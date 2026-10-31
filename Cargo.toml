@@ -1,0 +1,4 @@
+[workspace]
+members = ["crates/server", "crates/host"]
+exclude = ["work/ui-spike", "crates/web"]
+resolver = "2"

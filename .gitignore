@@ -1,0 +1,31 @@
+/references/reference-app/
+/work/runtime/
+/work/ui-spike/.tools/
+/work/ui-spike/target/
+/work/ui-spike/dist/
+/work/ui-spike/browser-profile/
+/target/
+/node_modules/
+/crates/web/target/
+/crates/web/dist/
+
+# Local credentials and runtime data
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.sqlite*
+*.db
+*.db-wal
+*.db-shm
+
+# Generated test artifacts; receipts and logs remain versioned
+__pycache__/
+*.py[cod]
+/work/**/*.tar.gz
+/work/**/*.png
+/work/ui-spike/http-netlog.json
