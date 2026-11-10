@@ -279,9 +279,9 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   </>;
 }
 
-type Routine = { id: string; agent: string; name: string; prompt: string; next_at: number; interval_ms: number | null; enabled: number; revision: number };
+type Routine = { trigger: 'schedule' | 'webhook'; id: string; agent: string; name: string; prompt: string; next_at: number; interval_ms: number | null; enabled: number; revision: number };
 type RoutineRun = { source: string; no_update: number; turn: string; thread: string; scheduled_at: number | null; created: string; missed: number; status: string; reply: string | null; error: string | null };
-type RoutineCommand = { routineId: string | null; data: { id: string; revision?: number; name: string; prompt: string; nextAt: number; intervalSeconds: number | null; enabled: boolean } };
+type RoutineCommand = { routineId: string | null; data: { id: string; revision?: number; trigger?: 'schedule' | 'webhook'; name: string; prompt: string; nextAt: number; intervalSeconds: number | null; enabled: boolean } };
 function pendingRoutine(agent: string): RoutineCommand | null {
   try { const value = JSON.parse(sessionStorage.getItem(`briefsip:routine-command:${agent}`) ?? 'null'); return value && typeof value.data?.id === 'string' && typeof value.data.name === 'string' && typeof value.data.prompt === 'string' && Number.isSafeInteger(value.data.nextAt) && value.data.nextAt > 0 && value.data.nextAt <= 253370764799999 && typeof value.data.enabled === 'boolean' && (value.data.intervalSeconds === null || Number.isSafeInteger(value.data.intervalSeconds)) && (value.routineId === null || typeof value.routineId === 'string') ? value : null; } catch { return null; }
 }
@@ -345,8 +345,64 @@ function ScriptAccess({ agent }: { agent: string }) {
   }
   return <section className="script-access" aria-label="Akses script lokal"><h2>Script lokal</h2><p className="muted">Script dengan token server dapat membaca rutinitas dan menjalankannya untuk agent ini. Mematikan akses tidak menghentikan pekerjaan yang sudah diterima.</p>{access && <p role="status">{access.enabled ? 'Akses script aktif.' : 'Akses script nonaktif.'}{!access.configured && ' Token script belum dikonfigurasi pada server.'}</p>}{pending && <p className="muted">Perubahan izin belum terkonfirmasi. Coba simpan lagi untuk memeriksa permintaan yang sama.</p>}{error && <p role="alert" className="error">{error}</p>}<div className="form-actions"><button className="secondary" disabled={busy || !access || (!pending && !access.enabled && !access.configured)} onClick={() => void save()}>{busy ? 'Menyimpan izin...' : pending ? 'Coba simpan izin lagi' : access?.enabled ? 'Matikan akses script' : 'Izinkan akses script'}</button><button className="secondary" disabled={busy} onClick={() => setReload(value => value + 1)}>Muat ulang izin</button></div></section>;
 }
+type WebhookConfig = { route: string; revision: number; url: string; event_name: string; filters: unknown[]; secret?: string };
+function WebhookSettings({ routine, onBack }: { routine: Routine; onBack: () => void }) {
+  type Command = { id: string; revision: number; rotate: boolean; eventName: string; filters: unknown[] };
+  const key = `briefsip:webhook:${routine.id}`, path = `/api/routines/${routine.id}/webhook`;
+  const [pending, setPending] = useState<Command | null>(() => {
+    try { const value = JSON.parse(sessionStorage.getItem(key) ?? 'null'); return value && typeof value.id === 'string' && Number.isSafeInteger(value.revision) && typeof value.rotate === 'boolean' && typeof value.eventName === 'string' && Array.isArray(value.filters) ? value : null; } catch { return null; }
+  });
+  const [hook, setHook] = useState<WebhookConfig | null | undefined>(undefined), [secret, setSecret] = useState('');
+  const [events, setEvents] = useState<{ delivery: string; received: number; result: { outcome: string; reason?: string } }[]>([]);
+  const [error, setError] = useState(''), [busy, setBusy] = useState(false), [conflict, setConflict] = useState(false), [reload, setReload] = useState(0);
+  const mounted = useRef(true), loadVersion = useRef(0);
+  useEffect(() => () => { mounted.current = false; }, []);
+  useEffect(() => {
+    let stopped = false; const version = ++loadVersion.current;
+    void Promise.all([api<WebhookConfig | null>(path), api<typeof events>(`/api/routines/${routine.id}/webhook-events`)]).then(([config, receipts]) => {
+      if (!stopped && version === loadVersion.current) { setHook(config); setEvents(receipts); setConflict(false); setError(''); }
+    }).catch(error => { if (!stopped && version === loadVersion.current) setError(message(error)); });
+    return () => { stopped = true; };
+  }, [path, routine.id, reload]);
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (busy || conflict || hook === undefined) return;
+    let request: Command;
+    try {
+      const fields = new FormData(event.currentTarget);
+      request = pending ?? { id: crypto.randomUUID(), revision: hook?.revision ?? 0, rotate: !hook || fields.get('rotate') === 'on', eventName: String(fields.get('eventName')), filters: JSON.parse(String(fields.get('filters'))) };
+      if (!Array.isArray(request.filters)) throw new Error('Filter harus berupa daftar JSON.');
+      sessionStorage.setItem(key, JSON.stringify(request));
+    } catch { setError('Filter harus berupa daftar JSON valid dan penyimpanan browser harus tersedia.'); return; }
+    loadVersion.current++; setPending(request); setBusy(true); setError(''); setSecret('');
+    try {
+      const result = await api<WebhookConfig>(path, request);
+      const latest = await api<WebhookConfig | null>(path);
+      if (!mounted.current) return;
+      if (!latest || latest.revision !== result.revision || latest.route !== result.route) throw new HttpError(409, 'Webhook berubah. Muat ulang sebelum memakai secret.');
+      sessionStorage.removeItem(key); setPending(null); setHook(latest); setSecret(result.secret ?? '');
+    } catch (error) {
+      if (!mounted.current) return;
+      if (error instanceof HttpError && error.status < 500) { sessionStorage.removeItem(key); setPending(null); setConflict(true); }
+      setError(message(error));
+    } finally { if (mounted.current) setBusy(false); }
+  }
+  return <section className="setup webhook-settings"><h1>Webhook {routine.name}</h1><p className="muted">URL lokal menerima event bertanda tangan saat Briefsip berjalan. Payload dikirim ke provider. URL ini belum tersedia dari internet.</p>
+    {hook && <label>URL webhook<input readOnly value={hook.url} onFocus={event => event.target.select()} /></label>}
+    {secret && <label>Secret baru<input readOnly value={secret} autoComplete="off" spellCheck={false} onFocus={event => event.target.select()} /><span className="muted">Salin ke penyimpanan secret pengirim. Secret tidak disimpan di browser dan tidak tampil lagi setelah halaman ditutup.</span></label>}
+    {hook === undefined ? <p role="status">Memuat webhook...</p> : <form key={`${hook?.route ?? 'new'}:${hook?.revision ?? 0}:${reload}`} onSubmit={save}>
+      <label>Nama event<input name="eventName" maxLength={256} readOnly={!!pending} defaultValue={pending?.eventName ?? hook?.event_name ?? ''} /><span className="muted">Kosongkan untuk semua event.</span></label>
+      <label>Filter payload<textarea name="filters" rows={4} readOnly={!!pending} defaultValue={JSON.stringify(pending?.filters ?? hook?.filters ?? [], null, 2)} /><span className="muted">Daftar filter JSON, contoh: {'[{"pointer":"/environment","equals":"production"}]'}. Semua filter harus cocok.</span></label>
+      {hook && <label className="member-option"><input type="checkbox" name="rotate" disabled={!!pending} defaultChecked={pending?.rotate ?? false} />Ganti secret. Secret lama langsung tidak berlaku.</label>}
+      {pending && <p className="notice">Penyimpanan belum terkonfirmasi. Coba lagi dengan permintaan yang sama.</p>}
+      <div className="form-actions routine-actions"><button disabled={busy || conflict}>{busy ? 'Menyimpan...' : pending ? 'Coba simpan webhook lagi' : hook ? 'Simpan webhook' : 'Buat URL dan secret'}</button></div>
+    </form>}
+    {error && <p role="alert" className="error">{error}</p>}<div className="form-actions routine-actions"><button className="secondary" onClick={onBack}>Kembali ke rutinitas</button><button className="secondary" disabled={busy} onClick={() => { setSecret(''); setReload(value => value + 1); }}>Muat ulang webhook</button></div>
+    <h2>Event diterima</h2>{!events.length ? <p className="muted">Belum ada event tersimpan. Muat ulang untuk melihat event baru.</p> : <ul className="routine-list">{events.map(event => <li key={`${event.delivery}:${event.received}`}><strong>{event.delivery}</strong><p>{new Date(event.received).toLocaleString('id-ID')} · {event.result.outcome === 'queued' ? 'Diterima untuk eksekusi' : 'Diabaikan'}</p>{event.result.reason && <p>{event.result.reason}</p>}</li>)}</ul>}
+  </section>;
+}
 function Routines({ agent, onClose, onOpen }: { agent: Agent; onClose: () => void; onOpen: (thread: string) => Promise<void> }) {
   const [rows, setRows] = useState<Routine[] | null>(null), [error, setError] = useState('');
+  const [webhook, setWebhook] = useState<Routine | null>(null);
   const [editing, setEditing] = useState<Routine | null | undefined>(() => pendingRoutine(agent.id) ? null : undefined);
   const [selected, setSelected] = useState(''), [runs, setRuns] = useState<RoutineRun[] | null>(null), [runError, setRunError] = useState('');
   const [reload, setReload] = useState(0);
@@ -366,14 +422,15 @@ function Routines({ agent, onClose, onOpen }: { agent: Agent; onClose: () => voi
     }
     if (selected) void refresh(); return () => { stopped = true; clearTimeout(timer); };
   }, [selected]);
+  if (webhook) return <WebhookSettings key={webhook.id} routine={webhook} onBack={() => setWebhook(null)} />;
   if (editing !== undefined) return <RoutineForm key={`${editing?.id ?? 'new'}:${reload}`} agent={agent} routine={editing} onBack={() => { setEditing(undefined); setReload(value => value + 1); }} />;
   return <section className="setup"><h1>Rutinitas {agent.name}</h1><p className="muted">Setiap eksekusi punya percakapan terpisah. Briefsip harus berjalan agar jadwal diproses.</p>
     <p className="muted">Uji sekarang menjalankan pekerjaan tersimpan melalui provider, termasuk saat jadwal nonaktif. Jadwal tidak berubah; penggunaan provider tetap dihitung.</p>
     <ScriptAccess key={agent.id} agent={agent.id} />
     <div className="form-actions routine-actions"><button className="secondary" onClick={onClose}>Kembali ke chat</button><a href={`/api/agents/${agent.id}/routines/calendar.ics`} download="briefsip-routines.ics">Unduh kalender</a><button onClick={() => setEditing(null)}>{pendingRoutine(agent.id) ? 'Lanjutkan penyimpanan' : 'Rutinitas baru'}</button></div>
     {error && <p className="error" role="alert">{error} Daftar akan dicoba lagi.</p>}
-    {rows === null ? <p role="status">Memuat rutinitas...</p> : !rows.length ? <p className="empty">Belum ada rutinitas. Buat jadwal untuk pekerjaan berulang atau sekali jalan.</p> : <ul className="routine-list">{rows.map(row => <li key={row.id}><strong>{row.name}</strong><p className="muted">{row.enabled ? `Berikutnya ${new Date(row.next_at).toLocaleString('id-ID')}` : 'Jadwal tidak aktif'}{row.interval_ms ? ` · Setiap ${row.interval_ms / 60000} menit` : ' · Sekali jalan'}</p><div className="form-actions"><button className="secondary" onClick={() => setEditing(row)}>Edit {row.name}</button><button className="secondary" onClick={() => setSelected(row.id)} aria-pressed={selected === row.id}>Eksekusi {row.name}</button></div><TestRoutine routine={row} /></li>)}</ul>}
-    {selected && <section aria-label="Riwayat eksekusi"><h2>Riwayat eksekusi</h2>{runError && <p className="error" role="alert">{runError}</p>}{runs === null ? <p role="status">Memuat eksekusi...</p> : !runs.length ? <p>Belum ada eksekusi tersimpan.</p> : <ul className="routine-list">{runs.map(run => <li key={run.turn}><p>{run.source === 'script' ? 'Script lokal · ' : run.scheduled_at === null ? 'Uji manual · ' : ''}{new Date(run.scheduled_at ?? run.created).toLocaleString('id-ID')} · {run.no_update ? 'Tidak ada pembaruan' : statusNames[run.status] ?? run.status}</p>{run.missed > 0 && <p className="muted">{run.missed} jadwal terlewat digabung ke eksekusi ini.</p>}{run.error && <p className="error">{run.error}</p>}<button className="secondary" onClick={() => void onOpen(run.thread).catch(error => setRunError(message(error)))}>Buka hasil</button></li>)}</ul>}</section>}
+    {rows === null ? <p role="status">Memuat rutinitas...</p> : !rows.length ? <p className="empty">Belum ada rutinitas. Buat jadwal untuk pekerjaan berulang atau sekali jalan.</p> : <ul className="routine-list">{rows.map(row => <li key={row.id}><strong>{row.name}</strong><p className="muted">{row.trigger === 'webhook' ? row.enabled ? 'Menunggu event webhook' : 'Webhook nonaktif' : row.enabled ? `Berikutnya ${new Date(row.next_at).toLocaleString('id-ID')}` : 'Jadwal tidak aktif'}{row.trigger === 'webhook' ? '' : row.interval_ms ? ` · Setiap ${row.interval_ms / 60000} menit` : ' · Sekali jalan'}</p><div className="form-actions"><button className="secondary" onClick={() => setEditing(row)}>Edit {row.name}</button><button className="secondary" onClick={() => setSelected(row.id)} aria-pressed={selected === row.id}>Eksekusi {row.name}</button></div><TestRoutine routine={row} />{row.trigger === 'webhook' && <button className="secondary" onClick={() => setWebhook(row)}>Pengaturan webhook {row.name}</button>}</li>)}</ul>}
+    {selected && <section aria-label="Riwayat eksekusi"><h2>Riwayat eksekusi</h2>{runError && <p className="error" role="alert">{runError}</p>}{runs === null ? <p role="status">Memuat eksekusi...</p> : !runs.length ? <p>Belum ada eksekusi tersimpan.</p> : <ul className="routine-list">{runs.map(run => <li key={run.turn}><p>{run.source === 'webhook' ? 'Webhook · ' : run.source === 'script' ? 'Script lokal · ' : run.scheduled_at === null ? 'Uji manual · ' : ''}{new Date(run.scheduled_at ?? run.created).toLocaleString('id-ID')} · {run.no_update ? 'Tidak ada pembaruan' : statusNames[run.status] ?? run.status}</p>{run.missed > 0 && <p className="muted">{run.missed} jadwal terlewat digabung ke eksekusi ini.</p>}{run.error && <p className="error">{run.error}</p>}<button className="secondary" onClick={() => void onOpen(run.thread).catch(error => setRunError(message(error)))}>Buka hasil</button></li>)}</ul>}</section>}
   </section>;
 }
 function RoutineForm({ agent, routine, onBack }: { agent: Agent; routine: Routine | null; onBack: () => void }) {
@@ -384,6 +441,7 @@ function RoutineForm({ agent, routine, onBack }: { agent: Agent; routine: Routin
   const revision = initial?.data.revision ?? routine?.revision;
   const [conflict, setConflict] = useState(false);
   const snapshot = initial?.data;
+  const [trigger, setTrigger] = useState<'schedule' | 'webhook'>(snapshot?.trigger ?? routine?.trigger ?? 'schedule');
   const [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const mounted = useRef(true);
   useEffect(() => () => { mounted.current = false; }, []);
@@ -392,7 +450,7 @@ function RoutineForm({ agent, routine, onBack }: { agent: Agent; routine: Routin
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (busy || conflict) return;
     const fields = new FormData(event.currentTarget);
-    const request = pending.current ?? { routineId, data: { id: crypto.randomUUID(), ...(routineId ? { revision } : {}), name: String(fields.get('name')).trim(), prompt: String(fields.get('prompt')).trim(), nextAt: new Date(String(fields.get('nextAt'))).getTime(), intervalSeconds: fields.get('interval') ? Number(fields.get('interval')) * 60 : null, enabled: fields.get('enabled') === 'on' } };
+    const request = pending.current ?? { routineId, data: { id: crypto.randomUUID(), ...(routineId ? { revision } : {}), name: String(fields.get('name')).trim(), prompt: String(fields.get('prompt')).trim(), trigger, nextAt: trigger === 'webhook' ? routine?.next_at ?? Date.now() + 60000 : new Date(String(fields.get('nextAt'))).getTime(), intervalSeconds: fields.get('interval') ? Number(fields.get('interval')) * 60 : null, enabled: fields.get('enabled') === 'on' } };
     try { sessionStorage.setItem(key, JSON.stringify(request)); } catch { setError('Status simpan tidak tersimpan di browser. Periksa penyimpanan situs.'); return; }
     pending.current = request; setBusy(true); setError('');
     try {
@@ -408,7 +466,7 @@ function RoutineForm({ agent, routine, onBack }: { agent: Agent; routine: Routin
     } finally { if (mounted.current) setBusy(false); }
   }
   return <section className="setup"><h1>{initial?.routineId || routine ? 'Edit rutinitas' : 'Rutinitas baru'}</h1><p className="muted">Waktu mengikuti zona waktu browser. Menonaktifkan atau mengubah jadwal membatalkan run yang masih antre; run yang sudah berjalan tetap berlangsung.</p>
-    <form onSubmit={save}><label>Nama<input name="name" required maxLength={80} autoFocus readOnly={!!pending.current} defaultValue={snapshot?.name ?? routine?.name} /></label><label>Pekerjaan<textarea name="prompt" required maxLength={16000} readOnly={!!pending.current} defaultValue={snapshot?.prompt ?? routine?.prompt} rows={5} /></label><label>Waktu mulai<input name="nextAt" type="datetime-local" required readOnly={!!pending.current} defaultValue={localDate} /></label><label>Ulangi setiap (menit)<input name="interval" type="number" min={1} max={525600} step={1} readOnly={!!pending.current} defaultValue={snapshot ? snapshot.intervalSeconds === null ? '' : snapshot.intervalSeconds / 60 : routine?.interval_ms ? routine.interval_ms / 60000 : ''} /><span className="muted">Kosongkan untuk sekali jalan.</span></label><label className="member-option"><input type="checkbox" name="enabled" disabled={!!pending.current} defaultChecked={snapshot?.enabled ?? (routine ? !!routine.enabled : true)} />Jadwal aktif</label>
+    <form onSubmit={save}><label>Nama<input name="name" required maxLength={80} autoFocus readOnly={!!pending.current} defaultValue={snapshot?.name ?? routine?.name} /></label><label>Pekerjaan<textarea name="prompt" required maxLength={16000} readOnly={!!pending.current} defaultValue={snapshot?.prompt ?? routine?.prompt} rows={5} /></label><label>Pemicu<select value={trigger} disabled={!!pending.current} onChange={event => setTrigger(event.target.value as typeof trigger)}><option value="schedule">Jadwal</option><option value="webhook">Webhook</option></select></label>{trigger === 'webhook' && <p className="notice">Setelah menyimpan, buka Pengaturan webhook untuk membuat URL dan secret. Beralih ke jadwal menghapus URL dan secret lama.</p>}<label hidden={trigger === 'webhook'}>Waktu mulai<input disabled={trigger === 'webhook'} name="nextAt" type="datetime-local" required readOnly={!!pending.current} defaultValue={localDate} /></label><label hidden={trigger === 'webhook'}>Ulangi setiap (menit)<input disabled={trigger === 'webhook'} name="interval" type="number" min={1} max={525600} step={1} readOnly={!!pending.current} defaultValue={snapshot ? snapshot.intervalSeconds === null ? '' : snapshot.intervalSeconds / 60 : routine?.interval_ms ? routine.interval_ms / 60000 : ''} /><span className="muted">Kosongkan untuk sekali jalan.</span></label><label className="member-option"><input type="checkbox" name="enabled" disabled={!!pending.current} defaultChecked={snapshot?.enabled ?? (routine ? !!routine.enabled : true)} /> {trigger === 'webhook' ? 'Webhook aktif' : 'Jadwal aktif'}</label>
     {error && <p className="error" role="alert">{error}</p>}<div className="form-actions"><button type="button" className="secondary" disabled={busy} onClick={onBack}>{error && !pending.current ? 'Buang perubahan dan muat ulang' : 'Kembali'}</button><button disabled={busy || conflict}>{busy ? 'Menyimpan...' : pending.current ? 'Coba simpan lagi' : 'Simpan rutinitas'}</button></div></form>
   </section>;
 }
