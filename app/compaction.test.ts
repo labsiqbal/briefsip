@@ -54,11 +54,13 @@ test('incremental compaction keeps source scopes, originals, provenance and fail
     ];
     await app.close(); const db = new DatabaseSync(options.database);
     for (const scope of scopes) for (let n = 0; n < 65; n++) db.prepare("INSERT INTO turns(id,agent,channel,thread,text,reply,status,created) VALUES (?,?,?,?,?,?,'done',?)").run(randomUUID(), scope.agent, scope.channel, scope.thread, `${scope.marker}_${n}`, `Reply ${n}`, new Date().toISOString());
+    const firstSource = db.prepare('SELECT id FROM turns ORDER BY seq LIMIT 1').get()!.id;
+    db.prepare('INSERT INTO questions VALUES (?,?,?,?,?,?,?,0,0)').run(randomUUID(), firstSource, 'question', '{}', 'Decision?', '[]', 'IMPORTANT_DECISION');
     db.close(); app = await startApp(options);
     for (const scope of scopes) {
       await run(scope.path); const first = await request(scope.path + '/compaction');
       assert.equal(first.source_count, 20); assert.equal(first.sources.length, 20); assert.equal(first.next_after, null);
-      assert.equal(summaries.at(-1).messages.length, 20); assert.match(prompts.at(-1)!, /Earlier conversation summary/);
+      assert.equal(summaries.at(-1).messages.length, 20); if (scope === scopes[0]) assert.match(JSON.stringify(summaries.at(-1)), /IMPORTANT_DECISION/); assert.match(prompts.at(-1)!, /Earlier conversation summary/);
       for (const other of scopes.filter(s => s !== scope)) { assert(!JSON.stringify(summaries.at(-1)).includes(other.marker)); assert(!prompts.at(-1)!.includes(other.marker)); }
       await run(scope.path); const second = await request(scope.path + '/compaction');
       assert.equal(second.source_count, 26); assert.equal((await request(scope.path + '/compaction?after=' + second.next_after)).sources.length, 6);
@@ -84,6 +86,7 @@ test('compaction CAS rejects stale provider responses, changed sources and futur
   const db = new DatabaseSync(':memory:');
   db.exec('CREATE TABLE turns(seq INTEGER PRIMARY KEY,id TEXT UNIQUE,agent TEXT,channel TEXT,thread TEXT,text TEXT,reply TEXT,error TEXT,status TEXT,revision INTEGER,attachments TEXT)');
   initializeCompaction(db);
+  const { initializeQuestions } = await import('./questions.ts'); initializeQuestions(db);
   for (let seq = 1; seq <= 70; seq++) db.prepare("INSERT INTO turns VALUES (?,?,?,NULL,NULL,?,'reply',NULL,'done',1,'[]')").run(seq, randomUUID(), 'a', `Message ${seq}`);
   const turn = (seq: number) => { const id = randomUUID(); db.prepare("INSERT INTO turns VALUES (?,?,?,NULL,NULL,'now',NULL,NULL,'running',1,'[]')").run(seq, id, 'a'); return { id, seq, agent: 'a', channel: null, thread: null }; };
   const signal = new AbortController().signal;
