@@ -7,7 +7,7 @@ import './style.css';
 type Agent = { thread_limit: number; revision: number; id: string; name: string; model: string; instructions: string };
 type Channel = { activity: number; read_position: number; revision: number; archived: number; id: string; name: string; instructions: string; members: string[]; lead: string | null };
 type Thread = { id: string; agent: string; name: string; revision: number; archived: number; deleted: number };
-type Turn = { generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
+type Turn = { no_update: number; generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
 type Directory = { agents: Agent[]; configured: boolean; defaultModel: string };
 type Pending = { files?: string[]; id: string; text: string; recipient?: string; automatic?: boolean };
 const statusNames: Record<string, string> = { queued: 'Dalam antrean', running: 'Sedang menjawab', done: 'Selesai', failed: 'Gagal', interrupted: 'Terputus', cancelled: 'Dibatalkan' };
@@ -256,7 +256,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
       {turns === null ? <p className="empty">Memuat percakapan...</p> : turns.length === 0 && before ? <p className="empty" role="status">Awal riwayat tercapai. Pilih Pesan lebih baru untuk kembali.</p> : turns.length === 0 ? <div className="empty"><h2>Mulai bersama {agent.name}</h2><p>Kirim pekerjaan atau pertanyaan pertama. Percakapan tersimpan di komputer ini.</p></div> : turns.map(turn => <article key={turn.id} id={`turn-${turn.id}`} tabIndex={-1} className="turn">
         <div className="message-head"><strong>{turn.parent ? 'Subtugas' : 'Kamu'}</strong>{turn.parent && <a href={`#turn-${turn.parent}`} onClick={event => { event.preventDefault(); focusedOnce.current = ''; setFocusedTask(turn.parent!); }}>Lihat tugas induk</a>}<time dateTime={turn.created}>{new Date(turn.created).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time></div>
         <p className="message-text">{turn.text}</p>{!!turn.files?.length && <ul aria-label="Lampiran pesan">{turn.files.map(file => <li key={file.id}><a href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}>{file.name}</a></li>)}</ul>}
-        <div className="answer"><div className="message-head"><strong>{turn.agent_name ?? agent.name}</strong><span>{turn.paused && !['done','cancelled'].includes(turn.status) ? 'Dijeda' : turn.waiting_for && turn.status === 'queued' ? 'Menunggu delegasi' : turn.routing === 'pending' && turn.status === 'running' ? 'Memilih penerima' : turn.routing === 'clarify' ? 'Perlu klarifikasi' : turn.routing === 'none' ? 'Tidak perlu tugas' : statusNames[turn.status] ?? turn.status}</span></div>
+        <div className="answer"><div className="message-head"><strong>{turn.agent_name ?? agent.name}</strong><span>{turn.no_update ? 'Tidak ada pembaruan' : turn.paused && !['done','cancelled'].includes(turn.status) ? 'Dijeda' : turn.waiting_for && turn.status === 'queued' ? 'Menunggu delegasi' : turn.routing === 'pending' && turn.status === 'running' ? 'Memilih penerima' : turn.routing === 'clarify' ? 'Perlu klarifikasi' : turn.routing === 'none' ? 'Tidak perlu tugas' : statusNames[turn.status] ?? turn.status}</span></div>
           {turn.reply ? <p className="message-text">{turn.reply}</p> : <p className={turn.error ? 'error' : 'muted'}>{turn.error ?? (turn.waiting_for ? 'Menunggu hasil tugas anak.' : turn.status === 'queued' ? 'Menunggu giliran.' : 'Menunggu jawaban provider...')}</p>}
           {!!turn.generatedFiles?.length && <ul aria-label="File hasil agent">{turn.generatedFiles.map(file => <li key={file.id}><a href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}>{file.name}</a> <span className="muted">{file.size} byte</span></li>)}</ul>}
           {!!turn.coordination?.length && <details><summary>Koordinasi tugas ({turn.coordination.length})</summary>{turn.coordination.map((action, index) => <div key={index}><p>{action.owner_name} {action.kind === 'delegate_task' ? 'mendelegasikan ke' : 'mengalihkan tugas ke'} {action.target_name}.</p><p className="message-text">{action.prompt}</p>{action.child && <a href={`#turn-${action.child}`} onClick={event => { event.preventDefault(); focusedOnce.current = ''; setFocusedTask(action.child!); }}>Lihat subtugas</a>}</div>)}</details>}
@@ -279,16 +279,89 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   </>;
 }
 
+type Routine = { id: string; agent: string; name: string; prompt: string; next_at: number; interval_ms: number | null; enabled: number; revision: number };
+type RoutineRun = { no_update: number; turn: string; thread: string; scheduled_at: number; missed: number; status: string; reply: string | null; error: string | null };
+type RoutineCommand = { routineId: string | null; data: { id: string; revision?: number; name: string; prompt: string; nextAt: number; intervalSeconds: number | null; enabled: boolean } };
+function pendingRoutine(agent: string): RoutineCommand | null {
+  try { const value = JSON.parse(sessionStorage.getItem(`briefsip:routine-command:${agent}`) ?? 'null'); return value && typeof value.data?.id === 'string' && typeof value.data.name === 'string' && typeof value.data.prompt === 'string' && Number.isSafeInteger(value.data.nextAt) && value.data.nextAt > 0 && value.data.nextAt <= 253370764799999 && typeof value.data.enabled === 'boolean' && (value.data.intervalSeconds === null || Number.isSafeInteger(value.data.intervalSeconds)) && (value.routineId === null || typeof value.routineId === 'string') ? value : null; } catch { return null; }
+}
+function Routines({ agent, onClose, onOpen }: { agent: Agent; onClose: () => void; onOpen: (thread: string) => Promise<void> }) {
+  const [rows, setRows] = useState<Routine[] | null>(null), [error, setError] = useState('');
+  const [editing, setEditing] = useState<Routine | null | undefined>(() => pendingRoutine(agent.id) ? null : undefined);
+  const [selected, setSelected] = useState(''), [runs, setRuns] = useState<RoutineRun[] | null>(null), [runError, setRunError] = useState('');
+  const [reload, setReload] = useState(0);
+  useEffect(() => {
+    let stopped = false; let timer: ReturnType<typeof setTimeout>;
+    async function refresh() {
+      try { const data = await api<Routine[]>(`/api/agents/${agent.id}/routines`); if (!stopped) { setRows(data); setError(''); } } catch (error) { if (!stopped) setError(message(error)); }
+      if (!stopped) timer = setTimeout(refresh, 1200);
+    }
+    void refresh(); return () => { stopped = true; clearTimeout(timer); };
+  }, [agent.id, reload]);
+  useEffect(() => {
+    let stopped = false; let timer: ReturnType<typeof setTimeout>; setRuns(null); setRunError('');
+    async function refresh() {
+      try { const data = await api<RoutineRun[]>(`/api/routines/${selected}/runs`); if (!stopped) { setRuns(data); setRunError(''); } } catch (error) { if (!stopped) setRunError(message(error)); }
+      if (!stopped) timer = setTimeout(refresh, 1200);
+    }
+    if (selected) void refresh(); return () => { stopped = true; clearTimeout(timer); };
+  }, [selected]);
+  if (editing !== undefined) return <RoutineForm key={`${editing?.id ?? 'new'}:${reload}`} agent={agent} routine={editing} onBack={() => { setEditing(undefined); setReload(value => value + 1); }} />;
+  return <section className="setup"><h1>Rutinitas {agent.name}</h1><p className="muted">Setiap eksekusi punya percakapan terpisah. Briefsip harus berjalan agar jadwal diproses.</p>
+    <div className="form-actions"><button className="secondary" onClick={onClose}>Kembali ke chat</button><a href={`/api/agents/${agent.id}/routines/calendar.ics`} download="briefsip-routines.ics">Unduh kalender</a><button onClick={() => setEditing(null)}>{pendingRoutine(agent.id) ? 'Lanjutkan penyimpanan' : 'Rutinitas baru'}</button></div>
+    {error && <p className="error" role="alert">{error} Daftar akan dicoba lagi.</p>}
+    {rows === null ? <p role="status">Memuat rutinitas...</p> : !rows.length ? <p className="empty">Belum ada rutinitas. Buat jadwal untuk pekerjaan berulang atau sekali jalan.</p> : <ul className="routine-list">{rows.map(row => <li key={row.id}><strong>{row.name}</strong><p className="muted">{row.enabled ? `Berikutnya ${new Date(row.next_at).toLocaleString('id-ID')}` : 'Jadwal tidak aktif'}{row.interval_ms ? ` · Setiap ${row.interval_ms / 60000} menit` : ' · Sekali jalan'}</p><div className="form-actions"><button className="secondary" onClick={() => setEditing(row)}>Edit {row.name}</button><button className="secondary" onClick={() => setSelected(row.id)} aria-pressed={selected === row.id}>Eksekusi {row.name}</button></div></li>)}</ul>}
+    {selected && <section aria-label="Riwayat eksekusi"><h2>Riwayat eksekusi</h2>{runError && <p className="error" role="alert">{runError}</p>}{runs === null ? <p role="status">Memuat eksekusi...</p> : !runs.length ? <p>Belum ada eksekusi tersimpan.</p> : <ul className="routine-list">{runs.map(run => <li key={run.turn}><p>{new Date(run.scheduled_at).toLocaleString('id-ID')} · {run.no_update ? 'Tidak ada pembaruan' : statusNames[run.status] ?? run.status}</p>{run.missed > 0 && <p className="muted">{run.missed} jadwal terlewat digabung ke eksekusi ini.</p>}{run.error && <p className="error">{run.error}</p>}<button className="secondary" onClick={() => void onOpen(run.thread).catch(error => setRunError(message(error)))}>Buka hasil</button></li>)}</ul>}</section>}
+  </section>;
+}
+function RoutineForm({ agent, routine, onBack }: { agent: Agent; routine: Routine | null; onBack: () => void }) {
+  const key = `briefsip:routine-command:${agent.id}`;
+  const pending = useRef<RoutineCommand | null>(pendingRoutine(agent.id));
+  const [initial] = useState(() => pending.current);
+  const routineId = initial?.routineId ?? routine?.id ?? null;
+  const revision = initial?.data.revision ?? routine?.revision;
+  const [conflict, setConflict] = useState(false);
+  const snapshot = initial?.data;
+  const [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
+  const date = new Date(snapshot?.nextAt ?? routine?.next_at ?? Date.now() + 60000);
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (busy || conflict) return;
+    const fields = new FormData(event.currentTarget);
+    const request = pending.current ?? { routineId, data: { id: crypto.randomUUID(), ...(routineId ? { revision } : {}), name: String(fields.get('name')).trim(), prompt: String(fields.get('prompt')).trim(), nextAt: new Date(String(fields.get('nextAt'))).getTime(), intervalSeconds: fields.get('interval') ? Number(fields.get('interval')) * 60 : null, enabled: fields.get('enabled') === 'on' } };
+    try { sessionStorage.setItem(key, JSON.stringify(request)); } catch { setError('Status simpan tidak tersimpan di browser. Periksa penyimpanan situs.'); return; }
+    pending.current = request; setBusy(true); setError('');
+    try {
+      await api(request.routineId ? `/api/routines/${request.routineId}/edit` : `/api/agents/${agent.id}/routines`, request.data);
+      if (!mounted.current) return;
+      if (pendingRoutine(agent.id)?.data.id === request.data.id) sessionStorage.removeItem(key);
+      pending.current = null; onBack();
+    } catch (error) {
+      if (!mounted.current) return;
+      if (error instanceof HttpError && error.status < 500) { if (pendingRoutine(agent.id)?.data.id === request.data.id) sessionStorage.removeItem(key); pending.current = null; }
+      if (error instanceof HttpError && error.status === 409) setConflict(true);
+      setError(message(error));
+    } finally { if (mounted.current) setBusy(false); }
+  }
+  return <section className="setup"><h1>{initial?.routineId || routine ? 'Edit rutinitas' : 'Rutinitas baru'}</h1><p className="muted">Waktu mengikuti zona waktu browser. Menonaktifkan atau mengubah jadwal membatalkan run yang masih antre; run yang sudah berjalan tetap berlangsung.</p>
+    <form onSubmit={save}><label>Nama<input name="name" required maxLength={80} autoFocus readOnly={!!pending.current} defaultValue={snapshot?.name ?? routine?.name} /></label><label>Pekerjaan<textarea name="prompt" required maxLength={16000} readOnly={!!pending.current} defaultValue={snapshot?.prompt ?? routine?.prompt} rows={5} /></label><label>Waktu mulai<input name="nextAt" type="datetime-local" required readOnly={!!pending.current} defaultValue={localDate} /></label><label>Ulangi setiap (menit)<input name="interval" type="number" min={1} max={525600} step={1} readOnly={!!pending.current} defaultValue={snapshot ? snapshot.intervalSeconds === null ? '' : snapshot.intervalSeconds / 60 : routine?.interval_ms ? routine.interval_ms / 60000 : ''} /><span className="muted">Kosongkan untuk sekali jalan.</span></label><label className="member-option"><input type="checkbox" name="enabled" disabled={!!pending.current} defaultChecked={snapshot?.enabled ?? (routine ? !!routine.enabled : true)} />Jadwal aktif</label>
+    {error && <p className="error" role="alert">{error}</p>}<div className="form-actions"><button type="button" className="secondary" disabled={busy} onClick={onBack}>{error && !pending.current ? 'Buang perubahan dan muat ulang' : 'Kembali'}</button><button disabled={busy || conflict}>{busy ? 'Menyimpan...' : pending.current ? 'Coba simpan lagi' : 'Simpan rutinitas'}</button></div></form>
+  </section>;
+}
+
 function AgentConversations({ agent, configured, onEdit }: { agent: Agent; configured: boolean; onEdit: () => void }) {
   const [threads, setThreads] = useState<Thread[]>([]), [error, setError] = useState('');
   const storageKey = `briefsip:thread:${agent.id}`;
   const [selected, setSelected] = useState(() => { try { return sessionStorage.getItem(storageKey) ?? ''; } catch { return ''; } });
   const [form, setForm] = useState(false), [editing, setEditing] = useState(false), [loaded, setLoaded] = useState(false);
   const [reload, setReload] = useState(0);
+  const [showRoutines, setShowRoutines] = useState(false);
   const loadVersion = useRef(0);
   const navigation = useRef(0);
   const thread = threads.find(item => item.id === selected);
-  function select(id: string) { navigation.current++; loadVersion.current++; setSelected(id); setForm(false); setEditing(false); try { sessionStorage.setItem(storageKey, id); } catch { /* Selection remains usable in memory. */ } }
+  function select(id: string) { setShowRoutines(false); navigation.current++; loadVersion.current++; setSelected(id); setForm(false); setEditing(false); try { sessionStorage.setItem(storageKey, id); } catch { /* Selection remains usable in memory. */ } }
   async function load(preferred = selected, afterSave = false) {
     const version = ++loadVersion.current;
     try {
@@ -304,9 +377,9 @@ function AgentConversations({ agent, configured, onEdit }: { agent: Agent; confi
   useEffect(() => { void load().catch(() => {}); return () => { navigation.current++; loadVersion.current++; }; }, []);
   const navigationVersion = navigation.current;
   return <>
-    <div className="recipient"><label htmlFor="conversation">Percakapan</label><select id="conversation" value={thread?.id ?? ''} disabled={!loaded} onChange={event => select(event.target.value)}><option value="">Chat utama</option>{threads.map(item => <option key={item.id} value={item.id}>{item.name}{item.archived ? ' (diarsipkan)' : ''}</option>)}</select><button className="secondary" disabled={!loaded} onClick={() => { navigation.current++; loadVersion.current++; setForm(true); setEditing(false); }}>Percakapan baru</button></div>
+    <div className="recipient"><label htmlFor="conversation">Percakapan</label><select id="conversation" value={thread?.id ?? ''} disabled={!loaded} onChange={event => select(event.target.value)}><option value="">Chat utama</option>{threads.map(item => <option key={item.id} value={item.id}>{item.name}{item.archived ? ' (diarsipkan)' : ''}</option>)}</select><button className="secondary" disabled={!loaded} onClick={() => { navigation.current++; loadVersion.current++; setShowRoutines(false); setForm(true); setEditing(false); }}>Percakapan baru</button><button className="secondary" onClick={() => { navigation.current++; loadVersion.current++; setShowRoutines(true); }}>Rutinitas</button></div>
     {error && <p className="error" role="alert">{error} <button className="secondary" onClick={() => void load().catch(() => {})}>Muat ulang percakapan</button></p>}
-    {!loaded ? <p className="empty">Memuat percakapan...</p> : form ? <ThreadForm key={editing ? `${thread?.id}:${thread?.revision}:${reload}` : 'new'} agent={agent} thread={editing ? thread : undefined} onCancel={() => { navigation.current++; loadVersion.current++; setForm(false); }} onReload={() => { void load().catch(() => {}); }} onSaved={item => navigationVersion === navigation.current ? load(item.deleted ? '' : item.id, true) : Promise.resolve()} /> : <Chat key={thread?.id ?? agent.id} agent={agent} thread={thread} configured={configured} onEdit={thread ? () => { navigation.current++; loadVersion.current++; setEditing(true); setForm(true); } : onEdit} />}
+    {showRoutines ? <Routines agent={agent} onClose={() => { navigation.current++; loadVersion.current++; setShowRoutines(false); }} onOpen={id => load(id, true)} /> : !loaded ? <p className="empty">Memuat percakapan...</p> : form ? <ThreadForm key={editing ? `${thread?.id}:${thread?.revision}:${reload}` : 'new'} agent={agent} thread={editing ? thread : undefined} onCancel={() => { navigation.current++; loadVersion.current++; setForm(false); }} onReload={() => { void load().catch(() => {}); }} onSaved={item => navigationVersion === navigation.current ? load(item.deleted ? '' : item.id, true) : Promise.resolve()} /> : <Chat key={thread?.id ?? agent.id} agent={agent} thread={thread} configured={configured} onEdit={thread ? () => { navigation.current++; loadVersion.current++; setEditing(true); setForm(true); } : onEdit} />}
   </>;
 }
 

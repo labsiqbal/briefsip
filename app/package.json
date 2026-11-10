@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc --noEmit && vite build",
     "start": "node --experimental-strip-types server.ts",
-    "test": "node --experimental-strip-types --test test.ts coordination.test.ts crash.test.ts models.test.ts threads.test.ts files.test.ts history.test.ts history-tools.test.ts artifacts.test.ts"
+    "test": "node --experimental-strip-types --test test.ts coordination.test.ts crash.test.ts models.test.ts threads.test.ts files.test.ts history.test.ts history-tools.test.ts artifacts.test.ts routines.test.ts"
   },
   "dependencies": {
     "@fontsource/ibm-plex-sans": "^5.3.0",
