@@ -49,6 +49,9 @@ test('workflow SIGKILL preserves uncertain step without replay across two restar
       await new Promise(resolve => setTimeout(resolve, 1100));
       assert.equal(calls, 1); assert.equal((await request(path)).steps.length, 1);
       assert.equal((await request(`/api/agents/${agent.id}/turns`)).length, 0);
+      const usage = await request('/api/usage');
+      assert.equal(usage.summary.calls, 1); assert.equal(usage.summary.interrupted, 1);
+      assert.equal(usage.summary.total_tokens, null); assert.equal(usage.calls[0].turn, turn);
       if (restart === 1) {
         await request(`${path}/cancel`, { id: randomUUID(), revision: run.revision });
         assert.equal((await request(path)).status, 'cancelled');
