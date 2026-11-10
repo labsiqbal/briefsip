@@ -322,7 +322,8 @@ test('workflow webhooks authenticate, deduplicate, ignore busy runs and recover 
 
 test('workspace workflow directory pages across owners and keeps per-agent lists scoped', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-workflow-directory-'));
-  const app = await startApp({ database: join(dir, 'state.sqlite') });
+  const options = { database: join(dir, 'state.sqlite') };
+  let app = await startApp(options);
   async function request(path: string, body?: unknown, status = 200) {
     const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const data = await response.json(); assert.equal(response.status, status, JSON.stringify(data)); return data;
@@ -334,13 +335,17 @@ test('workspace workflow directory pages across owners and keeps per-agent lists
     const workflows = [];
     for (let index = 0; index < 21; index++) {
       const agent = owners[index % 2];
-      workflows.push(await request(`/api/agents/${agent.id}/workflows`, { id: randomUUID(), revision: 0, name: `Workflow ${index}`, graph: { entry: 'out', maxSteps: 1, nodes: [{ id: 'out', kind: 'output' }] } }));
+      workflows.push(await request(`/api/agents/${agent.id}/workflows`, { id: randomUUID(), revision: 0, name: `Workflow ${index}`, graph: { entry: 'out', maxSteps: 1, nodes: [{ id: 'out', kind: 'output' }], positions: { out: { x: 100 + index, y: 200 + index } } } }));
     }
     const first = await request('/api/workflows'); assert.equal(first.workflows.length, 20); assert(first.next_after);
     const second = await request(`/api/workflows?after=${first.next_after}`); assert.equal(second.workflows.length, 1); assert.equal(second.next_after, null);
     const rows = [...first.workflows, ...second.workflows];
     assert.deepEqual(rows.map(row => row.id), workflows.map(row => row.id).sort());
-    for (const row of rows) assert.equal(row.owner_name, owners.find(owner => owner.id === row.agent)?.name);
+    for (const row of rows) {
+      assert.equal(row.owner_name, owners.find(owner => owner.id === row.agent)?.name);
+      assert.deepEqual(row.graph.positions, workflows.find(workflow => workflow.id === row.id)?.graph.positions);
+      assert.deepEqual((await request(`/api/workflows/${row.id}`)).graph.positions, row.graph.positions);
+    }
     for (const owner of owners) {
       const scoped = await request(`/api/agents/${owner.id}/workflows`);
       assert.deepEqual(scoped.workflows.map((row: any) => row.id), rows.filter(row => row.agent === owner.id).map(row => row.id));
@@ -348,6 +353,13 @@ test('workspace workflow directory pages across owners and keeps per-agent lists
     const workflow = rows[0];
     await request(`/api/workflows/${workflow.id}/edit`, { id: randomUUID(), revision: 1, name: 'Changed from directory', graph: workflow.graph });
     assert.equal((await request('/api/workflows')).workflows[0].revision, 2);
+    const run = await request(`/api/workflows/${workflow.id}/run`, { id: randomUUID(), revision: 2, input: '' });
+    await request(`/api/workflows/${workflow.id}/edit`, { id: randomUUID(), revision: 2, name: 'Moved', graph: { ...workflow.graph, positions: { out: { x: 800, y: 900 } } } });
+    assert.deepEqual((await request(`/api/workflow-runs/${run.id}`)).graph.positions, workflow.graph.positions);
+    await app.close(); app = await startApp(options);
+    assert.deepEqual((await request(`/api/workflows/${workflow.id}`)).graph.positions, { out: { x: 800, y: 900 } });
+    const restored = await request(`/api/workflows/${workflow.id}/restore`, { id: randomUUID(), revision: 3, version: 1 });
+    assert.deepEqual(restored.graph.positions, workflow.graph.positions);
     for (const query of ['after=bad', 'before=1', 'owner=anything']) await request(`/api/workflows?${query}`, undefined, 400);
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
