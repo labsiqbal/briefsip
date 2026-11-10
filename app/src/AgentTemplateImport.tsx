@@ -52,6 +52,7 @@ export function AgentTemplateImport({ request, onCreated, onClose }: { request: 
         <legend>Pratinjau profil baru</legend>
         <label>Nama<input required maxLength={80} value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} /></label>
         <label>Model<input required maxLength={160} value={draft.model} onChange={event => setDraft({ ...draft, model: event.target.value })} /></label>
+        <label>Model cadangan (opsional)<input maxLength={160} value={draft.backupModel ?? ''} onChange={event => setDraft({ ...draft, backupModel: event.target.value })} /></label>
         <p className="muted">Model memakai provider yang dikonfigurasi di komputer ini. ID model dari komputer lain mungkin tidak tersedia.</p>
         <label>Instruksi<textarea required maxLength={8000} rows={8} value={draft.instructions} onChange={event => setDraft({ ...draft, instructions: event.target.value })} /></label>
         <label>Percakapan samping bersamaan<input type="number" required min={1} max={32} step={1} value={draft.threadLimit} onChange={event => setDraft({ ...draft, threadLimit: Number(event.target.value) })} /></label>
