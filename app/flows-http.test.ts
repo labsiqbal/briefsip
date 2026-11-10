@@ -79,5 +79,17 @@ test('routine flow dispatch joins once, snapshots edits and recovers interrupted
     await request(`/api/routines/${routine.id}/test`, { id: randomUUID(), revision: routine.revision });
     await until(() => request(`/api/routines/${routine.id}/runs`), data => data[0]?.status === 'done');
     assert.equal((await request(runs)).length, 2); assert.equal(calls.filter(call => call.model === 'd').length, 2);
+    const configured = [routine.id];
+    for (let i = 0; i < 20; i++) {
+      const item = await request(`/api/agents/${b.id}/routines`, { id: randomUUID(), name: `Directory ${i}`, prompt: 'Not executed', nextAt: Date.now() + 3600000, intervalSeconds: null, enabled: false });
+      await request(`/api/routines/${item.id}/flow`, { id: randomUUID(), revision: 0, links: [{ from: b.id, to: c.id }] });
+      configured.push(item.id);
+    }
+    const first = await request('/api/flows'), second = await request(`/api/flows?after=${first.next_after}`);
+    assert.equal(first.flows.length, 20); assert.equal(second.flows.length, 1); assert.equal(second.next_after, null);
+    assert.deepEqual([...first.flows, ...second.flows].map(row => row.id), configured.sort());
+    assert(first.flows.every((row: { owner_name: string; graph: { root: string }; agent: string; flow_revision: number }) => row.owner_name && row.graph.root === row.agent && row.flow_revision >= 1));
+    await request('/api/flows?after=invalid', undefined, 400);
+    await request('/api/flows?extra=1', undefined, 400);
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });

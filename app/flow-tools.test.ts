@@ -10,11 +10,13 @@ import { startApp } from './server.ts';
 test('agent flow edits preserve ownership, revisions and ordered receipts across restart', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-flow-tools-'));
   let args: unknown, hold = false, held = false, lastResult: any;
+  let beforeEdit: (() => Promise<void>) | undefined;
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const data = JSON.parse(raw), results = data.messages.filter((row: any) => row.role === 'tool');
     const order = data.messages.filter((row: any) => row.tool_calls).map((row: any) => row.tool_calls[0].function.name);
     const step = results.length;
+    if (step === 1 && beforeEdit) { const action = beforeEdit; beforeEdit = undefined; await action(); }
     if (step === 3) {
       assert.deepEqual(order, ['create_text_file', 'set_routine_flow', 'create_text_file']);
       lastResult = JSON.parse(results[1].content);
@@ -66,5 +68,14 @@ test('agent flow edits preserve ownership, revisions and ordered receipts across
     }
     assert.equal((await request(`/api/routines/${own.id}/runs`)).length, 0);
     assert.equal((await request(`/api/routines/${foreign.id}/flow`)).revision, 0);
+    const cancelled = randomUUID();
+    args = { id: own.id, revision: 2, links: [{ from: a.id, to: b.id }] };
+    beforeEdit = async () => { await request(`${turns}/${cancelled}/cancel`, { id: randomUUID() }); };
+    await request(turns, { id: cancelled, text: 'Cancel before the edit arrives' });
+    await until(() => request(turns), rows => rows.find((row: any) => row.id === cancelled)?.status === 'cancelled');
+    await app.close(); app = await startApp(options);
+    assert.equal((await request(settings)).revision, 2);
+    assert.deepEqual((await request(settings)).graph.links, []);
+    assert.equal((await request(turns)).find((row: any) => row.id === cancelled).generatedFiles.length, 1);
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
