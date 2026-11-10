@@ -386,3 +386,51 @@ test('autosave stops after server canonicalizes condition property order', async
     assert.equal(workflowAutosaveDraft(ack.name, local, ack, new Set([agent.id])), null);
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+
+test('workflow deletion revokes triggers, rejects stale commands and retains terminal results', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-workflow-delete-'));
+  const options = { database: join(dir, 'state.sqlite') }; let app = await startApp(options);
+  async function request(path: string, body?: unknown, status = 200) {
+    const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    const value = await response.json(); assert.equal(response.status, status, JSON.stringify(value)); return value;
+  }
+  try {
+    const agent = await request('/api/agents', { id: randomUUID(), name: 'Delete', model: 'fixture', instructions: 'Test' }, 201);
+    const list = `/api/agents/${agent.id}/workflows`;
+    const create = { id: randomUUID(), revision: 0, name: 'Delete me', graph: { entry: 'review', maxSteps: 2, nodes: [
+      { id: 'review', kind: 'approval', prompt: 'Accept?', yes: 'out' }, { id: 'out', kind: 'output' },
+    ] } };
+    const workflow = await request(list, create), path = `/api/workflows/${workflow.id}`;
+    const schedule = { id: randomUUID(), revision: 0, enabled: true, nextAt: Date.now() + 3600000, intervalSeconds: 60, input: 'scheduled' };
+    await request(`${path}/schedule`, schedule);
+    const hookCommand = { id: randomUUID(), revision: 0, rotate: true, enabled: true };
+    const hook = await request(`${path}/webhook`, hookCommand);
+    const runCommand = { id: randomUUID(), revision: 1, input: 'retained marker' };
+    const run = await request(`${path}/run`, runCommand);
+    await request(`${path}/delete`, { id: randomUUID(), revision: 1 }, 409);
+    const current = await request(`/api/workflow-runs/${run.id}`);
+    await request(`/api/workflow-runs/${run.id}/cancel`, { id: randomUUID(), revision: current.revision });
+    const deletion = { id: randomUUID(), revision: 1 };
+    await request(`${path}/delete`, { ...deletion, revision: 99 }, 409);
+    assert.deepEqual(await request(`${path}/delete`, deletion), { id: workflow.id, deleted: 1 });
+    assert.equal((await request(path)).deleted, 1);
+    assert.equal((await request('/api/workflows')).workflows.length, 0);
+    assert.equal((await request(list)).workflows.length, 0);
+    assert.equal((await request('/api/workflows?deleted=1')).workflows[0].id, workflow.id);
+    assert.equal((await request(`${path}/schedule`)).schedule.enabled, 0);
+    for (const [endpoint, command] of [[list, create], [`${path}/run`, runCommand], [`${path}/schedule`, schedule], [`${path}/webhook`, hookCommand],
+      [`${path}/edit`, { id: randomUUID(), revision: 1, name: 'Resurrect', graph: create.graph }],
+      [`${path}/restore`, { id: randomUUID(), revision: 1, version: 1 }], [`/api/workflow-runs/${run.id}/retry`, { id: randomUUID(), revision: current.revision + 1 }]]) {
+      await request(endpoint as string, command, 404);
+    }
+    const response = await fetch(`${app.origin}/api/workflow-webhooks/${hook.route}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); assert.equal(response.status, 404);
+    await app.close(); app = await startApp(options);
+    assert.deepEqual(await request(`${path}/delete`, deletion), { id: workflow.id, deleted: 1 });
+    const preserved = await request(`/api/workflow-runs/${run.id}`);
+    assert.equal(preserved.input, 'retained marker'); assert.equal(preserved.status, 'cancelled'); assert.deepEqual(preserved.graph, create.graph);
+    assert.equal((await request(`${path}/runs`)).length, 1);
+    await request(`${path}/delete`, { id: randomUUID(), revision: 1 }, 404);
+    await request('/api/workflows?deleted=invalid', undefined, 400);
+  } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
+});

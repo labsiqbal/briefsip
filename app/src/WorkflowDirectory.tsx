@@ -9,6 +9,7 @@ export function WorkflowDirectory({ agents, request, onClose, onOpen }: {
   onClose: () => void; onOpen: (owner: string, thread: string) => void;
 }) {
   const [page, setPage] = useState<Page | null>(null), [cursors, setCursors] = useState(['']);
+  const [deleted, setDeleted] = useState(false);
   const [refresh, setRefresh] = useState(0), [error, setError] = useState('');
   const [owner, setOwner] = useState(agents[0]?.id ?? '');
   const [opened, setOpened] = useState<Workflow | 'new' | null>(null);
@@ -16,9 +17,9 @@ export function WorkflowDirectory({ agents, request, onClose, onOpen }: {
   useEffect(() => {
     if (opened) return;
     let stopped = false; setPage(null); setError('');
-    void request<Page>(`/api/workflows${after ? `?after=${after}` : ''}`).then(data => { if (!stopped) setPage(data); }).catch(error => { if (!stopped) setError(error.message); });
+    void request<Page>(`/api/workflows?deleted=${deleted ? 1 : 0}${after ? `&after=${after}` : ''}`).then(data => { if (!stopped) setPage(data); }).catch(error => { if (!stopped) setError(error.message); });
     return () => { stopped = true; };
-  }, [after, refresh, opened]);
+  }, [after, refresh, opened, deleted]);
   useEffect(() => { if (!opened) heading.current?.focus(); }, [opened, after]);
   const selectedOwner = agents.find(agent => agent.id === (opened && opened !== 'new' ? opened.agent : owner));
   if (opened && selectedOwner) return <WorkflowPanel key={selectedOwner.id} owner={selectedOwner} agents={agents} initial={opened} request={request}
@@ -26,6 +27,7 @@ export function WorkflowDirectory({ agents, request, onClose, onOpen }: {
   return <section className="setup workflow-panel"><h1 ref={heading} tabIndex={-1}>Workflow workspace</h1>
     <p>Kelola workflow semua agent. Setiap langkah dapat memakai agent atau model berbeda.</p>
     <div className="form-actions routine-actions"><button className="secondary" onClick={onClose}>Kembali ke percakapan</button><button className="secondary" onClick={() => setRefresh(value => value + 1)}>Muat ulang daftar workflow</button></div>
+    <label className="member-option"><input type="checkbox" checked={deleted} onChange={event => { setDeleted(event.target.checked); setCursors(['']); }} /> Tampilkan workflow yang dihapus</label>
     {error && <p className="error" role="alert">{error}</p>}
     {agents.length ? <form onSubmit={event => { event.preventDefault(); if (selectedOwner) setOpened('new'); }}>
       <label>Agent awal workflow<select value={owner} onChange={event => setOwner(event.target.value)}>{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name.length > 24 ? agent.name.slice(0, 21) + '...' : agent.name}</option>)}</select><span className="flow-selected-name muted">{agents.find(agent => agent.id === owner)?.name}</span></label>

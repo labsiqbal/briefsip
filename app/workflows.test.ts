@@ -71,7 +71,8 @@ test('workflow recovery rejects malformed commands and preserves valid retry ide
   const webhook = { kind: 'webhook', workflow, path: `/api/workflows/${workflow.id}/webhook`, body: { id: randomUUID(), revision: 0, enabled: false, rotate: true } };
   const removeWebhook = { ...webhook, body: { id: randomUUID(), revision: 1, remove: true, route: randomUUID() } };
   const autosave = { ...save, autosave: true, workflow, path: `/api/workflows/${workflow.id}/edit`, body: { ...save.body, revision: 1 } };
-  for (const command of [run, save, approve, restore, schedule, retry, webhook, removeWebhook, autosave]) assert.deepEqual(restoreWorkflowCommand(JSON.stringify(command), owner, agents), command);
+  const deletion = { kind: 'delete', workflow, path: `/api/workflows/${workflow.id}/delete`, body: { id: randomUUID(), revision: 1 } };
+  for (const command of [run, save, approve, restore, schedule, retry, webhook, removeWebhook, autosave, deletion]) assert.deepEqual(restoreWorkflowCommand(JSON.stringify(command), owner, agents), command);
   assert.equal(restoreWorkflowCommand(null, owner, agents), null);
   for (const command of [{ ...run, autosave: true }, { ...save, autosave: true }, { ...autosave, autosave: 'yes' }, { ...removeWebhook, body: { ...removeWebhook.body, route: 'invalid' } }, { ...webhook, body: { ...webhook.body, secret: 'must-not-persist' } }, { ...webhook, body: { ...webhook.body, rotate: 'yes' } }, { kind: 'run' }, { kind: 'save', path: '/api/agents/x/workflows', body: { id: 'x', name: 'bad', graph: {} } },
     { ...save, body: { ...save.body, graph: {} } }, { ...run, workflow: { ...workflow, agent: randomUUID() } },
