@@ -6,9 +6,9 @@ import './style.css';
 
 type Agent = { id: string; name: string; model: string; instructions: string };
 type Channel = { id: string; name: string; instructions: string; members: string[]; lead: string | null };
-type Turn = { agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
+type Turn = { routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
 type Directory = { agents: Agent[]; configured: boolean; defaultModel: string };
-type Pending = { id: string; text: string; recipient?: string };
+type Pending = { id: string; text: string; recipient?: string; automatic?: boolean };
 const statusNames: Record<string, string> = { queued: 'Dalam antrean', running: 'Sedang menjawab', done: 'Selesai', failed: 'Gagal', interrupted: 'Terputus', cancelled: 'Dibatalkan' };
 class HttpError extends Error { status: number; constructor(status: number, text: string) { super(text); this.status = status; } }
 async function api<T>(path: string, data?: unknown): Promise<T> {
@@ -24,7 +24,7 @@ function Chat({ agent, configured, channel, members = [] }: { agent: Agent | Cha
   const path = `/api/${channel ? 'channels' : 'agents'}/${agent.id}/turns`;
   const recipientKey = `briefsip:recipient:${scope}`;
   const [recipient, setRecipient] = useState(() => {
-    try { const saved = sessionStorage.getItem(recipientKey); if (saved !== null) return members.some(member => member.id === saved) ? saved : ''; } catch { /* Keep the visible default when storage is unavailable. */ }
+    try { const saved = sessionStorage.getItem(recipientKey); if (saved !== null) return ((saved === '@automatic' && channel?.lead) || members.some(member => member.id === saved)) ? saved : ''; } catch { /* Keep the visible default when storage is unavailable. */ }
     return channel?.lead ?? (members.length === 1 ? members[0].id : '');
   });
   const storageKey = `briefsip:pending:${scope}`;
@@ -63,14 +63,15 @@ function Chat({ agent, configured, channel, members = [] }: { agent: Agent | Cha
   async function send(event: FormEvent) {
     event.preventDefault();
     if (requestActive.current || (!pending && !draft.trim())) return;
-    if (channel && !members.some(member => member.id === (pending?.recipient ?? recipient))) {
+    const automatic = pending ? pending.automatic === true : recipient === '@automatic';
+    if (channel && (automatic ? !channel.lead : !members.some(member => member.id === (pending?.recipient ?? recipient)))) {
       if (pending) {
         try { sessionStorage.removeItem(storageKey); sessionStorage.setItem(draftKey, pending.text); } catch { /* Preserve recoverable text in memory. */ }
         setDraft(pending.text); setPending(null);
       }
       setError('Pilih agent penerima sebelum mengirim.'); return;
     }
-    const request = pending ?? { id: crypto.randomUUID(), text: draft.trim(), ...(channel ? { recipient } : {}) };
+    const request = pending ?? { id: crypto.randomUUID(), text: draft.trim(), ...(channel ? automatic ? { automatic: true } : { recipient } : {}) };
     try { sessionStorage.setItem(storageKey, JSON.stringify(request)); }
     catch { setError('Browser tidak bisa menyimpan status kirim. Aktifkan penyimpanan situs sebelum mengirim.'); return; }
     requestActive.current = true; setBusy(true); setPending(request); setError(''); nearBottom.current = true;
@@ -93,13 +94,13 @@ function Chat({ agent, configured, channel, members = [] }: { agent: Agent | Cha
   const active = turns?.filter(turn => turn.status === 'queued' || turn.status === 'running').length ?? 0;
   return <>
     <header className="chat-header"><span className="avatar">{agent.name.slice(0, 1)}</span><div><h1>{agent.name}</h1><p>{channel ? `${members.length} anggota` : (agent as Agent).model}</p></div><span className="activity" role="status">{active ? `${active} pesan diproses` : channel ? 'Channel bersama' : 'Percakapan langsung'}</span></header>
-    {channel && <div className="recipient"><label htmlFor="recipient">Respons oleh</label><select id="recipient" value={pending?.recipient ?? recipient} disabled={!!pending || busy} onChange={event => { setRecipient(event.target.value); try { sessionStorage.setItem(recipientKey, event.target.value); } catch { setError('Pilihan penerima tidak tersimpan. Periksa kembali sebelum mengirim.'); } }}><option value="">Pilih agent</option>{members.map(member => <option key={member.id} value={member.id}>{member.name}{member.id === channel.lead ? ' (lead)' : ''}</option>)}</select></div>}
+    {channel && <div className="recipient"><label htmlFor="recipient">Respons oleh</label><select id="recipient" value={pending?.automatic ? '@automatic' : pending?.recipient ?? recipient} disabled={!!pending || busy} onChange={event => { setRecipient(event.target.value); try { sessionStorage.setItem(recipientKey, event.target.value); } catch { setError('Pilihan penerima tidak tersimpan. Periksa kembali sebelum mengirim.'); } }}><option value="">Pilih agent</option>{channel.lead && <option value="@automatic">Otomatis melalui lead</option>}{members.map(member => <option key={member.id} value={member.id}>{member.name}{member.id === channel.lead ? ' (lead)' : ''}</option>)}</select></div>}
     <section className="transcript" aria-label="Riwayat percakapan" onScroll={event => { const el = event.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }}>
       {readError && <p role="alert" className="error">{readError} Riwayat akan dicoba lagi.</p>}
       {turns === null ? <p className="empty">Memuat percakapan...</p> : turns.length === 0 ? <div className="empty"><h2>Mulai bersama {agent.name}</h2><p>Kirim pekerjaan atau pertanyaan pertama. Percakapan tersimpan di komputer ini.</p></div> : turns.map(turn => <article key={turn.id} className="turn">
         <div className="message-head"><strong>Kamu</strong><time dateTime={turn.created}>{new Date(turn.created).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time></div>
         <p className="message-text">{turn.text}</p>
-        <div className="answer"><div className="message-head"><strong>{turn.agent_name ?? agent.name}</strong><span>{statusNames[turn.status] ?? turn.status}</span></div>
+        <div className="answer"><div className="message-head"><strong>{turn.agent_name ?? agent.name}</strong><span>{turn.routing === 'pending' && turn.status === 'running' ? 'Memilih penerima' : turn.routing === 'clarify' ? 'Perlu klarifikasi' : turn.routing === 'none' ? 'Tidak perlu tugas' : statusNames[turn.status] ?? turn.status}</span></div>
           {turn.reply ? <p className="message-text">{turn.reply}</p> : <p className={turn.error ? 'error' : 'muted'}>{turn.error ?? (turn.status === 'queued' ? 'Menunggu giliran.' : 'Menunggu jawaban provider...')}</p>}
           {(turn.status === 'queued' || turn.status === 'running') && <button className="secondary" onClick={() => void cancel(turn)}>{turn.status === 'running' ? 'Hentikan' : 'Batalkan antrean'}</button>}
         </div>
