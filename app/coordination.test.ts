@@ -93,6 +93,19 @@ test('coordination: durable delegation, transfer, cancellation, rejection and re
     assert(!cancelledParent.error.includes('sebelum dikirim'));
     await waitTurn(path, child.id, 'cancelled');
     assert.equal((await waitTurn(path, parent.id, 'done')).reply, 'parent:child-result');
+    const archiveParent = { id: randomUUID(), text: 'cancel-tree', recipient: alpha.id };
+    await post(path, archiveParent);
+    for (let i = 0; i < 100; i++) {
+      child = (await rows(path)).find((row: { parent: string }) => row.parent === archiveParent.id);
+      if (child?.status === 'running') break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(child.status, 'running');
+    const channelEdit = { ...channel, id: randomUUID(), revision: 1, archived: true };
+    await post(`/api/channels/${channel.id}/edit`, channelEdit);
+    await waitTurn(path, archiveParent.id, 'cancelled'); await waitTurn(path, child.id, 'cancelled');
+    await post(`/api/channels/${channel.id}/edit`, { ...channelEdit, id: randomUUID(), revision: 2, archived: false });
+    assert.equal((await waitTurn(path, parent.id, 'done')).reply, 'parent:child-result');
     const restart = { id: randomUUID(), text: 'restart-tree', recipient: alpha.id };
     await post(path, restart);
     for (let i = 0; i < 100; i++) {
@@ -104,7 +117,7 @@ test('coordination: durable delegation, transfer, cancellation, rejection and re
     await app.close(); app = await startApp(options);
     await waitTurn(path, restart.id, 'interrupted'); await waitTurn(path, child.id, 'interrupted');
     assert.equal(calls.filter(call => call.task === 'restart-tree').length, 1);
-    assert.equal(calls.filter(call => call.task === 'child-hang').length, 2);
+    assert.equal(calls.filter(call => call.task === 'child-hang').length, 3);
     assert.equal((await waitTurn(path, parent.id, 'done')).reply, 'parent:child-result');
     const nested = { id: randomUUID(), text: 'nested', recipient: alpha.id };
     await post(path, nested);

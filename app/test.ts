@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import assert from 'node:assert/strict';
-import { createServer, get } from 'node:http';
+import { createServer, get, request as httpRequest } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -139,6 +139,44 @@ test('HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupt
     await request(channelPath, { id: randomUUID(), text: 'after-cancel' });
     assert.equal((await until(channelPath, 'done')).at(-1).reply, 'reply:after-cancel;history:6');
     assert(!calls.includes('never-sent'));
+    const channelEditPath = `/api/channels/${channel.id}/edit`;
+    const editedChannel = { ...channel, id: randomUUID(), revision: 1, archived: false, name: 'Renamed room' };
+    const changedChannel = await request(channelEditPath, editedChannel);
+    assert.equal(changedChannel.status, 200); assert.equal(changedChannel.body.revision, 2);
+    assert.deepEqual((await request(channelEditPath, editedChannel)).body, changedChannel.body);
+    assert.equal((await request(channelEditPath, { ...editedChannel, id: randomUUID() })).status, 409);
+    assert.equal((await request('/api/channels', channel)).body.name, 'Renamed room');
+    const archiveHang = { id: randomUUID(), text: 'hang', recipient: other.id };
+    await request(channelPath, archiveHang); await until(channelPath, 'running');
+    await request(channelPath, { id: randomUUID(), text: 'archive-never-sent', recipient: other.id });
+    assert.equal((await request(channelEditPath, { ...editedChannel, id: randomUUID(), revision: 2 })).status, 409);
+    const archive = { ...editedChannel, id: randomUUID(), revision: 2, archived: true };
+    const delayedBody = JSON.stringify({ id: randomUUID(), text: 'delayed-before-archive', recipient: other.id });
+    let finishBody!: () => void;
+    const delayedSend = new Promise<number | undefined>((resolve, reject) => {
+      const req = httpRequest(app.origin + channelPath, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(delayedBody) } }, res => { res.resume(); resolve(res.statusCode); });
+      req.on('error', reject); req.write(delayedBody.slice(0, 10)); finishBody = () => req.end(delayedBody.slice(10));
+    });
+    await new Promise(resolve => setTimeout(resolve, 30));
+
+    assert.equal((await request(channelEditPath, archive)).body.archived, 1);
+    finishBody(); assert.equal(await delayedSend, 409);
+    assert(!calls.includes('delayed-before-archive'));
+    assert.equal((await request(channelEditPath, archive)).body.revision, 3);
+    assert.equal((await request(channelPath, { id: randomUUID(), text: 'archived-rejected' })).status, 409);
+    assert.equal((await request(channelPath, archiveHang)).body.status, 'cancelled');
+    assert(!(await request(channelPath)).body.some((turn: { status: string }) => ['running','queued'].includes(turn.status)));
+    assert(!calls.includes('archive-never-sent'));
+    await app.close(); app = await startApp(options);
+    assert.equal((await request('/api/channels')).body.find((room: { id: string }) => room.id === channel.id).archived, 1);
+    const restore = { ...editedChannel, id: randomUUID(), revision: 3, archived: false, members: [profile.id], lead: profile.id };
+    assert.equal((await request(channelEditPath, restore)).body.revision, 4);
+    await request(channelPath, { id: randomUUID(), text: 'restored-message' });
+    await until(channelPath, 'done');
+    assert.equal((await request(channelPath)).body.filter((turn: { status: string }) => turn.status === 'cancelled').length, 4);
+    assert(!calls.includes('archive-never-sent'));
+    assert.equal((await request(channelPath, { id: randomUUID(), text: 'removed-member', recipient: other.id })).status, 400);
+    assert.equal((await request(channelPath, archiveHang)).body.status, 'cancelled');
     const routingChannel = { ...channel, id: randomUUID() };
     await request('/api/channels', routingChannel);
     const routePath = `/api/channels/${routingChannel.id}/turns`;
@@ -214,7 +252,7 @@ test('HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupt
     await app.close();
     app = await startApp({ database: options.database });
     assert.equal((await request('/api/channels')).body.length, 4);
-    assert.equal((await request(channelPath)).body.length, 5);
+    assert.equal((await request(channelPath)).body.length, 8);
     assert.equal((await request(channelPath)).body[2].status, 'cancelled');
     assert.equal((await request('/api/agents')).body.configured, false);
     assert.equal((await request(path, { id: randomUUID(), text: 'no provider' })).status, 503);
@@ -315,7 +353,11 @@ test('legacy agent migration preserves create retries across later edits', async
   const original = { id: randomUUID(), name: 'Legacy', model: 'fixture', instructions: 'Original instructions.' };
   const db = new DatabaseSync(database);
   db.exec('CREATE TABLE agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, model TEXT NOT NULL, instructions TEXT NOT NULL) STRICT');
-  db.prepare('INSERT INTO agents VALUES (?,?,?,?)').run(original.id, original.name, original.model, original.instructions); db.close();
+  db.prepare('INSERT INTO agents VALUES (?,?,?,?)').run(original.id, original.name, original.model, original.instructions);
+  const legacyChannel = { id: randomUUID(), name: 'Legacy room', instructions: 'Original purpose.', lead: original.id, members: [original.id] };
+  db.exec('CREATE TABLE channels (id TEXT PRIMARY KEY, name TEXT NOT NULL, instructions TEXT NOT NULL, lead TEXT) STRICT; CREATE TABLE channel_members (channel TEXT NOT NULL, agent TEXT NOT NULL, PRIMARY KEY(channel,agent)) STRICT');
+  db.prepare('INSERT INTO channels VALUES (?,?,?,?)').run(legacyChannel.id, legacyChannel.name, legacyChannel.instructions, legacyChannel.lead);
+  db.prepare('INSERT INTO channel_members VALUES (?,?)').run(legacyChannel.id, original.id); db.close();
   let app = await startApp({ database });
   async function post(path: string, data: unknown) {
     const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
@@ -323,6 +365,10 @@ test('legacy agent migration preserves create retries across later edits', async
   }
   try {
     const current = await post('/api/agents', original); assert.equal(current.revision, 1);
+    const oldRoom = await post('/api/channels', legacyChannel); assert.equal(oldRoom.revision, 1); assert.equal(oldRoom.archived, 0);
+    await post(`/api/channels/${legacyChannel.id}/edit`, { ...legacyChannel, id: randomUUID(), revision: 1, archived: true, name: 'Archived legacy' });
+    const retryRoom = await post('/api/channels', legacyChannel); assert.equal(retryRoom.archived, 1); assert.equal(retryRoom.name, 'Archived legacy');
+
     const path = `/api/agents/${original.id}/edit`;
     const first = { ...original, id: randomUUID(), revision: 1, name: 'First edit' };
     const firstResult = await post(path, first);
