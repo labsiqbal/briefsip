@@ -7,9 +7,9 @@ import './style.css';
 type Agent = { thread_limit: number; revision: number; id: string; name: string; model: string; instructions: string };
 type Channel = { activity: number; read_position: number; revision: number; archived: number; id: string; name: string; instructions: string; members: string[]; lead: string | null };
 type Thread = { id: string; agent: string; name: string; revision: number; archived: number; deleted: number };
-type Turn = { revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
+type Turn = { files?: { id: string; name: string; size: number }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
 type Directory = { agents: Agent[]; configured: boolean; defaultModel: string };
-type Pending = { id: string; text: string; recipient?: string; automatic?: boolean };
+type Pending = { files?: string[]; id: string; text: string; recipient?: string; automatic?: boolean };
 const statusNames: Record<string, string> = { queued: 'Dalam antrean', running: 'Sedang menjawab', done: 'Selesai', failed: 'Gagal', interrupted: 'Terputus', cancelled: 'Dibatalkan' };
 class HttpError extends Error { status: number; constructor(status: number, text: string) { super(text); this.status = status; } }
 async function api<T>(path: string, data?: unknown): Promise<T> {
@@ -21,7 +21,7 @@ async function api<T>(path: string, data?: unknown): Promise<T> {
 }
 const message = (error: unknown) => error instanceof Error ? error.message : 'Koneksi gagal. Coba lagi.';
 
-function ConversationFiles({ path, archived }: { path: string; archived: boolean }) {
+function ConversationFiles({ path, archived, attached, onAttach, locked }: { path: string; archived: boolean; attached: string[]; onAttach: (ids: string[]) => void; locked: boolean }) {
   type StoredFile = { seq: number; id: string; name: string; size: number };
   type Upload = { id: string; name: string; size: number; digest: string; file?: File };
   const storageKey = `briefsip:upload:${path}`;
@@ -104,12 +104,12 @@ function ConversationFiles({ path, archived }: { path: string; archived: boolean
     finally { setBusy(false); }
   }
   return <details className="conversation-files" onToggle={event => setOpen(event.currentTarget.open)}><summary>File percakapan</summary>
-    <p className="muted">Maksimum 10 MiB per file. File tersimpan di percakapan ini; belum dikirim ke model.</p>
+    <p className="muted">Maksimum 10 MiB per file. Pilih lampiran untuk dikirim bersama pesan berikutnya. Maksimum empat file teks UTF-8, total 32 KiB.</p>
     <form onSubmit={upload}><label>File<input ref={input} type="file" disabled={busy || loading || !!pending.current?.file || (archived && !pending.current)} onChange={event => setSelected(event.target.files?.[0] ?? null)} /></label><button disabled={busy || loading || (archived && !pending.current) || (!selected && !pending.current?.file)}>{busy ? 'Memproses...' : pending.current ? 'Coba unggahan lagi' : 'Unggah file'}</button></form>
     {pending.current && <p className="notice">Unggahan {pending.current.name} belum terkonfirmasi. Pilih kembali file yang sama atau <button className="secondary" disabled={busy || loading} onClick={() => void checkPending()}>Periksa status unggahan</button></p>}
     {error && <p className="error" role="alert">{error} {!pending.current && <button className="secondary" disabled={busy || loading} onClick={() => setReload(value => value + 1)}>Muat ulang file</button>}</p>}
     {loading ? <p role="status">Memuat file...</p> : !error && files.length === 0 && <p className="muted">Belum ada file.</p>}
-    <ul>{files.map(file => <li key={file.id}><a href={`${path}/${file.id}`} download={file.name}>{file.name}</a><span className="muted">{file.size.toLocaleString('id-ID')} byte</span><button className="secondary" aria-label={`Lihat teks: ${file.name}`} onClick={() => setPreview(file)}>Lihat teks</button></li>)}</ul>
+    <ul>{files.map(file => <li key={file.id}><label className="member-option"><input type="checkbox" checked={attached.includes(file.id)} disabled={locked || archived || (!attached.includes(file.id) && attached.length >= 4)} onChange={event => onAttach(event.target.checked ? [...attached, file.id] : attached.filter(id => id !== file.id))} /><span className="sr-only">Lampirkan {file.name}</span></label><a href={`${path}/${file.id}`} download={file.name}>{file.name}</a><span className="muted">{file.size.toLocaleString('id-ID')} byte</span><button className="secondary" aria-label={`Lihat teks: ${file.name}`} onClick={() => setPreview(file)}>Lihat teks</button></li>)}</ul>
     {preview && <section aria-label={`Preview ${preview.name}`}><strong>{preview.name}</strong><button className="secondary" onClick={() => setPreview(null)}>Tutup preview</button>{previewError ? <p className="error" role="alert">{previewError}</p> : previewText === null ? <p role="status">Memuat preview...</p> : <pre tabIndex={0}>{previewText || '(File kosong)'}</pre>}</section>}
     {more && <button className="secondary" disabled={busy} onClick={() => void loadMore()}>File sebelumnya</button>}
   </details>;
@@ -152,6 +152,9 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     try { const saved = sessionStorage.getItem(recipientKey); if (saved !== null) return ((saved === '@automatic' && channel?.lead) || members.some(member => member.id === saved)) ? saved : ''; } catch { /* Keep the visible default when storage is unavailable. */ }
     return channel?.lead ?? (members.length === 1 ? members[0].id : '');
   });
+  const attachmentKey = `briefsip:attachments:${scope}`;
+  const [attached, setAttached] = useState<string[]>(() => { try { const ids = JSON.parse(sessionStorage.getItem(attachmentKey) ?? '[]'); return Array.isArray(ids) && ids.length <= 4 && ids.every(id => typeof id === 'string') ? ids : []; } catch { return []; } });
+  function attach(ids: string[]) { try { sessionStorage.setItem(attachmentKey, JSON.stringify(ids)); setAttached(ids); } catch { setError('Pilihan lampiran tidak tersimpan. Periksa penyimpanan browser.'); } }
   const storageKey = `briefsip:pending:${scope}`;
   const [turns, setTurns] = useState<Turn[] | null>(null);
   const draftKey = `briefsip:draft:${scope}`;
@@ -166,6 +169,8 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   const bottom = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
   const requestActive = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
     let stopped = false;
     loadedTask.current = null;
@@ -188,10 +193,10 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   }, [focusedTask, turns]);
   useEffect(() => {
     if (!requestActive.current && pending && turns?.some(turn => turn.id === pending.id)) {
-      try { sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); } catch { /* The same ID remains safe to retry. */ }
-      setPending(null); setDraft(''); setError('');
+      try { sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); } catch { /* The same ID remains safe to retry. */ }
+      setPending(null); setDraft(''); setAttached([]); setError('');
     }
-  }, [turns, pending, storageKey, draftKey]);
+  }, [turns, pending, storageKey, draftKey, attachmentKey]);
   async function send(event: FormEvent) {
     event.preventDefault();
     if (requestActive.current || (!pending && !draft.trim())) return;
@@ -204,14 +209,17 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
       }
       setError('Pilih agent penerima sebelum mengirim.'); return;
     }
-    const request = pending ?? { id: crypto.randomUUID(), text: draft.trim(), ...(channel ? automatic ? { automatic: true } : { recipient } : {}) };
+    const request = pending ?? { id: crypto.randomUUID(), text: draft.trim(), ...(attached.length ? { files: attached } : {}), ...(channel ? automatic ? { automatic: true } : { recipient } : {}) };
     try { sessionStorage.setItem(storageKey, JSON.stringify(request)); }
     catch { setError('Browser tidak bisa menyimpan status kirim. Aktifkan penyimpanan situs sebelum mengirim.'); return; }
     requestActive.current = true; setBusy(true); setPending(request); setError(''); nearBottom.current = true;
     try {
       await api(path, request);
-      sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); setPending(null); setDraft(''); setFocusedTask('');
+      // A remounted conversation owns recovery and any newer draft after navigation.
+      if (!mounted.current) return;
+      sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); setPending(null); setDraft(''); setAttached([]); setFocusedTask('');
     } catch (error) {
+      if (!mounted.current) return;
       if (error instanceof HttpError && (error.status < 500 || error.status === 503)) {
         try { sessionStorage.removeItem(storageKey); sessionStorage.setItem(draftKey, request.text); } catch { /* Keep the draft in memory if storage fails. */ }
         setPending(null); setDraft(request.text);
@@ -229,13 +237,13 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     <header className="chat-header"><span className="avatar">{agent.name.slice(0, 1)}</span><div><h1>{thread?.name ?? agent.name}</h1><p>{channel ? `${members.length} anggota` : thread ? `Percakapan samping · ${agent.name}` : (agent as Agent).model}</p></div><span className="activity" role="status">{active ? `${active} pesan diproses` : channel ? 'Channel bersama' : 'Percakapan langsung'}</span>{onEdit && <button className="secondary" onClick={onEdit}>{channel ? 'Pengaturan channel' : thread ? 'Pengaturan percakapan' : 'Edit profil'}</button>}</header>
     {channel && <div className="recipient"><label htmlFor="recipient">Respons oleh</label><select id="recipient" value={pending?.automatic ? '@automatic' : pending?.recipient ?? recipient} disabled={!!pending || busy} onChange={event => { setRecipient(event.target.value); try { sessionStorage.setItem(recipientKey, event.target.value); } catch { setError('Pilihan penerima tidak tersimpan. Periksa kembali sebelum mengirim.'); } }}><option value="">Pilih agent</option>{channel.lead && <option value="@automatic">Otomatis melalui lead</option>}{members.map(member => <option key={member.id} value={member.id}>{member.name}{member.id === channel.lead ? ' (lead)' : ''}</option>)}</select></div>}
     {channel && <div className="recipient"><span>{channel.activity > channel.read_position ? 'Ada aktivitas belum dibaca' : 'Semua aktivitas sudah dibaca'}</span><button className="secondary" disabled={markingRead || channel.activity <= channel.read_position} onClick={() => { setMarkingRead(true); void onRead?.().catch(error => setError(message(error))).finally(() => setMarkingRead(false)); }}>Tandai semua dibaca</button></div>}
-    <ConversationFiles path={path.replace(/\/turns$/, '/files')} archived={archived} />
+    <ConversationFiles path={path.replace(/\/turns$/, '/files')} archived={archived} attached={pending?.files ?? attached} onAttach={attach} locked={!!pending || busy} />
     {focusedTask && <div className="recipient"><button className="secondary" onClick={() => { setFocusedTask(''); focusedOnce.current = ''; nearBottom.current = true; }}>Kembali ke pesan terbaru</button></div>}
     <section className="transcript" aria-label="Riwayat percakapan" onScroll={event => { const el = event.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }}>
       {readError && <p role="alert" className="error">{readError} Riwayat akan dicoba lagi.</p>}
       {turns === null ? <p className="empty">Memuat percakapan...</p> : turns.length === 0 ? <div className="empty"><h2>Mulai bersama {agent.name}</h2><p>Kirim pekerjaan atau pertanyaan pertama. Percakapan tersimpan di komputer ini.</p></div> : turns.map(turn => <article key={turn.id} id={`turn-${turn.id}`} tabIndex={-1} className="turn">
         <div className="message-head"><strong>{turn.parent ? 'Subtugas' : 'Kamu'}</strong>{turn.parent && <a href={`#turn-${turn.parent}`} onClick={event => { event.preventDefault(); focusedOnce.current = ''; setFocusedTask(turn.parent!); }}>Lihat tugas induk</a>}<time dateTime={turn.created}>{new Date(turn.created).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time></div>
-        <p className="message-text">{turn.text}</p>
+        <p className="message-text">{turn.text}</p>{!!turn.files?.length && <ul aria-label="Lampiran pesan">{turn.files.map(file => <li key={file.id}><a href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}>{file.name}</a></li>)}</ul>}
         <div className="answer"><div className="message-head"><strong>{turn.agent_name ?? agent.name}</strong><span>{turn.paused && !['done','cancelled'].includes(turn.status) ? 'Dijeda' : turn.waiting_for && turn.status === 'queued' ? 'Menunggu delegasi' : turn.routing === 'pending' && turn.status === 'running' ? 'Memilih penerima' : turn.routing === 'clarify' ? 'Perlu klarifikasi' : turn.routing === 'none' ? 'Tidak perlu tugas' : statusNames[turn.status] ?? turn.status}</span></div>
           {turn.reply ? <p className="message-text">{turn.reply}</p> : <p className={turn.error ? 'error' : 'muted'}>{turn.error ?? (turn.waiting_for ? 'Menunggu hasil tugas anak.' : turn.status === 'queued' ? 'Menunggu giliran.' : 'Menunggu jawaban provider...')}</p>}
           {!!turn.coordination?.length && <details><summary>Koordinasi tugas ({turn.coordination.length})</summary>{turn.coordination.map((action, index) => <div key={index}><p>{action.owner_name} {action.kind === 'delegate_task' ? 'mendelegasikan ke' : 'mengalihkan tugas ke'} {action.target_name}.</p><p className="message-text">{action.prompt}</p>{action.child && <a href={`#turn-${action.child}`} onClick={event => { event.preventDefault(); focusedOnce.current = ''; setFocusedTask(action.child!); }}>Lihat subtugas</a>}</div>)}</details>}
@@ -248,6 +256,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
       {archived && <p className="notice">Percakapan diarsipkan. Riwayat tetap tersedia. Pulihkan melalui pengaturan untuk mengirim pesan baru.</p>}
       {!configured && <p className="notice">Provider belum terhubung. Atur OPENAI_BASE_URL dan kredensial di server, lalu mulai ulang app. Agent dan riwayat tetap tersimpan.</p>}
       {error && <p className="error" role="alert">{error} {pending && 'Gunakan Coba kirim lagi untuk memeriksa permintaan yang sama tanpa membuat pesan ganda.'}</p>}
+      {(pending?.files ?? attached).length > 0 && <p className="notice">{(pending?.files ?? attached).length} lampiran akan dikirim ke provider bersama pesan.</p>}
       <form className="composer" onSubmit={send}>
         <label className="sr-only" htmlFor="message">Pesan untuk {agent.name}</label>
         <textarea id="message" placeholder={`Pesan untuk ${agent.name}...`} maxLength={16000} value={pending?.text ?? draft} readOnly={!!pending || busy} onChange={event => { setDraft(event.target.value); try { sessionStorage.setItem(draftKey, event.target.value); } catch { setError('Draft tidak tersimpan di browser. Jangan pindah agent sebelum menyalin pesan.'); } }} rows={3} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
