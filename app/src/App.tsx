@@ -6,13 +6,15 @@ import './style.css';
 
 type Agent = { revision: number; id: string; name: string; model: string; instructions: string };
 type Channel = { activity: number; read_position: number; revision: number; archived: number; id: string; name: string; instructions: string; members: string[]; lead: string | null };
+type Thread = { id: string; agent: string; name: string; revision: number; archived: number; deleted: number };
 type Turn = { revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
 type Directory = { agents: Agent[]; configured: boolean; defaultModel: string };
 type Pending = { id: string; text: string; recipient?: string; automatic?: boolean };
 const statusNames: Record<string, string> = { queued: 'Dalam antrean', running: 'Sedang menjawab', done: 'Selesai', failed: 'Gagal', interrupted: 'Terputus', cancelled: 'Dibatalkan' };
 class HttpError extends Error { status: number; constructor(status: number, text: string) { super(text); this.status = status; } }
 async function api<T>(path: string, data?: unknown): Promise<T> {
-  const response = await fetch(path, data ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) } : undefined);
+  const response = await fetch(path, data ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) } : undefined)
+    .catch(() => { throw new Error('Koneksi ke Briefsip terputus. Periksa koneksi, lalu coba lagi.'); });
   const body = await response.json();
   if (!response.ok) throw new HttpError(response.status, body.error ?? `HTTP ${response.status}`);
   return body;
@@ -44,9 +46,10 @@ function TaskControls({ turn, path, members, archived }: { turn: Turn; path: str
   </div>;
 }
 
-function Chat({ agent, configured, channel, members = [], onRead, onEdit }: { onRead?: () => Promise<void>; onEdit?: () => void; agent: Agent | Channel; configured: boolean; channel?: Channel; members?: Agent[] }) {
-  const scope = channel ? `channel:${agent.id}` : agent.id;
-  const path = `/api/${channel ? 'channels' : 'agents'}/${agent.id}/turns`;
+function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit }: { onRead?: () => Promise<void>; onEdit?: () => void; agent: Agent | Channel; configured: boolean; channel?: Channel; thread?: Thread; members?: Agent[] }) {
+  const archived = !!(channel?.archived || thread?.archived);
+  const scope = thread ? `thread:${thread.id}` : channel ? `channel:${agent.id}` : agent.id;
+  const path = thread ? `/api/threads/${thread.id}/turns` : `/api/${channel ? 'channels' : 'agents'}/${agent.id}/turns`;
   const [focusedTask, setFocusedTask] = useState('');
   const focusedOnce = useRef('');
   const loadedTask = useRef<string | null>(null);
@@ -98,7 +101,7 @@ function Chat({ agent, configured, channel, members = [], onRead, onEdit }: { on
   async function send(event: FormEvent) {
     event.preventDefault();
     if (requestActive.current || (!pending && !draft.trim())) return;
-    if (channel?.archived) { setError('Pulihkan channel sebelum mengirim pesan baru.'); return; }
+    if (archived) { setError('Pulihkan percakapan sebelum mengirim pesan baru.'); return; }
     const automatic = pending ? pending.automatic === true : recipient === '@automatic';
     if (channel && (automatic ? !channel.lead : !members.some(member => member.id === (pending?.recipient ?? recipient)))) {
       if (pending) {
@@ -129,7 +132,7 @@ function Chat({ agent, configured, channel, members = [], onRead, onEdit }: { on
   }
   const active = turns?.filter(turn => turn.status === 'queued' || turn.status === 'running').length ?? 0;
   return <>
-    <header className="chat-header"><span className="avatar">{agent.name.slice(0, 1)}</span><div><h1>{agent.name}</h1><p>{channel ? `${members.length} anggota` : (agent as Agent).model}</p></div><span className="activity" role="status">{active ? `${active} pesan diproses` : channel ? 'Channel bersama' : 'Percakapan langsung'}</span>{onEdit && <button className="secondary" onClick={onEdit}>{channel ? 'Pengaturan channel' : 'Edit profil'}</button>}</header>
+    <header className="chat-header"><span className="avatar">{agent.name.slice(0, 1)}</span><div><h1>{thread?.name ?? agent.name}</h1><p>{channel ? `${members.length} anggota` : thread ? `Percakapan samping · ${agent.name}` : (agent as Agent).model}</p></div><span className="activity" role="status">{active ? `${active} pesan diproses` : channel ? 'Channel bersama' : 'Percakapan langsung'}</span>{onEdit && <button className="secondary" onClick={onEdit}>{channel ? 'Pengaturan channel' : thread ? 'Pengaturan percakapan' : 'Edit profil'}</button>}</header>
     {channel && <div className="recipient"><label htmlFor="recipient">Respons oleh</label><select id="recipient" value={pending?.automatic ? '@automatic' : pending?.recipient ?? recipient} disabled={!!pending || busy} onChange={event => { setRecipient(event.target.value); try { sessionStorage.setItem(recipientKey, event.target.value); } catch { setError('Pilihan penerima tidak tersimpan. Periksa kembali sebelum mengirim.'); } }}><option value="">Pilih agent</option>{channel.lead && <option value="@automatic">Otomatis melalui lead</option>}{members.map(member => <option key={member.id} value={member.id}>{member.name}{member.id === channel.lead ? ' (lead)' : ''}</option>)}</select></div>}
     {channel && <div className="recipient"><span>{channel.activity > channel.read_position ? 'Ada aktivitas belum dibaca' : 'Semua aktivitas sudah dibaca'}</span><button className="secondary" disabled={markingRead || channel.activity <= channel.read_position} onClick={() => { setMarkingRead(true); void onRead?.().catch(error => setError(message(error))).finally(() => setMarkingRead(false)); }}>Tandai semua dibaca</button></div>}
     {focusedTask && <div className="recipient"><button className="secondary" onClick={() => { setFocusedTask(''); focusedOnce.current = ''; nearBottom.current = true; }}>Kembali ke pesan terbaru</button></div>}
@@ -141,22 +144,76 @@ function Chat({ agent, configured, channel, members = [], onRead, onEdit }: { on
         <div className="answer"><div className="message-head"><strong>{turn.agent_name ?? agent.name}</strong><span>{turn.paused && !['done','cancelled'].includes(turn.status) ? 'Dijeda' : turn.waiting_for && turn.status === 'queued' ? 'Menunggu delegasi' : turn.routing === 'pending' && turn.status === 'running' ? 'Memilih penerima' : turn.routing === 'clarify' ? 'Perlu klarifikasi' : turn.routing === 'none' ? 'Tidak perlu tugas' : statusNames[turn.status] ?? turn.status}</span></div>
           {turn.reply ? <p className="message-text">{turn.reply}</p> : <p className={turn.error ? 'error' : 'muted'}>{turn.error ?? (turn.waiting_for ? 'Menunggu hasil tugas anak.' : turn.status === 'queued' ? 'Menunggu giliran.' : 'Menunggu jawaban provider...')}</p>}
           {!!turn.coordination?.length && <details><summary>Koordinasi tugas ({turn.coordination.length})</summary>{turn.coordination.map((action, index) => <div key={index}><p>{action.owner_name} {action.kind === 'delegate_task' ? 'mendelegasikan ke' : 'mengalihkan tugas ke'} {action.target_name}.</p><p className="message-text">{action.prompt}</p>{action.child && <a href={`#turn-${action.child}`} onClick={event => { event.preventDefault(); focusedOnce.current = ''; setFocusedTask(action.child!); }}>Lihat subtugas</a>}</div>)}</details>}
-          <TaskControls key={`${turn.id}:${turn.revision}`} turn={turn} path={path} members={channel ? members : []} archived={!!channel?.archived} />
+          <TaskControls key={`${turn.id}:${turn.revision}`} turn={turn} path={path} members={channel ? members : []} archived={archived} />
           {(!['done','cancelled'].includes(turn.status)) && <button className="secondary" onClick={() => void cancel(turn)}>{turn.waiting_for ? 'Batalkan tugas dan delegasi' : turn.status === 'running' ? 'Hentikan' : turn.status === 'queued' && !turn.paused ? 'Batalkan antrean' : 'Batalkan tugas'}</button>}
         </div>
       </article>)}<div ref={bottom} />
     </section>
     <footer className="composer-area">
-      {!!channel?.archived && <p className="notice">Channel diarsipkan. Riwayat tetap tersedia. Pulihkan melalui Pengaturan channel untuk mengirim pesan baru.</p>}
+      {archived && <p className="notice">Percakapan diarsipkan. Riwayat tetap tersedia. Pulihkan melalui pengaturan untuk mengirim pesan baru.</p>}
       {!configured && <p className="notice">Provider belum terhubung. Atur OPENAI_BASE_URL dan kredensial di server, lalu mulai ulang app. Agent dan riwayat tetap tersimpan.</p>}
       {error && <p className="error" role="alert">{error} {pending && 'Gunakan Coba kirim lagi untuk memeriksa permintaan yang sama tanpa membuat pesan ganda.'}</p>}
       <form className="composer" onSubmit={send}>
         <label className="sr-only" htmlFor="message">Pesan untuk {agent.name}</label>
         <textarea id="message" placeholder={`Pesan untuk ${agent.name}...`} maxLength={16000} value={pending?.text ?? draft} readOnly={!!pending || busy} onChange={event => { setDraft(event.target.value); try { sessionStorage.setItem(draftKey, event.target.value); } catch { setError('Draft tidak tersimpan di browser. Jangan pindah agent sebelum menyalin pesan.'); } }} rows={3} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
-        <div className="composer-actions"><span>Ctrl / Cmd + Enter untuk kirim</span><button type="submit" disabled={!!channel?.archived || !configured || busy || (!pending && !draft.trim()) || (!!channel && !recipient && !pending)}>{busy ? 'Mengirim...' : pending ? 'Coba kirim lagi' : 'Kirim pesan'}</button></div>
+        <div className="composer-actions"><span>Ctrl / Cmd + Enter untuk kirim</span><button type="submit" disabled={archived || !configured || busy || (!pending && !draft.trim()) || (!!channel && !recipient && !pending)}>{busy ? 'Mengirim...' : pending ? 'Coba kirim lagi' : 'Kirim pesan'}</button></div>
       </form><p className="footnote">{focusedTask ? 'Rangkaian tugas ditampilkan.' : '100 pesan terakhir ditampilkan.'} Provider menerima hingga 40 percakapan sebelumnya.</p>
     </footer>
   </>;
+}
+
+function AgentConversations({ agent, configured, onEdit }: { agent: Agent; configured: boolean; onEdit: () => void }) {
+  const [threads, setThreads] = useState<Thread[]>([]), [error, setError] = useState('');
+  const storageKey = `briefsip:thread:${agent.id}`;
+  const [selected, setSelected] = useState(() => { try { return sessionStorage.getItem(storageKey) ?? ''; } catch { return ''; } });
+  const [form, setForm] = useState(false), [editing, setEditing] = useState(false), [loaded, setLoaded] = useState(false);
+  const [reload, setReload] = useState(0);
+  const loadVersion = useRef(0);
+  const thread = threads.find(item => item.id === selected);
+  function select(id: string) { loadVersion.current++; setSelected(id); setForm(false); setEditing(false); try { sessionStorage.setItem(storageKey, id); } catch { /* Selection remains usable in memory. */ } }
+  async function load(preferred = selected, afterSave = false) {
+    const version = ++loadVersion.current;
+    try {
+      const rows = await api<Thread[]>(`/api/agents/${agent.id}/threads`);
+      if (version !== loadVersion.current) return;
+      const missing = !!preferred && !rows.some(row => row.id === preferred);
+      setThreads(rows); setLoaded(true); setReload(value => value + 1);
+      setError(missing ? 'Percakapan tidak lagi tersedia. Chat utama dibuka.' : '');
+      if (missing || afterSave) select(missing ? '' : preferred);
+    }
+    catch (error) { if (!afterSave && version === loadVersion.current) setError(message(error)); throw new Error(message(error)); }
+  }
+  useEffect(() => { void load().catch(() => {}); return () => { loadVersion.current++; }; }, []);
+  const navigationVersion = loadVersion.current;
+  return <>
+    <div className="recipient"><label htmlFor="conversation">Percakapan</label><select id="conversation" value={thread?.id ?? ''} disabled={!loaded} onChange={event => select(event.target.value)}><option value="">Chat utama</option>{threads.map(item => <option key={item.id} value={item.id}>{item.name}{item.archived ? ' (diarsipkan)' : ''}</option>)}</select><button className="secondary" disabled={!loaded} onClick={() => { loadVersion.current++; setForm(true); setEditing(false); }}>Percakapan baru</button></div>
+    {error && <p className="error" role="alert">{error} <button className="secondary" onClick={() => void load().catch(() => {})}>Muat ulang percakapan</button></p>}
+    {!loaded ? <p className="empty">Memuat percakapan...</p> : form ? <ThreadForm key={editing ? `${thread?.id}:${thread?.revision}:${reload}` : 'new'} agent={agent} thread={editing ? thread : undefined} onCancel={() => { loadVersion.current++; setForm(false); }} onReload={() => { void load().catch(() => {}); }} onSaved={item => navigationVersion === loadVersion.current ? load(item.deleted ? '' : item.id, true) : Promise.resolve()} /> : <Chat key={thread?.id ?? agent.id} agent={agent} thread={thread} configured={configured} onEdit={thread ? () => { loadVersion.current++; setEditing(true); setForm(true); } : onEdit} />}
+  </>;
+}
+
+function ThreadForm({ agent, thread, onCancel, onSaved, onReload }: { agent: Agent; thread?: Thread; onCancel: () => void; onSaved: (thread: Thread) => Promise<void>; onReload: () => void }) {
+  const [archived, setArchived] = useState(!!thread?.archived), [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const pending = useRef<{ path: string; data: { id: string; name?: string; revision?: number; archived?: boolean } } | null>(null);
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (busy) return;
+    const form = new FormData(event.currentTarget);
+    const deleting = (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value') === 'delete';
+    if (deleting && (!thread?.archived || !confirmed)) return;
+    const request = pending.current ?? { path: thread ? `/api/threads/${thread.id}/${deleting ? 'delete' : 'edit'}` : `/api/agents/${agent.id}/threads`, data: { id: crypto.randomUUID(), ...(thread ? { revision: thread.revision } : {}), ...(!deleting ? { name: String(form.get('name')).trim(), ...(thread ? { archived } : {}) } : {}) } };
+    pending.current = request; setBusy(true); setError('');
+    try { await onSaved(await api<Thread>(request.path, request.data)); }
+    catch (error) { if (error instanceof HttpError && error.status < 500) pending.current = null; setError(message(error)); }
+    finally { setBusy(false); }
+  }
+  return <section className="setup"><h1>{thread ? 'Pengaturan percakapan' : 'Percakapan samping baru'}</h1><p className="muted">Agent {agent.name}, dengan riwayat dan antrean terpisah dari chat utama.</p><form onSubmit={save}>
+    <label>Nama percakapan<input name="name" required maxLength={80} defaultValue={thread?.name} readOnly={!!pending.current} autoFocus /></label>
+    {thread && <label className="member-option"><input type="checkbox" checked={archived} disabled={!!pending.current} onChange={event => setArchived(event.target.checked)} />Arsipkan dan batalkan pekerjaan yang belum selesai</label>}
+    {!!thread?.archived && <label className="member-option"><input type="checkbox" checked={confirmed} disabled={!!pending.current} onChange={event => setConfirmed(event.target.checked)} />Saya mengerti percakapan yang dihapus tidak bisa dibuka lagi</label>}
+    {error && <p className="error" role="alert">{error}</p>}
+    <div className="form-actions"><button type="button" className="secondary" onClick={onCancel}>Batal</button><button disabled={busy}>{busy ? 'Menyimpan...' : pending.current ? 'Coba perubahan lagi' : thread ? 'Simpan percakapan' : 'Buat percakapan'}</button>{!!thread?.archived && <button className="secondary" value="delete" disabled={busy || !confirmed || !!pending.current}>Hapus percakapan</button>}{thread && error && !pending.current && <button type="button" className="secondary" onClick={onReload}>Muat ulang pengaturan</button>}</div>
+  </form></section>;
 }
 
 function AgentForm({ model, profile, onCreated, onCancel, onReload }: { model: string; profile?: Agent; onCreated: (agent: Agent) => void; onCancel?: () => void; onReload?: () => void }) {
@@ -256,7 +313,7 @@ function App() {
       {activityError && <p className="notice" role="status">Status baca belum diperbarui. Mencoba lagi.</p>}
       <div className="sidebar-footer"><span className={`dot ${directory?.configured ? 'connected' : ''}`} /><span>{directory?.configured ? 'Provider dikonfigurasi' : 'Provider belum terhubung'}</span></div>
     </aside>
-    <main>{error ? <div className="empty"><h1>Ruang kerja belum terbuka</h1><p role="alert">{error}</p><button onClick={() => void load()}>Coba lagi</button></div> : !directory ? <p className="empty" role="status">Memuat ruang kerja...</p> : editing && channel ? <ChannelForm key={`${channel.id}:${channel.revision}:${editReload}`} agents={directory.agents} channel={channel} onCancel={() => setEditing(false)} onReload={() => { void load().then(() => setEditReload(value => value + 1)); }} onCreated={() => { void load(); setEditing(false); }} /> : editing && agent ? <AgentForm key={`${agent.id}:${agent.revision}:${editReload}`} model={directory.defaultModel} profile={agent} onCancel={() => setEditing(false)} onReload={() => { void load().then(() => setEditReload(value => value + 1)); }} onCreated={() => { void load(); setEditing(false); }} /> : creatingChannel ? <ChannelForm agents={directory.agents} onCancel={() => setCreatingChannel(false)} onCreated={created => { setChannels([...channels.filter(room => room.id !== created.id), created]); setSelectedChannel(created.id); setCreatingChannel(false); }} /> : creating || (!agent && !channel) ? <AgentForm model={directory.defaultModel} onCancel={agent || channel ? () => setCreating(false) : undefined} onCreated={created => { setDirectory({ ...directory, agents: [...directory.agents.filter(agent => agent.id !== created.id), created] }); setSelected(created.id); setSelectedChannel(''); setCreating(false); }} /> : channel ? <Chat key={`channel:${channel.id}`} agent={channel} channel={channel} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id))} onEdit={() => setEditing(true)} configured={directory.configured} /> : agent && <Chat key={agent.id} agent={agent} configured={directory.configured} onEdit={() => setEditing(true)} />}</main>
+    <main>{error ? <div className="empty"><h1>Ruang kerja belum terbuka</h1><p role="alert">{error}</p><button onClick={() => void load()}>Coba lagi</button></div> : !directory ? <p className="empty" role="status">Memuat ruang kerja...</p> : editing && channel ? <ChannelForm key={`${channel.id}:${channel.revision}:${editReload}`} agents={directory.agents} channel={channel} onCancel={() => setEditing(false)} onReload={() => { void load().then(() => setEditReload(value => value + 1)); }} onCreated={() => { void load(); setEditing(false); }} /> : editing && agent ? <AgentForm key={`${agent.id}:${agent.revision}:${editReload}`} model={directory.defaultModel} profile={agent} onCancel={() => setEditing(false)} onReload={() => { void load().then(() => setEditReload(value => value + 1)); }} onCreated={() => { void load(); setEditing(false); }} /> : creatingChannel ? <ChannelForm agents={directory.agents} onCancel={() => setCreatingChannel(false)} onCreated={created => { setChannels([...channels.filter(room => room.id !== created.id), created]); setSelectedChannel(created.id); setCreatingChannel(false); }} /> : creating || (!agent && !channel) ? <AgentForm model={directory.defaultModel} onCancel={agent || channel ? () => setCreating(false) : undefined} onCreated={created => { setDirectory({ ...directory, agents: [...directory.agents.filter(agent => agent.id !== created.id), created] }); setSelected(created.id); setSelectedChannel(''); setCreating(false); }} /> : channel ? <Chat key={`channel:${channel.id}`} agent={channel} channel={channel} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id))} onEdit={() => setEditing(true)} configured={directory.configured} /> : agent && <AgentConversations key={agent.id} agent={agent} configured={directory.configured} onEdit={() => setEditing(true)} />}</main>
   </div>;
 }
 createRoot(document.getElementById('root')!).render(<App />);
