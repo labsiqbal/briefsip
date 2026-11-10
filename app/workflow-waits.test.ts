@@ -4,7 +4,7 @@ import { createHmac, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { startApp } from './server.ts';
 import { restoreWorkspace } from './backup.ts';
 import { validateWorkflow, validateWorkflowDraft, workflowEdges, workflowTransition } from './workflows.ts';
@@ -50,8 +50,36 @@ test('signed workflow events are scoped, durable, once-only, expiring and cancel
     const path = `/api/workflow-waits/${run.id}/1`, connection = await request(path);
     assert.equal(connection.event, 'invoice.paid'); assert.equal(connection.secret.length, 64);
     assert(!JSON.stringify(waiting).includes(connection.secret));
+    const disclosed = await fetch(app.origin + path);
+    assert.equal(disclosed.headers.get('cache-control'), 'no-store');
+    assert.equal(disclosed.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(disclosed.headers.get('referrer-policy'), 'no-referrer');
+    assert.equal(disclosed.headers.get('access-control-allow-origin'), null);
+    await disclosed.arrayBuffer();
     const foreign = await fetch(app.origin + path, { headers: { Origin: 'https://foreign.test' } }); assert.equal(foreign.status, 403);
+    for (const [name, value] of [['Origin', 'null'], ['Sec-Fetch-Site', 'cross-site']]) {
+      const headers = { [name]: value };
+      const denied = await fetch(app.origin + path, { headers }); assert.equal(denied.status, 403, JSON.stringify(headers));
+      assert(!(await denied.text()).includes(connection.secret));
+    }
+    const wrongHost = await new Promise<{ status: number | undefined; body: string }>((resolve, reject) => {
+      const req = httpRequest(app.origin + path, { headers: { Host: 'attacker.test' } }, res => {
+        let body = ''; res.on('data', chunk => { body += chunk; }); res.on('end', () => resolve({ status: res.statusCode, body })); res.on('error', reject);
+      }); req.on('error', reject); req.end();
+    });
+    assert.equal(wrongHost.status, 403); assert(!wrongHost.body.includes(connection.secret));
     const body = JSON.stringify({ event: 'invoice.paid', payload: { invoice: 'SYNTHETIC-123' } }), delivery = randomUUID();
+    const signatureTime = String(Math.floor(Date.now() / 1000)), signature = createHmac('sha256', connection.secret).update(`${signatureTime}\n${delivery}\n`).update(body).digest('hex');
+    const signedHeaders = { 'Content-Type': 'application/json', 'X-Briefsip-Time': signatureTime, 'X-Briefsip-Id': delivery, 'X-Briefsip-Signature': signature };
+    for (const headers of [{ ...signedHeaders, Origin: app.origin }, { ...signedHeaders, Origin: 'null' }, { ...signedHeaders, 'Content-Type': 'text/plain' }, { ...signedHeaders, 'X-Briefsip-Signature': signature.slice(1) }, { ...signedHeaders, 'X-Briefsip-Id': 'other-delivery' }]) {
+      const denied = await fetch(app.origin + path, { method: 'POST', headers, body }); assert([401, 403].includes(denied.status));
+      assert(!(await denied.text()).includes(connection.secret));
+    }
+    await send(path, connection.secret, JSON.stringify({ event: 'invoice.paid', payload: 'x'.repeat(65536) }), randomUUID(), 413);
+    const invalidUtf8 = Buffer.from([0xff, 0xfe]);
+    const invalidSignature = createHmac('sha256', connection.secret).update(`${signatureTime}\n${delivery}\n`).update(invalidUtf8).digest('hex');
+    const invalidResponse = await fetch(app.origin + path, { method: 'POST', headers: { ...signedHeaders, 'X-Briefsip-Signature': invalidSignature }, body: invalidUtf8 });
+    assert.equal(invalidResponse.status, 400); await invalidResponse.arrayBuffer();
     await send(path, 'wrong', body, randomUUID(), 401);
     await send(path, connection.secret, body, randomUUID(), 401, Math.floor(Date.now() / 1000) - 301);
     await send(path, connection.secret, JSON.stringify({ event: 'other' }), randomUUID(), 409);
