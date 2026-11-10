@@ -60,7 +60,7 @@ export function MemoryPanel({ path, channel, archived, request, onClose }: { pat
     } finally { sending.current = false; if (mounted.current) setBusy(false); }
   }
   return <section className="setup workflow-panel"><h1 ref={heading} tabIndex={-1}>Memori {channel ? 'channel' : 'agent'}</h1>
-    <p>{channel ? 'Dipakai anggota saat menjawab di channel ini. Memori pribadi agent tidak ikut disertakan.' : 'Dipakai agent di chat utama dan seluruh percakapan sampingnya. Tidak disertakan dalam channel.'} Catatan dikirim ke provider saat disertakan atau dicari.</p>
+    <p>{channel ? 'Dipakai anggota saat menjawab di channel ini. Memori pribadi agent tidak ikut disertakan.' : 'Dipakai agent di chat utama dan seluruh percakapan sampingnya. Tidak disertakan dalam channel.'} Catatan dikirim ke provider saat disertakan atau dicari. Agent dapat menambah atau mengedit isi catatan, tetapi tidak mengubah pilihan konteks atau menghapus catatan. Perubahan yang sudah tersimpan tetap ada meski tugas dibatalkan. Muat ulang untuk melihat perubahan terbaru.</p>
     <div className="form-actions routine-actions"><button className="secondary" onClick={() => { if (draftStored || window.confirm('Draft belum tersimpan di browser. Keluar dan buang perubahan?')) onClose(); }}>Kembali ke percakapan</button><button className="secondary" disabled={busy} onClick={() => setRefresh(n => n + 1)}>Muat ulang memori</button></div>
     {archived && <p>Channel diarsipkan. Pulihkan channel untuk mengubah memori.</p>}
     {(blocked || error) && <p role="alert" className="error">{blocked || error}</p>}{notice && <p role="status">{notice}</p>}
