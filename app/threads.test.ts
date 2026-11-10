@@ -35,7 +35,7 @@ test('side threads isolate queues, history, controls and archive recovery', asyn
     assert.fail(`Timed out: ${status}`);
   }
   try {
-    const agent = await post('/api/agents', { id: randomUUID(), name: 'Same agent', model: 'fixture', instructions: 'Help.' }, 201);
+    const agent = await post('/api/agents', { id: randomUUID(), name: 'Same agent', threadLimit: 4, model: 'fixture', instructions: 'Help.' }, 201);
     const list = `/api/agents/${agent.id}/threads`, main = `/api/agents/${agent.id}/turns`;
     const create = { id: randomUUID(), name: 'Side work' };
     const side = await post(list, create), path = `/api/threads/${side.id}/turns`;
@@ -123,7 +123,7 @@ test('configured concurrency limits side threads and validates before opening st
   const database = join(dir, 'state.sqlite');
   for (const concurrency of [0, -1, 1.5, 33, NaN, Infinity]) await assert.rejects(startApp({ database, concurrency }), /CONCURRENCY/);
   assert.equal(existsSync(database), false);
-  const app = await startApp({ database, concurrency: 1, baseURL: `http://127.0.0.1:${address.port}/v1` });
+  let app = await startApp({ database, concurrency: 1, baseURL: `http://127.0.0.1:${address.port}/v1` });
   async function post(path: string, body: unknown) {
     const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     assert(response.ok); return response.json();
@@ -147,5 +147,34 @@ test('configured concurrency limits side threads and validates before opening st
       await new Promise(resolve => setTimeout(resolve, 10));
     }
     assert.equal(row.status, 'done'); assert.deepEqual(calls, ['hold', 'side']);
+    assert.equal(agent.thread_limit, 2);
+    const edit = { ...agent, id: randomUUID(), threadLimit: 1 };
+    assert.equal((await post(`/api/agents/${agent.id}/edit`, edit)).thread_limit, 1);
+    await app.close(); app = await startApp({ database, baseURL: `http://127.0.0.1:${address.port}/v1` });
+    assert.equal((await post(`/api/agents/${agent.id}/edit`, edit)).thread_limit, 1);
+    const second = await post(`/api/agents/${agent.id}/threads`, { id: randomUUID(), name: 'Second side' });
+    const otherPath = `/api/threads/${second.id}/turns`;
+    const sideHold = randomUUID();
+    await post(path, { id: sideHold, text: 'hold' });
+    const queuedId = randomUUID(); await post(otherPath, { id: queuedId, text: 'after-limit' });
+    assert.equal((await (await fetch(app.origin + otherPath)).json())[0].status, 'queued');
+    const separateMain = randomUUID(); await post(main, { id: separateMain, text: 'main-independent' });
+    for (let i = 0; i < 100; i++) {
+      row = (await (await fetch(app.origin + main)).json()).find((turn: { id: string }) => turn.id === separateMain);
+      if (row.status === 'done') break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(row.status, 'done'); assert(!calls.includes('after-limit'));
+    await post(`${path}/${sideHold}/cancel`, { id: randomUUID() });
+    for (let i = 0; i < 100; i++) {
+      row = (await (await fetch(app.origin + otherPath)).json())[0];
+      if (row.status === 'done') break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(row.status, 'done');
+    for (const threadLimit of [0, 33, 1.5, null, '2']) {
+      const response = await fetch(app.origin + '/api/agents', { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ id: randomUUID(), name: 'Invalid', model: 'fixture', instructions: 'Help.', threadLimit }) });
+      assert.equal(response.status, 400);
+    }
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });

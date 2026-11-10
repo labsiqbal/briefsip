@@ -1,0 +1,96 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createHash, randomUUID } from 'node:crypto';
+import { request as httpRequest } from 'node:http';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { startApp } from './server.ts';
+
+test('files preserve bytes, scope, retry identity and archive boundaries', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-files-')), database = join(dir, 'state.sqlite');
+  let app = await startApp({ database });
+  const post = async (path: string, data: unknown) => {
+    const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+    assert(response.ok); return response.json();
+  };
+  const upload = (path: string, bytes: Uint8Array, name = 'report.bin', origin = app.origin) => fetch(app.origin + path, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(name) }, body: Buffer.from(bytes) });
+  try {
+    const agent = await post('/api/agents', { id: randomUUID(), name: 'Files', model: 'fixture', instructions: 'Help.' });
+    const channel = await post('/api/channels', { id: randomUUID(), name: 'Files room', instructions: 'Help.', members: [agent.id], lead: agent.id });
+    const thread = await post(`/api/agents/${agent.id}/threads`, { id: randomUUID(), name: 'Files side' });
+    const direct = `/api/agents/${agent.id}/files`, room = `/api/channels/${channel.id}/files`, side = `/api/threads/${thread.id}/files`;
+    const id = randomUUID(), bytes = Buffer.from([0, 255, 128, 10, 13, 65]), path = `${room}/${id}`;
+    const response = await upload(path, bytes, 'laporan é.bin'); assert.equal(response.status, 200);
+    const receipt = await response.json(); assert.equal(receipt.size, bytes.length);
+    const metadata = await (await fetch(app.origin + path + '?metadata=1')).json();
+    assert.equal(metadata.digest, createHash('sha256').update(bytes).digest('hex'));
+    assert.equal(metadata.size, receipt.size); assert.equal(metadata.id, id);
+    assert(!('bytes' in metadata));
+    assert.deepEqual(await (await upload(path, bytes, 'laporan é.bin')).json(), receipt);
+    assert.equal((await upload(path, Buffer.from('different'), 'laporan é.bin')).status, 409);
+    assert.equal((await upload(`${direct}/${id}`, bytes, 'laporan é.bin')).status, 409);
+    assert.equal((await fetch(app.origin + `${direct}/${id}`)).status, 404);
+    assert.equal((await fetch(app.origin + `${direct}/${id}?metadata=1`)).status, 404);
+    assert.deepEqual(await (await fetch(app.origin + direct)).json(), []);
+    const download = await fetch(app.origin + path);
+    assert.match(download.headers.get('content-disposition')!, /attachment/);
+    assert.match(download.headers.get('content-disposition')!, /%C3%A9/);
+    assert.equal(download.headers.get('content-type'), 'application/octet-stream');
+    assert.deepEqual(Buffer.from(await download.arrayBuffer()), bytes);
+    assert.equal((await fetch(app.origin + path + '?preview=text')).status, 415);
+    const textId = randomUUID(), html = '<script>window.injected = true</script>\nHello';
+    assert.equal((await upload(`${direct}/${textId}`, Buffer.from(html), 'example.html')).status, 200);
+    const preview = await fetch(app.origin + `${direct}/${textId}?preview=text`);
+    assert.equal(preview.headers.get('content-type'), 'application/json; charset=utf-8');
+    assert.equal((await preview.json()).text, html);
+    assert.equal((await fetch(app.origin + `${room}/${textId}?preview=text`)).status, 404);
+    const largeText = randomUUID();
+    await upload(`${direct}/${largeText}`, Buffer.alloc(256 * 1024 + 1, 65), 'large.txt');
+    assert.equal((await fetch(app.origin + `${direct}/${largeText}?preview=text`)).status, 413);
+    assert.equal((await upload(`${room}/${randomUUID()}`, bytes, '../escape')).status, 400);
+    assert.equal((await upload(`${room}/${randomUUID()}`, bytes, 'bad\nname')).status, 400);
+    assert.equal((await upload(`${room}/${randomUUID()}`, bytes, 'safe', 'https://outside.test')).status, 403);
+    assert.equal((await upload(`${room}/${randomUUID()}`, Buffer.alloc(10 * 1024 * 1024 + 1))).status, 413);
+    const oversizedId = randomUUID();
+    const chunked = await new Promise<number | undefined>((resolve, reject) => {
+      const request = httpRequest(app.origin + `${room}/${oversizedId}`, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/octet-stream', 'X-File-Name': 'large.bin', 'Transfer-Encoding': 'chunked' } }, response => { response.resume(); resolve(response.statusCode); });
+      request.on('error', reject);
+      for (let i = 0; i < 11; i++) request.write(Buffer.alloc(1024 * 1024));
+      request.end();
+    });
+    assert.equal(chunked, 413);
+    assert.equal((await fetch(app.origin + `${room}/${oversizedId}`)).status, 404);
+    assert.equal((await fetch(app.origin + room + '?before=-1')).status, 400);
+    assert.deepEqual(await (await fetch(app.origin + room + `?before=${receipt.seq}`)).json(), []);
+    let finishUpload!: () => void;
+    const delayedId = randomUUID();
+    const delayed = new Promise<number | undefined>((resolve, reject) => {
+      const request = httpRequest(app.origin + `${room}/${delayedId}`, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/octet-stream', 'X-File-Name': 'delayed.bin', 'Content-Length': bytes.length } }, response => { response.resume(); resolve(response.statusCode); });
+      request.on('error', reject); request.write(bytes.subarray(0, 1)); finishUpload = () => request.end(bytes.subarray(1));
+    });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    await post(`/api/channels/${channel.id}/edit`, { ...channel, id: randomUUID(), revision: 1, archived: true });
+    finishUpload(); assert.equal(await delayed, 409);
+    assert.equal((await fetch(app.origin + `${room}/${delayedId}`)).status, 404);
+    assert.equal((await upload(`${room}/${randomUUID()}`, bytes)).status, 409);
+    assert.deepEqual(await (await upload(path, bytes, 'laporan é.bin')).json(), receipt);
+    await app.close(); app = await startApp({ database });
+    assert.deepEqual(Buffer.from(await (await fetch(app.origin + path)).arrayBuffer()), bytes);
+    assert.equal((await (await fetch(app.origin + room)).json()).length, 1);
+    const sideFile = `${side}/${randomUUID()}`;
+    assert.equal((await upload(sideFile, bytes)).status, 200);
+    let finishDeleted!: () => void;
+    const removedUpload = new Promise<number | undefined>((resolve, reject) => {
+      const request = httpRequest(app.origin + `${side}/${randomUUID()}`, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/octet-stream', 'X-File-Name': 'deleted.bin', 'Content-Length': bytes.length } }, response => { response.resume(); resolve(response.statusCode); });
+      request.on('error', reject); request.write(bytes.subarray(0, 1)); finishDeleted = () => request.end(bytes.subarray(1));
+    });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    await post(`/api/threads/${thread.id}/edit`, { id: randomUUID(), revision: 1, name: thread.name, archived: true });
+    await post(`/api/threads/${thread.id}/delete`, { id: randomUUID(), revision: 2 });
+    finishDeleted(); assert.equal(await removedUpload, 404);
+    assert.equal((await fetch(app.origin + sideFile)).status, 404);
+    assert.equal((await upload(sideFile, bytes)).status, 404);
+    assert.equal((await upload(`${direct}/${randomUUID()}`, Buffer.alloc(0), 'empty.txt')).status, 200);
+  } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
+});

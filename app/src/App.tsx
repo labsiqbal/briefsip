@@ -4,7 +4,7 @@ import '@fontsource/ibm-plex-sans/latin-400.css';
 import '@fontsource/ibm-plex-sans/latin-600.css';
 import './style.css';
 
-type Agent = { revision: number; id: string; name: string; model: string; instructions: string };
+type Agent = { thread_limit: number; revision: number; id: string; name: string; model: string; instructions: string };
 type Channel = { activity: number; read_position: number; revision: number; archived: number; id: string; name: string; instructions: string; members: string[]; lead: string | null };
 type Thread = { id: string; agent: string; name: string; revision: number; archived: number; deleted: number };
 type Turn = { revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
@@ -20,6 +20,100 @@ async function api<T>(path: string, data?: unknown): Promise<T> {
   return body;
 }
 const message = (error: unknown) => error instanceof Error ? error.message : 'Koneksi gagal. Coba lagi.';
+
+function ConversationFiles({ path, archived }: { path: string; archived: boolean }) {
+  type StoredFile = { seq: number; id: string; name: string; size: number };
+  type Upload = { id: string; name: string; size: number; digest: string; file?: File };
+  const storageKey = `briefsip:upload:${path}`;
+  const [recovered] = useState<Upload | null>(() => {
+    try {
+      const value = JSON.parse(sessionStorage.getItem(storageKey) ?? 'null');
+      return value && /^[0-9a-f-]{36}$/i.test(value.id) && typeof value.name === 'string' && Number.isSafeInteger(value.size) && value.size >= 0 && value.size <= 10 * 1024 * 1024 && /^[0-9a-f]{64}$/.test(value.digest) ? { id: value.id, name: value.name, size: value.size, digest: value.digest } : null;
+    } catch { return null; }
+  });
+  const [open, setOpen] = useState(false), [files, setFiles] = useState<StoredFile[]>([]);
+  const [error, setError] = useState(''), [busy, setBusy] = useState(false), [more, setMore] = useState(false);
+  const [loading, setLoading] = useState(false), [reload, setReload] = useState(0);
+  const [selected, setSelected] = useState<File | null>(null);
+  const [preview, setPreview] = useState<StoredFile | null>(null), [previewText, setPreviewText] = useState<string | null>(null), [previewError, setPreviewError] = useState('');
+  const pending = useRef<Upload | null>(recovered);
+  const input = useRef<HTMLInputElement>(null);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  function clearUpload(id: string) {
+    if (JSON.parse(sessionStorage.getItem(storageKey) ?? 'null')?.id === id) sessionStorage.removeItem(storageKey);
+    if (pending.current?.id === id) pending.current = null;
+  }
+  useEffect(() => {
+    setPreviewText(null); setPreviewError('');
+    if (!preview) return;
+    let stopped = false;
+    void api<{ text: string }>(`${path}/${preview.id}?preview=text`).then(result => { if (!stopped) setPreviewText(result.text); }).catch(error => { if (!stopped) setPreviewError(message(error)); });
+    return () => { stopped = true; };
+  }, [path, preview]);
+  useEffect(() => {
+    if (!open || busy) return;
+    let stopped = false;
+    setLoading(true);
+    void api<StoredFile[]>(path).then(rows => { if (!stopped) { setFiles(rows); setMore(rows.length === 100); setError(''); } }).catch(error => { if (!stopped) setError(message(error)); }).finally(() => { if (!stopped) setLoading(false); });
+    return () => { stopped = true; };
+  }, [open, path, reload]);
+  async function upload(event: FormEvent) {
+    event.preventDefault(); if (busy || loading) return;
+    const file = pending.current?.file ?? selected;
+    if (!file) { setError('Pilih kembali file yang sama untuk melanjutkan unggahan.'); return; }
+    if (file.size > 10 * 1024 * 1024) { setError('Ukuran file maksimum 10 MiB.'); return; }
+    setBusy(true); setError('');
+    try {
+      const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()))].map(byte => byte.toString(16).padStart(2, '0')).join('');
+      if (!mounted.current) return;
+      if (pending.current && (pending.current.name !== file.name || pending.current.size !== file.size || pending.current.digest !== digest)) throw new Error('File berbeda dari unggahan tertunda. Pilih file asli atau periksa status unggahan.');
+      const request = pending.current ?? { id: crypto.randomUUID(), name: file.name, size: file.size, digest };
+      sessionStorage.setItem(storageKey, JSON.stringify({ id: request.id, name: request.name, size: request.size, digest: request.digest }));
+      pending.current = { ...request, file };
+      const response = await fetch(`${path}/${request.id}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) }, body: file }).catch(() => { throw new Error('Koneksi terputus. Coba unggahan yang sama lagi.'); });
+      const result = await response.json();
+      if (!response.ok) throw new HttpError(response.status, result.error ?? 'Unggahan gagal.');
+      setFiles(current => [result, ...current.filter(file => file.id !== result.id)]);
+      clearUpload(request.id); setSelected(null); if (input.current) input.current.value = '';
+    } catch (error) {
+      if (error instanceof HttpError && error.status < 500 && error.status !== 409) {
+        try { if (pending.current) clearUpload(pending.current.id); } catch { /* Retain retry identity if browser storage is unavailable. */ }
+      }
+      setError(message(error));
+    }
+    finally { setBusy(false); }
+  }
+  async function checkPending() {
+    const request = pending.current; if (!request || busy || loading) return;
+    setBusy(true); setError('');
+    try {
+      const result = await api<StoredFile & { digest: string }>(`${path}/${request.id}?metadata=1`);
+      if (result.name !== request.name || result.size !== request.size || result.digest !== request.digest) throw new Error('Receipt tidak cocok dengan unggahan tertunda.');
+      setFiles(current => [result, ...current.filter(file => file.id !== result.id)]);
+      clearUpload(request.id); setSelected(null); if (input.current) input.current.value = '';
+    } catch (error) { setError(error instanceof HttpError && error.status === 404 ? 'Unggahan belum tersimpan. Pilih kembali file asli untuk melanjutkan.' : message(error)); }
+    finally { setBusy(false); }
+  }
+  async function loadMore() {
+    if (busy) return; setBusy(true); setError('');
+    try {
+      const rows = await api<StoredFile[]>(`${path}?before=${files.at(-1)!.seq}`);
+      setFiles(current => [...current, ...rows.filter(row => !current.some(file => file.id === row.id))]); setMore(rows.length === 100);
+    } catch (error) { setError(message(error)); }
+    finally { setBusy(false); }
+  }
+  return <details className="conversation-files" onToggle={event => setOpen(event.currentTarget.open)}><summary>File percakapan</summary>
+    <p className="muted">Maksimum 10 MiB per file. File tersimpan di percakapan ini; belum dikirim ke model.</p>
+    <form onSubmit={upload}><label>File<input ref={input} type="file" disabled={busy || loading || !!pending.current?.file || (archived && !pending.current)} onChange={event => setSelected(event.target.files?.[0] ?? null)} /></label><button disabled={busy || loading || (archived && !pending.current) || (!selected && !pending.current?.file)}>{busy ? 'Memproses...' : pending.current ? 'Coba unggahan lagi' : 'Unggah file'}</button></form>
+    {pending.current && <p className="notice">Unggahan {pending.current.name} belum terkonfirmasi. Pilih kembali file yang sama atau <button className="secondary" disabled={busy || loading} onClick={() => void checkPending()}>Periksa status unggahan</button></p>}
+    {error && <p className="error" role="alert">{error} {!pending.current && <button className="secondary" disabled={busy || loading} onClick={() => setReload(value => value + 1)}>Muat ulang file</button>}</p>}
+    {loading ? <p role="status">Memuat file...</p> : !error && files.length === 0 && <p className="muted">Belum ada file.</p>}
+    <ul>{files.map(file => <li key={file.id}><a href={`${path}/${file.id}`} download={file.name}>{file.name}</a><span className="muted">{file.size.toLocaleString('id-ID')} byte</span><button className="secondary" aria-label={`Lihat teks: ${file.name}`} onClick={() => setPreview(file)}>Lihat teks</button></li>)}</ul>
+    {preview && <section aria-label={`Preview ${preview.name}`}><strong>{preview.name}</strong><button className="secondary" onClick={() => setPreview(null)}>Tutup preview</button>{previewError ? <p className="error" role="alert">{previewError}</p> : previewText === null ? <p role="status">Memuat preview...</p> : <pre tabIndex={0}>{previewText || '(File kosong)'}</pre>}</section>}
+    {more && <button className="secondary" disabled={busy} onClick={() => void loadMore()}>File sebelumnya</button>}
+  </details>;
+}
 
 function TaskControls({ turn, path, members, archived }: { turn: Turn; path: string; members: Agent[]; archived: boolean }) {
   const [recipient, setRecipient] = useState(''), [confirmed, setConfirmed] = useState(false);
@@ -135,6 +229,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     <header className="chat-header"><span className="avatar">{agent.name.slice(0, 1)}</span><div><h1>{thread?.name ?? agent.name}</h1><p>{channel ? `${members.length} anggota` : thread ? `Percakapan samping · ${agent.name}` : (agent as Agent).model}</p></div><span className="activity" role="status">{active ? `${active} pesan diproses` : channel ? 'Channel bersama' : 'Percakapan langsung'}</span>{onEdit && <button className="secondary" onClick={onEdit}>{channel ? 'Pengaturan channel' : thread ? 'Pengaturan percakapan' : 'Edit profil'}</button>}</header>
     {channel && <div className="recipient"><label htmlFor="recipient">Respons oleh</label><select id="recipient" value={pending?.automatic ? '@automatic' : pending?.recipient ?? recipient} disabled={!!pending || busy} onChange={event => { setRecipient(event.target.value); try { sessionStorage.setItem(recipientKey, event.target.value); } catch { setError('Pilihan penerima tidak tersimpan. Periksa kembali sebelum mengirim.'); } }}><option value="">Pilih agent</option>{channel.lead && <option value="@automatic">Otomatis melalui lead</option>}{members.map(member => <option key={member.id} value={member.id}>{member.name}{member.id === channel.lead ? ' (lead)' : ''}</option>)}</select></div>}
     {channel && <div className="recipient"><span>{channel.activity > channel.read_position ? 'Ada aktivitas belum dibaca' : 'Semua aktivitas sudah dibaca'}</span><button className="secondary" disabled={markingRead || channel.activity <= channel.read_position} onClick={() => { setMarkingRead(true); void onRead?.().catch(error => setError(message(error))).finally(() => setMarkingRead(false)); }}>Tandai semua dibaca</button></div>}
+    <ConversationFiles path={path.replace(/\/turns$/, '/files')} archived={archived} />
     {focusedTask && <div className="recipient"><button className="secondary" onClick={() => { setFocusedTask(''); focusedOnce.current = ''; nearBottom.current = true; }}>Kembali ke pesan terbaru</button></div>}
     <section className="transcript" aria-label="Riwayat percakapan" onScroll={event => { const el = event.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }}>
       {readError && <p role="alert" className="error">{readError} Riwayat akan dicoba lagi.</p>}
@@ -169,8 +264,9 @@ function AgentConversations({ agent, configured, onEdit }: { agent: Agent; confi
   const [form, setForm] = useState(false), [editing, setEditing] = useState(false), [loaded, setLoaded] = useState(false);
   const [reload, setReload] = useState(0);
   const loadVersion = useRef(0);
+  const navigation = useRef(0);
   const thread = threads.find(item => item.id === selected);
-  function select(id: string) { loadVersion.current++; setSelected(id); setForm(false); setEditing(false); try { sessionStorage.setItem(storageKey, id); } catch { /* Selection remains usable in memory. */ } }
+  function select(id: string) { navigation.current++; loadVersion.current++; setSelected(id); setForm(false); setEditing(false); try { sessionStorage.setItem(storageKey, id); } catch { /* Selection remains usable in memory. */ } }
   async function load(preferred = selected, afterSave = false) {
     const version = ++loadVersion.current;
     try {
@@ -183,12 +279,12 @@ function AgentConversations({ agent, configured, onEdit }: { agent: Agent; confi
     }
     catch (error) { if (!afterSave && version === loadVersion.current) setError(message(error)); throw new Error(message(error)); }
   }
-  useEffect(() => { void load().catch(() => {}); return () => { loadVersion.current++; }; }, []);
-  const navigationVersion = loadVersion.current;
+  useEffect(() => { void load().catch(() => {}); return () => { navigation.current++; loadVersion.current++; }; }, []);
+  const navigationVersion = navigation.current;
   return <>
-    <div className="recipient"><label htmlFor="conversation">Percakapan</label><select id="conversation" value={thread?.id ?? ''} disabled={!loaded} onChange={event => select(event.target.value)}><option value="">Chat utama</option>{threads.map(item => <option key={item.id} value={item.id}>{item.name}{item.archived ? ' (diarsipkan)' : ''}</option>)}</select><button className="secondary" disabled={!loaded} onClick={() => { loadVersion.current++; setForm(true); setEditing(false); }}>Percakapan baru</button></div>
+    <div className="recipient"><label htmlFor="conversation">Percakapan</label><select id="conversation" value={thread?.id ?? ''} disabled={!loaded} onChange={event => select(event.target.value)}><option value="">Chat utama</option>{threads.map(item => <option key={item.id} value={item.id}>{item.name}{item.archived ? ' (diarsipkan)' : ''}</option>)}</select><button className="secondary" disabled={!loaded} onClick={() => { navigation.current++; loadVersion.current++; setForm(true); setEditing(false); }}>Percakapan baru</button></div>
     {error && <p className="error" role="alert">{error} <button className="secondary" onClick={() => void load().catch(() => {})}>Muat ulang percakapan</button></p>}
-    {!loaded ? <p className="empty">Memuat percakapan...</p> : form ? <ThreadForm key={editing ? `${thread?.id}:${thread?.revision}:${reload}` : 'new'} agent={agent} thread={editing ? thread : undefined} onCancel={() => { loadVersion.current++; setForm(false); }} onReload={() => { void load().catch(() => {}); }} onSaved={item => navigationVersion === loadVersion.current ? load(item.deleted ? '' : item.id, true) : Promise.resolve()} /> : <Chat key={thread?.id ?? agent.id} agent={agent} thread={thread} configured={configured} onEdit={thread ? () => { loadVersion.current++; setEditing(true); setForm(true); } : onEdit} />}
+    {!loaded ? <p className="empty">Memuat percakapan...</p> : form ? <ThreadForm key={editing ? `${thread?.id}:${thread?.revision}:${reload}` : 'new'} agent={agent} thread={editing ? thread : undefined} onCancel={() => { navigation.current++; loadVersion.current++; setForm(false); }} onReload={() => { void load().catch(() => {}); }} onSaved={item => navigationVersion === navigation.current ? load(item.deleted ? '' : item.id, true) : Promise.resolve()} /> : <Chat key={thread?.id ?? agent.id} agent={agent} thread={thread} configured={configured} onEdit={thread ? () => { navigation.current++; loadVersion.current++; setEditing(true); setForm(true); } : onEdit} />}
   </>;
 }
 
@@ -227,17 +323,18 @@ function AgentForm({ model, profile, onCreated, onCancel, onReload }: { model: s
     return () => { stopped = true; };
   }, []);
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
-  const pending = useRef<{ id: string; name: string; model: string; instructions: string; revision?: number } | null>(null);
+  const pending = useRef<{ id: string; name: string; model: string; instructions: string; threadLimit: number; revision?: number } | null>(null);
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (busy) return;
     const form = new FormData(event.currentTarget);
-    const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision } : {}), name: String(form.get('name')).trim(), model: String(form.get('model')).trim(), instructions: String(form.get('instructions')).trim() };
+    const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision } : {}), name: String(form.get('name')).trim(), model: String(form.get('model')).trim(), instructions: String(form.get('instructions')).trim(), threadLimit: Number(form.get('threadLimit')) };
     pending.current = data; setBusy(true); setError('');
     try { onCreated(await api<Agent>(profile ? `/api/agents/${profile.id}/edit` : '/api/agents', data)); } catch (error) { if (error instanceof HttpError && error.status < 500) pending.current = null; setError(message(error)); } finally { setBusy(false); }
   }
   return <section className="setup"><h1>{profile ? 'Edit profil agent' : 'Agent baru'}</h1><p className="muted">Beri nama, pilih model, lalu jelaskan cara kerjanya.</p><form onSubmit={create}>
     <label>Nama<input name="name" required maxLength={80} readOnly={!!pending.current} autoFocus defaultValue={profile?.name} placeholder="Misalnya: Rekan riset" /></label>
     <label>Model<input name="model" list="provider-models" aria-describedby="model-catalog-status" required maxLength={160} readOnly={!!pending.current} defaultValue={profile?.model ?? model} placeholder="ID model dari provider kamu" /><datalist id="provider-models">{models.map(id => <option key={id} value={id} />)}</datalist><span id="model-catalog-status" className="muted" role="status">{catalogStatus}</span></label>
+    <label>Percakapan samping bersamaan<input name="threadLimit" type="number" min={1} max={32} step={1} required readOnly={!!pending.current} defaultValue={profile?.thread_limit ?? 2} /><span className="muted">Chat utama memiliki antrean sendiri. Semua percakapan tetap berbagi kapasitas server.</span></label>
     <label>Instruksi<textarea name="instructions" required maxLength={8000} readOnly={!!pending.current} defaultValue={profile?.instructions} rows={6} placeholder="Apa tugas agent ini? Bagaimana hasilnya perlu disampaikan?" /></label>
     {error && <p role="alert" className="error">{error}</p>}
     <div className="form-actions">{onCancel && <button type="button" className="secondary" onClick={onCancel}>Batal</button>}<button disabled={busy}>{busy ? 'Menyimpan...' : profile ? 'Simpan profil' : 'Buat agent'}</button>{profile && error && onReload && <button type="button" className="secondary" onClick={onReload}>Buang perubahan dan muat ulang</button>}</div>
