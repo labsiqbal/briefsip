@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createInterface } from 'node:readline';
-import { readProviderStream } from './provider-stream.ts';
+import { readProviderStream, streamTermination } from './provider-stream.ts';
 import { startApp } from './server.ts';
 import type { ProviderFamily } from './provider.ts';
 
@@ -21,6 +21,19 @@ const blockStop = { type: 'content_block_stop', index: 0 };
 const messageDelta = (stop_reason = 'end_turn') => ({ type: 'message_delta', delta: { stop_reason }, usage: { output_tokens: 4 } });
 const messageStop = { type: 'message_stop' };
 async function* bytes(text: string, size = 1) { const value = Buffer.from(text); for (let offset = 0; offset < value.length; offset += size) yield value.subarray(offset, offset + size); }
+
+test('explicit finish-reason compatibility accepts clean EOF but rejects interruption and missing finish', async () => {
+  assert.equal(streamTermination(undefined), 'marker'); assert.throws(() => streamTermination('unknown'));
+  await assert.rejects(startApp({ database: ':memory:', provider: 'anthropic', streamTermination: 'finish-reason' }), /only supported/);
+  const complete = [chunk({ content: 'Result' }), chunk({}, 'stop')].map(sse).join('');
+  const result: any = await readProviderStream(bytes(complete), 'openai-compatible', () => {}, 'finish-reason');
+  assert.equal(result.choices[0].message.content, 'Result');
+  await assert.rejects(readProviderStream(bytes(complete), 'openai-compatible', () => {}));
+  await assert.rejects(readProviderStream(bytes(sse(chunk({ content: 'Partial' }))), 'openai-compatible', () => {}, 'finish-reason'));
+  await assert.rejects(readProviderStream(bytes(complete + 'data: {"choices":'), 'openai-compatible', () => {}, 'finish-reason'), /Incomplete SSE/);
+  async function* interrupted() { yield Buffer.from(complete); throw new Error('Socket closed'); }
+  await assert.rejects(readProviderStream(interrupted(), 'openai-compatible', () => {}, 'finish-reason'), /Socket closed/);
+});
 
 test('SSE parsing handles split UTF-8, multiline data, tools and refuses incomplete or malformed streams', async () => {
   let latest = '';
@@ -117,6 +130,12 @@ for (const family of ['openai-compatible', 'anthropic'] as ProviderFamily[]) tes
     const completed = randomUUID(); mode = 'hold'; release = undefined;
     await request(path, { id: completed, text: 'Visible while streaming' }); const live = await until(path, completed, row => !!row.partial?.text);
     assert.equal(live.status, 'running'); assert.equal(live.reply, null); release!(); assert.equal((await until(path, completed)).reply, 'Partial ');
+    if (family === 'openai-compatible') {
+      await app.close(); app = await startApp({ ...options, streamTermination: 'finish-reason' });
+      mode = 'broken-tool'; const compatible = randomUUID(), before = calls;
+      await request(path, { id: compatible, text: 'Tool with finish-reason EOF' }); const result = await until(path, compatible);
+      assert.equal(result.status, 'done'); assert.equal(result.generatedFiles.length, 1); assert.equal(calls - before, 2);
+    }
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(directory, { recursive: true, force: true }); }
 });
 
