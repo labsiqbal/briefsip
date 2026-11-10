@@ -7,7 +7,7 @@ import './style.css';
 type Agent = { thread_limit: number; revision: number; id: string; name: string; model: string; instructions: string };
 type Channel = { activity: number; read_position: number; revision: number; archived: number; id: string; name: string; instructions: string; members: string[]; lead: string | null };
 type Thread = { id: string; agent: string; name: string; revision: number; archived: number; deleted: number };
-type Turn = { files?: { id: string; name: string; size: number }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
+type Turn = { seq: number; files?: { id: string; name: string; size: number }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
 type Directory = { agents: Agent[]; configured: boolean; defaultModel: string };
 type Pending = { files?: string[]; id: string; text: string; recipient?: string; automatic?: boolean };
 const statusNames: Record<string, string> = { queued: 'Dalam antrean', running: 'Sedang menjawab', done: 'Selesai', failed: 'Gagal', interrupted: 'Terputus', cancelled: 'Dibatalkan' };
@@ -145,6 +145,10 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   const scope = thread ? `thread:${thread.id}` : channel ? `channel:${agent.id}` : agent.id;
   const path = thread ? `/api/threads/${thread.id}/turns` : `/api/${channel ? 'channels' : 'agents'}/${agent.id}/turns`;
   const [focusedTask, setFocusedTask] = useState('');
+  const [historyPages, setHistoryPages] = useState<number[]>([]);
+  const before = historyPages.at(-1);
+  const historyTop = useRef<HTMLDivElement>(null);
+  const focusHistory = useRef(false);
   const focusedOnce = useRef('');
   const loadedTask = useRef<string | null>(null);
   const recipientKey = `briefsip:recipient:${scope}`;
@@ -177,20 +181,24 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     setTurns(null);
     let timer: ReturnType<typeof setTimeout>;
     async function refresh() {
-      try { const data = await api<Turn[]>(focusedTask ? `${path}?focus=${focusedTask}` : path); if (!stopped) { loadedTask.current = focusedTask; setTurns(data); setReadError(''); } }
+      try { const data = await api<Turn[]>(focusedTask ? `${path}?focus=${focusedTask}` : before ? `${path}?before=${before}` : path); if (!stopped) { loadedTask.current = focusedTask; setTurns(data); setReadError(''); } }
       catch (error) { if (!stopped) setReadError(message(error)); }
       if (!stopped) timer = setTimeout(refresh, 1200);
     }
     void refresh();
     return () => { stopped = true; clearTimeout(timer); };
-  }, [path, focusedTask]);
+  }, [path, focusedTask, before]);
   useEffect(() => {
     if (focusedTask && loadedTask.current === focusedTask && turns && focusedOnce.current !== focusedTask) {
       const target = document.getElementById(`turn-${focusedTask}`);
       if (target) { target.focus({ preventScroll: true }); target.scrollIntoView({ block: 'start' }); focusedOnce.current = focusedTask; }
     }
-    if (!focusedTask && nearBottom.current) bottom.current?.scrollIntoView({ block: 'end' });
-  }, [focusedTask, turns]);
+    if (!focusedTask && loadedTask.current === '' && turns && focusHistory.current) {
+      const target = !before && turns.length ? document.getElementById(`turn-${turns.at(-1)!.id}`) : historyTop.current;
+      if (target) { target.focus({ preventScroll: true }); target.scrollIntoView({ block: before ? 'start' : 'end' }); focusHistory.current = false; }
+    }
+    if (!focusedTask && !before && nearBottom.current) bottom.current?.scrollIntoView({ block: 'end' });
+  }, [focusedTask, turns, before]);
   useEffect(() => {
     if (!requestActive.current && pending && turns?.some(turn => turn.id === pending.id)) {
       try { sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); } catch { /* The same ID remains safe to retry. */ }
@@ -217,7 +225,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
       await api(path, request);
       // A remounted conversation owns recovery and any newer draft after navigation.
       if (!mounted.current) return;
-      sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); setPending(null); setDraft(''); setAttached([]); setFocusedTask('');
+      sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); setPending(null); setDraft(''); setAttached([]); setFocusedTask(''); setHistoryPages([]);
     } catch (error) {
       if (!mounted.current) return;
       if (error instanceof HttpError && (error.status < 500 || error.status === 503)) {
@@ -238,10 +246,14 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     {channel && <div className="recipient"><label htmlFor="recipient">Respons oleh</label><select id="recipient" value={pending?.automatic ? '@automatic' : pending?.recipient ?? recipient} disabled={!!pending || busy} onChange={event => { setRecipient(event.target.value); try { sessionStorage.setItem(recipientKey, event.target.value); } catch { setError('Pilihan penerima tidak tersimpan. Periksa kembali sebelum mengirim.'); } }}><option value="">Pilih agent</option>{channel.lead && <option value="@automatic">Otomatis melalui lead</option>}{members.map(member => <option key={member.id} value={member.id}>{member.name}{member.id === channel.lead ? ' (lead)' : ''}</option>)}</select></div>}
     {channel && <div className="recipient"><span>{channel.activity > channel.read_position ? 'Ada aktivitas belum dibaca' : 'Semua aktivitas sudah dibaca'}</span><button className="secondary" disabled={markingRead || channel.activity <= channel.read_position} onClick={() => { setMarkingRead(true); void onRead?.().catch(error => setError(message(error))).finally(() => setMarkingRead(false)); }}>Tandai semua dibaca</button></div>}
     <ConversationFiles path={path.replace(/\/turns$/, '/files')} archived={archived} attached={pending?.files ?? attached} onAttach={attach} locked={!!pending || busy} />
-    {focusedTask && <div className="recipient"><button className="secondary" onClick={() => { setFocusedTask(''); focusedOnce.current = ''; nearBottom.current = true; }}>Kembali ke pesan terbaru</button></div>}
+    {(focusedTask || before) && <div className="recipient"><span>{focusedTask ? 'Keluarga tugas' : 'Riwayat lama'}</span><button className="secondary" onClick={() => { focusHistory.current = true; setTurns(null); setFocusedTask(''); setHistoryPages([]); focusedOnce.current = ''; nearBottom.current = true; }}>Kembali ke pesan terbaru</button></div>}
     <section className="transcript" aria-label="Riwayat percakapan" onScroll={event => { const el = event.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }}>
+      {!focusedTask && <div ref={historyTop} tabIndex={-1} className="history-navigation" aria-label="Navigasi riwayat">
+        <button className="secondary" disabled={!turns || turns.length < 100} onClick={() => { if (turns?.length) { focusHistory.current = true; setTurns(null); setHistoryPages([...historyPages, turns[0].seq]); } }}>Pesan lebih lama</button>
+        {!!before && <button className="secondary" onClick={() => { focusHistory.current = true; setTurns(null); setHistoryPages(historyPages.slice(0, -1)); nearBottom.current = true; }}>Pesan lebih baru</button>}
+      </div>}
       {readError && <p role="alert" className="error">{readError} Riwayat akan dicoba lagi.</p>}
-      {turns === null ? <p className="empty">Memuat percakapan...</p> : turns.length === 0 ? <div className="empty"><h2>Mulai bersama {agent.name}</h2><p>Kirim pekerjaan atau pertanyaan pertama. Percakapan tersimpan di komputer ini.</p></div> : turns.map(turn => <article key={turn.id} id={`turn-${turn.id}`} tabIndex={-1} className="turn">
+      {turns === null ? <p className="empty">Memuat percakapan...</p> : turns.length === 0 && before ? <p className="empty" role="status">Awal riwayat tercapai. Pilih Pesan lebih baru untuk kembali.</p> : turns.length === 0 ? <div className="empty"><h2>Mulai bersama {agent.name}</h2><p>Kirim pekerjaan atau pertanyaan pertama. Percakapan tersimpan di komputer ini.</p></div> : turns.map(turn => <article key={turn.id} id={`turn-${turn.id}`} tabIndex={-1} className="turn">
         <div className="message-head"><strong>{turn.parent ? 'Subtugas' : 'Kamu'}</strong>{turn.parent && <a href={`#turn-${turn.parent}`} onClick={event => { event.preventDefault(); focusedOnce.current = ''; setFocusedTask(turn.parent!); }}>Lihat tugas induk</a>}<time dateTime={turn.created}>{new Date(turn.created).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time></div>
         <p className="message-text">{turn.text}</p>{!!turn.files?.length && <ul aria-label="Lampiran pesan">{turn.files.map(file => <li key={file.id}><a href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}>{file.name}</a></li>)}</ul>}
         <div className="answer"><div className="message-head"><strong>{turn.agent_name ?? agent.name}</strong><span>{turn.paused && !['done','cancelled'].includes(turn.status) ? 'Dijeda' : turn.waiting_for && turn.status === 'queued' ? 'Menunggu delegasi' : turn.routing === 'pending' && turn.status === 'running' ? 'Memilih penerima' : turn.routing === 'clarify' ? 'Perlu klarifikasi' : turn.routing === 'none' ? 'Tidak perlu tugas' : statusNames[turn.status] ?? turn.status}</span></div>
