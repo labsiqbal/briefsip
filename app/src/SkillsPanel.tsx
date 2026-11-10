@@ -1,7 +1,9 @@
 import { SkillPacksPanel } from './SkillPacksPanel';
 import { useEffect, useRef, useState } from 'react';
 import { restoreSkillCommand, type SkillCommand } from '../skill-command';
-type Skill = { id: string; name: string; description: string; content: string; revision: number; latest: number };
+import { parseSkillFiles, type SkillFile } from '../skill-files';
+import { SkillFolderImport, downloadSkillFolder } from './SkillFolderImport';
+type Skill = { id: string; name: string; description: string; content: string; revision: number; latest: number; files?: SkillFile[] };
 type Installed = { pack?: string | null; removed: number; skill: string; name: string; version: number; enabled: number; revision: number; latest: number };
 const storage = 'briefsip:skill-command';
 export function SkillsPanel({ agents, request, onClose }: { agents: { id: string; name: string }[]; request: <T>(path: string, body?: unknown) => Promise<T>; onClose: () => void }) {
@@ -15,10 +17,11 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
   const [baseline, setBaseline] = useState('');
   const [cursors, setCursors] = useState(['']), [refresh, setRefresh] = useState(0), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [editor, setEditor] = useState<Skill | null>(null), [version, setVersion] = useState(1);
+  const [importBusy, setImportBusy] = useState(false);
   const navigation = useRef(0), inFlight = useRef(false), heading = useRef<HTMLHeadingElement>(null);
   const dirty = !!editor && JSON.stringify(editor) !== baseline;
   const canReplace = () => !dirty || window.confirm('Buang perubahan skill yang belum disimpan?');
-  const locked = busy || !!pending || invalid, after = cursors.at(-1)!;
+  const locked = busy || importBusy || !!pending || invalid, after = cursors.at(-1)!;
   useEffect(() => { heading.current?.focus(); return () => { navigation.current++; }; }, []);
   useEffect(() => { heading.current?.focus(); }, [editor?.id, after, showPacks]);
   useEffect(() => {
@@ -65,8 +68,11 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
     <div className="form-actions"><button className="secondary" disabled={locked || installCursors.length < 2} onClick={() => setInstallCursors(value => value.slice(0, -1))}>Pemasangan sebelumnya</button><button className="secondary" disabled={locked || !installNext} onClick={() => setInstallCursors(value => [...value, installNext!])}>Pemasangan berikutnya</button></div>
     {installed?.length === 0 && <p>Tidak ada skill terpasang pada halaman ini.</p>}
     <button className="secondary" disabled={locked} onClick={() => { if (!canReplace()) return; setBaseline(''); setEditor({ id: '', name: '', description: '', content: '', revision: 0, latest: 0 }); setVersion(1); }}>Buat skill</button>
-    {editor && <form onSubmit={event => { event.preventDefault(); void execute({ path: editor.id ? `/api/skills/${editor.id}` : '/api/skills', body: { id: crypto.randomUUID(), revision: editor.latest, name: editor.name, description: editor.description, content: editor.content } }); }}><fieldset disabled={locked}><legend>{editor.id ? `Versi ${editor.revision}; terbaru ${editor.latest}` : 'Skill baru'}</legend>
-      <label>Nama<input required maxLength={80} value={editor.name} onChange={event => setEditor({ ...editor, name: event.target.value })} /></label><label>Deskripsi<textarea required maxLength={1024} value={editor.description} onChange={event => setEditor({ ...editor, description: event.target.value })} /></label><label>Instruksi skill<textarea required maxLength={16000} rows={10} value={editor.content} onChange={event => setEditor({ ...editor, content: event.target.value })} /></label>
+    <p>{editor?.id ? `Impor berikut menjadi draf revisi baru untuk ${editor.name}. Pilih Buat skill jika ingin membuat skill terpisah.` : 'Impor berikut menjadi draf skill baru. Simpan setelah memeriksa seluruh file.'}</p>
+    <SkillFolderImport disabled={locked} onBusy={setImportBusy} onImport={files => { if (!canReplace()) return; const parsed = parseSkillFiles(files); setEditor({ id: editor?.id ?? '', revision: editor?.revision ?? 0, latest: editor?.latest ?? 0, ...parsed }); setVersion(editor?.revision || 1); heading.current?.focus(); }} />
+    {editor && <form onSubmit={event => { event.preventDefault(); if (locked) return; void execute({ path: editor.id ? `/api/skills/${editor.id}` : '/api/skills', body: { id: crypto.randomUUID(), revision: editor.latest, ...(editor.files ? { files: editor.files } : { name: editor.name, description: editor.description, content: editor.content }) } }); }}><fieldset disabled={locked}><legend>{editor.id ? `Versi ${editor.revision}; terbaru ${editor.latest}` : 'Skill baru'}</legend>
+      <label>Nama<input required readOnly={!!editor.files} maxLength={80} value={editor.name} onChange={event => setEditor({ ...editor, name: event.target.value })} /></label><label>Deskripsi<textarea required readOnly={!!editor.files} maxLength={1024} value={editor.description} onChange={event => setEditor({ ...editor, description: event.target.value })} /></label><label>Instruksi skill<textarea required readOnly={!!editor.files} maxLength={16000} rows={10} value={editor.content} onChange={event => setEditor({ ...editor, content: event.target.value })} /></label>
+      {editor.files && <><p>Revisi folder mempertahankan metadata asli. Untuk memperbarui, impor folder lengkap saat skill ini terbuka.</p><button type="button" className="secondary" onClick={() => downloadSkillFolder(editor.files!)}>Ekspor folder skill</button><ul className="routine-list">{editor.files.map(file => <li key={file.path}><details><summary>{file.path}</summary><pre className="skill-file-content" tabIndex={0} role="region" aria-label={`Isi ${file.path}`}>{file.content}</pre></details></li>)}</ul></>}
       <p className="muted">Simpan membuat revisi baru. Agent tetap memakai revisi terpasang sampai kamu menggantinya.</p><button>Simpan revisi skill</button>
       {editor.id && <><label>Versi untuk diperiksa<input type="number" min={1} max={editor.latest} step={1} value={version} onChange={event => setVersion(Number(event.target.value))} /></label><button type="button" className="secondary" disabled={!Number.isSafeInteger(version) || version < 1 || version > editor.latest} onClick={() => void open(editor.id, version)}>Muat versi tersimpan</button>
       {binding?.removed === 1 && <p className="muted">Skill pernah dilepas dari agent ini. Pilih versi tersimpan untuk memasang kembali.</p>}<button type="button" disabled={!owner || binding === undefined || (!!binding?.pack && !binding.removed)} onClick={() => { if (window.confirm(`Pasang versi tersimpan ${editor.revision} untuk agent ini? Perubahan teks yang belum disimpan tidak ikut dipasang.`)) void execute({ path: `/api/agents/${owner}/skills/${editor.id}`, body: { id: crypto.randomUUID(), revision: binding?.revision ?? 0, version: editor.revision, enabled: true } }); }}>Pasang versi tersimpan {editor.revision}</button></>}
