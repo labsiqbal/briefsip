@@ -7,12 +7,20 @@ export type Workflow = { id: string; agent: string; name: string; revision: numb
 export type WorkflowDraft = { name: string; graph: WorkflowGraph; revision: number };
 type Agent = { id: string; name: string; model: string };
 
-export function WorkflowEditor({ owner, agents, initial, saved, reload = 0, locked: parentLocked, draftKey, pendingSave, onReload, onSave, onBack }: {
+export function WorkflowEditor({ owner, agents, request, initial, saved, reload = 0, locked: parentLocked, draftKey, pendingSave, onReload, onSave, onBack }: {
   owner: Agent; agents: Agent[]; initial?: WorkflowDraft; saved?: WorkflowDraft; locked: boolean;
+  request: <T>(path: string, data?: unknown) => Promise<T>;
   reload?: number;
   draftKey: string; pendingSave: boolean; onReload: () => void;
   onSave: (draft: WorkflowDraft, automatic?: boolean) => Promise<boolean>; onBack: () => void;
 }) {
+  const [channels, setChannels] = useState<{ id: string; name: string; archived: number; members: string[] }[] | null>(null);
+  const [channelError, setChannelError] = useState(''), [channelRefresh, setChannelRefresh] = useState(0);
+  useEffect(() => {
+    let stopped = false; setChannelError('');
+    void request<NonNullable<typeof channels>>('/api/channels').then(rows => { if (!stopped) setChannels(rows.filter(row => !row.archived && row.members.includes(owner.id))); }).catch(error => { if (!stopped) setChannelError(error.message); });
+    return () => { stopped = true; };
+  }, [owner.id, channelRefresh]);
   const [recovery, setRecovery] = useState(() => {
     try { return { draft: restoreWorkflowEditorDraft(sessionStorage.getItem(draftKey)), invalid: false, held: pendingSave }; }
     catch { return { draft: null, invalid: true, held: pendingSave }; }
@@ -138,7 +146,13 @@ export function WorkflowEditor({ owner, agents, initial, saved, reload = 0, lock
         }}><option value="equals">Sama persis</option><option value="contains">Mengandung teks</option><option value="model">Penilaian model</option></select></label>{node.operator === 'model' && <label>Model kondisi<input required maxLength={200} value={node.model} onChange={event => update(index, { model: event.target.value })} /></label>}<label>{node.operator === 'model' ? 'Pertanyaan kondisi' : 'Teks pembanding'}<input required={node.operator === 'model'} maxLength={16000} value={node.value} onChange={event => update(index, { value: event.target.value })} /><span className="muted">{node.operator === 'model' ? 'Model menjawab yes atau no tanpa tools. Jawaban lain menggagalkan langkah; hasil sebelumnya tetap diteruskan.' : 'Huruf besar dan kecil dibedakan.'}</span></label></>}
         {'next' in node && <label>Lanjut ke<select required value={node.next} onChange={event => update(index, { next: event.target.value })}>{targets}</select></label>}
         {'yes' in node && <><label>{node.kind === 'approval' ? 'Jika disetujui' : 'Jika cocok'}<select required value={node.yes} onChange={event => update(index, { yes: event.target.value })}>{targets}</select></label>{node.kind === 'condition' ? <label>Jika tidak cocok<select required value={node.no} onChange={event => update(index, { no: event.target.value })}>{targets}</select></label> : <p className="muted">Penolakan menghentikan eksekusi. Hasil sebelumnya tetap tersimpan.</p>}</>}
-        {node.kind === 'output' && <p className="muted">Selesaikan workflow dengan hasil langkah terakhir.</p>}
+        {node.kind === 'output' && <><label>Tujuan hasil<select value={node.channel === undefined ? 'inbox' : 'channel'} onChange={event => {
+          setGraph(current => ({ ...current, nodes: current.nodes.map(item => item.id === node.id ? { id: node.id, kind: 'output', ...(event.target.value === 'channel' ? { channel: '' } : {}) } : item) }));
+        }}><option value="inbox">Inbox workflow</option><option value="channel">Channel dan inbox</option></select></label>
+          {node.channel !== undefined && <><label>Channel tujuan<select required value={node.channel} onChange={event => update(index, { channel: event.target.value })}><option value="">Pilih channel</option>{node.channel && !channels?.some(channel => channel.id === node.channel) && <option value={node.channel}>Channel tidak tersedia</option>}{channels?.map(channel => <option key={channel.id} value={channel.id}>{channel.name.length > 24 ? channel.name.slice(0, 21) + '...' : channel.name}</option>)}</select><span className="flow-selected-name muted">{channels?.find(channel => channel.id === node.channel)?.name}</span></label>
+            {channelError && <p className="error" role="alert">{channelError}</p>}{!channels && !channelError && <p role="status">Memuat channel...</p>}<button type="button" className="secondary" onClick={() => setChannelRefresh(value => value + 1)}>Muat ulang channel tujuan</button>
+            <p className="muted">Hasil dikirim atas nama agent pemilik workflow. Channel harus aktif dan agent masih menjadi anggota saat hasil dikirim.</p></>}
+          <p className="muted">Selesaikan workflow dengan hasil langkah terakhir.</p></>}
         <button type="button" className="secondary" disabled={graph.nodes.length === 1} onClick={() => {
           const next = graph.nodes.find(item => item.id !== node.id)?.id;
           if (next) { focusAfterRemoval.current = next; setSelected(next); setGraph(current => removeWorkflowNode(current, node.id)); }

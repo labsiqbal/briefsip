@@ -475,3 +475,66 @@ test('workflow output inbox survives restart with stable paging and idempotent r
     assert.deepEqual(reopened.notifications.map((item: any) => item.run), first.notifications.map((item: any) => item.run));
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('workflow channel outputs deliver once and recheck channel availability at completion', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-workflow-channel-output-'));
+  const options = { database: join(dir, 'state.sqlite') };
+  let app = await startApp(options);
+  async function request(path: string, body?: unknown, status = 200) {
+    const res = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    const data = await res.json(); assert.equal(res.status, status, JSON.stringify(data)); return data;
+  }
+  async function settled(id: string, status: string) {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const run = await request(`/api/workflow-runs/${id}`);
+      if (run.status === status) return run;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.fail(`Run did not reach ${status}`);
+  }
+  try {
+    const owner = await request('/api/agents', { id: randomUUID(), name: 'Owner', model: 'unused', instructions: 'Test' }, 201);
+    const other = await request('/api/agents', { id: randomUUID(), name: 'Other', model: 'unused', instructions: 'Test' }, 201);
+    let room = await request('/api/channels', { id: randomUUID(), name: 'Results', instructions: 'Results', members: [owner.id, other.id], lead: owner.id }, 201);
+    const graph = { entry: 'review', maxSteps: 2, nodes: [{ id: 'review', kind: 'approval', prompt: 'Publish?', yes: 'out' }, { id: 'out', kind: 'output', channel: room.id }] };
+    const workflow = await request(`/api/agents/${owner.id}/workflows`, { id: randomUUID(), revision: 0, name: 'Publish', graph });
+    await request(`/api/agents/${other.id}/workflows`, { id: randomUUID(), revision: 0, name: 'Invalid', graph: { ...graph, nodes: [graph.nodes[0], { ...graph.nodes[1], channel: randomUUID() }] } }, 409);
+    await request(`/api/agents/${owner.id}/workflows`, { id: randomUUID(), revision: 0, name: 'Invalid', graph: { ...graph, nodes: [graph.nodes[0], { ...graph.nodes[1], channel: '' }] } }, 400);
+    const launch = { id: randomUUID(), revision: 1, input: '<b>Exact result</b>' };
+    const run = await request(`/api/workflows/${workflow.id}/run`, launch);
+    const approval = await settled(run.id, 'approval');
+    const accept = { id: randomUUID(), revision: approval.revision, accepted: true };
+    await request(`/api/workflow-runs/${run.id}/approve`, accept);
+    await settled(run.id, 'done');
+    await request(`/api/workflow-runs/${run.id}/approve`, accept);
+    await request(`/api/workflows/${workflow.id}/run`, launch);
+    const messages = await request(`/api/channels/${room.id}/turns`);
+    assert.equal(messages.length, 1); assert.equal(messages[0].reply, launch.input);
+    assert.equal(messages[0].workflow_run, run.id); assert.equal(messages[0].agent, owner.id);
+    assert.equal((await request(`/api/agents/${owner.id}/turns`)).length, 0);
+    assert.equal((await request('/api/channels'))[0].activity, 1);
+    await app.close(); app = await startApp(options);
+    assert.deepEqual(await request(`/api/channels/${room.id}/turns`), messages);
+    for (const mode of ['archive', 'remove']) {
+      const next = await request(`/api/workflows/${workflow.id}/run`, { id: randomUUID(), revision: 1, input: mode });
+      const pending = await settled(next.id, 'approval');
+      room = await request(`/api/channels/${room.id}/edit`, { id: randomUUID(), revision: room.revision, name: room.name, instructions: room.instructions, archived: mode === 'archive', members: mode === 'remove' ? [other.id] : [owner.id, other.id], lead: other.id });
+      await request(`/api/workflow-runs/${next.id}/approve`, { id: randomUUID(), revision: pending.revision, accepted: true });
+      const failed = await settled(next.id, 'failed');
+      assert.equal(failed.last, mode); assert.equal(failed.steps.at(-1).status, 'failed');
+      assert.match(failed.error, /Channel output/);
+      assert.equal((await request(`/api/channels/${room.id}/turns`)).length, 1);
+      await request(`/api/workflows/${workflow.id}/edit`, { id: randomUUID(), revision: 1, name: 'Publish', graph }, 409);
+      room = await request(`/api/channels/${room.id}/edit`, { id: randomUUID(), revision: room.revision, name: room.name, instructions: room.instructions, archived: false, members: [owner.id, other.id], lead: owner.id });
+    }
+    assert.equal((await request('/api/workflow-notifications')).notifications.length, 1);
+    const snapshotRun = await request(`/api/workflows/${workflow.id}/run`, { id: randomUUID(), revision: 1, input: 'Snapshot output' });
+    const snapshotApproval = await settled(snapshotRun.id, 'approval');
+    await request(`/api/workflows/${workflow.id}/edit`, { id: randomUUID(), revision: 1, name: 'Inbox only', graph: { ...graph, nodes: [graph.nodes[0], { id: 'out', kind: 'output' }] } });
+    await request(`/api/workflow-runs/${snapshotRun.id}/approve`, { id: randomUUID(), revision: snapshotApproval.revision, accepted: true });
+    await settled(snapshotRun.id, 'done');
+    const snapshotMessages = await request(`/api/channels/${room.id}/turns`);
+    assert.equal(snapshotMessages.length, 2); assert.equal(snapshotMessages[1].reply, 'Snapshot output');
+    assert.equal((await request(`/api/workflow-runs/${snapshotRun.id}`)).version, 1);
+  } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
+});
