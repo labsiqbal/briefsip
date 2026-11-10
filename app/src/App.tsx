@@ -1,3 +1,4 @@
+import { CompactionPanel } from './CompactionPanel';
 import { MemoryPanel } from './MemoryPanel';
 import { SkillsPanel } from './SkillsPanel';
 import { BackupPanel } from './BackupPanel';
@@ -257,6 +258,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     {channel && <div className="recipient"><label htmlFor="recipient">Respons oleh</label><select id="recipient" value={pending?.automatic ? '@automatic' : pending?.recipient ?? recipient} disabled={!!pending || busy} onChange={event => { setRecipient(event.target.value); try { sessionStorage.setItem(recipientKey, event.target.value); } catch { setError('Pilihan penerima tidak tersimpan. Periksa kembali sebelum mengirim.'); } }}><option value="">Pilih agent</option>{channel.lead && <option value="@automatic">Otomatis melalui lead</option>}{members.map(member => <option key={member.id} value={member.id}>{member.name}{member.id === channel.lead ? ' (lead)' : ''}</option>)}</select></div>}
     {channel && <div className="recipient"><span>{channel.activity > channel.read_position ? 'Ada aktivitas belum dibaca' : 'Semua aktivitas sudah dibaca'}</span><button className="secondary" disabled={markingRead || channel.activity <= channel.read_position} onClick={() => { setMarkingRead(true); void onRead?.().catch(error => setError(message(error))).finally(() => setMarkingRead(false)); }}>Tandai semua dibaca</button></div>}
     <div className="recipient"><button ref={memoryButton} className="secondary" onClick={() => setShowMemory(true)}>Memori {channel ? 'channel' : 'agent'}</button></div>
+    <CompactionPanel path={path.replace(/\/turns$/, '/compaction')} request={api} />
     <ConversationFiles path={path.replace(/\/turns$/, '/files')} archived={archived} attached={pending?.files ?? attached} onAttach={attach} locked={!!pending || busy} />
     {(focusedTask || before) && <div className="recipient"><span>{focusedTask ? 'Keluarga tugas' : 'Riwayat lama'}</span><button className="secondary" onClick={() => { focusHistory.current = true; setTurns(null); setFocusedTask(''); setHistoryPages([]); focusedOnce.current = ''; nearBottom.current = true; }}>Kembali ke pesan terbaru</button></div>}
     <section className="transcript" aria-label="Riwayat percakapan" onScroll={event => { const el = event.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }}>

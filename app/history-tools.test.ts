@@ -16,6 +16,7 @@ test('agent history tools retrieve old originals and reject foreign conversation
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const data = JSON.parse(raw);
+    if (data.messages[0].content.startsWith('Summarize conversation history')) return res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Earlier details remain available through history tools.' } }] }));
     if (data.messages.at(-1).content?.startsWith('Future disclosure')) return res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Saved.' } }] }));
     if (duringRead) { const action = duringRead; duringRead = undefined; await action(); }
     const reads = data.messages.filter((m: { role: string }) => m.role === 'tool');
