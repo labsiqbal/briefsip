@@ -78,7 +78,10 @@ test('teammate messages correlate groups, isolate context, persist receipts and 
     while (!held.length) await new Promise(resolve => setTimeout(resolve, 10)); held.shift()!();
     const done = await until(path, request.id, row => row.status === 'done');
     const result = JSON.parse(done.reply); assert.equal(result.status, 'completed');
-    assert.deepEqual(result.replies.map((r: any) => r.reply).sort(), ['beta result', 'gamma result']);
+    assert.deepEqual(result.replies.map((r: any) => r.reply), ['gamma result']);
+    assert.equal(result.delivered_earlier.length, 1);
+    assert.equal(result.delivered_earlier[0].consumer, bypass);
+    assert.equal((await rows(path)).find((row: any) => row.id === bypass).receivedAgentReplies[0].reply, 'beta result');
     assert.equal(done.agentMessages.length, 2);
     const before = calls.length; await post(path, request, 202); await app.close(); app = await startApp(options);
     assert.equal((await rows(path)).find((r: any) => r.id === request.id).agentMessages.length, 2); assert.equal(calls.length, before);
