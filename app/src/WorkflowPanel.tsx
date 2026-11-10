@@ -3,6 +3,7 @@ import { WorkflowEditor, type Workflow, type WorkflowDraft } from './WorkflowEdi
 import { WorkflowSchedule } from './WorkflowSchedule';
 import { WorkflowWebhook, type WorkflowHook } from './WorkflowWebhook';
 import type { WorkflowGraph } from '../workflows';
+import { restoreWorkflowEditorDraft, workflowDraftMatches } from '../workflow-editor-state';
 import { restoreWorkflowCommand, type WorkflowCommand as Command } from '../workflow-command';
 
 type Agent = { id: string; name: string; model: string };
@@ -82,6 +83,13 @@ export function WorkflowPanel({ owner, agents, request, onBack, onOpen, onNaviga
     try {
       const result = await request<{ id: string } & Partial<WorkflowHook>>(command.path, command.body);
       if (JSON.parse(sessionStorage.getItem(storage) ?? 'null')?.body?.id === command.body.id) sessionStorage.removeItem(storage);
+      if (command.kind === 'save') {
+        const key = `briefsip:workflow-draft:${owner.id}:${command.workflow?.id ?? 'new'}`;
+        try {
+          const draft = restoreWorkflowEditorDraft(sessionStorage.getItem(key));
+          if (draft && draft.revision === command.body.revision && workflowDraftMatches(draft.name, draft.graph, command.body as unknown as WorkflowDraft, new Set(agents.map(agent => agent.id)))) sessionStorage.removeItem(key);
+        } catch { /* Preserve an unreadable or newer local draft. */ }
+      }
       if (!mounted.current) return false;
       setPending(null); setRefresh(value => value + 1);
       if (command.kind === 'schedule' && command.workflow?.id === selected?.id && version === navigation.current) setScheduleRefresh(value => value + 1);
@@ -118,7 +126,7 @@ export function WorkflowPanel({ owner, agents, request, onBack, onOpen, onNaviga
   }
   const locked = busy || !!pending || conflict || recovery.invalid;
   const banner = <>{recovery.invalid && <p className="error" role="alert">Permintaan tersimpan tidak dapat dibaca. Periksa riwayat sebelum mengirim ulang. <button className="secondary" onClick={() => { try { sessionStorage.removeItem(storage); setRecovery({ command: null, invalid: false }); } catch { setError('Penyimpanan situs belum dapat diakses.'); } }}>Abaikan data pemulihan</button></p>}{error && <p className="error" role="alert">{error}</p>}{pending && <p className="notice">Permintaan belum terkonfirmasi. <button className="secondary" disabled={busy} onClick={() => void execute(pending)}>Coba permintaan lagi</button></p>}{conflict && editing && <p className="notice">Draft tetap ditampilkan. Muat versi terbaru; perubahan graph sebelumnya dapat dipulihkan dengan Urungkan graph. <button className="secondary" disabled={busy} onClick={() => void reloadEdit()}>Muat versi terbaru</button></p>}</>;
-  if (editing) return <><div className="recipient">{banner}</div><WorkflowEditor key={editing === 'new' ? 'new' : editing.id} reload={editorReload} owner={owner} agents={agents} locked={locked} saved={editing === 'new' ? undefined : editing}
+  if (editing) return <><div className="recipient">{banner}</div><WorkflowEditor key={editing === 'new' ? 'new' : editing.id} reload={editorReload} owner={owner} agents={agents} locked={locked} saved={editing === 'new' ? undefined : editing} draftKey={`briefsip:workflow-draft:${owner.id}:${editing === 'new' ? 'new' : editing.id}`} pendingSave={pending?.kind === 'save'} onReload={() => void reloadEdit()}
     initial={pending?.kind === 'save' ? pending.body as unknown as WorkflowDraft : editing === 'new' ? undefined : editing}
     onBack={() => { navigate(); if (initial && !selected) onBack(); else { setEditing(null); setConflict(false); setRefresh(value => value + 1); } }}
     onSave={(draft, automatic) => execute({ kind: 'save', ...(automatic ? { autosave: true } : {}), workflow: editing === 'new' ? undefined : editing, path: editing === 'new' ? listPath : `/api/workflows/${editing.id}/edit`, body: { id: crypto.randomUUID(), ...draft } })} /></>;

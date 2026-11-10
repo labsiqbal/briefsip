@@ -1,19 +1,26 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { WorkflowGraph as GraphView } from './WorkflowGraph';
-import { editWorkflowHistory, moveWorkflowNode, workflowAutosaveDraft, workflowDraftMatches, type WorkflowHistory } from '../workflow-editor-state';
+import { editWorkflowHistory, moveWorkflowNode, restoreWorkflowEditorDraft, workflowAutosaveDraft, workflowDraftMatches, type WorkflowHistory } from '../workflow-editor-state';
 import { removeWorkflowNode, validateWorkflow, type WorkflowGraph, type WorkflowNode } from '../workflows.ts';
 
 export type Workflow = { id: string; agent: string; name: string; revision: number; graph: WorkflowGraph };
 export type WorkflowDraft = { name: string; graph: WorkflowGraph; revision: number };
 type Agent = { id: string; name: string; model: string };
 
-export function WorkflowEditor({ owner, agents, initial, saved, reload = 0, locked, onSave, onBack }: {
+export function WorkflowEditor({ owner, agents, initial, saved, reload = 0, locked: parentLocked, draftKey, pendingSave, onReload, onSave, onBack }: {
   owner: Agent; agents: Agent[]; initial?: WorkflowDraft; saved?: WorkflowDraft; locked: boolean;
   reload?: number;
+  draftKey: string; pendingSave: boolean; onReload: () => void;
   onSave: (draft: WorkflowDraft, automatic?: boolean) => Promise<boolean>; onBack: () => void;
 }) {
-  const [name, setName] = useState(initial?.name ?? '');
-  const [history, setHistory] = useState<WorkflowHistory>({ past: [], future: [], graph: initial?.graph ?? { entry: 'work', maxSteps: 20, nodes: [
+  const [recovery, setRecovery] = useState(() => {
+    try { return { draft: restoreWorkflowEditorDraft(sessionStorage.getItem(draftKey)), invalid: false, held: pendingSave }; }
+    catch { return { draft: null, invalid: true, held: pendingSave }; }
+  });
+  const [draftConflict, setDraftConflict] = useState(!!recovery.draft && recovery.draft.revision !== (saved?.revision ?? 0));
+  const locked = parentLocked || recovery.invalid || recovery.held || draftConflict;
+  const [name, setName] = useState((!recovery.held ? recovery.draft?.name : undefined) ?? initial?.name ?? '');
+  const [history, setHistory] = useState<WorkflowHistory>({ past: [], future: [], graph: (!recovery.held ? recovery.draft?.graph : undefined) ?? initial?.graph ?? { entry: 'work', maxSteps: 20, nodes: [
     { id: 'work', kind: 'agent', agent: owner.id, prompt: '', next: 'review' },
     { id: 'review', kind: 'approval', prompt: 'Setujui hasil untuk menyelesaikan workflow?', yes: 'output' },
     { id: 'output', kind: 'output' },
@@ -26,19 +33,35 @@ export function WorkflowEditor({ owner, agents, initial, saved, reload = 0, lock
     setHistory(current => editWorkflowHistory(current, typeof change === 'function' ? change(current.graph) : change));
   }
   const [error, setError] = useState('');
+  const [storageError, setStorageError] = useState(false);
   const saveRef = useRef(onSave), attempted = useRef('');
   saveRef.current = onSave;
+  async function submit(value: WorkflowDraft, automatic?: boolean) {
+    let raw: string | null = null;
+    try { raw = sessionStorage.getItem(draftKey); } catch { /* The command path reports unavailable storage. */ }
+    const accepted = await saveRef.current(value, automatic);
+    if (accepted) try { if (sessionStorage.getItem(draftKey) === raw) sessionStorage.removeItem(draftKey); } catch { /* Keep the recoverable draft if cleanup fails. */ }
+    return accepted;
+  }
   const draft = workflowAutosaveDraft(name, graph, saved, new Set(agents.map(agent => agent.id)));
   const stamp = draft ? JSON.stringify(draft) : '';
   useEffect(() => {
     if (locked || !stamp || attempted.current === stamp) return;
     const timer = setTimeout(() => {
       attempted.current = stamp; setError('');
-      void saveRef.current(JSON.parse(stamp) as WorkflowDraft, true);
+      void submit(JSON.parse(stamp) as WorkflowDraft, true);
     }, 400);
     return () => clearTimeout(timer);
   }, [stamp, locked]);
-  const dirty = saved ? !workflowDraftMatches(name, graph, saved, new Set(agents.map(agent => agent.id))) : !!name || history.past.length > 0;
+  const dirty = saved ? !workflowDraftMatches(name, graph, saved, new Set(agents.map(agent => agent.id))) : !!recovery.draft || !!name || history.past.length > 0;
+  useEffect(() => {
+    if (pendingSave || recovery.held || recovery.invalid || draftConflict) return;
+    try {
+      if (dirty) sessionStorage.setItem(draftKey, JSON.stringify({ name, graph, revision: saved?.revision ?? 0 }));
+      else sessionStorage.removeItem(draftKey);
+      setStorageError(false);
+    } catch { setStorageError(true); }
+  }, [name, graph, saved?.revision, dirty, draftKey, recovery.invalid, recovery.held, pendingSave, draftConflict]);
   useEffect(() => {
     if (!dirty) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); };
@@ -51,6 +74,7 @@ export function WorkflowEditor({ owner, agents, initial, saved, reload = 0, lock
   useEffect(() => {
     if (appliedReload.current === reload || !saved) return;
     appliedReload.current = reload; attempted.current = '';
+    setDraftConflict(false); setRecovery({ draft: null, invalid: false, held: false });
     setHistory(current => editWorkflowHistory(current, saved.graph)); setName(saved.name); setError('');
     heading.current?.focus();
   }, [reload, saved]);
@@ -75,11 +99,22 @@ export function WorkflowEditor({ owner, agents, initial, saved, reload = 0, lock
     event.preventDefault(); if (locked) return;
     try {
       const validated = validateWorkflow(graph, new Set(agents.map(agent => agent.id)));
-      setError(''); await onSave({ name: name.trim(), graph: validated, revision: saved?.revision ?? initial?.revision ?? 0 });
+      setError(''); await submit({ name: name.trim(), graph: validated, revision: saved?.revision ?? initial?.revision ?? 0 });
     } catch (error) { setError(error instanceof Error ? error.message : 'Workflow belum tersimpan.'); }
   }
   return <section className="setup workflow-panel"><h1 ref={heading} tabIndex={-1}>{initial ? 'Edit workflow' : 'Workflow baru'}</h1>
     <p className="muted">Susun langkah dan tujuan berikutnya. Persetujuan menunggu keputusan Anda. Perubahan tersimpan hanya berlaku untuk eksekusi baru.</p>
+    {recovery.held && !pendingSave && <p className="notice" role="alert">Permintaan sudah selesai. Periksa draft lokal sebelum melanjutkan edit. <button type="button" className="secondary" disabled={parentLocked} onClick={() => {
+      try {
+        const local = restoreWorkflowEditorDraft(sessionStorage.getItem(draftKey));
+        setRecovery({ draft: local, invalid: false, held: false });
+        setDraftConflict(!!local && local.revision !== (saved?.revision ?? 0));
+        if (local) { setName(local.name); setHistory(current => editWorkflowHistory(current, local.graph)); }
+      } catch { setRecovery({ draft: null, invalid: true, held: false }); }
+    }}>Periksa draft lokal</button></p>}
+    {storageError && <p className="error" role="alert">Draft belum tersimpan di browser. Jangan tutup halaman sebelum menyimpan ke server.</p>}
+    {recovery.invalid && <p className="error" role="alert">Draft browser tidak dapat dibaca. <button type="button" className="secondary" onClick={() => { if (window.confirm('Buang draft browser yang tidak dapat dibaca?')) try { sessionStorage.removeItem(draftKey); setRecovery({ draft: null, invalid: false, held: false }); } catch { setStorageError(true); } }}>Buang draft browser</button></p>}
+    {draftConflict && <p className="notice" role="alert">Draft berasal dari revisi lama. Muat versi terbaru sebelum menyimpan; graph draft tetap tersedia lewat Urungkan graph. <button type="button" className="secondary" disabled={parentLocked} onClick={onReload}>Muat versi terbaru</button></p>}
     {saved && <p className="muted" role="status">{locked ? 'Penyimpanan menunggu konfirmasi atau pemulihan.' : !dirty ? `Tersimpan, versi ${saved.revision}.` : draft ? attempted.current === stamp ? 'Perubahan belum tersimpan. Gunakan Simpan workflow untuk mencoba lagi.' : 'Perubahan disimpan otomatis setelah jeda mengetik.' : 'Lengkapi graph dan nama agar perubahan dapat disimpan.'}</p>}
     <form onSubmit={event => void save(event)}><fieldset disabled={locked}>
       <label>Nama workflow<input required maxLength={80} value={name} onChange={event => setName(event.target.value)} /></label>

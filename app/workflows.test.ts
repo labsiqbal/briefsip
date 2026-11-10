@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { removeWorkflowNode, validateWorkflow, workflowTransition } from './workflows.ts';
 import { restoreWorkflowCommand } from './workflow-command.ts';
 import { randomUUID } from 'node:crypto';
-import { editWorkflowHistory, moveWorkflowNode, workflowAutosaveDraft, workflowLayout, type WorkflowHistory } from './workflow-editor-state.ts';
+import { editWorkflowHistory, moveWorkflowNode, restoreWorkflowEditorDraft, workflowAutosaveDraft, workflowLayout, type WorkflowHistory } from './workflow-editor-state.ts';
 
 test('deleting a legacy approval rejection target leaves a saveable graph', () => {
   const graph = validateWorkflow({ entry: 'work', maxSteps: 5, nodes: [
@@ -149,4 +149,25 @@ test('autosave only submits valid changes on the acknowledged revision', () => {
   assert.equal(workflowAutosaveDraft('Renamed', changed, acknowledged, new Set()), null);
   const undone = editWorkflowHistory(editWorkflowHistory({ graph, past: [], future: [] }, changed), 'undo').graph;
   assert.deepEqual(workflowAutosaveDraft('Renamed', undone, acknowledged, new Set()), { name: 'Renamed', graph, revision: 4 });
+});
+
+
+test('local workflow drafts preserve incomplete edits without relaxing execution validation', () => {
+  const draft = { name: '', revision: 7, graph: { entry: '', maxSteps: 0, nodes: [
+    { id: 'work', kind: 'model', model: '', prompt: '', next: '' },
+    { id: 'check', kind: 'condition', operator: 'model', model: '', value: '', yes: '', no: '' },
+    { id: 'out', kind: 'output' },
+  ], positions: { work: { x: 200, y: 200 } } } };
+  assert.deepEqual(restoreWorkflowEditorDraft(JSON.stringify(draft)), draft);
+  assert.throws(() => validateWorkflow(draft.graph, new Set()));
+  assert.equal(restoreWorkflowEditorDraft(null), null);
+  for (const value of [null, [], { ...draft, revision: -1 }, { ...draft, revision: '7' }, { ...draft, name: 'x'.repeat(81) },
+    { ...draft, extra: true }, { ...draft, graph: { ...draft.graph, nodes: [null] } },
+    { ...draft, graph: { ...draft.graph, nodes: [{ id: 'work', kind: 'shell', command: 'ignored' }] } },
+    { ...draft, graph: { ...draft.graph, positions: { work: { x: -1, y: 200 } } } },
+    { ...draft, graph: { ...draft.graph, nodes: [...draft.graph.nodes, draft.graph.nodes[0]] } }]) assert.throws(() => restoreWorkflowEditorDraft(JSON.stringify(value)));
+  assert.throws(() => restoreWorkflowEditorDraft('x'.repeat(2 * 1024 * 1024 + 1)));
+  const history = { graph: restoreWorkflowEditorDraft(JSON.stringify(draft))!.graph, past: [], future: [] };
+  const latest = validateWorkflow({ entry: 'out', maxSteps: 1, nodes: [{ id: 'out', kind: 'output' }] }, new Set());
+  assert.deepEqual(editWorkflowHistory(editWorkflowHistory(history, latest), 'undo').graph, history.graph);
 });
