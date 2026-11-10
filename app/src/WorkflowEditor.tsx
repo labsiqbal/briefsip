@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { WorkflowGraph as GraphView } from './WorkflowGraph';
-import { editWorkflowHistory, moveWorkflowNode, type WorkflowHistory } from '../workflow-editor-state';
+import { editWorkflowHistory, moveWorkflowNode, workflowAutosaveDraft, workflowDraftMatches, type WorkflowHistory } from '../workflow-editor-state';
 import { removeWorkflowNode, validateWorkflow, type WorkflowGraph, type WorkflowNode } from '../workflows.ts';
 
 export type Workflow = { id: string; agent: string; name: string; revision: number; graph: WorkflowGraph };
 export type WorkflowDraft = { name: string; graph: WorkflowGraph; revision: number };
 type Agent = { id: string; name: string; model: string };
 
-export function WorkflowEditor({ owner, agents, initial, locked, onSave, onBack }: {
-  owner: Agent; agents: Agent[]; initial?: WorkflowDraft; locked: boolean;
-  onSave: (draft: WorkflowDraft) => Promise<void>; onBack: () => void;
+export function WorkflowEditor({ owner, agents, initial, saved, reload = 0, locked, onSave, onBack }: {
+  owner: Agent; agents: Agent[]; initial?: WorkflowDraft; saved?: WorkflowDraft; locked: boolean;
+  reload?: number;
+  onSave: (draft: WorkflowDraft, automatic?: boolean) => Promise<boolean>; onBack: () => void;
 }) {
   const [name, setName] = useState(initial?.name ?? '');
   const [history, setHistory] = useState<WorkflowHistory>({ past: [], future: [], graph: initial?.graph ?? { entry: 'work', maxSteps: 20, nodes: [
@@ -25,8 +26,34 @@ export function WorkflowEditor({ owner, agents, initial, locked, onSave, onBack 
     setHistory(current => editWorkflowHistory(current, typeof change === 'function' ? change(current.graph) : change));
   }
   const [error, setError] = useState('');
+  const saveRef = useRef(onSave), attempted = useRef('');
+  saveRef.current = onSave;
+  const draft = workflowAutosaveDraft(name, graph, saved, new Set(agents.map(agent => agent.id)));
+  const stamp = draft ? JSON.stringify(draft) : '';
+  useEffect(() => {
+    if (locked || !stamp || attempted.current === stamp) return;
+    const timer = setTimeout(() => {
+      attempted.current = stamp; setError('');
+      void saveRef.current(JSON.parse(stamp) as WorkflowDraft, true);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [stamp, locked]);
+  const dirty = saved ? !workflowDraftMatches(name, graph, saved, new Set(agents.map(agent => agent.id))) : !!name || history.past.length > 0;
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
   const heading = useRef<HTMLHeadingElement>(null);
+  const appliedReload = useRef(reload);
   useEffect(() => { heading.current?.focus(); }, []);
+  useEffect(() => {
+    if (appliedReload.current === reload || !saved) return;
+    appliedReload.current = reload; attempted.current = '';
+    setHistory(current => editWorkflowHistory(current, saved.graph)); setName(saved.name); setError('');
+    heading.current?.focus();
+  }, [reload, saved]);
   useEffect(() => {
     if (!focusAfterRemoval.current) return;
     const button = buttons.current.get(focusAfterRemoval.current);
@@ -48,11 +75,12 @@ export function WorkflowEditor({ owner, agents, initial, locked, onSave, onBack 
     event.preventDefault(); if (locked) return;
     try {
       const validated = validateWorkflow(graph, new Set(agents.map(agent => agent.id)));
-      setError(''); await onSave({ name: name.trim(), graph: validated, revision: initial?.revision ?? 0 });
+      setError(''); await onSave({ name: name.trim(), graph: validated, revision: saved?.revision ?? initial?.revision ?? 0 });
     } catch (error) { setError(error instanceof Error ? error.message : 'Workflow belum tersimpan.'); }
   }
   return <section className="setup workflow-panel"><h1 ref={heading} tabIndex={-1}>{initial ? 'Edit workflow' : 'Workflow baru'}</h1>
     <p className="muted">Susun langkah dan tujuan berikutnya. Persetujuan menunggu keputusan Anda. Perubahan tersimpan hanya berlaku untuk eksekusi baru.</p>
+    {saved && <p className="muted" role="status">{locked ? 'Penyimpanan menunggu konfirmasi atau pemulihan.' : !dirty ? `Tersimpan, versi ${saved.revision}.` : draft ? attempted.current === stamp ? 'Perubahan belum tersimpan. Gunakan Simpan workflow untuk mencoba lagi.' : 'Perubahan disimpan otomatis setelah jeda mengetik.' : 'Lengkapi graph dan nama agar perubahan dapat disimpan.'}</p>}
     <form onSubmit={event => void save(event)}><fieldset disabled={locked}>
       <label>Nama workflow<input required maxLength={80} value={name} onChange={event => setName(event.target.value)} /></label>
       <label>Langkah awal<select required value={graph.entry} onChange={event => setGraph({ ...graph, entry: event.target.value })}>{targets}</select></label>
@@ -83,6 +111,6 @@ export function WorkflowEditor({ owner, agents, initial, locked, onSave, onBack 
       <button type="button" className="secondary" disabled={graph.nodes.length >= 64} onClick={() => { let n = graph.nodes.length + 1; while (graph.nodes.some(node => node.id === `step${n}`)) n++; setGraph({ ...graph, nodes: [...graph.nodes, { id: `step${n}`, kind: 'output' }] }); }}>Tambah langkah</button>
     </fieldset>
     {error && <p className="error" role="alert">{error}</p>}
-    <div className="form-actions routine-actions"><button type="button" className="secondary" onClick={onBack}>Kembali ke workflow</button><button disabled={locked}>Simpan workflow</button></div></form>
+    <div className="form-actions routine-actions"><button type="button" className="secondary" onClick={() => { if (!dirty || window.confirm('Ada perubahan yang belum tersimpan. Keluar dari editor?')) onBack(); }}>Kembali ke workflow</button><button disabled={locked}>Simpan workflow</button></div></form>
   </section>;
 }

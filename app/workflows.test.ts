@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { removeWorkflowNode, validateWorkflow, workflowTransition } from './workflows.ts';
 import { restoreWorkflowCommand } from './workflow-command.ts';
 import { randomUUID } from 'node:crypto';
-import { editWorkflowHistory, moveWorkflowNode, workflowLayout, type WorkflowHistory } from './workflow-editor-state.ts';
+import { editWorkflowHistory, moveWorkflowNode, workflowAutosaveDraft, workflowLayout, type WorkflowHistory } from './workflow-editor-state.ts';
 
 test('deleting a legacy approval rejection target leaves a saveable graph', () => {
   const graph = validateWorkflow({ entry: 'work', maxSteps: 5, nodes: [
@@ -70,9 +70,10 @@ test('workflow recovery rejects malformed commands and preserves valid retry ide
   const retry = { kind: 'retry', workflow, path: `/api/workflow-runs/${randomUUID()}/retry`, body: { id: randomUUID(), revision: 3 } };
   const webhook = { kind: 'webhook', workflow, path: `/api/workflows/${workflow.id}/webhook`, body: { id: randomUUID(), revision: 0, enabled: false, rotate: true } };
   const removeWebhook = { ...webhook, body: { id: randomUUID(), revision: 1, remove: true, route: randomUUID() } };
-  for (const command of [run, save, approve, restore, schedule, retry, webhook, removeWebhook]) assert.deepEqual(restoreWorkflowCommand(JSON.stringify(command), owner, agents), command);
+  const autosave = { ...save, autosave: true, workflow, path: `/api/workflows/${workflow.id}/edit`, body: { ...save.body, revision: 1 } };
+  for (const command of [run, save, approve, restore, schedule, retry, webhook, removeWebhook, autosave]) assert.deepEqual(restoreWorkflowCommand(JSON.stringify(command), owner, agents), command);
   assert.equal(restoreWorkflowCommand(null, owner, agents), null);
-  for (const command of [{ ...removeWebhook, body: { ...removeWebhook.body, route: 'invalid' } }, { ...webhook, body: { ...webhook.body, secret: 'must-not-persist' } }, { ...webhook, body: { ...webhook.body, rotate: 'yes' } }, { kind: 'run' }, { kind: 'save', path: '/api/agents/x/workflows', body: { id: 'x', name: 'bad', graph: {} } },
+  for (const command of [{ ...run, autosave: true }, { ...save, autosave: true }, { ...autosave, autosave: 'yes' }, { ...removeWebhook, body: { ...removeWebhook.body, route: 'invalid' } }, { ...webhook, body: { ...webhook.body, secret: 'must-not-persist' } }, { ...webhook, body: { ...webhook.body, rotate: 'yes' } }, { kind: 'run' }, { kind: 'save', path: '/api/agents/x/workflows', body: { id: 'x', name: 'bad', graph: {} } },
     { ...save, body: { ...save.body, graph: {} } }, { ...run, workflow: { ...workflow, agent: randomUUID() } },
     { ...run, path: '/api/agents' }, { ...approve, body: { ...approve.body, accepted: 'yes' } },
     { ...run, body: { ...run.body, revision: -1 } }, { ...run, workflow: { ...workflow, graph: {} } }, { ...restore, body: { ...restore.body, version: '1' } },
@@ -131,4 +132,21 @@ test('workflow positions validate, survive edits and undo, and do not affect tra
   }
   const unusual = validateWorkflow({ entry: 'constructor', maxSteps: 1, nodes: [{ id: 'constructor', kind: 'output' }], positions: {} }, new Set());
   assert.equal(workflowLayout(unusual)[0].x, 64);
+});
+
+
+test('autosave only submits valid changes on the acknowledged revision', () => {
+  const graph = validateWorkflow({ entry: 'out', maxSteps: 2, nodes: [{ id: 'out', kind: 'output' }] }, new Set());
+  const saved = { name: 'Saved', graph, revision: 3 };
+  assert.equal(workflowAutosaveDraft('New', graph, undefined, new Set()), null);
+  assert.equal(workflowAutosaveDraft('Saved ', graph, saved, new Set()), null);
+  for (const name of ['', ' ', 'x'.repeat(81)]) assert.equal(workflowAutosaveDraft(name, graph, saved, new Set()), null);
+  assert.equal(workflowAutosaveDraft('Saved', { ...graph, entry: '' }, saved, new Set()), null);
+  const changed = moveWorkflowNode(graph, 'out', 900, 700);
+  const draft = workflowAutosaveDraft('Renamed ', changed, saved, new Set());
+  assert.deepEqual(draft, { name: 'Renamed', graph: changed, revision: 3 });
+  const acknowledged = { ...draft!, revision: 4 };
+  assert.equal(workflowAutosaveDraft('Renamed', changed, acknowledged, new Set()), null);
+  const undone = editWorkflowHistory(editWorkflowHistory({ graph, past: [], future: [] }, changed), 'undo').graph;
+  assert.deepEqual(workflowAutosaveDraft('Renamed', undone, acknowledged, new Set()), { name: 'Renamed', graph, revision: 4 });
 });
