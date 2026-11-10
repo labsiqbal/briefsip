@@ -115,7 +115,7 @@ function ConversationFiles({ path, archived, attached, onAttach, locked }: { pat
     finally { setBusy(false); }
   }
   return <details className="conversation-files" onToggle={event => setOpen(event.currentTarget.open)}><summary>File percakapan</summary>
-    <p className="muted">Maksimum 10 MiB per file. Pilih lampiran untuk dikirim bersama pesan berikutnya. Maksimum empat file teks UTF-8, total 32 KiB.</p>
+    <p className="muted">Maksimum 10 MiB per file. Pilih lampiran untuk dikirim bersama pesan berikutnya. Maksimum empat lampiran: teks UTF-8 total 32 KiB dan gambar PNG/JPEG/WebP total 4 MiB. Pilih model yang mendukung gambar.</p>
     <form onSubmit={upload}><label>File<input ref={input} type="file" disabled={busy || loading || !!pending.current?.file || (archived && !pending.current)} onChange={event => setSelected(event.target.files?.[0] ?? null)} /></label><button disabled={busy || loading || (archived && !pending.current) || (!selected && !pending.current?.file)}>{busy ? 'Memproses...' : pending.current ? 'Coba unggahan lagi' : 'Unggah file'}</button></form>
     {pending.current && <p className="notice">Unggahan {pending.current.name} belum terkonfirmasi. Pilih kembali file yang sama atau <button className="secondary" disabled={busy || loading} onClick={() => void checkPending()}>Periksa status unggahan</button></p>}
     {error && <p className="error" role="alert">{error} {!pending.current && <button className="secondary" disabled={busy || loading} onClick={() => setReload(value => value + 1)}>Muat ulang file</button>}</p>}
