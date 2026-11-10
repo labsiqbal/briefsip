@@ -146,6 +146,26 @@ test('HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupt
     assert.deepEqual((await request(channelEditPath, editedChannel)).body, changedChannel.body);
     assert.equal((await request(channelEditPath, { ...editedChannel, id: randomUUID() })).status, 409);
     assert.equal((await request('/api/channels', channel)).body.name, 'Renamed room');
+    const blockedTurn = { id: randomUUID(), text: 'hang', recipient: profile.id };
+    await request(channelPath, blockedTurn); await until(channelPath, 'running');
+    const heldTurn = { id: randomUUID(), text: 'held-task', recipient: profile.id };
+    await request(channelPath, heldTurn);
+    const pause = { id: randomUUID(), revision: 1 };
+    const heldPath = `${channelPath}/${heldTurn.id}`;
+    const paused = await request(`${heldPath}/pause`, pause);
+    assert.equal(paused.body.paused, 1); assert.equal(paused.body.revision, 2);
+    assert.deepEqual((await request(`${heldPath}/pause`, pause)).body, paused.body);
+    assert.equal((await request(`${heldPath}/resume`, { id: randomUUID(), revision: 1 })).status, 409);
+    await app.close(); app = await startApp(options);
+    assert(!calls.includes('held-task'));
+    assert.equal((await request(`${heldPath}/reassign`, { id: randomUUID(), revision: 2, recipient: other.id })).status, 200);
+    assert.equal((await until(channelPath, 'done')).at(-1).agent, other.id);
+    assert.equal(calls.filter(text => text === 'held-task').length, 1);
+    assert.deepEqual((await request(`${heldPath}/pause`, pause)).body, paused.body);
+    assert.equal((await request(channelPath)).body.find((turn: { id: string }) => turn.id === heldTurn.id).status, 'done');
+    const interruptedPath = `${channelPath}/${blockedTurn.id}`;
+    assert.equal((await request(`${interruptedPath}/resume`, { id: randomUUID(), revision: 1 })).status, 409);
+    assert.equal((await request(`${heldPath}/pause`, { id: randomUUID(), revision: 3 })).status, 409);
     const archiveHang = { id: randomUUID(), text: 'hang', recipient: other.id };
     await request(channelPath, archiveHang); await until(channelPath, 'running');
     await request(channelPath, { id: randomUUID(), text: 'archive-never-sent', recipient: other.id });
@@ -252,7 +272,7 @@ test('HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupt
     await app.close();
     app = await startApp({ database: options.database });
     assert.equal((await request('/api/channels')).body.length, 4);
-    assert.equal((await request(channelPath)).body.length, 8);
+    assert.equal((await request(channelPath)).body.length, 10);
     assert.equal((await request(channelPath)).body[2].status, 'cancelled');
     assert.equal((await request('/api/agents')).body.configured, false);
     assert.equal((await request(path, { id: randomUUID(), text: 'no provider' })).status, 503);
@@ -357,7 +377,11 @@ test('legacy agent migration preserves create retries across later edits', async
   const legacyChannel = { id: randomUUID(), name: 'Legacy room', instructions: 'Original purpose.', lead: original.id, members: [original.id] };
   db.exec('CREATE TABLE channels (id TEXT PRIMARY KEY, name TEXT NOT NULL, instructions TEXT NOT NULL, lead TEXT) STRICT; CREATE TABLE channel_members (channel TEXT NOT NULL, agent TEXT NOT NULL, PRIMARY KEY(channel,agent)) STRICT');
   db.prepare('INSERT INTO channels VALUES (?,?,?,?)').run(legacyChannel.id, legacyChannel.name, legacyChannel.instructions, legacyChannel.lead);
-  db.prepare('INSERT INTO channel_members VALUES (?,?)').run(legacyChannel.id, original.id); db.close();
+  db.prepare('INSERT INTO channel_members VALUES (?,?)').run(legacyChannel.id, original.id);
+  db.exec(`CREATE TABLE turns (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL,
+    agent TEXT NOT NULL, channel TEXT, text TEXT NOT NULL, reply TEXT, status TEXT NOT NULL, error TEXT, created TEXT NOT NULL) STRICT`);
+  for (const channel of [legacyChannel.id, null]) db.prepare("INSERT INTO turns(id,agent,channel,text,reply,status,created) VALUES (?,?,?,?,?,'done',?)").run(randomUUID(), original.id, channel, 'Old request', 'Old result', new Date().toISOString());
+  db.close();
   let app = await startApp({ database });
   async function post(path: string, data: unknown) {
     const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
@@ -366,6 +390,8 @@ test('legacy agent migration preserves create retries across later edits', async
   try {
     const current = await post('/api/agents', original); assert.equal(current.revision, 1);
     const oldRoom = await post('/api/channels', legacyChannel); assert.equal(oldRoom.revision, 1); assert.equal(oldRoom.archived, 0);
+    assert.equal(oldRoom.activity, 1); assert.equal(oldRoom.read_position, 0);
+    await post(`/api/channels/${legacyChannel.id}/read`, { id: randomUUID(), position: 1 });
     await post(`/api/channels/${legacyChannel.id}/edit`, { ...legacyChannel, id: randomUUID(), revision: 1, archived: true, name: 'Archived legacy' });
     const retryRoom = await post('/api/channels', legacyChannel); assert.equal(retryRoom.archived, 1); assert.equal(retryRoom.name, 'Archived legacy');
 
@@ -374,9 +400,72 @@ test('legacy agent migration preserves create retries across later edits', async
     const firstResult = await post(path, first);
     await post(path, { ...first, id: randomUUID(), revision: 2, name: 'Second edit' });
     await app.close(); app = await startApp({ database });
+    const readRoom = await post('/api/channels', legacyChannel); assert.equal(readRoom.activity, 1); assert.equal(readRoom.read_position, 1);
     assert.deepEqual(await post(path, first), firstResult);
     const retried = await post('/api/agents', original);
     assert.equal(retried.id, original.id); assert.equal(retried.name, 'Second edit'); assert.equal(retried.revision, 3);
     const directory = await (await fetch(app.origin + '/api/agents')).json(); assert.equal(directory.agents.length, 1);
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('channel read positions are durable, monotone and bound to observed activity', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-reads-'));
+  let releaseReply: (() => void) | undefined;
+  const provider = createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    if (JSON.parse(raw).messages.at(-1).content === 'Reply after read') releaseReply = () => res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Late reply' } }] }));
+  });
+  await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+  const address = provider.address(); assert(address && typeof address !== 'string');
+  const options = { database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` };
+  let app = await startApp(options);
+  const post = async (path: string, body: unknown) => {
+    const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    return { status: response.status, body: await response.json() };
+  };
+  try {
+    const agent = (await post('/api/agents', { id: randomUUID(), name: 'Reader', model: 'fixture', instructions: 'Help.' })).body;
+    const room = (await post('/api/channels', { id: randomUUID(), name: 'Read state', instructions: 'Help.', members: [agent.id], lead: agent.id })).body;
+    const path = `/api/channels/${room.id}`, turn = randomUUID();
+    const state = async () => (await (await fetch(app.origin + '/api/channels')).json()).find((row: { id: string }) => row.id === room.id);
+    assert.equal(room.activity, 0); assert.equal(room.read_position, 0);
+    assert.equal((await post(`${path}/turns`, { id: turn, text: 'Queued work' })).status, 202);
+    const observed = await state(); assert(observed.activity > 0);
+    const read = { id: randomUUID(), position: observed.activity };
+    assert.equal((await post(`${path}/read`, read)).body.read_position, observed.activity);
+    await post(`${path}/turns/${turn}/cancel`, { id: randomUUID() });
+    const changed = await state(); assert(changed.activity > changed.read_position);
+    assert.equal((await post(`${path}/read`, read)).body.read_position, observed.activity);
+    assert.equal((await post(`${path}/read`, { id: randomUUID(), position: changed.activity + 1 })).status, 400);
+    assert.equal((await post(`${path}/read`, { id: randomUUID(), position: -1 })).status, 400);
+    assert.equal((await post(`${path}/read`, { id: randomUUID(), position: 1.5 })).status, 400);
+    await post(`${path}/read`, { id: randomUUID(), position: changed.activity });
+    await post(`${path}/read`, { id: randomUUID(), position: 0 });
+    assert.equal((await state()).read_position, changed.activity);
+    await post(`/api/agents/${agent.id}/turns`, { id: randomUUID(), text: 'Direct work' });
+    assert.equal((await state()).activity, changed.activity);
+    await app.close(); app = await startApp(options);
+    assert.equal((await state()).read_position, changed.activity);
+    assert.equal((await state()).activity, changed.activity);
+    assert.equal((await post(`/api/channels/${randomUUID()}/read`, { id: randomUUID(), position: 0 })).status, 404);
+    const lateTurn = randomUUID();
+    await post(`${path}/turns`, { id: lateTurn, text: 'Reply after read' });
+    for (let i = 0; i < 100 && !releaseReply; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert(releaseReply);
+    const beforeReply = await state();
+    const beforeRead = { id: randomUUID(), position: beforeReply.activity };
+    await post(`${path}/read`, beforeRead);
+    releaseReply();
+    let late;
+    for (let i = 0; i < 100; i++) {
+      late = (await (await fetch(app.origin + `${path}/turns`)).json()).find((row: { id: string }) => row.id === lateTurn);
+      if (late.status === 'done') break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(late.reply, 'Late reply');
+    await post(`${path}/read`, beforeRead);
+    const afterReply = await state();
+    assert(afterReply.activity > afterReply.read_position);
+    assert.equal(afterReply.read_position, beforeReply.activity);
+  } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });

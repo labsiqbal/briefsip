@@ -10,6 +10,7 @@ import { startApp } from './server.ts';
 test('coordination: durable delegation, transfer, cancellation, rejection and recovery', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-coordination-'));
   const calls: { model: string; task: string }[] = [];
+  let allowPausedChild = false;
   let releaseSavedChild: (() => void) | undefined;
   let parallelCount = 0;
   let releaseParallel!: () => void;
@@ -20,14 +21,14 @@ test('coordination: durable delegation, transfer, cancellation, rejection and re
     const task = data.messages.findLast((m: { role: string }) => m.role === 'user').content;
     calls.push({ model: data.model, task });
     const toolResult = data.messages.at(-1).role === 'tool' ? JSON.parse(data.messages.at(-1).content) : null;
-    if (task === 'child-hang' || task === 'block-parent') return;
+    if (task === 'child-hang' || task === 'block-parent' || (task === 'paused-child' && !allowPausedChild)) return;
     if (task === 'saved-child') await new Promise<void>(resolve => { releaseSavedChild = resolve; });
     if (task === 'parallel-delegate' && !toolResult) { parallelCount++; if (parallelCount === 4) releaseParallel(); await parallelGate; }
-    const shouldCall = !toolResult && ['save-result', 'parallel-delegate', 'nested', 'nested-child', 'delegate', 'transfer', 'cancel-tree', 'restart-tree', 'outsider', 'cycle'].includes(task) || task === 'cycle';
+    const shouldCall = !toolResult && ['pause-tree', 'save-result', 'parallel-delegate', 'nested', 'nested-child', 'delegate', 'transfer', 'cancel-tree', 'restart-tree', 'outsider', 'cycle'].includes(task) || task === 'cycle';
     if (shouldCall) {
       const recipient = task === 'outsider' ? randomUUID() : data.tools[0].function.parameters.properties.recipient.enum[0];
       const name = task === 'transfer' || task === 'cycle' ? 'transfer_task' : 'delegate_task';
-      const childTask = ['cancel-tree', 'restart-tree'].includes(task) ? 'child-hang' : task === 'save-result' ? 'saved-child' : task === 'nested' ? 'nested-child' : 'child-work';
+      const childTask = ['cancel-tree', 'restart-tree'].includes(task) ? 'child-hang' : task === 'pause-tree' ? 'paused-child' : task === 'save-result' ? 'saved-child' : task === 'nested' ? 'nested-child' : 'child-work';
       res.end(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', content: null, tool_calls: [{ id: randomUUID(), type: 'function', function: { name, arguments: JSON.stringify({ recipient, task: childTask }) } }] } }] }));
     } else {
       const content = toolResult ? `parent:${toolResult.reply ?? toolResult.status}` : 'child-result';
@@ -93,6 +94,28 @@ test('coordination: durable delegation, transfer, cancellation, rejection and re
     assert(!cancelledParent.error.includes('sebelum dikirim'));
     await waitTurn(path, child.id, 'cancelled');
     assert.equal((await waitTurn(path, parent.id, 'done')).reply, 'parent:child-result');
+    const pausing = { id: randomUUID(), text: 'pause-tree', recipient: alpha.id };
+    await post(path, pausing);
+    for (let i = 0; i < 100; i++) {
+      child = (await rows(path)).find((row: { parent: string }) => row.parent === pausing.id);
+      if (child?.status === 'running') break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(child.status, 'running');
+    await post(`${path}/${pausing.id}/pause`, { id: randomUUID(), revision: 1 });
+    assert.equal((await waitTurn(path, pausing.id, 'interrupted')).paused, 1);
+    assert.equal((await waitTurn(path, child.id, 'interrupted')).paused, 1);
+    await app.close(); app = await startApp(options);
+    assert.equal(calls.filter(call => call.task === 'paused-child').length, 1);
+    const childResume = await fetch(`${app.origin}${path}/${child.id}/resume`, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ id: randomUUID(), revision: 2, acknowledgeUncertain: true }) });
+    assert.equal(childResume.status, 409);
+    assert.match((await childResume.json()).error, /induk/);
+    assert.equal((await waitTurn(path, child.id, 'interrupted')).paused, 1);
+    allowPausedChild = true;
+    await post(`${path}/${pausing.id}/resume`, { id: randomUUID(), revision: 2, acknowledgeUncertain: true });
+    assert.equal((await waitTurn(path, pausing.id, 'done')).reply, 'parent:child-result');
+    assert.equal(calls.filter(call => call.task === 'paused-child').length, 2);
+    assert.equal((await rows(path)).filter((row: { parent: string }) => row.parent === pausing.id).length, 1);
     const archiveParent = { id: randomUUID(), text: 'cancel-tree', recipient: alpha.id };
     await post(path, archiveParent);
     for (let i = 0; i < 100; i++) {
