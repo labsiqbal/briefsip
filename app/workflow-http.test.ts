@@ -318,3 +318,36 @@ test('workflow webhooks authenticate, deduplicate, ignore busy runs and recover 
     assert.equal(new Set(events.filter((row: any) => row.delivery === 'disabled').map((row: any) => row.route)).size, 2);
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+
+test('workspace workflow directory pages across owners and keeps per-agent lists scoped', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-workflow-directory-'));
+  const app = await startApp({ database: join(dir, 'state.sqlite') });
+  async function request(path: string, body?: unknown, status = 200) {
+    const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    const data = await response.json(); assert.equal(response.status, status, JSON.stringify(data)); return data;
+  }
+  try {
+    assert.deepEqual(await request('/api/workflows'), { workflows: [], next_after: null });
+    const owners = [];
+    for (const name of ['Alpha', 'Beta']) owners.push(await request('/api/agents', { id: randomUUID(), name, model: 'fixture', instructions: 'Test' }, 201));
+    const workflows = [];
+    for (let index = 0; index < 21; index++) {
+      const agent = owners[index % 2];
+      workflows.push(await request(`/api/agents/${agent.id}/workflows`, { id: randomUUID(), revision: 0, name: `Workflow ${index}`, graph: { entry: 'out', maxSteps: 1, nodes: [{ id: 'out', kind: 'output' }] } }));
+    }
+    const first = await request('/api/workflows'); assert.equal(first.workflows.length, 20); assert(first.next_after);
+    const second = await request(`/api/workflows?after=${first.next_after}`); assert.equal(second.workflows.length, 1); assert.equal(second.next_after, null);
+    const rows = [...first.workflows, ...second.workflows];
+    assert.deepEqual(rows.map(row => row.id), workflows.map(row => row.id).sort());
+    for (const row of rows) assert.equal(row.owner_name, owners.find(owner => owner.id === row.agent)?.name);
+    for (const owner of owners) {
+      const scoped = await request(`/api/agents/${owner.id}/workflows`);
+      assert.deepEqual(scoped.workflows.map((row: any) => row.id), rows.filter(row => row.agent === owner.id).map(row => row.id));
+    }
+    const workflow = rows[0];
+    await request(`/api/workflows/${workflow.id}/edit`, { id: randomUUID(), revision: 1, name: 'Changed from directory', graph: workflow.graph });
+    assert.equal((await request('/api/workflows')).workflows[0].revision, 2);
+    for (const query of ['after=bad', 'before=1', 'owner=anything']) await request(`/api/workflows?${query}`, undefined, 400);
+  } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
+});
