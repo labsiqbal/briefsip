@@ -181,6 +181,8 @@ test('graph view identifies unconditional cycles and latest run attempt without 
     { id: 'out', kind: 'output' as const },
   ] };
   assert.deepEqual(workflowUnconditionalCycles(graph), [['a', 'b']]);
+  assert.equal(graph.nodes[0].kind, 'model');
+  if (graph.nodes[0].kind !== 'model') assert.fail('Expected model fixture');
   assert.deepEqual(workflowUnconditionalCycles({ ...graph, nodes: [graph.nodes[0], { id: 'b', kind: 'condition', operator: 'equals', value: 'yes', yes: 'a', no: 'out' }, graph.nodes[2]] }), []);
   assert.deepEqual(workflowUnconditionalCycles({ ...graph, nodes: [{ ...graph.nodes[0], next: 'a' }, graph.nodes[2]] }), [['a']]);
   assert.deepEqual(workflowUnconditionalCycles({ ...graph, nodes: [{ ...graph.nodes[0], next: '' }, graph.nodes[2]] }), []);
