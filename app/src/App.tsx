@@ -4,7 +4,7 @@ import '@fontsource/ibm-plex-sans/latin-400.css';
 import '@fontsource/ibm-plex-sans/latin-600.css';
 import './style.css';
 
-type Agent = { id: string; name: string; model: string; instructions: string };
+type Agent = { revision: number; id: string; name: string; model: string; instructions: string };
 type Channel = { id: string; name: string; instructions: string; members: string[]; lead: string | null };
 type Turn = { parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
 type Directory = { agents: Agent[]; configured: boolean; defaultModel: string };
@@ -19,7 +19,7 @@ async function api<T>(path: string, data?: unknown): Promise<T> {
 }
 const message = (error: unknown) => error instanceof Error ? error.message : 'Koneksi gagal. Coba lagi.';
 
-function Chat({ agent, configured, channel, members = [] }: { agent: Agent | Channel; configured: boolean; channel?: Channel; members?: Agent[] }) {
+function Chat({ agent, configured, channel, members = [], onEdit }: { onEdit?: () => void; agent: Agent | Channel; configured: boolean; channel?: Channel; members?: Agent[] }) {
   const scope = channel ? `channel:${agent.id}` : agent.id;
   const path = `/api/${channel ? 'channels' : 'agents'}/${agent.id}/turns`;
   const [focusedTask, setFocusedTask] = useState('');
@@ -102,7 +102,7 @@ function Chat({ agent, configured, channel, members = [] }: { agent: Agent | Cha
   }
   const active = turns?.filter(turn => turn.status === 'queued' || turn.status === 'running').length ?? 0;
   return <>
-    <header className="chat-header"><span className="avatar">{agent.name.slice(0, 1)}</span><div><h1>{agent.name}</h1><p>{channel ? `${members.length} anggota` : (agent as Agent).model}</p></div><span className="activity" role="status">{active ? `${active} pesan diproses` : channel ? 'Channel bersama' : 'Percakapan langsung'}</span></header>
+    <header className="chat-header"><span className="avatar">{agent.name.slice(0, 1)}</span><div><h1>{agent.name}</h1><p>{channel ? `${members.length} anggota` : (agent as Agent).model}</p></div><span className="activity" role="status">{active ? `${active} pesan diproses` : channel ? 'Channel bersama' : 'Percakapan langsung'}</span>{onEdit && <button className="secondary" onClick={onEdit}>Edit profil</button>}</header>
     {channel && <div className="recipient"><label htmlFor="recipient">Respons oleh</label><select id="recipient" value={pending?.automatic ? '@automatic' : pending?.recipient ?? recipient} disabled={!!pending || busy} onChange={event => { setRecipient(event.target.value); try { sessionStorage.setItem(recipientKey, event.target.value); } catch { setError('Pilihan penerima tidak tersimpan. Periksa kembali sebelum mengirim.'); } }}><option value="">Pilih agent</option>{channel.lead && <option value="@automatic">Otomatis melalui lead</option>}{members.map(member => <option key={member.id} value={member.id}>{member.name}{member.id === channel.lead ? ' (lead)' : ''}</option>)}</select></div>}
     {focusedTask && <div className="recipient"><button className="secondary" onClick={() => { setFocusedTask(''); focusedOnce.current = ''; nearBottom.current = true; }}>Kembali ke pesan terbaru</button></div>}
     <section className="transcript" aria-label="Riwayat percakapan" onScroll={event => { const el = event.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }}>
@@ -129,22 +129,31 @@ function Chat({ agent, configured, channel, members = [] }: { agent: Agent | Cha
   </>;
 }
 
-function NewAgent({ model, onCreated, onCancel }: { model: string; onCreated: (agent: Agent) => void; onCancel?: () => void }) {
+function AgentForm({ model, profile, onCreated, onCancel, onReload }: { model: string; profile?: Agent; onCreated: (agent: Agent) => void; onCancel?: () => void; onReload?: () => void }) {
+  const [models, setModels] = useState<string[]>([]);
+  const [catalogStatus, setCatalogStatus] = useState('Memuat daftar model...');
+  useEffect(() => {
+    let stopped = false;
+    void api<{ models: string[] }>('/api/models').then(data => {
+      if (!stopped) { setModels(data.models); setCatalogStatus(data.models.length ? `${data.models.length} model tersedia. Pilih saran atau masukkan ID model.` : 'Provider belum menampilkan model. Masukkan ID model yang tersedia di akunmu.'); }
+    }).catch(error => { if (!stopped) setCatalogStatus(`${message(error)} ID model tetap bisa diisi manual.`); });
+    return () => { stopped = true; };
+  }, []);
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
-  const pending = useRef<Agent | null>(null);
+  const pending = useRef<{ id: string; name: string; model: string; instructions: string; revision?: number } | null>(null);
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (busy) return;
     const form = new FormData(event.currentTarget);
-    const data = { id: pending.current?.id ?? crypto.randomUUID(), name: String(form.get('name')).trim(), model: String(form.get('model')).trim(), instructions: String(form.get('instructions')).trim() };
+    const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision } : {}), name: String(form.get('name')).trim(), model: String(form.get('model')).trim(), instructions: String(form.get('instructions')).trim() };
     pending.current = data; setBusy(true); setError('');
-    try { onCreated(await api<Agent>('/api/agents', data)); } catch (error) { if (error instanceof HttpError && error.status < 500) pending.current = null; setError(message(error)); } finally { setBusy(false); }
+    try { onCreated(await api<Agent>(profile ? `/api/agents/${profile.id}/edit` : '/api/agents', data)); } catch (error) { if (error instanceof HttpError && error.status < 500) pending.current = null; setError(message(error)); } finally { setBusy(false); }
   }
-  return <section className="setup"><h1>Agent baru</h1><p className="muted">Beri nama, pilih model, lalu jelaskan cara kerjanya.</p><form onSubmit={create}>
-    <label>Nama<input name="name" required maxLength={80} readOnly={!!pending.current} autoFocus placeholder="Misalnya: Rekan riset" /></label>
-    <label>Model<input name="model" required maxLength={160} readOnly={!!pending.current} defaultValue={model} placeholder="ID model dari provider kamu" /></label>
-    <label>Instruksi<textarea name="instructions" required maxLength={8000} readOnly={!!pending.current} rows={6} placeholder="Apa tugas agent ini? Bagaimana hasilnya perlu disampaikan?" /></label>
+  return <section className="setup"><h1>{profile ? 'Edit profil agent' : 'Agent baru'}</h1><p className="muted">Beri nama, pilih model, lalu jelaskan cara kerjanya.</p><form onSubmit={create}>
+    <label>Nama<input name="name" required maxLength={80} readOnly={!!pending.current} autoFocus defaultValue={profile?.name} placeholder="Misalnya: Rekan riset" /></label>
+    <label>Model<input name="model" list="provider-models" aria-describedby="model-catalog-status" required maxLength={160} readOnly={!!pending.current} defaultValue={profile?.model ?? model} placeholder="ID model dari provider kamu" /><datalist id="provider-models">{models.map(id => <option key={id} value={id} />)}</datalist><span id="model-catalog-status" className="muted" role="status">{catalogStatus}</span></label>
+    <label>Instruksi<textarea name="instructions" required maxLength={8000} readOnly={!!pending.current} defaultValue={profile?.instructions} rows={6} placeholder="Apa tugas agent ini? Bagaimana hasilnya perlu disampaikan?" /></label>
     {error && <p role="alert" className="error">{error}</p>}
-    <div className="form-actions">{onCancel && <button type="button" className="secondary" onClick={onCancel}>Batal</button>}<button disabled={busy}>{busy ? 'Menyimpan...' : 'Buat agent'}</button></div>
+    <div className="form-actions">{onCancel && <button type="button" className="secondary" onClick={onCancel}>Batal</button>}<button disabled={busy}>{busy ? 'Menyimpan...' : profile ? 'Simpan profil' : 'Buat agent'}</button>{profile && error && onReload && <button type="button" className="secondary" onClick={onReload}>Buang perubahan dan muat ulang</button>}</div>
   </form></section>;
 }
 
@@ -175,6 +184,8 @@ function App() {
   const [directory, setDirectory] = useState<Directory | null>(null); const [selected, setSelected] = useState('');
   const [channels, setChannels] = useState<Channel[]>([]), [selectedChannel, setSelectedChannel] = useState('');
   const [creatingChannel, setCreatingChannel] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editReload, setEditReload] = useState(0);
   const [creating, setCreating] = useState(false); const [error, setError] = useState('');
   async function load() {
     try { const [data, rooms] = await Promise.all([api<Directory>('/api/agents'), api<Channel[]>('/api/channels')]); setDirectory(data); setChannels(rooms); setSelected(id => id || data.agents[0]?.id || ''); setError(''); }
@@ -185,13 +196,13 @@ function App() {
   const channel = channels.find(channel => channel.id === selectedChannel);
   return <div className="workspace">
     <aside className="sidebar"><a className="brand" href="/">Briefsip<span>Ruang kerja lokal</span></a>
-      <div className="sidebar-title"><h2>Channels</h2><button className="secondary" disabled={!directory?.agents.length} onClick={() => { setCreatingChannel(true); setCreating(false); }} aria-label="Buat channel baru">Baru</button></div>
-      <nav aria-label="Pilih channel">{channels.map(room => <button key={room.id} className={`agent-row ${room.id === selectedChannel && !creatingChannel && !creating ? 'selected' : ''}`} aria-current={room.id === selectedChannel && !creatingChannel && !creating ? 'page' : undefined} onClick={() => { setSelectedChannel(room.id); setCreating(false); setCreatingChannel(false); }}><span className="avatar" aria-hidden="true">#</span><span><strong>{room.name}</strong><small>{room.members.length} anggota</small></span></button>)}</nav>
-      <div className="sidebar-title"><h2>Agents</h2><button className="secondary" onClick={() => { setCreating(true); setCreatingChannel(false); }} aria-label="Buat agent baru">Baru</button></div>
-      <nav aria-label="Pilih agent">{directory?.agents.map(agent => <button key={agent.id} className={`agent-row ${agent.id === selected && !selectedChannel && !creating && !creatingChannel ? 'selected' : ''}`} aria-current={agent.id === selected && !selectedChannel && !creating && !creatingChannel ? 'page' : undefined} onClick={() => { setSelected(agent.id); setSelectedChannel(''); setCreating(false); setCreatingChannel(false); }}><span className="avatar">{agent.name.slice(0, 1)}</span><span><strong>{agent.name}</strong><small>{agent.model}</small></span></button>)}</nav>
+      <div className="sidebar-title"><h2>Channels</h2><button className="secondary" disabled={!directory?.agents.length} onClick={() => { setCreatingChannel(true); setCreating(false); setEditing(false); }} aria-label="Buat channel baru">Baru</button></div>
+      <nav aria-label="Pilih channel">{channels.map(room => <button key={room.id} className={`agent-row ${room.id === selectedChannel && !creatingChannel && !creating ? 'selected' : ''}`} aria-current={room.id === selectedChannel && !creatingChannel && !creating ? 'page' : undefined} onClick={() => { setSelectedChannel(room.id); setCreating(false); setCreatingChannel(false); setEditing(false); }}><span className="avatar" aria-hidden="true">#</span><span><strong>{room.name}</strong><small>{room.members.length} anggota</small></span></button>)}</nav>
+      <div className="sidebar-title"><h2>Agents</h2><button className="secondary" onClick={() => { setCreating(true); setCreatingChannel(false); setEditing(false); }} aria-label="Buat agent baru">Baru</button></div>
+      <nav aria-label="Pilih agent">{directory?.agents.map(agent => <button key={agent.id} className={`agent-row ${agent.id === selected && !selectedChannel && !creating && !creatingChannel ? 'selected' : ''}`} aria-current={agent.id === selected && !selectedChannel && !creating && !creatingChannel ? 'page' : undefined} onClick={() => { setSelected(agent.id); setSelectedChannel(''); setCreating(false); setCreatingChannel(false); setEditing(false); }}><span className="avatar">{agent.name.slice(0, 1)}</span><span><strong>{agent.name}</strong><small>{agent.model}</small></span></button>)}</nav>
       <div className="sidebar-footer"><span className={`dot ${directory?.configured ? 'connected' : ''}`} /><span>{directory?.configured ? 'Provider dikonfigurasi' : 'Provider belum terhubung'}</span></div>
     </aside>
-    <main>{error ? <div className="empty"><h1>Ruang kerja belum terbuka</h1><p role="alert">{error}</p><button onClick={() => void load()}>Coba lagi</button></div> : !directory ? <p className="empty" role="status">Memuat ruang kerja...</p> : creatingChannel ? <NewChannel agents={directory.agents} onCancel={() => setCreatingChannel(false)} onCreated={created => { setChannels([...channels.filter(room => room.id !== created.id), created]); setSelectedChannel(created.id); setCreatingChannel(false); }} /> : creating || (!agent && !channel) ? <NewAgent model={directory.defaultModel} onCancel={agent || channel ? () => setCreating(false) : undefined} onCreated={created => { setDirectory({ ...directory, agents: [...directory.agents.filter(agent => agent.id !== created.id), created] }); setSelected(created.id); setSelectedChannel(''); setCreating(false); }} /> : channel ? <Chat key={`channel:${channel.id}`} agent={channel} channel={channel} members={directory.agents.filter(agent => channel.members.includes(agent.id))} configured={directory.configured} /> : agent && <Chat key={agent.id} agent={agent} configured={directory.configured} />}</main>
+    <main>{error ? <div className="empty"><h1>Ruang kerja belum terbuka</h1><p role="alert">{error}</p><button onClick={() => void load()}>Coba lagi</button></div> : !directory ? <p className="empty" role="status">Memuat ruang kerja...</p> : editing && agent ? <AgentForm key={`${agent.id}:${agent.revision}:${editReload}`} model={directory.defaultModel} profile={agent} onCancel={() => setEditing(false)} onReload={() => { void load().then(() => setEditReload(value => value + 1)); }} onCreated={() => { void load(); setEditing(false); }} /> : creatingChannel ? <NewChannel agents={directory.agents} onCancel={() => setCreatingChannel(false)} onCreated={created => { setChannels([...channels.filter(room => room.id !== created.id), created]); setSelectedChannel(created.id); setCreatingChannel(false); }} /> : creating || (!agent && !channel) ? <AgentForm model={directory.defaultModel} onCancel={agent || channel ? () => setCreating(false) : undefined} onCreated={created => { setDirectory({ ...directory, agents: [...directory.agents.filter(agent => agent.id !== created.id), created] }); setSelected(created.id); setSelectedChannel(''); setCreating(false); }} /> : channel ? <Chat key={`channel:${channel.id}`} agent={channel} channel={channel} members={directory.agents.filter(agent => channel.members.includes(agent.id))} configured={directory.configured} /> : agent && <Chat key={agent.id} agent={agent} configured={directory.configured} onEdit={() => setEditing(true)} />}</main>
   </div>;
 }
 createRoot(document.getElementById('root')!).render(<App />);

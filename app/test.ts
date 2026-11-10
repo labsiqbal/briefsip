@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 import assert from 'node:assert/strict';
 import { createServer, get } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -10,11 +11,13 @@ import { startApp } from './server.ts';
 test('HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupted recovery', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-check-'));
   const calls: string[] = [];
+  const profilesSeen: { text: string; model: string; instructions: string }[] = [];
   let releaseRouting: (() => void) | undefined;
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const data = JSON.parse(raw); const text = data.messages.at(-1).content;
     calls.push(text);
+    profilesSeen.push({ text, model: data.model, instructions: data.messages[0].content });
     if (data.messages[0].content.startsWith('Choose exactly one channel member')) {
       const input = JSON.parse(text);
       if (input.request === 'route-hang') return;
@@ -79,6 +82,7 @@ test('HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupt
     assert.match(failed.error, /HTTP 429/); assert(!failed.error.includes('private'));
     await request(path, { id: randomUUID(), text: 'hang' });
     await until(path, 'running');
+    assert.equal((await request(`/api/agents/${profile.id}/edit`, { ...profile, id: randomUUID(), revision: 1 })).status, 409);
     await app.close();
     app = await startApp(options);
     const recovered = (await request(path)).body;
@@ -215,6 +219,29 @@ test('HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupt
     assert.equal((await request('/api/agents')).body.configured, false);
     assert.equal((await request(path, { id: randomUUID(), text: 'no provider' })).status, 503);
     assert.equal((await request(path)).body.length, 5);
+    const editPath = `/api/agents/${profile.id}/edit`;
+    const edit = { id: randomUUID(), revision: 1, name: 'Edited research', model: 'different-model', instructions: 'Updated instructions.' };
+    const changed = await request(editPath, edit);
+    assert.equal(changed.status, 200); assert.equal(changed.body.id, profile.id); assert.equal(changed.body.revision, 2);
+    assert.deepEqual((await request(editPath, edit)).body, changed.body);
+    const createRetry = await request('/api/agents', profile);
+    assert.equal(createRetry.status, 200); assert.deepEqual(createRetry.body, changed.body);
+    assert.equal((await request(editPath, { ...edit, id: randomUUID() })).status, 409);
+    assert.equal((await request(editPath, { ...edit, name: 'conflicting retry' })).status, 409);
+    assert.equal((await request(`/api/agents/${other.id}/edit`, edit)).status, 409);
+    assert.equal((await request(editPath, { ...edit, id: randomUUID(), revision: 2, name: '' })).status, 400);
+    await app.close(); app = await startApp({ database: options.database });
+    assert.deepEqual((await request('/api/agents', profile)).body, changed.body);
+    assert.deepEqual((await request(editPath, edit)).body, changed.body);
+    assert.equal((await request('/api/agents')).body.agents.find((agent: { id: string }) => agent.id === profile.id).model, 'different-model');
+    assert.equal((await request(path)).body.length, 5);
+    await app.close(); app = await startApp(options);
+    await request(path, { id: randomUUID(), text: 'after-profile-edit' });
+    const editedReply = (await until(path, 'done')).at(-1);
+    assert.equal(editedReply.reply, 'reply:after-profile-edit;history:6');
+    assert.deepEqual(profilesSeen.find(call => call.text === 'after-profile-edit'), { text: 'after-profile-edit', model: 'different-model', instructions: 'Updated instructions.' });
+
+
   } finally {
     await app.close(); provider.closeAllConnections();
     await new Promise<void>(resolve => provider.close(() => resolve()));
@@ -279,4 +306,31 @@ test('automatic routing shares four workers with execution', async () => {
     await new Promise<void>(resolve => provider.close(() => resolve()));
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+
+test('legacy agent migration preserves create retries across later edits', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-legacy-'));
+  const database = join(dir, 'state.sqlite');
+  const original = { id: randomUUID(), name: 'Legacy', model: 'fixture', instructions: 'Original instructions.' };
+  const db = new DatabaseSync(database);
+  db.exec('CREATE TABLE agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, model TEXT NOT NULL, instructions TEXT NOT NULL) STRICT');
+  db.prepare('INSERT INTO agents VALUES (?,?,?,?)').run(original.id, original.name, original.model, original.instructions); db.close();
+  let app = await startApp({ database });
+  async function post(path: string, data: unknown) {
+    const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+    assert(response.ok); return response.json();
+  }
+  try {
+    const current = await post('/api/agents', original); assert.equal(current.revision, 1);
+    const path = `/api/agents/${original.id}/edit`;
+    const first = { ...original, id: randomUUID(), revision: 1, name: 'First edit' };
+    const firstResult = await post(path, first);
+    await post(path, { ...first, id: randomUUID(), revision: 2, name: 'Second edit' });
+    await app.close(); app = await startApp({ database });
+    assert.deepEqual(await post(path, first), firstResult);
+    const retried = await post('/api/agents', original);
+    assert.equal(retried.id, original.id); assert.equal(retried.name, 'Second edit'); assert.equal(retried.revision, 3);
+    const directory = await (await fetch(app.origin + '/api/agents')).json(); assert.equal(directory.agents.length, 1);
+  } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
