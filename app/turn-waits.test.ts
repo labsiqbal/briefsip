@@ -78,10 +78,26 @@ test('agent event waits release workers, survive restart, honor pause and accept
     await app.close(); app = await startApp({ ...options, database: restoreWorkspace(backupPath, join(dir, 'restored.sqlite')) });
     await request(new URL(pendingConnection.url).pathname, undefined, 404); await send(pendingConnection, randomUUID(), 409);
     const recovered = (await request(direct)).find((r: any) => r.id === pending.id); assert.equal(recovered.events[0].status, 'closed');
+    await request(`${direct}/${pending.id}/resume`, { id: randomUUID(), revision: recovered.revision, acknowledgeUncertain: true });
+    const resumedRestore = await until(direct, pending.id, row => ['done', 'failed'].includes(row.status));
+    assert.equal(resumedRestore.status, 'done', resumedRestore.error);
+    assert.equal(JSON.parse(JSON.parse(prompts.at(-1)!).messages.filter((m: any) => m.role === 'tool').at(-1).content).status, 'closed');
+    await send(pendingConnection, randomUUID(), 409);
+
     await app.close(); app = await startApp(options);
     const expiring = await waiting(direct); await app.close();
     const db = new DatabaseSync(options.database); db.prepare('UPDATE turn_waits SET deadline=0 WHERE turn=?').run(expiring.id); db.close();
     app = await startApp(options); const expired = await until(direct, expiring.id, row => row.status === 'failed'); assert.equal(expired.events[0].status, 'expired');
+    await app.close(); const legacy = new DatabaseSync(options.database);
+    legacy.prepare('DELETE FROM flow_tool_calls WHERE turn=?').run(expired.id); legacy.close();
+    app = await startApp(options); await app.close(); app = await startApp(options); await app.close();
+    const repaired = new DatabaseSync(options.database);
+    try { assert.equal(repaired.prepare('SELECT count(*) AS n FROM flow_tool_calls WHERE turn=?').get(expired.id)!.n, 1); } finally { repaired.close(); }
+    app = await startApp(options);
+    await request(`${direct}/${expired.id}/resume`, { id: randomUUID(), revision: expired.revision, acknowledgeUncertain: true });
+    const resumedExpired = await until(direct, expired.id, row => ['done', 'failed'].includes(row.status));
+    assert.equal(resumedExpired.status, 'done', resumedExpired.error);
+    assert.equal(JSON.parse(JSON.parse(prompts.at(-1)!).messages.filter((m: any) => m.role === 'tool').at(-1).content).status, 'expired');
     invalid = true; const bad = randomUUID(); await request(direct, { id: bad, text: bad }); const failed = await until(direct, bad, row => row.status === 'failed'); assert.match(failed.error, /Nama event atau batas tunggu/);
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
@@ -169,5 +185,56 @@ test('routine waits preserve artifacts and reject events cancelled before upload
     assert.match(expiredRun.error, /Waktu tunggu event habis/); assert.equal(completed, 1);
     assert.equal((await request(scheduledTurns))[0].generatedFiles.length, 1);
 
+  } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('workflow cancellation closes waiting descendants of completed steps', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-workflow-child-wait-'));
+  let recipient = '', childContinuations = 0;
+  const provider = createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    const data = JSON.parse(raw), resumed = data.messages.some((message: any) => message.role === 'tool');
+    const source = data.model === 'source';
+    if (!source && resumed) childContinuations++;
+    res.end(JSON.stringify({ choices: [{ finish_reason: resumed ? 'stop' : 'tool_calls', message: resumed ? { content: 'Finished' } : { tool_calls: [{ id: 'call', type: 'function', function: { name: source ? 'send_message' : 'wait_for_event', arguments: JSON.stringify(source ? { recipients: [recipient], text: 'Wait for external event', expects_reply: false } : { event: 'ready', timeoutSeconds: 3600 }) } }] } }] }));
+  });
+  await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+  const address = provider.address(); assert(address && typeof address !== 'string');
+  const options = { database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` };
+  let app = await startApp(options);
+  async function request(path: string, body?: unknown, expected?: number) {
+    const res = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    const value = await res.json(); if (expected) assert.equal(res.status, expected, JSON.stringify(value)); else assert(res.ok, JSON.stringify(value)); return value;
+  }
+  async function until(path: string, predicate: (value: any) => boolean) {
+    for (let n = 0; n < 200; n++) { const value = await request(path); if (predicate(value)) return value; await new Promise(resolve => setTimeout(resolve, 10)); }
+    assert.fail('Workflow child did not settle');
+  }
+  try {
+    const owner = await request('/api/agents', { id: randomUUID(), name: 'Owner', model: 'source', instructions: 'Help' });
+    const child = await request('/api/agents', { id: randomUUID(), name: 'Child', model: 'child', instructions: 'Help' }); recipient = child.id;
+    const graph = { entry: 'agent', maxSteps: 4, nodes: [{ id: 'agent', kind: 'agent', agent: owner.id, prompt: 'Notify child', next: 'wait' }, { id: 'wait', kind: 'wait', event: 'workflow-ready', timeoutSeconds: 3600, next: 'out' }, { id: 'out', kind: 'output' }] };
+    const workflow = await request(`/api/agents/${owner.id}/workflows`, { id: randomUUID(), name: 'Child wait', revision: 0, graph });
+    const run = await request(`/api/workflows/${workflow.id}/run`, { id: randomUUID(), revision: workflow.revision, input: 'Start' });
+    const state = await until(`/api/workflow-runs/${run.id}`, value => value.cursor === 'wait' && value.status === 'waiting');
+    const [thread] = await until(`/api/agents/${child.id}/threads`, value => value.length);
+    const turns = `/api/threads/${thread.id}/turns`, [waiting] = await until(turns, value => value[0]?.events?.length);
+    const connection = await request(`/api/turn-waits/${waiting.events[0].id}`);
+    const unrelated = randomUUID(), direct = `/api/agents/${child.id}/turns`;
+    await request(direct, { id: unrelated, text: 'Independent task' });
+    await until(direct, rows => rows.find((row: any) => row.id === unrelated)?.events?.length);
+    await request(`/api/workflow-runs/${run.id}/cancel`, { id: randomUUID(), revision: state.revision });
+    const stopped = (await request(turns))[0]; assert.equal(stopped.status, 'cancelled');
+    assert.equal(stopped.events[0].status, 'closed');
+    assert.equal((await request(`/api/workflow-runs/${run.id}`)).steps[0].status, 'done');
+    const body = JSON.stringify({ event: 'ready' }), id = randomUUID(), time = String(Math.floor(Date.now() / 1000));
+    const headers = { 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': id, 'X-Briefsip-Signature': createHmac('sha256', connection.secret).update(`${time}\n${id}\n${body}`).digest('hex') };
+    const send = () => fetch(app.origin + new URL(connection.url).pathname, { method: 'POST', headers, body });
+    const denied = await send(); assert.equal(denied.status, 409); await denied.arrayBuffer();
+    await app.close(); app = await startApp(options);
+    assert.equal((await request(turns))[0].status, 'cancelled'); const stillDenied = await send(); assert.equal(stillDenied.status, 409); await stillDenied.arrayBuffer();
+    assert.equal(childContinuations, 0);
+    assert.equal((await request(direct)).find((row: any) => row.id === unrelated).status, 'queued');
+    await request(`${turns}/${waiting.id}/resume`, { id: randomUUID(), revision: stopped.revision, acknowledgeUncertain: true }, 409);
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
