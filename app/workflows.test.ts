@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { removeWorkflowNode, validateWorkflow, workflowTransition } from './workflows.ts';
 import { restoreWorkflowCommand } from './workflow-command.ts';
 import { randomUUID } from 'node:crypto';
-import { editWorkflowHistory, moveWorkflowNode, restoreWorkflowEditorDraft, workflowAutosaveDraft, workflowLayout, type WorkflowHistory } from './workflow-editor-state.ts';
+import { editWorkflowHistory, moveWorkflowNode, restoreWorkflowEditorDraft, workflowAutosaveDraft, workflowLayout, workflowUnconditionalCycles, workflowNodeLabels, workflowStepLabel, type WorkflowHistory } from './workflow-editor-state.ts';
 
 test('deleting a legacy approval rejection target leaves a saveable graph', () => {
   const graph = validateWorkflow({ entry: 'work', maxSteps: 5, nodes: [
@@ -171,4 +171,28 @@ test('local workflow drafts preserve incomplete edits without relaxing execution
   const history = { graph: restoreWorkflowEditorDraft(JSON.stringify(draft))!.graph, past: [], future: [] };
   const latest = validateWorkflow({ entry: 'out', maxSteps: 1, nodes: [{ id: 'out', kind: 'output' }] }, new Set());
   assert.deepEqual(editWorkflowHistory(editWorkflowHistory(history, latest), 'undo').graph, history.graph);
+});
+
+
+test('graph view identifies unconditional cycles and latest run attempt without mutating history', () => {
+  const graph = { entry: 'a', maxSteps: 5, nodes: [
+    { id: 'a', kind: 'model' as const, model: 'fixture', prompt: 'Work', next: 'b' },
+    { id: 'b', kind: 'approval' as const, prompt: 'Continue?', yes: 'a' },
+    { id: 'out', kind: 'output' as const },
+  ] };
+  assert.deepEqual(workflowUnconditionalCycles(graph), [['a', 'b']]);
+  assert.deepEqual(workflowUnconditionalCycles({ ...graph, nodes: [graph.nodes[0], { id: 'b', kind: 'condition', operator: 'equals', value: 'yes', yes: 'a', no: 'out' }, graph.nodes[2]] }), []);
+  assert.deepEqual(workflowUnconditionalCycles({ ...graph, nodes: [{ ...graph.nodes[0], next: 'a' }, graph.nodes[2]] }), [['a']]);
+  assert.deepEqual(workflowUnconditionalCycles({ ...graph, nodes: [{ ...graph.nodes[0], next: '' }, graph.nodes[2]] }), []);
+  const steps = [
+    { seq: 4, node: 'a', status: 'done', task_status: 'done', paused: 1 },
+    { seq: 2, node: 'a', status: 'failed', task_status: 'done' },
+    { seq: 5, node: 'b', status: 'failed', detail: 'rejected' },
+  ];
+  const before = JSON.stringify(steps), labels = workflowNodeLabels(steps);
+  assert.equal(labels.get('a'), 'Selesai'); assert.equal(labels.get('b'), 'Ditolak'); assert.equal(labels.has('out'), false);
+  assert.equal(JSON.stringify(steps), before);
+  assert.equal(workflowStepLabel({ seq: 1, node: 'a', status: 'failed', task_status: 'done', paused: 1 }), 'Gagal');
+  assert.equal(workflowStepLabel({ seq: 1, node: 'a', status: 'waiting', task_status: 'running', paused: 1 }), 'Dijeda');
+  assert.equal(workflowStepLabel({ seq: 1, node: 'a', status: 'waiting', task_status: 'running' }), 'Berjalan');
 });

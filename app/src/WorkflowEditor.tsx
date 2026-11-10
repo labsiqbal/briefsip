@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { WorkflowGraph as GraphView } from './WorkflowGraph';
-import { editWorkflowHistory, moveWorkflowNode, restoreWorkflowEditorDraft, workflowAutosaveDraft, workflowDraftMatches, type WorkflowHistory } from '../workflow-editor-state';
+import { editWorkflowHistory, moveWorkflowNode, restoreWorkflowEditorDraft, workflowAutosaveDraft, workflowDraftMatches, workflowUnconditionalCycles, type WorkflowHistory } from '../workflow-editor-state';
 import { removeWorkflowNode, validateWorkflow, type WorkflowGraph, type WorkflowNode } from '../workflows.ts';
 
 export type Workflow = { id: string; agent: string; name: string; revision: number; graph: WorkflowGraph; deleted?: number };
@@ -25,7 +25,7 @@ export function WorkflowEditor({ owner, agents, initial, saved, reload = 0, lock
     { id: 'review', kind: 'approval', prompt: 'Setujui hasil untuk menyelesaikan workflow?', yes: 'output' },
     { id: 'output', kind: 'output' },
   ] } });
-  const graph = history.graph;
+  const graph = history.graph, cycles = workflowUnconditionalCycles(history.graph);
   const [selected, setSelected] = useState(graph.entry);
   const panels = useRef(new Map<string, HTMLFieldSetElement>()), buttons = useRef(new Map<string, HTMLButtonElement>());
   const focusAfterRemoval = useRef('');
@@ -122,7 +122,8 @@ export function WorkflowEditor({ owner, agents, initial, saved, reload = 0, lock
       <label>Batas langkah<input type="number" min={1} max={1000} required value={graph.maxSteps} onChange={event => setGraph({ ...graph, maxSteps: Number(event.target.value) })} /><span className="muted">Loop berhenti dengan status gagal jika batas ini tercapai.</span></label>
       <div className="form-actions routine-actions"><button type="button" className="secondary" disabled={!history.past.length} onClick={() => setHistory(current => editWorkflowHistory(current, 'undo'))}>Urungkan graph</button><button type="button" className="secondary" disabled={!history.future.length} onClick={() => setHistory(current => editWorkflowHistory(current, 'redo'))}>Ulangi graph</button><button type="button" className="secondary" disabled={!graph.positions} onClick={() => { const { positions, ...automatic } = graph; void positions; setGraph(automatic); }}>Rapikan otomatis</button></div>
       <p className="muted">Pilih langkah pada graph untuk membuka pengaturannya. Urungkan dan ulangi berlaku untuk perubahan graph, bukan nama workflow.</p>
-      <GraphView graph={graph} onMove={(id, x, y) => { setSelected(id); setGraph(current => moveWorkflowNode(current, id, x, y)); }} selected={selected} locked={locked} buttonRefs={buttons.current} onSelect={id => { setSelected(id); panels.current.get(id)?.focus(); panels.current.get(id)?.scrollIntoView({ block: 'nearest' }); }} />
+      {!!cycles.length && <p className="notice" role="status">Loop tanpa kondisi: {cycles.map(cycle => cycle.join(', ')).join('; ')}. Loop berhenti jika persetujuan ditolak, eksekusi dibatalkan, atau batas langkah tercapai.</p>}
+      <GraphView graph={graph} loops={new Set(cycles.flat())} onMove={(id, x, y) => { setSelected(id); setGraph(current => moveWorkflowNode(current, id, x, y)); }} selected={selected} locked={locked} buttonRefs={buttons.current} onSelect={id => { setSelected(id); panels.current.get(id)?.focus(); panels.current.get(id)?.scrollIntoView({ block: 'nearest' }); }} />
       {graph.nodes.map((node, index) => <fieldset className="workflow-node" key={node.id} tabIndex={-1} ref={element => { if (element) panels.current.set(node.id, element); else panels.current.delete(node.id); }}><legend>Langkah {node.id}</legend>
         <button type="button" className="secondary" onClick={() => { setSelected(node.id); buttons.current.get(node.id)?.focus(); buttons.current.get(node.id)?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }}>Kembali ke graph {node.id}</button>
         <label>Jenis langkah<select value={node.kind} onChange={event => changeKind(index, event.target.value as WorkflowNode['kind'])}><option value="agent">Agent</option><option value="model">Model</option><option value="condition">Kondisi</option><option value="approval">Persetujuan</option><option value="output">Output</option></select></label>

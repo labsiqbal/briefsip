@@ -3,12 +3,12 @@ import { WorkflowEditor, type Workflow, type WorkflowDraft } from './WorkflowEdi
 import { WorkflowSchedule } from './WorkflowSchedule';
 import { WorkflowWebhook, type WorkflowHook } from './WorkflowWebhook';
 import type { WorkflowGraph } from '../workflows';
-import { restoreWorkflowEditorDraft, workflowDraftMatches } from '../workflow-editor-state';
+import { WorkflowGraph as GraphView } from './WorkflowGraph';
+import { restoreWorkflowEditorDraft, workflowDraftMatches, workflowStatusLabels as statuses, workflowStepLabel, workflowNodeLabels } from '../workflow-editor-state';
 import { restoreWorkflowCommand, type WorkflowCommand as Command } from '../workflow-command';
 
 type Agent = { id: string; name: string; model: string };
 type Run = { id: string; version: number; revision: number; status: string; cursor: string; error: string | null; last: string; graph: WorkflowGraph; steps: { seq: number; node: string; status: string; detail: string | null; task_status: string | null; paused: number | null; thread: string | null; agent: string | null }[] };
-const statuses: Record<string, string> = { ready: 'Siap', waiting: 'Menunggu langkah', approval: 'Menunggu persetujuan', done: 'Selesai', failed: 'Gagal', cancelled: 'Dibatalkan', interrupted: 'Terputus', queued: 'Antre', running: 'Berjalan' };
 
 function WorkflowVersions({ workflow, request, locked, refresh, onRestore }: {
   workflow: Workflow; request: <T>(path: string, data?: unknown) => Promise<T>; locked: boolean; refresh: number; onRestore: (version: number) => void;
@@ -24,6 +24,16 @@ function WorkflowVersions({ workflow, request, locked, refresh, onRestore }: {
   return <section><h2>Versi tersimpan</h2><p>Pulihkan graph sebagai revisi baru. Nama workflow dan eksekusi yang sudah dimulai tetap sama.</p>
     {error ? <p className="error" role="alert">{error} <button className="secondary" onClick={() => setRetry(value => value + 1)}>Muat ulang versi</button></p> : !page ? <p role="status">Memuat versi...</p> : <ul className="routine-list">{page.versions.map(version => <li key={version.revision}><p>Versi {version.revision} · {version.graph.nodes.length} langkah · Awal: {version.graph.entry}</p><details><summary>Lihat graph versi {version.revision}</summary><pre className="message-text">{JSON.stringify(version.graph, null, 2)}</pre></details><button className="secondary" disabled={locked || version.revision === workflow.revision} onClick={() => { if (window.confirm(`Pulihkan graph versi ${version.revision} sebagai revisi baru? Eksekusi yang sudah dimulai tidak berubah.`)) onRestore(version.revision); }}>Pulihkan versi {version.revision}</button></li>)}</ul>}
     <div className="form-actions routine-actions"><button className="secondary" disabled={!cursors.length} onClick={() => setCursors(value => value.slice(0, -1))}>Versi lebih baru</button><button className="secondary" disabled={!page?.next_before} onClick={() => { if (page?.next_before) setCursors(value => [...value, page.next_before!]); }}>Versi lebih lama</button></div>
+  </section>;
+}
+
+function RunGraph({ run }: { run: Run }) {
+  const [node, setNode] = useState('');
+  const buttons = useRef(new Map<string, HTMLButtonElement>()), detail = useRef<HTMLDivElement>(null);
+  const steps = run.steps.filter(step => step.node === node), selected = run.graph.nodes.find(item => item.id === node);
+  useEffect(() => { if (node) detail.current?.focus(); }, [node]);
+  return <section><GraphView graph={run.graph} selected={node || run.cursor} locked={false} labels={workflowNodeLabels(run.steps)} buttonRefs={buttons.current} onSelect={id => { setNode(id); if (id === node) detail.current?.focus(); }} />
+    {selected && <div className="workflow-step-detail" tabIndex={-1} ref={detail}><h3>Langkah {node}</h3>{steps.length ? <ol>{steps.map((step, index) => <li key={step.seq}>Percobaan {index + 1}: {workflowStepLabel(step)}{step.detail && <p className="message-text">{step.detail}</p>}</li>)}</ol> : <p>Langkah belum dijalankan pada eksekusi ini.</p>}<button className="secondary" onClick={() => { buttons.current.get(node)?.focus(); buttons.current.get(node)?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }}>Kembali ke graph eksekusi</button></div>}
   </section>;
 }
 
@@ -143,10 +153,11 @@ export function WorkflowPanel({ owner, agents, request, onBack, onOpen, onNaviga
       <WorkflowVersions key={selected.id} workflow={selected} request={request} locked={locked} refresh={refresh} onRestore={version => void execute({ kind: 'restore', workflow: selected, path: `/api/workflows/${selected.id}/restore`, body: { id: crypto.randomUUID(), revision: selected.revision, version } })} /></>}
       <h2>Riwayat eksekusi</h2>{!runs.length ? <p>Belum ada eksekusi.</p> : <ul className="routine-list">{runs.map(item => <li key={item.id}><button className="secondary" aria-pressed={runId === item.id} onClick={() => { navigate(); setRun(null); setRunId(item.id); }}>{new Date(item.created).toLocaleString('id-ID')} · {statuses[item.status] ?? item.status}</button></li>)}</ul>}
       {run && <section><h2>Versi {run.version} · {statuses[run.status]}</h2>{run.error && <p className="error">{run.error}</p>}
+        <RunGraph key={run.id} run={run} />
         {run.status === 'failed' && ['agent', 'model', 'condition'].includes(run.graph.nodes.find(node => node.id === run.cursor)?.kind ?? '') && run.steps.length < run.graph.maxSteps && <button className="secondary" disabled={locked} onClick={() => { if (window.confirm('Coba lagi langkah yang gagal? Efek sebelumnya mungkin sudah terjadi. Pengaturan node terbaru yang sejenis akan digunakan; hasil sebelumnya tetap disimpan.')) void execute({ kind: 'retry', workflow: selected, path: `/api/workflow-runs/${run.id}/retry`, body: { id: crypto.randomUUID(), revision: run.revision } }); }}>Coba lagi langkah gagal</button>}
         {run.status === 'approval' && <><p>{run.graph.nodes.find(node => node.id === run.cursor)?.kind === 'approval' ? (run.graph.nodes.find(node => node.id === run.cursor) as { prompt: string }).prompt : ''}</p><div className="form-actions routine-actions">{[true, false].map(accepted => <button key={String(accepted)} disabled={locked} onClick={() => void execute({ kind: 'approve', workflow: selected, path: `/api/workflow-runs/${run.id}/approve`, body: { id: crypto.randomUUID(), revision: run.revision, accepted } })}>{accepted ? 'Setujui langkah' : 'Tolak langkah'}</button>)}</div></>}
         {!['done', 'failed', 'cancelled'].includes(run.status) && <button className="secondary" disabled={locked} onClick={() => { if (window.confirm('Batalkan workflow beserta langkah aktif? Hasil yang sudah tersimpan tetap ada.')) void execute({ kind: 'cancel', workflow: selected, path: `/api/workflow-runs/${run.id}/cancel`, body: { id: crypto.randomUUID(), revision: run.revision } }); }}>Batalkan workflow</button>}
-        <p className="message-text">{run.last}</p><ol className="routine-list">{run.steps.map(step => <li key={step.seq}><strong>{step.node}</strong><p>{step.detail === 'rejected' ? 'Ditolak' : step.paused ? 'Dijeda' : statuses[step.status === 'waiting' ? step.task_status ?? step.status : step.status] ?? step.status}</p>{step.detail && <p>{step.detail}</p>}{step.thread && step.agent && <button className="secondary" onClick={() => void onOpen(step.thread!, step.agent!).catch(error => setError(error.message))}>Buka langkah {step.node}</button>}</li>)}</ol>
+        <p className="message-text">{run.last}</p><ol className="routine-list">{run.steps.map(step => <li key={step.seq}><strong>{step.node}</strong><p>{workflowStepLabel(step)}</p>{step.detail && <p>{step.detail}</p>}{step.thread && step.agent && <button className="secondary" onClick={() => void onOpen(step.thread!, step.agent!).catch(error => setError(error.message))}>Buka langkah {step.node}</button>}</li>)}</ol>
       </section>}
     </>}
   </section>;
