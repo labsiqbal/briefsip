@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { WorkflowEditor, type Workflow, type WorkflowDraft } from './WorkflowEditor';
 import { WorkflowSchedule } from './WorkflowSchedule';
+import { WorkflowWebhook, type WorkflowHook } from './WorkflowWebhook';
 import type { WorkflowGraph } from '../workflows';
 import { restoreWorkflowCommand, type WorkflowCommand as Command } from '../workflow-command';
 
@@ -38,12 +39,14 @@ export function WorkflowPanel({ owner, agents, request, onBack, onOpen, onNaviga
   const [page, setPage] = useState<{ workflows: Workflow[]; next_after: string | null } | null>(null), [cursors, setCursors] = useState(['']);
   const [editing, setEditing] = useState<Workflow | 'new' | null>(pending?.kind === 'save' ? pending.workflow ?? 'new' : null);
   const [selected, setSelected] = useState<Workflow | null>(pending && pending.kind !== 'save' ? pending.workflow ?? null : null), [runs, setRuns] = useState<{ id: string; status: string; created: string }[]>([]);
-  const [runId, setRunId] = useState(pending?.kind === 'run' ? String(pending.body.id) : pending && ['approve', 'cancel'].includes(pending.kind) ? pending.path.split('/')[3] : ''), [run, setRun] = useState<Run | null>(null), [input, setInput] = useState('');
+  const [runId, setRunId] = useState(pending?.kind === 'run' ? String(pending.body.id) : pending && ['approve', 'cancel', 'retry'].includes(pending.kind) ? pending.path.split('/')[3] : ''), [run, setRun] = useState<Run | null>(null), [input, setInput] = useState('');
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [refresh, setRefresh] = useState(0);
   const [conflict, setConflict] = useState(false);
   const [scheduleRefresh, setScheduleRefresh] = useState(0), [scheduleConflict, setScheduleConflict] = useState('');
+  const [hookRefresh, setHookRefresh] = useState(0), [hookConflict, setHookConflict] = useState('');
+  const [hookSecret, setHookSecret] = useState<{ workflow: string; value: string } | null>(null);
   const mounted = useRef(true), navigation = useRef(0), heading = useRef<HTMLHeadingElement>(null);
-  function navigate() { navigation.current++; onNavigate(); }
+  function navigate() { navigation.current++; setHookSecret(null); onNavigate(); }
   useEffect(() => () => { mounted.current = false; navigation.current++; }, []);
   const after = cursors[cursors.length - 1];
   useEffect(() => {
@@ -74,13 +77,18 @@ export function WorkflowPanel({ owner, agents, request, onBack, onOpen, onNaviga
     try { sessionStorage.setItem(storage, JSON.stringify(command)); }
     catch { setError('Permintaan belum tersimpan di browser. Periksa penyimpanan situs.'); return; }
     setPending(command); setBusy(true); setError('');
+    if (command.kind === 'webhook') setHookSecret(null);
     try {
-      const result = await request<{ id: string }>(command.path, command.body);
+      const result = await request<{ id: string } & Partial<WorkflowHook>>(command.path, command.body);
       if (JSON.parse(sessionStorage.getItem(storage) ?? 'null')?.body?.id === command.body.id) sessionStorage.removeItem(storage);
       if (!mounted.current) return;
       setPending(null); setRefresh(value => value + 1);
       if (command.kind === 'schedule' && command.workflow?.id === selected?.id && version === navigation.current) setScheduleRefresh(value => value + 1);
       if (version === navigation.current) {
+        if (command.kind === 'webhook' && command.workflow?.id === selected?.id) {
+          setHookRefresh(value => value + 1);
+          if (result.secret) setHookSecret({ workflow: selected!.id, value: result.secret });
+        }
         if (command.kind === 'save') setEditing(null);
         if (command.kind === 'run' && command.workflow?.id === selected?.id) { setRun(null); setRunId(result.id); }
         if (command.kind === 'restore' && command.workflow?.id === selected?.id) setSelected(result as Workflow);
@@ -90,6 +98,7 @@ export function WorkflowPanel({ owner, agents, request, onBack, onOpen, onNaviga
       if (typeof error === 'object' && error && 'status' in error && Number(error.status) < 500) {
         if (JSON.parse(sessionStorage.getItem(storage) ?? 'null')?.body?.id === command.body.id) sessionStorage.removeItem(storage); setPending(null);
         if (command.kind === 'save' && Number(error.status) === 409 && version === navigation.current) setConflict(true);
+        if (command.kind === 'webhook' && Number(error.status) === 409) setHookConflict(command.workflow!.id);
         if (command.kind === 'schedule' && Number(error.status) === 409) setScheduleConflict(command.workflow!.id);
       }
       setError(error instanceof Error ? error.message : 'Permintaan belum terkonfirmasi.');
@@ -117,12 +126,14 @@ export function WorkflowPanel({ owner, agents, request, onBack, onOpen, onNaviga
       <div className="form-actions routine-actions"><button className="secondary" disabled={cursors.length < 2} onClick={() => setCursors(value => value.slice(0, -1))}>Workflow sebelumnya</button><button className="secondary" disabled={!page?.next_after} onClick={() => { if (page?.next_after) setCursors(value => [...value, page.next_after!]); }}>Workflow berikutnya</button></div>
     </> : <><form onSubmit={event => { event.preventDefault(); if (!locked) void execute({ kind: 'run', workflow: selected, path: `/api/workflows/${selected.id}/run`, body: { id: crypto.randomUUID(), revision: selected.revision, input } }); }}><label>Input workflow<textarea maxLength={16000} value={input} readOnly={locked} onChange={event => setInput(event.target.value)} /></label><button disabled={locked}>Jalankan versi {selected.revision}</button></form>
       <WorkflowSchedule key={`schedule:${selected.id}`} workflow={selected.id} request={request} locked={locked} refresh={scheduleRefresh} conflict={scheduleConflict === selected.id} onLoaded={() => setScheduleConflict(current => current === selected.id ? '' : current)} pending={pending?.kind === 'schedule' && pending.workflow?.id === selected.id ? pending : undefined} onSave={body => execute({ kind: 'schedule', workflow: selected, path: `/api/workflows/${selected.id}/schedule`, body })} onRun={id => { navigate(); setRun(null); setRunId(id); }} />
+      <WorkflowWebhook key={`hook:${selected.id}`} workflow={selected.id} request={request} locked={locked} busy={busy} refresh={hookRefresh} secret={hookSecret?.workflow === selected.id ? hookSecret.value : undefined} conflict={hookConflict === selected.id} onLoaded={() => setHookConflict(current => current === selected.id ? '' : current)} pending={pending?.kind === 'webhook' && pending.workflow?.id === selected.id ? pending : undefined} onSave={body => execute({ kind: 'webhook', workflow: selected, path: `/api/workflows/${selected.id}/webhook`, body })} onRun={id => { navigate(); setRun(null); setRunId(id); }} />
       <WorkflowVersions key={selected.id} workflow={selected} request={request} locked={locked} refresh={refresh} onRestore={version => void execute({ kind: 'restore', workflow: selected, path: `/api/workflows/${selected.id}/restore`, body: { id: crypto.randomUUID(), revision: selected.revision, version } })} />
       <h2>Riwayat eksekusi</h2>{!runs.length ? <p>Belum ada eksekusi.</p> : <ul className="routine-list">{runs.map(item => <li key={item.id}><button className="secondary" aria-pressed={runId === item.id} onClick={() => { navigate(); setRun(null); setRunId(item.id); }}>{new Date(item.created).toLocaleString('id-ID')} · {statuses[item.status] ?? item.status}</button></li>)}</ul>}
       {run && <section><h2>Versi {run.version} · {statuses[run.status]}</h2>{run.error && <p className="error">{run.error}</p>}
+        {run.status === 'failed' && ['agent', 'model', 'condition'].includes(run.graph.nodes.find(node => node.id === run.cursor)?.kind ?? '') && run.steps.length < run.graph.maxSteps && <button className="secondary" disabled={locked} onClick={() => { if (window.confirm('Coba lagi langkah yang gagal? Efek sebelumnya mungkin sudah terjadi. Pengaturan node terbaru yang sejenis akan digunakan; hasil sebelumnya tetap disimpan.')) void execute({ kind: 'retry', workflow: selected, path: `/api/workflow-runs/${run.id}/retry`, body: { id: crypto.randomUUID(), revision: run.revision } }); }}>Coba lagi langkah gagal</button>}
         {run.status === 'approval' && <><p>{run.graph.nodes.find(node => node.id === run.cursor)?.kind === 'approval' ? (run.graph.nodes.find(node => node.id === run.cursor) as { prompt: string }).prompt : ''}</p><div className="form-actions routine-actions">{[true, false].map(accepted => <button key={String(accepted)} disabled={locked} onClick={() => void execute({ kind: 'approve', workflow: selected, path: `/api/workflow-runs/${run.id}/approve`, body: { id: crypto.randomUUID(), revision: run.revision, accepted } })}>{accepted ? 'Setujui langkah' : 'Tolak langkah'}</button>)}</div></>}
         {!['done', 'failed', 'cancelled'].includes(run.status) && <button className="secondary" disabled={locked} onClick={() => { if (window.confirm('Batalkan workflow beserta langkah aktif? Hasil yang sudah tersimpan tetap ada.')) void execute({ kind: 'cancel', workflow: selected, path: `/api/workflow-runs/${run.id}/cancel`, body: { id: crypto.randomUUID(), revision: run.revision } }); }}>Batalkan workflow</button>}
-        <p className="message-text">{run.last}</p><ol className="routine-list">{run.steps.map(step => <li key={step.seq}><strong>{step.node}</strong><p>{step.paused ? 'Dijeda' : statuses[step.status === 'waiting' ? step.task_status ?? step.status : step.status] ?? step.status}</p>{step.detail && <p>{step.detail}</p>}{step.thread && step.agent && <button className="secondary" onClick={() => void onOpen(step.thread!, step.agent!).catch(error => setError(error.message))}>Buka langkah {step.node}</button>}</li>)}</ol>
+        <p className="message-text">{run.last}</p><ol className="routine-list">{run.steps.map(step => <li key={step.seq}><strong>{step.node}</strong><p>{step.detail === 'rejected' ? 'Ditolak' : step.paused ? 'Dijeda' : statuses[step.status === 'waiting' ? step.task_status ?? step.status : step.status] ?? step.status}</p>{step.detail && <p>{step.detail}</p>}{step.thread && step.agent && <button className="secondary" onClick={() => void onOpen(step.thread!, step.agent!).catch(error => setError(error.message))}>Buka langkah {step.node}</button>}</li>)}</ol>
       </section>}
     </>}
   </section>;

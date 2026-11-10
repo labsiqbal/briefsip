@@ -1,8 +1,23 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateWorkflow, workflowTransition } from './workflows.ts';
+import { removeWorkflowNode, validateWorkflow, workflowTransition } from './workflows.ts';
 import { restoreWorkflowCommand } from './workflow-command.ts';
 import { randomUUID } from 'node:crypto';
+
+test('deleting a legacy approval rejection target leaves a saveable graph', () => {
+  const graph = validateWorkflow({ entry: 'work', maxSteps: 5, nodes: [
+    { id: 'work', kind: 'model', model: 'fixture', prompt: 'Work', next: 'review' },
+    { id: 'review', kind: 'approval', prompt: 'Accept?', yes: 'out', no: 'work' },
+    { id: 'out', kind: 'output' },
+  ] }, new Set());
+  const edited = removeWorkflowNode({ ...graph, entry: 'review' }, 'work');
+  assert.deepEqual(validateWorkflow(edited, new Set()), edited);
+  assert.equal('no' in edited.nodes[0], false);
+  assert.equal(workflowTransition(edited.nodes[0], '', false), null);
+  assert.equal('no' in graph.nodes[1], true);
+  assert.equal(removeWorkflowNode(graph, 'work').entry, '');
+  assert.throws(() => validateWorkflow(removeWorkflowNode(graph, 'out'), new Set()));
+});
 
 test('model condition validation requires model and question and parses only yes/no', () => {
   const node = { id: 'check', kind: 'condition', operator: 'model', model: 'fixture', value: 'Accept?', yes: 'out', no: 'out' };
@@ -25,7 +40,7 @@ test('workflow graphs validate explicit approval, bounded loops and terminal pat
   const agents = new Set(['a']), graph = validateWorkflow(input, agents);
   assert.deepEqual(graph, input);
   assert.throws(() => workflowTransition(graph.nodes[1], 'yes'), /eksplisit/);
-  assert.equal(workflowTransition(graph.nodes[1], 'irrelevant', false), 'draft');
+  assert.equal(workflowTransition(graph.nodes[1], 'irrelevant', false), null);
   assert.equal(workflowTransition(graph.nodes[1], 'irrelevant', true), 'check');
   assert.equal(workflowTransition(graph.nodes[2], 'ready'), 'done');
   assert.equal(workflowTransition(graph.nodes[2], 'not ready'), 'revise');
@@ -51,9 +66,12 @@ test('workflow recovery rejects malformed commands and preserves valid retry ide
   const approve = { kind: 'approve', workflow, path: `/api/workflow-runs/${randomUUID()}/approve`, body: { id: randomUUID(), revision: 2, accepted: true } };
   const restore = { kind: 'restore', workflow, path: `/api/workflows/${workflow.id}/restore`, body: { id: randomUUID(), revision: 1, version: 1 } };
   const schedule = { kind: 'schedule', workflow, path: `/api/workflows/${workflow.id}/schedule`, body: { id: randomUUID(), revision: 0, nextAt: Date.now(), intervalSeconds: null, input: 'scheduled', enabled: false } };
-  for (const command of [run, save, approve, restore, schedule]) assert.deepEqual(restoreWorkflowCommand(JSON.stringify(command), owner, agents), command);
+  const retry = { kind: 'retry', workflow, path: `/api/workflow-runs/${randomUUID()}/retry`, body: { id: randomUUID(), revision: 3 } };
+  const webhook = { kind: 'webhook', workflow, path: `/api/workflows/${workflow.id}/webhook`, body: { id: randomUUID(), revision: 0, enabled: false, rotate: true } };
+  const removeWebhook = { ...webhook, body: { id: randomUUID(), revision: 1, remove: true, route: randomUUID() } };
+  for (const command of [run, save, approve, restore, schedule, retry, webhook, removeWebhook]) assert.deepEqual(restoreWorkflowCommand(JSON.stringify(command), owner, agents), command);
   assert.equal(restoreWorkflowCommand(null, owner, agents), null);
-  for (const command of [{ kind: 'run' }, { kind: 'save', path: '/api/agents/x/workflows', body: { id: 'x', name: 'bad', graph: {} } },
+  for (const command of [{ ...removeWebhook, body: { ...removeWebhook.body, route: 'invalid' } }, { ...webhook, body: { ...webhook.body, secret: 'must-not-persist' } }, { ...webhook, body: { ...webhook.body, rotate: 'yes' } }, { kind: 'run' }, { kind: 'save', path: '/api/agents/x/workflows', body: { id: 'x', name: 'bad', graph: {} } },
     { ...save, body: { ...save.body, graph: {} } }, { ...run, workflow: { ...workflow, agent: randomUUID() } },
     { ...run, path: '/api/agents' }, { ...approve, body: { ...approve.body, accepted: 'yes' } },
     { ...run, body: { ...run.body, revision: -1 } }, { ...run, workflow: { ...workflow, graph: {} } }, { ...restore, body: { ...restore.body, version: '1' } },
