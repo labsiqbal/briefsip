@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { HostMetricsSection } from './HostMetricsSection';
 
 type Call = { family: string; seq: number; agent_name: string; model: string; origin: string; purpose: string; phase: string; status: string; created: string; input_tokens: number | null; output_tokens: number | null; total_tokens: number | null };
 type Report = { summary: { calls: number; pending: number; failed: number; interrupted: number; input_tokens: string | null; output_tokens: string | null; total_tokens: string | null; unknown_input: number; unknown_output: number; unknown_total: number }; calls: Call[]; next_before: number | null };
@@ -14,9 +15,11 @@ export function UsagePanel({ request, onClose }: { request: <T>(path: string) =>
     void request<Report>(`/api/usage${before ? `?before=${before}` : ''}`).then(data => { if (!stopped) setReport(data); }).catch(error => { if (!stopped) setError(error.message); });
     return () => { stopped = true; };
   }, [before, refresh]);
-  return <section className="setup workflow-panel"><h1 ref={heading} tabIndex={-1}>Pemakaian provider</h1>
-    <p>Catatan panggilan sejak pencatatan diaktifkan. Token berasal dari laporan provider, bukan perkiraan. Biaya dan sisa kuota belum diketahui.</p>
+  return <section className="setup workflow-panel"><h1 ref={heading} tabIndex={-1}>Pemakaian</h1>
     <div className="form-actions routine-actions"><button className="secondary" onClick={onClose}>Kembali ke percakapan</button><button className="secondary" onClick={() => setRefresh(value => value + 1)}>Muat ulang pemakaian</button></div>
+    <HostMetricsSection request={request} />
+    <h2>Pemakaian provider</h2>
+    <p>Catatan panggilan sejak pencatatan diaktifkan. Token berasal dari laporan provider, bukan perkiraan. Biaya dan sisa kuota belum diketahui.</p>
     {error && <p className="error" role="alert">{error}</p>}
     {!report ? !error && <p role="status">Memuat pemakaian...</p> : <><h2>Seluruh catatan</h2><p>{report.summary.calls} panggilan · {report.summary.pending} menunggu · {report.summary.failed} gagal atau dibatalkan · {report.summary.interrupted} terputus</p>
       <dl><dt>Token input tercatat</dt><dd>{amount(report.summary.input_tokens)} ({report.summary.unknown_input} panggilan tanpa angka)</dd><dt>Token output tercatat</dt><dd>{amount(report.summary.output_tokens)} ({report.summary.unknown_output} panggilan tanpa angka)</dd><dt>Total token tercatat</dt><dd>{amount(report.summary.total_tokens)} ({report.summary.unknown_total} panggilan tanpa angka)</dd></dl>
