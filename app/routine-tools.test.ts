@@ -13,8 +13,8 @@ test('routine discovery is paginated, owner-scoped and unavailable in channels',
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const data = JSON.parse(raw), previous = data.messages.filter((item: any) => item.role === 'tool');
-    if (mode.startsWith('channel')) assert(!data.tools.some((item: any) => ['list_routines', 'read_routine'].includes(item.function.name)));
-    const call = mode === 'channel' ? null : mode === 'list' ? previous.length < 2 ? { name: 'list_routines', args: previous.length ? { after: JSON.parse(previous[0].content).next_after } : {} } : null
+    if (mode.startsWith('channel')) assert(!data.tools.some((item: any) => ['list_routines', 'read_routine', 'set_routine_flow'].includes(item.function.name)));
+    const call = mode === 'channel' ? null : mode === 'channel-denied' ? { name: 'set_routine_flow', args: { id: owned, revision: 1, links: [] } } : mode === 'list' ? previous.length < 2 ? { name: 'list_routines', args: previous.length ? { after: JSON.parse(previous[0].content).next_after } : {} } : null
       : previous.length ? null : { name: 'read_routine', args: { id: mode === 'foreign' ? foreign : owned, ...(mode === 'invalid' ? { extra: true } : {}) } };
     if (previous.length) lastResult = previous.map((item: any) => JSON.parse(item.content));
     res.end(JSON.stringify({ choices: [{ finish_reason: call ? 'tool_calls' : 'stop', message: call ? { tool_calls: [{ id: randomUUID(), type: 'function', function: { name: call.name, arguments: JSON.stringify(call.args) } }] } : { content: 'Checked.' } }] }));
