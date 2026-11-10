@@ -280,7 +280,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
 }
 
 type Routine = { id: string; agent: string; name: string; prompt: string; next_at: number; interval_ms: number | null; enabled: number; revision: number };
-type RoutineRun = { no_update: number; turn: string; thread: string; scheduled_at: number | null; created: string; missed: number; status: string; reply: string | null; error: string | null };
+type RoutineRun = { source: string; no_update: number; turn: string; thread: string; scheduled_at: number | null; created: string; missed: number; status: string; reply: string | null; error: string | null };
 type RoutineCommand = { routineId: string | null; data: { id: string; revision?: number; name: string; prompt: string; nextAt: number; intervalSeconds: number | null; enabled: boolean } };
 function pendingRoutine(agent: string): RoutineCommand | null {
   try { const value = JSON.parse(sessionStorage.getItem(`briefsip:routine-command:${agent}`) ?? 'null'); return value && typeof value.data?.id === 'string' && typeof value.data.name === 'string' && typeof value.data.prompt === 'string' && Number.isSafeInteger(value.data.nextAt) && value.data.nextAt > 0 && value.data.nextAt <= 253370764799999 && typeof value.data.enabled === 'boolean' && (value.data.intervalSeconds === null || Number.isSafeInteger(value.data.intervalSeconds)) && (value.routineId === null || typeof value.routineId === 'string') ? value : null; } catch { return null; }
@@ -310,6 +310,41 @@ function TestRoutine({ routine }: { routine: Routine }) {
   }
   return <div><button className="secondary" disabled={busy} onClick={() => void run()}>{busy ? 'Mengirim uji...' : pending ? `Coba uji lagi ${routine.name}` : `Uji sekarang ${routine.name}`}</button>{error && <p className="error" role="alert">{error}</p>}{pending && !busy && <p className="muted">Coba lagi untuk memeriksa permintaan yang sama tanpa membuat eksekusi ganda.</p>}{accepted && <p role="status">Uji sudah diterima. Lihat perkembangannya di Eksekusi.</p>}</div>;
 }
+function ScriptAccess({ agent }: { agent: string }) {
+  const key = `briefsip:script-access:${agent}`;
+  const [access, setAccess] = useState<{ enabled: number; revision: number; configured: boolean } | null>(null);
+  const [pending, setPending] = useState<{ id: string; revision: number; enabled: boolean } | null>(() => {
+    try { const value = JSON.parse(sessionStorage.getItem(key) ?? 'null'); return value && typeof value.id === 'string' && Number.isSafeInteger(value.revision) && typeof value.enabled === 'boolean' ? value : null; } catch { return null; }
+  });
+  const [error, setError] = useState(''), [busy, setBusy] = useState(false), [reload, setReload] = useState(0);
+  const mounted = useRef(true);
+  const readVersion = useRef(0);
+  useEffect(() => () => { mounted.current = false; }, []);
+  useEffect(() => {
+    let stopped = false;
+    const version = ++readVersion.current;
+    void api<NonNullable<typeof access>>(`/api/agents/${agent}/scripts`).then(data => { if (!stopped && version === readVersion.current) { setAccess(data); setError(''); } }).catch(error => { if (!stopped && version === readVersion.current) setError(message(error)); });
+    return () => { stopped = true; };
+  }, [agent, reload]);
+  async function save() {
+    if (busy || !access) return;
+    const request = pending ?? { id: crypto.randomUUID(), revision: access.revision, enabled: !access.enabled };
+    try { sessionStorage.setItem(key, JSON.stringify(request)); } catch { setError('Status izin tidak tersimpan di browser. Periksa penyimpanan situs.'); return; }
+    readVersion.current++;
+    setPending(request); setBusy(true); setError('');
+    try {
+      await api(`/api/agents/${agent}/scripts`, request);
+      const latest = await api<NonNullable<typeof access>>(`/api/agents/${agent}/scripts`);
+      if (!mounted.current) return;
+      sessionStorage.removeItem(key); setPending(null); setAccess(latest);
+    } catch (error) {
+      if (!mounted.current) return;
+      if (error instanceof HttpError && error.status < 500) { sessionStorage.removeItem(key); setPending(null); setAccess(null); }
+      setError(message(error));
+    } finally { if (mounted.current) setBusy(false); }
+  }
+  return <section className="script-access" aria-label="Akses script lokal"><h2>Script lokal</h2><p className="muted">Script dengan token server dapat membaca rutinitas dan menjalankannya untuk agent ini. Mematikan akses tidak menghentikan pekerjaan yang sudah diterima.</p>{access && <p role="status">{access.enabled ? 'Akses script aktif.' : 'Akses script nonaktif.'}{!access.configured && ' Token script belum dikonfigurasi pada server.'}</p>}{pending && <p className="muted">Perubahan izin belum terkonfirmasi. Coba simpan lagi untuk memeriksa permintaan yang sama.</p>}{error && <p role="alert" className="error">{error}</p>}<div className="form-actions"><button className="secondary" disabled={busy || !access || (!pending && !access.enabled && !access.configured)} onClick={() => void save()}>{busy ? 'Menyimpan izin...' : pending ? 'Coba simpan izin lagi' : access?.enabled ? 'Matikan akses script' : 'Izinkan akses script'}</button><button className="secondary" disabled={busy} onClick={() => setReload(value => value + 1)}>Muat ulang izin</button></div></section>;
+}
 function Routines({ agent, onClose, onOpen }: { agent: Agent; onClose: () => void; onOpen: (thread: string) => Promise<void> }) {
   const [rows, setRows] = useState<Routine[] | null>(null), [error, setError] = useState('');
   const [editing, setEditing] = useState<Routine | null | undefined>(() => pendingRoutine(agent.id) ? null : undefined);
@@ -334,10 +369,11 @@ function Routines({ agent, onClose, onOpen }: { agent: Agent; onClose: () => voi
   if (editing !== undefined) return <RoutineForm key={`${editing?.id ?? 'new'}:${reload}`} agent={agent} routine={editing} onBack={() => { setEditing(undefined); setReload(value => value + 1); }} />;
   return <section className="setup"><h1>Rutinitas {agent.name}</h1><p className="muted">Setiap eksekusi punya percakapan terpisah. Briefsip harus berjalan agar jadwal diproses.</p>
     <p className="muted">Uji sekarang menjalankan pekerjaan tersimpan melalui provider, termasuk saat jadwal nonaktif. Jadwal tidak berubah; penggunaan provider tetap dihitung.</p>
-    <div className="form-actions"><button className="secondary" onClick={onClose}>Kembali ke chat</button><a href={`/api/agents/${agent.id}/routines/calendar.ics`} download="briefsip-routines.ics">Unduh kalender</a><button onClick={() => setEditing(null)}>{pendingRoutine(agent.id) ? 'Lanjutkan penyimpanan' : 'Rutinitas baru'}</button></div>
+    <ScriptAccess key={agent.id} agent={agent.id} />
+    <div className="form-actions routine-actions"><button className="secondary" onClick={onClose}>Kembali ke chat</button><a href={`/api/agents/${agent.id}/routines/calendar.ics`} download="briefsip-routines.ics">Unduh kalender</a><button onClick={() => setEditing(null)}>{pendingRoutine(agent.id) ? 'Lanjutkan penyimpanan' : 'Rutinitas baru'}</button></div>
     {error && <p className="error" role="alert">{error} Daftar akan dicoba lagi.</p>}
     {rows === null ? <p role="status">Memuat rutinitas...</p> : !rows.length ? <p className="empty">Belum ada rutinitas. Buat jadwal untuk pekerjaan berulang atau sekali jalan.</p> : <ul className="routine-list">{rows.map(row => <li key={row.id}><strong>{row.name}</strong><p className="muted">{row.enabled ? `Berikutnya ${new Date(row.next_at).toLocaleString('id-ID')}` : 'Jadwal tidak aktif'}{row.interval_ms ? ` · Setiap ${row.interval_ms / 60000} menit` : ' · Sekali jalan'}</p><div className="form-actions"><button className="secondary" onClick={() => setEditing(row)}>Edit {row.name}</button><button className="secondary" onClick={() => setSelected(row.id)} aria-pressed={selected === row.id}>Eksekusi {row.name}</button></div><TestRoutine routine={row} /></li>)}</ul>}
-    {selected && <section aria-label="Riwayat eksekusi"><h2>Riwayat eksekusi</h2>{runError && <p className="error" role="alert">{runError}</p>}{runs === null ? <p role="status">Memuat eksekusi...</p> : !runs.length ? <p>Belum ada eksekusi tersimpan.</p> : <ul className="routine-list">{runs.map(run => <li key={run.turn}><p>{run.scheduled_at === null ? 'Uji manual · ' : ''}{new Date(run.scheduled_at ?? run.created).toLocaleString('id-ID')} · {run.no_update ? 'Tidak ada pembaruan' : statusNames[run.status] ?? run.status}</p>{run.missed > 0 && <p className="muted">{run.missed} jadwal terlewat digabung ke eksekusi ini.</p>}{run.error && <p className="error">{run.error}</p>}<button className="secondary" onClick={() => void onOpen(run.thread).catch(error => setRunError(message(error)))}>Buka hasil</button></li>)}</ul>}</section>}
+    {selected && <section aria-label="Riwayat eksekusi"><h2>Riwayat eksekusi</h2>{runError && <p className="error" role="alert">{runError}</p>}{runs === null ? <p role="status">Memuat eksekusi...</p> : !runs.length ? <p>Belum ada eksekusi tersimpan.</p> : <ul className="routine-list">{runs.map(run => <li key={run.turn}><p>{run.source === 'script' ? 'Script lokal · ' : run.scheduled_at === null ? 'Uji manual · ' : ''}{new Date(run.scheduled_at ?? run.created).toLocaleString('id-ID')} · {run.no_update ? 'Tidak ada pembaruan' : statusNames[run.status] ?? run.status}</p>{run.missed > 0 && <p className="muted">{run.missed} jadwal terlewat digabung ke eksekusi ini.</p>}{run.error && <p className="error">{run.error}</p>}<button className="secondary" onClick={() => void onOpen(run.thread).catch(error => setRunError(message(error)))}>Buka hasil</button></li>)}</ul>}</section>}
   </section>;
 }
 function RoutineForm({ agent, routine, onBack }: { agent: Agent; routine: Routine | null; onBack: () => void }) {
