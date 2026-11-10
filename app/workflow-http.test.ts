@@ -434,3 +434,44 @@ test('workflow deletion revokes triggers, rejects stale commands and retains ter
     await request('/api/workflows?deleted=invalid', undefined, 400);
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('workflow output inbox survives restart with stable paging and idempotent read', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-workflow-inbox-'));
+  const options = { database: join(dir, 'state.sqlite') };
+  let app = await startApp(options);
+  async function request(path: string, body?: unknown, status = 200) {
+    const res = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    const data = await res.json(); assert.equal(res.status, status, JSON.stringify(data)); return data;
+  }
+  try {
+    const agent = await request('/api/agents', { id: randomUUID(), name: 'Inbox', model: 'fixture', instructions: 'Test' }, 201);
+    const workflow = await request(`/api/agents/${agent.id}/workflows`, { id: randomUUID(), name: 'Output', revision: 0, graph: { entry: 'out', maxSteps: 1, nodes: [{ id: 'out', kind: 'output' }] } });
+    for (let index = 0; index < 21; index++) {
+      const body = { id: randomUUID(), revision: 1, input: `Result ${index}` };
+      const run = await request(`/api/workflows/${workflow.id}/run`, body);
+      assert.deepEqual(await request(`/api/workflows/${workflow.id}/run`, body), run);
+    }
+    let first;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      first = await request('/api/workflow-notifications');
+      if (first.unread === 21) break;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.equal(first.unread, 21); assert.equal(first.notifications.length, 20);
+    const second = await request(`/api/workflow-notifications?before=${first.next_before}`);
+    assert.equal(second.notifications.length, 1); assert.equal(second.next_before, null);
+    assert.equal(new Set([...first.notifications, ...second.notifications].map(item => item.run)).size, 21);
+    const selected = first.notifications[0];
+    assert.equal((await request(`/api/workflow-runs/${selected.run}`)).last, 'Result 20');
+    const body = { id: randomUUID() };
+    await request(`/api/workflow-notifications/${selected.run}/read`, body);
+    await request(`/api/workflow-notifications/${selected.run}/read`, body);
+    await request('/api/workflow-notifications?before=0', undefined, 400);
+    await request('/api/workflow-notifications?before=1e2', undefined, 400);
+    await request(`/api/workflow-notifications/${randomUUID()}/read`, body, 404);
+    await app.close(); app = await startApp(options);
+    const reopened = await request('/api/workflow-notifications');
+    assert.equal(reopened.unread, 20); assert.equal(reopened.notifications[0].read, 1);
+    assert.deepEqual(reopened.notifications.map((item: any) => item.run), first.notifications.map((item: any) => item.run));
+  } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
+});
