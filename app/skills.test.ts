@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './server.ts';
 import { restoreSkillCommand } from './skill-command.ts';
 
@@ -51,7 +52,9 @@ test('skill revisions stay pinned, disable isolates agent context and receipts s
     await request(path, { ...install, id: randomUUID(), revision: 4, version: 2, enabled: false });
 
     assert.equal((await request(`/api/skills/${skill.id}?version=1`)).content, command.content);
-    await app.close(); app = await startApp(options);
+    await app.close();
+    const legacy = new DatabaseSync(options.database); legacy.exec('ALTER TABLE agent_skills DROP COLUMN removed'); legacy.close();
+    app = await startApp(options); assert.equal((await request(path)).removed, 0);
     await request(path, install); assert.equal((await request(`/api/agents/${a.id}/skills`)).items[0].enabled, 0);
     for (let i = 0; i < 5; i++) {
       const large = await request('/api/skills', { ...command, id: randomUUID(), content: 'x'.repeat(16000) });
@@ -67,6 +70,25 @@ test('skill revisions stay pinned, disable isolates agent context and receipts s
     assert.equal(new Set([...first.items, ...second.items].map(row => row.skill)).size, 22);
     assert.equal((await request(`/api/agents/${a.id}/skills/${skill.id}`)).version, 2);
     await request(`/api/agents/${a.id}/skills?after=invalid`, undefined, 400);
+    const binding = await request(path);
+    const remove = { id: randomUUID(), revision: binding.revision, version: binding.version, enabled: false, remove: true };
+    const removed = await request(path, remove); assert.equal(removed.removed, 1);
+    await send(a.id); assert.doesNotMatch(contexts.at(-1)!, /Unique version/);
+    assert.equal((await request(`/api/skills/${skill.id}?version=1`)).content, command.content);
+    const installedAgain = await request(path, { id: randomUUID(), revision: removed.revision, version: 1, enabled: true });
+    await request(path, remove); assert.equal((await request(path)).removed, 0);
+    assert.equal((await request(path)).revision, installedAgain.revision);
+    await send(a.id); assert.match(contexts.at(-1)!, /Unique version one/);
+    const finalRemove = { ...remove, id: randomUUID(), revision: installedAgain.revision, version: 1 };
+    await request(path, finalRemove); await app.close(); app = await startApp(options);
+    await request(path, finalRemove); await request(path, install);
+    assert.equal((await request(path)).removed, 1);
+    await request(path, { ...install, id: randomUUID() }, 409);
+    const afterRemoval = await request(`/api/agents/${a.id}/skills`);
+    const remainder = await request(`/api/agents/${a.id}/skills?after=${afterRemoval.next_after}`);
+    assert.equal([...afterRemoval.items, ...remainder.items].some(row => row.skill === skill.id), false);
+    assert.deepEqual(restoreSkillCommand(JSON.stringify({ path, body: finalRemove })), { path, body: finalRemove });
+    assert.throws(() => restoreSkillCommand(JSON.stringify({ path, body: { ...finalRemove, enabled: true } })));
     assert.equal(restoreSkillCommand(null), null);
     assert.deepEqual(restoreSkillCommand(JSON.stringify({ path: '/api/skills', body: command })), { path: '/api/skills', body: command });
     for (const value of [{ path: '/api/backup', body: command }, { path: '/api/skills', body: { ...command, id: [command.id] } }, { path, body: { ...install, enabled: 'yes' } }, { path: '/api/skills', body: { ...command, extra: true } }]) assert.throws(() => restoreSkillCommand(JSON.stringify(value)));
