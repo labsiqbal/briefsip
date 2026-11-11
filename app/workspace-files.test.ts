@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { workspaceBindings, workspaceRead } from './workspace-files.ts';
+import { workspaceBindings, workspaceInspect, workspaceRead } from './workspace-files.ts';
 import { startApp } from './server.ts';
 
 test('workspace browser API pages text and directories while enforcing host binding and read boundaries', async () => {
@@ -54,6 +54,12 @@ test('workspace descriptor reads reject escapes and changed pages, retain bounde
     writeFileSync(join(root,'text'),'changed'); assert.throws(()=>workspaceRead(root,false,{path:'text',offset:8000,digest:first.digest}));
     writeFileSync(join(dir,'outside'),'PRIVATE'); symlinkSync('../outside',join(root,'link')); symlinkSync(dir,join(root,'directory-link'));
     linkSync(join(dir,'outside'),join(root,'hard'));
+    for(const path of ['../outside','/etc/passwd','directory-link/outside','link','hard','a/../text','text/','./text'])assert.throws(()=>workspaceInspect(root,{path}));
+    assert.throws(()=>workspaceInspect(root,{path:'text',extra:true}));
+    const limit=Buffer.alloc(10*1024*1024,255);writeFileSync(join(root,'limit'),limit);
+    assert.deepEqual(workspaceInspect(root,{path:'limit'}),{path:'limit',size:limit.length,digest:createHash('sha256').update(limit).digest('hex')});
+    writeFileSync(join(root,'oversize'),Buffer.alloc(limit.length+1));assert.throws(()=>workspaceInspect(root,{path:'oversize'}));
+    writeFileSync(join(root,'empty'),Buffer.alloc(0));assert.equal(workspaceInspect(root,{path:'empty'}).size,0);
     for(const path of ['../outside','/etc/passwd','directory-link/outside','link','hard','a/../text','text/','./text']) assert.throws(()=>workspaceRead(root,false,{path}));
     writeFileSync(join(root,'binary'),Buffer.from([0xff])); assert.throws(()=>workspaceRead(root,false,{path:'binary'}));
     writeFileSync(join(root,'large'),Buffer.alloc(256*1024+1)); assert.throws(()=>workspaceRead(root,false,{path:'large'}));
@@ -68,14 +74,16 @@ test('workspace descriptor reads reject escapes and changed pages, retain bounde
   } finally { rmSync(dir,{recursive:true,force:true}); }
 });
 
-test('workspace tools share agent direct/side binding, deny unbound and channel access across restart', async () => {
+for (const metadata of [false,true]) test(`workspace tools metadata=${metadata} share agent direct/side binding, deny unbound and channel access across restart`, async () => {
   const dir=mkdtempSync(join(tmpdir(),'briefsip-workspace-http-')), root=join(dir,'root');mkdirSync(root);writeFileSync(join(root,'note.txt'),'OWN_WORKSPACE');
-  const agent=randomUUID(), other=randomUUID(); let advertised=false;
+  const agent=randomUUID(), other=randomUUID(), toolName=metadata?'inspect_workspace_file':'read_workspace_file'; let advertised=false;
+  const binary=Buffer.from([0,255,128,42]);if(metadata)writeFileSync(join(root,'note.txt'),binary);
+  const expected=metadata?JSON.stringify({path:'note.txt',size:binary.length,digest:createHash('sha256').update(binary).digest('hex')}):'OWN_WORKSPACE';
   const provider=createServer(async(req,res)=>{
     let raw='';for await(const chunk of req)raw+=chunk;const data=JSON.parse(raw);
-    advertised=data.tools.some((tool:any)=>tool.function.name==='read_workspace_file');
+    advertised=data.tools.some((tool:any)=>tool.function.name===toolName);
     const result=data.messages.findLast((message:any)=>message.role==='tool');
-    res.end(JSON.stringify({choices:[{finish_reason:result?'stop':'tool_calls',message:result?{content:JSON.parse(result.content).text}:{tool_calls:[{id:'read',type:'function',function:{name:'read_workspace_file',arguments:JSON.stringify({path:'note.txt'})}}]}}]}));
+    res.end(JSON.stringify({choices:[{finish_reason:result?'stop':'tool_calls',message:result?{content:metadata?result.content:JSON.parse(result.content).text}:{tool_calls:[{id:'read',type:'function',function:{name:toolName,arguments:JSON.stringify({path:'note.txt'})}}]}}]}));
   });
   await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));const address=provider.address();assert(address&&typeof address!=='string');
   const options={database:join(dir,'db.sqlite'),baseURL:`http://127.0.0.1:${address.port}/v1`,workspaces:[{agent,directory:root}]};let app=await startApp(options);
@@ -83,12 +91,12 @@ test('workspace tools share agent direct/side binding, deny unbound and channel 
   async function send(path:string){const id=randomUUID();await request(path,{id,text:'Read workspace'});for(let n=0;n<200;n++){const turn=(await request(path)).find((row:any)=>row.id===id);if(['done','failed'].includes(turn.status))return turn;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Timed out');}
   try {
     for(const id of [agent,other])await request('/api/agents',{id,name:id===agent?'Bound':'Unbound',model:'test',instructions:'Help'});
-    assert.equal((await send(`/api/agents/${agent}/turns`)).reply,'OWN_WORKSPACE');assert(advertised);
-    const side=await request(`/api/agents/${agent}/threads`,{id:randomUUID(),name:'Side'});assert.equal((await send(`/api/threads/${side.id}/turns`)).reply,'OWN_WORKSPACE');
+    assert.equal((await send(`/api/agents/${agent}/turns`)).reply,expected);assert(advertised);
+    const side=await request(`/api/agents/${agent}/threads`,{id:randomUUID(),name:'Side'});assert.equal((await send(`/api/threads/${side.id}/turns`)).reply,expected);
     assert.equal((await send(`/api/agents/${other}/turns`)).status,'failed');assert(!advertised);
     const channel=await request('/api/channels',{id:randomUUID(),name:'Team',instructions:'Help',members:[agent],lead:agent});
     assert.equal((await send(`/api/channels/${channel.id}/turns`)).status,'failed');assert(!advertised);
-    await app.close();app=await startApp(options);assert.equal((await send(`/api/agents/${agent}/turns`)).reply,'OWN_WORKSPACE');
+    await app.close();app=await startApp(options);assert.equal((await send(`/api/agents/${agent}/turns`)).reply,expected);
     await app.close();app=await startApp({...options,workspaces:[]});assert.equal((await send(`/api/agents/${agent}/turns`)).status,'failed');assert(!advertised);
   } finally {await app.close();provider.closeAllConnections();await new Promise<void>(resolve=>provider.close(()=>resolve()));rmSync(dir,{recursive:true,force:true});}
 });
