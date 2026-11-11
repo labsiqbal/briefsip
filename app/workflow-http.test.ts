@@ -320,6 +320,37 @@ test('workflow webhooks authenticate, deduplicate, ignore busy runs and recover 
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('parallel webhook waits for provider before creating a receipt', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-parallel-hook-'));
+  let app = await startApp({ database: join(dir, 'state.sqlite') });
+  const provider = createServer((_req, res) => res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'ok' } }] })));
+  try {
+    const request = async (path: string, body: unknown, status = 200) => {
+      const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const value = await response.json(); assert.equal(response.status, status, JSON.stringify(value)); return value;
+    };
+    const owner = await request('/api/agents', { id: randomUUID(), name: 'Parallel hook', model: 'fixture', instructions: 'Test' }, 201);
+    const workflow = await request(`/api/agents/${owner.id}/workflows`, { id: randomUUID(), revision: 0, name: 'Parallel hook', graph: { entry: 'fan', maxSteps: 4, nodes: [
+      { id: 'fan', kind: 'parallel', branches: [{ kind: 'agent', agent: owner.id, prompt: 'A' }, { kind: 'model', model: 'fixture', prompt: 'B' }], next: 'out' }, { id: 'out', kind: 'output' },
+    ] } });
+    const hook = await request(`/api/workflows/${workflow.id}/webhook`, { id: randomUUID(), revision: 0, enabled: true, rotate: true });
+    const body = JSON.stringify({ event: 'parallel', payload: {} }), time = String(Math.floor(Date.now() / 1000)), delivery = randomUUID();
+    const signature = createHmac('sha256', hook.secret).update(`${time}\n${delivery}\n`).update(body).digest('hex');
+    const response = await fetch(`${app.origin}/api/workflow-webhooks/${hook.route}`, { method: 'POST', headers: { 'x-briefsip-time': time, 'x-briefsip-id': delivery, 'x-briefsip-signature': signature, 'Content-Type': 'application/json' }, body });
+    assert.equal(response.status, 503); await response.body?.cancel();
+    assert.equal((await fetch(app.origin + `/api/workflows/${workflow.id}/runs`)).status, 200);
+    await app.close();
+    await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+    const address = provider.address(); assert(address && typeof address !== 'string');
+    app = await startApp({ database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` });
+    const retry = await fetch(`${app.origin}/api/workflow-webhooks/${hook.route}`, { method: 'POST', headers: { 'x-briefsip-time': time, 'x-briefsip-id': delivery, 'x-briefsip-signature': signature, 'Content-Type': 'application/json' }, body });
+    assert.equal(retry.status, 202); await retry.body?.cancel();
+    const duplicate = await fetch(`${app.origin}/api/workflow-webhooks/${hook.route}`, { method: 'POST', headers: { 'x-briefsip-time': time, 'x-briefsip-id': delivery, 'x-briefsip-signature': signature, 'Content-Type': 'application/json' }, body });
+    assert.equal(duplicate.status, 200); await duplicate.body?.cancel();
+    assert.equal((await (await fetch(app.origin + `/api/workflows/${workflow.id}/runs`)).json()).length, 1);
+  } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
+});
+
 
 test('workspace workflow directory pages across owners and keeps per-agent lists scoped', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-workflow-directory-'));
