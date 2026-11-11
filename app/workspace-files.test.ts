@@ -11,7 +11,7 @@ import { startApp } from './server.ts';
 test('workspace descriptor reads reject escapes and changed pages, retain bounded listing', () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-workspace-')), root = join(dir,'root'); mkdirSync(root);
   try {
-    const agent = randomUUID(); assert.equal(workspaceBindings([{ agent, directory: root }]).get(agent), root);
+    const agent = randomUUID(); assert.equal(workspaceBindings([{ agent, directory: root }]).get(agent)?.directory, root);
     writeFileSync(join(root,'text'), 'a'.repeat(8000)+'end');
     const first = workspaceRead(root,false,{path:'text'}); assert.equal(first.next_offset,8000);
     assert.equal(workspaceRead(root,false,{path:'text',offset:8000,digest:first.digest}).text,'end');
