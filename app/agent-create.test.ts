@@ -7,13 +7,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './server.ts';
-import { restoreAgentCreation, restoreOwnerAgentCreation } from './agent-create.ts';
+import { restoreAgentCreation, restoreOwnerAgentCreation, restoreOwnerAgentEdit } from './agent-create.ts';
 
 test('owner creation recovery refuses setup authority and preserves explicit manual identity', () => {
   const value = {id: randomUUID(), name: 'Manual agent', model: 'fixture', backupModel: '', instructions: 'Help', threadLimit: 2, providerAccount: ''};
   assert.equal(restoreOwnerAgentCreation(null), null);
   assert.deepEqual(restoreOwnerAgentCreation(JSON.stringify(value)), {...value, setup: false});
   for (const input of [{...value, setup: true}, {...value, id: value.id.toUpperCase()}, {...value, requester: 'owner'}, {...value, providerAccount: null}, {...value, threadLimit: 0}]) assert.throws(() => restoreOwnerAgentCreation(JSON.stringify(input)));
+});
+
+test('owner edit recovery retains target and revision rather than becoming creation', () => {
+  const value = {id: randomUUID(), agent: randomUUID(), revision: 3, name: 'Edited agent', model: 'fixture', backupModel: '', instructions: 'Help', threadLimit: 2, providerAccount: ''};
+  assert.deepEqual(restoreOwnerAgentEdit(JSON.stringify(value)), {...value, setup: false});
+  assert.equal(restoreOwnerAgentEdit(null), null);
+  for (const raw of ['null', '[]', '{}', JSON.stringify({...value, agent: undefined}), JSON.stringify({...value, revision: 0}), JSON.stringify({...value, revision: Number.MAX_SAFE_INTEGER}), JSON.stringify({...value, setup: true})]) assert.throws(() => restoreOwnerAgentEdit(raw));
+  assert.throws(() => restoreOwnerAgentCreation(JSON.stringify(value)));
 });
 
 test('creation recovery keeps exact command and rejects malformed authority', () => {
