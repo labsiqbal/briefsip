@@ -61,5 +61,26 @@ test('queue order survives restart, preserves transcript order, blocks edits and
     finish(held!);
     await until(async () => (await request(path)).find((row: any) => row.id === early.id)?.status === 'done');
     assert(summaries.some(summary => summary.messages.some((message: any) => message.id === last.id)));
+    held = undefined; await request(path, { id: randomUUID(), text: 'BLOCK' }); await until(async () => !!held);
+    const b = await request('/api/agents', { id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' });
+    const group = await request('/api/channels', { id: randomUUID(), name: 'Large queue', lead: a.id, members: [a.id, b.id], instructions: 'Help' });
+    const groupPath = `/api/channels/${group.id}/turns`, groupQueue = `/api/channels/${group.id}/queue`;
+    const ids: string[] = [];
+    for (let n=0; n<101; n++) { const id = randomUUID(); ids.push(id); await request(groupPath, { id, text: `QUEUED ${n}`, recipient: n < 98 ? a.id : b.id }); }
+    const firstPage = await request(groupQueue); assert.equal(firstPage.turns.length,100); assert.equal(firstPage.more,true);
+    const cursor = `?after=${firstPage.next_after}&snapshot=${firstPage.snapshot}`;
+    const secondPage = await request(groupQueue + cursor); assert.equal(secondPage.turns.length,1); assert.equal(secondPage.next_after,null);
+    assert.deepEqual([...firstPage.turns, ...secondPage.turns].map((row: any) => row.id), ids);
+    assert.equal(firstPage.turns.at(-1).next.id, secondPage.turns[0].id);
+    assert.equal(secondPage.turns[0].previous.id, firstPage.turns.at(-1).id);
+    await request(groupQueue + '?after=NaN&snapshot=' + firstPage.snapshot, undefined,400);
+    await request(groupQueue + '?after=1', undefined,400);
+    await request(`/api/agents/${b.id}/queue` + cursor, undefined,409);
+    const left=firstPage.turns[0], right=firstPage.turns[1];
+    await request(groupQueue, { id: randomUUID(), target:left.id, other:right.id, revision:left.revision, otherRevision:right.revision });
+    await request(groupQueue + cursor, undefined,409);
+    const boundary = secondPage.turns[0], neighbor = boundary.previous;
+    await request(groupQueue, { id: randomUUID(), target: boundary.id, other: neighbor.id, revision: boundary.revision, otherRevision: neighbor.revision });
+    const changed = await request(groupQueue); assert.notEqual(changed.snapshot,firstPage.snapshot); assert.equal(changed.turns[0].id,ids[1]);
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
