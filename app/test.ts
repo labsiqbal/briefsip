@@ -297,7 +297,7 @@ test('HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupt
     await request(path, { id: randomUUID(), text: 'after-profile-edit' });
     const editedReply = (await until(path, 'done')).at(-1);
     assert.equal(editedReply.reply, 'reply:after-profile-edit;history:6');
-    assert.deepEqual(profilesSeen.find(call => call.text === 'after-profile-edit'), { text: 'after-profile-edit', model: 'different-model', instructions: 'Updated instructions.\nCurrent avatar revision: 0.' });
+    assert.deepEqual(profilesSeen.find(call => call.text === 'after-profile-edit'), { text: 'after-profile-edit', model: 'different-model', instructions: 'Updated instructions.\nCurrent avatar revision: 0. Current profile revision: 2.' });
 
 
   } finally {
