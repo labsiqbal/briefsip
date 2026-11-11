@@ -11,6 +11,7 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
 test('image generation preserves scope, uncertain receipts and exact artifacts through restart', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-image-gen-'));
   let mode = 'ok', calls = 0, continuation = false, seenImage = false, release: (() => void) | undefined;
+  const downloads = new Map<string, string>();
   const images = createServer(async (req, res) => {
     assert.equal(req.url, '/v1/images/generations'); assert.equal(req.headers.authorization, 'Bearer image-secret'); calls++;
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -31,6 +32,7 @@ test('image generation preserves scope, uncertain receipts and exact artifacts t
     if (results.length && mode === 'hold') return;
     seenImage ||= body.messages.some((message: any) => Array.isArray(message.content) && message.content.some((part: any) => part.type === 'image_url'));
     const result = results.length ? JSON.parse(results[0].content) : null;
+    if (result?.id) { assert.match(result.downloadUrl, new RegExp(`^/api/(agents|threads|channels)/[a-f0-9-]+/files/${result.id}$`)); downloads.set(result.id, result.downloadUrl); }
     const tool = !results.length ? { id: 'generate', type: 'function', function: { name: 'generate_image', arguments: JSON.stringify({ prompt: 'Synthetic landscape' }) } } : results.length === 1 && result.id ? { id: 'read', type: 'function', function: { name: 'read_attachment', arguments: JSON.stringify({ id: result.id }) } } : null;
     res.end(JSON.stringify({ choices: [{ finish_reason: tool ? 'tool_calls' : 'stop', message: tool ? { tool_calls: [tool] } : { content: 'Image complete or uncertain receipt checked.' } }] }));
   });
@@ -49,7 +51,7 @@ test('image generation preserves scope, uncertain receipts and exact artifacts t
     for (const path of scopes) {
       const id = randomUUID(); seenImage = false; await request(path + '/turns', { id, text: 'Image', ...(path.includes('channels') ? { recipient: a.id } : {}) });
       const row = await until(path, id, 'done'); assert.equal(row.generatedFiles.length, 1); assert(seenImage);
-      const file = row.generatedFiles[0]; const res = await fetch(app.origin + path + '/files/' + file.id); assert.deepEqual(Buffer.from(await res.arrayBuffer()), png); assert.match(res.headers.get('content-disposition')!, /attachment/);
+      const file = row.generatedFiles[0]; assert.equal(downloads.get(file.id), path + '/files/' + file.id); const res = await fetch(app.origin + downloads.get(file.id)); assert.deepEqual(Buffer.from(await res.arrayBuffer()), png); assert.match(res.headers.get('content-disposition')!, /attachment/);
       assert.equal((await fetch(app.origin + scopes.find(other => other !== path) + '/files/' + file.id)).status, 404);
     }
     const path = scopes[0];
