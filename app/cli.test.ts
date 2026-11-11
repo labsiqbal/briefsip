@@ -44,7 +44,7 @@ test('script CLI discovers only grants, sends once, waits, preserves retry ID an
     assert.equal((await cli(['status',a.id,held.id], directory)).turn.status, 'running');
     assert.equal((await cli(['cancel',b.id,held.id], directory)).exitCode, 1);
     assert.equal((await cli(['status',a.id,held.id], directory)).turn.status, 'running');
-    assert.equal((await cli(['cancel',a.id,held.id.toUpperCase()], directory)).exitCode, 0);
+    assert.equal((await cli(['cancel',a.id,held.id.toUpperCase()], directory)).exitCode, 1);
     const cancelled = await cli(['cancel',a.id,held.id], directory);
     assert.equal(cancelled.exitCode, 0); assert.equal(cancelled.turn.status, 'cancelled');
     assert.equal((await cli(['cancel',a.id,id], directory)).exitCode, 1);
@@ -223,7 +223,14 @@ test('CLI answers retain receipt identity across lost replies and restart', asyn
     const uncertainArgs = ['answer',a.id,uncertain.id,uncertain.turn.questions[0].id,'Yes','--id',randomUUID()], before = calls;
     assert.equal((await terminal(uncertainArgs)).exitCode, 1); assert.equal(calls, before);
     assert.equal((await terminal([...uncertainArgs,'--acknowledge-uncertain','--wait','--timeout','5'])).exitCode, 0); assert.equal(calls, before + 1);
+    const lowerId = 'abcdef12-3456-4789-abcd-0123456789ab', upperId = lowerId.toUpperCase();
+    const lower = await terminal(['run',a.id,'ASK','--id',lowerId,'--wait','--timeout','5']); assert.equal(lower.exitCode, 3);
+    const upper = await terminal(['run',a.id,'ASK','--id',upperId,'--wait','--timeout','5']); assert.equal(upper.exitCode, 3);
+    const cancelledUpper = await terminal(['cancel',a.id,upperId]); assert.equal(cancelledUpper.exitCode, 0);
+    assert.equal(cancelledUpper.turn.id, upperId);
+    const untouchedLower = await terminal(['status',a.id,lowerId]); assert.equal(untouchedLower.exitCode, 3); assert.equal(untouchedLower.turn.status, 'queued');
+    assert.equal((await terminal(['cancel',a.id,lowerId])).exitCode, 0);
     await ui(`/api/agents/${a.id}/scripts`, { id: randomUUID(), revision: 1, enabled: false });
-    assert.equal((await terminal(args)).exitCode, 5); assert.equal(calls, before + 1);
+    assert.equal((await terminal(args)).exitCode, 5); assert.equal(calls, before + 3);
   } finally { await app.close(); proxy.closeAllConnections(); provider.closeAllConnections(); await Promise.all([new Promise<void>(resolve => proxy.close(() => resolve())), new Promise<void>(resolve => provider.close(() => resolve()))]); rmSync(dir, { recursive: true, force: true }); }
 });
