@@ -16,8 +16,19 @@ test('CLI routine lists and histories stay within the selected granted agent', a
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(dir, 'db.sqlite'), scriptDirectory: directory, baseURL: `http://127.0.0.1:${address.port}/v1` };
-  let app = await startApp(options);
-  t.after(async () => { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); });
+  let app = await startApp(options), drop = true;
+  const requests: string[] = [];
+  const proxy = createServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    const response = await fetch(app.origin + req.url, { method: req.method, headers: { Authorization: req.headers.authorization!, 'Content-Type': 'application/json' }, body: body || undefined });
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (req.url?.endsWith('/run') && req.method === 'POST') { requests.push(body); if (drop && response.ok) { drop = false; res.destroy(); return; } }
+    res.writeHead(response.status, { 'Content-Type': 'application/json' }); res.end(bytes);
+  });
+  await new Promise<void>(resolve => proxy.listen(0, '127.0.0.1', resolve));
+  const proxyAddress = proxy.address(); assert(proxyAddress && typeof proxyAddress !== 'string');
+  const useProxy = () => { const file = join(directory, 'connection.json'), saved = JSON.parse(readFileSync(file, 'utf8')); writeFileSync(file, JSON.stringify({ ...saved, url: `http://127.0.0.1:${proxyAddress.port}` })); };
+  t.after(async () => { await app.close(); proxy.closeAllConnections(); await new Promise<void>(resolve => proxy.close(() => resolve())); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); });
   const ui = async (path: string, body: unknown) => { const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const value = await response.json(); assert(response.ok, JSON.stringify(value)); return value; };
   const terminal = (args: string[]) => new Promise<any>((resolve, reject) => {
     const child = spawn(process.execPath, ['--experimental-strip-types', 'cli.ts', ...args], { cwd: import.meta.dirname, env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -34,14 +45,20 @@ test('CLI routine lists and histories stay within the selected granted agent', a
   assert.equal((await terminal(['routine-runs', b.id, routine.id])).exitCode, 1);
   const command = ['routine-run', a.id, routine.id, String(routine.revision), 'CLI input', '--id', randomUUID(), '--wait', '--timeout', '5'];
   assert.equal((await terminal(['routine-run', b.id, ...command.slice(2)])).exitCode, 1);
+  useProxy();
+  const uncertain = await terminal(command);
+  assert.equal(uncertain.exitCode, 5); assert.equal(uncertain.requestId, command[6]); assert.equal(uncertain.routine, routine.id); assert.equal(requests.length, 1);
   const run = await terminal(command); assert.equal(run.exitCode, 0); assert.equal(run.routine, routine.id); assert(run.thread); assert.equal(run.turn.reply, 'Routine result');
+  assert.equal(requests.length, 2); assert.equal(requests[0], requests[1]);
   assert.equal((await terminal(command)).id, run.id); assert.deepEqual(prompts, ['Task\n\nScript input:\nCLI input']);
   let history: any;
   for (let n = 0; n < 30; n++) { history = await terminal(['routine-runs', a.id, routine.id]); if (history.runs?.[0]?.status === 'done') break; await new Promise(resolve => setTimeout(resolve, 20)); }
   assert.equal(history.exitCode, 0); assert.equal(history.runs.length, 1); assert.equal(history.runs[0].turn, run.id); assert.equal(history.runs[0].reply, 'Routine result');
   await app.close(); app = await startApp(options);
+  useProxy();
   assert.deepEqual((await terminal(['routine-runs', a.id, routine.id])).runs, history.runs);
   assert.equal((await terminal(command)).id, run.id); assert.equal(prompts.length, 1);
+  const accepted = await terminal(command.slice(0, 7)); assert.equal(accepted.exitCode, 0); assert.equal(accepted.id, run.id); assert.equal(accepted.thread, run.thread); assert.equal(accepted.turn, undefined);
   assert.equal((await terminal(command.map(value=>value==='CLI input'?'Changed':value))).exitCode, 1);
   for (const bad of [['routines', a.id, '--wait'], ['routine-runs', a.id], ['routine-runs', a.id, '../bad'], ['routine-runs', a.id, routine.id, '--thread', randomUUID()], ['routine-run', a.id, routine.id, '0', 'CLI input', '--id', randomUUID()], ['routine-run', a.id, routine.id, String(routine.revision), 'CLI input']]) assert.equal((await terminal(bad)).exitCode, 2);
   await ui(`/api/agents/${a.id}/scripts`, { id: randomUUID(), revision: 1, enabled: false });
