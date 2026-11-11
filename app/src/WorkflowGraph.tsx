@@ -2,7 +2,7 @@ import { useId, useRef, useState } from 'react';
 import { workflowEdges, type WorkflowGraph as Graph } from '../workflows';
 import { workflowLayout } from '../workflow-editor-state';
 
-const kinds = { agent: 'Agent', model: 'Model', condition: 'Kondisi', approval: 'Persetujuan', wait: 'Tunggu event', output: 'Output' };
+const kinds = { parallel: 'Paralel', agent: 'Agent', model: 'Model', condition: 'Kondisi', approval: 'Persetujuan', wait: 'Tunggu event', output: 'Output' };
 export function WorkflowGraph({ graph, selected, locked, onSelect, onMove, buttonRefs, labels, loops }: {
   graph: Graph; selected: string; locked: boolean; onSelect: (id: string) => void;
   buttonRefs: Map<string, HTMLButtonElement>;

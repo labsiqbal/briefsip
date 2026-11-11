@@ -9,7 +9,13 @@ import { restoreWorkflowEditorDraft, workflowDraftMatches, workflowStatusLabels 
 import { restoreWorkflowCommand, type WorkflowCommand as Command } from '../workflow-command';
 
 type Agent = { id: string; name: string; model: string };
-type Run = { id: string; version: number; revision: number; status: string; cursor: string; error: string | null; last: string; graph: WorkflowGraph; steps: { seq: number; node: string; status: string; detail: string | null; task_status: string | null; paused: number | null; thread: string | null; agent: string | null }[] };
+type Run = { id: string; version: number; revision: number; status: string; cursor: string; error: string | null; last: string; graph: WorkflowGraph; steps: { parallel_group: number | null; seq: number; node: string; status: string; detail: string | null; task_status: string | null; paused: number | null; thread: string | null; agent: string | null }[] };
+
+function stepTitle(run: Run, step: Run['steps'][number]) {
+  const node = run.graph.nodes.find(node => node.id === step.node);
+  if (node?.kind !== 'parallel') return step.node;
+  return step.parallel_group === null ? `${step.node} · Penggabungan` : `${step.node} · Cabang ${step.seq - step.parallel_group + node.branches.length + 1}`;
+}
 
 function WorkflowVersions({ workflow, request, locked, refresh, onRestore }: {
   workflow: Workflow; request: <T>(path: string, data?: unknown) => Promise<T>; locked: boolean; refresh: number; onRestore: (version: number) => void;
@@ -34,7 +40,7 @@ function RunGraph({ run }: { run: Run }) {
   const steps = run.steps.filter(step => step.node === node), selected = run.graph.nodes.find(item => item.id === node);
   useEffect(() => { if (node) detail.current?.focus(); }, [node]);
   return <section><GraphView graph={run.graph} selected={node || run.cursor} locked={false} labels={workflowNodeLabels(run.steps)} buttonRefs={buttons.current} onSelect={id => { setNode(id); if (id === node) detail.current?.focus(); }} />
-    {selected && <div className="workflow-step-detail" tabIndex={-1} ref={detail}><h3>Langkah {node}</h3>{steps.length ? <ol>{steps.map((step, index) => <li key={step.seq}>Percobaan {index + 1}: {workflowStepLabel(step)}{step.detail && <p className="message-text">{step.detail}</p>}</li>)}</ol> : <p>Langkah belum dijalankan pada eksekusi ini.</p>}<button className="secondary" onClick={() => { buttons.current.get(node)?.focus(); buttons.current.get(node)?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }}>Kembali ke graph eksekusi</button></div>}
+    {selected && <div className="workflow-step-detail" tabIndex={-1} ref={detail}><h3>Langkah {node}</h3>{steps.length ? <ol>{steps.map((step, index) => <li key={step.seq}>{selected.kind === 'parallel' ? stepTitle(run, step) : `Percobaan ${index + 1}`}: {workflowStepLabel(step)}{step.detail && <p className="message-text">{step.detail}</p>}</li>)}</ol> : <p>Langkah belum dijalankan pada eksekusi ini.</p>}<button className="secondary" onClick={() => { buttons.current.get(node)?.focus(); buttons.current.get(node)?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }}>Kembali ke graph eksekusi</button></div>}
   </section>;
 }
 
@@ -159,7 +165,7 @@ export function WorkflowPanel({ owner, agents, request, onBack, onOpen, onNaviga
         {run.status === 'waiting' && run.graph.nodes.find(node => node.id === run.cursor)?.kind === 'wait' && <EventConnection key={`${run.id}:${run.steps.at(-1)?.seq}`} path={`/api/workflow-waits/${run.id}/${run.steps.at(-1)!.seq}`} request={request} />}
         {run.status === 'approval' && <><p>{run.graph.nodes.find(node => node.id === run.cursor)?.kind === 'approval' ? (run.graph.nodes.find(node => node.id === run.cursor) as { prompt: string }).prompt : ''}</p><div className="form-actions routine-actions">{[true, false].map(accepted => <button key={String(accepted)} disabled={locked} onClick={() => void execute({ kind: 'approve', workflow: selected, path: `/api/workflow-runs/${run.id}/approve`, body: { id: crypto.randomUUID(), revision: run.revision, accepted } })}>{accepted ? 'Setujui langkah' : 'Tolak langkah'}</button>)}</div></>}
         {!['done', 'failed', 'cancelled'].includes(run.status) && <button className="secondary" disabled={locked} onClick={() => { if (window.confirm('Batalkan workflow beserta langkah aktif? Hasil yang sudah tersimpan tetap ada.')) void execute({ kind: 'cancel', workflow: selected, path: `/api/workflow-runs/${run.id}/cancel`, body: { id: crypto.randomUUID(), revision: run.revision } }); }}>Batalkan workflow</button>}
-        <p className="message-text">{run.last}</p><ol className="routine-list">{run.steps.map(step => <li key={step.seq}><strong>{step.node}</strong><p>{workflowStepLabel(step)}</p>{step.detail && <p>{step.detail}</p>}{step.thread && step.agent && <button className="secondary" onClick={() => void onOpen(step.thread!, step.agent!).catch(error => setError(error.message))}>Buka langkah {step.node}</button>}</li>)}</ol>
+        <p className="message-text">{run.last}</p><ol className="routine-list">{run.steps.map(step => <li key={step.seq}><strong>{stepTitle(run, step)}</strong><p>{workflowStepLabel(step)}</p>{step.detail && <p>{step.detail}</p>}{step.thread && step.agent && <button className="secondary" onClick={() => void onOpen(step.thread!, step.agent!).catch(error => setError(error.message))}>Buka langkah {stepTitle(run, step)}</button>}</li>)}</ol>
       </section>}
     </>}
   </section>;
