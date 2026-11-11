@@ -22,7 +22,15 @@ test('script approval binds agent and revision, preserves receipts and refuses r
     await request(list,undefined,403,auth);await request(permission,{id:randomUUID(),revision:0,enabled:true});await request(`/api/agents/${b.id}/scripts`,{id:randomUUID(),revision:0,enabled:true});
     const graph={entry:'first',maxSteps:3,nodes:[{id:'first',kind:'approval',prompt:'First?',yes:'second'},{id:'second',kind:'approval',prompt:'Second?',yes:'out'},{id:'out',kind:'output'}]};
     const workflow=await request(`/api/agents/${a.id}/workflows`,{id:randomUUID(),revision:0,name:'Review',graph});
-    const run=await request(`/api/workflows/${workflow.id}/run`,{id:randomUUID(),revision:1,input:'Safe input'});
+    const workflowsPath=`/api/scripts/agents/${a.id}/workflows`,startPath=`${workflowsPath}/${workflow.id}/run`,start={id:randomUUID(),revision:1,input:'Safe input'};
+    assert.equal((await request(workflowsPath,undefined,200,auth)).workflows[0].id,workflow.id);
+    assert.deepEqual((await request(`/api/scripts/agents/${b.id}/workflows`,undefined,200,auth)).workflows,[]);
+    await request(`/api/scripts/agents/${b.id}/workflows/${workflow.id}/run`,start,404,auth);
+    await request(startPath,undefined,405,auth);await request(startPath,{...start,extra:true},400,auth);
+    const run=await request(startPath,start,200,auth);assert.deepEqual(await request(startPath,start,200,auth),run);
+    const runPath=`/api/scripts/agents/${a.id}/workflow-runs/${run.id}`;
+    assert.equal((await request(runPath,undefined,200,auth)).status,'approval');
+    await request(`/api/scripts/agents/${b.id}/workflow-runs/${run.id}`,undefined,404,auth);
     const pending=(await request(list,undefined,200,auth)).approvals[0];assert.equal(pending.run,run.id);assert.equal(pending.prompt,'First?');assert.equal(pending.input,'Safe input');
     assert.deepEqual((await request(`/api/scripts/agents/${b.id}/approvals`,undefined,200,auth)).approvals,[]);
     const path=`/api/scripts/agents/${a.id}/workflow-runs/${run.id}/approve`, decision={id:randomUUID(),revision:pending.revision,accepted:true};
@@ -34,7 +42,9 @@ test('script approval binds agent and revision, preserves receipts and refuses r
     await app.close();app=await startApp(options);assert.deepEqual(await request(path,decision,200,auth),result);
     assert.equal((await request(list,undefined,200,auth)).approvals[0].step,'second');
     const held=streamed(path,{id:randomUUID(),revision:next.revision,accepted:true});
-    await request(permission,{id:randomUUID(),revision:1,enabled:false});held.finish();assert.equal(await held.result,403);
+    const heldStart=streamed(startPath,{...start,id:randomUUID()});
+    await request(permission,{id:randomUUID(),revision:1,enabled:false});held.finish();heldStart.finish();assert.equal(await held.result,403);assert.equal(await heldStart.result,403);
+    await request(runPath,undefined,403,auth);await request(workflowsPath,undefined,403,auth);
     await request(list,undefined,403,auth);await request(path,decision,403,auth);
     await request(permission,{id:randomUUID(),revision:2,enabled:true});
     const reject={id:randomUUID(),revision:next.revision,accepted:false};await request(path,reject,200,auth);
