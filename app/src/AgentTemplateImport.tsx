@@ -14,7 +14,7 @@ export function AgentTemplateImport({ request, onCreated, onClose }: { request: 
     if (!file || pending || invalid || inFlight.current) return;
     const current = ++generation.current; setError(''); setDraft(null); setBusy(true);
     try {
-      if (file.size > 64000) throw new Error('Template maksimum 64 KB.');
+      if (file.size > 750000) throw new Error('Template maksimum 750 KB.');
       const parsed = parseAgentTemplate(JSON.parse(await file.text()));
       if (current === generation.current) setDraft(parsed);
     } catch (error) { if (current === generation.current) setError(error instanceof SyntaxError ? 'File bukan JSON valid.' : error instanceof Error ? error.message : 'Template gagal dibaca.'); }
@@ -50,6 +50,8 @@ export function AgentTemplateImport({ request, onCreated, onClose }: { request: 
       {pending && <p className="notice">Pembuatan belum terkonfirmasi. Coba lagi memakai permintaan yang sama untuk menghindari duplikasi.</p>}
       {draft && <form onSubmit={event => { event.preventDefault(); void apply(); }}><fieldset disabled={busy || !!pending}>
         <legend>Pratinjau profil baru</legend>
+        {draft.avatar && <img className="avatar-preview" src={`data:image/png;base64,${draft.avatar}`} alt="Avatar yang akan diimpor" />}
+        <button type="button" className="secondary" aria-disabled={!draft.avatar} onClick={() => { if (draft.avatar) { const { avatar, ...profile } = draft; setDraft(profile); } }}>Tanpa avatar</button>
         <label>Nama<input required maxLength={80} value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} /></label>
         <label>Model<input required maxLength={160} value={draft.model} onChange={event => setDraft({ ...draft, model: event.target.value })} /></label>
         <label>Model cadangan (opsional)<input maxLength={160} value={draft.backupModel ?? ''} onChange={event => setDraft({ ...draft, backupModel: event.target.value })} /></label>
@@ -71,10 +73,10 @@ export function AgentTemplateExport({ id, request }: { id: string; request: <T>(
     catch (error) { if (current === version.current) setError(error instanceof Error ? error.message : 'Template gagal dimuat.'); }
     finally { if (current === version.current) setBusy(false); }
   }
-  return <section><h2>Ekspor template profil</h2><p>Ekspor mengambil profil tersimpan, tanpa riwayat, file, atau konfigurasi kredensial provider. Instruksi tetap ikut diunduh: periksa informasi sensitif sebelum membagikan file.</p>
+  return <section><h2>Ekspor template profil</h2><p>Ekspor mengambil profil tersimpan, termasuk avatar, tanpa riwayat, file percakapan, atau konfigurasi kredensial provider. Instruksi tetap ikut diunduh: periksa informasi sensitif sebelum membagikan file.</p>
     <button className="secondary" disabled={busy} onClick={() => void preview()}>{busy ? 'Memuat profil tersimpan...' : 'Pratinjau template ekspor'}</button>
     {error && <p className="error" role="alert">{error}</p>}
-    {template && <><label>Isi file yang akan diunduh<textarea readOnly rows={10} value={JSON.stringify(template, null, 2)} /></label><button className="secondary" onClick={() => {
+    {template && <>{template.avatar && <img className="avatar-preview" src={`data:image/png;base64,${template.avatar}`} alt="Avatar dalam template" />}<label>Isi file yang akan diunduh<textarea readOnly rows={10} value={JSON.stringify(template, null, 2)} /></label><button className="secondary" onClick={() => {
       const url = URL.createObjectURL(new Blob([JSON.stringify(template, null, 2) + '\n'], { type: 'application/json' }));
       const link = document.createElement('a'); link.href = url; link.download = 'briefsip-agent-template.json'; link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
