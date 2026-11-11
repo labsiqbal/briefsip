@@ -12,7 +12,7 @@ function recover(): Command | null {
   return { id: value.id, revision: value.revision, sections: parseSections(value.sections) };
 }
 export function AgentSidebar({ agents, renderAgent, request }: {
-  agents: { id: string; name: string }[]; renderAgent: (id: string) => ReactNode;
+  agents: { id: string; name: string; hidden?: boolean }[]; renderAgent: (id: string) => ReactNode;
   request: <T>(path: string, body?: unknown) => Promise<T>;
 }) {
   const [saved, setSaved] = useState<Sidebar | null>(null), [draft, setDraft] = useState<SidebarSection[]>([]);
@@ -55,7 +55,7 @@ export function AgentSidebar({ agents, renderAgent, request }: {
     try { sessionStorage.removeItem(storage); setPending(null); setInvalid(false); await load(); }
     catch { setError('Penyimpanan browser tidak tersedia. Periksa pengaturan browser lalu coba lagi.'); }
   }
-  const shown = new Set(agents.map(agent => agent.id)), assigned = new Set(saved?.sections.flatMap(section => section.agents));
+  const shown = new Set(agents.filter(agent => !agent.hidden).map(agent => agent.id)), assigned = new Set(saved?.sections.flatMap(section => section.agents));
   const displayed = pending?.sections ?? draft;
   const patch = (id: string, value: Partial<SidebarSection>) => setDraft(draft.map(section => section.id === id ? { ...section, ...value } : section));
   function move(index: number, offset: number) {
@@ -77,6 +77,7 @@ export function AgentSidebar({ agents, renderAgent, request }: {
       </fieldset><div className="form-actions"><button disabled={busy || invalid || !saved}>{busy ? 'Menyimpan...' : pending ? 'Coba simpan lagi' : 'Simpan bagian'}</button><button type="button" className="secondary" disabled={busy} onClick={() => void reload()}>Muat ulang pengaturan</button></div></form>
     </section>}
     {saved?.sections.map(section => <details key={section.id} open><summary>{section.name}</summary>{section.agents.filter(id => shown.has(id)).map(id => renderAgent(id))}{!section.agents.some(id => shown.has(id)) && <p className="muted">Belum ada agent.</p>}</details>)}
-    {!!saved?.sections.length && <h3>Tanpa bagian</h3>}{agents.filter(agent => !assigned.has(agent.id)).map(agent => renderAgent(agent.id))}
+    {!!saved?.sections.length && <h3>Tanpa bagian</h3>}{agents.filter(agent => !agent.hidden && !assigned.has(agent.id)).map(agent => renderAgent(agent.id))}
+    {agents.some(agent => agent.hidden) && <details><summary>Agents disembunyikan</summary>{agents.filter(agent => agent.hidden).map(agent => renderAgent(agent.id))}</details>}
   </nav>;
 }

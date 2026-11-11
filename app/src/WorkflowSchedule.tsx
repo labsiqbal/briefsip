@@ -32,6 +32,6 @@ export function WorkflowSchedule({ workflow, request, pending, locked, refresh, 
       {conflict && <p role="alert">Jadwal sudah berubah. Draft tetap ditampilkan; muat ulang jadwal sebelum menyimpan lagi.</p>}
       <button disabled={locked || conflict}>Simpan jadwal workflow</button>
     </form>}
-    {state && <><h3>Kejadian jadwal terakhir</h3>{!state.occurrences.length ? <p>Belum ada kejadian jadwal.</p> : <ul className="routine-list">{state.occurrences.map(item => <li key={item.scheduled_at}><p>{new Date(item.scheduled_at).toLocaleString('id-ID')} · {item.reason === 'busy' ? 'Dilewati: workflow masih aktif' : 'Eksekusi dibuat'}{item.missed > 0 ? ` · ${item.missed} interval terlewat` : ''}</p>{item.run && <button className="secondary" onClick={() => onRun(item.run!)}>Buka hasil jadwal</button>}</li>)}</ul>}</>}
+    {state && <><h3>Kejadian jadwal terakhir</h3>{!state.occurrences.length ? <p>Belum ada kejadian jadwal.</p> : <ul className="routine-list">{state.occurrences.map(item => <li key={item.scheduled_at}><p>{new Date(item.scheduled_at).toLocaleString('id-ID')} · {item.reason === 'hidden' ? 'Dilewati: agent disembunyikan' : item.reason === 'busy' ? 'Dilewati: workflow masih aktif' : 'Eksekusi dibuat'}{item.missed > 0 ? ` · ${item.missed} interval terlewat` : ''}</p>{item.run && <button className="secondary" onClick={() => onRun(item.run!)}>Buka hasil jadwal</button>}</li>)}</ul>}</>}
   </section>;
 }
