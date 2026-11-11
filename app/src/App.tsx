@@ -27,6 +27,7 @@ import '@fontsource/ibm-plex-sans/latin-600.css';
 import './style.css';
 
 const panelLoadFailure = () => ({ default: () => <section className="empty"><h1>Panel belum dapat dimuat</h1><p role="alert">Periksa koneksi, lalu muat ulang aplikasi.</p><button onClick={() => window.location.reload()}>Muat ulang aplikasi</button></section> });
+const SitesPanel = lazy(() => import('./SitesPanel').then(module => ({ default: module.SitesPanel })).catch(panelLoadFailure));
 const McpPanel = lazy(() => import('./McpPanel').then(module => ({ default: module.McpPanel })).catch(panelLoadFailure));
 const SkillsPanel = lazy(() => import('./SkillsPanel').then(module => ({ default: module.SkillsPanel })).catch(panelLoadFailure));
 
@@ -727,7 +728,7 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
     <label>{!profile && setup ? 'Deskripsi kebutuhan' : 'Instruksi'}<textarea name="instructions" required maxLength={8000} readOnly={!!pending.current} defaultValue={profile?.instructions ?? recovery.command?.instructions} rows={6} placeholder="Apa tugas agent ini? Bagaimana hasilnya perlu disampaikan?" /></label>
     {error && <p role="alert" className="error">{error}</p>}
     <div className="form-actions">{onCancel && <button type="button" className="secondary" onClick={onCancel}>Batal</button>}<button disabled={busy || invalid}>{busy ? 'Menyimpan...' : profile ? 'Simpan profil' : pending.current ? 'Coba pembuatan lagi' : setup ? 'Buat dan susun agent' : 'Buat agent'}</button>{!profile && pending.current && <button type="button" className="secondary" disabled={busy} onClick={() => { if (confirm('Agent mungkin sudah dibuat. Periksa daftar agent sebelum membuang permintaan ini dan membuat yang baru. Buang pemulihan?')) { try { sessionStorage.removeItem(creationKey); pending.current = null; setRecovery({ command: null, invalid: false }); setError(''); nameInput.current?.focus(); } catch { setError('Penyimpanan pemulihan belum dapat dibersihkan.'); } } }}>Buang pemulihan</button>}{profile && error && onReload && <button type="button" className="secondary" onClick={onReload}>Buang perubahan dan muat ulang</button>}</div>
-  </form>{profile && onVisibilityChanged && <AvatarEditor agent={profile.id} request={api} onChanged={onVisibilityChanged} />}{profile && onVisibilityChanged && <AgentVisibility agent={liveProfile!} request={api} onChanged={onVisibilityChanged} />}{profile && <AgentTemplateExport key={profile.id} id={profile.id} request={api} />}</section>;
+  </form>{profile && onVisibilityChanged && <AvatarEditor agent={profile.id} request={api} onChanged={onVisibilityChanged} />}{profile && onVisibilityChanged && <AgentVisibility agent={liveProfile!} request={api} onChanged={onVisibilityChanged} />}{profile && <Suspense fallback={<p role="status">Memuat situs lokal...</p>}><SitesPanel key={`sites:${profile.id}`} agent={profile.id} request={api} /></Suspense>}{profile && <AgentTemplateExport key={profile.id} id={profile.id} request={api} />}</section>;
 }
 
 function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agents: Agent[]; channel?: Channel; onCreated: (channel: Channel) => void; onCancel: () => void; onReload?: () => void }) {
