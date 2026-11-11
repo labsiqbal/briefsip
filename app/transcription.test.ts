@@ -6,10 +6,22 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './server.ts';
+import { audioFormat } from './transcription.ts';
+
+function mp4Header(brand: string) {
+  const bytes = Buffer.alloc(24); bytes.writeUInt32BE(24); bytes.write('ftyp', 4); bytes.write(brand, 8); bytes.write('isom', 16); bytes.write('mp42', 20); return bytes;
+}
+
+test('audio detection recognizes MP4 brands and rejects malformed ftyp and image containers', () => {
+  for (const brand of ['M4A ', 'M4B ', 'isom', 'mp41', 'mp42', 'iso2', 'iso5', 'iso6']) assert.equal(audioFormat(mp4Header(brand)), 'mp4');
+  for (const brand of ['avif', 'heic', 'mif1', 'xxxx']) assert.equal(audioFormat(mp4Header(brand)), null);
+  for (const size of [0, 1, 8, 15, 17, 25, 0xffffffff]) { const bytes = mp4Header('M4A '); bytes.writeUInt32BE(size); assert.equal(audioFormat(bytes), null); }
+  assert.equal(audioFormat(mp4Header('M4A ').subarray(0, 15)), null);
+});
 
 test('HTTP transcription requires consent, isolates files and never silently replays uncertain requests', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-transcription-'));
-  const bytes = Buffer.from('RIFF0000WAVEfixture');
+  const bytes = Buffer.concat([mp4Header('M4A '), Buffer.from('synthetic audio transport bytes')]);
   let calls = 0, invalid: false | 'secret' | 'surrogate' | 'utf8' = false;
   const provider = createServer(async (req, res) => {
     calls++;
@@ -18,7 +30,7 @@ test('HTTP transcription requires consent, isolates files and never silently rep
     const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(chunk);
     const body = Buffer.concat(chunks);
     assert(body.includes(bytes)); assert(body.includes(Buffer.from('fixture-transcribe')));
-    assert(body.includes(Buffer.from('filename="audio.wav"')));
+    assert(body.includes(Buffer.from('filename="audio.mp4"')));
     res.setHeader('Content-Type', 'application/json');
     if (invalid === 'utf8') res.end(Buffer.concat([Buffer.from('{\"text\":\"'), Buffer.from([255]), Buffer.from('\"}')]));
     else res.end(JSON.stringify({ text: invalid === 'secret' ? 'synthetic-secret' : invalid === 'surrogate' ? '\ud800' : 'Hasil transkripsi.\nBaris dua.' }));
