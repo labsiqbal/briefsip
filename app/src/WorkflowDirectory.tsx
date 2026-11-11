@@ -1,13 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { WorkflowPanel } from './WorkflowPanel';
 import { WorkflowInbox } from './WorkflowInbox';
 import type { Workflow } from './WorkflowEditor';
 
 type Agent = { id: string; name: string; model: string };
 type Page = { workflows: (Workflow & { owner_name: string })[]; next_after: string | null };
-export function WorkflowDirectory({ agents, request, onClose, onOpen }: {
+export function WorkflowDirectory({ agents, request, onClose, renderConversation }: {
   agents: Agent[]; request: <T>(path: string, data?: unknown) => Promise<T>;
-  onClose: () => void; onOpen: (owner: string, thread: string) => void;
+  onClose: () => void; renderConversation: (thread: string, owner: string) => ReactNode;
 }) {
   const [page, setPage] = useState<Page | null>(null), [cursors, setCursors] = useState(['']);
   const [deleted, setDeleted] = useState(false);
@@ -26,7 +26,7 @@ export function WorkflowDirectory({ agents, request, onClose, onOpen }: {
   const selectedOwner = agents.find(agent => agent.id === (opened && opened !== 'new' ? opened.agent : owner));
   if (inbox) return <WorkflowInbox request={request} onBack={() => setInbox(false)} />;
   if (opened && selectedOwner) return <WorkflowPanel key={selectedOwner.id} owner={selectedOwner} agents={agents} initial={opened} request={request}
-    onNavigate={() => {}} onBack={() => { setOpened(null); setRefresh(value => value + 1); }} onOpen={async (thread, agent) => onOpen(agent, thread)} />;
+    onNavigate={() => {}} onBack={() => { setOpened(null); setRefresh(value => value + 1); }} renderConversation={renderConversation} />;
   return <section className="setup workflow-panel"><h1 ref={heading} tabIndex={-1}>Workflow workspace</h1>
     <p>Kelola workflow semua agent. Setiap langkah dapat memakai agent atau model berbeda.</p>
     <button className="secondary" onClick={() => setInbox(true)}>Buka inbox hasil workflow</button>

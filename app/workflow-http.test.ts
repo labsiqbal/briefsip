@@ -538,3 +538,27 @@ test('workflow channel outputs deliver once and recheck channel availability at 
     assert.equal((await request(`/api/workflow-runs/${snapshotRun.id}`)).version, 1);
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('workflow run pages retain older approvals after restart and validate cursors', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-run-pages-'));
+  const options = { database: join(dir, 'state.sqlite') };
+  let app = await startApp(options);
+  async function request(path: string, body?: unknown, expected = 200) {
+    const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    const data = await response.json(); assert.equal(response.status, expected, JSON.stringify(data)); return data;
+  }
+  try {
+    const agent = await request('/api/agents', { id: randomUUID(), name: 'Approvals', model: 'fixture', instructions: 'Help.' }, 201);
+    const workflow = await request(`/api/agents/${agent.id}/workflows`, { id: randomUUID(), revision: 0, name: 'Review', graph: { entry: 'review', maxSteps: 2, nodes: [{ id: 'review', kind: 'approval', prompt: 'Accept?', yes: 'out', no: 'out' }, { id: 'out', kind: 'output' }] } });
+    const ids: string[] = [];
+    for (let i = 0; i < 22; i++) ids.push((await request(`/api/workflows/${workflow.id}/run`, { id: randomUUID(), revision: 1, input: String(i) })).id);
+    await app.close(); app = await startApp(options);
+    const path = `/api/workflows/${workflow.id}/runs`, latest = await request(path);
+    assert.equal(latest.length, 20); assert.deepEqual(latest.map((row: any) => row.id), ids.slice(2).reverse());
+    const older = await request(`${path}?before=${latest.at(-1).seq}`);
+    assert.deepEqual(older.map((row: any) => row.id), ids.slice(0, 2).reverse());
+    assert.equal((await request(`/api/workflow-runs/${older.at(-1).id}`)).status, 'approval');
+    assert.equal((await request(`${path}?before=${older.at(-1).seq}`)).length, 0);
+    for (const query of ['before=0', 'before=-1', 'before=no', 'before=1.5', 'before=9007199254740992', 'before=', 'before=1&before=2', 'other=1']) await request(`${path}?${query}`, undefined, 400);
+  } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
+});

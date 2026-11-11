@@ -1,5 +1,5 @@
 import { EventConnection } from './EventConnection';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { WorkflowEditor, type Workflow, type WorkflowDraft } from './WorkflowEditor';
 import { WorkflowSchedule } from './WorkflowSchedule';
 import { WorkflowWebhook, type WorkflowHook } from './WorkflowWebhook';
@@ -38,9 +38,9 @@ function RunGraph({ run }: { run: Run }) {
   </section>;
 }
 
-export function WorkflowPanel({ owner, agents, request, onBack, onOpen, onNavigate, initial }: {
+export function WorkflowPanel({ owner, agents, request, onBack, renderConversation, onNavigate, initial }: {
   owner: Agent; agents: Agent[]; request: <T>(path: string, data?: unknown) => Promise<T>;
-  onBack: () => void; onOpen: (thread: string, owner: string) => Promise<void>; onNavigate: () => void;
+  onBack: () => void; renderConversation: (thread: string, owner: string) => ReactNode; onNavigate: () => void;
   initial?: Workflow | 'new';
 }) {
   const storage = `briefsip:workflow-command:${owner.id}`, listPath = `/api/agents/${owner.id}/workflows`;
@@ -51,8 +51,17 @@ export function WorkflowPanel({ owner, agents, request, onBack, onOpen, onNaviga
   const [pending, setPending] = useState<Command | null>(recovery.command);
   const [page, setPage] = useState<{ workflows: Workflow[]; next_after: string | null } | null>(null), [cursors, setCursors] = useState(['']);
   const [editing, setEditing] = useState<Workflow | 'new' | null>(pending?.kind === 'save' ? pending.workflow ?? 'new' : initial === 'new' && !pending ? 'new' : null);
-  const [selected, setSelected] = useState<Workflow | null>(pending?.workflow ?? (initial && initial !== 'new' ? initial : null)), [runs, setRuns] = useState<{ id: string; status: string; created: string }[]>([]);
+  const [selected, setSelected] = useState<Workflow | null>(pending?.workflow ?? (initial && initial !== 'new' ? initial : null)), [runs, setRuns] = useState<{ seq: number; id: string; status: string; created: string }[] | null>(null);
   const [runId, setRunId] = useState(pending?.kind === 'run' ? String(pending.body.id) : pending && ['approve', 'cancel', 'retry'].includes(pending.kind) ? pending.path.split('/')[3] : ''), [run, setRun] = useState<Run | null>(null), [input, setInput] = useState('');
+  const [runCursors, setRunCursors] = useState<number[]>([]), beforeRun = runCursors.at(-1);
+  const [conversation, setConversation] = useState<{ thread: string; agent: string; node: string } | null>(null);
+  const stepButtons = useRef(new Map<number, HTMLButtonElement>()), returnStep = useRef<number | null>(null), conversationBack = useRef<HTMLButtonElement>(null);
+  useEffect(() => { setRunCursors([]); }, [selected?.id]);
+  useEffect(() => { setRuns(null); }, [selected?.id, beforeRun]);
+  useEffect(() => {
+    if (conversation) conversationBack.current?.focus();
+    else if (returnStep.current !== null) stepButtons.current.get(returnStep.current)?.focus();
+  }, [conversation]);
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [refresh, setRefresh] = useState(0);
   const [conflict, setConflict] = useState(false), [editorReload, setEditorReload] = useState(0);
   const [scheduleRefresh, setScheduleRefresh] = useState(0), [scheduleConflict, setScheduleConflict] = useState('');
@@ -76,14 +85,14 @@ export function WorkflowPanel({ owner, agents, request, onBack, onOpen, onNaviga
     let stopped = false, timer: ReturnType<typeof setTimeout>;
     async function poll() {
       try {
-        const rows = await request<typeof runs>(`/api/workflows/${selected!.id}/runs`);
+        const rows = await request<NonNullable<typeof runs>>(`/api/workflows/${selected!.id}/runs${beforeRun ? `?before=${beforeRun}` : ''}`);
         const detail = runId ? await request<Run>(`/api/workflow-runs/${runId}`) : null;
         if (!stopped) { setRuns(rows); setRun(detail); }
       } catch (error) { if (!stopped) setError(error instanceof Error ? error.message : 'Riwayat belum dimuat.'); }
       if (!stopped) timer = setTimeout(poll, 1200);
     }
     void poll(); return () => { stopped = true; clearTimeout(timer); };
-  }, [selected?.id, runId, refresh]);
+  }, [selected?.id, runId, refresh, beforeRun]);
   async function execute(command: Command) {
     if (busy || inFlight.current) return false;
     const version = navigation.current;
@@ -138,6 +147,7 @@ export function WorkflowPanel({ owner, agents, request, onBack, onOpen, onNaviga
   }
   const locked = busy || !!pending || conflict || recovery.invalid || !!selected?.deleted || !!(editing && editing !== 'new' && editing.deleted);
   const banner = <>{editing && editing !== 'new' && !!editing.deleted && <p className="notice" role="alert">Workflow telah dihapus. Draft tetap tersimpan di browser.</p>}{recovery.invalid && <p className="error" role="alert">Permintaan tersimpan tidak dapat dibaca. Periksa riwayat sebelum mengirim ulang. <button className="secondary" onClick={() => { try { sessionStorage.removeItem(storage); setRecovery({ command: null, invalid: false }); } catch { setError('Penyimpanan situs belum dapat diakses.'); } }}>Abaikan data pemulihan</button></p>}{error && <p className="error" role="alert">{error}</p>}{pending && <p className="notice">Permintaan belum terkonfirmasi. <button className="secondary" disabled={busy} onClick={() => void execute(pending)}>Coba permintaan lagi</button></p>}{conflict && editing && <p className="notice">Draft tetap ditampilkan. Muat versi terbaru; perubahan graph sebelumnya dapat dipulihkan dengan Urungkan graph. <button className="secondary" disabled={busy} onClick={() => void reloadEdit()}>Muat versi terbaru</button></p>}</>;
+  if (conversation && selected && run) return <><div className="recipient"><button ref={conversationBack} className="secondary" onClick={() => setConversation(null)}>Kembali ke eksekusi {selected.name}</button><span>{selected.name} · Versi {run.version} · Langkah {conversation.node} · Eksekusi {run.id}</span></div>{renderConversation(conversation.thread, conversation.agent)}</>;
   if (editing) return <><div className="recipient">{banner}</div><WorkflowEditor key={editing === 'new' ? 'new' : editing.id} reload={editorReload} owner={owner} agents={agents} request={request} locked={locked} saved={editing === 'new' ? undefined : editing} draftKey={`briefsip:workflow-draft:${owner.id}:${editing === 'new' ? 'new' : editing.id}`} pendingSave={pending?.kind === 'save'} onReload={() => void reloadEdit()}
     initial={pending?.kind === 'save' ? pending.body as unknown as WorkflowDraft : editing === 'new' ? undefined : editing}
     onBack={() => { navigate(); if (initial && !selected) onBack(); else { setEditing(null); setConflict(false); setRefresh(value => value + 1); } }}
@@ -145,21 +155,22 @@ export function WorkflowPanel({ owner, agents, request, onBack, onOpen, onNaviga
   return <section className="setup workflow-panel"><h1 ref={heading} tabIndex={-1}>{selected ? selected.name : 'Workflow'}</h1>{banner}
     <div className="form-actions routine-actions"><button className="secondary" onClick={() => { navigate(); if (selected && !initial) { setSelected(null); setRunId(''); setRun(null); } else onBack(); }}>Kembali</button>{selected && !selected.deleted && initial && <button className="secondary" disabled={locked} onClick={() => { navigate(); setEditing(selected); }}>Edit workflow</button>}<button className="secondary" onClick={() => setRefresh(value => value + 1)}>Muat ulang workflow</button></div>
     {!selected ? <><button disabled={locked} onClick={() => { navigate(); setEditing('new'); }}>Workflow baru</button>
-      {!page ? <p role="status">Memuat workflow...</p> : !page.workflows.length ? <p>Belum ada workflow pada halaman ini.</p> : <ul className="routine-list">{page.workflows.map(item => <li key={item.id}><h2>{item.name}</h2><p>Versi {item.revision} · {item.graph.nodes.length} langkah</p><div className="form-actions routine-actions"><button className="secondary" disabled={locked} onClick={() => { navigate(); setEditing(item); }}>Edit {item.name}</button><button onClick={() => { navigate(); setSelected(item); setRunId(''); setRun(null); setRuns([]); setInput(''); }}>Buka {item.name}</button></div></li>)}</ul>}
+      {!page ? <p role="status">Memuat workflow...</p> : !page.workflows.length ? <p>Belum ada workflow pada halaman ini.</p> : <ul className="routine-list">{page.workflows.map(item => <li key={item.id}><h2>{item.name}</h2><p>Versi {item.revision} · {item.graph.nodes.length} langkah</p><div className="form-actions routine-actions"><button className="secondary" disabled={locked} onClick={() => { navigate(); setEditing(item); }}>Edit {item.name}</button><button onClick={() => { navigate(); setSelected(item); setRunId(''); setRun(null); setRuns(null); setInput(''); }}>Buka {item.name}</button></div></li>)}</ul>}
       <div className="form-actions routine-actions"><button className="secondary" disabled={cursors.length < 2} onClick={() => setCursors(value => value.slice(0, -1))}>Workflow sebelumnya</button><button className="secondary" disabled={!page?.next_after} onClick={() => { if (page?.next_after) setCursors(value => [...value, page.next_after!]); }}>Workflow berikutnya</button></div>
     </> : <>{selected.deleted ? <p className="notice">Workflow telah dihapus. Hasil tersimpan tetap dapat dibaca.</p> : <form onSubmit={event => { event.preventDefault(); if (!locked) void execute({ kind: 'run', workflow: selected, path: `/api/workflows/${selected.id}/run`, body: { id: crypto.randomUUID(), revision: selected.revision, input } }); }}><label>Input workflow<textarea maxLength={16000} value={input} readOnly={locked} onChange={event => setInput(event.target.value)} /></label><button disabled={locked}>Jalankan versi {selected.revision}</button></form>}
       {!selected.deleted && <><button className="secondary" disabled={locked} onClick={() => { if (window.confirm(`Hapus workflow ${selected.name}? Jadwal dihentikan dan URL webhook dicabut. Hasil tersimpan tetap tersedia. Eksekusi aktif harus dihentikan lebih dulu.`)) void execute({ kind: 'delete', workflow: selected, path: `/api/workflows/${selected.id}/delete`, body: { id: crypto.randomUUID(), revision: selected.revision } }); }}>Hapus workflow</button>
       <WorkflowSchedule key={`schedule:${selected.id}`} workflow={selected.id} request={request} locked={locked} refresh={scheduleRefresh} conflict={scheduleConflict === selected.id} onLoaded={() => setScheduleConflict(current => current === selected.id ? '' : current)} pending={pending?.kind === 'schedule' && pending.workflow?.id === selected.id ? pending : undefined} onSave={async body => { await execute({ kind: 'schedule', workflow: selected, path: `/api/workflows/${selected.id}/schedule`, body }); }} onRun={id => { navigate(); setRun(null); setRunId(id); }} />
       <WorkflowWebhook key={`hook:${selected.id}`} workflow={selected.id} request={request} locked={locked} busy={busy} refresh={hookRefresh} secret={hookSecret?.workflow === selected.id ? hookSecret.value : undefined} conflict={hookConflict === selected.id} onLoaded={() => setHookConflict(current => current === selected.id ? '' : current)} pending={pending?.kind === 'webhook' && pending.workflow?.id === selected.id ? pending : undefined} onSave={async body => { await execute({ kind: 'webhook', workflow: selected, path: `/api/workflows/${selected.id}/webhook`, body }); }} onRun={id => { navigate(); setRun(null); setRunId(id); }} />
       <WorkflowVersions key={selected.id} workflow={selected} request={request} locked={locked} refresh={refresh} onRestore={version => void execute({ kind: 'restore', workflow: selected, path: `/api/workflows/${selected.id}/restore`, body: { id: crypto.randomUUID(), revision: selected.revision, version } })} /></>}
-      <h2>Riwayat eksekusi</h2>{!runs.length ? <p>Belum ada eksekusi.</p> : <ul className="routine-list">{runs.map(item => <li key={item.id}><button className="secondary" aria-pressed={runId === item.id} onClick={() => { navigate(); setRun(null); setRunId(item.id); }}>{new Date(item.created).toLocaleString('id-ID')} · {statuses[item.status] ?? item.status}</button></li>)}</ul>}
+      <h2>Riwayat eksekusi</h2>{!runs ? <p role="status">Memuat riwayat eksekusi...</p> : !runs.length ? <p>Belum ada eksekusi pada halaman ini.</p> : <ul className="routine-list">{runs.map(item => <li key={item.id}><button className="secondary" aria-pressed={runId === item.id} onClick={() => { navigate(); setRun(null); setRunId(item.id); }}>{new Date(item.created).toLocaleString('id-ID')} · {statuses[item.status] ?? item.status}</button></li>)}</ul>}
+      <div className="form-actions routine-actions"><button className="secondary" disabled={!runCursors.length} onClick={() => setRunCursors(value => value.slice(0, -1))}>Eksekusi lebih baru</button><button className="secondary" disabled={runs?.length !== 20} onClick={() => { if (runs?.length) setRunCursors(value => [...value, runs.at(-1)!.seq]); }}>Eksekusi lebih lama</button></div>
       {run && <section><h2>Versi {run.version} · {statuses[run.status]}</h2>{run.error && <p className="error">{run.error}</p>}
         <RunGraph key={run.id} run={run} />
         {run.status === 'failed' && ['agent', 'model', 'condition'].includes(run.graph.nodes.find(node => node.id === run.cursor)?.kind ?? '') && run.steps.length < run.graph.maxSteps && <button className="secondary" disabled={locked} onClick={() => { if (window.confirm('Coba lagi langkah yang gagal? Efek sebelumnya mungkin sudah terjadi. Pengaturan node terbaru yang sejenis akan digunakan; hasil sebelumnya tetap disimpan.')) void execute({ kind: 'retry', workflow: selected, path: `/api/workflow-runs/${run.id}/retry`, body: { id: crypto.randomUUID(), revision: run.revision } }); }}>Coba lagi langkah gagal</button>}
         {run.status === 'waiting' && run.graph.nodes.find(node => node.id === run.cursor)?.kind === 'wait' && <EventConnection key={`${run.id}:${run.steps.at(-1)?.seq}`} path={`/api/workflow-waits/${run.id}/${run.steps.at(-1)!.seq}`} request={request} />}
         {run.status === 'approval' && <><p>{run.graph.nodes.find(node => node.id === run.cursor)?.kind === 'approval' ? (run.graph.nodes.find(node => node.id === run.cursor) as { prompt: string }).prompt : ''}</p><div className="form-actions routine-actions">{[true, false].map(accepted => <button key={String(accepted)} disabled={locked} onClick={() => void execute({ kind: 'approve', workflow: selected, path: `/api/workflow-runs/${run.id}/approve`, body: { id: crypto.randomUUID(), revision: run.revision, accepted } })}>{accepted ? 'Setujui langkah' : 'Tolak langkah'}</button>)}</div></>}
         {!['done', 'failed', 'cancelled'].includes(run.status) && <button className="secondary" disabled={locked} onClick={() => { if (window.confirm('Batalkan workflow beserta langkah aktif? Hasil yang sudah tersimpan tetap ada.')) void execute({ kind: 'cancel', workflow: selected, path: `/api/workflow-runs/${run.id}/cancel`, body: { id: crypto.randomUUID(), revision: run.revision } }); }}>Batalkan workflow</button>}
-        <p className="message-text">{run.last}</p><ol className="routine-list">{run.steps.map(step => <li key={step.seq}><strong>{step.node}</strong><p>{workflowStepLabel(step)}</p>{step.detail && <p>{step.detail}</p>}{step.thread && step.agent && <button className="secondary" onClick={() => void onOpen(step.thread!, step.agent!).catch(error => setError(error.message))}>Buka langkah {step.node}</button>}</li>)}</ol>
+        <p className="message-text">{run.last}</p><ol className="routine-list">{run.steps.map(step => <li key={step.seq}><strong>{step.node}</strong><p>{workflowStepLabel(step)}</p>{step.detail && <p>{step.detail}</p>}{step.thread && step.agent && <button ref={element => { if (element) stepButtons.current.set(step.seq, element); else stepButtons.current.delete(step.seq); }} className="secondary" onClick={() => { navigate(); returnStep.current = step.seq; setConversation({ thread: step.thread!, agent: step.agent!, node: step.node }); }}>Buka langkah {step.node}</button>}</li>)}</ol>
       </section>}
     </>}
   </section>;

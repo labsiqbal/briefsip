@@ -85,6 +85,7 @@ test('manual routine runs keep schedule, deduplicate across restart and enforce 
     await post(holdPath, { id: randomUUID(), revision: hold.revision }, 409);
     assert.deepEqual((await get(list)).find((row: { id: string }) => row.id === hold.id), hold);
     await post(`/api/threads/${held.thread}/turns/${held.turn}/pause`, { id: randomUUID(), revision: 1 });
+    assert.equal((await get(`/api/routines/${hold.id}/runs`))[0].paused, 1);
     await post(holdPath, { id: randomUUID(), revision: hold.revision }, 409);
     await post(`/api/threads/${held.thread}/turns/${held.turn}/cancel`, { id: randomUUID() });
     const again = await post(holdPath, { id: randomUUID(), revision: hold.revision });
