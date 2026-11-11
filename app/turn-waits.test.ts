@@ -188,7 +188,7 @@ test('routine waits preserve artifacts and reject events cancelled before upload
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('workflow cancellation closes waiting descendants of completed steps', async () => {
+for (const boundary of ['workflow', 'channel', 'thread'] as const) test(`${boundary} cancellation closes waiting descendants of completed steps`, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-workflow-child-wait-'));
   let recipient = '', childContinuations = 0;
   const provider = createServer(async (req, res) => {
@@ -213,25 +213,47 @@ test('workflow cancellation closes waiting descendants of completed steps', asyn
   try {
     const owner = await request('/api/agents', { id: randomUUID(), name: 'Owner', model: 'source', instructions: 'Help' });
     const child = await request('/api/agents', { id: randomUUID(), name: 'Child', model: 'child', instructions: 'Help' }); recipient = child.id;
-    const graph = { entry: 'agent', maxSteps: 4, nodes: [{ id: 'agent', kind: 'agent', agent: owner.id, prompt: 'Notify child', next: 'wait' }, { id: 'wait', kind: 'wait', event: 'workflow-ready', timeoutSeconds: 3600, next: 'out' }, { id: 'out', kind: 'output' }] };
-    const workflow = await request(`/api/agents/${owner.id}/workflows`, { id: randomUUID(), name: 'Child wait', revision: 0, graph });
-    const run = await request(`/api/workflows/${workflow.id}/run`, { id: randomUUID(), revision: workflow.revision, input: 'Start' });
-    const state = await until(`/api/workflow-runs/${run.id}`, value => value.cursor === 'wait' && value.status === 'waiting');
+    let cancel: () => Promise<unknown>, verifyRoot: () => Promise<void>, restore: (() => Promise<unknown>) | undefined;
+    if (boundary === 'workflow') {
+      const graph = { entry: 'agent', maxSteps: 4, nodes: [{ id: 'agent', kind: 'agent', agent: owner.id, prompt: 'Notify child', next: 'wait' }, { id: 'wait', kind: 'wait', event: 'workflow-ready', timeoutSeconds: 3600, next: 'out' }, { id: 'out', kind: 'output' }] };
+      const workflow = await request(`/api/agents/${owner.id}/workflows`, { id: randomUUID(), name: 'Child wait', revision: 0, graph });
+      const run = await request(`/api/workflows/${workflow.id}/run`, { id: randomUUID(), revision: workflow.revision, input: 'Start' });
+      const state = await until(`/api/workflow-runs/${run.id}`, value => value.cursor === 'wait' && value.status === 'waiting');
+      cancel = () => request(`/api/workflow-runs/${run.id}/cancel`, { id: randomUUID(), revision: state.revision });
+      verifyRoot = async () => { assert.equal((await request(`/api/workflow-runs/${run.id}`)).steps[0].status, 'done'); };
+    } else if (boundary === 'channel') {
+      const channel = await request('/api/channels', { id: randomUUID(), name: 'Team', instructions: 'Help', members: [owner.id, child.id], lead: owner.id });
+      const path = `/api/channels/${channel.id}/turns`, root = randomUUID();
+      await request(path, { id: root, text: 'Notify child', recipient: owner.id });
+      await until(path, rows => rows.find((row: any) => row.id === root)?.status === 'done');
+      cancel = () => request(`/api/channels/${channel.id}/edit`, { id: randomUUID(), revision: channel.revision, name: channel.name, instructions: channel.instructions, members: channel.members, lead: channel.lead, archived: true });
+      restore = () => request(`/api/channels/${channel.id}/edit`, { id: randomUUID(), revision: channel.revision + 1, name: channel.name, instructions: channel.instructions, members: channel.members, lead: channel.lead, archived: false });
+      verifyRoot = async () => { assert.equal((await request(path)).find((row: any) => row.id === root).status, 'done'); };
+    } else {
+      const side = await request(`/api/agents/${owner.id}/threads`, { id: randomUUID(), name: 'Source' });
+      const path = `/api/threads/${side.id}/turns`, root = randomUUID();
+      await request(path, { id: root, text: 'Notify child' });
+      await until(path, rows => rows.find((row: any) => row.id === root)?.status === 'done');
+      cancel = () => request(`/api/threads/${side.id}/edit`, { id: randomUUID(), revision: side.revision, name: side.name, archived: true });
+      restore = () => request(`/api/threads/${side.id}/edit`, { id: randomUUID(), revision: side.revision + 1, name: side.name, archived: false });
+      verifyRoot = async () => { assert.equal((await request(path)).find((row: any) => row.id === root).status, 'done'); };
+    }
     const [thread] = await until(`/api/agents/${child.id}/threads`, value => value.length);
     const turns = `/api/threads/${thread.id}/turns`, [waiting] = await until(turns, value => value[0]?.events?.length);
     const connection = await request(`/api/turn-waits/${waiting.events[0].id}`);
     const unrelated = randomUUID(), direct = `/api/agents/${child.id}/turns`;
     await request(direct, { id: unrelated, text: 'Independent task' });
     await until(direct, rows => rows.find((row: any) => row.id === unrelated)?.events?.length);
-    await request(`/api/workflow-runs/${run.id}/cancel`, { id: randomUUID(), revision: state.revision });
+    await cancel();
     const stopped = (await request(turns))[0]; assert.equal(stopped.status, 'cancelled');
     assert.equal(stopped.events[0].status, 'closed');
-    assert.equal((await request(`/api/workflow-runs/${run.id}`)).steps[0].status, 'done');
+    await verifyRoot();
     const body = JSON.stringify({ event: 'ready' }), id = randomUUID(), time = String(Math.floor(Date.now() / 1000));
     const headers = { 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': id, 'X-Briefsip-Signature': createHmac('sha256', connection.secret).update(`${time}\n${id}\n${body}`).digest('hex') };
     const send = () => fetch(app.origin + new URL(connection.url).pathname, { method: 'POST', headers, body });
     const denied = await send(); assert.equal(denied.status, 409); await denied.arrayBuffer();
     await app.close(); app = await startApp(options);
+    await restore?.();
     assert.equal((await request(turns))[0].status, 'cancelled'); const stillDenied = await send(); assert.equal(stillDenied.status, 409); await stillDenied.arrayBuffer();
     assert.equal(childContinuations, 0);
     assert.equal((await request(direct)).find((row: any) => row.id === unrelated).status, 'queued');
