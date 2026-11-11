@@ -122,6 +122,10 @@ test('script CLI discovers only grants, sends once, waits, preserves retry ID an
     }
     const denied = await fetch(app.origin + '/api/scripts/agents', { headers: { ...headers, Origin: app.origin } }); assert.equal(denied.status, 403); await denied.arrayBuffer();
     const side = await request(`/api/agents/${b.id}/threads`, { id: randomUUID(), name: 'Cancellation scope' });
+    const listedSides = await cli(['threads', b.id], directory); assert.equal(listedSides.exitCode, 0); assert(listedSides.threads?.some(row => row.id === side.id));
+    const createdSide = await cli(['thread', b.id, 'CLI side'], directory); assert.equal(createdSide.exitCode, 0); assert.equal(createdSide.conversation?.name, 'CLI side');
+    const sideReply = await cli(['run', b.id, 'Hello side', '--thread', side.id, '--wait', '--timeout', '3'], directory);
+    assert.equal(sideReply.exitCode, 0); assert.equal(sideReply.turn.thread, side.id); assert.equal(sideReply.turn.reply, 'Answer');
     const sideTurn = await request(`/api/threads/${side.id}/turns`, { id: randomUUID(), text: 'HOLD' });
     assert.equal((await cli(['cancel',b.id,sideTurn.id], directory)).exitCode, 1);
     await request(`/api/threads/${side.id}/turns/${sideTurn.id}/cancel`, { id: randomUUID() });
@@ -157,7 +161,7 @@ test('script CLI discovers only grants, sends once, waits, preserves retry ID an
 });
 
 test('CLI answers retain receipt identity across lost replies and restart', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-cli-answer-')); let calls = 0, drop = false, dropStatus = false;
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-cli-answer-')); let calls = 0, drop = false, dropStatus = false, dropThread = false, dropSide = false;
   const posts: string[] = [], answers: string[] = [];
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk; calls++;
@@ -173,6 +177,8 @@ test('CLI answers retain receipt identity across lost replies and restart', asyn
     let body = ''; for await (const chunk of req) body += chunk;
     const response = await fetch(app.origin + req.url, { method: req.method, headers: { Authorization: req.headers.authorization!, 'Content-Type': 'application/json' }, body: body || undefined });
     const bytes = Buffer.from(await response.arrayBuffer());
+    if (req.method === 'POST' && dropThread && req.url?.endsWith('/threads')) { dropThread = false; res.destroy(); return; }
+    if (req.method === 'POST' && dropSide && req.url?.includes('/threads/') && req.url.endsWith('/turns')) { dropSide = false; res.destroy(); return; }
     if (req.url?.endsWith('/answer')) { posts.push(body); if (drop) { drop = false; res.destroy(); return; } }
     if (dropStatus && req.url?.includes('?focus=')) { dropStatus = false; res.destroy(); return; }
     res.writeHead(response.status, { 'Content-Type': 'application/json' }); res.end(bytes);
@@ -232,5 +238,30 @@ test('CLI answers retain receipt identity across lost replies and restart', asyn
     assert.equal((await terminal(['cancel',a.id,lowerId])).exitCode, 0);
     await ui(`/api/agents/${a.id}/scripts`, { id: randomUUID(), revision: 1, enabled: false });
     assert.equal((await terminal(args)).exitCode, 5); assert.equal(calls, before + 3);
+    const sideId = randomUUID(), create = ['thread', b.id, 'Terminal side', '--id', sideId];
+    dropThread = true;
+    const lostCreate = await terminal(create); assert.equal(lostCreate.exitCode, 5); assert.equal(lostCreate.id, sideId);
+    const side = await terminal(create); assert.equal(side.exitCode, 0); assert.equal(side.conversation.id, sideId);
+    assert.equal((await terminal(create)).conversation.id, sideId);
+    assert.equal((await terminal(['threads', b.id])).threads.filter((row: { id: string }) => row.id === sideId).length, 1);
+    const sideArgs = ['run', b.id, 'ASK', '--thread', sideId, '--id', randomUUID().toUpperCase(), '--wait', '--timeout', '5'];
+    dropSide = true; const beforeSide = calls;
+    const lostSend = await terminal(sideArgs); assert.equal(lostSend.exitCode, 5); assert.equal(lostSend.thread, sideId); assert.equal(lostSend.id, sideArgs[6]);
+    const sideAsk = await terminal(sideArgs); assert.equal(sideAsk.exitCode, 3); assert.equal(sideAsk.thread, sideId);
+    const sideCalls = calls; assert.equal(sideCalls, beforeSide + 1);
+    assert.equal((await terminal(sideArgs)).id, sideAsk.id); assert.equal(calls, sideCalls);
+    assert.equal((await terminal(['status', b.id, sideAsk.id])).exitCode, 1);
+    assert.equal((await terminal(['cancel', b.id, sideAsk.id])).exitCode, 1);
+    assert.equal((await terminal(['status', b.id, sideAsk.id, '--thread', sideId])).exitCode, 3);
+    const sideAnswer = ['answer', b.id, sideAsk.id, sideAsk.turn.questions[0].id, 'Yes', '--thread', sideId, '--id', randomUUID()];
+    drop = true;
+    const sideLost = await terminal(sideAnswer); assert.equal(sideLost.exitCode, 5); assert.equal(sideLost.thread, sideId);
+    const sideDone = await terminal([...sideAnswer, '--wait', '--timeout', '5']); assert.equal(sideDone.exitCode, 0); assert.equal(sideDone.turn.thread, sideId); assert.equal(calls, sideCalls + 1);
+    await app.close(); app = await startApp(options); useProxy();
+    assert.equal((await terminal(sideAnswer)).exitCode, 0); assert.equal(calls, sideCalls + 1);
+    const sideNext = await terminal(['run', b.id, 'ASK', '--thread', sideId, '--wait', '--timeout', '5']); assert.equal(sideNext.exitCode, 3);
+    assert.equal((await terminal(['cancel', b.id, sideNext.id, '--thread', sideId])).exitCode, 0);
+    assert.equal((await terminal(['status', b.id, sideNext.id, '--thread', sideId])).turn.status, 'cancelled');
+    for (const bad of [['threads', b.id, 'extra'], ['thread', b.id, 'name', '--wait'], ['run', b.id, 'ASK', '--thread', 'bad'], ['run', b.id, 'ASK', '--thread', sideId, '--thread', sideId]]) assert.equal((await terminal(bad)).exitCode, 2);
   } finally { await app.close(); proxy.closeAllConnections(); provider.closeAllConnections(); await Promise.all([new Promise<void>(resolve => proxy.close(() => resolve())), new Promise<void>(resolve => provider.close(() => resolve()))]); rmSync(dir, { recursive: true, force: true }); }
 });
