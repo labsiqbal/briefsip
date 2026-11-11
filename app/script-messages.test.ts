@@ -65,5 +65,33 @@ test('script messages and answers share grants, scope, receipts, redaction and r
     await request(path,{id:randomUUID(),text:'Limited'},429,auth);
     await request(path,command,202,auth);
     assert((await request(uiPath)).length<=59);
+    const threadsPath=`/api/scripts/agents/${b.id}/threads`, createSide={id:randomUUID(),name:'Script side'};
+    const side=await request(threadsPath,createSide,200,auth);assert.deepEqual(await request(threadsPath,createSide,200,auth),side);
+    assert((await request(threadsPath,undefined,200,auth)).some((row:any)=>row.id===side.id));
+    const sidePath=`${threadsPath}/${side.id}/turns`, sideMessage={id:randomUUID(),text:'ASK'};
+    await request(`/api/scripts/agents/${a.id}/threads/${side.id}/turns`,sideMessage,404,auth);
+    await request(sidePath,sideMessage,202,auth);
+    await until(async()=>!!(await request(sidePath,undefined,200,auth))[0]?.questions?.length);
+    const sideTurn=(await request(sidePath,undefined,200,auth))[0], sideAnswer={id:randomUUID(),text:'No'};
+    await request(`/api/scripts/agents/${b.id}/turns/${sideTurn.id}/questions/${sideTurn.questions[0].id}/answer`,sideAnswer,404,auth);
+    const sideAnswerPath=`${sidePath}/${sideTurn.id}/questions/${sideTurn.questions[0].id}/answer`;
+    await request(sideAnswerPath,sideAnswer,200,auth);
+    await until(async()=>(await request(sidePath,undefined,200,auth))[0]?.status==='done');
+    assert.deepEqual(await request(`/api/scripts/agents/${b.id}/turns`,undefined,200,auth),[]);
+    await until(async()=>(await request(uiPath)).every((row:any)=>['done','failed','cancelled','interrupted'].includes(row.status)));
+    const sideCalls=calls;await app.close();app=await startApp(options);
+    await request(sidePath,sideMessage,202,auth);await request(sideAnswerPath,sideAnswer,200,auth);assert.equal(calls,sideCalls);
+    let finishDeletedReplay!:()=>void;
+    const deletedReplay=new Promise<number|undefined>((resolve,reject)=>{
+      const req=httpRequest(app.origin+sidePath,{method:'POST',headers:auth},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});req.on('error',reject);
+      req.write('{"id":"'+sideMessage.id+'","text":');finishDeletedReplay=()=>req.end('"ASK"}');
+    });
+    await request(`/api/threads/${side.id}/edit`,{id:randomUUID(),revision:side.revision,name:side.name,archived:true});
+    await request(sidePath,{id:randomUUID(),text:'Archived'},409,auth);
+    await request(`/api/threads/${side.id}/delete`,{id:randomUUID(),revision:side.revision+1});
+    finishDeletedReplay();assert.equal(await deletedReplay,404);
+    await request(sidePath,undefined,404,auth);await request(sidePath,sideMessage,404,auth);
+    await request(`/api/agents/${b.id}/scripts`,{id:randomUUID(),revision:1,enabled:false});
+    await request(threadsPath,createSide,403,auth);await request(threadsPath,undefined,403,auth);
   } finally {await app.close();provider.closeAllConnections();await new Promise<void>(resolve=>provider.close(()=>resolve()));rmSync(dir,{recursive:true,force:true});}
 });
