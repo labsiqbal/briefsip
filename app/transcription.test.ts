@@ -6,7 +6,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './server.ts';
-import { audioFormat } from './transcription.ts';
+import { DatabaseSync } from 'node:sqlite';
+import { audioFormat, transcriptionUsage, createTranscriber } from './transcription.ts';
 
 function mp4Header(brand: string) {
   const bytes = Buffer.alloc(24); bytes.writeUInt32BE(24); bytes.write('ftyp', 4); bytes.write(brand, 8); bytes.write('isom', 16); bytes.write('mp42', 20); return bytes;
@@ -33,7 +34,7 @@ test('HTTP transcription requires consent, isolates files and never silently rep
     assert(body.includes(Buffer.from('filename="audio.mp4"')));
     res.setHeader('Content-Type', 'application/json');
     if (invalid === 'utf8') res.end(Buffer.concat([Buffer.from('{\"text\":\"'), Buffer.from([255]), Buffer.from('\"}')]));
-    else res.end(JSON.stringify({ text: invalid === 'secret' ? 'synthetic-secret' : invalid === 'surrogate' ? '\ud800' : 'Hasil transkripsi.\nBaris dua.' }));
+    else res.end(JSON.stringify({ usage: { type: 'tokens', input_tokens: 0, output_tokens: 2, total_tokens: 2 }, text: invalid === 'secret' ? 'synthetic-secret' : invalid === 'surrogate' ? '\ud800' : 'Hasil transkripsi.\nBaris dua.' }));
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
@@ -60,7 +61,7 @@ test('HTTP transcription requires consent, isolates files and never silently rep
       assert.equal((await post(endpoint, request, 'https://outside.test')).status, 403);
       assert.equal((await post(endpoint, { ...request, provider: 'stale' })).status, 409);
       const before: number = calls;
-      const result = await (await post(endpoint, request)).json(); assert.equal(result.status, 'done');
+      const result = await (await post(endpoint, request)).json(); assert.equal(result.status, 'done'); assert.deepEqual(result.usage, { type: 'tokens', input_tokens: 0, output_tokens: 2, total_tokens: 2 });
       assert.deepEqual(await (await post(endpoint, request)).json(), result); assert.equal(calls, before + 1);
       assert(!('request' in result));
       const output = `/api/${scope}/files/${result.result.id}`;
@@ -88,6 +89,10 @@ test('HTTP transcription requires consent, isolates files and never silently rep
     const lastAttempt = (await get(endpoint)).operation.id;
     assert.equal((await (await post(endpoint, { ...request, id: randomUUID(), retryOf: lastAttempt })).json()).status, 'done');
     assert.equal(calls, count + 3);
+    const usage = (await get('/api/usage')).transcription;
+    assert.equal(usage.calls, calls); assert.equal(usage.total_tokens, '12'); assert.equal(usage.input_tokens, '0'); assert.equal(usage.unknown, 1);
+    await app.close(); app = await startApp(options);
+    assert.deepEqual((await get('/api/usage')).transcription, usage);
   } finally {
     await app.close(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true });
   }
@@ -157,8 +162,8 @@ test('transcription rejects redirects and oversized output, and script grants ca
     if (mode === 'redirect') { res.writeHead(307, { Location: '/unexpected' }); res.end(); }
     else if (mode === 'body') res.end(JSON.stringify({ text: 'Valid text', padding: 'x'.repeat(512 * 1024) }));
     else if (mode === 'text') res.end(JSON.stringify({ text: 'x'.repeat(256 * 1024 + 1) }));
-    else if (mode === 'empty') res.end(JSON.stringify({ text: ' \n ' }));
-    else res.end(JSON.stringify({ text: 'Accepted final text' }));
+    else if (mode === 'empty') res.end(JSON.stringify({ text: ' \n ', usage: { type: 'tokens', input_tokens: '2', output_tokens: -1, total_tokens: 1.1 } }));
+    else res.end(JSON.stringify({ text: 'Accepted final text', usage: { type: 'duration', seconds: 1.25 } }));
   });
   t.after(async () => { provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
@@ -191,5 +196,27 @@ test('transcription rejects redirects and oversized output, and script grants ca
       retryOf = request.id;
     }
     assert.equal(calls, 5);
+    const summary = (await (await fetch(app.origin + '/api/usage')).json()).transcription;
+    assert.equal(summary.seconds, 1.25); assert.equal(summary.total_tokens, null); assert.equal(summary.unknown, 4);
+    assert.deepEqual((await (await fetch(app.origin + endpoint)).json()).operation.usage, { type: 'duration', seconds: 1.25 });
   } finally { await app.close(); }
+});
+
+
+test('transcription usage preserves unknown counts, duration and legacy operations', async () => {
+  for (const value of [null, [], 1, { type: 'unknown' }, { type: 'duration', seconds: -1 }, { type: 'duration', seconds: Infinity }, { type: 'duration', seconds: '3' }]) assert.equal(transcriptionUsage(value), null);
+  assert.deepEqual(transcriptionUsage({ type: 'duration', seconds: 1.25 }), { type: 'duration', seconds: 1.25 });
+  assert.deepEqual(transcriptionUsage({ type: 'duration', seconds: 0 }), { type: 'duration', seconds: 0 });
+  assert.equal(transcriptionUsage({ type: 'tokens', input_tokens: '2', output_tokens: -1, total_tokens: 1.1 }), null);
+  const db = new DatabaseSync(':memory:');
+  db.exec("CREATE TABLE files(id TEXT PRIMARY KEY); CREATE TABLE transcriptions(id TEXT PRIMARY KEY,file TEXT NOT NULL,request TEXT NOT NULL,model TEXT NOT NULL,origin TEXT NOT NULL,status TEXT NOT NULL,result TEXT,created TEXT NOT NULL) STRICT; INSERT INTO transcriptions VALUES ('old','file','{}','m','http://localhost','pending',NULL,'2026-01-01');");
+  const transcriber = createTranscriber(db, fn => fn());
+  try {
+    assert.equal(transcriber.info('file', new Uint8Array()).operation?.status, 'uncertain');
+    assert.equal(transcriber.info('file', new Uint8Array()).operation?.usage, null);
+    assert.equal(transcriber.usageSummary()?.unknown, 1);
+    db.prepare('UPDATE transcriptions SET usage=?').run(JSON.stringify(transcriptionUsage({ type: 'duration', seconds: 1.25 })));
+    assert.equal(transcriber.usageSummary()?.seconds, 1.25);
+    assert.equal(transcriber.usageSummary()?.total_tokens, null);
+  } finally { await transcriber.close(); db.close(); }
 });

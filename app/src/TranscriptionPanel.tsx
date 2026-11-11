@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-type Operation = { id: string; status: string; model: string; origin: string; result: { id: string; name: string; size: number } | null };
+type Operation = { id: string; status: string; model: string; origin: string; result: { id: string; name: string; size: number } | null; usage: { type: string; input_tokens?: number | null; output_tokens?: number | null; total_tokens?: number | null; seconds?: number } | null };
 type Info = { provider: { id: string; model: string; origin: string } | null; format: string | null; operation: Operation | null };
 export function TranscriptionPanel({ path, request }: { path: string; request: <T>(path: string, data?: unknown) => Promise<T> }) {
   const [open, setOpen] = useState(false);
@@ -36,6 +36,7 @@ function TranscriptionControls({ path, request }: { path: string; request: <T>(p
     {info?.format === 'mp4' && <p className="notice">File M4A/MP4 dikirim utuh, termasuk video jika ada. Briefsip tidak memisahkan trek audio. Provider harus mendukung format dan codec file ini.</p>}
     {operation?.status === 'pending' && <p role="status">Transkripsi sedang diproses. Menutup panel tidak membatalkan pengiriman.</p>}
     {operation?.status === 'uncertain' && <p className="notice">Hasil sebelumnya belum pasti. Periksa provider sebelum mencoba lagi. Permintaan baru dapat dikenai biaya lagi.</p>}
+    {operation && <p className="muted">{operation.usage?.type === 'duration' ? `Durasi dilaporkan provider: ${operation.usage.seconds} detik.` : operation.usage?.type === 'tokens' ? `Token dilaporkan provider: input ${operation.usage.input_tokens ?? 'tidak diketahui'}, output ${operation.usage.output_tokens ?? 'tidak diketahui'}, total ${operation.usage.total_tokens ?? 'tidak diketahui'}.` : 'Pemakaian belum dilaporkan provider.'} Biaya belum diketahui.</p>}
     {operation?.result && <a href={`${path.slice(0, path.lastIndexOf('/'))}/${operation.result.id}`} download={operation.result.name}>Unduh transkrip ({operation.result.size} byte)</a>}
     {ready && <><p>Tujuan: {info.provider!.origin}. Model: {info.provider!.model}.</p><label className="member-option"><input type="checkbox" checked={consent} disabled={busy} onChange={event => setConsent(event.target.checked)} /><span>Saya setuju mengirim file ini ke provider tersebut{operation ? ' dan menerima risiko biaya tambahan dari percobaan baru' : ''}.</span></label><button type="button" disabled={busy || !consent} onClick={() => void send()}>Kirim untuk transkripsi</button></>}
     <button type="button" className="secondary" disabled={busy} onClick={() => void refresh()}>Muat ulang status transkripsi</button>
