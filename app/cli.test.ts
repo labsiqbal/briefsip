@@ -155,3 +155,75 @@ test('script CLI discovers only grants, sends once, waits, preserves retry ID an
     await assert.rejects(cli(['cancel',a.id,id,'--wait'], directory));
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('CLI answers retain receipt identity across lost replies and restart', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-cli-answer-')); let calls = 0, drop = false, dropStatus = false;
+  const posts: string[] = [], answers: string[] = [];
+  const provider = createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk; calls++;
+    const message = JSON.parse(raw).messages.at(-1), ask = message.content === 'ASK';
+    if (!ask) answers.push(JSON.parse(message.content).answer);
+    res.end(JSON.stringify({ choices: [{ finish_reason: ask ? 'tool_calls' : 'stop', message: ask ? { tool_calls: [{ id: 'ask', type: 'function', function: { name: 'ask_user', arguments: JSON.stringify({ question: 'Proceed?', choices: ['Yes','No'] }) } }] } : { content: 'Answered' } }] }));
+  });
+  await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+  const address = provider.address(); assert(address && typeof address !== 'string');
+  const directory = join(dir, 'scripts'), options = { database: join(dir, 'db.sqlite'), scriptDirectory: directory, baseURL: `http://127.0.0.1:${address.port}/v1` };
+  let app = await startApp(options);
+  const proxy = createServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    const response = await fetch(app.origin + req.url, { method: req.method, headers: { Authorization: req.headers.authorization!, 'Content-Type': 'application/json' }, body: body || undefined });
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (req.url?.endsWith('/answer')) { posts.push(body); if (drop) { drop = false; res.destroy(); return; } }
+    if (dropStatus && req.url?.includes('?focus=')) { dropStatus = false; res.destroy(); return; }
+    res.writeHead(response.status, { 'Content-Type': 'application/json' }); res.end(bytes);
+  });
+  await new Promise<void>(resolve => proxy.listen(0, '127.0.0.1', resolve));
+  const proxyAddress = proxy.address(); assert(proxyAddress && typeof proxyAddress !== 'string');
+  const proxyURL = `http://127.0.0.1:${proxyAddress.port}`;
+  function useProxy() { const file = join(directory, 'connection.json'), value = JSON.parse(readFileSync(file, 'utf8')); writeFileSync(file, JSON.stringify({ ...value, url: proxyURL })); }
+  async function ui(path: string, body: unknown) {
+    const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const value = await response.json(); assert(response.ok, JSON.stringify(value)); return value;
+  }
+  async function terminal(args: string[], input?: string) {
+    return await new Promise<any>((resolve, reject) => {
+      const child = spawn(process.execPath, ['--experimental-strip-types','cli.ts',...args], { cwd: import.meta.dirname, env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['pipe','pipe','pipe'] });
+      let output = ''; child.stdout.on('data', chunk => { output += chunk; }); child.stderr.resume(); child.on('error', reject);
+      child.on('close', code => { try { const result = JSON.parse(output); assert.equal(result.exitCode, code); resolve(result); } catch (error) { reject(error); } }); child.stdin.end(input);
+    });
+  }
+  try {
+    const a = await ui('/api/agents', { id: randomUUID(), name: 'Answer agent', model: 'fixture', instructions: 'Help' });
+    const b = await ui('/api/agents', { id: randomUUID(), name: 'Other', model: 'fixture', instructions: 'Help' });
+    for (const agent of [a,b]) await ui(`/api/agents/${agent.id}/scripts`, { id: randomUUID(), revision: 0, enabled: true });
+    useProxy();
+    const ask = await terminal(['run',a.id,'ASK','--wait','--timeout','5']); assert.equal(ask.exitCode, 3);
+    const question = ask.turn.questions[0].id, requestId = randomUUID(), args = ['answer',a.id,ask.id,question,'Yes','--id',requestId];
+    assert.equal((await terminal(['answer',a.id,ask.id,question,'Yes'])).exitCode, 2);
+    assert.equal((await terminal(['answer',a.id,ask.id,question,'x'.repeat(4001),'--id',randomUUID()])).exitCode, 2);
+    assert.equal((await terminal(['answer',a.id,ask.id,question,'Wrong','--id',randomUUID()])).exitCode, 1);
+    assert.equal((await terminal(['answer',b.id,ask.id,question,'Yes','--id',randomUUID()])).exitCode, 1); assert.equal(calls, 1);
+    drop = true;
+    const lost = await terminal(args); assert.equal(lost.exitCode, 5); assert.equal(lost.id, ask.id); assert.equal(lost.requestId, requestId); assert.equal(lost.question, question);
+    const done = await terminal([...args,'--wait','--timeout','5']); assert.equal(done.exitCode, 0); assert.equal(done.turn.reply, 'Answered'); assert.equal(done.requestId, requestId);
+    assert.equal(posts.at(-1), posts.at(-2)); assert.deepEqual(answers, ['Yes']); assert.equal(calls, 2);
+    await app.close(); app = await startApp(options); useProxy();
+    const replay = await terminal(args); assert.equal(replay.exitCode, 0); assert.equal(replay.answer.answer, 'Yes'); assert.equal(calls, 2);
+    assert.equal((await terminal(['answer',a.id,ask.id,question,'No','--id',requestId])).exitCode, 1);
+    const next = await terminal(['run',a.id,'ASK','--id',randomUUID().toUpperCase(),'--wait','--timeout','5']); assert.equal(next.exitCode, 3);
+    dropStatus = true; const postCount = posts.length;
+    const stdin = await terminal(['answer',a.id,next.id,next.turn.questions[0].id,'-','--id',randomUUID(),'--wait','--timeout','5'], 'No');
+    assert.equal(stdin.exitCode, 0); assert.deepEqual(answers, ['Yes','No']);
+    assert.equal(dropStatus, false); assert.equal(posts.length, postCount + 1);
+    const uncertain = await terminal(['run',a.id,'ASK','--wait','--timeout','5']); assert.equal(uncertain.exitCode, 3);
+    await app.close();
+    const { DatabaseSync } = await import('node:sqlite');
+    const db = new DatabaseSync(options.database); db.prepare("UPDATE turns SET status='interrupted',revision=revision+1 WHERE id=?").run(uncertain.id); db.close();
+    app = await startApp(options); useProxy();
+    const uncertainArgs = ['answer',a.id,uncertain.id,uncertain.turn.questions[0].id,'Yes','--id',randomUUID()], before = calls;
+    assert.equal((await terminal(uncertainArgs)).exitCode, 1); assert.equal(calls, before);
+    assert.equal((await terminal([...uncertainArgs,'--acknowledge-uncertain','--wait','--timeout','5'])).exitCode, 0); assert.equal(calls, before + 1);
+    await ui(`/api/agents/${a.id}/scripts`, { id: randomUUID(), revision: 1, enabled: false });
+    assert.equal((await terminal(args)).exitCode, 5); assert.equal(calls, before + 1);
+  } finally { await app.close(); proxy.closeAllConnections(); provider.closeAllConnections(); await Promise.all([new Promise<void>(resolve => proxy.close(() => resolve())), new Promise<void>(resolve => provider.close(() => resolve()))]); rmSync(dir, { recursive: true, force: true }); }
+});
