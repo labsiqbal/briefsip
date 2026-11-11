@@ -19,6 +19,9 @@ test('Markdown renders structure and scoped links without model-supplied DOM or 
   assert.equal(markdownLink('javascript&#58;alert(1)', scope, origin), null);
   assert.equal(markdownLink('https://example.com/?a=1&amp;b=2', scope, origin)?.href, 'https://example.com/?a=1&b=2');
   assert.equal(markdownLink(origin + '/api/backup', scope, origin), null);
+  assert.match(render(`[Site](/sites/${file})`), /target="_blank" rel="noopener noreferrer"/);
+  assert.equal(markdownLink(`/sites/${file}?redirect=/api/backup`, scope, origin), null);
+  assert.equal(markdownLink('/sites/../../api/backup', scope, origin), null);
   assert.equal(markdownLink(origin + scope + '/files/' + file, scope, origin)?.external, false);
   assert.equal((render('- [x] done\n- [ ] todo').match(/\[x\]/g) ?? []).length, 1);
   assert(render('| Right | Center |\n| ---: | :---: |\n| 1 | 2 |').includes('text-align:right'));
