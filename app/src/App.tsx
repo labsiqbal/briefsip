@@ -1,3 +1,4 @@
+import { restoreAgentCreation, type AgentCreation } from '../agent-create';
 import { AgentAvatar, AvatarEditor } from './AgentAvatar';
 import { WorkspacePanel } from './WorkspacePanel';
 import { QueuePanel } from './QueuePanel';
@@ -664,7 +665,15 @@ function ThreadForm({ agent, thread, onCancel, onSaved, onReload }: { agent: Age
 
 function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload, onVisibilityChanged }: { model: string; profile?: Agent; onCreated: (agent: Agent) => void; onCancel?: () => void; onReload?: () => Promise<void>; onVisibilityChanged?: () => Promise<void> }) {
   const [profile] = useState(liveProfile);
-  const [account, setAccount] = useState(profile?.provider_account ?? '');
+  const creationKey = 'briefsip-agent-creation';
+  const nameInput = useRef<HTMLInputElement>(null);
+  const [recovery, setRecovery] = useState(() => { try { return { command: liveProfile ? null : restoreAgentCreation(sessionStorage.getItem(creationKey)), invalid: false }; } catch { return { command: null, invalid: true }; } });
+  const [invalid, setInvalid] = useState(recovery.invalid);
+  const [setup, setSetup] = useState(recovery.command?.setup ?? false);
+  const active = useRef(true);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+
+  const [account, setAccount] = useState(profile?.provider_account ?? recovery.command?.providerAccount ?? '');
   const [accounts, setAccounts] = useState<{ id: string; name: string; configured: boolean; defaultModel: string }[]>([]);
   const [accountError, setAccountError] = useState('');
   const [accountReload, setAccountReload] = useState(0);
@@ -684,28 +693,40 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
     return () => { stopped = true; };
   }, [account, accountReload]);
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
-  const pending = useRef<{ id: string; name: string; model: string; backupModel: string; instructions: string; threadLimit: number; providerAccount: string; revision?: number } | null>(null);
+  const pending = useRef<(AgentCreation & { revision?: number }) | null>(recovery.command);
   async function create(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (busy) return;
+    event.preventDefault(); if (busy || invalid) return;
     const form = new FormData(event.currentTarget);
-    const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision } : {}), providerAccount: account, name: String(form.get('name')).trim(), model: String(form.get('model')).trim(), backupModel: String(form.get('backupModel')).trim(), instructions: String(form.get('instructions')).trim(), threadLimit: Number(form.get('threadLimit')) };
-    pending.current = data; setBusy(true); setError('');
-    try { onCreated(await api<Agent>(profile ? `/api/agents/${profile.id}/edit` : '/api/agents', data)); } catch (error) { if (error instanceof HttpError && error.status < 500) pending.current = null; setError(message(error)); } finally { setBusy(false); }
+    const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision } : setup ? { setup: true } : {}), providerAccount: account, name: String(form.get('name')).trim() || (setup ? 'Agent baru' : ''), model: String(form.get('model')).trim(), backupModel: String(form.get('backupModel')).trim(), instructions: String(form.get('instructions')).trim(), threadLimit: Number(form.get('threadLimit')) };
+    setBusy(true); setError('');
+    function clearRecovery() { if (!profile && restoreAgentCreation(sessionStorage.getItem(creationKey))?.id === data.id) sessionStorage.removeItem(creationKey); }
+    try {
+      if (!profile) { restoreAgentCreation(JSON.stringify(data)); sessionStorage.setItem(creationKey, JSON.stringify(data)); }
+      pending.current = data;
+      const created = await api<Agent>(profile ? `/api/agents/${profile.id}/edit` : '/api/agents', data);
+      clearRecovery(); if (active.current) onCreated(created);
+    } catch (error) {
+      if (error instanceof HttpError && error.status < 500) { try { clearRecovery(); pending.current = null; } catch { /* Keep exact retry if recovery storage cannot be cleared. */ } }
+      if (active.current) setError(message(error));
+    } finally { if (active.current) setBusy(false); }
+
   }
-  return <section className="setup"><h1>{profile ? 'Edit profil agent' : 'Agent baru'}</h1><p className="muted">Beri nama, pilih model, lalu jelaskan cara kerjanya.</p><form onSubmit={create}>
-    <label>Nama<input name="name" required maxLength={80} readOnly={!!pending.current} autoFocus defaultValue={profile?.name} placeholder="Misalnya: Rekan riset" /></label>
+  return <section className="setup"><h1>{profile ? 'Edit profil agent' : 'Agent baru'}</h1><p className="muted">Beri nama, pilih model, lalu jelaskan cara kerjanya.</p>{invalid && <p className="error" role="alert">Data pemulihan pembuatan agent tidak dapat dibaca. Periksa daftar agent sebelum membuangnya.</p>}{invalid && <button className="secondary" onClick={() => { if (confirm('Agent mungkin sudah dibuat. Buang data pemulihan setelah memeriksa daftar agent?')) { try { sessionStorage.removeItem(creationKey); setInvalid(false); nameInput.current?.focus(); } catch { setError('Penyimpanan pemulihan belum dapat dibersihkan.'); } } }}>Buang data pemulihan</button>}{!profile && pending.current && <p className="notice">Pembuatan belum terkonfirmasi. Coba lagi memakai permintaan yang sama agar tidak membuat agent ganda.</p>}<form onSubmit={create}>
+    {!profile && <label className="member-option"><input type="checkbox" checked={setup} disabled={busy || !!pending.current || invalid} onChange={event => setSetup(event.target.checked)} />Susun nama dan instruksi dari deskripsi kebutuhan</label>}
+    {!profile && setup && <p className="muted">Memakai provider yang dipilih. Agent dan tugas penyusunan dibuat bersama; hasil, kegagalan, atau pertanyaan muncul di chat. Penyusunan hanya dapat mengubah profil atau meminta klarifikasi.</p>}
+    <label>{!profile && setup ? 'Nama sementara (opsional)' : 'Nama'}<input ref={nameInput} name="name" required={!setup} maxLength={80} readOnly={!!pending.current} autoFocus defaultValue={profile?.name ?? recovery.command?.name} placeholder="Misalnya: Rekan riset" /></label>
     <label>Akun provider<select value={account} disabled={!!pending.current} onChange={event => setAccount(event.target.value)} aria-describedby="provider-account-help">
       {!accounts.some(item => item.id === '') && <option value="">Default server</option>}
       {account && !accounts.some(item => item.id === account) && <option value={account}>Akun tidak tersedia</option>}
       {accounts.map(item => <option key={item.id} value={item.id}>{item.name.slice(0, 28)}{item.configured ? '' : ' (belum terhubung)'}</option>)}
     </select><span id="provider-account-help" className="muted account-help">{accounts.find(item => item.id === account)?.name ?? account} - Pilih model yang tersedia pada akun ini. Kunci API tetap di server.</span></label>
     {accountError && <div><p className="error" role="alert">Daftar akun belum dimuat. {accountError}</p><button type="button" className="secondary" onClick={() => setAccountReload(value => value + 1)}>Muat ulang akun</button></div>}
-    <label>Model<input name="model" list="provider-models" aria-describedby="model-catalog-status" required maxLength={160} readOnly={!!pending.current} defaultValue={profile?.model ?? model} placeholder="ID model dari provider kamu" /><datalist id="provider-models">{models.map(id => <option key={id} value={id} />)}</datalist><span id="model-catalog-status" className="muted" role="status">{catalogStatus}</span></label>
-    <label>Model cadangan (opsional)<input name="backupModel" list="provider-models" maxLength={160} readOnly={!!pending.current} defaultValue={profile?.backup_model ?? ''} aria-describedby="backup-model-help" /><span id="backup-model-help" className="muted">Dicoba sekali jika model utama menolak karena kuota atau sedang tidak tersedia, sebelum jawaban atau tool diterima. Memakai provider yang sama. Kosongkan untuk menonaktifkan.</span></label>
-    <label>Percakapan samping bersamaan<input name="threadLimit" type="number" min={1} max={32} step={1} required readOnly={!!pending.current} defaultValue={profile?.thread_limit ?? 2} /><span className="muted">Chat utama memiliki antrean sendiri. Semua percakapan tetap berbagi kapasitas server.</span></label>
-    <label>Instruksi<textarea name="instructions" required maxLength={8000} readOnly={!!pending.current} defaultValue={profile?.instructions} rows={6} placeholder="Apa tugas agent ini? Bagaimana hasilnya perlu disampaikan?" /></label>
+    <label>Model<input name="model" list="provider-models" aria-describedby="model-catalog-status" required maxLength={160} readOnly={!!pending.current} defaultValue={profile?.model ?? recovery.command?.model ?? model} placeholder="ID model dari provider kamu" /><datalist id="provider-models">{models.map(id => <option key={id} value={id} />)}</datalist><span id="model-catalog-status" className="muted" role="status">{catalogStatus}</span></label>
+    <label>Model cadangan (opsional)<input name="backupModel" list="provider-models" maxLength={160} readOnly={!!pending.current} defaultValue={profile?.backup_model ?? recovery.command?.backupModel ?? ''} aria-describedby="backup-model-help" /><span id="backup-model-help" className="muted">Dicoba sekali jika model utama menolak karena kuota atau sedang tidak tersedia, sebelum jawaban atau tool diterima. Memakai provider yang sama. Kosongkan untuk menonaktifkan.</span></label>
+    <label>Percakapan samping bersamaan<input name="threadLimit" type="number" min={1} max={32} step={1} required readOnly={!!pending.current} defaultValue={profile?.thread_limit ?? recovery.command?.threadLimit ?? 2} /><span className="muted">Chat utama memiliki antrean sendiri. Semua percakapan tetap berbagi kapasitas server.</span></label>
+    <label>{!profile && setup ? 'Deskripsi kebutuhan' : 'Instruksi'}<textarea name="instructions" required maxLength={8000} readOnly={!!pending.current} defaultValue={profile?.instructions ?? recovery.command?.instructions} rows={6} placeholder="Apa tugas agent ini? Bagaimana hasilnya perlu disampaikan?" /></label>
     {error && <p role="alert" className="error">{error}</p>}
-    <div className="form-actions">{onCancel && <button type="button" className="secondary" onClick={onCancel}>Batal</button>}<button disabled={busy}>{busy ? 'Menyimpan...' : profile ? 'Simpan profil' : 'Buat agent'}</button>{profile && error && onReload && <button type="button" className="secondary" onClick={onReload}>Buang perubahan dan muat ulang</button>}</div>
+    <div className="form-actions">{onCancel && <button type="button" className="secondary" onClick={onCancel}>Batal</button>}<button disabled={busy || invalid}>{busy ? 'Menyimpan...' : profile ? 'Simpan profil' : pending.current ? 'Coba pembuatan lagi' : setup ? 'Buat dan susun agent' : 'Buat agent'}</button>{!profile && pending.current && <button type="button" className="secondary" disabled={busy} onClick={() => { if (confirm('Agent mungkin sudah dibuat. Periksa daftar agent sebelum membuang permintaan ini dan membuat yang baru. Buang pemulihan?')) { try { sessionStorage.removeItem(creationKey); pending.current = null; setRecovery({ command: null, invalid: false }); setError(''); nameInput.current?.focus(); } catch { setError('Penyimpanan pemulihan belum dapat dibersihkan.'); } } }}>Buang pemulihan</button>}{profile && error && onReload && <button type="button" className="secondary" onClick={onReload}>Buang perubahan dan muat ulang</button>}</div>
   </form>{profile && onVisibilityChanged && <AvatarEditor agent={profile.id} request={api} onChanged={onVisibilityChanged} />}{profile && onVisibilityChanged && <AgentVisibility agent={liveProfile!} request={api} onChanged={onVisibilityChanged} />}{profile && <AgentTemplateExport key={profile.id} id={profile.id} request={api} />}</section>;
 }
 
