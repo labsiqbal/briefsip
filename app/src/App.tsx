@@ -778,7 +778,7 @@ function App() {
   const directoryRequest = useRef(0);
   async function load(propagate = false) {
     const version = ++directoryRequest.current;
-    try { const [data, rooms] = await Promise.all([api<Directory>('/api/agents'), api<Channel[]>('/api/channels')]); if (version !== directoryRequest.current) return; setDirectory(data); setChannels(rooms); setSelected(id => id || data.agents[0]?.id || ''); setError(''); }
+    try { const [data, rooms] = await Promise.all([api<Directory>('/api/agents'), api<Channel[]>('/api/channels')]); if (version !== directoryRequest.current) return; directoryRequest.current++; setDirectory(data); setChannels(rooms); setSelected(id => id || data.agents[0]?.id || ''); setError(''); }
     catch (error) { if (version === directoryRequest.current) setError(message(error)); if (propagate) throw error; }
   }
   useEffect(() => { void load(); }, []);
@@ -787,7 +787,9 @@ function App() {
     let timer: ReturnType<typeof setTimeout>;
     async function refreshActivity() {
       try {
-        const rooms = await api<Channel[]>('/api/channels');
+        const version = directoryRequest.current;
+        const [rooms, agents] = await Promise.all([api<Channel[]>('/api/channels'), api<Directory>('/api/agents')]);
+        if (!stopped && version === directoryRequest.current) setDirectory(current => current && ({ ...current, agents: current.agents.map(agent => { const fresh = agents.agents.find(item => item.id === agent.id); return fresh ? { ...agent, avatar_revision: fresh.avatar_revision } : agent; }) }));
         if (!stopped) { setActivityError(false); setChannels(current => current.map(room => {
           const fresh = rooms.find(item => item.id === room.id);
           return fresh ? { ...room, activity: Math.max(room.activity, fresh.activity), read_position: Math.max(room.read_position, fresh.read_position) } : room;
