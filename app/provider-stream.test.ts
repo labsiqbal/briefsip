@@ -46,6 +46,16 @@ test('SSE parsing handles split UTF-8, multiline data, tools and refuses incompl
   await assert.rejects(readProviderStream(bytes('event: error\n' + sse(chunk({ content: 'Not an answer' }, 'stop')) + sse('[DONE]')), 'openai-compatible', () => {}));
   const tools = [chunk({ tool_calls: [{ index: 0, id: 'call', type: 'function', function: { name: 'read_history', arguments: '{' } }] }), chunk({ tool_calls: [{ index: 0, function: { arguments: '}' } }] }), chunk({}, 'tool_calls'), '[DONE]'].map(sse).join('');
   const tool: any = await readProviderStream(bytes(tools, 17), 'openai-compatible', () => {}); assert.equal(tool.choices[0].message.tool_calls[0].function.arguments, '{}');
+  const extra = { google: { thought_signature: 'opaque-signature' }, vendor: { version: 1 } };
+  const metadata = (value: unknown) => sse(chunk({ tool_calls: [{ index: 0, extra_content: value }] }));
+  const finish = sse(chunk({}, 'tool_calls'));
+  for (const position of ['early', 'late']) {
+    const signed = position === 'early' ? metadata(extra) + tools : tools.replace(finish, metadata(extra) + metadata({ vendor: { version: 1 }, google: extra.google }) + finish);
+    const parsed: any = await readProviderStream(bytes(signed, 3), 'openai-compatible', () => {});
+    assert.deepEqual(parsed.choices[0].message.tool_calls[0].extra_content, extra);
+  }
+  for (const invalid of [null, [], false, 'signature']) await assert.rejects(readProviderStream(bytes(metadata(invalid) + tools), 'openai-compatible', () => {}));
+  await assert.rejects(readProviderStream(bytes(metadata(extra) + metadata({ google: { thought_signature: 'changed' } }) + tools), 'openai-compatible', () => {}), /Conflicting/);
   const native = [start, { type: 'ping' }, blockStart, textDelta('Native'), blockStop, messageDelta(), messageStop].map(sse).join('');
   const anthropic: any = await readProviderStream(bytes(native, 3), 'anthropic', () => {}); assert.equal(anthropic.content[0].text, 'Native'); assert.deepEqual(anthropic.usage, { input_tokens: 2, output_tokens: 4, cache_read_input_tokens: 3 });
   const unknownUsage: any = await readProviderStream(bytes([start, blockStart, textDelta('Answer'), blockStop, { type: 'message_delta', delta: { stop_reason: 'end_turn' } }, messageStop].map(sse).join('')), 'anthropic', () => {});
@@ -62,27 +72,28 @@ for (const family of ['openai-compatible', 'anthropic'] as ProviderFamily[]) tes
     let raw = ''; for await (const part of req) raw += part;
     const body = JSON.parse(raw); calls++; assert.equal(body.stream, true);
     if (family === 'openai-compatible') assert.deepEqual(body.stream_options, { include_usage: true });
+    if (family === 'openai-compatible' && body.messages.some((message: any) => message.tool_calls?.some((call: any) => call.extra_content?.google?.thought_signature !== 'stream-signature'))) { res.writeHead(400); res.end('Missing streamed signature'); return; }
     if (mode === 'wrong-type') { res.on('close', () => { wrongTypeClosed = true; }); res.setHeader('Content-Type', 'application/json'); res.write('{}'); return; }
     res.setHeader('Content-Type', 'text/event-stream');
     const send = (value: unknown) => res.write(sse(value));
     const finish = () => { if (family === 'anthropic') { send(blockStop); send(messageDelta()); send(messageStop); } else { send(chunk({}, 'stop')); send({ choices: [], usage: { prompt_tokens: 5, completion_tokens: 4, total_tokens: 9 } }); send('[DONE]'); } res.end(); };
     const last = body.messages.at(-1), toolResult = family === 'anthropic' ? last.content.some((block: any) => block.type === 'tool_result') : last.role === 'tool';
     if (family === 'anthropic') send(start);
-    if (['tool', 'broken-tool'].includes(mode) && !toolResult) {
+    if (['tool', 'tool-hold', 'broken-tool'].includes(mode) && !toolResult) {
       const id = 'stream-tool', args = JSON.stringify({ name: 'stream.txt', text: 'Exactly once' });
       if (family === 'anthropic') {
         send({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id, name: 'create_text_file', input: {} } });
         send({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: args.slice(0, 10) } });
         send({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: args.slice(10) } });
-        send(blockStop); send(messageDelta('tool_use')); if (mode === 'tool') send(messageStop);
+        send(blockStop); send(messageDelta('tool_use')); if (mode !== 'broken-tool') send(messageStop);
       } else {
         send(chunk({ tool_calls: [{ index: 0, id, type: 'function', function: { name: 'create_text_file', arguments: args.slice(0, 10) } }] }));
-        send(chunk({ tool_calls: [{ index: 0, function: { arguments: args.slice(10) } }] })); send(chunk({}, 'tool_calls')); if (mode === 'tool') send('[DONE]');
+        send(chunk({ tool_calls: [{ index: 0, function: { arguments: args.slice(10) } }] })); send(chunk({ tool_calls: [{ index: 0, extra_content: { google: { thought_signature: 'stream-signature' } } }] })); send(chunk({}, 'tool_calls')); if (mode !== 'broken-tool') send('[DONE]');
       }
       res.end(); return;
     }
     if (family === 'anthropic') { send(blockStart); send(textDelta('Partial ')); } else send(chunk({ content: 'Partial ' }));
-    if (mode === 'hold') { release = finish; return; }
+    if (mode === 'hold' || mode === 'tool-hold') { release = finish; return; }
     if (mode === 'broken') { res.end(); return; }
     if (family === 'anthropic') send(textDelta('complete')); else send(chunk({ content: 'complete' }));
     finish();
@@ -117,6 +128,12 @@ for (const family of ['openai-compatible', 'anthropic'] as ProviderFamily[]) tes
         assert(wrongTypeClosed, 'Rejected MIME must cancel upstream body');
       }
     }
+    mode = 'tool-hold'; const signed = randomUUID(); await request(path, { id: signed, text: 'Resume signed tool' });
+    const signedLive = await until(path, signed, row => row.generatedFiles.length === 1 && !!row.partial?.text);
+    await app.close(); app = await startApp(options); mode = 'text';
+    const signedRestored = (await request(path)).find((row: any) => row.id === signed), signedCalls = calls;
+    await request(`${path}/${signed}/resume`, { id: randomUUID(), revision: signedRestored.revision, acknowledgeUncertain: true });
+    const signedDone = await until(path, signed); assert.equal(signedDone.status, 'done'); assert.deepEqual(signedDone.generatedFiles, signedLive.generatedFiles); assert.equal(calls - signedCalls, 1);
     mode = 'hold'; const cancelled = randomUUID(); await request(path, { id: cancelled, text: 'Cancel stream' });
     await until(path, cancelled, row => !!row.partial?.text); await request(`${path}/${cancelled}/cancel`, { id: randomUUID() });
     const cancelledRow = await until(path, cancelled); assert.equal(cancelledRow.status, 'cancelled'); assert.equal(cancelledRow.partial.text, 'Partial ');
