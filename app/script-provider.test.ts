@@ -9,8 +9,9 @@ import { startApp } from './server.ts';
 
 test('script provider settings keep identity and credentials isolated, reject busy/revoked changes and preserve receipts', async () => {
   const dir=mkdtempSync(join(tmpdir(),'briefsip-script-provider-')),token=randomBytes(32).toString('base64url'),secret=randomBytes(32).toString('base64url');
+  let releaseCatalog: (()=>void) | undefined, holdCatalog=false;
   const calls:{model:string;auth:string|undefined}[]=[];
-  const provider=createServer(async(req,res)=>{let raw='';for await(const chunk of req)raw+=chunk;const data=JSON.parse(raw);calls.push({model:data.model,auth:req.headers.authorization});if(data.messages.at(-1).content==='HOLD')return;res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content:'Done'}}]}));});
+  const provider=createServer(async(req,res)=>{if(req.method==='GET'){assert.equal(req.headers.authorization,`Bearer ${secret}`);const send=()=>res.end(JSON.stringify({data:[{id:'new'},{id:'old'}]}));if(holdCatalog)releaseCatalog=send;else send();return;}let raw='';for await(const chunk of req)raw+=chunk;const data=JSON.parse(raw);calls.push({model:data.model,auth:req.headers.authorization});if(data.messages.at(-1).content==='HOLD')return;res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content:'Done'}}]}));});
   await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));const address=provider.address();assert(address&&typeof address!=='string');
   const options={database:join(dir,'db.sqlite'),scriptToken:token,accounts:[{id:'chosen',name:'Chosen',provider:'openai-compatible',baseURL:`http://127.0.0.1:${address.port}/v1`,apiKey:secret}]};let app=await startApp(options);
   const auth={Authorization:`Bearer ${token}`,'Content-Type':'application/json'};
@@ -25,6 +26,12 @@ test('script provider settings keep identity and credentials isolated, reject bu
     await request(path,{...command,enabled:true},400,auth);await request(path,{...command,providerAccount:'missing'},400,auth);await request(path,command,403,{...auth,Origin:app.origin});
     const changed=await request(path,command,200,auth);assert.equal(changed.name,a.name);assert.equal(changed.instructions,a.instructions);assert.equal(changed.provider_account,'chosen');assert.deepEqual(await request(path,command,200,auth),changed);
     await request(path,{...command,id:randomUUID()},409,auth);
+    const modelsPath=`/api/scripts/agents/${a.id}/models`;
+    assert.deepEqual(await request(modelsPath,undefined,200,auth),{account:'chosen',models:['new','old']});
+    await request(modelsPath+'?account=missing',undefined,503,auth);await request(modelsPath+'?url=http://foreign.test',undefined,400,auth);
+    holdCatalog=true;const catalog=request(modelsPath,undefined,403,auth);await until(async()=>!!releaseCatalog);
+    await request(permission,{id:randomUUID(),revision:1,enabled:false});releaseCatalog!();await catalog;holdCatalog=false;
+    await request(permission,{id:randomUUID(),revision:2,enabled:true});
     const message={id:randomUUID(),text:'Ready'};await request(turns,message,202,auth);await until(async()=>(await request(turns,undefined,200,auth))[0]?.status==='done');assert.deepEqual(calls,[{model:'new',auth:`Bearer ${secret}`}]);
     const renamed=await request(`/api/agents/${a.id}/edit`,{id:randomUUID(),revision:changed.revision,name:'Renamed',model:changed.model,instructions:changed.instructions});
     assert.deepEqual(await request(path,command,200,auth),changed);assert.equal((await request('/api/agents')).agents[0].name,'Renamed');
@@ -33,6 +40,6 @@ test('script provider settings keep identity and credentials isolated, reject bu
     await request(`/api/agents/${a.id}/turns/${hold.id}/cancel`,{id:randomUUID()});
     await app.close();app=await startApp(options);assert.deepEqual(await request(path,command,200,auth),changed);assert.equal(calls.length,2);
     let finish!:()=>void;const pending=new Promise<number|undefined>((resolve,reject)=>{const req=httpRequest(app.origin+path,{method:'POST',headers:auth},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});req.on('error',reject);const raw=JSON.stringify({...command,id:randomUUID(),revision:renamed.revision});req.write(raw.slice(0,-1));finish=()=>req.end('}');});
-    await request(permission,{id:randomUUID(),revision:1,enabled:false});finish();assert.equal(await pending,403);await request(path,command,403,auth);await request(path,undefined,403,auth);
+    await request(permission,{id:randomUUID(),revision:3,enabled:false});finish();assert.equal(await pending,403);await request(path,command,403,auth);await request(path,undefined,403,auth);
   } finally {await app.close();provider.closeAllConnections();await new Promise<void>(resolve=>provider.close(()=>resolve()));rmSync(dir,{recursive:true,force:true});}
 });
