@@ -1,0 +1,60 @@
+import { createElement as h, memo, type ReactNode } from 'react';
+import { marked, type Token, type Tokens } from 'marked';
+import { decodeHTML } from 'entities';
+
+export function markdownLink(value: string, scope: string, origin: string): { href: string; external: boolean } | null {
+  value = decodeHTML(value);
+  if (/[\x00-\x20\x7f\\]/.test(value)) return null;
+  if (/^https?:\/\//i.test(value)) {
+    try { const url = new URL(value); if (url.username || url.password) return null; if (url.origin !== origin) return { href: url.href, external: true }; value = url.pathname + url.search + url.hash; } catch { return null; }
+  }
+  if (value.startsWith(scope + '/files/') && /^[a-f0-9-]{36}$/i.test(value.slice((scope + '/files/').length))) return { href: value, external: false };
+  return null;
+}
+
+export const Markdown = memo(function Markdown({ text, scope, origin }: { text: string; scope: string; origin: string }) {
+  let count = 0;
+  function render(tokens: Token[], depth = 0): ReactNode[] {
+    if (depth > 40) throw new Error('Markdown depth');
+    return tokens.map((token, key) => {
+      if (++count > 6000) throw new Error('Markdown nodes');
+      const child = () => render('tokens' in token ? token.tokens ?? [] : [], depth + 1);
+      switch (token.type) {
+        case 'space': case 'def': return null;
+        case 'text': return token.tokens ? h('span', { key }, child()) : decodeHTML(token.text);
+        case 'escape': return decodeHTML(token.text);
+        case 'paragraph': return h('p', { key }, child());
+        case 'heading': return h(`h${Math.min(6, token.depth + 2)}`, { key }, child());
+        case 'strong': case 'em': case 'del': return h(token.type, { key }, child());
+        case 'blockquote': return h('blockquote', { key }, child());
+        case 'br': case 'hr': return h(token.type, { key });
+        case 'codespan': return h('code', { key }, token.text);
+        case 'code': return h('pre', { key, tabIndex: 0, role: 'region', 'aria-label': 'Blok kode' }, h('code', null, token.text));
+        case 'checkbox': return h('span', { key, role: 'img', 'aria-label': token.checked ? 'Selesai' : 'Belum selesai' }, token.checked ? '[x] ' : '[ ] ');
+        case 'list': return h(token.ordered ? 'ol' : 'ul', { key, ...(token.ordered ? { start: token.start } : {}) }, token.items.map((item: Tokens.ListItem, index: number) => h('li', { key: index }, render(item.tokens, depth + 1))));
+        case 'link': {
+          const target = markdownLink(token.href, scope, origin);
+          return target ? h('a', { key, href: target.href, ...(target.external ? { target: '_blank', rel: 'noopener noreferrer', title: target.href } : { download: true }) }, child()) : h('span', { key }, child());
+        }
+        case 'image': return h('span', { key }, token.text ? `[Gambar: ${token.text}]` : '[Gambar]');
+        case 'table': {
+          count += token.header.length * (token.rows.length + 1) + token.rows.length;
+          if (count > 6000) throw new Error('Markdown table nodes');
+          const alignment = (cell: Tokens.TableCell) => ({ textAlign: cell.align ?? 'left' });
+          return h('div', { key, className: 'markdown-table', tabIndex: 0, role: 'region', 'aria-label': 'Tabel jawaban' }, h('table', null,
+            h('thead', null, h('tr', null, token.header.map((cell: Tokens.TableCell, index: number) => h('th', { key: index, scope: 'col', style: alignment(cell) }, render(cell.tokens, depth + 1))))),
+            h('tbody', null, token.rows.map((row: Tokens.TableCell[], index: number) => h('tr', { key: index }, row.map((cell, column) => h('td', { key: column, style: alignment(cell) }, render(cell.tokens, depth + 1))))))));
+        }
+        // Raw HTML remains visible source text, never DOM supplied by the model.
+        default: return token.raw;
+      }
+    });
+  }
+  try {
+    if (text.length > 64000) throw new Error('Markdown length');
+    // ponytail: conservative pre-lexer table bound; a dedicated tokenizer can narrow false-positive plain-text fallback.
+    const lines = text.split(/\r\n|\r|\n/), columns = lines.reduce((max, line) => Math.max(max, line.split('|').length), 1);
+    if (columns * lines.length > 6000) throw new Error('Markdown table expansion');
+    return h('div', { className: 'markdown' }, render(marked.lexer(text, { gfm: true, breaks: false })));
+  } catch { return h('p', { className: 'message-text' }, text); }
+});
