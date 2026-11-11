@@ -220,3 +220,50 @@ test('transcription usage preserves unknown counts, duration and legacy operatio
     assert.equal(transcriber.usageSummary()?.total_tokens, null);
   } finally { await transcriber.close(); db.close(); }
 });
+
+test('cancelling streamed transcription persists without publication or replay', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-transcription-cancel-'));
+  let calls = 0, holding = true, received = () => {}, disconnected = () => {};
+  const provider = createServer(async (req, res) => {
+    for await (const _ of req) { /* Consume audio before holding result stream. */ }
+    calls++;
+    if (!holding) { res.end(JSON.stringify({ text: 'New result' })); return; }
+    res.setHeader('Content-Type', 'application/json'); res.write('{"text":"unfinished');
+    res.on('close', () => disconnected()); received();
+  });
+  let app: Awaited<ReturnType<typeof startApp>> | undefined;
+  t.after(async () => { await app?.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); });
+  await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+  const address = provider.address(); assert(address && typeof address !== 'string');
+  const options = { database: join(dir, 'state.sqlite'), transcriptionProvider: { baseURL: `http://127.0.0.1:${address.port}/v1`, model: 'fixture' } };
+  app = await startApp(options);
+  const post = (path: string, data: unknown) => fetch(app!.origin + path, { method: 'POST', headers: { Origin: app!.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  const agent = await (await post('/api/agents', { id: randomUUID(), name: 'Cancel', model: 'fixture', instructions: 'Help.' })).json();
+  const files = `/api/agents/${agent.id}/files`, file = randomUUID(), path = `${files}/${file}`, endpoint = `${path}?transcription=1`;
+  const upload = (id: string) => fetch(app!.origin + `${files}/${id}`, { method: 'POST', headers: { Origin: app!.origin, 'Content-Type': 'application/octet-stream', 'X-File-Name': 'audio.wav' }, body: 'RIFF0000WAVEfixture' });
+  assert.equal((await upload(file)).status, 200);
+  const info = await (await fetch(app.origin + endpoint)).json();
+  const request = { id: randomUUID(), provider: info.provider.id, consent: true };
+  const arrived = new Promise<void>(resolve => { received = resolve; });
+  const closed = new Promise<void>(resolve => { disconnected = resolve; });
+  const pending = post(endpoint, request); await arrived;
+  const other = randomUUID(); await upload(other);
+  assert.equal((await post(`${files}/${other}?transcription=1`, { action: 'cancel', id: request.id })).status, 404);
+  assert.equal((await post(endpoint, { action: 'cancel', id: request.id, consent: true })).status, 400);
+  const cancellation = { action: 'cancel', id: request.id };
+  const result = await (await post(endpoint, cancellation)).json(); assert.equal(result.status, 'cancelled');
+  assert.deepEqual(await (await post(endpoint, cancellation)).json(), result);
+  assert.equal((await (await pending).json()).status, 'cancelled');
+  await closed;
+  assert.equal((await (await fetch(app.origin + files)).json()).length, 2);
+  await app.close(); app = await startApp(options);
+  assert.equal((await (await fetch(app.origin + endpoint)).json()).operation.status, 'cancelled');
+  assert.equal((await (await post(endpoint, request)).json()).status, 'cancelled'); assert.equal(calls, 1);
+  assert.equal((await (await fetch(app.origin + '/api/usage')).json()).transcription.cancelled, 1);
+  assert.equal((await post(endpoint, { ...request, id: randomUUID() })).status, 409);
+  holding = false;
+  const newRequest = { ...request, id: randomUUID(), retryOf: request.id };
+  const done = await (await post(endpoint, newRequest)).json(); assert.equal(done.status, 'done'); assert.equal(calls, 2);
+  assert.equal((await post(endpoint, { action: 'cancel', id: newRequest.id })).status, 409);
+  assert.equal(await (await fetch(app.origin + `${files}/${done.result.id}`)).text(), 'New result');
+});
