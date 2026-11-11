@@ -7,7 +7,7 @@ import {mkdtempSync,rmSync,existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {initializeSlack,bindSlack,recordSlackEnvelope,finishSlack,deliverSlack,slackApi,SlackError} from './slack.ts';
-import {runSlack,slackAgentStep,slackSocket} from './slack-runner.ts';
+import {runSlack,slackAgentStep,slackSocket,slackSessionRequest} from './slack-runner.ts';
 import {startApp} from './server.ts';
 import {localScript} from './script-client.ts';
 
@@ -52,9 +52,10 @@ test('Slack actual agent API retries one task and isolates requester question an
 // Minimal fixture framing; production uses Node's native WebSocket implementation.
 function frame(value:unknown){const bytes=Buffer.from(JSON.stringify(value)),head=bytes.length<126?Buffer.from([0x81,bytes.length]):Buffer.from([0x81,126,bytes.length>>8,bytes.length&255]);return Buffer.concat([head,bytes]);}
 test('Slack Socket Mode runner acknowledges journaled event and delivers once after reconnect',async()=>{
- const root=mkdtempSync(join(tmpdir(),'briefsip-slack-run-')),agent=randomUUID(),controller=new AbortController(),sockets=new Set<any>();let providerCalls=0,connections=0,acks=0,delivered=0;const authHeaders:string[]=[];const finish=()=>{if(delivered&&acks>=2)setTimeout(()=>controller.abort(),20);};
+ const root=mkdtempSync(join(tmpdir(),'briefsip-slack-run-')),agent=randomUUID(),controller=new AbortController(),sockets=new Set<any>();let providerCalls=0,connections=0,acks=0,delivered=0;const limited=new Map<string,number>();const authHeaders:string[]=[];const finish=()=>{if(delivered&&acks>=2)setTimeout(()=>controller.abort(),20);};
  const provider=createServer(async(req,res)=>{for await(const _ of req){}providerCalls++;res.end(JSON.stringify({choices:[{message:{content:'Socket reply'},finish_reason:'stop'}]}));});
  const slack=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const body=JSON.parse(raw);authHeaders.push(String(req.headers.authorization));let result:any;
+  if(['/api/auth.test','/api/apps.connections.open'].includes(req.url!)){const prior=limited.get(req.url!);if(prior===undefined){limited.set(req.url!,Date.now());res.writeHead(429,{'Retry-After':'1'});res.end('Wait');return;}assert(Date.now()-prior>=1000);}
   if(req.url?.endsWith('/auth.test'))result={team_id:'TTEAM',user_id:'UBOT',bot_id:'BBOT'};
   else if(req.url?.endsWith('/apps.connections.open')){const a=slack.address();assert(a&&typeof a!=='string');result={url:`ws://127.0.0.1:${a.port}/socket`};}
   else{delivered++;assert.equal(body.thread_ts,'1700000000.000001');assert.equal(body.channel,'DCHAT');assert.equal(body.text,'Socket reply');result={channel:'DCHAT',ts:'1700000001.000001'};finish();}res.end(JSON.stringify({ok:true,...result}));});
@@ -85,4 +86,82 @@ test('Slack status and stop scope to requester root and preserve cancellation id
   const before=incoming('Do not create');loseBefore=true;await assert.rejects(slackAgentStep(db,users,local,remote),/Before submission/);const priorCalls=calls;incoming(`!stop ${before.turn}`,String(before.root));await slackAgentStep(db,users,local,remote);assert.equal(db.prepare('SELECT status FROM slack_inbox WHERE event=?').get(before.event)!.status,'unavailable');assert.equal(calls,priorCalls);assert.deepEqual(await ui(`/api/threads/${before.thread}/turns`),[]);
   incoming('!status',String(before.root));await slackAgentStep(db,users,local,remote);assert(sent.some(r=>r.text==='Tidak ada tugas aktif di thread ini.'));
  }finally{db.close();await app.close();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));rmSync(root,{recursive:true,force:true});}
+});
+
+test('Slack offline recovery pins revisions, retains confirmed chunks and requires explicit CLI confirmation',async()=>{
+ const {spawnSync}=await import('node:child_process');const {connectorJournal}=await import('./connector-journal.ts');
+ const directory=mkdtempSync(join(tmpdir(),'briefsip-slack-recovery-')),id=randomUUID();let owner=connectorJournal(directory,'slack.sqlite');let closed=false,calls=0;
+ const cli=(...args:string[])=>spawnSync(process.execPath,['--experimental-strip-types','slack-runner.ts',...args],{cwd:import.meta.dirname,env:{...process.env,BRIEFSIP_SLACK_DIRECTORY:directory},encoding:'utf8'});
+ const remote=async()=>{calls++;if(calls>1)throw new SlackError(false);return {channel:'DCHAT',ts:'1700000001.000001'};};
+ try{
+  initializeSlack(owner.db);owner.db.prepare('INSERT INTO slack_outbox(id,channel,sender,root,text) VALUES (?,?,?,?,?)').run(id,'DCHAT','UUSER','1700000000.000001','x'.repeat(5000));
+  await deliverSlack(owner.db,id,remote,async()=>{});assert.equal(calls,2);assert.notEqual(cli('inspect',id).status,0);
+  owner.close();closed=true;
+  let inspected=JSON.parse(cli('inspect',id).stdout);assert.equal(inspected.reply.status,'uncertain');assert.equal(inspected.reply.part,1);assert.equal(inspected.revision,0);
+  assert.notEqual(cli('recover',id,'0','retry').status,0);assert.equal(cli('recover',id,'0','retry','--accept-duplicate-risk').status,0);
+  owner=connectorJournal(directory,'slack.sqlite');closed=false;initializeSlack(owner.db);await deliverSlack(owner.db,id,remote,async()=>{});assert.equal(calls,3);owner.close();closed=true;
+  assert.notEqual(cli('recover',id,'0','retry','--accept-duplicate-risk').status,0);
+  inspected=JSON.parse(cli('inspect',id).stdout);assert.equal(inspected.reply.part,1);assert.equal(JSON.parse(inspected.reply.timestamps).length,1);assert.equal(inspected.revision,1);
+  assert.equal(cli('recover',id,'1','retry','--accept-duplicate-risk').status,0);
+  owner=connectorJournal(directory,'slack.sqlite');closed=false;initializeSlack(owner.db);let authorized=false;
+  await assert.rejects(deliverSlack(owner.db,id,async()=>{throw new Error('must not send');},async()=>{if(!authorized)throw new Error('revoked');}),/revoked/);
+  authorized=true;await deliverSlack(owner.db,id,async(_method,body)=>{calls++;assert.equal(body.text,'x'.repeat(1000));return {channel:'DCHAT',ts:'1700000001.000002'};},async()=>{});
+  assert.equal(owner.db.prepare('SELECT status FROM slack_outbox WHERE id=?').get(id)!.status,'sent');owner.db.prepare("UPDATE slack_outbox SET status='sending' WHERE id=?").run(id);owner.close();closed=true;
+  inspected=JSON.parse(cli('inspect',id).stdout);assert.equal(inspected.reply.status,'uncertain');assert.equal(inspected.revision,2);
+  assert.notEqual(cli('recover',id,'2','discard').status,0);assert.equal(cli('recover',id,'2','discard','--confirm').status,0);assert.notEqual(cli('recover',id,'3','retry','--accept-duplicate-risk').status,0);
+  inspected=JSON.parse(cli('inspect',id).stdout);assert.equal(inspected.reply.status,'discarded');assert.equal(inspected.decisions.length,3);assert.equal(inspected.reply.part,2);
+  const rejected=randomUUID();owner=connectorJournal(directory,'slack.sqlite');closed=false;initializeSlack(owner.db);
+  owner.db.prepare('INSERT INTO slack_outbox(id,channel,sender,root,text) VALUES (?,?,?,?,?)').run(rejected,'DCHAT','UUSER','1700000000.000001','Rejected');
+  await deliverSlack(owner.db,rejected,async()=>{throw new SlackError(true);},async()=>{});owner.close();closed=true;
+  inspected=JSON.parse(cli('inspect',rejected).stdout);assert.equal(inspected.reply.status,'failed');assert.equal(inspected.reply.part,0);
+  assert.equal(cli('recover',rejected,'0','retry','--accept-duplicate-risk').status,0);
+  assert.equal(JSON.parse(cli('inspect',rejected).stdout).reply.status,'queued');
+ }finally{if(!closed)owner.close();rmSync(directory,{recursive:true,force:true});}
+});
+
+test('Slack HTTP rate limit defers workspace delivery durably without retrying uncertain responses',async()=>{
+ const directory=mkdtempSync(join(tmpdir(),'briefsip-slack-rate-')),file=join(directory,'journal.sqlite');let db=new DatabaseSync(file),requests=0,mode='rate',retry='1';
+ const server=createServer(async(req,res)=>{for await(const _ of req){}requests++;if(mode==='rate'){res.writeHead(429,{'Retry-After':retry});res.end('rate limited');}else if(mode==='lost'){req.socket.destroy();}else{res.end(JSON.stringify({ok:true,channel:'DCHAT',ts:`1700000001.${String(requests).padStart(6,'0')}`}));}});
+ await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const address=server.address();assert(address&&typeof address!=='string');const remote=slackApi('xoxb-'+'b'.repeat(24),'xapp-'+'a'.repeat(24),`http://127.0.0.1:${address.port}`);
+ const first=randomUUID(),second=randomUUID();const add=(id:string)=>db.prepare('INSERT INTO slack_outbox(id,channel,sender,root,text) VALUES (?,?,?,?,?)').run(id,'DCHAT','UUSER','1700000000.000001','Reply');
+ try{
+  initializeSlack(db);add(first);add(second);await deliverSlack(db,first,remote,async()=>{});assert.equal(requests,1);assert.equal(db.prepare('SELECT status FROM slack_outbox WHERE id=?').get(first)!.status,'queued');
+  const until=Number(db.prepare('SELECT until FROM slack_delivery_cooldown').get()!.until);assert(until>Date.now());db.close();db=new DatabaseSync(file);initializeSlack(db);
+  await deliverSlack(db,second,remote,async()=>{});assert.equal(requests,1);
+  await new Promise(r=>setTimeout(r,Math.max(0,until-Date.now())+10));mode='ok';await assert.rejects(deliverSlack(db,first,remote,async()=>{throw new Error('revoked');}),/revoked/);assert.equal(requests,1);
+  await deliverSlack(db,first,remote,async()=>{});assert.equal(requests,2);assert.equal(db.prepare('SELECT status FROM slack_outbox WHERE id=?').get(first)!.status,'sent');
+  mode='lost';await deliverSlack(db,second,remote,async()=>{});assert.equal(requests,3);initializeSlack(db);await deliverSlack(db,second,remote,async()=>{});assert.equal(requests,3);assert.equal(db.prepare('SELECT status FROM slack_outbox WHERE id=?').get(second)!.status,'uncertain');
+  for(const header of ['0','-1','1.5','bad','999999999999999999999']){mode='rate';retry=header;const id=randomUUID();add(id);await deliverSlack(db,id,remote,async()=>{});assert.equal(db.prepare('SELECT status FROM slack_outbox WHERE id=?').get(id)!.status,'failed');}
+  const multipart=randomUUID();add(multipart);db.prepare('UPDATE slack_outbox SET text=? WHERE id=?').run('x'.repeat(5000),multipart);mode='ok';retry='1';
+  await deliverSlack(db,multipart,async(method,body,signal)=>{const result=await remote(method,body,signal);mode='rate';return result;},async()=>{});
+  const partial=db.prepare('SELECT * FROM slack_outbox WHERE id=?').get(multipart)!;assert.equal(partial.status,'queued');assert.equal(partial.part,1);assert.equal(JSON.parse(String(partial.timestamps)).length,1);
+  const resume=Number(db.prepare('SELECT until FROM slack_delivery_cooldown').get()!.until);await new Promise(r=>setTimeout(r,Math.max(0,resume-Date.now())+10));mode='ok';const before=requests;
+  await deliverSlack(db,multipart,async(method,body,signal)=>{assert.equal(body.text,'x'.repeat(1000));return remote(method,body,signal);},async()=>{});assert.equal(requests,before+1);assert.equal(db.prepare('SELECT part FROM slack_outbox WHERE id=?').get(multipart)!.part,2);
+ }finally{db.close();await new Promise<void>(r=>server.close(()=>r()));rmSync(directory,{recursive:true,force:true});}
+});
+
+test('Slack session cooldown survives abort and reopen without blocking other methods',async()=>{
+ const directory=mkdtempSync(join(tmpdir(),'briefsip-slack-session-')),file=join(directory,'journal.sqlite');let db=new DatabaseSync(file),calls=0;
+ try{
+  initializeSlack(db);const stop=new AbortController();
+  const pending=slackSessionRequest(db,async()=>{calls++;setTimeout(()=>stop.abort(),20);throw new SlackError(true,1);},'auth.test',stop.signal);
+  await assert.rejects(pending);assert.equal(calls,1);const until=Number(db.prepare("SELECT until FROM slack_session_cooldowns WHERE method='auth.test'").get()!.until);
+  db.close();db=new DatabaseSync(file);initializeSlack(db);
+  await slackSessionRequest(db,async()=>{calls++;return {};},'apps.connections.open',new AbortController().signal);assert.equal(calls,2);
+  await slackSessionRequest(db,async()=>{assert(Date.now()>=until);calls++;return {};},'auth.test',new AbortController().signal);assert.equal(calls,3);
+  await assert.rejects(slackSessionRequest(db,async()=>{calls++;throw new SlackError(false);},'auth.test',new AbortController().signal));assert.equal(calls,4);
+  const stopped=AbortSignal.abort();await assert.rejects(slackSessionRequest(db,async()=>{calls++;return {};},'auth.test',stopped));assert.equal(calls,4);
+ }finally{db.close();rmSync(directory,{recursive:true,force:true});}
+});
+
+test('Slack startup cancellation releases lock and status retains authentication cooldown',async()=>{
+ const {spawnSync}=await import('node:child_process');const root=mkdtempSync(join(tmpdir(),'briefsip-slack-start-stop-')),directory=join(root,'state'),controller=new AbortController();let requests=0;
+ const server=createServer(async(req,res)=>{for await(const _ of req){}requests++;res.writeHead(429,{'Retry-After':'60'});res.end('Wait');});await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const address=server.address();assert(address&&typeof address!=='string');
+ const timeout=setTimeout(()=>controller.abort(),5000);
+ try{
+  const running=runSlack({directory,scriptDirectory:join(root,'unused'),agent:randomUUID(),team:'TTEAM',app:'AAPP',botToken:'xoxb-'+'b'.repeat(24),appToken:'xapp-'+'a'.repeat(24),users:['UUSER'],origin:`http://127.0.0.1:${address.port}`},controller.signal);
+  let recorded=false;for(let i=0;i<100&&!recorded;i++){await new Promise(r=>setTimeout(r,10));if(!existsSync(join(directory,'slack.sqlite')))continue;const db=new DatabaseSync(join(directory,'slack.sqlite'));try{recorded=!!db.prepare("SELECT until FROM slack_session_cooldowns WHERE method='auth.test'").get();}finally{db.close();}}
+  assert(recorded);controller.abort();await running;assert.equal(requests,1);assert(!existsSync(join(directory,'owner.lock')));
+  const status=spawnSync(process.execPath,['--experimental-strip-types','slack-runner.ts','status'],{cwd:import.meta.dirname,env:{...process.env,BRIEFSIP_SLACK_DIRECTORY:directory},encoding:'utf8'});assert.equal(status.status,0,status.stderr);const rows=JSON.parse(status.stdout).sessionCooldowns;assert.equal(rows.length,1);assert.equal(rows[0].method,'auth.test');assert(rows[0].until>Date.now());
+ }finally{clearTimeout(timeout);controller.abort();server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));rmSync(root,{recursive:true,force:true});}
 });
