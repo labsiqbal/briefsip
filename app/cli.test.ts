@@ -112,7 +112,7 @@ test('CLI workflow discovery paginates and explicit approvals retain identity af
     const response = await fetch(app.origin + req.url, { method: req.method, headers: { Authorization: req.headers.authorization!, 'Content-Type': 'application/json' }, body: body || undefined });
     const bytes = Buffer.from(await response.arrayBuffer());
     if (req.url?.endsWith('/approve')) { decisions.push(body); if (drop) { drop = false; res.destroy(); return; } }
-    if (req.method === 'POST' && /\/(run|cancel|schedule)$/.test(req.url ?? '')) {
+    if (req.method === 'POST' && /\/(run|cancel|schedule|webhook)$/.test(req.url ?? '')) {
       actions.push({ path: req.url!, body });
       if (dropAction && req.url!.endsWith(dropAction) && response.ok) { dropAction = ''; res.destroy(); return; }
     }
@@ -144,13 +144,27 @@ test('CLI workflow discovery paginates and explicit approvals retain identity af
   const list = await terminal(['workflows', owner.id]); assert.equal(list.exitCode, 0); assert.deepEqual(list.workflows.map((row: any) => row.id).sort(), workflows.sort());
   const readHook = ['workflow-webhook', owner.id, workflows[0]];
   assert.equal((await terminal(readHook)).webhook, null);
-  const hook = await ui(`/api/workflows/${workflows[0]}/webhook`, { id: randomUUID(), revision: 0, rotate: true, enabled: true });
+  const hookCommand = ['workflow-webhook-save', owner.id, workflows[0], JSON.stringify({ revision: 0, rotate: true, enabled: true }), '--id', randomUUID()];
+  dropAction = '/webhook';
+  const lostHook = await terminal(hookCommand); assert.equal(lostHook.exitCode, 5); assert.equal(lostHook.requestId, hookCommand[5]);
+  await app.close(); app = await startApp(options); useProxy();
+  const hookResult = await terminal(hookCommand); assert.equal(hookResult.exitCode, 0); const hook = hookResult.webhook; assert.equal(typeof hook.secret, 'string');
+  assert.deepEqual(actions.at(-1), actions.at(-2)); assert.equal((await terminal(hookCommand)).webhook.secret, hook.secret);
+  assert.equal((await terminal(['workflow-webhook-save', other.id, ...hookCommand.slice(2)])).exitCode, 1);
+  actions.length = 0;
+
   const inspected = await terminal(readHook);
   assert.equal(inspected.exitCode, 0); assert.deepEqual(inspected.webhook, { route: hook.route, revision: 1, enabled: 1 }); assert(!JSON.stringify(inspected).includes(hook.secret));
   assert.equal((await terminal(['workflow-webhook', other.id, workflows[0]])).exitCode, 1);
   assert.equal((await terminal([...readHook, '--wait'])).exitCode, 2);
-  await ui(`/api/workflows/${workflows[0]}/webhook`, { id: randomUUID(), revision: 1, remove: true, route: hook.route });
-  assert.deepEqual((await terminal(readHook)).webhook, { route: null, revision: 2, enabled: 0 });
+  const disabledHook = await terminal(['workflow-webhook-save', owner.id, workflows[0], JSON.stringify({ revision: 1, enabled: false, rotate: false }), '--id', randomUUID()]);
+  assert.equal(disabledHook.exitCode, 0); assert.equal(disabledHook.webhook.secret, undefined); assert(!JSON.stringify(disabledHook).includes(hook.secret));
+  assert.equal((await terminal(hookCommand)).exitCode, 1);
+  assert.equal((await terminal(['workflow-webhook-save', owner.id, workflows[0], JSON.stringify({ secret: 'forbidden' }), '--id', randomUUID()])).exitCode, 2);
+  const removeHook = ['workflow-webhook-save', owner.id, workflows[0], JSON.stringify({ revision: 2, remove: true, route: hook.route }), '--id', randomUUID()];
+  assert.equal((await terminal(removeHook)).exitCode, 0); assert.equal((await terminal(removeHook)).exitCode, 0);
+  assert.deepEqual((await terminal(readHook)).webhook, { route: null, revision: 3, enabled: 0 });
+  actions.length = 0;
   let pending: any;
   for (let n = 0; n < 50; n++) { pending = await terminal(['approvals', owner.id]); if (pending.approvals?.length === 51) break; await new Promise(resolve => setTimeout(resolve, 20)); }
   assert.equal(pending.exitCode, 0); assert.deepEqual(pending.approvals.map((row: any) => row.run).sort(), runs.sort());
@@ -214,6 +228,7 @@ test('CLI workflow discovery paginates and explicit approvals retain identity af
   assert.equal((await terminal(command)).exitCode, 5);
   assert.equal((await terminal(saveSchedule)).exitCode, 5);
   assert.equal((await terminal(readHook)).exitCode, 5);
+  assert.equal((await terminal(hookCommand)).exitCode, 5);
 });
 
 test('script CLI discovers only grants, sends once, waits, preserves retry ID and reports attention/timeouts', async () => {
