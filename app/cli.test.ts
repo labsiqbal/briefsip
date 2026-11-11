@@ -9,6 +9,63 @@ import { spawn } from 'node:child_process';
 import { cli } from './cli.ts';
 import { startApp } from './server.ts';
 
+test('CLI workflow discovery paginates and explicit approvals retain identity after lost responses', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-cli-approvals-')), directory = join(dir, 'scripts');
+  const options = { database: join(dir, 'db.sqlite'), scriptDirectory: directory };
+  let app = await startApp(options), drop = false;
+  const decisions: string[] = [];
+  const proxy = createServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    const response = await fetch(app.origin + req.url, { method: req.method, headers: { Authorization: req.headers.authorization!, 'Content-Type': 'application/json' }, body: body || undefined });
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (req.url?.endsWith('/approve')) { decisions.push(body); if (drop) { drop = false; res.destroy(); return; } }
+    res.writeHead(response.status, { 'Content-Type': 'application/json' }); res.end(bytes);
+  });
+  t.after(async () => { await app.close(); proxy.closeAllConnections(); await new Promise<void>(resolve => proxy.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); });
+  await new Promise<void>(resolve => proxy.listen(0, '127.0.0.1', resolve));
+  const address = proxy.address(); assert(address && typeof address !== 'string');
+  const ui = async (path: string, body?: unknown) => {
+    const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    const result = await response.json(); assert(response.ok, JSON.stringify(result)); return result;
+  };
+  const terminal = (args: string[]) => new Promise<any>((resolve, reject) => {
+    const child = spawn(process.execPath, ['--experimental-strip-types', 'cli.ts', ...args], { cwd: import.meta.dirname, env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = ''; child.stdout.on('data', chunk => { output += chunk; }); child.stderr.resume(); child.on('error', reject);
+    child.on('close', code => { try { const result = JSON.parse(output); assert.equal(code, result.exitCode); resolve(result); } catch (error) { reject(error); } });
+  });
+  const useProxy = () => { const file = join(directory, 'connection.json'), saved = JSON.parse(readFileSync(file, 'utf8')); writeFileSync(file, JSON.stringify({ ...saved, url: `http://127.0.0.1:${address.port}` })); };
+  const owner = await ui('/api/agents', { id: randomUUID(), name: 'Approver', model: 'fixture', instructions: 'Help' });
+  const other = await ui('/api/agents', { id: randomUUID(), name: 'Other', model: 'fixture', instructions: 'Help' });
+  for (const agent of [owner, other]) await ui(`/api/agents/${agent.id}/scripts`, { id: randomUUID(), revision: 0, enabled: true });
+  const workflows: string[] = [], runs: string[] = [];
+  for (let n = 0; n < 51; n++) {
+    const workflow = await ui(`/api/agents/${owner.id}/workflows`, { id: randomUUID(), revision: 0, name: `Approval ${n}`, graph: { entry: 'ask', maxSteps: 2, nodes: [{ id: 'ask', kind: 'approval', prompt: `Approve ${n}?`, yes: 'out' }, { id: 'out', kind: 'output' }] } });
+    workflows.push(workflow.id);
+    runs.push((await ui(`/api/workflows/${workflow.id}/run`, { id: randomUUID(), revision: 1, input: `Input ${n}` })).id);
+  }
+  useProxy();
+  const list = await terminal(['workflows', owner.id]); assert.equal(list.exitCode, 0); assert.deepEqual(list.workflows.map((row: any) => row.id).sort(), workflows.sort());
+  let pending: any;
+  for (let n = 0; n < 50; n++) { pending = await terminal(['approvals', owner.id]); if (pending.approvals?.length === 51) break; await new Promise(resolve => setTimeout(resolve, 20)); }
+  assert.equal(pending.exitCode, 0); assert.deepEqual(pending.approvals.map((row: any) => row.run).sort(), runs.sort());
+  assert.deepEqual((await terminal(['approvals', other.id])).approvals, []);
+  const first = pending.approvals[0], requestId = randomUUID(), command = ['approve', owner.id, first.run, String(first.revision), 'yes', '--id', requestId];
+  assert.equal((await terminal(['approve', other.id, ...command.slice(2)])).exitCode, 1);
+  assert.equal((await terminal(['approve', owner.id, first.run, String(first.revision + 1), 'yes', '--id', randomUUID()])).exitCode, 1);
+  drop = true;
+  const lost = await terminal(command); assert.equal(lost.exitCode, 5); assert.equal(lost.id, first.run); assert.equal(lost.requestId, requestId);
+  await app.close(); app = await startApp(options); useProxy();
+  assert.equal((await terminal(command)).exitCode, 0); assert.equal(decisions.at(-1), decisions.at(-2));
+  assert.equal((await ui(`/api/workflow-runs/${first.run}`)).status, 'done');
+  assert.equal((await terminal(command.map(value => value === 'yes' ? 'no' : value))).exitCode, 1);
+  const second = pending.approvals[1];
+  assert.equal((await terminal(['approve', owner.id, second.run, String(second.revision), 'no', '--id', randomUUID()])).exitCode, 0);
+  assert.equal((await ui(`/api/workflow-runs/${second.run}`)).status, 'failed');
+  for (const bad of [['workflows', owner.id, '--wait'], ['approvals', owner.id, '--thread', randomUUID()], command.slice(0, 5), ['approve', owner.id, first.run, '1', 'maybe', '--id', randomUUID()]]) assert.equal((await terminal(bad)).exitCode, 2);
+  await ui(`/api/agents/${owner.id}/scripts`, { id: randomUUID(), revision: 1, enabled: false });
+  assert.equal((await terminal(command)).exitCode, 5);
+});
+
 test('script CLI discovers only grants, sends once, waits, preserves retry ID and reports attention/timeouts', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-cli-')); let calls = 0;
   const provider = createServer(async (req, res) => {
