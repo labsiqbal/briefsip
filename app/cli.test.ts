@@ -142,6 +142,15 @@ test('CLI workflow discovery paginates and explicit approvals retain identity af
   }
   useProxy();
   const list = await terminal(['workflows', owner.id]); assert.equal(list.exitCode, 0); assert.deepEqual(list.workflows.map((row: any) => row.id).sort(), workflows.sort());
+  const readHook = ['workflow-webhook', owner.id, workflows[0]];
+  assert.equal((await terminal(readHook)).webhook, null);
+  const hook = await ui(`/api/workflows/${workflows[0]}/webhook`, { id: randomUUID(), revision: 0, rotate: true, enabled: true });
+  const inspected = await terminal(readHook);
+  assert.equal(inspected.exitCode, 0); assert.deepEqual(inspected.webhook, { route: hook.route, revision: 1, enabled: 1 }); assert(!JSON.stringify(inspected).includes(hook.secret));
+  assert.equal((await terminal(['workflow-webhook', other.id, workflows[0]])).exitCode, 1);
+  assert.equal((await terminal([...readHook, '--wait'])).exitCode, 2);
+  await ui(`/api/workflows/${workflows[0]}/webhook`, { id: randomUUID(), revision: 1, remove: true, route: hook.route });
+  assert.deepEqual((await terminal(readHook)).webhook, { route: null, revision: 2, enabled: 0 });
   let pending: any;
   for (let n = 0; n < 50; n++) { pending = await terminal(['approvals', owner.id]); if (pending.approvals?.length === 51) break; await new Promise(resolve => setTimeout(resolve, 20)); }
   assert.equal(pending.exitCode, 0); assert.deepEqual(pending.approvals.map((row: any) => row.run).sort(), runs.sort());
@@ -204,6 +213,7 @@ test('CLI workflow discovery paginates and explicit approvals retain identity af
   await ui(`/api/agents/${owner.id}/scripts`, { id: randomUUID(), revision: 1, enabled: false });
   assert.equal((await terminal(command)).exitCode, 5);
   assert.equal((await terminal(saveSchedule)).exitCode, 5);
+  assert.equal((await terminal(readHook)).exitCode, 5);
 });
 
 test('script CLI discovers only grants, sends once, waits, preserves retry ID and reports attention/timeouts', async () => {
