@@ -134,3 +134,50 @@ test('transcription is opt-in and validates request bodies', async () => {
     assert.equal((await fetch(app.origin + endpoint, { method: 'DELETE', headers: { Origin: app.origin } })).status, 405);
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('transcription rejects redirects and oversized output, and script grants cannot replace consent', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-transcription-boundaries-'));
+  let mode = 'redirect', calls = 0, redirected = 0;
+  const provider = createServer(async (req, res) => {
+    for await (const _ of req) { /* Drain uploaded audio. */ }
+    if (req.url === '/unexpected') { redirected++; res.end('{}'); return; }
+    calls++;
+    if (mode === 'redirect') { res.writeHead(307, { Location: '/unexpected' }); res.end(); }
+    else if (mode === 'body') res.end(JSON.stringify({ text: 'Valid text', padding: 'x'.repeat(512 * 1024) }));
+    else if (mode === 'text') res.end(JSON.stringify({ text: 'x'.repeat(256 * 1024 + 1) }));
+    else if (mode === 'empty') res.end(JSON.stringify({ text: ' \n ' }));
+    else res.end(JSON.stringify({ text: 'Accepted final text' }));
+  });
+  t.after(async () => { provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); });
+  await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+  const address = provider.address(); assert(address && typeof address !== 'string');
+  const token = 'synthetic-token-for-transcription-tests-123456789';
+  const app = await startApp({ database: join(dir, 'state.sqlite'), scriptToken: token, transcriptionProvider: { baseURL: `http://127.0.0.1:${address.port}/v1`, model: 'fixture' } });
+  const post = (path: string, data: unknown) => fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  try {
+    const agent = await (await post('/api/agents', { id: randomUUID(), name: 'Bounds', model: 'fixture', instructions: 'Help.' })).json();
+    assert.equal((await post(`/api/agents/${agent.id}/scripts`, { id: randomUUID(), revision: 0, enabled: true })).status, 200);
+    const thread = await (await post(`/api/agents/${agent.id}/threads`, { id: randomUUID(), name: 'Bounds' })).json();
+    const file = randomUUID(), files = `/api/threads/${thread.id}/files`, path = `${files}/${file}`, endpoint = `${path}?transcription=1`;
+    assert.equal((await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/octet-stream', 'X-File-Name': 'audio.wav' }, body: 'RIFF0000WAVEfixture' })).status, 200);
+    const info = await (await fetch(app.origin + endpoint)).json();
+    const script = `${app.origin}/api/scripts/agents/${agent.id}/threads/${thread.id}/files/${file}?transcription=1`;
+    for (const method of ['GET', 'POST']) {
+      const response = await fetch(script, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, ...(method === 'POST' ? { body: JSON.stringify({ id: randomUUID(), provider: info.provider.id, consent: true }) } : {}) });
+      assert.equal(response.status, 403); assert.match((await response.json()).error, /persetujuan/);
+    }
+    assert.equal(calls, 0);
+    let retryOf: string | undefined;
+    for (mode of ['redirect', 'body', 'text', 'empty', 'valid']) {
+      const request = { id: randomUUID(), provider: info.provider.id, consent: true, ...(retryOf ? { retryOf } : {}) };
+      const response = await post(endpoint, request); assert.equal(response.status, 200);
+      const result = await response.json(); assert.equal(result.status, mode === 'valid' ? 'done' : 'uncertain');
+      assert.equal(redirected, 0);
+      const before: number = calls;
+      assert.deepEqual(await (await post(endpoint, request)).json(), result); assert.equal(calls, before);
+      const listed = await (await fetch(app.origin + files)).json(); assert.equal(listed.length, mode === 'valid' ? 2 : 1);
+      retryOf = request.id;
+    }
+    assert.equal(calls, 5);
+  } finally { await app.close(); }
+});
