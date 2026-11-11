@@ -338,7 +338,10 @@ test('parallel webhook waits for provider before creating a receipt', async () =
     const signature = createHmac('sha256', hook.secret).update(`${time}\n${delivery}\n`).update(body).digest('hex');
     const response = await fetch(`${app.origin}/api/workflow-webhooks/${hook.route}`, { method: 'POST', headers: { 'x-briefsip-time': time, 'x-briefsip-id': delivery, 'x-briefsip-signature': signature, 'Content-Type': 'application/json' }, body });
     assert.equal(response.status, 503); await response.body?.cancel();
-    assert.equal((await fetch(app.origin + `/api/workflows/${workflow.id}/runs`)).status, 200);
+    const runs = await fetch(app.origin + `/api/workflows/${workflow.id}/runs`);
+    assert.equal(runs.status, 200); assert.deepEqual(await runs.json(), []);
+    const events = await fetch(app.origin + `/api/workflows/${workflow.id}/webhook-events`);
+    assert.equal(events.status, 200); assert.deepEqual(await events.json(), []);
     await app.close();
     await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
     const address = provider.address(); assert(address && typeof address !== 'string');
