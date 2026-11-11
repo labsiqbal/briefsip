@@ -160,10 +160,17 @@ test('CLI workflow discovery paginates and explicit approvals retain identity af
   const disabledHook = await terminal(['workflow-webhook-save', owner.id, workflows[0], JSON.stringify({ revision: 1, enabled: false, rotate: false }), '--id', randomUUID()]);
   assert.equal(disabledHook.exitCode, 0); assert.equal(disabledHook.webhook.secret, undefined); assert(!JSON.stringify(disabledHook).includes(hook.secret));
   assert.equal((await terminal(hookCommand)).exitCode, 1);
+  const rotated = await terminal(['workflow-webhook-save', owner.id, workflows[0], JSON.stringify({ revision: 2, enabled: true, rotate: true }), '--id', randomUUID()]);
+  assert.equal(rotated.exitCode, 0); assert.equal(typeof rotated.webhook.secret, 'string'); assert(rotated.webhook.secret.length > 0); assert.notEqual(rotated.webhook.secret, hook.secret);
+  assert.equal((await terminal(hookCommand)).exitCode, 1);
   assert.equal((await terminal(['workflow-webhook-save', owner.id, workflows[0], JSON.stringify({ secret: 'forbidden' }), '--id', randomUUID()])).exitCode, 2);
-  const removeHook = ['workflow-webhook-save', owner.id, workflows[0], JSON.stringify({ revision: 2, remove: true, route: hook.route }), '--id', randomUUID()];
+  const removeHook = ['workflow-webhook-save', owner.id, workflows[0], JSON.stringify({ revision: 3, remove: true, route: hook.route }), '--id', randomUUID()];
   assert.equal((await terminal(removeHook)).exitCode, 0); assert.equal((await terminal(removeHook)).exitCode, 0);
-  assert.deepEqual((await terminal(readHook)).webhook, { route: null, revision: 3, enabled: 0 });
+  assert.deepEqual((await terminal(readHook)).webhook, { route: null, revision: 4, enabled: 0 });
+  const recreated = await terminal(['workflow-webhook-save', owner.id, workflows[0], JSON.stringify({ revision: 4, enabled: true, rotate: true }), '--id', randomUUID()]);
+  assert.equal(recreated.exitCode, 0); assert.notEqual(recreated.webhook.route, hook.route);
+  assert.equal((await terminal(removeHook)).exitCode, 0);
+  assert.deepEqual((await terminal(readHook)).webhook, { route: recreated.webhook.route, revision: 5, enabled: 1 });
   actions.length = 0;
   let pending: any;
   for (let n = 0; n < 50; n++) { pending = await terminal(['approvals', owner.id]); if (pending.approvals?.length === 51) break; await new Promise(resolve => setTimeout(resolve, 20)); }
