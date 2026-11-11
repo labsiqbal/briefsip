@@ -57,13 +57,14 @@ test('script CLI discovers only grants, sends once, waits, preserves retry ID an
     });
     assert.equal(JSON.parse(unicode).turn.text, 'café');
     const connectionFile = join(directory, 'connection.json'), saved = readFileSync(connectionFile, 'utf8');
-    let drop = true;
+    let drop = true, observed: (() => void) | undefined;
     const proxy = createServer(async (req, res) => {
       let body = ''; for await (const chunk of req) body += chunk;
       const response = await fetch(app.origin + req.url, { method: req.method, headers: { Authorization: req.headers.authorization!, 'Content-Type': 'application/json' }, body: body || undefined });
       const bytes = Buffer.from(await response.arrayBuffer());
       if (req.method === 'POST' && drop) { drop = false; res.destroy(); return; }
       res.writeHead(response.status, { 'Content-Type': 'application/json' }); res.end(bytes);
+      if (req.method === 'GET' && req.url?.includes('?focus=')) observed?.();
     });
     await new Promise<void>(resolve => proxy.listen(0, '127.0.0.1', resolve));
     const proxyAddress = proxy.address(); assert(proxyAddress && typeof proxyAddress !== 'string');
@@ -72,15 +73,40 @@ test('script CLI discovers only grants, sends once, waits, preserves retry ID an
       const lost = await cli(['run',a.id,'Lost response'], directory); assert.equal(lost.exitCode, 5); assert(lost.id);
       const recovered = await cli(['run',a.id,'Lost response','--id',lost.id,'--wait','--timeout','3'], directory);
       assert.equal(recovered.exitCode, 0); assert.equal(recovered.id, lost.id); assert.equal(calls, 5);
-    } finally { writeFileSync(connectionFile, saved); proxy.closeAllConnections(); await new Promise<void>(resolve => proxy.close(() => resolve())); }
+      const pending = await cli(['run',a.id,'HOLD'], directory); assert.equal(pending.exitCode, 0);
+      const seen = new Promise<void>(resolve => { observed = resolve; }); let settled = false;
+      const waiting = cli(['status',a.id,pending.id!,'--wait','--timeout','5'], directory).then(result => { settled = true; return result; });
+      await seen; observed = undefined;
+      await app.close();
+      await new Promise(resolve => setTimeout(resolve, 650)); assert.equal(settled, false, 'discovery gap must not end an established wait');
+      app = await startApp(options);
+      const interrupted = await waiting; assert.equal(interrupted.exitCode, 1); assert.equal(interrupted.turn.status, 'interrupted'); assert.equal(calls, 6);
+    } finally { proxy.closeAllConnections(); await new Promise<void>(resolve => proxy.close(() => resolve())); }
     const collision = await request('/api/agents', { id: randomUUID(), name: a.id, model: 'test', instructions: 'Help' });
     await request(`/api/agents/${collision.id}/scripts`, { id: randomUUID(), revision: 0, enabled: true });
     assert.equal((await cli(['status',a.id,id], directory)).exitCode, 0);
     assert.equal((await cli(['status',a.id.toUpperCase(),id], directory)).exitCode, 0);
     await app.close(); app = await startApp(options);
-    assert.equal((await cli(['status',a.id,id], directory)).turn.reply, 'Answer'); assert.equal(calls, 5);
+    assert.equal((await cli(['status',a.id,id], directory)).turn.reply, 'Answer'); assert.equal(calls, 6);
     await request(`/api/agents/${a.id}/scripts`, { id: randomUUID(), revision: 1, enabled: false });
     assert.equal((await cli(['status',a.id,id], directory)).exitCode, 5);
+    for (let n = 0; n < 99; n++) {
+      const extra = await request('/api/agents', { id: randomUUID(), name: `Extra ${n}`, model: 'test', instructions: 'Help' });
+      await request(`/api/agents/${extra.id}/scripts`, { id: randomUUID(), revision: 0, enabled: true });
+    }
+    const catalog = await cli(['list'], directory); assert.equal(catalog.agents?.length, 101);
+    assert.equal(new Set(catalog.agents?.map(agent => agent.id)).size, 101);
+    assert(!catalog.agents?.some(agent => agent.id === a.id));
+    const credentials = JSON.parse(readFileSync(connectionFile, 'utf8'));
+    const headers = { Authorization: `Bearer ${credentials.token}` };
+    const first = await (await fetch(app.origin + '/api/scripts/agents', { headers })).json();
+    assert.equal(first.agents.length, 100); assert(first.next_after);
+    const second = await (await fetch(app.origin + '/api/scripts/agents?after=' + first.next_after, { headers })).json();
+    assert.equal(second.agents.length, 1); assert.equal(second.next_after, null);
+    for (const suffix of ['?after=invalid', '?unexpected=1']) {
+      const rejected = await fetch(app.origin + '/api/scripts/agents' + suffix, { headers }); assert.equal(rejected.status, 400); await rejected.arrayBuffer();
+    }
+    const denied = await fetch(app.origin + '/api/scripts/agents', { headers: { ...headers, Origin: app.origin } }); assert.equal(denied.status, 403); await denied.arrayBuffer();
     const file = join(directory, 'connection.json'), original = readFileSync(file);
     writeFileSync(file, JSON.stringify({ url: 'https://example.com', token: 'x'.repeat(32) }));
     assert.equal((await cli(['list'], directory)).exitCode, 5); writeFileSync(file, original);
