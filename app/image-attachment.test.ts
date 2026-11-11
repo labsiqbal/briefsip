@@ -20,22 +20,22 @@ test('image headers and inline provider conversion are bounded and never use rem
   for (const url of ['https://example.com/private', 'data:image/svg+xml;base64,PHN2Zz4=', 'file:///tmp/private']) assert.throws(() => anthropicRequest('vision', [{ role: 'user', content: [{ type: 'image_url', image_url: { url } }] }], [], 100));
 });
 
-for (const family of ['openai-compatible', 'anthropic'] as ProviderFamily[]) test(`${family} image attachments retain scope, bytes, retry identity and bounded rereading`, async () => {
+for (const family of ['openai-compatible', 'anthropic', 'gemini'] as ProviderFamily[]) test(`${family} image attachments retain scope, bytes, retry identity and bounded rereading`, async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-images-'));
   let mode = 'text', target = '', stage = 0;
   const payloads: any[] = [];
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw); payloads.push(body); stage++;
-    const system = family === 'anthropic' ? body.system.map((part: any) => part.text).join('\n') : body.messages[0].content;
-    const reply = (text: string) => res.end(JSON.stringify(family === 'anthropic' ? { type: 'message', role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text }] } : { choices: [{ finish_reason: 'stop', message: { content: text } }] }));
+    const system = family === 'gemini' ? body.systemInstruction.parts.map((part: any) => part.text).join('\n') : family === 'anthropic' ? body.system.map((part: any) => part.text).join('\n') : body.messages[0].content;
+    const reply = (text: string) => res.end(JSON.stringify(family === 'gemini' ? { candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text }] } }] } : family === 'anthropic' ? { type: 'message', role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text }] } : { choices: [{ finish_reason: 'stop', message: { content: text } }] }));
     if (system.startsWith('Choose exactly one channel member')) {
-      const input = JSON.parse(body.messages.at(-1).content[0].text);
+      const input = JSON.parse(family === 'gemini' ? body.contents.at(-1).parts[0].text : body.messages.at(-1).content[0].text);
       return reply(JSON.stringify({ action: 'assign', recipient: input.members[0].id }));
     }
     if (mode === 'read' && stage === 1) {
       const id = randomUUID(), args = { id: target };
-      res.end(JSON.stringify(family === 'anthropic' ? { type: 'message', role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', id, name: 'read_attachment', input: args }] } : { choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ id, type: 'function', function: { name: 'read_attachment', arguments: JSON.stringify(args) } }] } }] })); return;
+      res.end(JSON.stringify(family === 'gemini' ? { candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ functionCall: { name: 'read_attachment', args }, thoughtSignature: 'image-signature' }] } }] } : family === 'anthropic' ? { type: 'message', role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', id, name: 'read_attachment', input: args }] } : { choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ id, type: 'function', function: { name: 'read_attachment', arguments: JSON.stringify(args) } }] } }] })); return;
     }
     reply('Image received');
   });
@@ -53,8 +53,8 @@ for (const family of ['openai-compatible', 'anthropic'] as ProviderFamily[]) tes
   async function until(scope: string, id: string) {
     for (let n = 0; n < 150; n++) { const row = (await request(scope + '/turns')).find((row: any) => row.id === id); if (row && ['done','failed'].includes(row.status)) return row; await new Promise(resolve => setTimeout(resolve, 15)); } assert.fail('Task did not settle');
   }
-  const images = (payload: any) => payload.messages.flatMap((message: any) => Array.isArray(message.content) ? message.content.filter((part: any) => part.type === 'image_url' || part.type === 'image') : []);
-  const exactImage = (part: any) => assert.equal(family === 'anthropic' ? part.source.data : part.image_url.url, family === 'anthropic' ? png.toString('base64') : 'data:image/png;base64,' + png.toString('base64'));
+  const images = (payload: any) => family === 'gemini' ? payload.contents.flatMap((message: any) => message.parts.filter((part: any) => part.inlineData)) : payload.messages.flatMap((message: any) => Array.isArray(message.content) ? message.content.filter((part: any) => part.type === 'image_url' || part.type === 'image') : []);
+  const exactImage = (part: any) => assert.equal(family === 'gemini' ? part.inlineData.data : family === 'anthropic' ? part.source.data : part.image_url.url, family !== 'openai-compatible' ? png.toString('base64') : 'data:image/png;base64,' + png.toString('base64'));
   try {
     const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'vision', instructions: 'Inspect images' });
     const b = await request('/api/agents', { id: randomUUID(), name: 'B', model: 'vision', instructions: 'Inspect images' });
