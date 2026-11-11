@@ -62,12 +62,14 @@ for(const platform of ['slack','telegram'])for(const mode of ['reply','notice','
     await new Promise(r=>setTimeout(r,10));
    }
    assert.equal(db.prepare(`SELECT status FROM ${platform}_inbox WHERE turn=?`).get(row.turn)!.status,'done');
+   assert.equal(parent.agentMessages[0].generatedFiles?.length,expectsReply?1:0);
    const child=parent.agentMessages[0];let childTurn:any;
    for(let i=0;i<200;i++){childTurn=(await ui(`/api/threads/${child.thread}/turns`))[0];if(childTurn.status==='done')break;await new Promise(r=>setTimeout(r,10));}
    assert.equal(childTurn.status,'done');const file=mode==='nested'?(await ui(`/api/threads/${childTurn.agentMessages[0].thread}/turns`))[0].generatedFiles[0]:childTurn.generatedFiles[0];assert(file);
    const base=`/api/scripts/agents/${owner}/threads/${row.thread}`,path=`${base}/turns/${row.turn}/files`;
    const turns=await actual(`${base}/turns?focus=${row.turn}`);assert.equal(turns[0].generatedFiles.length,expectsReply?1:0);
    if(!expectsReply){assert.equal(uploads.length,0);assert.deepEqual(await actual(path),[]);await assert.rejects(actual(`${path}/${file.id}`),(e:any)=>e.status===404);continue;}
+   const visible=parent.agentMessages[0].generatedFiles[0];assert.equal(visible.id,file.id);const download=await fetch(`${app.origin}/api/threads/${visible.thread}/files/${visible.id}`);assert.equal(download.status,200);assert.deepEqual(Buffer.from(await download.arrayBuffer()),bytes);
    assert(lost&&reopened);assert.deepEqual(uploads.at(-1),bytes);assert.deepEqual(await actual(`${path}/${file.id}`,undefined,undefined,undefined,true),bytes);
    await assert.rejects(actual(path.replace(owner,foreign)),(e:any)=>e.status===404);
    await assert.rejects(actual(`${base}/files/${file.id}`),(e:any)=>e.status===404);
@@ -79,7 +81,7 @@ for(const platform of ['slack','telegram'])for(const mode of ['reply','notice','
    const count=uploads.length;reopen();await tick();assert.equal(uploads.length,count);
    if(!cancelled)continue;
    const side=(await ui(`/api/agents/${worker}/threads`)).find((t:any)=>t.id===child.thread),archived=await ui(`/api/threads/${child.thread}/edit`,{id:randomUUID(),revision:side.revision,name:side.name,archived:true});
-   await ui(`/api/threads/${child.thread}/delete`,{id:randomUUID(),revision:archived.revision});assert.deepEqual(await actual(path),[]);await assert.rejects(actual(`${path}/${file.id}`),(e:any)=>e.status===404);
+   await ui(`/api/threads/${child.thread}/delete`,{id:randomUUID(),revision:archived.revision});assert.deepEqual(await actual(path),[]);await assert.rejects(actual(`${path}/${file.id}`),(e:any)=>e.status===404);assert.deepEqual((await ui(`/api/threads/${row.thread}/turns?focus=${row.turn}`))[0].agentMessages[0].generatedFiles,[]);
    const document=db.prepare(`SELECT id FROM ${platform}_documents WHERE turn=?`).get(row.turn)!;db.prepare(`UPDATE ${platform}_outbox SET status='queued'${platform==='telegram'?',part=0':''} WHERE id=?`).run(document.id);const sentCount=sent.length;await tick();assert.equal(sent.length,sentCount);assert.equal(db.prepare(`SELECT status FROM ${platform}_outbox WHERE id=?`).get(document.id)!.status,'revoked');
   }
   assert.deepEqual(await ui(`/api/agents/${owner}/turns`),[]);
