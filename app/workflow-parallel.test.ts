@@ -10,8 +10,8 @@ import { validateWorkflow } from './workflows.ts';
 
 test('parallel workflow joins once in branch order, retains failures and cancels all branches', async t => {
   const dir=mkdtempSync(join(tmpdir(),'briefsip-parallel-'));
-  const held=new Map<string,ServerResponse>(), calls:string[]=[];
-  const provider=createServer(async(req,res)=>{let raw='';for await(const chunk of req)raw+=chunk;const body=JSON.parse(raw);if(body.model==='b')assert(!body.tools?.length);calls.push(body.model);held.set(body.model,res);});
+  const held=new Map<string,ServerResponse>(), calls:string[]=[], inputs:string[]=[];
+  const provider=createServer(async(req,res)=>{let raw='';for await(const chunk of req)raw+=chunk;const body=JSON.parse(raw);if(body.model==='b')assert(!body.tools?.length);calls.push(body.model);inputs.push(String(body.messages.at(-1).content));held.set(body.model,res);});
   let app:Awaited<ReturnType<typeof startApp>>|undefined;
   t.after(async()=>{await app?.close();provider.closeAllConnections();await new Promise<void>(resolve=>provider.close(()=>resolve()));rmSync(dir,{recursive:true,force:true});});
   await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));const address=provider.address();assert(address&&typeof address!=='string');
@@ -60,4 +60,19 @@ test('parallel workflow joins once in branch order, retains failures and cancels
   finish('a','First result');await until(async()=>held.has('a'));assert.equal(calls.length,11);finish('a','Second result');
   await until(async()=>(await request(`/api/workflow-runs/${serial.id}`)).status==='done');
   assert.deepEqual(JSON.parse((await request(`/api/workflow-runs/${serial.id}`)).last),[{branch:1,result:'First result'},{branch:2,result:'Second result'}]);
+  const chainGraph={...graph,maxSteps:7,nodes:[{...graph.nodes[0],next:'second'},{...graph.nodes[0],id:'second'},graph.nodes[1]]};
+  const chain=await request(`/api/agents/${b.id}/workflows`,{id:randomUUID(),revision:0,name:'Chained blocks',graph:chainGraph});
+  const chained=await request(`/api/workflows/${chain.id}/run`,{id:randomUUID(),revision:1,input:'Root input'});
+  await until(async()=>held.has('a')&&held.has('b'));finish('a','First A');finish('b','First B');
+  await until(async()=>held.has('a')&&held.has('b'));
+  const previous=JSON.stringify([{branch:1,result:'First A'},{branch:2,result:'First B'}]);
+  assert.deepEqual([...inputs.slice(-2)].sort(), ['A','B'].map(instruction=>instruction+'\n\nWorkflow input:\nRoot input\n\nPrevious step result:\n'+previous).sort());
+  finish('b','Second B');finish('a','Second A');
+  await until(async()=>(await request(`/api/workflow-runs/${chained.id}`)).status==='done');
+  const chainResult=await request(`/api/workflow-runs/${chained.id}`);assert.equal(chainResult.steps.length,7);assert.deepEqual(JSON.parse(chainResult.last),[{branch:1,result:'Second A'},{branch:2,result:'Second B'}]);assert.equal(calls.length,15);
+  const oversized=await start();await until(async()=>held.has('a')&&held.has('b'));finish('a','a'.repeat(140*1024));finish('b','b'.repeat(140*1024));
+  await until(async()=>(await request(`/api/workflow-runs/${oversized.id}`)).status==='failed');
+  const tooLarge=await request(`/api/workflow-runs/${oversized.id}`);assert.match(tooLarge.error,/gabungan melebihi/);assert.equal(tooLarge.last,'Shared input');assert.equal(tooLarge.steps.length,3);assert.equal(tooLarge.steps.filter((step:{status:string})=>step.status==='done').length,2);assert.equal(tooLarge.steps.find((step:{parallel_group:number|null})=>step.parallel_group===null).status,'failed');assert(!tooLarge.steps.some((step:{node:string})=>step.node==='out'));assert.equal(calls.length,17);
+  await app.close();app=await startApp(options);await new Promise(resolve=>setTimeout(resolve,1200));assert.equal((await request(`/api/workflow-runs/${oversized.id}`)).status,'failed');assert.equal(calls.length,17);
+
 });
