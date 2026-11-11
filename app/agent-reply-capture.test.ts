@@ -28,6 +28,11 @@ test('new user turns capture only ready same-scope group replies once across ret
       res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ id: randomUUID(), type: 'function', function: { name: 'send_message', arguments: JSON.stringify({ recipients: targets, text: 'group request', expects_reply: true }) } }] } }] })); return;
     } else if (!body.tools?.length) answer = JSON.stringify({ action: 'assign', recipient: targets[2] });
     else if (prompt === 'use ready results' && failConsumer) { failConsumer = false; res.writeHead(503); res.end(); return; }
+    else if (prompt === 'use ready results' && !body.messages.some((m:any)=>m.role==='tool')) {
+      const reference=body.messages.find((m:any)=>typeof m.content==='string'&&m.content.startsWith('Teammate results available')).content;
+      const artifact=JSON.parse(reference.slice(reference.indexOf(': ')+2))[0].generatedFiles[0];
+      res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'read-captured',type:'function',function:{name:'read_attachment',arguments:JSON.stringify({id:artifact.id})}}]}}]}));return;
+    }
     else if (prompt === 'WITHDRAWN_REQUEST_DO_NOT_EXECUTE') { await new Promise<void>(resolve => release.push(resolve)); answer = 'Withdrawn reply'; }
     else answer = 'Caller complete';
     res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: answer } }] }));
@@ -72,8 +77,9 @@ test('new user turns capture only ready same-scope group replies once across ret
     assert.deepEqual((await get(path)).find((r: any) => r.id === consumer.id).receivedAgentReplies, failed.receivedAgentReplies);
     await post(`${path}/${consumer.id}/resume`, { id: randomUUID(), revision: failed.revision, acknowledgeUncertain: true });
     await until(path, consumer.id, row => row.status === 'done');
-    const attempts = calls.filter(body => body.model === 'alpha' && body.messages.at(-1).content === consumer.text);
-    assert.equal(attempts.length, 2);
+    const attempts = calls.filter(body => body.model === 'alpha' && body.messages.filter((m:any)=>m.role==='user').at(-1).content === consumer.text);
+    assert.equal(attempts.length, 3);
+    assert(attempts.some(body=>body.messages.some((m:any)=>m.role==='tool'&&JSON.parse(m.content).text==='READY_ARTIFACT')));
     assert.deepEqual(attempts[0].messages.find((m: any) => m.content?.startsWith?.('Teammate results available')), attempts[1].messages.find((m: any) => m.content?.startsWith?.('Teammate results available')));
     await until(path, group, row => row.status === 'done');
     const continuation = calls.find(body => body.model === 'alpha' && body.messages.at(-1).content?.startsWith('Some teammate results were attached'));
