@@ -34,10 +34,21 @@ test('queue edit holds survive restart, preserve order and original receipt, rej
       held = undefined; const blocker = randomUUID(); await request(path, { id: blocker, text: 'BLOCK' }); await until(async () => !!held);
       const fileId = randomUUID(), filePath = path.replace(/\/turns$/, '/files') + '/' + fileId;
       const upload = await fetch(app.origin + filePath, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/octet-stream', 'X-File-Name': 'note.txt' }, body: 'Saved attachment' }); assert.equal(upload.status, 200);
-      const command = { id: randomUUID(), text: 'ORIGINAL', files: [fileId] }, tail = randomUUID();
+      const paginated = path.startsWith('/api/agents/');
+      if (paginated) {
+        for (let n = 0; n < 100; n++) {
+          const response = await fetch(app.origin + path.replace(/\/turns$/, '/files') + '/' + randomUUID(), { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/octet-stream', 'X-File-Name': `newer-${n}.txt` }, body: 'newer' }); assert.equal(response.status, 200);
+        }
+        const firstPage = await request(path.replace(/\/turns$/, '/files'));
+        assert.equal(firstPage.length, 100); assert(!firstPage.some((file: any) => file.id === fileId));
+        const secondPage = await request(path.replace(/\/turns$/, '/files') + '?before=' + firstPage.at(-1).seq);
+        assert.deepEqual(secondPage.map((file: any) => file.id), [fileId]);
+      }
+      const originalFiles = paginated ? [] : [fileId], editedFiles = paginated ? [fileId] : [];
+      const command = { id: randomUUID(), text: 'ORIGINAL', files: originalFiles }, tail = randomUUID();
       const turn = await request(path, command); await request(path, { id: tail, text: 'TAIL' });
       const editPath = `${path}/${turn.id}/edit`, hold = { id: randomUUID(), editor: randomUUID(), revision: turn.revision, action: 'hold' };
-      const accepted = await request(editPath, hold); assert.deepEqual(accepted.files, [fileId]); assert.deepEqual(await request(editPath, hold), accepted);
+      const accepted = await request(editPath, hold); assert.deepEqual(accepted.files, originalFiles); assert.deepEqual(await request(editPath, hold), accepted);
       await request(`/api/agents/${b.id}/turns/${turn.id}/edit`, hold, 404);
       await request(editPath, { ...hold, id: randomUUID(), editor: randomUUID(), revision: accepted.revision }, 409);
       await request(`${path}/${turn.id}/pause`, { id: randomUUID(), revision: accepted.revision }, 409);
@@ -51,11 +62,12 @@ test('queue edit holds survive restart, preserve order and original receipt, rej
       await app.close(); app = await startApp(options);
       assert.equal((await request(path)).find((row: any) => row.id === tail).status, 'queued');
       await request(editPath, { id: randomUUID(), editor: hold.editor, revision: accepted.revision, action: 'save', text: 'WRONG', files: [randomUUID()] }, 404);
-      const save = { id: randomUUID(), editor: hold.editor, revision: accepted.revision, action: 'save', text: 'CHANGED', files: [] };
+      const save = { id: randomUUID(), editor: hold.editor, revision: accepted.revision, action: 'save', text: 'CHANGED', files: editedFiles };
       const result = await request(editPath, save); assert.deepEqual(await request(editPath, save), result);
       await until(async () => (await request(path)).find((row: any) => row.id === tail)?.status === 'done');
-      assert.deepEqual(calls.slice(-3), ['BLOCK', 'CHANGED', 'TAIL']);
-      const edited = await request(path, command); assert.equal(edited.text, 'CHANGED'); assert.deepEqual(JSON.parse(edited.attachments), []);
+      assert.equal(calls.at(-3), 'BLOCK'); assert.equal(calls.at(-1), 'TAIL');
+      if (paginated) { assert.match(calls.at(-2)!, /CHANGED/); assert.match(calls.at(-2)!, /Saved attachment/); } else assert.equal(calls.at(-2), 'CHANGED');
+      const edited = await request(path, command); assert.equal(edited.text, 'CHANGED'); assert.deepEqual(JSON.parse(edited.attachments), editedFiles);
       assert.equal(await (await fetch(app.origin + filePath)).text(), 'Saved attachment');
       await request(path, { ...command, text: 'CHANGED' }, 409);
       await request(editPath, { ...save, id: randomUUID(), action: 'cancel', text: undefined, files: undefined }, 409);
