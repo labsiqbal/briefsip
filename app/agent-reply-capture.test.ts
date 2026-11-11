@@ -20,7 +20,10 @@ test('new user turns capture only ready same-scope group replies once across ret
     let answer;
     if (body.model === 'gamma') {
       if (holdGamma) await new Promise<void>(resolve => release.push(resolve)); answer = 'LATE_GAMMA';
-    } else if (body.model === 'beta') answer = 'READY_BETA';
+    } else if (body.model === 'beta') {
+      if(!body.messages.some((m:any)=>m.role==='tool')){res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'capture-file',type:'function',function:{name:'create_text_file',arguments:JSON.stringify({name:'ready.txt',text:'READY_ARTIFACT'})}}]}}]}));return;}
+      answer = 'READY_BETA';
+    }
     else if (body.tools?.length && prompt === 'start group' && !body.messages.some((m: any) => m.role === 'tool')) {
       res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ id: randomUUID(), type: 'function', function: { name: 'send_message', arguments: JSON.stringify({ recipients: targets, text: 'group request', expects_reply: true }) } }] } }] })); return;
     } else if (!body.tools?.length) answer = JSON.stringify({ action: 'assign', recipient: targets[2] });
@@ -57,8 +60,11 @@ test('new user turns capture only ready same-scope group replies once across ret
     await post(path, consumer, 202); const failed = await until(path, consumer.id, row => row.status === 'failed');
     assert.equal(failed.receivedAgentReplies.length, 1); assert.equal(failed.receivedAgentReplies[0].reply, 'READY_BETA');
     assert.equal(failed.receivedAgentReplies[0].source, group);
+    assert.equal(failed.receivedAgentReplies[0].generatedFiles?.length,1);
+    const artifact=failed.receivedAgentReplies[0].generatedFiles[0],download=await fetch(`${app.origin}/api/threads/${artifact.thread}/files/${artifact.id}`);assert.equal(await download.text(),'READY_ARTIFACT');
     const firstAttempt = calls.find(body => body.model === 'alpha' && body.messages.at(-1).content === consumer.text);
     assert(firstAttempt.messages.some((m: any) => typeof m.content === 'string' && m.content.startsWith('Teammate results available') && m.content.includes('READY_BETA')));
+    assert(firstAttempt.messages.some((m:any)=>typeof m.content==='string'&&m.content.startsWith('Teammate results available')&&m.content.includes(artifact.id)));
     await post(path, consumer, 202);
     const second = await submit(path, 'another message'); assert.equal((await until(path, second, row => row.status === 'done')).receivedAgentReplies.length, 0);
     await app.close(); release.splice(0).forEach(resolve => resolve()); holdGamma = false; app = await startApp(options);
@@ -105,6 +111,16 @@ test('new user turns capture only ready same-scope group replies once across ret
     assert.equal(forwarded[0].status, 'cancelled'); assert.equal(forwarded[0].user_message, null);
     assert.equal(forwarded[0].recovery_result.reply, 'READY_BETA');
     assert.equal((await get(path)).find((row: any) => row.id === withdrawn).receivedAgentReplies[0].reply, 'READY_BETA');
+    await app.close();
+    const beforeDelete=new DatabaseSync(options.database,{readOnly:true});const snapshot=beforeDelete.prepare('SELECT snapshot FROM agent_reply_claims WHERE consumer=?').get(consumer.id)!.snapshot;beforeDelete.close();app=await startApp(options);
+    const sourceThread=(await get(`/api/agents/${beta.id}/threads`)).find((row:any)=>row.id===artifact.thread);
+    const archived=await post(`/api/threads/${artifact.thread}/edit`,{id:randomUUID(),revision:sourceThread.revision,name:sourceThread.name,archived:true});
+    await post(`/api/threads/${artifact.thread}/delete`,{id:randomUUID(),revision:archived.revision});
+    assert.deepEqual((await get(path)).find((row:any)=>row.id===consumer.id).receivedAgentReplies[0].generatedFiles,[]);
+    assert.equal((await fetch(`${app.origin}/api/threads/${artifact.thread}/files/${artifact.id}`)).status,404);
+    await app.close();
+    const afterDelete=new DatabaseSync(options.database,{readOnly:true});assert.equal(afterDelete.prepare('SELECT snapshot FROM agent_reply_claims WHERE consumer=?').get(consumer.id)!.snapshot,snapshot);afterDelete.close();app=await startApp(options);
+
   } finally {
     await app.close(); holdGamma = false; release.splice(0).forEach(resolve => resolve()); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(directory, { recursive: true, force: true });
   }
