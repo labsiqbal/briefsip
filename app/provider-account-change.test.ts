@@ -60,3 +60,53 @@ test('provider account switch requires scoped browser consent and survives resta
     const denied=await pending(4,`/api/channels/${room.id}`);assert.equal(denied.row.status,'failed');assert(!advertised);assert.equal((await profile()).revision,4);
   } finally {await app.close();provider.closeAllConnections();await new Promise<void>(resolve=>provider.close(()=>resolve()));rmSync(directory,{recursive:true,force:true});}
 });
+
+test('provider account metadata tool redacts credentials and paths', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'briefsip-account-list-'));
+  const results: unknown[] = [];
+  let args = '{}', advertised = false;
+  const provider = createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    const body = JSON.parse(raw);
+    advertised = body.tools.some((tool: any) => tool.function.name === 'list_provider_accounts');
+    const result = body.messages.findLast((row: any) => row.role === 'tool');
+    if (result) results.push(JSON.parse(result.content));
+    res.end(JSON.stringify({ choices: [{ finish_reason: result ? 'stop' : 'tool_calls', message: result ? { content: 'Listed' } : { tool_calls: [{ id: 'list', type: 'function', function: { name: 'list_provider_accounts', arguments: args } }] } }] }));
+  });
+  let app: Awaited<ReturnType<typeof startApp>> | undefined;
+  try {
+    await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+    const address = provider.address(); assert(address && typeof address !== 'string');
+    const base = `http://127.0.0.1:${address.port}`;
+    const options = { database: join(directory, 'db.sqlite'), port: 0, accounts: [{ id: 'main', name: 'Main', provider: 'openai-compatible', baseURL: base + '/secret/path', apiKey: 'private', defaultModel: 'fixture' }] };
+    app = await startApp(options);
+    async function request(path: string, body?: unknown) {
+      const response = await fetch(app!.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app!.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+      const data = await response.json(); assert(response.ok, JSON.stringify(data)); return data;
+    }
+    async function send(path: string, status = 'done') {
+      const id = randomUUID(); await request(path + '/turns', { id, text: 'List accounts', ...(path.includes('/channels/') ? { recipient: agent.id } : {}) });
+      for (let n = 0; n < 300; n++) {
+        const row = (await request(path + '/turns')).find((item: any) => item.id === id);
+        if (row && ['done', 'failed'].includes(row.status)) { assert.equal(row.status, status, row.error); return; }
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.fail('Account list timed out');
+    }
+    const agent = await request('/api/agents', { id: randomUUID(), name: 'List', model: 'fixture', instructions: 'Help', providerAccount: 'main' });
+    const path = `/api/agents/${agent.id}`;
+    const expected = [{ id: '', name: 'Default server', provider: 'openai-compatible', origin: null, defaultModel: '', configured: false }, { id: 'main', name: 'Main', provider: 'openai-compatible', origin: base, defaultModel: 'fixture', configured: true }];
+    await send(path); assert(advertised); assert.deepEqual(results.at(-1), expected);
+    await app.close(); app = await startApp(options);
+    const side = await request(path + '/threads', { id: randomUUID(), name: 'Side' });
+    await send(`/api/threads/${side.id}`); assert.deepEqual(results.at(-1), expected);
+    args = '{"extra":true}'; await send(path, 'failed'); assert.equal(results.length, 2);
+    args = '{}';
+    const channel = await request('/api/channels', { id: randomUUID(), name: 'Room', members: [agent.id], lead: agent.id, instructions: 'Help' });
+    await send(`/api/channels/${channel.id}`, 'failed'); assert(!advertised); assert.equal(results.length, 2);
+  } finally {
+    await app?.close(); provider.closeAllConnections();
+    await new Promise<void>(resolve => provider.close(() => resolve()));
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
