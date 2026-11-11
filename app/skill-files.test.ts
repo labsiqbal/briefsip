@@ -13,6 +13,7 @@ const files = [
   { path: 'SKILL.md', content: '\uFEFF---\r\nname: example-skill\r\ndescription: >-\r\n  Use for\r\n  examples.\r\nlicense: Apache-2.0\r\nmetadata:\r\n  version: "1.2.3"\r\n---\r\nRead references/detail.md before answering.\r\n' },
   { path: 'references/detail.md', content: 'Original details.\n' + 'x'.repeat(9000) },
   { path: 'scripts/check.py', content: 'raise SystemExit("never execute")\n' },
+  { path: 'assets/sample.bin', content: Buffer.from([0,255,128,1]).toString('base64'), encoding: 'base64' },
 ];
 test('skill folders preserve exact files and reject invalid or unsupported inputs as a whole', () => {
   const parsed = parseSkillFiles(files); assert.equal(parsed.description, 'Use for examples.'); assert.deepEqual(parsed.files, files);
@@ -76,6 +77,7 @@ test('folder revisions, receipts and pinned file tools survive reload without fo
     await run(turnPath); assert.equal(results[0].content, files[1].content.slice(0, 8000)); assert.equal(results[0].version, 1); assert.equal(results[0].next_offset, 8000);
     offset = 8000; await run(turnPath); assert.equal(results[0].content, files[1].content.slice(8000)); assert.equal(results[0].next_offset, null); offset = 0;
     mode = 'manifest'; await run(turnPath); assert.deepEqual(results[0].files.map((file: any) => file.path), files.map(file => file.path)); mode = 'file';
+    filePath = 'assets/sample.bin'; await run(turnPath); assert.equal(results[0].binary, true); assert.equal(results[0].content, undefined);
     for (filePath of ['../secret', '/etc/passwd', 'absent.txt']) { await run(turnPath); assert.match(results[0].error, /not found/); } filePath = 'references/detail.md';
     await run(`/api/agents/${b.id}/turns`); assert.match(results[0].error, /not found/);
     await app.close(); app = await startApp(options);
