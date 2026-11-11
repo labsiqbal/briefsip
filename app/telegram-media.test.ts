@@ -8,6 +8,8 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {startApp} from './server.ts';
 import {pdfFixture} from './pdf-fixture.ts';
+import childProcess from 'node:child_process';
+import {syncBuiltinESMExports} from 'node:module';
 import {initializeTelegram,bindTelegram,recordTelegramUpdates,telegramApi,telegramInput} from './telegram.ts';
 import {telegramAgentStep,telegramLocal} from './telegram-bridge.ts';
 
@@ -49,6 +51,12 @@ test('Telegram media uploads once in requester thread and retries lost uploads/m
   payloads.huge=Buffer.alloc(10*1024*1024+1);payloads.largeImage=Buffer.concat([png,Buffer.alloc(4*1024*1024)]);
   for(const file of ['badPdf','largePdf','huge','largeImage']){const row=incoming(file);await settle(row.turn);}assert.equal(captures.length,4);
   const afterFailure=incoming('pdf');await settle(afterFailure.turn);assert.equal(captures.length,5);assert(JSON.stringify(captures.at(-1)).includes('CHANGED_PDF'));
+  const retry=incoming('pdf'),originalSpawn=childProcess.spawn,count=captures.length,downloadCount=downloads.length;
+  childProcess.spawn=((...args:Parameters<typeof childProcess.spawn>)=>args[0]==='/usr/bin/bwrap'?originalSpawn('/usr/bin/bwrap',['--ro-bind','/briefsip-nonexistent-fixture-path','/missing','/bin/true'],args[2]):originalSpawn(...args)) as typeof childProcess.spawn;syncBuiltinESMExports();
+  try{await assert.rejects(telegramAgentStep(db,users,local,remote),/503/);assert.equal(db.prepare('SELECT status FROM telegram_inbox WHERE turn=?').get(retry.turn)!.status,'submitting');assert.equal(captures.length,count);}
+  finally{childProcess.spawn=originalSpawn;syncBuiltinESMExports();}
+  db.close();db=new DatabaseSync(join(root,'telegram.sqlite'));initializeTelegram(db);await settle(retry.turn);assert.equal(captures.length,count+1);assert.equal(downloads.length,downloadCount+1);
+
  }finally{db.close();await app.close();provider.closeAllConnections();telegram.closeAllConnections();await Promise.all([new Promise<void>(r=>provider.close(()=>r())),new Promise<void>(r=>telegram.close(()=>r()))]);rmSync(root,{recursive:true,force:true});}
 });
 

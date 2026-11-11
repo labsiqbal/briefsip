@@ -8,6 +8,8 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {startApp} from './server.ts';
 import {pdfFixture} from './pdf-fixture.ts';
+import childProcess from 'node:child_process';
+import {syncBuiltinESMExports} from 'node:module';
 import {initializeSlack,bindSlack,recordSlackEnvelope,slackApi} from './slack.ts';
 import {slackAgentStep} from './slack-runner.ts';
 import {localScript} from './script-client.ts';
@@ -48,6 +50,12 @@ test('Slack files snapshot bytes and retry uploads and turns without duplicate w
   for(const file of ['FBADPDF','FBIGPDF','FHUGE','FLARGEIMAGE']){const row=incoming([file])!;await settle(row.turn);}assert.equal(captures.length,count);
   bytes.FHALF1=pdfFixture('X'.repeat(500),34);bytes.FHALF2=pdfFixture('Y'.repeat(500),34);await settle(incoming(['FHALF1','FHALF2'])!.turn);assert.equal(captures.length,count);
   const afterFailure=incoming(['FPDF'])!;await settle(afterFailure.turn);assert.equal(captures.length,count+1);assert(JSON.stringify(captures.at(-1)).includes('CHANGED_PDF'));
+  const retry=incoming(['FPDF'])!,originalSpawn=childProcess.spawn,retryCount=captures.length,downloadCount=downloads.length;
+  childProcess.spawn=((...args:Parameters<typeof childProcess.spawn>)=>args[0]==='/usr/bin/bwrap'?originalSpawn('/usr/bin/bwrap',['--ro-bind','/briefsip-nonexistent-fixture-path','/missing','/bin/true'],args[2]):originalSpawn(...args)) as typeof childProcess.spawn;syncBuiltinESMExports();
+  try{await assert.rejects(slackAgentStep(db,users,local,remote),/503/);assert.equal(db.prepare('SELECT status FROM slack_inbox WHERE turn=?').get(retry.turn)!.status,'submitting');assert.equal(captures.length,retryCount);}
+  finally{childProcess.spawn=originalSpawn;syncBuiltinESMExports();}
+  db.close();db=new DatabaseSync(join(root,'slack.sqlite'));initializeSlack(db);await settle(retry.turn);assert.equal(captures.length,retryCount+1);assert.equal(downloads.length,downloadCount+1);
+
  }finally{db.close();await app.close();provider.closeAllConnections();slack.closeAllConnections();await Promise.all([new Promise<void>(r=>provider.close(()=>r())),new Promise<void>(r=>slack.close(()=>r()))]);rmSync(root,{recursive:true,force:true});}
 });
 

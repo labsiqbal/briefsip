@@ -73,6 +73,17 @@ test('PDF HTTP preview and messages preserve source, scope, retry, routing, tool
     await request(`${scopes[0]}/turns`, { id: randomUUID(), text: 'Foreign', files: [files[1]] }, 404);
     const noPreview = await upload(scopes[0], document('AUTO_EXTRACT'));
     const auto = randomUUID(); await request(`${scopes[0]}/turns`, { id: auto, text: 'No preview needed', files: [noPreview] }); await done(scopes[0], auto); assert(JSON.stringify(payloads.at(-1)).includes('AUTO_EXTRACT'));
+    {
+      const file = await upload(scopes[0], document('RETRY_SANDBOX')), command = { id: randomUUID(), text: 'Retry after sandbox repair', files: [file] };
+      const originalSpawn = childProcess.spawn;
+      childProcess.spawn = ((...args: Parameters<typeof childProcess.spawn>) => args[0] === '/usr/bin/bwrap'
+        ? originalSpawn('/usr/bin/bwrap', ['--ro-bind', '/briefsip-nonexistent-fixture-path', '/missing', '/bin/true'], args[2]) : originalSpawn(...args)) as typeof childProcess.spawn;
+      syncBuiltinESMExports();
+      try { await request(`${scopes[0]}/turns`, command, 503); assert(!(await request(`${scopes[0]}/turns`)).some((row: any) => row.id === command.id)); }
+      finally { childProcess.spawn = originalSpawn; syncBuiltinESMExports(); }
+      await request(`${scopes[0]}/turns`, command); await done(scopes[0], command.id);
+      assert(JSON.stringify(payloads.at(-1)).includes('RETRY_SANDBOX'));
+    }
     const block = randomUUID(); await request(`${scopes[0]}/turns`, { id: block, text: 'BLOCK_EDIT' });
     for (let n = 0; n < 100 && !blocked; n++) await new Promise(resolve => setTimeout(resolve, 10)); assert(blocked);
     const queued = await request(`${scopes[0]}/turns`, { id: randomUUID(), text: 'Original queued message' }), editor = randomUUID();
