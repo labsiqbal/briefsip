@@ -11,7 +11,8 @@ import { startApp } from './server.ts';
 
 test('CLI routine lists and histories stay within the selected granted agent', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-cli-routines-')), directory = join(dir, 'scripts');
-  const provider = createServer(async (req, res) => { for await (const _chunk of req) {} res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Routine result' } }] })); });
+  const prompts: string[] = [];
+  const provider = createServer(async (req, res) => { let raw=''; for await (const chunk of req) raw+=chunk; prompts.push(JSON.parse(raw).messages.at(-1).content); res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Routine result' } }] })); });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(dir, 'db.sqlite'), scriptDirectory: directory, baseURL: `http://127.0.0.1:${address.port}/v1` };
@@ -31,15 +32,21 @@ test('CLI routine lists and histories stay within the selected granted agent', a
   assert.deepEqual((await terminal(['routines', b.id])).routines, []);
   assert.deepEqual((await terminal(['routine-runs', a.id, routine.id])).runs, []);
   assert.equal((await terminal(['routine-runs', b.id, routine.id])).exitCode, 1);
-  const run = await ui(`/api/routines/${routine.id}/test`, { id: randomUUID(), revision: routine.revision });
+  const command = ['routine-run', a.id, routine.id, String(routine.revision), 'CLI input', '--id', randomUUID(), '--wait', '--timeout', '5'];
+  assert.equal((await terminal(['routine-run', b.id, ...command.slice(2)])).exitCode, 1);
+  const run = await terminal(command); assert.equal(run.exitCode, 0); assert.equal(run.routine, routine.id); assert(run.thread); assert.equal(run.turn.reply, 'Routine result');
+  assert.equal((await terminal(command)).id, run.id); assert.deepEqual(prompts, ['Task\n\nScript input:\nCLI input']);
   let history: any;
   for (let n = 0; n < 30; n++) { history = await terminal(['routine-runs', a.id, routine.id]); if (history.runs?.[0]?.status === 'done') break; await new Promise(resolve => setTimeout(resolve, 20)); }
-  assert.equal(history.exitCode, 0); assert.equal(history.runs.length, 1); assert.equal(history.runs[0].turn, run.turn); assert.equal(history.runs[0].reply, 'Routine result');
+  assert.equal(history.exitCode, 0); assert.equal(history.runs.length, 1); assert.equal(history.runs[0].turn, run.id); assert.equal(history.runs[0].reply, 'Routine result');
   await app.close(); app = await startApp(options);
   assert.deepEqual((await terminal(['routine-runs', a.id, routine.id])).runs, history.runs);
-  for (const bad of [['routines', a.id, '--wait'], ['routine-runs', a.id], ['routine-runs', a.id, '../bad'], ['routine-runs', a.id, routine.id, '--thread', randomUUID()]]) assert.equal((await terminal(bad)).exitCode, 2);
+  assert.equal((await terminal(command)).id, run.id); assert.equal(prompts.length, 1);
+  assert.equal((await terminal(command.map(value=>value==='CLI input'?'Changed':value))).exitCode, 1);
+  for (const bad of [['routines', a.id, '--wait'], ['routine-runs', a.id], ['routine-runs', a.id, '../bad'], ['routine-runs', a.id, routine.id, '--thread', randomUUID()], ['routine-run', a.id, routine.id, '0', 'CLI input', '--id', randomUUID()], ['routine-run', a.id, routine.id, String(routine.revision), 'CLI input']]) assert.equal((await terminal(bad)).exitCode, 2);
   await ui(`/api/agents/${a.id}/scripts`, { id: randomUUID(), revision: 1, enabled: false });
   assert.equal((await terminal(['routine-runs', a.id, routine.id])).exitCode, 5);
+  assert.equal((await terminal(command)).exitCode, 5);
 });
 
 test('CLI workflow discovery paginates and explicit approvals retain identity after lost responses', async t => {
