@@ -314,7 +314,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     <QueuePanel path={path} request={api} onOpen={id => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(id); }} />
     <footer className="composer-area">
       {archived && <p className="notice">{!channel && (agent as Agent).hidden ? 'Agent disembunyikan. Pulihkan melalui Edit profil untuk melanjutkan antrean dan menerima pesan baru.' : 'Percakapan diarsipkan. Riwayat tetap tersedia. Pulihkan melalui pengaturan untuk mengirim pesan baru.'}</p>}
-      {!configured && <p className="notice">Provider belum terhubung. Atur OPENAI_BASE_URL dan kredensial di server, lalu mulai ulang app. Agent dan riwayat tetap tersimpan.</p>}
+      {!configured && <p className="notice">{!channel && 'provider_account' in agent && !!agent.provider_account && agent.provider_available === false ? 'Akun provider agent ini tidak tersedia. Pilih akun yang terhubung di profil agent, atau pulihkan konfigurasi akun di server.' : 'Provider belum terhubung. Periksa konfigurasi akun provider di server, lalu mulai ulang app.'} Agent dan riwayat tetap tersimpan.</p>}
       {error && <p className="error" role="alert">{error} {pending && 'Gunakan Coba kirim lagi untuk memeriksa permintaan yang sama tanpa membuat pesan ganda.'}</p>}
       {(pending?.files ?? attached).length > 0 && <p className="notice">{(pending?.files ?? attached).length} lampiran akan dikirim ke provider bersama pesan.</p>}
       <form className="composer" onSubmit={send}>
