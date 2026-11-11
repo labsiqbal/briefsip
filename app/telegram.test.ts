@@ -5,6 +5,40 @@ import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { telegramInput, telegramApi, initializeTelegram, queueTelegramReply, deliverTelegramReply } from './telegram.ts';
 
+test('Telegram offline recovery preserves sent parts and rejects repeated operator decisions', async () => {
+  const {mkdtempSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+  const {spawnSync}=await import('node:child_process');const {telegramJournal}=await import('./telegram-runner.ts');
+  const directory=mkdtempSync(join(tmpdir(),'briefsip-telegram-recovery-')),id=randomUUID(),calls:any[]=[];
+  const command=(...args:string[])=>spawnSync(process.execPath,['--experimental-strip-types',new URL('./telegram-runner.ts',import.meta.url).pathname,...args],{encoding:'utf8',env:{...process.env,BRIEFSIP_TELEGRAM_DIRECTORY:directory}});
+  let lost=true;
+  const server=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const body=JSON.parse(raw);calls.push(body);if(calls.length>1&&lost){req.socket.destroy();return;}res.end(JSON.stringify({ok:true,result:{message_id:calls.length,chat:{id:4}}}));});
+  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));const address=server.address();assert(address&&typeof address!=='string');
+  const remote=telegramApi('123:'+'x'.repeat(24),`http://127.0.0.1:${address.port}`);
+  try{
+    let state=telegramJournal(directory);
+    try{initializeTelegram(state.db);queueTelegramReply(state.db,id,4,2,'a'.repeat(4096)+'tail');await deliverTelegramReply(state.db,id,remote);assert.equal(command('inspect',id).status,1);}finally{state.close();}
+    let inspected=JSON.parse(command('inspect',id).stdout);assert.equal(inspected.reply.status,'uncertain');assert.equal(inspected.reply.part,1);assert.equal(inspected.revision,0);
+    assert.equal(command('recover',id,'0','retry').status,1);assert.equal(command('recover',id,'1','retry','--accept-duplicate-risk').status,1);
+    assert.equal(command('recover',id,'0','retry','--accept-duplicate-risk').status,0);
+    state=telegramJournal(directory);try{initializeTelegram(state.db);await deliverTelegramReply(state.db,id,remote);}finally{state.close();}
+    assert.equal(calls.length,3);assert.equal(calls[2].text,'tail');
+    assert.equal(command('recover',id,'0','retry','--accept-duplicate-risk').status,1,'Old command cannot retry a newly uncertain attempt');
+    inspected=JSON.parse(command('inspect',id).stdout);assert.equal(inspected.revision,1);assert.equal(inspected.decisions[0].status,'uncertain');assert.equal(inspected.decisions[0].part,1);
+    lost=false;assert.equal(command('recover',id,'1','retry','--accept-duplicate-risk').status,0);
+    state=telegramJournal(directory);try{initializeTelegram(state.db);await deliverTelegramReply(state.db,id,remote);}finally{state.close();}
+    inspected=JSON.parse(command('inspect',id).stdout);assert.equal(inspected.reply.status,'sent');assert.equal(inspected.reply.message_ids,'[1,4]');assert.equal(calls[3].text,'tail');
+    assert.equal(command('recover',id,'2','retry','--accept-duplicate-risk').status,1);
+    const rejected=randomUUID();state=telegramJournal(directory);try{queueTelegramReply(state.db,rejected,4,2,'Rejected');state.db.prepare("UPDATE telegram_outbox SET status='failed',error='Rejected' WHERE id=?").run(rejected);}finally{state.close();}
+    assert.equal(command('recover',rejected,'0','discard').status,1);assert.equal(command('recover',rejected,'0','discard','--confirm').status,0);
+    inspected=JSON.parse(command('inspect',rejected).stdout);assert.equal(inspected.reply.status,'discarded');assert.equal(inspected.decisions[0].error,'Rejected');
+    state=telegramJournal(directory);try{initializeTelegram(state.db);await deliverTelegramReply(state.db,rejected,remote);}finally{state.close();}assert.equal(calls.length,4);
+    assert.equal(command('recover',rejected,'1','retry','--accept-duplicate-risk').status,1);
+    const interrupted=randomUUID();state=telegramJournal(directory);try{queueTelegramReply(state.db,interrupted,4,2,'Interrupted');state.db.prepare("UPDATE telegram_outbox SET status='sending' WHERE id=?").run(interrupted);}finally{state.close();}
+    inspected=JSON.parse(command('inspect',interrupted).stdout);assert.equal(inspected.reply.status,'uncertain');assert.equal(inspected.revision,0);
+    assert.equal(command('recover',interrupted,'0','discard','--confirm').status,0);
+  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));rmSync(directory,{recursive:true,force:true});}
+});
+
 test('Telegram accepts only allowlisted private human text', () => {
   const message = { message_id: 2, chat: { id: 4, type: 'private' }, from: { id: 4, is_bot: false }, text: 'Hello' };
   assert.deepEqual(telegramInput({ update_id: 1, message }, new Set([4])), { update: 1, chat: 4, message: 2, text: 'Hello' });
