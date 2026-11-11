@@ -91,7 +91,7 @@ test('CLI workflow discovery paginates and explicit approvals retain identity af
     const response = await fetch(app.origin + req.url, { method: req.method, headers: { Authorization: req.headers.authorization!, 'Content-Type': 'application/json' }, body: body || undefined });
     const bytes = Buffer.from(await response.arrayBuffer());
     if (req.url?.endsWith('/approve')) { decisions.push(body); if (drop) { drop = false; res.destroy(); return; } }
-    if (req.method === 'POST' && /\/(run|cancel)$/.test(req.url ?? '')) {
+    if (req.method === 'POST' && /\/(run|cancel|schedule)$/.test(req.url ?? '')) {
       actions.push({ path: req.url!, body });
       if (dropAction && req.url!.endsWith(dropAction) && response.ok) { dropAction = ''; res.destroy(); return; }
     }
@@ -162,9 +162,27 @@ test('CLI workflow discovery paginates and explicit approvals retain identity af
   assert.equal((await terminal(cancel)).exitCode, 0); assert.equal(actions.length, actionCount + 1); assert.deepEqual(actions.at(-1), actions.at(-2));
   assert.equal((await terminal(cancel)).exitCode, 0); assert.equal((await terminal(cancel)).exitCode, 0);
   const cancelled = await terminal(['workflow-status', owner.id, waiting.id]); assert.equal(cancelled.exitCode, 1); assert.equal(cancelled.turn.status, 'cancelled');
+  assert.equal((await terminal(['workflow-schedule', owner.id, workflows[0]])).schedule.schedule, null);
+  const schedule = { revision: 0, nextAt: Date.now() + 3600000, intervalSeconds: 60, input: 'Scheduled', enabled: true };
+  const saveSchedule = ['workflow-schedule-save', owner.id, workflows[0], JSON.stringify(schedule), '--id', randomUUID()];
+  assert.equal((await terminal(['workflow-schedule-save', other.id, ...saveSchedule.slice(2)])).exitCode, 1);
+  dropAction = '/schedule';
+  const lostSchedule = await terminal(saveSchedule); assert.equal(lostSchedule.exitCode, 5); assert.equal(lostSchedule.requestId, saveSchedule[5]);
+  await app.close(); app = await startApp(options); useProxy();
+  assert.equal((await terminal(saveSchedule)).exitCode, 0); assert.deepEqual(actions.at(-1), actions.at(-2));
+  const savedSchedule = await terminal(['workflow-schedule', owner.id, workflows[0]]);
+  assert.equal(savedSchedule.schedule.schedule.revision, 1); assert.equal(savedSchedule.schedule.schedule.enabled, 1); assert.deepEqual(savedSchedule.schedule.occurrences, []);
+  assert.equal((await terminal(['workflow-schedule-save', owner.id, workflows[0], JSON.stringify({ ...schedule, revision: 1, enabled: false }), '--id', randomUUID()])).exitCode, 0);
+  assert.equal((await terminal(['workflow-schedule-save', owner.id, workflows[0], JSON.stringify(schedule), '--id', randomUUID()])).exitCode, 1);
+  assert.equal((await terminal(['workflow-schedule', owner.id, workflows[0]])).schedule.schedule.enabled, 0);
+  const boundary = { ...schedule, revision: 2, enabled: false, input: '"'.repeat(16000) };
+  assert.equal((await terminal(['workflow-schedule-save', owner.id, workflows[0], JSON.stringify(boundary), '--id', randomUUID()])).exitCode, 0);
+  assert.equal((await terminal(['workflow-schedule', owner.id, workflows[0]])).schedule.schedule.input, boundary.input);
+  assert.equal((await terminal(['workflow-schedule-save', owner.id, workflows[0], JSON.stringify({ ...boundary, revision: 3, input: boundary.input + 'x' }), '--id', randomUUID()])).exitCode, 1);
   for (const bad of [['workflows', owner.id, '--wait'], ['approvals', owner.id, '--thread', randomUUID()], command.slice(0, 5), ['approve', owner.id, first.run, '1', 'maybe', '--id', randomUUID()], ['workflow-retry', owner.id, first.run, '0', '--id', randomUUID()]]) assert.equal((await terminal(bad)).exitCode, 2);
   await ui(`/api/agents/${owner.id}/scripts`, { id: randomUUID(), revision: 1, enabled: false });
   assert.equal((await terminal(command)).exitCode, 5);
+  assert.equal((await terminal(saveSchedule)).exitCode, 5);
 });
 
 test('script CLI discovers only grants, sends once, waits, preserves retry ID and reports attention/timeouts', async () => {
