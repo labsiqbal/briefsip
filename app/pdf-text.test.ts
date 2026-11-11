@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deflateSync } from 'node:zlib';
+import { pdfFixture as document } from './pdf-fixture.ts';
 import { createServer, type ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -11,21 +11,6 @@ import { syncBuiltinESMExports } from 'node:module';
 import { extractPdf, isPdf, pdfInputLimit } from './pdf-text.ts';
 import { startApp } from './server.ts';
 
-function document(text: string, pages = 1) {
-  const objects: Buffer[] = [], add = (value: string | Buffer) => { objects.push(Buffer.isBuffer(value) ? value : Buffer.from(value)); };
-  add('<< /Type /Catalog /Pages 2 0 R >>');
-  add(`<< /Type /Pages /Kids [${Array.from({ length: pages }, (_, i) => `${4 + i * 2} 0 R`).join(' ')}] /Count ${pages} >>`);
-  add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
-  for (let i = 0; i < pages; i++) {
-    add(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10000 10000] /Resources << /Font << /F1 3 0 R >> >> /Contents ${5 + i * 2} 0 R >>`);
-    const stream = deflateSync(Buffer.from(`BT /F1 12 Tf 40 9900 Td (${text.replace(/[\\()]/g, '\\$&')}) Tj ET`));
-    add(Buffer.concat([Buffer.from(`<< /Length ${stream.length} /Filter /FlateDecode >>\nstream\n`), stream, Buffer.from('\nendstream')]));
-  }
-  const chunks = [Buffer.from('%PDF-1.4\n')], offsets = [0]; let length = chunks[0].length;
-  objects.forEach((object, i) => { offsets.push(length); const chunk = Buffer.concat([Buffer.from(`${i + 1} 0 obj\n`), object, Buffer.from('\nendobj\n')]); chunks.push(chunk); length += chunk.length; });
-  chunks.push(Buffer.from(`xref\n0 ${offsets.length}\n0000000000 65535 f \n${offsets.slice(1).map(offset => `${String(offset).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${length}\n%%EOF\n`));
-  return Buffer.concat(chunks);
-}
 
 test('PDF sandbox extracts compressed text, refuses malformed/blank/oversize input and bounds output', async () => {
   const bytes = document('LOCAL_PDF_CONTENT'); assert(isPdf(bytes));
@@ -38,14 +23,15 @@ test('PDF sandbox extracts compressed text, refuses malformed/blank/oversize inp
 
 test('PDF HTTP preview and messages preserve source, scope, retry, routing, tools and restart', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-pdf-')), payloads: any[] = [];
-  let target = '', tool = false, blocked: ServerResponse | undefined;
+  let target = '', tool = false, generated = 0, blocked: ServerResponse | undefined;
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw); payloads.push(body);
     if (body.messages.at(-1).content === 'BLOCK_EDIT') { blocked = res; return; }
     let message: any = { content: 'PDF accepted' };
     if (body.messages[0].content.startsWith('Choose exactly one channel member')) message = { content: JSON.stringify({ action: 'assign', recipient: JSON.parse(body.messages.at(-1).content).members[0].id }) };
-    else if (tool) { tool = false; message = { tool_calls: [{ id: randomUUID(), type: 'function', function: { name: 'read_attachment', arguments: JSON.stringify({ id: target }) } }] }; }
+    else if (generated === 1) { generated = 2; message = { tool_calls: [{ id: randomUUID(), type: 'function', function: { name: 'create_text_file', arguments: JSON.stringify({ name: 'generated.pdf', text: document('GENERATED_PDF_TEXT', 1, false).toString('utf8') }) } }] }; }
+    else if (generated === 2 || tool) { if (generated === 2) target = JSON.parse(body.messages.at(-1).content).id; generated = 0; tool = false; message = { tool_calls: [{ id: randomUUID(), type: 'function', function: { name: 'read_attachment', arguments: JSON.stringify({ id: target }) } }] }; }
     res.end(JSON.stringify({ choices: [{ finish_reason: message.tool_calls ? 'tool_calls' : 'stop', message }] }));
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve)); const address = provider.address(); assert(address && typeof address !== 'string');
@@ -98,6 +84,28 @@ test('PDF HTTP preview and messages preserve source, scope, retry, routing, tool
     blocked.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Unblocked' } }] }));
     await done(scopes[0], queued.id); assert(JSON.stringify(payloads.at(-1)).includes('QUEUED_PDF_TEXT'));
     const bad = await upload(scopes[0], Buffer.from('%PDF-malformed')); await request(`${scopes[0]}/turns`, { id: randomUUID(), text: 'Bad PDF', files: [bad] }, 415);
+    for (const scope of scopes) {
+      generated = 1; const id = randomUUID(); await request(`${scope}/turns`, { id, text: 'Make a PDF and read it' }); await done(scope, id);
+      const content = JSON.parse(payloads.at(-1).messages.at(-1).content);
+      assert.equal(content.source, 'pdf-text'); assert.equal(content.text.trim(), 'GENERATED_PDF_TEXT');
+    }
+    {
+      const originalSpawn = childProcess.spawn; let frozen: ReturnType<typeof childProcess.spawn> | undefined;
+      let started!: () => void; const spawned = new Promise<void>(resolve => { started = resolve; });
+      childProcess.spawn = ((...args: Parameters<typeof childProcess.spawn>) => {
+        const child = originalSpawn(...args); if (args[0] === '/usr/bin/bwrap') { frozen = child; child.kill('SIGSTOP'); started(); } return child;
+      }) as typeof childProcess.spawn; syncBuiltinESMExports();
+      try {
+        generated = 1; const id = randomUUID(); await request(`${scopes[0]}/turns`, { id, text: 'Cancel generated PDF read' }); await spawned;
+        const count = payloads.length; await request(`${scopes[0]}/turns/${id}/cancel`, { id: randomUUID() });
+        frozen!.kill('SIGCONT');
+        await new Promise<void>(resolve => frozen!.once('close', () => resolve()));
+        const turn = (await request(`${scopes[0]}/turns`)).find((row: any) => row.id === id); assert.equal(turn.status, 'cancelled');
+        // A subsequent turn must run after the cancelled reader yields, without its text continuation.
+        const next = randomUUID(); await request(`${scopes[0]}/turns`, { id: next, text: 'After cancellation' }); await done(scopes[0], next);
+        assert.equal(payloads.length, count + 1);
+      } finally { childProcess.spawn = originalSpawn; syncBuiltinESMExports(); frozen?.kill('SIGKILL'); }
+    }
     const large = await upload(scopes[0], document('X'.repeat(500), 70));
     await request(`${scopes[0]}/files/${large}?preview=text`);
     await request(`${scopes[0]}/turns`, { id: randomUUID(), text: 'Too much extracted text', files: [large] }, 413);
