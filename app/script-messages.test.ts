@@ -1,0 +1,69 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { randomUUID, randomBytes } from 'node:crypto';
+import { createServer, request as httpRequest } from 'node:http';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { startApp } from './server.ts';
+
+test('script messages and answers share grants, scope, receipts, redaction and rate admission', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-script-messages-')), token = randomBytes(32).toString('base64url'); let calls = 0;
+  const provider = createServer(async (req,res) => {
+    let raw=''; for await (const chunk of req) raw+=chunk; calls++;
+    const messages=JSON.parse(raw).messages;
+    const asking=messages.at(-1).content === 'ASK';
+    res.end(JSON.stringify({ choices: [{ finish_reason: asking ? 'tool_calls' : 'stop', message: asking ? { tool_calls: [{ id: 'ask', type: 'function', function: { name: 'ask_user', arguments: JSON.stringify({ question: 'Proceed?', choices: ['Yes','No'] }) } }] } : { content: `Done ${token}` } }] }));
+  });
+  await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));
+  const address=provider.address(); assert(address && typeof address!=='string');
+  const options={ database:join(dir,'db.sqlite'),baseURL:`http://127.0.0.1:${address.port}/v1`,scriptToken:token };
+  let app=await startApp(options);
+  const auth={ Authorization:`Bearer ${token}`,'Content-Type':'application/json' };
+  async function request(path:string,body?:unknown,status?:number,headers?:Record<string,string>):Promise<any> {
+    const res=await fetch(app.origin+path,{method:body?'POST':'GET',headers:headers??{Origin:app.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+    const result=await res.json(); if(status) assert.equal(res.status,status,JSON.stringify(result)); else assert(res.ok,JSON.stringify(result)); return result;
+  }
+  async function until(check:()=>Promise<boolean>){for(let n=0;n<200;n++){if(await check())return;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Timed out');}
+  try {
+    const a=await request('/api/agents',{id:randomUUID(),name:'A',model:'fixture',instructions:'Help'});
+    const b=await request('/api/agents',{id:randomUUID(),name:'B',model:'fixture',instructions:'Help'});
+    const path=`/api/scripts/agents/${a.id}/turns`, uiPath=`/api/agents/${a.id}/turns`, permission=`/api/agents/${a.id}/scripts`;
+    const command={id:randomUUID(),text:'ASK'};
+    await request(path,command,403,auth);
+    await request(permission,{id:randomUUID(),revision:0,enabled:true});
+    await request(path,command,403,{...auth,Origin:app.origin});
+    await request(path,command,403,{'Content-Type':'application/json',Authorization:'Bearer wrong'});
+    await request(path,command,202,auth);
+    await until(async()=>!!(await request(path,undefined,200,auth))[0]?.questions?.length);
+    const turn=(await request(path,undefined,200,auth))[0]; const question=turn.questions[0];
+    const answerPath=`${path}/${turn.id}/questions/${question.id}/answer`, answer={id:randomUUID(),text:'Yes'};
+    await request(`/api/agents/${b.id}/scripts`,{id:randomUUID(),revision:0,enabled:true});
+    await request(`/api/scripts/agents/${b.id}/turns/${turn.id}/questions/${question.id}/answer`,answer,404,auth);
+    await request(permission,{id:randomUUID(),revision:1,enabled:false});
+    await request(answerPath,answer,403,auth); await request(path,undefined,403,auth);
+    await request(permission,{id:randomUUID(),revision:2,enabled:true});
+    const accepted=await request(answerPath,answer,200,auth); assert.deepEqual(await request(answerPath,answer,200,auth),accepted);
+    await until(async()=>(await request(path,undefined,200,auth))[0]?.status==='done');
+    const result=(await request(path,undefined,200,auth))[0]; assert.equal(result.reply,'Done [redacted]'); assert.equal(calls,2);
+    await app.close();app=await startApp(options);
+    await request(path,command,202,auth); assert.deepEqual(await request(answerPath,answer,200,auth),accepted);assert.equal(calls,2);
+    await request(answerPath,{...answer,text:'No'},409,auth);
+    await request(`/api/agents/${a.id}/visibility`,{id:randomUUID(),revision:0,hidden:true});
+    await request(path,{id:randomUUID(),text:'Hidden'},409,auth);
+    await request(`/api/agents/${a.id}/visibility`,{id:randomUUID(),revision:1,hidden:false});
+    let release!:()=>void;
+    const streamed=new Promise<number|undefined>((resolve,reject)=>{
+      const req=httpRequest(app.origin+path,{method:'POST',headers:auth},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));}); req.on('error',reject);
+      req.write('{"id":"'+randomUUID()+'","text":'); release=()=>req.end('"Too late"}');
+    });
+    await request(permission,{id:randomUUID(),revision:3,enabled:false}); release(); assert.equal(await streamed,403);
+    await request(permission,{id:randomUUID(),revision:4,enabled:true});
+    const routine=await request(`/api/agents/${a.id}/routines`,{id:randomUUID(),name:'Script',prompt:'RUN',nextAt:Date.now()+3600000,intervalSeconds:null,enabled:false});
+    await request(`/api/scripts/routines/${routine.id}/run`,{id:randomUUID(),revision:routine.revision,payload:''},200,auth);
+    for(let n=0;n<58;n++) await request(path,{id:randomUUID(),text:`Message ${n}`},202,auth);
+    await request(path,{id:randomUUID(),text:'Limited'},429,auth);
+    await request(path,command,202,auth);
+    assert((await request(uiPath)).length<=59);
+  } finally {await app.close();provider.closeAllConnections();await new Promise<void>(resolve=>provider.close(()=>resolve()));rmSync(dir,{recursive:true,force:true});}
+});
