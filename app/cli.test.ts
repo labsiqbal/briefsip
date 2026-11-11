@@ -9,6 +9,39 @@ import { spawn } from 'node:child_process';
 import { cli } from './cli.ts';
 import { startApp } from './server.ts';
 
+test('CLI routine lists and histories stay within the selected granted agent', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-cli-routines-')), directory = join(dir, 'scripts');
+  const provider = createServer(async (req, res) => { for await (const _chunk of req) {} res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Routine result' } }] })); });
+  await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+  const address = provider.address(); assert(address && typeof address !== 'string');
+  const options = { database: join(dir, 'db.sqlite'), scriptDirectory: directory, baseURL: `http://127.0.0.1:${address.port}/v1` };
+  let app = await startApp(options);
+  t.after(async () => { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); });
+  const ui = async (path: string, body: unknown) => { const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const value = await response.json(); assert(response.ok, JSON.stringify(value)); return value; };
+  const terminal = (args: string[]) => new Promise<any>((resolve, reject) => {
+    const child = spawn(process.execPath, ['--experimental-strip-types', 'cli.ts', ...args], { cwd: import.meta.dirname, env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = ''; child.stdout.on('data', chunk => { output += chunk; }); child.stderr.resume(); child.on('error', reject);
+    child.on('close', code => { try { const value = JSON.parse(output); assert.equal(value.exitCode, code); resolve(value); } catch (error) { reject(error); } });
+  });
+  const a = await ui('/api/agents', { id: randomUUID(), name: 'Routine owner', model: 'fixture', instructions: 'Help' });
+  const b = await ui('/api/agents', { id: randomUUID(), name: 'Other', model: 'fixture', instructions: 'Help' });
+  for (const agent of [a,b]) await ui(`/api/agents/${agent.id}/scripts`, { id: randomUUID(), revision: 0, enabled: true });
+  const routine = await ui(`/api/agents/${a.id}/routines`, { id: randomUUID(), name: 'Routine', prompt: 'Task', nextAt: Date.now() + 3600000, intervalSeconds: null, enabled: false });
+  const list = await terminal(['routines', a.id]); assert.equal(list.exitCode, 0); assert.deepEqual(list.routines.map((row: any) => row.id), [routine.id]);
+  assert.deepEqual((await terminal(['routines', b.id])).routines, []);
+  assert.deepEqual((await terminal(['routine-runs', a.id, routine.id])).runs, []);
+  assert.equal((await terminal(['routine-runs', b.id, routine.id])).exitCode, 1);
+  const run = await ui(`/api/routines/${routine.id}/test`, { id: randomUUID(), revision: routine.revision });
+  let history: any;
+  for (let n = 0; n < 30; n++) { history = await terminal(['routine-runs', a.id, routine.id]); if (history.runs?.[0]?.status === 'done') break; await new Promise(resolve => setTimeout(resolve, 20)); }
+  assert.equal(history.exitCode, 0); assert.equal(history.runs.length, 1); assert.equal(history.runs[0].turn, run.turn); assert.equal(history.runs[0].reply, 'Routine result');
+  await app.close(); app = await startApp(options);
+  assert.deepEqual((await terminal(['routine-runs', a.id, routine.id])).runs, history.runs);
+  for (const bad of [['routines', a.id, '--wait'], ['routine-runs', a.id], ['routine-runs', a.id, '../bad'], ['routine-runs', a.id, routine.id, '--thread', randomUUID()]]) assert.equal((await terminal(bad)).exitCode, 2);
+  await ui(`/api/agents/${a.id}/scripts`, { id: randomUUID(), revision: 1, enabled: false });
+  assert.equal((await terminal(['routine-runs', a.id, routine.id])).exitCode, 5);
+});
+
 test('CLI workflow discovery paginates and explicit approvals retain identity after lost responses', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-cli-approvals-')), directory = join(dir, 'scripts');
   const options = { database: join(dir, 'db.sqlite'), scriptDirectory: directory };
