@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -38,11 +38,16 @@ test('script CLI discovers only grants, sends once, waits, preserves retry ID an
     await request(`/api/agents/${b.id}/scripts`, { id: randomUUID(), revision: 0, enabled: true });
     assert.equal((await cli(['run','Alpha','Ambiguous'], directory)).exitCode, 2); assert.equal(calls, 1);
     const ask = await cli(['run',a.id,'ASK','--wait','--timeout','3'], directory); assert.equal(ask.exitCode, 3);
-    await request(`/api/agents/${a.id}/turns/${ask.id}/cancel`, { id: randomUUID() });
+    assert.equal((await cli(['cancel',a.id,ask.id!], directory)).exitCode, 0);
     assert.equal((await cli(['status',a.id,ask.id!], directory)).exitCode, 1);
     const held = await cli(['run',a.id,'HOLD','--wait','--timeout','1'], directory); assert.equal(held.exitCode, 4); assert(held.id);
     assert.equal((await cli(['status',a.id,held.id], directory)).turn.status, 'running');
-    await request(`/api/agents/${a.id}/turns/${held.id}/cancel`, { id: randomUUID() });
+    assert.equal((await cli(['cancel',b.id,held.id], directory)).exitCode, 1);
+    assert.equal((await cli(['status',a.id,held.id], directory)).turn.status, 'running');
+    assert.equal((await cli(['cancel',a.id,held.id.toUpperCase()], directory)).exitCode, 0);
+    const cancelled = await cli(['cancel',a.id,held.id], directory);
+    assert.equal(cancelled.exitCode, 0); assert.equal(cancelled.turn.status, 'cancelled');
+    assert.equal((await cli(['cancel',a.id,id], directory)).exitCode, 1);
     assert.equal((await cli(['status',a.id,held.id], directory)).exitCode, 1);
     const output = await new Promise<string>((resolve, reject) => {
       const child = spawn(process.execPath, ['--experimental-strip-types','cli.ts','list'], { cwd: import.meta.dirname, env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['ignore','pipe','pipe'] });
@@ -74,22 +79,31 @@ test('script CLI discovers only grants, sends once, waits, preserves retry ID an
       const recovered = await cli(['run',a.id,'Lost response','--id',lost.id,'--wait','--timeout','3'], directory);
       assert.equal(recovered.exitCode, 0); assert.equal(recovered.id, lost.id); assert.equal(calls, 5);
       const pending = await cli(['run',a.id,'HOLD'], directory); assert.equal(pending.exitCode, 0);
+      drop = true;
+      const lostCancel = await cli(['cancel',a.id,pending.id!], directory);
+      assert.equal(lostCancel.exitCode, 5); assert.equal(lostCancel.id, pending.id);
+      const cancelRetry = await cli(['cancel',a.id,pending.id!], directory);
+      assert.equal(cancelRetry.exitCode, 0); assert.equal(cancelRetry.turn.status, 'cancelled');
+      const revision = cancelRetry.turn.revision;
+      assert.equal((await cli(['cancel',a.id,pending.id!], directory)).turn.revision, revision);
+      const restartPending = await cli(['run',a.id,'HOLD'], directory); assert.equal(restartPending.exitCode, 0);
       const seen = new Promise<void>(resolve => { observed = resolve; }); let settled = false;
-      const waiting = cli(['status',a.id,pending.id!,'--wait','--timeout','5'], directory).then(result => { settled = true; return result; });
+      const waiting = cli(['status',a.id,restartPending.id!,'--wait','--timeout','5'], directory).then(result => { settled = true; return result; });
       await seen; observed = undefined;
       await app.close();
       await new Promise(resolve => setTimeout(resolve, 650)); assert.equal(settled, false, 'discovery gap must not end an established wait');
       app = await startApp(options);
-      const interrupted = await waiting; assert.equal(interrupted.exitCode, 1); assert.equal(interrupted.turn.status, 'interrupted'); assert.equal(calls, 6);
+      const interrupted = await waiting; assert.equal(interrupted.exitCode, 1); assert.equal(interrupted.turn.status, 'interrupted'); assert.equal(calls, 7);
     } finally { proxy.closeAllConnections(); await new Promise<void>(resolve => proxy.close(() => resolve())); }
     const collision = await request('/api/agents', { id: randomUUID(), name: a.id, model: 'test', instructions: 'Help' });
     await request(`/api/agents/${collision.id}/scripts`, { id: randomUUID(), revision: 0, enabled: true });
     assert.equal((await cli(['status',a.id,id], directory)).exitCode, 0);
     assert.equal((await cli(['status',a.id.toUpperCase(),id], directory)).exitCode, 0);
     await app.close(); app = await startApp(options);
-    assert.equal((await cli(['status',a.id,id], directory)).turn.reply, 'Answer'); assert.equal(calls, 6);
+    assert.equal((await cli(['status',a.id,id], directory)).turn.reply, 'Answer'); assert.equal(calls, 7);
     await request(`/api/agents/${a.id}/scripts`, { id: randomUUID(), revision: 1, enabled: false });
     assert.equal((await cli(['status',a.id,id], directory)).exitCode, 5);
+    assert.equal((await cli(['cancel',a.id,held.id], directory)).exitCode, 5);
     for (let n = 0; n < 99; n++) {
       const extra = await request('/api/agents', { id: randomUUID(), name: `Extra ${n}`, model: 'test', instructions: 'Help' });
       await request(`/api/agents/${extra.id}/scripts`, { id: randomUUID(), revision: 0, enabled: true });
@@ -107,9 +121,37 @@ test('script CLI discovers only grants, sends once, waits, preserves retry ID an
       const rejected = await fetch(app.origin + '/api/scripts/agents' + suffix, { headers }); assert.equal(rejected.status, 400); await rejected.arrayBuffer();
     }
     const denied = await fetch(app.origin + '/api/scripts/agents', { headers: { ...headers, Origin: app.origin } }); assert.equal(denied.status, 403); await denied.arrayBuffer();
+    const side = await request(`/api/agents/${b.id}/threads`, { id: randomUUID(), name: 'Cancellation scope' });
+    const sideTurn = await request(`/api/threads/${side.id}/turns`, { id: randomUUID(), text: 'HOLD' });
+    assert.equal((await cli(['cancel',b.id,sideTurn.id], directory)).exitCode, 1);
+    await request(`/api/threads/${side.id}/turns/${sideTurn.id}/cancel`, { id: randomUUID() });
+    const channel = await request('/api/channels', { id: randomUUID(), name: 'Cancellation scope', instructions: 'Help', members: [b.id], lead: b.id });
+    const channelTurn = await request(`/api/channels/${channel.id}/turns`, { id: randomUUID(), text: 'HOLD', agent: b.id });
+    assert.equal((await cli(['cancel',b.id,channelTurn.id], directory)).exitCode, 1);
+    await request(`/api/channels/${channel.id}/turns/${channelTurn.id}/cancel`, { id: randomUUID() });
+    const revokeTarget = await cli(['run',b.id,'HOLD'], directory);
+    assert.equal(revokeTarget.exitCode, 0);
+    const cancelPath = `/api/scripts/agents/${b.id}/turns/${revokeTarget.id}/cancel`;
+    for (const method of ['GET', 'PUT']) {
+      const response = await fetch(app.origin + cancelPath, { method, headers });
+      assert.equal(response.status, 405); await response.arrayBuffer();
+    }
+    let finishBody!: () => void;
+    const delayed = new Promise<number | undefined>((resolve, reject) => {
+      const raw = JSON.stringify({ id: revokeTarget.id });
+      const req = httpRequest(app.origin + cancelPath, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' } }, res => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+      req.on('error', reject); req.write(raw.slice(0, -1)); finishBody = () => req.end(raw.slice(-1));
+    });
+    await request(`/api/agents/${b.id}/scripts`, { id: randomUUID(), revision: 1, enabled: false });
+    finishBody(); assert.equal(await delayed, 403);
+    const retained = await request(`/api/agents/${b.id}/turns?focus=${revokeTarget.id}`);
+    assert(['queued','running'].includes(retained[0].status));
+    await request(`/api/agents/${b.id}/turns/${revokeTarget.id}/cancel`, { id: randomUUID() });
     const file = join(directory, 'connection.json'), original = readFileSync(file);
     writeFileSync(file, JSON.stringify({ url: 'https://example.com', token: 'x'.repeat(32) }));
     assert.equal((await cli(['list'], directory)).exitCode, 5); writeFileSync(file, original);
     await assert.rejects(cli(['run',a.id,'Hello','--id'], directory));
+    await assert.rejects(cli(['cancel',a.id], directory));
+    await assert.rejects(cli(['cancel',a.id,id,'--wait'], directory));
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
