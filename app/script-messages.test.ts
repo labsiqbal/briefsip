@@ -81,6 +81,13 @@ test('script messages and answers share grants, scope, receipts, redaction and r
     await until(async()=>(await request(uiPath)).every((row:any)=>['done','failed','cancelled','interrupted'].includes(row.status)));
     const sideCalls=calls;await app.close();app=await startApp(options);
     await request(sidePath,sideMessage,202,auth);await request(sideAnswerPath,sideAnswer,200,auth);assert.equal(calls,sideCalls);
+    const stopTurn={id:randomUUID(),text:'ASK'};await request(sidePath,stopTurn,202,auth);
+    await until(async()=>(await request(sidePath,undefined,200,auth)).some((row:any)=>row.id===stopTurn.id&&row.questions?.length));
+    const stopPath=`${sidePath}/${stopTurn.id}/cancel`,stopBody={id:randomUUID()};
+    await request(stopPath,undefined,405,auth);
+    await request(`/api/scripts/agents/${a.id}/threads/${side.id}/turns/${stopTurn.id}/cancel`,stopBody,404,auth);
+    assert.equal((await request(stopPath,stopBody,200,auth)).status,'cancelled');
+    assert.equal((await request(stopPath,stopBody,200,auth)).status,'cancelled');
     let finishDeletedReplay!:()=>void;
     const deletedReplay=new Promise<number|undefined>((resolve,reject)=>{
       const req=httpRequest(app.origin+sidePath,{method:'POST',headers:auth},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});req.on('error',reject);
