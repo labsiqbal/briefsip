@@ -110,3 +110,70 @@ test('provider account metadata tool redacts credentials and paths', async () =>
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('private model discovery uses selected account, pages results and cancels without continuation', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'briefsip-model-list-'));
+  const results: any[] = [], catalogCalls: string[] = [];
+  let args: unknown = {}, mode = 'ok', advertised = false, completions = 0, catalogClosed = false;
+  const provider = createServer(async (req, res) => {
+    if (req.method === 'GET') {
+      catalogCalls.push(req.url!);
+      assert.equal(req.headers.authorization, req.url!.startsWith('/b/') ? 'Bearer secret-b' : 'Bearer secret-a');
+      if (mode === 'hold') { res.once('close', () => { catalogClosed = true; }); return; }
+      if (mode === 'error') { res.writeHead(503); res.end('private provider diagnostic'); return; }
+      res.end(JSON.stringify({ data: Array.from({ length: 102 }, (_, index) => ({ id: `model-${String(index).padStart(3, '0')}` })) })); return;
+    }
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    const body = JSON.parse(raw); completions++;
+    advertised = body.tools.some((tool: any) => tool.function.name === 'list_provider_models');
+    const result = body.messages.findLast((row: any) => row.role === 'tool');
+    if (result) results.push(JSON.parse(result.content));
+    res.end(JSON.stringify({ choices: [{ finish_reason: result ? 'stop' : 'tool_calls', message: result ? { content: 'Catalog read' } : { tool_calls: [{ id: 'models', type: 'function', function: { name: 'list_provider_models', arguments: JSON.stringify(args) } }] } }] }));
+  });
+  let app: Awaited<ReturnType<typeof startApp>> | undefined;
+  try {
+    await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+    const address = provider.address(); assert(address && typeof address !== 'string');
+    const base = `http://127.0.0.1:${address.port}`;
+    app = await startApp({ database: join(directory, 'db.sqlite'), port: 0, accounts: ['a', 'b'].map(id => ({ id, name: id, provider: 'openai-compatible', baseURL: `${base}/${id}/v1`, apiKey: `secret-${id}` })) });
+    async function request(path: string, body?: unknown) {
+      const response = await fetch(app!.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app!.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+      const data = await response.json(); assert(response.ok, JSON.stringify(data)); return data;
+    }
+    async function until(check: () => Promise<any>) {
+      for (let n = 0; n < 300; n++) { const value = await check(); if (value) return value; await new Promise(resolve => setTimeout(resolve, 10)); }
+      assert.fail('Model discovery timed out');
+    }
+    const agent = await request('/api/agents', { id: randomUUID(), name: 'Catalog', model: 'fixture', instructions: 'Help', providerAccount: 'a' }), path = `/api/agents/${agent.id}`;
+    async function send(location = path, status = 'done') {
+      const id = randomUUID(); await request(location + '/turns', { id, text: 'Find models' });
+      const row = await until(async () => (await request(location + '/turns')).find((row: any) => row.id === id && ['done', 'failed'].includes(row.status)));
+      assert.equal(row.status, status, row.error); return row;
+    }
+    await send(); assert(advertised); assert.equal(catalogCalls.at(-1), '/a/v1/models');
+    assert.deepEqual(results.at(-1), { account: 'a', models: Array.from({ length: 100 }, (_, i) => `model-${String(i).padStart(3, '0')}`), next_after: 'model-099' });
+    args = { account: 'b', after: 'model-099' };
+    const side = await request(path + '/threads', { id: randomUUID(), name: 'Side' });
+    await send(`/api/threads/${side.id}`); assert.equal(catalogCalls.at(-1), '/b/v1/models');
+    assert.deepEqual(results.at(-1), { account: 'b', models: ['model-100', 'model-101'], next_after: null });
+    args = { account: '' }; await send(); assert.equal(results.at(-1).status, 503);
+    args = { account: 'missing' }; await send(); assert.equal(results.at(-1).status, 503);
+    args = { account: 'b', extra: true }; await send(path, 'failed'); assert.equal(catalogCalls.length, 2);
+    args = {}; mode = 'error'; await send(); assert.equal(results.at(-1).status, 502); assert(!JSON.stringify(results).includes('private provider diagnostic'));
+    const channel = await request('/api/channels', { id: randomUUID(), name: 'Room', members: [agent.id], lead: agent.id, instructions: 'Help' });
+    await send(`/api/channels/${channel.id}`, 'failed'); assert(!advertised); assert.equal(catalogCalls.length, 3);
+    mode = 'hold'; const id = randomUUID(), before = completions;
+    await request(path + '/turns', { id, text: 'Hold catalog' });
+    await until(async () => catalogCalls.length === 4);
+    await request(`${path}/turns/${id}/cancel`, { id: randomUUID() });
+    await until(async () => (await request(path + '/turns')).some((row: any) => row.id === id && row.status === 'cancelled'));
+    await until(async () => catalogClosed);
+    assert.equal(completions, before + 1);
+    mode = 'ok'; await send(); assert.equal(results.at(-1).account, 'a');
+    assert.equal((await request('/api/agents')).agents.find((row: any) => row.id === agent.id).provider_account, 'a');
+  } finally {
+    await app?.close(); provider.closeAllConnections();
+    await new Promise<void>(resolve => provider.close(() => resolve()));
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
