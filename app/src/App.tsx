@@ -1,3 +1,4 @@
+import { authRequest, readLoginRequest } from '../auth-client';
 import { restoreAgentCreation, type AgentCreation } from '../agent-create';
 import { AgentAvatar, AvatarEditor } from './AgentAvatar';
 import { WorkspacePanel } from './WorkspacePanel';
@@ -787,7 +788,7 @@ function FlowDirectory({ agents, onClose, onOpen }: { agents: Agent[]; onClose: 
   </section>;
 }
 
-function App() {
+function WorkspaceApp() {
   const [showSkills, setShowSkills] = useState(false), skillsButton = useRef<HTMLButtonElement>(null);
   const [showBackup, setShowBackup] = useState(false), backupButton = useRef<HTMLButtonElement>(null);
   const [importing, setImporting] = useState(false), importButton = useRef<HTMLButtonElement>(null);
@@ -856,5 +857,98 @@ function App() {
     <main>{error ? <div className="empty"><h1>Ruang kerja belum terbuka</h1><p role="alert">{error}</p><button onClick={() => void load()}>Coba lagi</button></div> : !directory ? <p className="empty" role="status">Memuat ruang kerja...</p> : showMcp ? <Suspense fallback={<p className="empty" role="status">Memuat koneksi MCP...</p>}><McpPanel agents={directory.agents} request={api} onClose={() => { setShowMcp(false); mcpButton.current?.focus(); }} /></Suspense> : showData ? <SharedDataPanel agents={directory.agents} request={api} onClose={() => { setShowMcp(false); setShowData(false); dataButton.current?.focus(); }} /> : showSkills ? <Suspense fallback={<p className="empty" role="status">Memuat library skill...</p>}><SkillsPanel agents={directory.agents} request={api} onClose={() => { setShowMcp(false); setShowData(false); setShowSkills(false); skillsButton.current?.focus(); }} /></Suspense> : showBackup ? <BackupPanel onClose={() => { setShowMcp(false); setShowData(false); setShowSkills(false); setShowBackup(false); backupButton.current?.focus(); }} /> : importing ? <AgentTemplateImport request={api} onClose={() => { setShowMcp(false); setShowData(false); setShowSkills(false); setShowBackup(false); setImporting(false); importButton.current?.focus(); }} onCreated={created => { setDirectory({ ...directory, agents: [...directory.agents.filter(agent => agent.id !== created.id), created] }); setSelected(created.id); setSelectedChannel(''); setCreating(false); setCreatingChannel(false); setEditing(false); setImporting(false); }} /> : showUsage ? <UsagePanel request={api} onClose={() => { setShowMcp(false); setShowData(false); setShowSkills(false); setShowBackup(false); setImporting(false); setShowUsage(false); usageButton.current?.focus(); }} /> : showWorkflows ? <WorkflowDirectory agents={directory.agents} request={api} onClose={() => setShowWorkflows(false)} onOpen={(owner, thread) => { setOpenedThread({ agent: owner, thread }); setSelected(owner); setSelectedChannel(''); setShowWorkflows(false); }} /> : showFlows ? <FlowDirectory agents={directory.agents} onClose={() => setShowFlows(false)} onOpen={(owner, thread) => { setOpenedThread({ agent: owner, thread }); setSelected(owner); setSelectedChannel(''); setShowWorkflows(false); setShowFlows(false); }} /> : editing && channel ? <ChannelForm key={`${channel.id}:${channel.revision}:${editReload}`} agents={directory.agents} channel={channel} onCancel={() => setEditing(false)} onReload={() => { void load().then(() => setEditReload(value => value + 1)); }} onCreated={() => { void load(); setEditing(false); }} /> : editing && agent ? <AgentForm key={`${agent.id}:${editReload}`} model={directory.defaultModel} profile={agent} onCancel={() => setEditing(false)} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} onCreated={() => { void load(); setEditing(false); }} /> : creatingChannel ? <ChannelForm agents={directory.agents} onCancel={() => setCreatingChannel(false)} onCreated={created => { setChannels([...channels.filter(room => room.id !== created.id), created]); setSelectedChannel(created.id); setCreatingChannel(false); }} /> : creating || (!agent && !channel) ? <AgentForm model={directory.defaultModel} onCancel={agent || channel ? () => setCreating(false) : undefined} onCreated={created => { setDirectory({ ...directory, agents: [...directory.agents.filter(agent => agent.id !== created.id), created] }); setSelected(created.id); setSelectedChannel(''); setCreating(false); }} /> : channel ? <Chat onOpenAgent={(owner, thread) => { setOpenedThread({ agent: owner, thread }); setSelected(owner); setSelectedChannel(''); setEditing(false); }} key={`channel:${channel.id}`} agent={channel} channel={{ ...channel, lead: directory.agents.find(agent => agent.id === channel.lead)?.hidden ? null : channel.lead }} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id) && !agent.hidden)} onEdit={() => setEditing(true)} configured={directory.configured} /> : agent && <AgentConversations onOpenChannel={id => { setSelectedChannel(id); setEditing(false); }} key={agent.id} agent={agent} workflowAgents={directory.agents} configured={directory.configured && agent.provider_available !== false} initialThread={openedThread?.agent === agent.id ? openedThread.thread : undefined} onThreadOpened={() => setOpenedThread(null)} onOpenAgent={(owner, thread) => { setOpenedThread({ agent: owner, thread }); setSelected(owner); setSelectedChannel(''); setEditing(false); }} onEdit={() => setEditing(true)} />}</main>
   </div>;
 }
+
+type AuthSession = { user: { email: string } } | null;
+type LoginRequest = { id: string; email: string };
+const loginKey = 'briefsip:login-request';
+function AuthGate() {
+  const [mode, setMode] = useState<boolean | null>(null);
+  const [session, setSession] = useState<AuthSession>(null);
+  const [email, setEmail] = useState(''), [otp, setOtp] = useState('');
+  const [pending, setPending] = useState<LoginRequest | null>(null);
+  const [busy, setBusy] = useState(true), [error, setError] = useState('');
+  const [notice, setNotice] = useState(''), [ready, setReady] = useState(false);
+  const locked = useRef(false);
+  const heading = useRef<HTMLHeadingElement>(null), codeInput = useRef<HTMLInputElement>(null);
+  async function sessionNow() {
+    const value = await authRequest('/api/auth/get-session');
+    if (value !== null && (!value || typeof value.user?.email !== 'string')) throw new Error('Status sesi tidak dapat dibaca. Coba lagi.');
+    setSession(value); return value as AuthSession;
+  }
+  async function bootstrap() {
+    if (locked.current) return;
+    locked.current = true; setBusy(true); setError('');
+    try {
+      const value = await authRequest('/api/auth-mode');
+      if (typeof value?.enabled !== 'boolean') throw new Error('Mode akses tidak dapat dibaca. Coba lagi.');
+      setMode(value.enabled);
+      if (value.enabled) {
+        const saved = readLoginRequest(sessionStorage.getItem(loginKey));
+        setPending(saved); setEmail(saved?.email ?? '');
+        await sessionNow();
+      }
+      setReady(true);
+    } catch { setError('Akses Briefsip belum dapat diperiksa. Periksa koneksi, lalu coba lagi.'); }
+    finally { locked.current = false; setBusy(false); }
+  }
+  useEffect(() => { void bootstrap(); }, []);
+  useEffect(() => { if (ready && mode) heading.current?.focus(); }, [ready, mode, session?.user.email]);
+  async function sendCode(event: FormEvent) {
+    event.preventDefault(); if (locked.current) return;
+    locked.current = true; setBusy(true); setError(''); setNotice('');
+    try {
+      const request = pending ?? { id: crypto.randomUUID(), email: email.trim() };
+      // Persist identity before delivery; a lost response must never create another send.
+      sessionStorage.setItem(loginKey, JSON.stringify(request)); setPending(request); setEmail(request.email);
+      await authRequest('/api/auth/email-otp/send-verification-otp', { ...request, type: 'sign-in' });
+      setNotice('Pengiriman kode diterima. Periksa email, lalu masukkan kode.');
+    } catch { setError('Pengiriman belum terkonfirmasi. Periksa email atau periksa ulang permintaan yang sama.'); }
+    finally { locked.current = false; setBusy(false); codeInput.current?.focus(); }
+  }
+  async function verifyCode(event: FormEvent) {
+    event.preventDefault(); if (locked.current || !pending || !/^[0-9]{6}$/.test(otp)) return;
+    locked.current = true; setBusy(true); setError(''); setNotice('');
+    try {
+      await authRequest('/api/auth/sign-in/email-otp', { email: pending.email, otp });
+      await sessionNow();
+    } catch {
+      // The cookie may have arrived even when the login response was lost.
+      try { if (!await sessionNow()) setError('Belum masuk. Kode mungkin salah, kedaluwarsa, atau respons masuk hilang. Periksa sesi sebelum mencoba kode lagi.'); }
+      catch { setError('Hasil masuk belum diketahui. Periksa sesi sebelum mencoba kode lagi.'); }
+    } finally { setOtp(''); locked.current = false; setBusy(false); }
+  }
+  async function checkSession(logout = false) {
+    if (locked.current) return;
+    locked.current = true; setBusy(true); setError(''); setNotice('');
+    try {
+      if (logout) await authRequest('/api/auth/sign-out', {});
+      const current = await sessionNow();
+      if (!current) setNotice('Tidak ada sesi aktif.');
+    } catch { setError(logout ? 'Keluar belum terkonfirmasi. Periksa sesi atau coba keluar lagi.' : 'Sesi belum dapat diperiksa. Periksa koneksi, lalu coba lagi.'); }
+    finally { locked.current = false; setBusy(false); }
+  }
+  function resetRequest(recover = false) {
+    if (locked.current) return;
+    try { sessionStorage.removeItem(loginKey); setPending(null); setOtp(''); setError(''); setNotice(''); if (recover) void bootstrap(); }
+    catch { setError('Permintaan tersimpan belum dapat dihapus. Periksa penyimpanan browser.'); }
+  }
+  if (ready && mode === false) return <WorkspaceApp />;
+  return <main className="auth-shell"><section className="setup auth-panel" aria-busy={busy}>
+    <p className="muted">Briefsip</p><h1 ref={heading} tabIndex={-1}>{session ? 'Sesi aktif' : 'Masuk ke Briefsip'}</h1>
+    {!ready ? <><p role="status">{busy ? 'Memeriksa akses...' : 'Akses belum dapat diperiksa.'}</p><button disabled={busy} onClick={() => void bootstrap()}>Periksa ulang akses</button>{mode && !busy && <><p>Jika permintaan tersimpan rusak, hapus untuk mulai lagi. Kode sebelumnya mungkin masih tiba.</p><button className="secondary" onClick={() => resetRequest(true)}>Hapus permintaan masuk tersimpan</button></>}</> : session ? <>
+      <p>Masuk sebagai {session.user.email}.</p><p>Akses ruang kerja belum diberikan. Login tidak otomatis memberi keanggotaan workspace.</p>
+      <div className="form-actions"><button disabled={busy} onClick={() => void checkSession(true)}>Keluar</button><button className="secondary" disabled={busy} onClick={() => void checkSession()}>Periksa sesi</button></div>
+    </> : <>
+      <p>Masukkan email untuk menerima kode masuk. Kode berlaku selama 5 menit.</p>
+      <form onSubmit={event => void sendCode(event)}><label>Email<input type="email" required maxLength={254} value={email} onChange={event => setEmail(event.target.value)} autoComplete="email" readOnly={busy || !!pending} /></label>
+        <button disabled={busy}>{pending ? 'Periksa ulang pengiriman' : 'Kirim kode masuk'}</button></form>
+      {pending && <><form onSubmit={event => void verifyCode(event)}><label>Kode masuk<input ref={codeInput} required inputMode="numeric" pattern="[0-9]{6}" maxLength={6} value={otp} onChange={event => setOtp(event.target.value)} autoComplete="one-time-code" readOnly={busy} /></label><button disabled={busy || !/^[0-9]{6}$/.test(otp)}>Verifikasi dan masuk</button></form>
+        <p>Periksa ulang memakai permintaan yang sama dan tidak mengirim kode baru. Untuk mengganti email atau meminta kode baru, mulai permintaan baru. Kode dari permintaan sebelumnya mungkin masih tiba.</p>
+        <button className="secondary" disabled={busy} onClick={() => resetRequest()}>Mulai permintaan baru</button></>}
+      <button className="secondary" disabled={busy} onClick={() => void checkSession()}>Periksa sesi</button>
+    </>}
+    {notice && <p role="status">{notice}</p>}{error && <p className="error" role="alert">{error}</p>}
+  </section></main>;
+}
 applyPresentation(document.documentElement, readPresentation().value);
-createRoot(document.getElementById('root')!).render(<App />);
+createRoot(document.getElementById('root')!).render(<AuthGate />);
