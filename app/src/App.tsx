@@ -1,3 +1,4 @@
+import { QueuePanel } from './QueuePanel';
 import { QueueEditor } from './QueueEditor';
 import { AgentVisibility } from './AgentVisibility';
 import { Markdown } from './Markdown';
@@ -309,6 +310,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
         </div>
       </article>)}<div ref={bottom} />
     </section>
+    <QueuePanel path={path} request={api} onOpen={id => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(id); }} />
     <footer className="composer-area">
       {archived && <p className="notice">{!channel && (agent as Agent).hidden ? 'Agent disembunyikan. Pulihkan melalui Edit profil untuk melanjutkan antrean dan menerima pesan baru.' : 'Percakapan diarsipkan. Riwayat tetap tersedia. Pulihkan melalui pengaturan untuk mengirim pesan baru.'}</p>}
       {!configured && <p className="notice">Provider belum terhubung. Atur OPENAI_BASE_URL dan kredensial di server, lalu mulai ulang app. Agent dan riwayat tetap tersimpan.</p>}
