@@ -177,3 +177,72 @@ test('private model discovery uses selected account, pages results and cancels w
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+for (const source of ['openai-compatible', 'anthropic', 'gemini'] as const) for (const target of ['openai-compatible', 'anthropic', 'gemini'] as const) {
+  if (source === target) continue;
+  test(`confirmed account switch ${source} to ${target} retains consent across restart`, async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'briefsip-consent-family-'));
+    const calls: { account: string; body: any }[] = [];
+    let phase = 'seed';
+    const provider = createServer(async (req, res) => {
+      const account = req.url!.split('/')[1], family = account === 'a' ? source : target;
+      assert.equal(req.headers.authorization, family === 'openai-compatible' ? `Bearer key-${account}` : undefined);
+      assert.equal(req.headers['x-api-key'], family === 'anthropic' ? `key-${account}` : undefined);
+      assert.equal(req.headers['x-goog-api-key'], family === 'gemini' ? `key-${account}` : undefined);
+      assert(req.url!.includes(family === 'anthropic' ? '/messages' : family === 'gemini' ? ':generateContent' : '/chat/completions'));
+      if (account === 'b' && family === 'gemini') assert(req.url!.includes('/target-model:generateContent'));
+      let raw = ''; for await (const chunk of req) raw += chunk;
+      const body = JSON.parse(raw); calls.push({ account, body });
+      const call = account === 'a' && phase === 'switch' ? { name: 'set_provider_account', args: { revision: 1, providerAccount: 'b', model: 'target-model' } } : null;
+      const text = account === 'b' ? 'Approved destination reply' : 'Seed reply';
+      if (family === 'gemini') res.end(JSON.stringify({ candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: call ? [{ functionCall: call, thoughtSignature: 'source-signature' }] : [{ text }] } }] }));
+      else if (family === 'anthropic') res.end(JSON.stringify({ type: 'message', role: 'assistant', stop_reason: call ? 'tool_use' : 'end_turn', content: call ? [{ type: 'tool_use', id: 'switch', name: call.name, input: call.args }] : [{ type: 'text', text }] }));
+      else res.end(JSON.stringify({ choices: [{ finish_reason: call ? 'tool_calls' : 'stop', message: call ? { tool_calls: [{ id: 'switch', type: 'function', function: { name: call.name, arguments: JSON.stringify(call.args) } }] } : { content: text } }] }));
+    });
+    let app: Awaited<ReturnType<typeof startApp>> | undefined;
+    try {
+      await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+      const address = provider.address(); assert(address && typeof address !== 'string');
+      const base = `http://127.0.0.1:${address.port}`;
+      const options = { database: join(directory, 'db.sqlite'), port: 0, accounts: [{ id: 'a', name: 'Source', provider: source, baseURL: base + '/a/v1', apiKey: 'key-a' }, { id: 'b', name: 'Destination', provider: target, baseURL: base + '/b/v1', apiKey: 'key-b' }] };
+      app = await startApp(options);
+      async function request(path: string, body?: unknown) {
+        const response = await fetch(app!.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app!.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+        const data = await response.json(); assert(response.ok, JSON.stringify(data)); return data;
+      }
+      async function until(path: string, id: string, paused = false) {
+        for (let n = 0; n < 300; n++) {
+          const row = (await request(path + '/turns')).find((item: any) => item.id === id);
+          if (row && (paused ? row.paused || row.status === 'failed' : ['done', 'failed'].includes(row.status))) return row;
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        assert.fail('Confirmed family switch timed out');
+      }
+      const agent = await request('/api/agents', { id: randomUUID(), name: 'Stable identity', model: 'source-model', instructions: 'Help', providerAccount: 'a' });
+      const direct = `/api/agents/${agent.id}`, side = await request(direct + '/threads', { id: randomUUID(), name: 'Private side' });
+      const path = source === 'gemini' ? `/api/threads/${side.id}` : direct, other = source === 'gemini' ? direct : `/api/threads/${side.id}`;
+      const foreign = randomUUID(), seed = randomUUID();
+      await request(other + '/turns', { id: foreign, text: 'FOREIGN_HISTORY_' + foreign }); assert.equal((await until(other, foreign)).status, 'done');
+      await request(path + '/turns', { id: seed, text: 'History before confirmed switch' }); assert.equal((await until(path, seed)).status, 'done');
+      phase = 'switch'; const id = randomUUID(); await request(path + '/turns', { id, text: 'Switch provider account' });
+      const waiting = await until(path, id, true); assert.equal(waiting.paused, 1, waiting.error);
+      assert.match(waiting.questions[0].prompt, new RegExp(target)); assert(calls.every(call => call.account === 'a'));
+      await app.close(); app = await startApp(options);
+      assert(calls.every(call => call.account === 'a'));
+      const answer = { id: randomUUID(), text: 'Setujui perpindahan', acknowledgeUncertain: true }, answerPath = `${path}/turns/${id}/questions/${waiting.questions[0].id}/answer`;
+      await request(answerPath, answer); const done = await until(path, id);
+      assert.equal(done.status, 'done', done.error); assert.equal(done.reply, 'Approved destination reply'); assert.equal(done.agent, agent.id);
+      const destination = calls.filter(call => call.account === 'b'); assert.equal(destination.length, 1);
+      const sent = JSON.stringify(destination[0].body);
+      for (const marker of ['History before confirmed switch', 'Seed reply', 'Setujui perpindahan', 'set_provider_account']) assert(sent.includes(marker), marker);
+      assert(!sent.includes(foreign)); assert(!sent.includes('key-a')); assert(!sent.includes('key-b'));
+      if (target === 'gemini') assert(sent.includes('context_engineering_is_the_way to_go'));
+      else { assert.equal(destination[0].body.model, 'target-model'); assert(!sent.includes('source-signature')); assert(!sent.includes('geminiParts')); }
+      await request(answerPath, answer); assert.equal(calls.filter(call => call.account === 'b').length, 1);
+      const profile = (await request('/api/agents')).agents.find((row: any) => row.id === agent.id); assert.equal(profile.provider_account, 'b'); assert.equal(profile.revision, 2);
+    } finally {
+      await app?.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve()));
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+}
