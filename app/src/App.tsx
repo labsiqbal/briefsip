@@ -6,6 +6,7 @@ import { QueueEditor } from './QueueEditor';
 import { AgentVisibility } from './AgentVisibility';
 import { Markdown } from './Markdown';
 import { SpeechPlayback } from './SpeechPlayback';
+import { TranscriptionPanel } from './TranscriptionPanel';
 import { EventConnection } from './EventConnection';
 import { PresentationSettings } from './PresentationSettings';
 import { applyPresentation, readPresentation } from '../presentation';
@@ -138,7 +139,7 @@ function ConversationFiles({ path, archived, attached, onAttach, locked }: { pat
     {pending.current && <p className="notice">Unggahan {pending.current.name} belum terkonfirmasi. Pilih kembali file yang sama atau <button className="secondary" disabled={busy || loading} onClick={() => void checkPending()}>Periksa status unggahan</button></p>}
     {error && <p className="error" role="alert">{error} {!pending.current && <button className="secondary" disabled={busy || loading} onClick={() => setReload(value => value + 1)}>Muat ulang file</button>}</p>}
     {loading ? <p role="status">Memuat file...</p> : !error && files.length === 0 && <p className="muted">Belum ada file.</p>}
-    <ul>{files.map(file => <li key={file.id}><label className="member-option"><input type="checkbox" checked={attached.includes(file.id)} disabled={locked || archived || (!attached.includes(file.id) && attached.length >= 4)} onChange={event => onAttach(event.target.checked ? [...attached, file.id] : attached.filter(id => id !== file.id))} /><span className="sr-only">Lampirkan {file.name}</span></label><a href={`${path}/${file.id}`} download={file.name}>{file.name}</a><span className="muted">{file.size.toLocaleString('id-ID')} byte</span><button className="secondary" aria-label={`Lihat teks: ${file.name}`} onClick={() => setPreview(file)}>Lihat teks</button><HtmlPreview path={`${path}/${file.id}`} name={file.name} request={api} /></li>)}</ul>
+    <ul>{files.map(file => <li key={file.id}><label className="member-option"><input type="checkbox" checked={attached.includes(file.id)} disabled={locked || archived || (!attached.includes(file.id) && attached.length >= 4)} onChange={event => onAttach(event.target.checked ? [...attached, file.id] : attached.filter(id => id !== file.id))} /><span className="sr-only">Lampirkan {file.name}</span></label><a href={`${path}/${file.id}`} download={file.name}>{file.name}</a><span className="muted">{file.size.toLocaleString('id-ID')} byte</span><button className="secondary" aria-label={`Lihat teks: ${file.name}`} onClick={() => setPreview(file)}>Lihat teks</button><HtmlPreview path={`${path}/${file.id}`} name={file.name} request={api} /><TranscriptionPanel path={`${path}/${file.id}`} request={api} /></li>)}</ul>
     {preview && <section aria-label={`Preview ${preview.name}`}><strong>{preview.name}</strong><button className="secondary" onClick={() => setPreview(null)}>Tutup preview</button>{previewError ? <p className="error" role="alert">{previewError}</p> : previewText === null ? <p role="status">Memuat preview...</p> : <pre tabIndex={0}>{previewText || '(File kosong)'}</pre>}</section>}
     {more && <button className="secondary" disabled={busy} onClick={() => void loadMore()}>File sebelumnya</button>}
   </details>;
