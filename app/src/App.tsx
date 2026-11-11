@@ -1,3 +1,4 @@
+import { MembershipPanel } from './MembershipPanel';
 import { authRequest, readLoginRequest } from '../auth-client';
 import { restoreAgentCreation, type AgentCreation } from '../agent-create';
 import { AgentAvatar, AvatarEditor } from './AgentAvatar';
@@ -936,8 +937,7 @@ function AuthGate() {
   return <main className="auth-shell"><section className="setup auth-panel" aria-busy={busy}>
     <p className="muted">Briefsip</p><h1 ref={heading} tabIndex={-1}>{session ? 'Sesi aktif' : 'Masuk ke Briefsip'}</h1>
     {!ready ? <><p role="status">{busy ? 'Memeriksa akses...' : 'Akses belum dapat diperiksa.'}</p><button disabled={busy} onClick={() => void bootstrap()}>Periksa ulang akses</button>{mode && !busy && <><p>Jika permintaan tersimpan rusak, hapus untuk mulai lagi. Kode sebelumnya mungkin masih tiba.</p><button className="secondary" onClick={() => resetRequest(true)}>Hapus permintaan masuk tersimpan</button></>}</> : session ? <>
-      <p>Masuk sebagai {session.user.email}.</p><p>Akses ruang kerja belum diberikan. Login tidak otomatis memberi keanggotaan workspace.</p>
-      <div className="form-actions"><button disabled={busy} onClick={() => void checkSession(true)}>Keluar</button><button className="secondary" disabled={busy} onClick={() => void checkSession()}>Periksa sesi</button></div>
+      <MembershipPanel key={session.user.email} email={session.user.email} /><div className="form-actions"><button disabled={busy} onClick={() => void checkSession(true)}>Keluar</button><button className="secondary" disabled={busy} onClick={() => void checkSession()}>Periksa sesi</button></div>
     </> : <>
       <p>Masukkan email untuk menerima kode masuk. Kode berlaku selama 5 menit.</p>
       <form onSubmit={event => void sendCode(event)}><label>Email<input type="email" required maxLength={254} value={email} onChange={event => setEmail(event.target.value)} autoComplete="email" readOnly={busy || !!pending} /></label>
