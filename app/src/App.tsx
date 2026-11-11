@@ -168,6 +168,8 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   const [showMemory, setShowMemory] = useState(false);
   const memoryButton = useRef<HTMLButtonElement>(null);
   const [focusedTask, setFocusedTask] = useState('');
+  const [searchText, setSearchText] = useState('');
+  const [query, setQuery] = useState('');
   const [historyPages, setHistoryPages] = useState<number[]>([]);
   const before = historyPages.at(-1);
   const historyTop = useRef<HTMLDivElement>(null);
@@ -204,24 +206,24 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     setTurns(null);
     let timer: ReturnType<typeof setTimeout>;
     async function refresh() {
-      try { const data = await api<Turn[]>(focusedTask ? `${path}?focus=${focusedTask}` : before ? `${path}?before=${before}` : path); if (!stopped) { loadedTask.current = focusedTask; setTurns(data); setReadError(''); } }
+      try { const data = await api<Turn[]>(focusedTask ? `${path}?focus=${focusedTask}` : `${path}?${new URLSearchParams({ ...(before ? { before: String(before) } : {}), ...(query ? { q: query } : {}) })}`); if (!stopped) { loadedTask.current = focusedTask; setTurns(data); setReadError(''); } }
       catch (error) { if (!stopped) setReadError(message(error)); }
       if (!stopped) timer = setTimeout(refresh, 1200);
     }
     void refresh();
     return () => { stopped = true; clearTimeout(timer); };
-  }, [path, focusedTask, before]);
+  }, [path, focusedTask, before, query]);
   useEffect(() => {
     if (focusedTask && loadedTask.current === focusedTask && turns && focusedOnce.current !== focusedTask) {
       const target = document.getElementById(`turn-${focusedTask}`);
       if (target) { target.focus({ preventScroll: true }); target.scrollIntoView({ block: 'start' }); focusedOnce.current = focusedTask; }
     }
     if (!focusedTask && loadedTask.current === '' && turns && focusHistory.current) {
-      const target = !before && turns.length ? document.getElementById(`turn-${turns.at(-1)!.id}`) : historyTop.current;
+      const target = !query && !before && turns.length ? document.getElementById(`turn-${turns.at(-1)!.id}`) : historyTop.current;
       if (target) { target.focus({ preventScroll: true }); target.scrollIntoView({ block: before ? 'start' : 'end' }); focusHistory.current = false; }
     }
-    if (!focusedTask && !before && nearBottom.current) bottom.current?.scrollIntoView({ block: 'end' });
-  }, [focusedTask, turns, before]);
+    if (!focusedTask && !before && !query && nearBottom.current) bottom.current?.scrollIntoView({ block: 'end' });
+  }, [focusedTask, turns, before, query]);
   useEffect(() => {
     if (!requestActive.current && pending && turns?.some(turn => turn.id === pending.id)) {
       try { sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); } catch { /* The same ID remains safe to retry. */ }
@@ -248,7 +250,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
       await api(path, request);
       // A remounted conversation owns recovery and any newer draft after navigation.
       if (!mounted.current) return;
-      sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); setPending(null); setDraft(''); setAttached([]); setFocusedTask(''); setHistoryPages([]);
+      sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); setPending(null); setDraft(''); setAttached([]); setFocusedTask(''); setHistoryPages([]); setQuery('');
     } catch (error) {
       if (!mounted.current) return;
       if (error instanceof HttpError && (error.status < 500 || error.status === 503)) {
@@ -272,15 +274,22 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     <div className="recipient"><button ref={memoryButton} className="secondary" onClick={() => setShowMemory(true)}>Memori {channel ? 'channel' : 'agent'}</button></div>
     <CompactionPanel path={path.replace(/\/turns$/, '/compaction')} request={api} />
     <ConversationFiles path={path.replace(/\/turns$/, '/files')} archived={archived} attached={pending?.files ?? attached} onAttach={attach} locked={!!pending || busy} />
-    {(focusedTask || before) && <div className="recipient"><span>{focusedTask ? 'Keluarga tugas' : 'Riwayat lama'}</span><button className="secondary" onClick={() => { focusHistory.current = true; setTurns(null); setFocusedTask(''); setHistoryPages([]); focusedOnce.current = ''; nearBottom.current = true; }}>Kembali ke pesan terbaru</button></div>}
+    <form className="recipient history-search" role="search" onSubmit={event => { event.preventDefault(); if (!searchText.trim()) return; focusHistory.current = true; nearBottom.current = false; setQuery(searchText); setFocusedTask(''); setHistoryPages([]); focusedOnce.current = ''; }}>
+      <label htmlFor="history-search">Cari di percakapan ini</label>
+      <input id="history-search" type="search" maxLength={200} value={searchText} onChange={event => setSearchText(event.target.value)} aria-describedby="history-search-help" />
+      <button type="submit" disabled={!searchText.trim()}>Cari</button>
+      <span id="history-search-help">Pesan dan balasan. Huruf besar dan kecil dibedakan.</span>
+    </form>
+    {(focusedTask || before || query) && <div className="recipient history-state"><span>{focusedTask ? channel ? 'Keluarga tugas' : 'Pesan terpilih' : query ? `Hasil pencarian: ${query}` : 'Riwayat lama'}</span><button className="secondary" onClick={() => { focusHistory.current = true; setTurns(null); setFocusedTask(''); setHistoryPages([]); setQuery(''); focusedOnce.current = ''; nearBottom.current = true; }}>Kembali ke pesan terbaru</button></div>}
     <section className="transcript" aria-label="Riwayat percakapan" onScroll={event => { const el = event.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }}>
       {!focusedTask && <div ref={historyTop} tabIndex={-1} className="history-navigation" aria-label="Navigasi riwayat">
         <button className="secondary" disabled={!turns || turns.length < 100} onClick={() => { if (turns?.length) { focusHistory.current = true; setTurns(null); setHistoryPages([...historyPages, turns[0].seq]); } }}>Pesan lebih lama</button>
         {!!before && <button className="secondary" onClick={() => { focusHistory.current = true; setTurns(null); setHistoryPages(historyPages.slice(0, -1)); nearBottom.current = true; }}>Pesan lebih baru</button>}
       </div>}
       {readError && <p role="alert" className="error">{readError} Riwayat akan dicoba lagi.</p>}
-      {turns === null ? <p className="empty">Memuat percakapan...</p> : turns.length === 0 && before ? <p className="empty" role="status">Awal riwayat tercapai. Pilih Pesan lebih baru untuk kembali.</p> : turns.length === 0 ? <div className="empty"><h2>Mulai bersama {agent.name}</h2><p>Kirim pekerjaan atau pertanyaan pertama. Percakapan tersimpan di komputer ini.</p></div> : turns.map(turn => <article key={turn.id} id={`turn-${turn.id}`} tabIndex={-1} className="turn">
-        <div className="message-head"><strong>{turn.workflow_run ? 'Workflow' : turn.parent ? 'Subtugas' : 'Kamu'}</strong>{turn.parent && !turn.messageOrigin && <a href={`#turn-${turn.parent}`} onClick={event => { event.preventDefault(); focusedOnce.current = ''; setFocusedTask(turn.parent!); }}>Lihat tugas induk</a>}{turn.messageOrigin && <button className="secondary" onClick={() => turn.messageOrigin!.channel ? onOpenChannel?.(turn.messageOrigin!.channel) : onOpenAgent?.(turn.messageOrigin!.agent, turn.messageOrigin!.thread ?? '')}>Buka percakapan peminta</button>}<time dateTime={turn.created}>{new Date(turn.created).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time></div>
+      {turns === null ? <p className="empty">Memuat percakapan...</p> : turns.length === 0 && query ? <p className="empty" role="status">Tidak ada hasil di halaman ini. Ubah kata pencarian atau kembali ke halaman sebelumnya.</p> : turns.length === 0 && before ? <p className="empty" role="status">Awal riwayat tercapai. Pilih Pesan lebih baru untuk kembali.</p> : turns.length === 0 ? <div className="empty"><h2>Mulai bersama {agent.name}</h2><p>Kirim pekerjaan atau pertanyaan pertama. Percakapan tersimpan di komputer ini.</p></div> : turns.map(turn => <article key={turn.id} id={`turn-${turn.id}`} tabIndex={-1} className="turn">
+        {query && <button className="secondary" onClick={() => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(turn.id); }}>Buka pesan ini</button>}
+        <div className="message-head"><strong>{turn.workflow_run ? 'Workflow' : turn.parent ? 'Subtugas' : 'Kamu'}</strong>{turn.parent && !turn.messageOrigin && <a href={`#turn-${turn.parent}`} onClick={event => { event.preventDefault(); focusedOnce.current = ''; setQuery(''); setFocusedTask(turn.parent!); }}>Lihat tugas induk</a>}{turn.messageOrigin && <button className="secondary" onClick={() => turn.messageOrigin!.channel ? onOpenChannel?.(turn.messageOrigin!.channel) : onOpenAgent?.(turn.messageOrigin!.agent, turn.messageOrigin!.thread ?? '')}>Buka percakapan peminta</button>}<time dateTime={turn.created}>{new Date(turn.created).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time></div>
         <p className="message-text">{turn.text}</p>{!!turn.files?.length && <ul aria-label="Lampiran pesan">{turn.files.map(file => <li key={file.id}><a href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}>{file.name}</a></li>)}</ul>}
         <div className="answer"><div className="message-head"><strong>{turn.agent_name ?? agent.name}</strong><span>{turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) ? 'Menunggu jawabanmu' : turn.no_update ? 'Tidak ada pembaruan' : turn.paused && !['done','cancelled'].includes(turn.status) ? 'Dijeda' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) && turn.status === 'queued' ? 'Menunggu balasan agent' : turn.waiting_for && turn.status === 'queued' ? 'Menunggu delegasi' : turn.routing === 'pending' && turn.status === 'running' ? 'Memilih penerima' : turn.routing === 'clarify' ? 'Perlu klarifikasi' : turn.routing === 'none' ? 'Tidak perlu tugas' : statusNames[turn.status] ?? turn.status}</span></div>
           {turn.reply ? <Markdown text={turn.reply} scope={path.slice(0, -6)} origin={window.location.origin} /> : <p className={turn.error ? 'error' : 'muted'}>{turn.error ?? (turn.questions?.some(question => question.answer === null) ? 'Jawab pertanyaan untuk melanjutkan tugas.' : turn.workflow_run ? 'Workflow selesai tanpa teks hasil.' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) ? 'Hasil akan digabung setelah semua penerima selesai. Pesan baru membawa hasil yang sudah tersedia.' : turn.events?.some(event => event.status === 'waiting') ? 'Menunggu event bertanda tangan.' : turn.waiting_for ? 'Menunggu hasil tugas anak.' : turn.status === 'queued' ? 'Menunggu giliran.' : 'Menunggu jawaban provider...')}</p>}
@@ -291,7 +300,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
           {!!turn.generatedFiles?.length && <ul aria-label="File hasil agent">{turn.generatedFiles.map(file => <li key={file.id}><a href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}>{file.name}</a> <span className="muted">{file.size} byte</span><HtmlPreview path={`${path.replace(/\/turns$/, '/files')}/${file.id}`} name={file.name} request={api} /></li>)}</ul>}
           {!!turn.receivedAgentReplies?.length && <details><summary>Hasil agent yang diterima bersama pesan ini ({turn.receivedAgentReplies.length})</summary>{turn.receivedAgentReplies.map(item => <div key={item.id}><p className="message-text"><strong>{item.name}</strong>: {statusNames[item.status] ?? item.status}</p>{item.error && <p className="error">{item.error}</p>}{item.reply && <p className="message-text">{item.reply}</p>}{item.truncated && <p className="muted">Cuplikan hasil. Buka percakapan untuk teks lengkap.</p>}{onOpenAgent && <button className="secondary" onClick={() => onOpenAgent(item.agent, item.thread)}>Buka percakapan {item.name}</button>}</div>)}</details>}
           {!!turn.agentMessages?.length && <details><summary>Pesan antar-agent ({turn.agentMessages.length})</summary>{turn.agentMessages.map(item => <div key={item.id}><p className="message-text"><strong>{item.name}</strong>: {item.paused && !['done','cancelled'].includes(item.status) ? 'Dijeda' : statusNames[item.status] ?? item.status}{!item.expects_reply && ' (tanpa balasan)'}</p>{item.error && <p className="error">{item.error}</p>}{item.reply && <p className="message-text">{item.reply.slice(0, 1000)}</p>}{(item.truncated || (item.reply?.length ?? 0) > 1000) && <p className="muted">Cuplikan hasil. Buka percakapan untuk teks lengkap.</p>}{onOpenAgent && <button className="secondary" onClick={() => onOpenAgent(item.agent, item.thread)}>Buka percakapan {item.name}</button>}</div>)}</details>}
-          {!!turn.coordination?.length && <details><summary>Koordinasi tugas ({turn.coordination.length})</summary>{turn.coordination.map((action, index) => <div key={index}><p>{action.owner_name} {action.kind === 'delegate_task' ? 'mendelegasikan ke' : 'mengalihkan tugas ke'} {action.target_name}.</p><p className="message-text">{action.prompt}</p>{action.child && <a href={`#turn-${action.child}`} onClick={event => { event.preventDefault(); focusedOnce.current = ''; setFocusedTask(action.child!); }}>Lihat subtugas</a>}</div>)}</details>}
+          {!!turn.coordination?.length && <details><summary>Koordinasi tugas ({turn.coordination.length})</summary>{turn.coordination.map((action, index) => <div key={index}><p>{action.owner_name} {action.kind === 'delegate_task' ? 'mendelegasikan ke' : 'mengalihkan tugas ke'} {action.target_name}.</p><p className="message-text">{action.prompt}</p>{action.child && <a href={`#turn-${action.child}`} onClick={event => { event.preventDefault(); focusedOnce.current = ''; setQuery(''); setFocusedTask(action.child!); }}>Lihat subtugas</a>}</div>)}</details>}
           <TaskControls key={`${turn.id}:${turn.revision}`} turn={turn} path={path} members={channel ? members : []} archived={archived} />
           {(!['done','cancelled'].includes(turn.status)) && <button className="secondary" onClick={() => void cancel(turn)}>{turn.waiting_for ? 'Batalkan tugas dan delegasi' : turn.status === 'running' ? 'Hentikan' : turn.status === 'queued' && !turn.paused ? 'Batalkan antrean' : 'Batalkan tugas'}</button>}
         </div>
@@ -306,7 +315,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
         <label className="sr-only" htmlFor="message">Pesan untuk {agent.name}</label>
         <textarea id="message" placeholder={`Pesan untuk ${agent.name}...`} maxLength={16000} value={pending?.text ?? draft} readOnly={!!pending || busy} onChange={event => { setDraft(event.target.value); try { sessionStorage.setItem(draftKey, event.target.value); } catch { setError('Draft tidak tersimpan di browser. Jangan pindah agent sebelum menyalin pesan.'); } }} rows={3} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
         <div className="composer-actions"><span>Ctrl / Cmd + Enter untuk kirim</span><button type="submit" disabled={archived || !configured || busy || (!pending && !draft.trim()) || (!!channel && !recipient && !pending)}>{busy ? 'Mengirim...' : pending ? 'Coba kirim lagi' : 'Kirim pesan'}</button></div>
-      </form><p className="footnote">{focusedTask ? 'Rangkaian tugas ditampilkan.' : '100 pesan terakhir ditampilkan.'} Provider menerima hingga 40 percakapan sebelumnya.</p>
+      </form><p className="footnote">{focusedTask ? channel ? 'Keluarga tugas ditampilkan.' : 'Pesan terpilih ditampilkan.' : query ? 'Hingga 100 hasil pencarian per halaman.' : before ? 'Hingga 100 pesan lama per halaman.' : 'Hingga 100 pesan terakhir ditampilkan.'} Provider menerima hingga 40 percakapan sebelumnya.</p>
     </footer>
   </>;
 }
