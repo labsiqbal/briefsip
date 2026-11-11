@@ -57,7 +57,7 @@ test('Telegram inline approvals validate message ownership and persist the first
     ])click(notice,true,change);
     await pollTelegram(db,users,remote);await telegramAgentStep(db,users,local,remote);assert.equal(decisions.length,0);assert.equal(db.prepare('SELECT count(*) AS n FROM telegram_callbacks').get()!.n,0);
     click(notice,true);click(notice,false);ackLost=true;await pollTelegram(db,users,remote);
-    assert.equal(db.prepare('SELECT count(*) AS n FROM telegram_callbacks').get()!.n,1);assert.equal(db.prepare('SELECT accepted FROM telegram_callbacks').get()!.accepted,1);
+    assert.equal(db.prepare('SELECT count(*) AS n FROM telegram_callbacks').get()!.n,1);assert.equal(db.prepare('SELECT selection FROM telegram_callbacks').get()!.selection,1);
     const command=db.prepare('SELECT id FROM telegram_callbacks').get()!.id;
     db.close();db=new DatabaseSync(join(dir,'journal.sqlite'));initializeTelegram(db);
     lost=true;await assert.rejects(telegramAgentStep(db,users,local,remote),/Lost decision/);
