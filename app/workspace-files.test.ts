@@ -19,6 +19,17 @@ test('workspace browser API pages text and directories while enforcing host bind
     writeFileSync(join(root,'text.html'),'<script>alert(1)</script>'+'x'.repeat(8000));
     writeFileSync(join(dir,'outside'),'PRIVATE');symlinkSync('../outside',join(root,'link'));linkSync(join(dir,'outside'),join(root,'hard'));symlinkSync(dir,join(root,'directory-link'));
     writeFileSync(join(root,'binary'),Buffer.from([255]));writeFileSync(join(root,'large'),'x'.repeat(256*1024+1));
+    for(const [name,bytes] of [['raw.bin',Buffer.from([0,255,1])],["quote'().html",Buffer.from('<script>alert(1)</script>')],['limit',Buffer.alloc(10*1024*1024,7)]] as const){
+      writeFileSync(join(root,name),bytes);
+      const response=await fetch(app.origin+path+'/download?path='+encodeURIComponent(name));assert.equal(response.status,200);
+      assert.equal(response.headers.get('content-type'),'application/octet-stream');assert.match(response.headers.get('content-disposition')!,/^attachment;/);
+      assert.equal(response.headers.get('x-content-type-options'),'nosniff');assert.equal(response.headers.get('cache-control'),'no-store');assert.deepEqual(Buffer.from(await response.arrayBuffer()),bytes);
+    }
+    writeFileSync(join(root,'too-large'),Buffer.alloc(10*1024*1024+1));
+    for(const name of ['too-large','pages','link','hard','directory-link/outside','../outside','/etc/passwd'])await get(path+'/download?path='+encodeURIComponent(name),400);
+    await get(path+'/download?path=raw.bin&offset=0',400);await get(path+'/download?path=raw.bin&path=large',400);
+    await get(path+'/download?path=raw.bin',403,{Origin:'https://external.invalid'});
+    await get(`/api/agents/${other}/workspace/download?path=raw.bin`,403);
     const first=await get(path+'/entries?path=pages');assert.equal(first.entries.length,100);
     const last=await get(path+'/entries?path=pages&after='+encodeURIComponent(first.next_after));assert.deepEqual(last.entries,[{name:'100',kind:'file'}]);assert.equal(last.next_after,null);
     const file=await get(path+'/file?path=text.html');assert(file.text.startsWith('<script>'));assert.equal(file.next_offset,8000);
