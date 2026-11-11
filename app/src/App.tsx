@@ -6,6 +6,7 @@ import { QueueEditor } from './QueueEditor';
 import { AgentVisibility } from './AgentVisibility';
 import { Markdown } from './Markdown';
 import { SpeechPlayback } from './SpeechPlayback';
+import { AudioRecorder } from './AudioRecorder';
 import { TranscriptionPanel } from './TranscriptionPanel';
 import { EventConnection } from './EventConnection';
 import { PresentationSettings } from './PresentationSettings';
@@ -64,7 +65,7 @@ function ConversationFiles({ path, archived, attached, onAttach, locked }: { pat
   const [open, setOpen] = useState(false), [files, setFiles] = useState<StoredFile[]>([]);
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [more, setMore] = useState(false);
   const [loading, setLoading] = useState(false), [reload, setReload] = useState(0);
-  const [selected, setSelected] = useState<File | null>(null);
+  const [selected, setSelected] = useState<File | null>(null), [recording, setRecording] = useState(false);
   const [preview, setPreview] = useState<StoredFile | null>(null), [previewText, setPreviewText] = useState<string | null>(null), [previewError, setPreviewError] = useState('');
   const pending = useRef<Upload | null>(recovered);
   const input = useRef<HTMLInputElement>(null);
@@ -89,7 +90,7 @@ function ConversationFiles({ path, archived, attached, onAttach, locked }: { pat
     return () => { stopped = true; };
   }, [open, path, reload]);
   async function upload(event: FormEvent) {
-    event.preventDefault(); if (busy || loading) return;
+    event.preventDefault(); if (busy || loading || recording) return;
     const file = pending.current?.file ?? selected;
     if (!file) { setError('Pilih kembali file yang sama untuk melanjutkan unggahan.'); return; }
     if (file.size > 10 * 1024 * 1024) { setError('Ukuran file maksimum 10 MiB.'); return; }
@@ -133,9 +134,11 @@ function ConversationFiles({ path, archived, attached, onAttach, locked }: { pat
     } catch (error) { setError(message(error)); }
     finally { setBusy(false); }
   }
-  return <details className="conversation-files" onToggle={event => setOpen(event.currentTarget.open)}><summary>File percakapan</summary>
+  return <details className="conversation-files" onToggle={event => { setOpen(event.currentTarget.open); if (!event.currentTarget.open) setRecording(false); }}><summary>File percakapan</summary>
     <p className="muted">Maksimum 10 MiB per file. Pilih lampiran untuk dikirim bersama pesan berikutnya. Maksimum empat lampiran: teks UTF-8 atau teks hasil ekstraksi PDF total 32 KiB dan gambar PNG/JPEG/WebP total 4 MiB. PDF scan memerlukan OCR di luar Briefsip. Pratinjau PDF hanya menampilkan teks, bukan tata letak atau gambar. Pilih model yang mendukung gambar.</p>
-    <form onSubmit={upload}><label>File<input ref={input} type="file" disabled={busy || loading || !!pending.current?.file || (archived && !pending.current)} onChange={event => setSelected(event.target.files?.[0] ?? null)} /></label><button disabled={busy || loading || (archived && !pending.current) || (!selected && !pending.current?.file)}>{busy ? 'Memproses...' : pending.current ? 'Coba unggahan lagi' : 'Unggah file'}</button></form>
+    {open && <AudioRecorder disabled={archived || busy || loading || !!pending.current || !!selected} onRecording={setRecording} onReady={file => { setSelected(file); if (input.current) input.current.value = ''; }} />}
+    {selected && <p className="muted">File dipilih: {selected.name} <button type="button" className="secondary" disabled={busy || !!pending.current} onClick={() => { if (busy || pending.current) return; setSelected(null); if (input.current) input.current.value = ''; }}>Batalkan pilihan file</button></p>}
+    <form onSubmit={upload}><label>File<input ref={input} type="file" disabled={recording || busy || loading || !!pending.current?.file || (archived && !pending.current)} onChange={event => setSelected(event.target.files?.[0] ?? null)} /></label><button disabled={recording || busy || loading || (archived && !pending.current) || (!selected && !pending.current?.file)}>{busy ? 'Memproses...' : pending.current ? 'Coba unggahan lagi' : 'Unggah file'}</button></form>
     {pending.current && <p className="notice">Unggahan {pending.current.name} belum terkonfirmasi. Pilih kembali file yang sama atau <button className="secondary" disabled={busy || loading} onClick={() => void checkPending()}>Periksa status unggahan</button></p>}
     {error && <p className="error" role="alert">{error} {!pending.current && <button className="secondary" disabled={busy || loading} onClick={() => setReload(value => value + 1)}>Muat ulang file</button>}</p>}
     {loading ? <p role="status">Memuat file...</p> : !error && files.length === 0 && <p className="muted">Belum ada file.</p>}

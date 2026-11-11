@@ -156,7 +156,8 @@ test('transcription rejects redirects and oversized output, and script grants ca
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-transcription-boundaries-'));
   let mode = 'redirect', calls = 0, redirected = 0;
   const provider = createServer(async (req, res) => {
-    for await (const _ of req) { /* Drain uploaded audio. */ }
+    const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(chunk);
+    assert(Buffer.concat(chunks).includes(Buffer.from('filename="audio.webm"')));
     if (req.url === '/unexpected') { redirected++; res.end('{}'); return; }
     calls++;
     if (mode === 'redirect') { res.writeHead(307, { Location: '/unexpected' }); res.end(); }
@@ -176,7 +177,7 @@ test('transcription rejects redirects and oversized output, and script grants ca
     assert.equal((await post(`/api/agents/${agent.id}/scripts`, { id: randomUUID(), revision: 0, enabled: true })).status, 200);
     const thread = await (await post(`/api/agents/${agent.id}/threads`, { id: randomUUID(), name: 'Bounds' })).json();
     const file = randomUUID(), files = `/api/threads/${thread.id}/files`, path = `${files}/${file}`, endpoint = `${path}?transcription=1`;
-    assert.equal((await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/octet-stream', 'X-File-Name': 'audio.wav' }, body: 'RIFF0000WAVEfixture' })).status, 200);
+    assert.equal((await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/octet-stream', 'X-File-Name': 'audio.wav' }, body: Buffer.from([0x1a,0x45,0xdf,0xa3,0x87,0x42,0x82,0x84,0x77,0x65,0x62,0x6d]) })).status, 200);
     const info = await (await fetch(app.origin + endpoint)).json();
     const script = `${app.origin}/api/scripts/agents/${agent.id}/threads/${thread.id}/files/${file}?transcription=1`;
     for (const method of ['GET', 'POST']) {

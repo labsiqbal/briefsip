@@ -43,8 +43,8 @@ function TranscriptionControls({ path, request }: { path: string; request: <T>(p
     <p>File dikirim ke provider transkripsi hanya setelah persetujuan. Provider dapat mengenakan biaya. Hasil disimpan sebagai file teks; tidak otomatis dikirim ke chat.</p>
     {error && <p role="alert" className="error">{error}</p>}
     {info && !info.provider && <p className="muted">Provider transkripsi belum dikonfigurasi pada host.</p>}
-    {info && !info.format && <p className="muted">File ini tidak dikenali sebagai WAV, MP3, FLAC, OGG, atau M4A/MP4. Batas file 10 MiB.</p>}
-    {info?.format === 'mp4' && <p className="notice">File M4A/MP4 dikirim utuh, termasuk video jika ada. Briefsip tidak memisahkan trek audio. Provider harus mendukung format dan codec file ini.</p>}
+    {info && !info.format && <p className="muted">File ini tidak dikenali sebagai WAV, MP3, FLAC, OGG, WebM, atau M4A/MP4. Batas file 10 MiB.</p>}
+    {(info?.format === 'mp4' || info?.format === 'webm') && <p className="notice">File M4A/MP4 atau WebM dikirim utuh, termasuk video jika ada. Briefsip tidak memisahkan trek audio. Provider harus mendukung format dan codec file ini.</p>}
     {operation?.status === 'pending' && <p role="status">Transkripsi sedang diproses. Menutup panel tidak membatalkan pengiriman.</p>}
     {operation?.status === 'pending' && <button type="button" className="secondary" disabled={cancelling} onClick={() => void cancel()}>Batalkan transkripsi</button>}
     {operation?.status === 'cancelled' && <p role="status">Transkripsi dibatalkan di Briefsip. Provider mungkin sudah memproses atau menagih permintaan. Percobaan baru dapat dikenai biaya lagi.</p>}
