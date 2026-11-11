@@ -16,7 +16,7 @@ test('CLI routine lists and histories stay within the selected granted agent', a
   const provider = createServer(async (req, res) => { if (req.method === 'GET') { res.statusCode = catalogFails ? 502 : 200; res.end(JSON.stringify({ data: [{ id: 'fixture' }, { id: 'fixture-alt' }] })); return; } let raw=''; for await (const chunk of req) raw+=chunk; prompts.push(JSON.parse(raw).messages.at(-1).content); res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: answer } }] })); });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
-  const options = { database: join(dir, 'db.sqlite'), scriptDirectory: directory, baseURL: `http://127.0.0.1:${address.port}/v1` };
+  const options = { database: join(dir, 'db.sqlite'), scriptDirectory: directory, baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: randomUUID() };
   let app = await startApp(options), drop = true;
   const requests: string[] = [];
   const proxy = createServer(async (req, res) => {
@@ -39,6 +39,10 @@ test('CLI routine lists and histories stay within the selected granted agent', a
   const a = await ui('/api/agents', { id: randomUUID(), name: 'Routine owner', model: 'fixture', instructions: 'Help' });
   const b = await ui('/api/agents', { id: randomUUID(), name: 'Other', model: 'fixture', instructions: 'Help' });
   for (const agent of [a,b]) await ui(`/api/agents/${agent.id}/scripts`, { id: randomUUID(), revision: 0, enabled: true });
+  const settings = await terminal(['provider', a.id]);
+  assert.equal(settings.exitCode, 0); assert.equal(settings.provider.model, 'fixture'); assert.equal(settings.provider.providerAccount, '');
+  assert.equal(settings.provider.accounts[0].configured, true); assert(!JSON.stringify(settings).includes(options.baseURL)); assert(!JSON.stringify(settings).includes(options.apiKey));
+  assert.equal((await terminal(['provider', a.id, '--wait'])).exitCode, 2);
   assert.deepEqual((await terminal(['models', a.id])).models, ['fixture', 'fixture-alt']);
   assert.equal((await terminal(['models', a.id, '--wait'])).exitCode, 2);
   catalogFails = true; assert.equal((await terminal(['models', a.id])).exitCode, 1); catalogFails = false;
@@ -82,6 +86,7 @@ test('CLI routine lists and histories stay within the selected granted agent', a
   assert.equal((await terminal(command)).exitCode, 5);
   assert.equal((await terminal(retry)).exitCode, 5);
   assert.equal((await terminal(['models', a.id])).exitCode, 5);
+  assert.equal((await terminal(['provider', a.id])).exitCode, 5);
 });
 
 test('CLI workflow discovery paginates and explicit approvals retain identity after lost responses', async t => {
