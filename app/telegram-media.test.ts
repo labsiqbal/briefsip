@@ -7,6 +7,7 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {startApp} from './server.ts';
+import {pdfFixture} from './pdf-fixture.ts';
 import {initializeTelegram,bindTelegram,recordTelegramUpdates,telegramApi,telegramInput} from './telegram.ts';
 import {telegramAgentStep,telegramLocal} from './telegram-bridge.ts';
 
@@ -34,12 +35,20 @@ test('Telegram media uploads once in requester thread and retries lost uploads/m
   const auth={Authorization:`Bearer ${token}`};let res=await fetch(`${app.origin}/api/scripts/agents/${other}/threads/${text.thread}/files`,{headers:auth});assert.equal(res.status,404);await res.text();
   res=await fetch(`${app.origin}/api/scripts/agents/${agent}/threads/${text.thread}/files/${files[0].id}`,{headers:auth});assert.equal(await res.text(),'Exact attachment contents');
   const photo=incoming('image',5,'/stop not-a-command');await settle(photo.turn);assert.notEqual(photo.thread,text.thread);assert.equal(captures.length,2);assert(JSON.stringify(captures[1]).includes('data:image/png;base64,'));assert.equal((await ui(`/api/threads/${photo.thread}/files`)).length,1);
-  const unsupported=incoming('binary');await settle(unsupported.turn);const tooLarge=incoming('image',4,'Too big',4*1024*1024+1);await settle(tooLarge.turn);const streamedLarge=incoming('oversize');await settle(streamedLarge.turn);assert.equal(captures.length,2);assert.equal(downloads.filter(x=>x==='image').length,1);assert(sent.some(row=>row.text.includes('Lampiran tidak dapat diproses')));
+  const unsupported=incoming('binary');await settle(unsupported.turn);const tooLarge=incoming('image',4,'Too big',10*1024*1024+1);await settle(tooLarge.turn);const streamedLarge=incoming('oversize');await settle(streamedLarge.turn);assert.equal(captures.length,2);assert.equal(downloads.filter(x=>x==='image').length,1);assert(sent.some(row=>row.text.includes('Lampiran tidak dapat diproses')));
   const fileId=randomUUID();let release!:()=>void;const uploadPath=`/api/scripts/agents/${agent}/threads/${text.thread}/files/${fileId}`;
   const streamed=new Promise<number|undefined>((resolve,reject)=>{const req=httpRequest(app.origin+uploadPath,{method:'POST',headers:{...auth,'Content-Type':'application/octet-stream','X-File-Name':'late.txt'}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});req.on('error',reject);req.write('first');release=()=>req.end('last');});
   await ui(`/api/agents/${agent}/scripts`,{id:randomUUID(),revision:1,enabled:false});release();assert.equal(await streamed,403);assert(!(await ui(`/api/threads/${text.thread}/files`)).some((file:any)=>file.id===fileId));
   const revoked=incoming('text',4,'/stop ordinary caption');await assert.rejects(telegramAgentStep(db,users,local,remote),/403/);assert.equal(downloads.filter(x=>x==='text').length,1);
   await ui(`/api/agents/${agent}/scripts`,{id:randomUUID(),revision:2,enabled:true});await ui(`/api/threads/${text.thread}/edit`,{id:randomUUID(),revision:1,name:'Archived',archived:true});await settle(revoked.turn);assert.equal(captures.length,2);assert(db.prepare('SELECT 1 FROM telegram_closed_threads WHERE id=?').get(text.thread),'Media caption failure must close archived thread mapping');const fresh=incoming('text');assert.notEqual(fresh.thread,text.thread);await settle(fresh.turn);assert.equal(captures.length,3);
+  const originalPdf=Buffer.concat([pdfFixture('TELEGRAM_PDF_TEXT'),Buffer.alloc(5*1024*1024,32)]);payloads.pdf=originalPdf;loseUpload=true;loseMessage=true;
+  const pdf=incoming('pdf');await assert.rejects(telegramAgentStep(db,users,local,remote),/Lost upload/);payloads.pdf=pdfFixture('CHANGED_PDF');db.close();db=new DatabaseSync(join(root,'telegram.sqlite'));initializeTelegram(db);
+  await assert.rejects(telegramAgentStep(db,users,local,remote),/Lost message/);await settle(pdf.turn);assert.equal(captures.length,4);assert(JSON.stringify(captures.at(-1)).includes('TELEGRAM_PDF_TEXT'));assert.equal(downloads.filter(id=>id==='pdf').length,1);
+  const pdfFile=db.prepare('SELECT upload FROM telegram_media WHERE turn=?').get(pdf.turn)!;const downloaded=await fetch(`${app.origin}/api/threads/${pdf.thread}/files/${pdfFile.upload}`);assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()),originalPdf);
+  payloads.badPdf=Buffer.from('%PDF-malformed');payloads.largePdf=pdfFixture('X'.repeat(500),70);
+  payloads.huge=Buffer.alloc(10*1024*1024+1);payloads.largeImage=Buffer.concat([png,Buffer.alloc(4*1024*1024)]);
+  for(const file of ['badPdf','largePdf','huge','largeImage']){const row=incoming(file);await settle(row.turn);}assert.equal(captures.length,4);
+  const afterFailure=incoming('pdf');await settle(afterFailure.turn);assert.equal(captures.length,5);assert(JSON.stringify(captures.at(-1)).includes('CHANGED_PDF'));
  }finally{db.close();await app.close();provider.closeAllConnections();telegram.closeAllConnections();await Promise.all([new Promise<void>(r=>provider.close(()=>r())),new Promise<void>(r=>telegram.close(()=>r()))]);rmSync(root,{recursive:true,force:true});}
 });
 

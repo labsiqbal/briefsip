@@ -7,6 +7,7 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {startApp} from './server.ts';
+import {pdfFixture} from './pdf-fixture.ts';
 import {initializeSlack,bindSlack,recordSlackEnvelope,slackApi} from './slack.ts';
 import {slackAgentStep} from './slack-runner.ts';
 import {localScript} from './script-client.ts';
@@ -37,6 +38,16 @@ test('Slack files snapshot bytes and retry uploads and turns without duplicate w
   const stopCaption=incoming(['FTEXT'],`!stop ${run}`)!;db.prepare('INSERT INTO slack_workflows VALUES (?,?,?,?,?)').run(run,stopCaption.channel,stopCaption.sender,stopCaption.root,workflow.id);await settle(stopCaption.turn);assert.equal((await ui(`/api/workflow-runs/${run}`)).status,'approval');assert.equal(captures.length,4);assert(JSON.stringify(captures.at(-1)).includes(`!stop ${run}`));
   const revoked=incoming(['FTEXT'])!;await ui(`/api/agents/${agent}/scripts`,{id:randomUUID(),revision:1,enabled:false});const before=downloads.length;await assert.rejects(slackAgentStep(db,users,local,remote));assert.equal(downloads.length,before);assert.equal(captures.length,4);
   await assert.rejects(remote('downloadFile',{url:'http://localhost:1234/private'}));await assert.rejects(remote('downloadFile',{url:'https://files.slack.com.example.com/private'}));assert(revoked);
+  await ui(`/api/agents/${agent}/scripts`,{id:randomUUID(),revision:2,enabled:true});await settle(revoked.turn);
+  const originalPdf=Buffer.concat([pdfFixture('SLACK_PDF_TEXT'),Buffer.alloc(5*1024*1024,32)]);bytes.FPDF=originalPdf;loseUpload=true;loseMessage=true;
+  const pdf=incoming(['FPDF'])!;await assert.rejects(slackAgentStep(db,users,local,remote),/Lost upload/);bytes.FPDF=pdfFixture('CHANGED_PDF');db.close();db=new DatabaseSync(join(root,'slack.sqlite'));initializeSlack(db);
+  await assert.rejects(slackAgentStep(db,users,local,remote),/Lost message/);await settle(pdf.turn);assert(JSON.stringify(captures.at(-1)).includes('SLACK_PDF_TEXT'));assert.equal(downloads.filter(id=>id==='FPDF').length,1);
+  const pdfFile=db.prepare('SELECT upload FROM slack_media WHERE turn=?').get(pdf.turn)!;const downloaded=await fetch(`${app.origin}/api/threads/${pdf.thread}/files/${pdfFile.upload}`);assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()),originalPdf);
+  const count=captures.length;bytes.FBADPDF=Buffer.from('%PDF-malformed');bytes.FBIGPDF=pdfFixture('X'.repeat(500),70);
+  bytes.FHUGE=Buffer.alloc(10*1024*1024+1);bytes.FLARGEIMAGE=Buffer.concat([png,Buffer.alloc(4*1024*1024)]);
+  for(const file of ['FBADPDF','FBIGPDF','FHUGE','FLARGEIMAGE']){const row=incoming([file])!;await settle(row.turn);}assert.equal(captures.length,count);
+  bytes.FHALF1=pdfFixture('X'.repeat(500),34);bytes.FHALF2=pdfFixture('Y'.repeat(500),34);await settle(incoming(['FHALF1','FHALF2'])!.turn);assert.equal(captures.length,count);
+  const afterFailure=incoming(['FPDF'])!;await settle(afterFailure.turn);assert.equal(captures.length,count+1);assert(JSON.stringify(captures.at(-1)).includes('CHANGED_PDF'));
  }finally{db.close();await app.close();provider.closeAllConnections();slack.closeAllConnections();await Promise.all([new Promise<void>(r=>provider.close(()=>r())),new Promise<void>(r=>slack.close(()=>r()))]);rmSync(root,{recursive:true,force:true});}
 });
 
