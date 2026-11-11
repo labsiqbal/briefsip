@@ -49,6 +49,8 @@ test('script approval binds agent and revision, preserves receipts and refuses r
     await request(permission,{id:randomUUID(),revision:2,enabled:true});
     const reject={id:randomUUID(),revision:next.revision,accepted:false};await request(path,reject,200,auth);
     assert.equal((await request(`/api/workflow-runs/${run.id}`)).status,'failed');assert.deepEqual((await request(list,undefined,200,auth)).approvals,[]);
+    await request(`/api/scripts/agents/${b.id}/workflow-runs/${run.id}/retry`,{id:randomUUID(),revision:next.revision},404,auth);
+    await request(`/api/scripts/agents/${a.id}/workflow-runs/${run.id}/retry`,{id:randomUUID(),revision:next.revision},409,auth);
     const deleted=streamed(path,reject);await request(`/api/workflows/${workflow.id}/delete`,{id:randomUUID(),revision:1});deleted.finish();assert.equal(await deleted.result,404);
   } finally {await app.close();rmSync(dir,{recursive:true,force:true});}
 });
