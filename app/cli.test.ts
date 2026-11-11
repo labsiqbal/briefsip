@@ -71,11 +71,17 @@ test('CLI workflow discovery paginates and explicit approvals retain identity af
   const options = { database: join(dir, 'db.sqlite'), scriptDirectory: directory };
   let app = await startApp(options), drop = false;
   const decisions: string[] = [];
+  let dropAction = '';
+  const actions: { path: string; body: string }[] = [];
   const proxy = createServer(async (req, res) => {
     let body = ''; for await (const chunk of req) body += chunk;
     const response = await fetch(app.origin + req.url, { method: req.method, headers: { Authorization: req.headers.authorization!, 'Content-Type': 'application/json' }, body: body || undefined });
     const bytes = Buffer.from(await response.arrayBuffer());
     if (req.url?.endsWith('/approve')) { decisions.push(body); if (drop) { drop = false; res.destroy(); return; } }
+    if (req.method === 'POST' && /\/(run|cancel)$/.test(req.url ?? '')) {
+      actions.push({ path: req.url!, body });
+      if (dropAction && req.url!.endsWith(dropAction) && response.ok) { dropAction = ''; res.destroy(); return; }
+    }
     res.writeHead(response.status, { 'Content-Type': 'application/json' }); res.end(bytes);
   });
   t.after(async () => { await app.close(); proxy.closeAllConnections(); await new Promise<void>(resolve => proxy.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); });
@@ -120,7 +126,13 @@ test('CLI workflow discovery paginates and explicit approvals retain identity af
   assert.equal((await ui(`/api/workflow-runs/${second.run}`)).status, 'failed');
   const start = ['workflow-run', owner.id, workflows[0], '1', 'CLI workflow', '--id', randomUUID(), '--wait', '--timeout', '5'];
   const uppercase = [...start]; uppercase[6] = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA'; assert.equal((await terminal(uppercase)).exitCode, 2);
+  dropAction = '/run';
+  const lostStart = await terminal(start); assert.equal(lostStart.exitCode, 5); assert.equal(lostStart.requestId, start[6]); assert.equal(actions.length, 1);
+  await app.close(); app = await startApp(options); useProxy();
   const started = await terminal(start); assert.equal(started.exitCode, 3); assert.equal(started.id, start[6]); assert.equal(started.turn.status, 'approval');
+  assert.equal(actions.length, 2); assert.deepEqual(actions[0], actions[1]);
+  const savedRuns = await ui(`/api/workflows/${workflows[0]}/runs`);
+  assert.equal(savedRuns.length, 2); assert.equal(savedRuns.filter((run: { id: string }) => run.id === started.id).length, 1);
   assert.equal((await terminal(start)).id, started.id);
   assert.equal((await terminal(['workflow-status', owner.id, started.id])).turn.status, 'approval');
   assert.equal((await terminal(['workflow-status', other.id, started.id])).exitCode, 1);
@@ -130,6 +142,11 @@ test('CLI workflow discovery paginates and explicit approvals retain identity af
   const next = [...start]; next[6] = randomUUID();
   const waiting = await terminal(next); assert.equal(waiting.exitCode, 3);
   const cancel = ['workflow-cancel', owner.id, waiting.id, String(waiting.turn.revision), '--id', randomUUID()];
+  dropAction = '/cancel';
+  const lostCancel = await terminal(cancel); assert.equal(lostCancel.exitCode, 5); assert.equal(lostCancel.id, waiting.id); assert.equal(lostCancel.requestId, cancel[5]);
+  const actionCount = actions.length;
+  await app.close(); app = await startApp(options); useProxy();
+  assert.equal((await terminal(cancel)).exitCode, 0); assert.equal(actions.length, actionCount + 1); assert.deepEqual(actions.at(-1), actions.at(-2));
   assert.equal((await terminal(cancel)).exitCode, 0); assert.equal((await terminal(cancel)).exitCode, 0);
   const cancelled = await terminal(['workflow-status', owner.id, waiting.id]); assert.equal(cancelled.exitCode, 1); assert.equal(cancelled.turn.status, 'cancelled');
   for (const bad of [['workflows', owner.id, '--wait'], ['approvals', owner.id, '--thread', randomUUID()], command.slice(0, 5), ['approve', owner.id, first.run, '1', 'maybe', '--id', randomUUID()]]) assert.equal((await terminal(bad)).exitCode, 2);
