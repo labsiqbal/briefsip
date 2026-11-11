@@ -23,7 +23,7 @@ test('CLI routine lists and histories stay within the selected granted agent', a
     let body = ''; for await (const chunk of req) body += chunk;
     const response = await fetch(app.origin + req.url, { method: req.method, headers: { Authorization: req.headers.authorization!, 'Content-Type': 'application/json' }, body: body || undefined });
     const bytes = Buffer.from(await response.arrayBuffer());
-    if ((req.url?.endsWith('/run') || req.url?.endsWith('/retry')) && req.method === 'POST') { requests.push(body); if (drop && response.ok) { drop = false; res.destroy(); return; } }
+    if ((req.url?.endsWith('/run') || req.url?.endsWith('/retry') || req.url?.endsWith('/provider')) && req.method === 'POST') { requests.push(body); if (drop && response.ok) { drop = false; res.destroy(); return; } }
     res.writeHead(response.status, { 'Content-Type': 'application/json' }); res.end(bytes);
   });
   await new Promise<void>(resolve => proxy.listen(0, '127.0.0.1', resolve));
@@ -81,12 +81,23 @@ test('CLI routine lists and histories stay within the selected granted agent', a
   assert.equal(recovered.turn.status, 'done'); const calls = prompts.length; assert.equal(calls, 3);
   await app.close(); app = await startApp(options); useProxy();
   assert.equal((await terminal(retry)).exitCode, 0); assert.equal(requests.at(-1), requests.at(-2)); assert.equal(prompts.length, calls);
+  const profileBefore = (await terminal(['provider', a.id])).provider;
+  const providerPayload = JSON.stringify({ revision: profileBefore.revision, model: 'fixture-alt', backupModel: '', providerAccount: '' });
+  const saveProvider = ['provider-save', a.id, providerPayload, '--id', randomUUID()];
+  drop = true;
+  const lostProvider = await terminal(saveProvider); assert.equal(lostProvider.exitCode, 5); assert.equal(lostProvider.requestId, saveProvider[4]);
+  await app.close(); app = await startApp(options); useProxy();
+  const updatedProvider = await terminal(saveProvider); assert.equal(updatedProvider.exitCode, 0); assert.equal(updatedProvider.id, a.id); assert.equal(updatedProvider.provider.model, 'fixture-alt'); assert.equal(updatedProvider.provider.name, a.name); assert.equal(updatedProvider.provider.instructions, a.instructions);
+  assert.equal(requests.at(-1), requests.at(-2));
+  assert.equal((await terminal(['provider-save', a.id, providerPayload, '--id', randomUUID()])).exitCode, 1);
+  assert.equal((await terminal(['provider-save', a.id, '{"apiKey":"forbidden"}', '--id', randomUUID()])).exitCode, 2);
   await ui(`/api/agents/${a.id}/scripts`, { id: randomUUID(), revision: 1, enabled: false });
   assert.equal((await terminal(['routine-runs', a.id, routine.id])).exitCode, 5);
   assert.equal((await terminal(command)).exitCode, 5);
   assert.equal((await terminal(retry)).exitCode, 5);
   assert.equal((await terminal(['models', a.id])).exitCode, 5);
   assert.equal((await terminal(['provider', a.id])).exitCode, 5);
+  assert.equal((await terminal(saveProvider)).exitCode, 5);
 });
 
 test('CLI workflow discovery paginates and explicit approvals retain identity after lost responses', async t => {
