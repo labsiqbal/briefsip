@@ -1,0 +1,119 @@
+{
+  "repository": "https://github.com/pingdotgg/t3code",
+  "revision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+  "license": "MIT",
+  "notice": "app/t3/NOTICE",
+  "runtimeDependencies": [],
+  "sourceEntries": [
+    {
+      "sourcePath": "apps/server/src/cloud/linkChecks.ts",
+      "symbols": [
+        "normalizeHostname",
+        "isLoopbackHostname",
+        "firstForwardedHeaderValue",
+        "requestAbsoluteUrl",
+        "hasForwardedAuthorityHeaders",
+        "endpointRequestPort",
+        "parseManagedEndpointLocalOrigin",
+        "canLinkHere",
+        "isAllowedEndpointOrigin",
+        "hasExactScope",
+        "hasBoundedCloudProofLifetime"
+      ],
+      "adaptation": "Native structural request/origin types; Briefsip local bootstrap subject; no T3 or Effect import.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "9576e368b40d72c61e3c6beb340d02b3678893266e6e20d9ce86c358724b96db",
+      "localPath": "app/t3/environment-link.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "work/rebuild/collaboration-check/t3-provenance.mjs"
+    },
+    {
+      "sourcePath": "apps/server/src/cloud/relayResponse.ts",
+      "symbols": [
+        "parseRetryAfterMillis",
+        "MAX_RELAY_RETRY_AFTER_MILLIS"
+      ],
+      "adaptation": "Native scalar parser; Effect relay errors excluded.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "020a5bade2b8c9be70d0940838404f9e168115dd3047c06b5a48bb0bda86d928",
+      "localPath": "app/t3/connection-registry.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "work/rebuild/collaboration-check/t3-provenance.mjs"
+    },
+    {
+      "sourcePath": "packages/contracts/src/environment.ts",
+      "symbols": [
+        "ORCHESTRATION_PROTOCOL_VERSION",
+        "ExecutionEnvironmentPlatformOs",
+        "ExecutionEnvironmentPlatformArch",
+        "ThreadEnvMode",
+        "threadRestartContinuation"
+      ],
+      "adaptation": "Native structural types and literals; Effect schemas excluded.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "ef7ab1d9f0b5f636490607f95653d517009eebc0d6d0e71d5eea069f7eb1ff35",
+      "localPath": "app/t3/environment-contract.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "work/rebuild/collaboration-check/t3-provenance.mjs"
+    },
+    {
+      "sourcePath": "packages/client-runtime/src/connection/model.ts",
+      "symbols": [
+        "NetworkStatus",
+        "ConnectionTransientReason",
+        "ConnectionBlockedReason",
+        "ConnectionHop",
+        "ConnectionFailureCause",
+        "ConnectionTransientError",
+        "ConnectionBlockedError",
+        "ConnectionAttemptError",
+        "SupervisorConnectionPhase",
+        "ConnectionAttemptStage",
+        "SupervisorConnectionState"
+      ],
+      "adaptation": "Native string unions/records; tagged errors are plain records with message equal to detail.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "b2ff91808ab24078dc667e7e14c1b8671fdde54ac9932e997e73a1560745f8dd",
+      "localPath": "app/t3/connection-registry.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "work/rebuild/collaboration-check/t3-provenance.mjs"
+    },
+    {
+      "sourcePath": "packages/contracts/src/relay.ts",
+      "symbols": [
+        "RelayEnvironmentEndpointFailure"
+      ],
+      "adaptation": "Eight endpoint-failure literals only; no module import.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "94ff0570c801adf8fe72ecf17f812e19d8100acc8aa13eece8c44c7265f5ce3b",
+      "localPath": "app/t3/connection-registry.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "work/rebuild/collaboration-check/t3-provenance.mjs"
+    }
+  ],
+  "licenseSha256": "935d8f2af0c703f9c39517ee57cc4930b19d02d533be930b63f0e82f93614b43",
+  "localFiles": {
+    "app/t3/connection-registry.ts": "a7bfb8ae826cd788584b6ac66ebc66bd79ff46bb492abfd5983ec2944a9ab2cd",
+    "app/t3/environment-contract.ts": "9cf05fc15e5f8e66448e96abf312445f22761cc8d8b6d23ba23031510f9f9717",
+    "app/t3/environment-link.ts": "eb842ebe6ea6403fd4adaef5016d1b2da277666051f63284f827a31ec5f9a19d"
+  },
+  "typeSubstitutions": {
+    "HttpServerRequest.HttpServerRequest": "LinkRequest with originalUrl and lowercase scalar headers",
+    "RelayManagedEndpointOrigin": "ManagedEndpointOrigin with localHttpHost and localHttpPort",
+    "Effect Schema.Literals": "native closed string union types",
+    "Effect TaggedError": "plain discriminated record factories ConnectionTransientError/ConnectionBlockedError; message=detail",
+    "ConnectionFailureFields": "ConnectionDiagnostics alias, retaining hop/via/failureCause/httpStatus/traceId",
+    "ExecutionEnvironmentCapabilities": "only optional boolean threadRestartContinuation retained; native decoder drops unknown names",
+    "desktop-bootstrap": "briefsip-local-bootstrap; current caller authentication still required"
+  }
+}
