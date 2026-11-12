@@ -170,6 +170,34 @@ test('provider binding stays explicit and avatar receipt hashes original bytes',
   } finally { f.close(); }
 });
 
+test('canonical setup admission rolls back every row and requires a ready explicit home binding', async () => {
+  const f=canonicalFixture(),{db,access,owner,home}=f,binding=randomUUID();
+  try{
+    db.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','setup','Setup','missing',1)").run(binding,home,owner.accountId);
+    const command=()=>f.command({setup:true,providerBinding:{bindingId:binding,expectedRevision:1}});
+    for(const readiness of ['missing','unreadable','unavailable']){
+      db.prepare('UPDATE provider_bindings SET readiness=? WHERE id=?').run(readiness,binding);
+      await assert.rejects(access.createAgent(owner,command()),code('provider_unavailable'));
+      assert.equal(db.prepare('SELECT count(*) n FROM agents').get()!.n,0);
+    }
+    db.prepare("UPDATE provider_bindings SET readiness='ready' WHERE id=?").run(binding);
+    const tables=['agents','agent_authority','agent_projects','agent_creations','turns','tasks','receipts','record_scopes'],counts=()=>tables.map(table=>db.prepare(`SELECT count(*) n FROM ${table}`).get()!.n),before=counts();
+    for(const table of ['turns','tasks','receipts']){
+      const failed=command();db.exec(`CREATE TRIGGER reject_setup BEFORE INSERT ON ${table} BEGIN SELECT RAISE(ABORT,'setup rollback'); END`);
+      await assert.rejects(access.createAgent(owner,failed),/setup rollback/);db.exec('DROP TRIGGER reject_setup');
+      assert.deepEqual(counts(),before);
+    }
+    db.prepare('UPDATE project_members SET grant_revision=3 WHERE project=? AND account=?').run(f.project,owner.accountId);
+    const input=command(),created=await access.createAgent(owner,input),task=db.prepare('SELECT * FROM tasks WHERE id=?').get(input.id)!;
+    assert.equal(created.status,201);assert.equal(task.state,'waiting_device');assert.equal(task.assignment_revision,3);assert.equal(task.provider_binding_id,binding);
+    assert.equal(db.prepare('SELECT profile_setup FROM turns WHERE id=?').get(input.id)!.profile_setup,1);
+    db.prepare("UPDATE provider_bindings SET readiness='unavailable',revision=2 WHERE id=?").run(binding);
+    db.prepare("UPDATE devices SET status='revoked',revision=2 WHERE id=?").run(home);
+    assert.deepEqual((await access.createAgent(owner,input)).data,created.data);
+    assert.equal(db.prepare('SELECT count(*) n FROM tasks').get()!.n,1);
+  }finally{f.close();}
+});
+
 test('second project participation and shared CAS isolate rules/capabilities and stale grants', async () => {
   const f = canonicalFixture(), { db, access, owner, member, foreign, project } = f;
   try {

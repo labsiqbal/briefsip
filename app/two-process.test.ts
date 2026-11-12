@@ -781,6 +781,30 @@ test('canonical teammate sends retain one scoped delivery on its fixed home afte
   }finally{globalThis.fetch=originalFetch;await runtime.close();await remote.close();await f.close();}
 });
 
+test('canonical setup creation retains one restricted task and creation receipt after lost response and restart',async()=>{
+  const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'setup-home.sqlite'),server:f.origin(),development:true,entry:keys.entry}),originalFetch=globalThis.fetch;
+  try{
+    await runtime.enroll(f.jwt());const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),agent=randomUUID(),binding=randomUUID();
+    assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Setup'})).status,201);
+    const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    try{db.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','synthetic-setup','Synthetic','ready',1)").run(binding,home.id,db.prepare('SELECT account FROM devices WHERE id=?').get(home.id)!.account);}finally{db.close();}
+    const command={requestId:agent,id:agent,name:'New agent',model:'fixture',backupModel:'',instructions:'Build a careful research profile.',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:{bindingId:binding,expectedRevision:1},setup:true};
+    globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith('/api/agents')){assert.equal(response.status,201,await response.clone().text());await response.body?.cancel();throw new Error('Lost setup creation');}return response;};
+    await assert.rejects(f.send('/api/agents',command),/Lost setup creation/);globalThis.fetch=originalFetch;
+    await f.restart();const retry=await f.send('/api/agents',command);assert.equal(retry.status,200,JSON.stringify(retry.body));
+    const lookup=await f.send(`/api/tasks/${agent}`),detail=lookup.body.data;assert.equal(detail.state,'waiting_device');assert.equal(lookup.body.receipt.requestId,agent);assert.equal(lookup.body.receipt.payloadDigest,retry.body.receipt.payloadDigest);
+    const connection=runtime.connect();await until(()=>connection.state().phase==='connected');const owned=await runtime.startTask(agent),context=await runtime.taskContext(agent,owned.ownership,owned.revision);
+    const tools=context.snapshot.tools as {function:{name:string;parameters?:{required:string[]}}}[];assert.deepEqual(tools.map(row=>row.function.name).sort(),['ask_user','edit_profile']);assert.deepEqual(tools.find(row=>row.function.name==='edit_profile')!.function.parameters!.required,['revision','name','instructions']);
+    assert.match(JSON.stringify(context.snapshot.conversation),/Jangan mulai mengerjakan tugas bisnisnya/);assert.match(JSON.stringify(context.snapshot.conversation),/Build a careful research profile/);
+    let providerCalls=0;const providerId=randomUUID();await runtime.executeAction({taskId:agent,actionId:providerId,sequence:0,actionKind:'provider',ownership:owned.ownership,payload:{prompt:'Synthetic setup request'},context,grantRevision:1,bindingId:binding,bindingRevision:1},async()=>{providerCalls++;return {name:'Research partner',instructions:'Compare sources and cite evidence.'};});
+    const current=(await f.send(`/api/tasks/${agent}`)).body.data,next=await runtime.taskContext(agent,owned.ownership,current.revision),editId=randomUUID();
+    await runtime.executeAction({taskId:agent,actionId:editId,sequence:1,actionKind:'canonical',ownership:owned.ownership,payload:{toolCall:{id:editId,function:{name:'edit_profile',arguments:JSON.stringify({revision:1,name:'Research partner',instructions:'Compare sources and cite evidence.'})}},expectedRevision:next.snapshot.taskRevision+1},context:next,grantRevision:1},()=>assert.fail('Host effect'));
+    assert.equal((await f.send('/api/agents',command)).status,200);assert.equal(providerCalls,1);
+    const saved=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    try{assert.equal(saved.prepare('SELECT count(*) n FROM tasks WHERE id=?').get(agent)!.n,1);assert.equal(saved.prepare('SELECT count(*) n FROM turns WHERE id=?').get(agent)!.n,1);assert.equal(saved.prepare('SELECT count(*) n FROM receipts WHERE request_id=?').get(agent)!.n,1);assert.equal(saved.prepare('SELECT name FROM agents WHERE id=?').get(agent)!.name,'Research partner');}finally{saved.close();}
+  }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}
+});
+
 test('canonical caller interruption retains one notice and fences remote deliveries after lost result and restart',async()=>{
   const f=await fixture(),keys=memoryKeys(),remoteKeys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'caller.sqlite'),server:f.origin(),development:true,entry:keys.entry}),remote=openDeviceRuntime({database:join(f.dir,'worker.sqlite'),server:f.origin(),development:true,entry:remoteKeys.entry}),originalFetch=globalThis.fetch;
   let releaseEffect:(()=>void)|undefined;

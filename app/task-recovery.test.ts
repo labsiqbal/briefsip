@@ -824,6 +824,31 @@ for(const kind of ['direct','side'] as const) test(`canonical provider settings 
   }finally{f.close();}
 });
 
+test('canonical setup restricts host actions and forced tools, and requires a complete profile edit',async()=>{
+  const f=await fixture(['edit_profile','ask_user','read_history']),binding=randomUUID(),agent=randomUUID(),token=randomBytes(32).toString('base64url');
+  try{
+    f.db.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','setup','Setup','ready',1)").run(binding,f.home,f.owner.accountId);
+    await f.access.createAgent(f.owner,{requestId:agent,id:agent,name:'Setup',model:'fixture',backupModel:'',instructions:'Research',threadLimit:2,projectId:f.project,homeDeviceId:f.home,expectedProjectRevision:1,expectedHomeDeviceRevision:1,providerBinding:{bindingId:binding,expectedRevision:1},setup:true});
+    const acquired=f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId:agent,previousExecutorGeneration:0,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token),ownership=parseOwnership(acquired.data.ownership);
+    const context=f.tasks.context(f.principal,agent,{requestId:randomUUID(),ownership,expectedTaskRevision:2},token).data as ActionContext,ref=context.snapshotRef;
+    for(const actionKind of ['read','compute','local','browser']){
+      const actionId=randomUUID(),payloadDigest=sha256('forbidden'),intentDigest=digestCommand([agent,actionId,0,ownership,payloadDigest,actionKind,ref.snapshotId,ref.digest,null,null,1,null,null,null]);
+      assert.throws(()=>f.tasks.prepare(f.principal,agent,actionId,{requestId:randomUUID(),sequence:0,ownership,payloadDigest,actionKind,contextSnapshotId:ref.snapshotId,contextDigest:ref.digest,grantRevision:1,expectedTaskRevision:2,journalSequence:1,intentDigest},token),code('execution_denied'));
+    }
+    const forbidden={id:randomUUID(),function:{name:'read_history',arguments:'{}'}};
+    assert.throws(()=>f.tasks.contextMutations(f.principal,agent,{requestId:randomUUID(),actionId:randomUUID(),ownership,toolCall:forbidden,expectedRevision:2,payloadDigest:canonicalToolDigest({toolCall:forbidden,expectedRevision:2})},token),code('execution_denied'));
+    let sequence=0;
+    const edit=(args:unknown)=>{
+      const revision=Number(f.tasks.lookup(f.owner,agent).data.revision),context=f.tasks.context(f.principal,agent,{requestId:randomUUID(),ownership,expectedTaskRevision:revision},token).data as ActionContext,ref=context.snapshotRef,actionId=randomUUID(),toolCall={id:actionId,function:{name:'edit_profile',arguments:JSON.stringify(args)}},expectedRevision=revision+1,payloadDigest=canonicalToolDigest({toolCall,expectedRevision}),intentDigest=digestCommand([agent,actionId,sequence,ownership,payloadDigest,'canonical',ref.snapshotId,ref.digest,null,null,1,null,null,null]);
+      f.tasks.prepare(f.principal,agent,actionId,{requestId:randomUUID(),sequence,ownership,payloadDigest,actionKind:'canonical',contextSnapshotId:ref.snapshotId,contextDigest:ref.digest,grantRevision:1,expectedTaskRevision:revision,journalSequence:sequence+1,intentDigest},token);
+      f.tasks.commit(f.principal,agent,actionId,{requestId:randomUUID(),ownership,intentDigest,expectedTaskRevision:revision,journalSequence:sequence+1},token);sequence++;
+      return f.tasks.contextMutations(f.principal,agent,{requestId:randomUUID(),actionId,ownership,toolCall,payloadDigest,expectedRevision},token).data.resultContent as Record<string,unknown>;
+    };
+    assert.equal(edit({revision:1,name:'Incomplete'}).status,400);assert.equal(edit({revision:1,instructions:'Incomplete'}).status,400);
+    assert.deepEqual(edit({revision:1,name:'Research partner',instructions:'Cite evidence'}),{name:'Research partner',instructions:'Cite evidence',revision:2});
+  }finally{f.close();}
+});
+
 for(const kind of ['direct','side'] as const) test(`canonical profile edit in ${kind} keeps atomic CAS errors and channel privacy`, async () => {
   const f=await fixture(['edit_profile']);
   try{
