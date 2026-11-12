@@ -6,7 +6,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { initializeCanonicalSchema } from './schema.ts';
-import { restoreWorkspace, workspaceSnapshot } from './backup.ts';
+import { prepareRestoreBootstrap, issueRestoreSession, requireRestoreSession, restoreWorkspace, workspaceSnapshot } from './backup.ts';
 import { createProjectAccess } from './project-access.ts';
 import { createMailWorker } from './mail.ts';
 import { startApp } from './server.ts';
@@ -125,4 +125,35 @@ test('operator CLI restores a canonical backup read-only without script credenti
     const legacy=join(dir,'legacy.sqlite'),old=new DatabaseSync(legacy);old.exec("CREATE TABLE briefsip_backup(format TEXT,version INTEGER); INSERT INTO briefsip_backup VALUES ('briefsip-workspace',1)");old.close();
     const invalid=join(dir,'invalid.sqlite');await assert.rejects(cli(['restore','--read-only',legacy,'--db',invalid],undefined),/backup canonical/);assert(!existsSync(invalid));
   }finally{backup.cleanup();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('local restore bootstrap requires recorded owner identity and issues expiring ingest-only proof',()=>{
+  const db=new DatabaseSync(':memory:');initializeCanonicalSchema(db);
+  const owner:HumanActor={accountId:randomUUID(),issuer:'https://fixture.example',subject:'owner',sessionId:'owner-session',expiresAt:Date.now()+60000};
+  const stranger={...owner,accountId:randomUUID(),subject:'stranger'},auth={requireCurrent:(a:HumanActor)=>a};
+  for(const actor of [owner,stranger])db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(actor.accountId,actor.issuer,actor.subject,Date.now());
+  const access=createProjectAccess(db,{...auth,verifiedMailboxes:async()=>[]},()=>{throw new Error('No mail');});
+  access.createProject(owner,{requestId:randomUUID(),id:randomUUID(),name:'Owner only'});
+  access.createProject(stranger,{requestId:randomUUID(),id:randomUUID(),name:'Other account project'});
+  db.exec('CREATE TABLE briefsip_backup_authority(generation TEXT,owner_account TEXT)');
+  db.prepare('INSERT INTO briefsip_backup_authority SELECT generation,? FROM authority_state').run(owner.accountId);
+  const denied=(error:unknown)=>error instanceof ProtocolError&&error.code==='recovery_session_invalid';
+  try{
+    assert.throws(()=>prepareRestoreBootstrap(db),denied);
+    db.exec("UPDATE authority_state SET serving_state='read_only_recovery'");
+    const gate=prepareRestoreBootstrap(db);
+    assert.throws(()=>requireRestoreSession(db,auth,owner,gate.bootstrap,gate.recoveryGeneration),denied);
+    assert.throws(()=>issueRestoreSession(db,auth,stranger,gate.bootstrap),denied);
+    assert.throws(()=>issueRestoreSession(db,auth,{...owner,issuer:'https://wrong.example'},gate.bootstrap),denied);
+    const proof=issueRestoreSession(db,auth,owner,gate.bootstrap);
+    assert.equal(requireRestoreSession(db,auth,owner,proof.session,proof.recoveryGeneration).serving_state,'read_only_recovery');
+    assert.throws(()=>issueRestoreSession(db,auth,owner,gate.bootstrap),denied);
+    assert.throws(()=>requireRestoreSession(db,auth,stranger,proof.session,proof.recoveryGeneration),denied);
+    assert.throws(()=>requireRestoreSession(db,auth,owner,proof.session,randomUUID()),denied);
+    const state=db.prepare('SELECT * FROM authority_state').get()!;assert(!JSON.stringify(state).includes(proof.session));assert(!JSON.stringify(state).includes(gate.bootstrap));
+    db.exec('UPDATE authority_state SET recovery_expires_at=0');
+    assert.throws(()=>requireRestoreSession(db,auth,owner,proof.session,proof.recoveryGeneration),denied);
+    assert.equal(db.prepare('SELECT count(*) n FROM tasks').get()!.n,0);
+    assert.equal(db.prepare('SELECT serving_state FROM authority_state').get()!.serving_state,'read_only_recovery');
+  }finally{db.close();}
 });

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createClerkClient } from '@clerk/backend';
 import { generateKeyPairSync, sign, randomUUID, randomBytes } from 'node:crypto';
-import { mkdtempSync, rmSync, readFileSync, existsSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, existsSync, statSync, writeFileSync, renameSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer, request as httpRequest } from 'node:http';
@@ -11,7 +11,8 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { startCanonicalApp } from './server.ts';
 import { openDeviceRuntime } from './device-runtime.ts';
-import type { AuthConfig } from './auth.ts';
+import { createAuth, type AuthConfig } from './auth.ts';
+import { prepareRestoreBootstrap, issueRestoreSession, restoreWorkspace, workspaceSnapshot } from './backup.ts';
 import { canonicalJson, ProtocolError, digestCommand, sha256 } from './protocol.ts';
 import { parseOwnership } from './task-recovery.ts';
 import sharp from 'sharp';
@@ -34,7 +35,15 @@ async function fixture() {
     const response = await fetch(app.origin + path, { method, headers: { Authorization: `Bearer ${jwt(subject)}`, Origin: auth.origin, Connection: 'close', 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': body?.requestId ?? randomUUID() }, ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
   };
-  return { dir, jwt, send, origin: () => app.origin, async restart() { const port = new URL(app.origin).port; await app.close(); app = await startCanonicalApp({ ...options, port: Number(port) }); }, close: async () => { await app.close(); rmSync(dir, { recursive: true, force: true }); } };
+  return { dir, jwt, send, origin: () => app.origin, async restart() { const port = new URL(app.origin).port; await app.close(); app = await startCanonicalApp({ ...options, port: Number(port) }); }, async restoreFrom(backup:string){
+    const port=Number(new URL(app.origin).port);await app.close();renameSync(options.database,options.database+'.unavailable');
+    restoreWorkspace(backup,options.database,{canonicalOnly:true});
+    const restored=new DatabaseSync(options.database);
+    try{
+      const verifier=createAuth(restored,auth,clerk),actor=await verifier.authenticate(new Request(auth.origin+'/api/session',{headers:{Authorization:`Bearer ${jwt()}`}}));
+      const gate=prepareRestoreBootstrap(restored);return issueRestoreSession(restored,verifier,actor,gate.bootstrap);
+    }finally{restored.close();app=await startCanonicalApp({...options,port});}
+  }, close: async () => { await app.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 async function until(check: () => boolean | Promise<boolean>, timeout = 10000) {
   const deadline = Date.now() + timeout;
@@ -469,4 +478,47 @@ test('owner recovers revoked-device journal through HTTP without device session 
 
     const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{assert.equal(db.prepare('SELECT count(*) n FROM task_results').get()!.n,1);assert.equal(db.prepare('SELECT count(*) n FROM recovery_imports').get()!.n,1);assert(!JSON.stringify(db.prepare('SELECT * FROM receipts').all()).includes(proof));}finally{db.close();}
   }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}
+});
+
+test('disaster recovery imports original host result without original server and never enables dispatch',async()=>{
+  const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry});
+  const originalFetch=globalThis.fetch;let calls=0,backup:Awaited<ReturnType<typeof workspaceSnapshot>>|undefined;
+  try{
+    await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
+    const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),agent=randomUUID();
+    assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Disaster recovery'})).status,201);
+    assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Agent',model:'fixture',backupModel:'',instructions:'Recover',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
+    const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'Original action',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
+    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
+    const owned=await runtime.startTask(taskId),context=await runtime.taskContext(taskId,owned.ownership,owned.revision),actionId=randomUUID();
+    globalThis.fetch=async(url,init)=>{if(String(url).endsWith('/reconcile'))throw new Error('Original server lost');return originalFetch(url,init);};
+    await assert.rejects(runtime.executeAction({taskId,actionId,sequence:0,actionKind:'read',ownership:owned.ownership,payload:{operation:'one call'},context,grantRevision:1},()=>{calls++;return{text:'Saved on original host'};}),/Original server lost/);
+    await connection.stop();globalThis.fetch=originalFetch;
+    const source=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{backup=await workspaceSnapshot(source);}finally{source.close();}
+    const proof=await f.restoreFrom(backup.file);
+    assert.notEqual(proof.recoveryGeneration,owned.ownership.authorityGeneration);
+    const send=async(kind:string,body:ReturnType<typeof runtime.exportRecovery>,session=proof.session,subject='user_owner')=>{
+      const response=await fetch(f.origin()+`/api/tasks/${taskId}/recovery-${kind}`,{method:'POST',headers:{Authorization:`Bearer ${f.jwt(subject)}`,Origin:f.origin(),Connection:'close','Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':body.requestId,'X-Briefsip-Recovery':session},body:JSON.stringify(body)});
+      return{status:response.status,body:await response.json()};
+    };
+    const metadata=runtime.exportRecovery(taskId,[actionId],randomUUID(),proof.recoveryGeneration);
+    assert.equal((await send('import',metadata,Buffer.alloc(32).toString('base64url'))).status,403);
+    assert.equal((await send('import',metadata,proof.session,'user_other')).status,403);
+    const imported=await send('import',metadata);assert.equal(imported.status,200,JSON.stringify(imported.body));assert.equal(imported.body.data.state,'result_missing');
+    await f.restart();const content=runtime.exportRecovery(taskId,[actionId],randomUUID(),proof.recoveryGeneration,true);
+    const published=await send('results',content);assert.equal(published.status,200,JSON.stringify(published.body));assert.equal((await send('results',content)).status,200);
+    await assert.rejects(runtime.startTask(taskId),error=>error instanceof ProtocolError&&error.code==='device_offline');
+    assert.equal((await f.send(`/api/tasks/${taskId}`)).status,503);
+    const restored=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    try{
+      assert.equal(restored.prepare('SELECT serving_state FROM authority_state').get()!.serving_state,'read_only_recovery');
+      assert.deepEqual(JSON.parse(String(restored.prepare('SELECT content_json FROM task_results WHERE action=?').get(actionId)!.content_json)),{text:'Saved on original host'});
+      assert.equal(restored.prepare('SELECT count(*) n FROM task_results').get()!.n,1);
+      assert.equal(restored.prepare('SELECT stopped FROM execution_owners').get()!.stopped,1);
+      assert.equal(restored.prepare('SELECT status FROM devices').get()!.status,'revoked');
+      restored.exec('UPDATE authority_state SET recovery_expires_at=0');
+      assert.equal((await send('results',content)).status,403);
+    }finally{restored.close();}
+    assert.equal(calls,1);
+  }finally{globalThis.fetch=originalFetch;backup?.cleanup();await runtime.close();await f.close();}
 });
