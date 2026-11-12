@@ -26,8 +26,8 @@ test('schema rollback leaves no partial v1 tables', () => {
 test('device schema stays separate from canonical authority and is idempotent', () => {
   const db = new DatabaseSync(':memory:');
   initializeDeviceSchema(db); initializeDeviceSchema(db);
-  assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 2);
-  for (const table of ['device_state', 'device_resource_bindings', 'device_provider_bindings']) assert(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(table));
+  assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 3);
+  for (const table of ['device_state', 'device_resource_bindings', 'device_provider_bindings', 'device_journal', 'device_outbox']) assert(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(table));
   assert.equal(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='projects'").get(), undefined);
   db.close();
 });
