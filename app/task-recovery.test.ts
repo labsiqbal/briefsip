@@ -707,7 +707,7 @@ test('canonical skills retain installed pins, owner mappings, private boundaries
 });
 
 test('canonical routine tools keep private project mappings, pagination and flow scope', async () => {
-  const f=await fixture(['list_routines','read_routine']);
+  const f=await fixture(['list_routines','read_routine','set_routine_flow']);
   try{
     const task=f.command();f.tasks.admit(f.owner,task);const token=randomBytes(32).toString('base64url');
     const acquired=f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId:task.requestId,previousExecutorGeneration:0,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token),ownership=parseOwnership(acquired.data.ownership);let sequence=0;
@@ -740,7 +740,50 @@ test('canonical routine tools keep private project mappings, pagination and flow
     const room=f.command({payload:{v:1,kind:'channel',channelId:channel,routing:'assigned',message:{text:'Forced read',files:[]}},expectedRevisions:{project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1,channel:1}});f.tasks.admit(f.owner,room);
     const owned=f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId:room.requestId,previousExecutorGeneration:0,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token),roomOwnership=parseOwnership(owned.data.ownership),context=f.tasks.context(f.principal,room.requestId,{requestId:randomUUID(),ownership:roomOwnership,expectedTaskRevision:2},token);
     assert.deepEqual((context.data.snapshot as {tools:unknown[]}).tools,[]);
-    const toolCall={id:randomUUID(),function:{name:'list_routines',arguments:'{}'}},expectedRevision=2;assert.throws(()=>f.tasks.contextMutations(f.principal,room.requestId,{requestId:randomUUID(),actionId:randomUUID(),ownership:roomOwnership,toolCall,expectedRevision,payloadDigest:canonicalToolDigest({toolCall,expectedRevision})},token),code('execution_denied'));
+    for(const name of ['list_routines','set_routine_flow']){
+      const toolCall={id:randomUUID(),function:{name,arguments:'{}'}},expectedRevision=2;assert.throws(()=>f.tasks.contextMutations(f.principal,room.requestId,{requestId:randomUUID(),actionId:randomUUID(),ownership:roomOwnership,toolCall,expectedRevision,payloadDigest:canonicalToolDigest({toolCall,expectedRevision})},token),code('execution_denied'));
+    }
+  }finally{f.close();}
+});
+
+test('canonical routine edits require project agents and assignment, preserve CAS and roll back with result failure', async () => {
+  const f=await fixture(['set_routine_flow']),recipient=randomUUID(),outsider=randomUUID(),other=randomUUID(),routine=randomUUID(),privateRoutine=randomUUID(),foreignRoutine=randomUUID();
+  try{
+    f.access.createProject(f.owner,{requestId:randomUUID(),id:other,name:'Other'});
+    for(const [id,projectId] of [[recipient,f.project],[outsider,other]])await f.access.createAgent(f.owner,{requestId:id,id,name:'Recipient',model:'fixture',backupModel:'',instructions:'Continue',threadLimit:2,projectId,homeDeviceId:f.home,expectedProjectRevision:1,expectedHomeDeviceRevision:1,providerBinding:null});
+    f.db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,f.agent);
+    f.db.exec('CREATE TABLE routines(id TEXT PRIMARY KEY,agent TEXT,name TEXT,prompt TEXT,next_at INTEGER,interval_ms INTEGER,enabled INTEGER,revision INTEGER,trigger TEXT); CREATE TABLE routine_flows(routine TEXT PRIMARY KEY,graph TEXT,revision INTEGER); CREATE TABLE flow_runs(root_turn TEXT PRIMARY KEY,graph TEXT);');
+    for(const [id,project,visibility] of [[routine,f.project,'project'],[privateRoutine,f.project,'owner'],[foreignRoutine,other,'project']]){
+      f.db.prepare("INSERT INTO routines VALUES (?,?,'Routine','Prompt',123456,NULL,1,1,'schedule')").run(id,f.agent);
+      f.db.prepare("INSERT INTO record_scopes VALUES ('routines',?,?,?,?, 'agent',?)").run(JSON.stringify([id]),f.owner.accountId,project,visibility,f.agent);
+    }
+    const task=f.command();f.tasks.admit(f.member,task);const token=randomBytes(32).toString('base64url');
+    const acquired=f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId:task.requestId,previousExecutorGeneration:0,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token),ownership=parseOwnership(acquired.data.ownership);let sequence=0,pending:unknown;
+    const run=(args:unknown)=>{
+      const expectedTaskRevision=Number(f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(task.requestId)!.revision),context=f.tasks.context(f.principal,task.requestId,{requestId:randomUUID(),ownership,expectedTaskRevision},token),ref=context.data.snapshotRef as {snapshotId:string;digest:string},actionId=randomUUID(),toolCall={id:actionId,function:{name:'set_routine_flow',arguments:JSON.stringify(args)}},expectedRevision=expectedTaskRevision+1,payloadDigest=canonicalToolDigest({toolCall,expectedRevision});
+      const intentDigest=digestCommand([task.requestId,actionId,sequence,ownership,payloadDigest,'canonical',ref.snapshotId,ref.digest,null,null,1,null,null,null]);
+      f.tasks.prepare(f.principal,task.requestId,actionId,{requestId:randomUUID(),sequence,ownership,payloadDigest,actionKind:'canonical',contextSnapshotId:ref.snapshotId,contextDigest:ref.digest,grantRevision:1,expectedTaskRevision,journalSequence:sequence+1,intentDigest},token);
+      f.tasks.commit(f.principal,task.requestId,actionId,{requestId:randomUUID(),ownership,intentDigest,expectedTaskRevision,journalSequence:sequence+1},token);sequence++;
+      pending={requestId:randomUUID(),actionId,ownership,toolCall,payloadDigest,expectedRevision};return f.tasks.contextMutations(f.principal,task.requestId,pending,token).data.resultContent as Record<string,unknown>;
+    };
+    for(const id of [privateRoutine,foreignRoutine,randomUUID()])assert.match(String(run({id,revision:0,links:[]}).error),/not found/);
+    for(const revision of [-1,1.5,Number.MAX_SAFE_INTEGER,Number.MAX_SAFE_INTEGER+1,null])assert.equal(run({id:routine,revision,links:[]}).status,400);
+    for(const links of [[{from:f.agent,to:f.agent}],[{from:f.agent,to:recipient},{from:recipient,to:f.agent}],[{from:f.agent,to:recipient},{from:f.agent,to:recipient}],null])assert.equal(run({id:routine,revision:0,links}).status,400);
+    for(const to of [outsider,recipient,randomUUID()])assert.equal(run({id:routine,revision:0,links:[{from:f.agent,to}]}).status,404);
+    assert.equal(f.db.prepare('SELECT count(*) n FROM routine_flows').get()!.n,0);
+    f.db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,recipient);
+    f.db.exec("CREATE TRIGGER fail_flow_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'fixture_result_fail'); END;");
+    assert.throws(()=>run({id:routine,revision:0,links:[{from:f.agent,to:recipient}]}),/fixture_result_fail/);
+    assert.equal(f.db.prepare('SELECT count(*) n FROM routine_flows').get()!.n,0);assert.equal(f.db.prepare("SELECT count(*) n FROM record_scopes WHERE table_name='routine_flows'").get()!.n,0);
+    f.db.exec('DROP TRIGGER fail_flow_result');
+    const saved=f.tasks.contextMutations(f.principal,task.requestId,pending,token),graph=(saved.data.resultContent as {graph:unknown}).graph;
+    assert.deepEqual(saved.data.resultContent,{graph:{root:f.agent,nodes:[f.agent,recipient],links:[{from:f.agent,to:recipient}]},revision:1});
+    const mapping=f.db.prepare("SELECT account,project,visibility FROM record_scopes WHERE table_name='routine_flows'").get()!;assert.deepEqual({...mapping},{account:f.owner.accountId,project:f.project,visibility:'project'});
+    f.db.prepare('INSERT INTO flow_runs VALUES (?,?)').run(task.requestId,JSON.stringify(graph));
+    assert.equal(run({id:routine,revision:0,links:[]}).status,409);assert.deepEqual(run({id:routine,revision:1,links:[]}),{graph:{root:f.agent,nodes:[f.agent],links:[]},revision:2});assert.deepEqual(JSON.parse(String(f.db.prepare('SELECT graph FROM flow_runs').get()!.graph)),graph);
+    assert.deepEqual(f.tasks.contextMutations(f.principal,task.requestId,pending,token).data.resultContent,{graph:{root:f.agent,nodes:[f.agent],links:[]},revision:2});
+    f.db.prepare('UPDATE tasks SET state=\'cancelled\',revision=revision+1 WHERE id=?').run(task.requestId);assert.deepEqual(f.tasks.contextMutations(f.principal,task.requestId,pending,token).data.resultContent,{graph:{root:f.agent,nodes:[f.agent],links:[]},revision:2});
+    assert.equal(f.db.prepare('SELECT revision FROM routine_flows WHERE routine=?').get(routine)!.revision,2);
   }finally{f.close();}
 });
 

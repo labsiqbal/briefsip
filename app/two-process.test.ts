@@ -734,7 +734,7 @@ test('canonical provider settings use home binding metadata and recover saved re
   }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}
 });
 
-test('canonical routine reads isolate project configuration and recover original flow after lost reply', async () => {
+test('canonical routine reads and edits isolate project configuration and recover original flow after lost reply', async () => {
   const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry}),originalFetch=globalThis.fetch;
   try{
     await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
@@ -767,5 +767,7 @@ test('canonical routine reads isolate project configuration and recover original
     const list=await run('list_routines',{});assert.deepEqual(list.routines.map((row:{id:string})=>row.id),[routine]);assert.equal(list.next_after,null);assert(!JSON.stringify(list).includes('WEBHOOK_SECRET'));
     const read=await run('read_routine',{id:routine},true);assert.equal(read.prompt,'Original prompt');assert.deepEqual(read.flow,{graph,revision:1});assert(!JSON.stringify(read).includes('WEBHOOK_SECRET'));
     assert.match((await run('read_routine',{id:hidden})).error,/not found/);
+    const edit=await run('set_routine_flow',{id:routine,revision:2,links:[]},true);assert.deepEqual(edit,{graph,revision:3});
+    const final=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{assert.equal(final.prepare('SELECT revision FROM routine_flows WHERE routine=?').get(routine)!.revision,4);assert.equal(final.prepare('SELECT count(*) n FROM task_results WHERE task=?').get(taskId)!.n,4);}finally{final.close();}
   }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}
 });
