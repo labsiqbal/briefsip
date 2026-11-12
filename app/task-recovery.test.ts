@@ -16,7 +16,7 @@ import { initializeFlows } from './flow-store.ts';
 import { createProjectAccess } from './project-access.ts';
 import { createDevices, parseLinkChallenge, deviceLinkBody, descriptorBody, type DeviceDescriptor } from './devices.ts';
 import { canonicalJson, digestCommand, sha256, ProtocolError } from './protocol.ts';
-import { canonicalToolDigest, createTaskRecovery, parseTaskCommand, parseOwnership, journalEntryBody, stopEvidenceBody, type StopEvidence, type JournalEntry } from './task-recovery.ts';
+import { canonicalToolDigest, createTaskRecovery, parseTaskCommand, parseOwnership, journalEntryBody, stopEvidenceBody, recoveryEnvelopeBody, type StopEvidence, type JournalEntry } from './task-recovery.ts';
 
 async function fixture() {
   const db = new DatabaseSync(':memory:'); initializeCanonicalSchema(db);
@@ -607,4 +607,140 @@ test('context counts projected result bytes once, including escaped JSON content
     assert.deepEqual((context.data.snapshot as any).toolJournal[0].result,resultContent);
     assert(Buffer.byteLength(canonicalJson(context.data)) < 8*1024*1024);
   } finally { f.close(); }
+});
+
+function recoveryEnvelope(f: Awaited<ReturnType<typeof preparedTask>>, requestId: string, recoveryGeneration: string, resultContent?: unknown) {
+  const action=f.db.prepare('SELECT * FROM task_actions WHERE id=?').get(f.actionId)!;
+  const resultDigest=resultContent===undefined?undefined:sha256(canonicalJson(resultContent));
+  const entry: JournalEntry={taskId:f.taskId,actionId:f.actionId,sequence:Number(action.sequence),executorGeneration:f.ownership.executorGeneration,actionKind:String(action.action_kind),payloadDigest:f.payloadDigest,intentDigest:String(action.intent_digest),grantRevision:Number(action.grant_revision),state:resultContent===undefined?'uncertain':'reported',effectStatus:resultContent===undefined?'unknown':'known',journalSequence:2,...(resultDigest?{resultDigest,resultRef:{v:1,taskId:f.taskId,actionId:f.actionId,digest:resultDigest,size:Buffer.byteLength(canonicalJson(resultContent)),encoding:'canonical-json-v1'}}:{})};
+  const signed={...entry,signature:sign(null,Buffer.from(JSON.stringify(journalEntryBody(f.principal.authorityGeneration,f.home,1,entry))),f.signing.privateKey).toString('base64url')};
+  const envelope={v:1,sourceAuthority:f.principal.authorityGeneration,sourceDeviceId:f.home,sourceDeviceGeneration:1,watermark:2,entries:[signed],stopEvidence:[]};
+  const signature=sign(null,Buffer.from(JSON.stringify(['briefsip-recovery-envelope-v1',recoveryGeneration,requestId,envelope.sourceAuthority,envelope.sourceDeviceId,envelope.sourceDeviceGeneration,envelope.watermark,envelope.entries.map(e=>[e.taskId,e.actionId,e.sequence,e.executorGeneration,e.actionKind,e.payloadDigest,e.intentDigest,e.bindingId??null,e.bindingRevision??null,e.grantRevision,e.state,e.effectStatus,e.resultDigest??null,e.resultRef??null,e.journalSequence,e.signature]),[]])),f.signing.privateKey).toString('base64url');
+  return {requestId,recoveryGeneration,envelope,signature,...(resultContent===undefined?{}:{resultContent})};
+}
+
+test('owner recovery session is scoped, nonsecret on retry, rotates and requires revoked original source', async()=>{
+  const f=await preparedTask();
+  try {
+    f.tasks.commit(f.principal,f.taskId,f.actionId,f.commit,f.token);
+    const command={requestId:randomUUID(),expectedAuthorityGeneration:f.principal.authorityGeneration,sourceDeviceId:f.home,sourceDeviceGeneration:1};
+    assert.throws(()=>f.tasks.recoverySession(f.owner,f.taskId,command),code('recovery_source_current'));
+    f.devices.revoke(f.owner,f.home,{requestId:randomUUID(),expectedRevision:1});
+    assert.throws(()=>f.tasks.recoverySession(f.member,f.taskId,command),code('owner_required'));
+    const first=f.tasks.recoverySession(f.owner,f.taskId,command),session=String(first.data.session);
+    assert.match(session,/^[A-Za-z0-9_-]{43}$/);
+    const retry=f.tasks.recoverySession(f.owner,f.taskId,command);
+    assert.equal(retry.data.session,undefined);assert.equal(retry.data.recoveryGeneration,first.data.recoveryGeneration);
+    assert(!JSON.stringify(f.db.prepare('SELECT * FROM receipts').all()).includes(session));
+    const next=f.tasks.recoverySession(f.owner,f.taskId,{...command,requestId:randomUUID()});
+    assert.notEqual(next.data.recoveryGeneration,first.data.recoveryGeneration);
+    assert.equal(f.db.prepare('SELECT revoked FROM recovery_evidence_sessions WHERE id_hash=?').get(sha256(session))!.revoked,1);
+    assert.equal(f.db.prepare('SELECT serving_state FROM authority_state').get()!.serving_state,'active');
+  } finally {f.close();}
+});
+
+test('revoked-source recovery retains signed evidence then publishes exact content without granting execution',async()=>{
+  const f=await preparedTask();
+  try {
+    f.tasks.commit(f.principal,f.taskId,f.actionId,f.commit,f.token);
+    f.devices.revoke(f.owner,f.home,{requestId:randomUUID(),expectedRevision:1});
+    const command={requestId:randomUUID(),expectedAuthorityGeneration:f.principal.authorityGeneration,sourceDeviceId:f.home,sourceDeviceGeneration:1};
+    const session=f.tasks.recoverySession(f.owner,f.taskId,command),proof=String(session.data.session),generation=String(session.data.recoveryGeneration),content={text:'Recovered original result'};
+    const request=recoveryEnvelope(f,randomUUID(),generation,content),{resultContent,...metadata}=request;
+    const imported=f.tasks.recoveryImport(f.owner,f.taskId,metadata,proof);
+    assert.equal(imported.data.state,'result_missing');
+    assert.equal(f.db.prepare('SELECT count(*) n FROM task_results').get()!.n,0);
+    assert.deepEqual(f.tasks.recoveryImport(f.owner,f.taskId,metadata,proof),imported);
+    assert.throws(()=>f.tasks.recoveryImport(f.owner,f.taskId,{...metadata,signature:Buffer.alloc(64).toString('base64url')},proof),code('recovery_signature_invalid'));
+    const resultRequest=recoveryEnvelope(f,randomUUID(),generation,content);
+    const published=f.tasks.recoveryResults(f.owner,f.taskId,resultRequest,proof);
+    assert.deepEqual(f.tasks.recoveryResults(f.owner,f.taskId,resultRequest,proof),published);
+    assert.deepEqual((f.tasks.lookup(f.owner,f.taskId).data.results as any[])[0].content,content);
+    assert.equal(f.db.prepare('SELECT count(*) n FROM task_results').get()!.n,1);
+    assert.equal(f.db.prepare('SELECT status FROM devices WHERE id=?').get(f.home)!.status,'revoked');
+    assert.equal(f.db.prepare('SELECT executor_generation FROM execution_owners WHERE task=?').get(f.taskId)!.executor_generation,1);
+    assert.throws(()=>f.tasks.acquire(f.principal,{requestId:randomUUID()},f.token));
+    assert.throws(()=>f.tasks.recoveryImport(f.owner,f.taskId,{...metadata,requestId:randomUUID()},proof),code('recovery_signature_invalid'));
+  }finally{f.close();}
+});
+
+
+test('recovery rejects replacement keys, expired proof, changed content and non-advancing watermarks atomically',async()=>{
+  const f=await preparedTask();
+  try{
+    f.tasks.commit(f.principal,f.taskId,f.actionId,f.commit,f.token);
+    f.devices.revoke(f.owner,f.home,{requestId:randomUUID(),expectedRevision:1});
+    const session=f.tasks.recoverySession(f.owner,f.taskId,{requestId:randomUUID(),expectedAuthorityGeneration:f.principal.authorityGeneration,sourceDeviceId:f.home,sourceDeviceGeneration:1}),proof=String(session.data.session),generation=String(session.data.recoveryGeneration),content={text:'Signed result'};
+    const request=recoveryEnvelope(f,randomUUID(),generation,content);
+    const other=generateKeyPairSync('ed25519');
+    f.db.prepare('UPDATE devices SET signing_public_key=? WHERE id=?').run(other.publicKey.export({format:'der',type:'spki'}).toString('base64url'),f.home);
+    const substituted=structuredClone(request);
+    substituted.envelope.entries[0].signature=sign(null,Buffer.from(JSON.stringify(journalEntryBody(f.principal.authorityGeneration,f.home,1,substituted.envelope.entries[0]))),other.privateKey).toString('base64url');
+    substituted.signature=sign(null,Buffer.from(JSON.stringify(recoveryEnvelopeBody(generation,substituted.requestId,substituted.envelope))),other.privateKey).toString('base64url');
+    assert.throws(()=>f.tasks.recoveryResults(f.owner,f.taskId,substituted,proof),code('recovery_signature_invalid'));
+    assert.throws(()=>f.tasks.recoveryResults(f.owner,f.taskId,{...request,resultContent:{text:'Altered'}},proof),code('result_digest_mismatch'));
+    const unknown=structuredClone(request);unknown.envelope.entries[0].actionId=randomUUID();unknown.envelope.entries[0].resultRef!.actionId=unknown.envelope.entries[0].actionId;
+    unknown.envelope.entries[0].signature=sign(null,Buffer.from(JSON.stringify(journalEntryBody(f.principal.authorityGeneration,f.home,1,unknown.envelope.entries[0]))),f.signing.privateKey).toString('base64url');
+    unknown.signature=sign(null,Buffer.from(JSON.stringify(recoveryEnvelopeBody(generation,unknown.requestId,unknown.envelope))),f.signing.privateKey).toString('base64url');
+    assert.throws(()=>f.tasks.recoveryResults(f.owner,f.taskId,unknown,proof),code('recovery_provenance_invalid'));
+    assert.equal(f.db.prepare('SELECT count(*) n FROM recovery_imports').get()!.n,0);
+    assert.equal(f.db.prepare('SELECT count(*) n FROM task_results').get()!.n,0);
+    const result=f.tasks.recoveryResults(f.owner,f.taskId,request,proof);
+    const repeat=recoveryEnvelope(f,randomUUID(),generation,content);delete repeat.resultContent;
+    assert.throws(()=>f.tasks.recoveryImport(f.owner,f.taskId,repeat,proof),code('recovery_conflict'));
+    const changed=recoveryEnvelope(f,randomUUID(),generation,{text:'Different signed result'});
+    changed.envelope.watermark=3;changed.envelope.entries[0].journalSequence=3;
+    changed.envelope.entries[0].signature=sign(null,Buffer.from(JSON.stringify(journalEntryBody(f.principal.authorityGeneration,f.home,1,changed.envelope.entries[0]))),f.signing.privateKey).toString('base64url');
+    changed.signature=sign(null,Buffer.from(JSON.stringify(recoveryEnvelopeBody(generation,changed.requestId,changed.envelope))),f.signing.privateKey).toString('base64url');
+    assert.throws(()=>f.tasks.recoveryResults(f.owner,f.taskId,changed,proof),code('recovery_conflict'));
+    f.db.prepare('UPDATE recovery_evidence_sessions SET expires_at=0 WHERE id_hash=?').run(sha256(proof));
+    assert.throws(()=>f.tasks.recoveryResults(f.owner,f.taskId,request,proof),code('recovery_session_invalid'));
+    f.db.prepare('UPDATE recovery_evidence_sessions SET expires_at=? WHERE id_hash=?').run(Date.now()+60000,sha256(proof));
+    f.db.prepare('UPDATE authority_state SET generation=?').run(randomUUID());
+    assert.throws(()=>f.tasks.recoveryResults(f.owner,f.taskId,request,proof),code('recovery_session_invalid'));
+    assert.equal(f.db.prepare('SELECT count(*) n FROM recovery_imports').get()!.n,1);
+    assert.equal(f.db.prepare('SELECT receipt_id FROM task_reports').get()!.receipt_id,result.receipt.requestId);
+  }finally{f.close();}
+});
+
+test('recovery stop proof preserves original journal signature and rejects altered runner evidence',async()=>{
+  const f=await preparedTask();
+  try{
+    f.tasks.commit(f.principal,f.taskId,f.actionId,f.commit,f.token);f.devices.revoke(f.owner,f.home,{requestId:randomUUID(),expectedRevision:1});
+    const session=f.tasks.recoverySession(f.owner,f.taskId,{requestId:randomUUID(),expectedAuthorityGeneration:f.principal.authorityGeneration,sourceDeviceId:f.home,sourceDeviceGeneration:1}),proof=String(session.data.session),generation=String(session.data.recoveryGeneration);
+    const entry:JournalEntry={taskId:f.taskId,actionId:f.actionId,sequence:0,executorGeneration:1,actionKind:'read',payloadDigest:f.payloadDigest,intentDigest:f.commit.intentDigest,grantRevision:1,state:'not_sent',effectStatus:'none',journalSequence:2};
+    const signed={...entry,signature:sign(null,Buffer.from(JSON.stringify(journalEntryBody(f.principal.authorityGeneration,f.home,1,entry))),f.signing.privateKey).toString('base64url')};
+    const stop:StopEvidence={v:1,sourceAuthority:f.principal.authorityGeneration,taskId:f.taskId,actionId:f.actionId,sourceDeviceId:f.home,sourceDeviceGeneration:1,executorGeneration:1,bootId:f.lockProof.bootId,processId:f.lockProof.processId,processStart:f.lockProof.processStart,lockId:f.lockProof.lockId,observationBootId:f.lockProof.bootId,observation:'process_exited',children:[],observedAt:Date.now(),journalDigest:sha256(JSON.stringify(journalEntryBody(f.principal.authorityGeneration,f.home,1,entry))),signature:''};
+    stop.signature=sign(null,Buffer.from(JSON.stringify(stopEvidenceBody(stop))),f.signing.privateKey).toString('base64url');
+    const envelope={v:1,sourceAuthority:f.principal.authorityGeneration,sourceDeviceId:f.home,sourceDeviceGeneration:1,watermark:2,entries:[signed],stopEvidence:[stop]},requestId=randomUUID();
+    const request={requestId,recoveryGeneration:generation,envelope,signature:sign(null,Buffer.from(JSON.stringify(recoveryEnvelopeBody(generation,requestId,envelope))),f.signing.privateKey).toString('base64url')};
+    const altered=structuredClone(request);altered.envelope.stopEvidence[0].processStart='1000';
+    assert.throws(()=>f.tasks.recoveryImport(f.owner,f.taskId,altered,proof),code('recovery_signature_invalid'));
+    const result=f.tasks.recoveryImport(f.owner,f.taskId,request,proof);
+    assert.equal(f.db.prepare('SELECT state FROM task_actions WHERE id=?').get(f.actionId)!.state,'not_sent');
+    assert.equal(JSON.parse(String(f.db.prepare('SELECT envelope_json FROM recovery_imports').get()!.envelope_json)).entries[0].signature,signed.signature);
+    assert.deepEqual(f.tasks.recoveryImport(f.owner,f.taskId,request,proof),result);
+  }finally{f.close();}
+});
+
+test('late content completes a saved recovery batch without lowering newer evidence watermark',async()=>{
+  const f=await preparedTask();
+  try{
+    f.tasks.commit(f.principal,f.taskId,f.actionId,f.commit,f.token);f.devices.revoke(f.owner,f.home,{requestId:randomUUID(),expectedRevision:1});
+    const session=f.tasks.recoverySession(f.owner,f.taskId,{requestId:randomUUID(),expectedAuthorityGeneration:f.principal.authorityGeneration,sourceDeviceId:f.home,sourceDeviceGeneration:1}),proof=String(session.data.session),generation=String(session.data.recoveryGeneration),content={text:'Late content'};
+    const old=recoveryEnvelope(f,randomUUID(),generation,content),{resultContent,...metadata}=old;
+    f.tasks.recoveryImport(f.owner,f.taskId,metadata,proof);
+    const newer=recoveryEnvelope(f,randomUUID(),generation,content);delete newer.resultContent;
+    newer.envelope.watermark=3;newer.envelope.entries[0].journalSequence=3;
+    newer.envelope.entries[0].signature=sign(null,Buffer.from(JSON.stringify(journalEntryBody(f.principal.authorityGeneration,f.home,1,newer.envelope.entries[0]))),f.signing.privateKey).toString('base64url');
+    newer.signature=sign(null,Buffer.from(JSON.stringify(recoveryEnvelopeBody(generation,newer.requestId,newer.envelope))),f.signing.privateKey).toString('base64url');
+    f.tasks.recoveryImport(f.owner,f.taskId,newer,proof);
+    const late=recoveryEnvelope(f,randomUUID(),generation,content),published=f.tasks.recoveryResults(f.owner,f.taskId,late,proof);
+    assert.equal(published.receipt.recordId,f.actionId);
+    assert.equal(f.db.prepare('SELECT journal_sequence FROM task_reports').get()!.journal_sequence,3);
+    assert.equal(JSON.parse(String(f.db.prepare('SELECT payload_json FROM task_reports').get()!.payload_json)).journalSequence,3);
+    assert.equal(f.db.prepare('SELECT max(watermark) n FROM recovery_imports').get()!.n,3);
+    assert.equal(f.db.prepare('SELECT count(*) n FROM recovery_imports').get()!.n,2);
+    assert.deepEqual((f.tasks.lookup(f.owner,f.taskId).data.results as any[])[0].content,content);
+  }finally{f.close();}
 });

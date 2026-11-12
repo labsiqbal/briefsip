@@ -420,3 +420,53 @@ test('canonical transfer survives lost RPC reply and canonical restart without d
     const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{assert.equal(db.prepare('SELECT count(*) n FROM tasks WHERE logical_turn=?').get(taskId)!.n,2);assert.equal(db.prepare('SELECT count(*) n FROM task_results WHERE action=?').get(actionId)!.n,1);}finally{db.close();}
   } finally {globalThis.fetch=originalFetch;await home.close();await target.close();await f.close();}
 });
+
+test('owner recovers revoked-device journal through HTTP without device session or repeated effect',async()=>{
+  const f=await fixture(),keys=memoryKeys(),database=join(f.dir,'recover-device.sqlite');
+  let runtime=openDeviceRuntime({database,server:f.origin(),development:true,entry:keys.entry});
+  const originalFetch=globalThis.fetch;let calls=0;
+  try{
+    await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
+    const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),agent=randomUUID();
+    assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Recovery'})).status,201);
+    assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Agent',model:'fixture',backupModel:'',instructions:'Recover',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
+    const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'One effect',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
+    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
+    const owned=await runtime.startTask(taskId),context=await runtime.taskContext(taskId,owned.ownership,owned.revision),actionId=randomUUID();
+    globalThis.fetch=async(url,init)=>{if(String(url).endsWith('/reconcile'))throw new Error('Report offline');return originalFetch(url,init);};
+    await assert.rejects(runtime.executeAction({taskId,actionId,sequence:0,actionKind:'read',ownership:owned.ownership,payload:{operation:'one effect'},context,grantRevision:1},()=>{calls++;return{text:'Original output'};}),/Report offline/);
+    globalThis.fetch=originalFetch;
+    const current=(await f.send('/api/devices')).body.data[0];assert.equal((await f.send(`/api/devices/${home.id}/revoke`,{requestId:randomUUID(),expectedRevision:current.revision})).status,200);
+    await connection.stop();
+    const start={requestId:randomUUID(),expectedAuthorityGeneration:owned.ownership.authorityGeneration,sourceDeviceId:home.id,sourceDeviceGeneration:owned.ownership.deviceGeneration};
+    const session=await f.send(`/api/tasks/${taskId}/recovery-session`,start);assert.equal(session.status,201,JSON.stringify(session.body));
+    assert.equal((await f.send(`/api/tasks/${taskId}/recovery-session`,start)).body.data.session,undefined);
+    const generation=session.body.data.recoveryGeneration,proof=session.body.data.session;
+    const send=async(operation:string,body:ReturnType<typeof runtime.exportRecovery>,origin=f.origin(),subject='user_owner')=>{
+      const response=await fetch(f.origin()+`/api/tasks/${taskId}/recovery-${operation}`,{method:'POST',headers:{Authorization:`Bearer ${f.jwt(subject)}`,Origin:origin,'Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':body.requestId,'X-Briefsip-Recovery':proof,Connection:'close'},body:JSON.stringify(body)});
+      return{status:response.status,body:await response.json()};
+    };
+    const metadata=runtime.exportRecovery(taskId,[actionId],randomUUID(),generation);
+    assert.equal((await send('import',metadata,'https://evil.example')).status,403);
+    assert.equal((await send('import',metadata,f.origin(),'user_other')).status,404);
+    const imported=await send('import',metadata);assert.equal(imported.status,200,JSON.stringify(imported.body));assert.equal(imported.body.data.state,'result_missing');
+    await f.restart();
+    const result=runtime.exportRecovery(taskId,[actionId],randomUUID(),generation,true);
+    assert.deepEqual(result.envelope.entries,metadata.envelope.entries);
+    const published=await send('results',result);assert.equal(published.status,200,JSON.stringify(published.body));assert.equal((await send('results',result)).status,200);
+    assert.deepEqual((await f.send(`/api/tasks/${taskId}`)).body.data.results[0].content,{text:'Original output'});
+    assert.equal((await f.send('/api/devices')).body.data[0].status,'revoked');assert.equal(calls,1);
+    const rotated=await runtime.enroll(f.jwt(),'rotate');assert(rotated.generation>owned.ownership.deviceGeneration);
+    const historical=runtime.exportRecovery(taskId,[actionId],randomUUID(),generation,true);
+    assert.deepEqual(historical.envelope.entries,metadata.envelope.entries);
+    assert.equal((await send('results',historical)).status,200);
+    const local=new DatabaseSync(database);let signingRef:string;
+    try{signingRef=String(local.prepare('SELECT signing_ref FROM device_enrollment_keys WHERE device_generation=?').get(owned.ownership.deviceGeneration)!.signing_ref);}finally{local.close();}
+    const keyName=[...keys.values.keys()].find(name=>name.endsWith('/'+signingRef))!,privateKey=keys.values.get(keyName)!;
+    keys.values.delete(keyName);
+    assert.throws(()=>runtime.exportRecovery(taskId,[actionId],randomUUID(),generation,true),error=>error instanceof ProtocolError&&error.code==='device_key_unavailable');
+    keys.values.set(keyName,privateKey);
+
+    const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{assert.equal(db.prepare('SELECT count(*) n FROM task_results').get()!.n,1);assert.equal(db.prepare('SELECT count(*) n FROM recovery_imports').get()!.n,1);assert(!JSON.stringify(db.prepare('SELECT * FROM receipts').all()).includes(proof));}finally{db.close();}
+  }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}
+});
