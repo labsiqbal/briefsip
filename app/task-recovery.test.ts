@@ -706,6 +706,44 @@ test('canonical skills retain installed pins, owner mappings, private boundaries
   }finally{f.close();}
 });
 
+test('canonical routine tools keep private project mappings, pagination and flow scope', async () => {
+  const f=await fixture(['list_routines','read_routine']);
+  try{
+    const task=f.command();f.tasks.admit(f.owner,task);const token=randomBytes(32).toString('base64url');
+    const acquired=f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId:task.requestId,previousExecutorGeneration:0,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token),ownership=parseOwnership(acquired.data.ownership);let sequence=0;
+    const run=(name:string,args:unknown)=>{
+      const expectedTaskRevision=Number(f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(task.requestId)!.revision),context=f.tasks.context(f.principal,task.requestId,{requestId:randomUUID(),ownership,expectedTaskRevision},token),ref=context.data.snapshotRef as {snapshotId:string;digest:string},actionId=randomUUID(),toolCall={id:actionId,function:{name,arguments:JSON.stringify(args)}},expectedRevision=expectedTaskRevision+1,payloadDigest=canonicalToolDigest({toolCall,expectedRevision});
+      const intentDigest=digestCommand([task.requestId,actionId,sequence,ownership,payloadDigest,'canonical',ref.snapshotId,ref.digest,null,null,1,null,null,null]);
+      f.tasks.prepare(f.principal,task.requestId,actionId,{requestId:randomUUID(),sequence,ownership,payloadDigest,actionKind:'canonical',contextSnapshotId:ref.snapshotId,contextDigest:ref.digest,grantRevision:1,expectedTaskRevision,journalSequence:sequence+1,intentDigest},token);
+      f.tasks.commit(f.principal,task.requestId,actionId,{requestId:randomUUID(),ownership,intentDigest,expectedTaskRevision,journalSequence:sequence+1},token);sequence++;
+      return f.tasks.contextMutations(f.principal,task.requestId,{requestId:randomUUID(),actionId,ownership,toolCall,payloadDigest,expectedRevision},token).data.resultContent as Record<string,unknown>;
+    };
+    assert.deepEqual(run('list_routines',{}),{routines:[],next_after:null});
+    f.db.exec('CREATE TABLE routines(id TEXT PRIMARY KEY,agent TEXT,name TEXT,prompt TEXT,next_at INTEGER,interval_ms INTEGER,enabled INTEGER,revision INTEGER,trigger TEXT,secret TEXT); CREATE TABLE routine_flows(routine TEXT PRIMARY KEY,graph TEXT,revision INTEGER);');
+    const other=randomUUID();f.access.createProject(f.owner,{requestId:randomUUID(),id:other,name:'Other'});
+    const seed=(project=f.project,account=f.owner.accountId,mapped=true,agent=f.agent)=>{
+      const id=randomUUID();f.db.prepare("INSERT INTO routines VALUES (?,?,'Routine','Routine prompt',123456,NULL,1,1,'schedule','SECRET_MUST_NOT_LEAK')").run(id,agent);
+      if(mapped)f.db.prepare("INSERT INTO record_scopes VALUES ('routines',?,?,?,'owner','agent',?)").run(JSON.stringify([id]),account,project,agent);return id;
+    };
+    const visible=Array.from({length:11},()=>seed()).sort(),foreign=seed(other),privateRoutine=seed(f.project,f.member.accountId),unmapped=seed(f.project,f.owner.accountId,false);
+    const foreignAgent=seed(f.project,f.owner.accountId,true,randomUUID());
+    const page=run('list_routines',{});assert.deepEqual((page.routines as {id:string}[]).map(row=>row.id),visible.slice(0,10));assert.equal(page.next_after,visible[9]);assert(!JSON.stringify(page).includes('Routine prompt'));assert(!JSON.stringify(page).includes('SECRET_MUST_NOT_LEAK'));
+    const next=run('list_routines',{after:page.next_after});assert.deepEqual((next.routines as {id:string}[]).map(row=>row.id),visible.slice(10));assert.equal(next.next_after,null);
+    const plain=run('read_routine',{id:visible[0]});assert.equal(plain.prompt,'Routine prompt');assert.deepEqual(plain.flow,{graph:{root:f.agent,nodes:[f.agent],links:[]},revision:0});assert(!JSON.stringify(plain).includes('SECRET_MUST_NOT_LEAK'));
+    const graph={root:f.agent,nodes:[f.agent],links:[]};f.db.prepare('INSERT INTO routine_flows VALUES (?,?,2)').run(visible[0],JSON.stringify(graph));assert.match(String(run('read_routine',{id:visible[0]}).error),/not found/);
+    f.db.prepare("INSERT INTO record_scopes VALUES ('routine_flows',?,?,?,'owner','agent',?)").run(JSON.stringify([visible[0]]),f.owner.accountId,other,f.agent);assert.match(String(run('read_routine',{id:visible[0]}).error),/not found/);
+    f.db.prepare("UPDATE record_scopes SET project=? WHERE table_name='routine_flows'").run(f.project);assert.deepEqual(run('read_routine',{id:visible[0]}).flow,{graph,revision:2});
+    f.db.prepare("UPDATE record_scopes SET account=? WHERE table_name='routine_flows'").run(f.member.accountId);assert.match(String(run('read_routine',{id:visible[0]}).error),/not found/);
+    for(const id of [foreign,privateRoutine,unmapped,foreignAgent])assert.match(String(run('read_routine',{id}).error),/not found/);
+    for(const [name,args] of [['list_routines',{after:'bad'}],['read_routine',{id:'bad'}]] as const)assert.equal(run(name,args).status,400);
+    const channel=randomUUID();f.db.prepare("INSERT INTO channels(id,name,instructions,lead) VALUES (?,'Room','',?)").run(channel,f.agent);f.db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel,f.agent);f.db.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(JSON.stringify([channel]),f.owner.accountId,f.project,channel);
+    const room=f.command({payload:{v:1,kind:'channel',channelId:channel,routing:'assigned',message:{text:'Forced read',files:[]}},expectedRevisions:{project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1,channel:1}});f.tasks.admit(f.owner,room);
+    const owned=f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId:room.requestId,previousExecutorGeneration:0,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token),roomOwnership=parseOwnership(owned.data.ownership),context=f.tasks.context(f.principal,room.requestId,{requestId:randomUUID(),ownership:roomOwnership,expectedTaskRevision:2},token);
+    assert.deepEqual((context.data.snapshot as {tools:unknown[]}).tools,[]);
+    const toolCall={id:randomUUID(),function:{name:'list_routines',arguments:'{}'}},expectedRevision=2;assert.throws(()=>f.tasks.contextMutations(f.principal,room.requestId,{requestId:randomUUID(),actionId:randomUUID(),ownership:roomOwnership,toolCall,expectedRevision,payloadDigest:canonicalToolDigest({toolCall,expectedRevision})},token),code('execution_denied'));
+  }finally{f.close();}
+});
+
 test('context counts projected result bytes once, including escaped JSON content', async () => {
   const f = await preparedTask();
   try {
