@@ -744,6 +744,43 @@ test('canonical agent directory isolates projects and recovers exact roster afte
   }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}
 });
 
+test('canonical teammate sends retain one scoped delivery on its fixed home after lost reply and restart', async () => {
+  const f=await fixture(),keys=memoryKeys(),remoteKeys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'sender.sqlite'),server:f.origin(),development:true,entry:keys.entry}),remote=openDeviceRuntime({database:join(f.dir,'recipient.sqlite'),server:f.origin(),development:true,entry:remoteKeys.entry}),originalFetch=globalThis.fetch;
+  try{
+    await runtime.enroll(f.jwt());await remote.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
+    const homes=(await f.send('/api/devices')).body.data,home=homes.find((row:{id:string})=>row.id===runtime.deviceId()),otherHome=homes.find((row:{id:string})=>row.id===remote.deviceId()),project=randomUUID(),agent=randomUUID(),peer=randomUUID();
+    assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Messages'})).status,201);
+    for(const [id,device] of [[agent,home],[peer,otherHome]])assert.equal((await f.send('/api/agents',{requestId:id,id,name:id===agent?'Sender':'Recipient',model:'fixture',backupModel:'',instructions:'Project teammate',threadLimit:2,projectId:project,homeDeviceId:device.id,expectedProjectRevision:1,expectedHomeDeviceRevision:device.revision,providerBinding:null})).status,201);
+    const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'PRIVATE_SENDER_HISTORY',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
+    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
+    const owned=await runtime.startTask(taskId),context=await runtime.taskContext(taskId,owned.ownership,owned.revision),actionId=randomUUID();
+    const input={taskId,actionId,sequence:0,actionKind:'canonical' as const,ownership:owned.ownership,payload:{toolCall:{id:actionId,function:{name:'send_message',arguments:JSON.stringify({recipients:[peer],text:'Only this text',expects_reply:false})}},expectedRevision:context.snapshot.taskRevision+1},context,grantRevision:1};
+    globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith('/context-mutations')){assert.equal(response.status,200,await response.clone().text());await response.body?.cancel();throw new Error('Lost message result');}return response;};
+    await assert.rejects(runtime.executeAction(input,()=>assert.fail('Host effect')),/Lost message result/);globalThis.fetch=originalFetch;
+    await f.restart();await until(()=>connection.state().phase==='connected');await until(()=>runtime.recoveryStatus().results.some(row=>row.actionId===actionId&&row.state==='acknowledged'),15000);
+    const detail=(await f.send(`/api/tasks/${taskId}`)).body.data,result=detail.results[0].content;
+    assert.equal(result.status,'sent');assert.equal(result.expects_reply,false);
+    const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));let childId:string;
+    try{
+      const children=db.prepare('SELECT turn FROM agent_deliveries WHERE request=?').all(result.request);assert.equal(children.length,1);childId=String(children[0].turn);
+      assert.equal(db.prepare('SELECT count(*) n FROM tasks').get()!.n,2);assert.equal(db.prepare('SELECT count(*) n FROM task_results WHERE action=?').get(actionId)!.n,1);
+    }finally{db.close();}
+    const child=(await f.send(`/api/tasks/${childId}`)).body.data;assert.equal(child.homeDeviceId,otherHome.id);assert.equal(child.state,'waiting_device');
+    assert.equal((await f.send(`/api/tasks/${childId}`,undefined,'user_foreign')).status,404);
+    const remoteConnection=remote.connect();await until(()=>remoteConnection.state().phase==='connected');const childOwned=await remote.startTask(childId),childContext=await remote.taskContext(childId,childOwned.ownership,childOwned.revision);
+    const childConversation=childContext.snapshot.conversation as {message:{text:string;files:string[]};history:unknown[]};assert.deepEqual(childConversation.message,{text:'Only this text',files:[]});assert.deepEqual(childConversation.history,[]);assert(!JSON.stringify(childContext.snapshot).includes('PRIVATE_SENDER_HISTORY'));
+    assert(!(childContext.snapshot.tools as {function:{name:string}}[]).some(tool=>['send_message','list_agents','interrupt_agent'].includes(tool.function.name)));
+    const paused=await f.send(`/api/tasks/${taskId}/control`,{requestId:randomUUID(),expectedRevision:detail.revision,operation:'pause'});assert.equal(paused.status,200);
+    await assert.rejects(remote.taskContext(childId,childOwned.ownership,childOwned.revision),(error:unknown)=>error instanceof ProtocolError&&error.code==='task_not_runnable');
+    assert.equal((await f.send(`/api/tasks/${childId}/control`,{requestId:randomUUID(),expectedRevision:childOwned.revision,operation:'pause'})).status,200);
+    const resumed=await f.send(`/api/tasks/${taskId}/control`,{requestId:randomUUID(),expectedRevision:paused.body.data.revision,operation:'resume'});assert.equal(resumed.status,200);
+    assert.equal((await f.send(`/api/tasks/${childId}`)).body.data.state,'paused');
+    const childResumed=await f.send(`/api/tasks/${childId}/control`,{requestId:randomUUID(),expectedRevision:childOwned.revision+1,operation:'resume'});assert.equal(childResumed.status,200);
+    await remote.taskContext(childId,childOwned.ownership,childResumed.body.data.revision);
+    const continued=await runtime.taskContext(taskId,owned.ownership,resumed.body.data.revision);assert((continued.snapshot.coordination as {request?:string}[]).some(row=>row.request===result.request));
+  }finally{globalThis.fetch=originalFetch;await runtime.close();await remote.close();await f.close();}
+});
+
 test('canonical profile edits recover exact result without replacing later edits or current task instructions', async () => {
   const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry}),originalFetch=globalThis.fetch;
   try{

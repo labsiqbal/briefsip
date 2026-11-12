@@ -865,7 +865,7 @@ test('canonical agent directory pages authorized teammates and scopes activity t
       const agent=randomUUID();await f.access.createAgent(f.owner,{requestId:agent,id:agent,name:'Peer',model:'fixture',backupModel:'',instructions:'x'.repeat(400),threadLimit:2,projectId:project,homeDeviceId:f.home,expectedProjectRevision:1,expectedHomeDeviceRevision:1,providerBinding:null});return agent;
     };
     const visible=(await Promise.all(Array.from({length:11},()=>add()))).sort(),hidden=await add(),deleted=await add(),foreign=await add(other),unowned=randomUUID();
-    f.db.exec('CREATE TABLE agent_visibility(agent TEXT PRIMARY KEY,hidden INTEGER,revision INTEGER);');
+    f.db.exec('CREATE TABLE IF NOT EXISTS agent_visibility(agent TEXT PRIMARY KEY,hidden INTEGER,revision INTEGER);');
     f.db.prepare('INSERT INTO agent_visibility VALUES (?,1,1)').run(hidden);
     f.db.prepare('UPDATE agent_projects SET deleted=1 WHERE agent=?').run(deleted);
     f.db.prepare("INSERT INTO agents(id,name,model,instructions) VALUES (?,'Foreign','fixture','PRIVATE_PROFILE')").run(unowned);
@@ -920,6 +920,64 @@ test('canonical agent directory pages authorized teammates and scopes activity t
     const paused=Number(f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(main.taskId)!.revision),moved=f.tasks.control(f.owner,main.taskId,{requestId:randomUUID(),expectedRevision:paused,operation:'reassign',recipientAgentId:peer});
     const successor=start(String(moved.data.taskId));assert(!run(successor).agents.some(row=>row.id===f.agent||row.id===peer));
   } finally { f.close(); }
+});
+
+test('canonical messages retain full assignment, isolated children, group waits and atomic cancellation',async()=>{
+  const f=await fixture(['send_message','list_agents','read_provider_settings','search_memory']),peers=Array.from({length:11},()=>randomUUID()).sort(),other=randomUUID(),foreign=randomUUID();
+  try{
+    f.access.createProject(f.owner,{requestId:randomUUID(),id:other,name:'Other'});
+    for(const agent of [...peers,foreign])await f.access.createAgent(f.owner,{requestId:agent,id:agent,name:agent,model:'fixture',backupModel:'',instructions:'Recipient',threadLimit:2,projectId:agent===foreign?other:f.project,homeDeviceId:f.home,expectedProjectRevision:1,expectedHomeDeviceRevision:1,providerBinding:null});
+    for(const agent of [f.agent,...peers])f.db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,agent);
+    const start=(taskId?:string,actor=f.owner)=>{
+      if(!taskId){const command=f.command();f.tasks.admit(actor,command);taskId=command.requestId;}
+      const token=randomBytes(32).toString('base64url'),acquired=f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId,previousExecutorGeneration:0,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token);
+      return {taskId,token,ownership:parseOwnership(acquired.data.ownership),sequence:0};
+    };
+    const stage=(task:ReturnType<typeof start>,args:unknown,name='send_message')=>{
+      const expectedTaskRevision=Number(f.tasks.lookup(f.member,task.taskId).data.revision),context=f.tasks.context(f.principal,task.taskId,{requestId:randomUUID(),ownership:task.ownership,expectedTaskRevision},task.token),ref=context.data.snapshotRef as {snapshotId:string;digest:string},actionId=randomUUID(),toolCall={id:actionId,function:{name,arguments:JSON.stringify(args)}},expectedRevision=expectedTaskRevision+1,payloadDigest=canonicalToolDigest({toolCall,expectedRevision}),sequence=task.sequence,intentDigest=digestCommand([task.taskId,actionId,sequence,task.ownership,payloadDigest,'canonical',ref.snapshotId,ref.digest,null,null,1,null,null,null]);
+      f.tasks.prepare(f.principal,task.taskId,actionId,{requestId:randomUUID(),sequence,ownership:task.ownership,payloadDigest,actionKind:'canonical',contextSnapshotId:ref.snapshotId,contextDigest:ref.digest,grantRevision:1,expectedTaskRevision,journalSequence:sequence+1,intentDigest},task.token);task.sequence++;f.tasks.commit(f.principal,task.taskId,actionId,{requestId:randomUUID(),ownership:task.ownership,intentDigest,expectedTaskRevision,journalSequence:sequence+1},task.token);
+      const request={requestId:randomUUID(),actionId,ownership:task.ownership,toolCall,payloadDigest,expectedRevision};return ()=>f.tasks.contextMutations(f.principal,task.taskId,request,task.token);
+    };
+    const run=(task:ReturnType<typeof start>,args:unknown,name='send_message')=>stage(task,args,name)().data.resultContent as {request:string;status:string|number;error?:string;agents?:{id:string}[]};
+    const children=(request:string)=>f.db.prepare('SELECT turn FROM agent_deliveries WHERE request=? ORDER BY turn').all(request).map(row=>String(row.turn));
+    const snapshot=(task:ReturnType<typeof start>)=>(f.tasks.context(f.principal,task.taskId,{requestId:randomUUID(),ownership:task.ownership,expectedTaskRevision:Number(f.tasks.lookup(f.member,task.taskId).data.revision)},task.token).data.snapshot as any);
+    const main=start(undefined,f.member),sent=run(main,{recipients:[peers[10]],text:'Only explicit text',expects_reply:false});assert.equal(sent.status,'sent');
+    const notice=start(children(sent.request)[0]),noticeSnapshot=snapshot(notice);assert.deepEqual(noticeSnapshot.conversation.message,{text:'Only explicit text',files:[]});assert.deepEqual(noticeSnapshot.conversation.history,[]);assert(!noticeSnapshot.tools.some((row:any)=>['list_agents','send_message'].includes(row.function.name)));
+    assert.throws(()=>stage(notice,{},'list_agents')(),code('execution_denied'));
+    const invalid=run(main,{recipients:[peers[0],foreign],text:'No partial delivery',expects_reply:false});assert.equal(invalid.status,404);assert.equal(f.db.prepare('SELECT count(*) n FROM agent_requests WHERE turn=?').get(main.taskId)!.n,1);
+    for(const args of [{recipients:[peers[0],peers[0].toUpperCase()],text:'Duplicate',expects_reply:false},{recipients:[peers[0]],text:'\u0000',expects_reply:false},{recipients:[],text:'Empty',expects_reply:false},{recipients:[peers[0]],text:'Missing flag'}])assert.equal(typeof run(main,args).status,'number');
+    const atomic=stage(main,{recipients:[peers[0],peers[1]],text:'Atomic group',expects_reply:true}),before=Number(f.db.prepare('SELECT count(*) n FROM tasks').get()!.n);
+    f.db.exec("CREATE TRIGGER fail_message_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'result journal failed'); END");assert.throws(atomic,/result journal failed/);f.db.exec('DROP TRIGGER fail_message_result');assert.equal(f.db.prepare('SELECT count(*) n FROM tasks').get()!.n,before);
+    const group=atomic().data.resultContent as {request:string};assert.equal(children(group.request).length,2);assert.deepEqual(atomic().data.resultContent,group);
+    assert.throws(()=>snapshot(main),code('waiting_agents'));
+    const ids=children(group.request),child=start(ids[0]);assert(f.db.prepare('SELECT 1 FROM tasks WHERE id=? AND initiator_account=?').get(child.taskId,f.member.accountId));
+    const roster=run(child,{},'list_agents');assert(!roster.agents!.some(row=>row.id===f.agent));
+    const oldContext=f.tasks.context(f.principal,child.taskId,{requestId:randomUUID(),ownership:child.ownership,expectedTaskRevision:Number(f.tasks.lookup(f.member,child.taskId).data.revision)},child.token);
+    const control=(task:ReturnType<typeof start>,operation:string)=>f.tasks.control(f.member,task.taskId,{requestId:randomUUID(),expectedRevision:Number(f.tasks.lookup(f.member,task.taskId).data.revision),operation});
+    control(main,'pause');assert.throws(()=>snapshot(child),code('task_not_runnable'));assert.throws(()=>start(ids[1]),code('task_not_runnable'));
+    control(main,'resume');
+    const oldRef=oldContext.data.snapshotRef as {snapshotId:string;digest:string},staleAction=randomUUID(),childRevision=Number(f.tasks.lookup(f.member,child.taskId).data.revision),stalePayload=sha256('read'),staleSequence=child.sequence;
+    const staleIntent=digestCommand([child.taskId,staleAction,staleSequence,child.ownership,stalePayload,'read',oldRef.snapshotId,oldRef.digest,null,null,1,null,null,null]);
+    assert.throws(()=>f.tasks.prepare(f.principal,child.taskId,staleAction,{requestId:randomUUID(),sequence:staleSequence,ownership:child.ownership,payloadDigest:stalePayload,actionKind:'read',contextSnapshotId:oldRef.snapshotId,contextDigest:oldRef.digest,grantRevision:1,expectedTaskRevision:childRevision,journalSequence:staleSequence+1,intentDigest:staleIntent},child.token),code('context_stale'));
+    control(child,'pause');control(main,'pause');control(main,'resume');assert.equal(f.tasks.lookup(f.member,child.taskId).data.state,'paused');assert.throws(()=>stage(child,{},'list_agents'),code('task_not_runnable'));control(child,'resume');
+    const nested=run(child,{recipients:[peers[2]],text:'Nested explicit task',expects_reply:true}),grandchild=children(nested.request)[0];
+    for(const taskId of ids){const revision=Number(f.tasks.lookup(f.member,taskId).data.revision);f.tasks.control(f.member,taskId,{requestId:randomUUID(),expectedRevision:revision,operation:'cancel'});}
+    assert.equal(f.tasks.lookup(f.member,grandchild).data.state,'cancelled');assert.throws(()=>f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId:grandchild,previousExecutorGeneration:0,executorTokenHash:sha256(child.token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},child.token),code('execution_denied'));
+    const settled=snapshot(main).coordination.find((row:any)=>row.request===group.request);assert(settled.replies.every((row:any)=>row.status==='cancelled'&&row.paused===0));assert.equal(f.tasks.lookup(f.member,main.taskId).data.state,'running');
+    const channel=randomUUID();f.db.prepare("INSERT INTO channels(id,name,instructions,lead) VALUES (?,'Room','',?)").run(channel,f.agent);for(const agent of [f.agent,peers[0]])f.db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel,agent);f.db.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(JSON.stringify([channel]),f.owner.accountId,f.project,channel);
+    initializeMemory(f.db);const channelScope=`project:${f.project}/channels:${channel}`,privateScope=`project:${f.project}/agents:${peers[0]}/human:${f.member.accountId}`;
+    for(const [scope,kind,root,value] of [[channelScope,'channel',channel,'SHARED_ROOM_MEMORY'],[privateScope,'agent',peers[0],'PRIVATE_AGENT_MEMORY']]){const saved=rememberMemory(f.db,scope,{text:value}) as {id:string};f.db.prepare("INSERT INTO record_scopes VALUES ('memories',?,?,?,?,?,?)").run(JSON.stringify([scope,saved.id]),f.member.accountId,f.project,kind==='channel'?'project':'owner',kind,root);}
+    f.db.exec('UPDATE memories SET essential=1');
+    const roomCommand=f.command({payload:{v:1,kind:'channel',channelId:channel,routing:'assigned',message:{text:'Room request',files:[]}},expectedRevisions:{project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1,channel:1}});f.tasks.admit(f.member,roomCommand);const room=start(roomCommand.requestId);
+    assert.equal(run(room,{recipients:[peers[0],peers[1]],text:'Members only',expects_reply:false}).status,404);
+    const roomSend=run(room,{recipients:[peers[0]],text:'Room child',expects_reply:true}),roomChild=start(children(roomSend.request)[0]),roomSnapshot=snapshot(roomChild);assert(!roomSnapshot.tools.some((row:any)=>row.function.name==='read_provider_settings'));assert(roomSnapshot.memories.some((row:any)=>row.text==='SHARED_ROOM_MEMORY'));assert(!JSON.stringify(roomSnapshot).includes('PRIVATE_AGENT_MEMORY'));
+    assert.throws(()=>stage(roomChild,{},'read_provider_settings')(),code('execution_denied'));f.db.prepare('DELETE FROM channel_members WHERE channel=? AND agent=?').run(channel,peers[0]);assert.throws(()=>snapshot(roomChild),code('execution_denied'));
+    const bounded=start(undefined,f.member);for(let batch=0;batch<3;batch++)assert.equal(run(bounded,{recipients:peers.slice(0,8),text:'Bounded family',expects_reply:false}).status,'sent');assert.equal(run(bounded,{recipients:peers.slice(0,7),text:'Final family slots',expects_reply:false}).status,'sent');assert.equal(run(bounded,{recipients:[peers[0]],text:'Over family bound',expects_reply:false}).status,409);
+    let deep=start(undefined,f.member);for(let level=0;level<7;level++){const next=run(deep,{recipients:[peers[level]],text:'Bounded depth',expects_reply:true});assert.equal(next.status,'waiting');deep=start(children(next.request)[0]);}assert.equal(run(deep,{recipients:[peers[7]],text:'Over depth bound',expects_reply:false}).status,409);
+    f.db.prepare('UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE account=? AND agent=?').run(f.member.accountId,peers[3]);assert.equal(run(main,{recipients:[peers[3]],text:'No grant',expects_reply:false}).status,404);
+    const revoked=run(main,{recipients:[peers[4]],text:'Accepted before revoke',expects_reply:true}),revokedChild=children(revoked.request)[0];f.db.prepare('UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE account=? AND agent=?').run(f.member.accountId,peers[4]);assert.throws(()=>start(revokedChild),code('execution_denied'));
+    const requestScope=f.db.prepare("SELECT * FROM record_scopes WHERE table_name='agent_requests' AND key_json=?").get(JSON.stringify([revoked.request]))!;f.db.prepare("DELETE FROM record_scopes WHERE table_name='agent_requests' AND key_json=?").run(requestScope.key_json);assert.throws(()=>snapshot(main),code('record_scope_missing'));
+  }finally{f.close();}
 });
 
 test('context counts projected result bytes once, including escaped JSON content', async () => {
