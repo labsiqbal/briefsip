@@ -19,13 +19,13 @@ import { canonicalJson, digestCommand, sha256, ProtocolError } from './protocol.
 import { canonicalToolDigest, createTaskRecovery, parseTaskCommand, parseOwnership, journalEntryBody, stopEvidenceBody, recoveryEnvelopeBody, type StopEvidence, type JournalEntry } from './task-recovery.ts';
 import { prepareRestoreBootstrap, issueRestoreSession } from './backup.ts';
 
-async function fixture() {
+async function fixture(tools = ['transfer_task']) {
   const db = new DatabaseSync(':memory:'); initializeCanonicalSchema(db);
   const actor = (subject: string): HumanActor => ({ accountId: randomUUID(), issuer: 'https://fixture.example', subject, sessionId: `sess_${subject}`, expiresAt: Date.now() + 60000 });
   const owner = actor('owner'), member = actor('member'), foreign = actor('foreign');
   for (const a of [owner, member, foreign]) db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(a.accountId, a.issuer, a.subject, Date.now());
   const auth = { requireCurrent(a: HumanActor) { if (db.prepare('SELECT blocked FROM accounts WHERE id=?').get(a.accountId)?.blocked !== 0) throw new ProtocolError(401, 'session_invalid', 'Denied'); return a; }, async verifiedMailboxes() { return []; } };
-  const access = createProjectAccess(db, auth, () => { throw new Error('No mail'); }, ['transfer_task']);
+  const access = createProjectAccess(db, auth, () => { throw new Error('No mail'); }, tools);
   const devices = createDevices(db, auth), signing = generateKeyPairSync('ed25519'), installation = generateKeyPairSync('ed25519'), encryption = generateKeyPairSync('x25519');
   const encoded = (key: typeof signing.publicKey) => key.export({ type: 'spki', format: 'der' }).toString('base64url');
   const candidate = parseLinkChallenge({ requestId: randomUUID(), installationId: randomUUID(), deviceId: randomUUID(), mode: 'new', installationPublicKey: encoded(installation.publicKey), deviceSigningKey: encoded(signing.publicKey), deviceEncryptionKey: encoded(encryption.publicKey), deviceLabel: 'Home', requestedCapabilities: ['execution'], zone: 'Asia/Jakarta', zoneRevision: 1 });
@@ -36,7 +36,7 @@ async function fixture() {
   access.createProject(owner, { requestId: randomUUID(), id: project, name: 'A' });
   await access.createAgent(owner, { requestId: agent, id: agent, name: 'Agent', model: 'fixture', backupModel: '', instructions: 'Research', threadLimit: 2, projectId: project, homeDeviceId: home, expectedProjectRevision: 1, expectedHomeDeviceRevision: 1, providerBinding: null });
   db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(project, member.accountId);
-  const tasks = createTaskRecovery(db, auth, access, devices, [{ type: 'function', function: { name: 'transfer_task', parameters: { type: 'object' } } }]);
+  const tasks = createTaskRecovery(db, auth, access, devices, tools.map(name => ({ type: 'function', function: { name, parameters: { type: 'object' } } })));
   function command(change: Record<string, unknown> = {}) {
     const c = { requestId: randomUUID(), projectId: project, agentId: agent, homeDeviceId: home, payload: { v: 1, kind: 'direct', message: { text: 'Research this', files: [] } }, expectedRevisions: { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 }, ...change };
     return { ...c, payloadDigest: digestCommand(['briefsip-task-payload-v1', c.requestId, c.projectId, c.agentId, c.homeDeviceId, c.payload, c.expectedRevisions]) };
@@ -597,6 +597,57 @@ test('context preserves scoped history, questions, compaction and child evidence
   } finally { f.close(); }
 });
 
+
+test('canonical history retains sequence cursors and excludes unmapped, foreign, private and future originals', async () => {
+  const f = await fixture(['read_history','read_message']);
+  try {
+    initializeQuestions(f.db);
+    f.db.exec(`CREATE TABLE queue_positions(turn TEXT PRIMARY KEY,position INTEGER NOT NULL);
+      CREATE TABLE files(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE,scope TEXT,name TEXT,digest TEXT,bytes BLOB,created TEXT);
+      CREATE TABLE generated_files(seq INTEGER PRIMARY KEY AUTOINCREMENT,turn TEXT,file TEXT,call_id TEXT,call TEXT,after_action INTEGER);`);
+    const other = randomUUID(); f.access.createProject(f.owner,{requestId:randomUUID(),id:other,name:'Other'});
+    const seed = (text: string, project=f.project, account=f.owner.accountId, root=f.agent, mapped=true) => {
+      const id=randomUUID(), row=f.db.prepare("INSERT INTO turns(id,agent,text,reply,status,created) VALUES (?,?,?,?,'done','fixture')").run(id,f.agent,text,'Saved original reply');
+      if(mapped)f.db.prepare("INSERT INTO record_scopes VALUES ('turns',?,?,?,'owner','agent',?)").run(JSON.stringify([id]),account,project,root);
+      return {id,seq:Number(row.lastInsertRowid)};
+    };
+    const originals=Array.from({length:8},(_,i)=>seed(`Original ${i}`)),privateTurn=seed('PRIVATE',f.project,f.member.accountId),foreign=seed('FOREIGN',other),otherRoot=seed('OTHER_ROOT',f.project,f.owner.accountId,randomUUID()),unmapped=seed('UNMAPPED',f.project,f.owner.accountId,f.agent,false);
+    f.db.prepare('INSERT INTO queue_positions VALUES (?,?)').run(originals[5].id,originals[4].seq);
+    f.db.prepare('INSERT INTO queue_positions VALUES (?,?)').run(originals[4].id,originals[5].seq);
+    f.db.prepare("UPDATE turns SET status='failed' WHERE id=?").run(originals[0].id);
+    const file=randomUUID(),blockedFile=randomUUID(),raw=Buffer.from('SOURCE_DEVICE_BYTES');
+    for(const [id,account] of [[file,f.owner.accountId],[blockedFile,f.member.accountId]]){
+      f.db.prepare("INSERT INTO files(id,scope,name,digest,bytes,created) VALUES (?,'legacy-private','original.txt',?,?,'fixture')").run(id,sha256(raw),raw);
+      f.db.prepare("INSERT INTO record_scopes VALUES ('files',?,?,?,'owner','agent',?)").run(JSON.stringify([id]),account,f.project,f.agent);
+    }
+    f.db.prepare('UPDATE turns SET attachments=? WHERE id=?').run(JSON.stringify([file,blockedFile]),originals[0].id);
+    f.db.prepare('INSERT INTO generated_files(turn,file,call_id,call,after_action) VALUES (?,?,?,?,0)').run(originals[0].id,file,'file',JSON.stringify({function:{name:'create_text_file'}}));
+    f.db.prepare('INSERT INTO questions VALUES (?,?,?,?,?,?,?,0,0)').run(randomUUID(),originals[0].id,'question','{}','Keep original?',JSON.stringify(['Yes']),'Yes');
+    const task=f.command();f.tasks.admit(f.owner,task);
+    const token=randomBytes(32).toString('base64url'),acquired=f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId:task.requestId,previousExecutorGeneration:0,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token),ownership=parseOwnership(acquired.data.ownership);
+    const future=seed('FUTURE');let sequence=0;
+    const run=(name:string,args:unknown)=>{
+      const taskRevision=Number(f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(task.requestId)!.revision),context=f.tasks.context(f.principal,task.requestId,{requestId:randomUUID(),ownership,expectedTaskRevision:taskRevision},token),ref=context.data.snapshotRef as {snapshotId:string;digest:string},actionId=randomUUID();
+      const toolCall={id:actionId,function:{name,arguments:JSON.stringify(args)}},expectedRevision=taskRevision+1,payloadDigest=canonicalToolDigest({toolCall,expectedRevision});
+      const intentDigest=digestCommand([task.requestId,actionId,sequence,ownership,payloadDigest,'canonical',ref.snapshotId,ref.digest,null,null,1,null,null,null]);
+      f.tasks.prepare(f.principal,task.requestId,actionId,{requestId:randomUUID(),sequence,ownership,payloadDigest,actionKind:'canonical',contextSnapshotId:ref.snapshotId,contextDigest:ref.digest,grantRevision:1,expectedTaskRevision:taskRevision,journalSequence:sequence+1,intentDigest},token);
+      f.tasks.commit(f.principal,task.requestId,actionId,{requestId:randomUUID(),ownership,intentDigest,expectedTaskRevision:taskRevision,journalSequence:sequence+1},token);sequence++;
+      const request={requestId:randomUUID(),actionId,ownership,toolCall,payloadDigest,expectedRevision};
+      return {request,result:f.tasks.contextMutations(f.principal,task.requestId,request,token)};
+    };
+    const page=run('read_history',{}).result.data.resultContent as {messages:{id:string}[];next_before:number};
+    assert.deepEqual(page.messages.map(row=>row.id),originals.slice(3).reverse().map(row=>row.id));assert.equal(page.next_before,originals[3].seq);
+    const next=run('read_history',{before:page.next_before}).result.data.resultContent as {messages:{id:string}[];next_before:null};
+    assert.deepEqual(next.messages.map(row=>row.id),originals.slice(0,3).reverse().map(row=>row.id));assert.equal(next.next_before,null);
+    const read=run('read_message',{id:originals[0].id}),content=read.result.data.resultContent as {attachments:{id:string}[];generatedFiles:{id:string}[];questions:{answer:string}[];status:string};
+    assert.deepEqual(content.attachments.map(row=>row.id),[file]);assert.deepEqual(content.generatedFiles.map(row=>row.id),[file]);assert.equal(content.questions[0].answer,'Yes');assert.equal(content.status,'failed');assert(!JSON.stringify(content).includes('SOURCE_DEVICE_BYTES'));
+    for(const row of [privateTurn,foreign,otherRoot,unmapped,future,{id:task.requestId}])assert.match(String((run('read_message',{id:row.id}).result.data.resultContent as {error:string}).error),/not found/);
+    assert.equal((run('read_history',{before:0}).result.data.resultContent as {status:number}).status,400);
+    assert.equal((run('read_message',{id:originals[0].id,offset:-1}).result.data.resultContent as {status:number}).status,400);
+    f.db.prepare('UPDATE turns SET text=?,revision=revision+1 WHERE id=?').run('Changed original',originals[0].id);
+    assert.equal(canonicalJson(f.tasks.contextMutations(f.principal,task.requestId,read.request,token)),canonicalJson({...read.result,status:200}));
+  }finally{f.close();}
+});
 
 test('context counts projected result bytes once, including escaped JSON content', async () => {
   const f = await preparedTask();
