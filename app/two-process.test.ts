@@ -16,6 +16,7 @@ import { prepareRestoreBootstrap, issueRestoreSession, restoreWorkspace, workspa
 import { canonicalJson, ProtocolError, digestCommand, sha256 } from './protocol.ts';
 import { parseOwnership } from './task-recovery.ts';
 import sharp from 'sharp';
+import { saveSkill } from './skills.ts';
 
 function memoryKeys() {
   const values = new Map<string, string>();
@@ -665,5 +666,42 @@ test('canonical history RPC pages scoped originals and retains exact reads after
     assert.match((await run(first,'read_message',{id:hidden[0].id})).error,/not found/);
     assert.equal((await run(first,'read_history',{before:0})).status,400);assert.equal((await run(first,'read_message',{id:oldest.id,offset:-1})).status,400);
     for(const [kind,id] of [['side',side.id],['channel',shared.id]] as const){const task=await start(kind),result=await run(task,'read_history',{});assert.deepEqual(result.messages.map((row:{id:string})=>row.id),[id]);}
+  }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}
+});
+
+test('canonical skill reads recover exact pinned text after lost response, disable and server restart', async () => {
+  const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry});
+  const originalFetch=globalThis.fetch;
+  try{
+    await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
+    const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),agent=randomUUID(),skill=randomUUID();
+    assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Skill reads'})).status,201);
+    assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Reader',model:'fixture',backupModel:'',instructions:'Read installed skills',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
+    const db=new DatabaseSync(join(f.dir,'canonical.sqlite')),owner=String(db.prepare("SELECT id FROM accounts WHERE clerk_sub='user_owner'").get()!.id);
+    try{
+      saveSkill(db,skill,{revision:0,files:[{path:'SKILL.md',content:'---\nname: pinned-reader\ndescription: Read immutable support files\n---\nPINNED_CONTENT'},{path:'notes.txt',content:'x'.repeat(8000)+'ORIGINAL_TAIL'},{path:'asset.bin',content:Buffer.from('BINARY_PRIVATE').toString('base64'),encoding:'base64'}]});
+      saveSkill(db,skill,{revision:1,files:[{path:'SKILL.md',content:'---\nname: latest-reader\ndescription: Uninstalled version\n---\nLATEST_PRIVATE'}]});
+      db.prepare('INSERT INTO agent_skills(agent,skill,version,enabled,revision,removed) VALUES (?,?,1,1,1,0)').run(agent,skill);
+      for(const [table,key] of [['skills',[skill]],['skill_versions',[skill,1]],['agent_skills',[agent,skill]],['skill_files',[skill,1]]] as const)db.prepare("INSERT INTO record_scopes VALUES (?,?,?,?,'owner','agent',?)").run(table,JSON.stringify(key),owner,project,agent);
+    }finally{db.close();}
+    const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'Inspect pinned skill',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
+    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
+    const owned=await runtime.startTask(taskId);let sequence=0;
+    const run=async(name:string,args:unknown,lose=false)=>{
+      const detail=(await f.send(`/api/tasks/${taskId}`)).body.data,context=await runtime.taskContext(taskId,owned.ownership,detail.revision),actionId=randomUUID();
+      const input={taskId,actionId,sequence:sequence++,actionKind:'canonical' as const,ownership:owned.ownership,payload:{toolCall:{id:actionId,function:{name,arguments:JSON.stringify(args)}},expectedRevision:context.snapshot.taskRevision+1},context,grantRevision:1};
+      if(lose){
+        globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith('/context-mutations')){assert.equal(response.status,200,await response.clone().text());await response.body?.cancel();throw new Error('Lost skill result');}return response;};
+        await assert.rejects(runtime.executeAction(input,()=>assert.fail('Host effect')),/Lost skill result/);globalThis.fetch=originalFetch;
+        const changed=new DatabaseSync(join(f.dir,'canonical.sqlite'));changed.prepare('UPDATE agent_skills SET enabled=0,revision=revision+1 WHERE agent=? AND skill=?').run(agent,skill);changed.close();
+        await f.restart();await until(()=>connection.state().phase==='connected');await until(()=>runtime.recoveryStatus().results.some(row=>row.actionId===actionId&&row.state==='acknowledged'),15000);
+      }else await runtime.executeAction(input,()=>assert.fail('Host effect'));
+      return (await f.send(`/api/tasks/${taskId}`)).body.data.results.find((row:{actionId:string})=>row.actionId===actionId).content;
+    };
+    assert.deepEqual((await run('list_skills',{})).items,[{id:skill,version:1,name:'pinned-reader',description:'Read immutable support files'}]);
+    const read=await run('read_skill',{id:skill});assert.equal(read.content,'PINNED_CONTENT');assert.equal(read.version,1);assert(!JSON.stringify(read).includes('LATEST_PRIVATE'));assert(!JSON.stringify(read).includes('BINARY_PRIVATE'));
+    const file=await run('read_skill_file',{id:skill,path:'notes.txt',offset:8000},true);assert.equal(file.content,'ORIGINAL_TAIL');assert.equal(file.next_offset,null);
+    assert.match((await run('read_skill',{id:skill})).error,/not found/);
+    assert.equal((await f.send(`/api/tasks/${taskId}`)).body.data.results.length,4);
   }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}
 });

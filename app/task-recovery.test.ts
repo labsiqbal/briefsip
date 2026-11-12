@@ -514,6 +514,7 @@ test('context projects authorized memory, pinned skills and byte-free asset refs
     saveSkill(f.db,skill,{revision:1,name:'Latest skill',description:'Must not substitute',content:'UNINSTALLED_LATEST_VERSION'});
     f.db.prepare('INSERT INTO agent_skills(agent,skill,version,enabled,revision,removed) VALUES (?,?,1,1,7,0)').run(f.agent,skill);
     const raw=Buffer.from('PRIVATE_ASSET_BYTES');f.db.prepare('INSERT INTO skill_files VALUES (?,1,?)').run(skill,JSON.stringify([{path:'asset.bin',content:raw.toString('base64'),encoding:'base64'}]));
+    for(const [table,key] of [['skills',[skill]],['skill_versions',[skill,1]],['agent_skills',[f.agent,skill]],['skill_files',[skill,1]] ] as const)f.db.prepare("INSERT INTO record_scopes VALUES (?,?,?,?,?,?,?)").run(table,JSON.stringify(key),f.owner.accountId,f.project,'owner','agent',f.agent);
     f.db.prepare("UPDATE task_actions SET state='not_sent',effect_status='none' WHERE id=?").run(f.actionId);
     const context=f.tasks.context(f.principal,f.taskId,{requestId:randomUUID(),ownership:f.ownership,expectedTaskRevision:2},f.token).data as ActionContext;
     const snapshot=context.snapshot as typeof context.snapshot&{memories:{text:string}[];skills:{id:string;revision:number;installationRevision:number}[];skillAssets:{source:string;digest:string;size:number}[];sourceRevisions:{kind:string;id:string;revision:number}[];tools:{function:{name:string}}[]};
@@ -646,6 +647,62 @@ test('canonical history retains sequence cursors and excludes unmapped, foreign,
     assert.equal((run('read_message',{id:originals[0].id,offset:-1}).result.data.resultContent as {status:number}).status,400);
     f.db.prepare('UPDATE turns SET text=?,revision=revision+1 WHERE id=?').run('Changed original',originals[0].id);
     assert.equal(canonicalJson(f.tasks.contextMutations(f.principal,task.requestId,read.request,token)),canonicalJson({...read.result,status:200}));
+  }finally{f.close();}
+});
+
+test('canonical skills retain installed pins, owner mappings, private boundaries and immutable read results', async () => {
+  const f=await fixture(['list_skills','read_skill','read_skill_file']);
+  try{
+    initializeSkills(f.db);
+    const configProject=randomUUID();f.access.createProject(f.owner,{requestId:randomUUID(),id:configProject,name:'Configuration'});
+    const map=(table:string,key:(string|number)[],account=f.owner.accountId)=>f.db.prepare("INSERT INTO record_scopes VALUES (?,?,?,?,'owner','agent',?)").run(table,JSON.stringify(key),account,configProject,f.agent);
+    const seed=(mapped=true,account=f.owner.accountId)=>{
+      const skill=randomUUID();saveSkill(f.db,skill,{revision:0,name:'Pinned',description:'Global configuration',content:'PINNED_INSTRUCTIONS'});
+      f.db.prepare('INSERT INTO agent_skills(agent,skill,version,enabled,revision,removed) VALUES (?,?,1,1,1,0)').run(f.agent,skill);
+      if(mapped)for(const [table,key] of [['skills',[skill]],['skill_versions',[skill,1]],['agent_skills',[f.agent,skill]]] as const)map(table,[...key],account);
+      return skill;
+    };
+    const installed=Array.from({length:11},()=>seed()).sort(),skill=installed[0],unmapped=seed(false),foreign=seed(true,f.foreign.accountId),disabled=seed(),removed=seed(),uninstalled=seed();
+    f.db.prepare('UPDATE agent_skills SET enabled=0 WHERE skill=?').run(disabled);f.db.prepare('UPDATE agent_skills SET removed=1 WHERE skill=?').run(removed);f.db.prepare('DELETE FROM agent_skills WHERE skill=?').run(uninstalled);
+    const otherAgent=randomUUID();f.db.prepare("INSERT INTO agents(id,name,model,instructions) VALUES (?,'Other','fixture','Private')").run(otherAgent);f.db.prepare('INSERT INTO agent_skills(agent,skill,version,enabled,revision,removed) VALUES (?,?,1,1,1,0)').run(otherAgent,uninstalled);map('agent_skills',[otherAgent,uninstalled]);
+    saveSkill(f.db,skill,{revision:1,name:'Latest',description:'Uninstalled version',content:'LATEST_MUST_NOT_LEAK'});
+    const binary=Buffer.from('BINARY_MUST_NOT_LEAK'),text='x'.repeat(8000)+'TEXT_TAIL';
+    f.db.prepare('INSERT INTO skill_files VALUES (?,1,?)').run(skill,JSON.stringify([{path:'notes.txt',content:text},{path:'asset.bin',content:binary.toString('base64'),encoding:'base64'}]));map('skill_files',[skill,1]);
+    const start=(kind:'direct'|'side'|'channel'='direct',account=f.owner)=>{
+      const root=randomUUID();
+      if(kind==='side'){f.db.prepare("INSERT INTO threads(id,agent,name) VALUES (?,?,'Side')").run(root,f.agent);map('threads',[root],account.accountId);f.db.prepare("UPDATE record_scopes SET project=?,root_kind='thread',root_id=? WHERE table_name='threads' AND key_json=?").run(f.project,root,JSON.stringify([root]));}
+      if(kind==='channel'){f.db.prepare("INSERT INTO channels(id,name,instructions,lead) VALUES (?,'Room','',?)").run(root,f.agent);f.db.prepare('INSERT INTO channel_members VALUES (?,?)').run(root,f.agent);f.db.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(JSON.stringify([root]),f.owner.accountId,f.project,root);}
+      const command=f.command({payload:{v:1,kind,...(kind==='side'?{threadId:root}:kind==='channel'?{channelId:root,routing:'assigned'}:{}),message:{text:'Read installed configuration',files:[]}},expectedRevisions:{project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1,...(kind==='side'?{thread:1}:kind==='channel'?{channel:1}:{})}});
+      f.tasks.admit(account,command);const token=randomBytes(32).toString('base64url');
+      const acquired=f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId:command.requestId,previousExecutorGeneration:0,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token);
+      return {taskId:command.requestId,ownership:parseOwnership(acquired.data.ownership),token,sequence:0};
+    };
+    const prepare=(task:ReturnType<typeof start>,name:string,args:unknown)=>{
+      const expectedTaskRevision=Number(f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(task.taskId)!.revision),context=f.tasks.context(f.principal,task.taskId,{requestId:randomUUID(),ownership:task.ownership,expectedTaskRevision},task.token),ref=context.data.snapshotRef as {snapshotId:string;digest:string},actionId=randomUUID(),toolCall={id:actionId,function:{name,arguments:JSON.stringify(args)}},expectedRevision=expectedTaskRevision+1,payloadDigest=canonicalToolDigest({toolCall,expectedRevision}),sequence=task.sequence++;
+      const intentDigest=digestCommand([task.taskId,actionId,sequence,task.ownership,payloadDigest,'canonical',ref.snapshotId,ref.digest,null,null,1,null,null,null]);
+      f.tasks.prepare(f.principal,task.taskId,actionId,{requestId:randomUUID(),sequence,ownership:task.ownership,payloadDigest,actionKind:'canonical',contextSnapshotId:ref.snapshotId,contextDigest:ref.digest,grantRevision:1,expectedTaskRevision,journalSequence:sequence+1,intentDigest},task.token);
+      f.tasks.commit(f.principal,task.taskId,actionId,{requestId:randomUUID(),ownership:task.ownership,intentDigest,expectedTaskRevision:expectedTaskRevision,journalSequence:sequence+1},task.token);
+      return {requestId:randomUUID(),actionId,ownership:task.ownership,toolCall,payloadDigest,expectedRevision};
+    };
+    const main=start(),run=(name:string,args:unknown,task=main)=>f.tasks.contextMutations(f.principal,task.taskId,prepare(task,name,args),task.token).data.resultContent as Record<string,unknown>;
+    const page=run('list_skills',{});assert.deepEqual((page.items as {id:string}[]).map(row=>row.id),installed.slice(0,10));assert.equal(page.next_after,installed[9]);assert.deepEqual((run('list_skills',{after:page.next_after}).items as {id:string}[]).map(row=>row.id),installed.slice(10));
+    const read=run('read_skill',{id:skill});assert.equal(read.version,1);assert.equal(read.content,'PINNED_INSTRUCTIONS');assert.deepEqual(read.files,[{path:'notes.txt',characters:8009},{path:'asset.bin',binary:true}]);assert(!JSON.stringify(read).includes(binary.toString('base64')));
+    const first=run('read_skill_file',{id:skill,path:'notes.txt'});assert.equal(first.content,'x'.repeat(8000));assert.equal(first.next_offset,8000);assert.equal(run('read_skill_file',{id:skill,path:'notes.txt',offset:8000}).content,'TEXT_TAIL');assert.equal(run('read_skill_file',{id:skill,path:'asset.bin'}).binary,true);
+    for(const id of [unmapped,foreign,disabled,removed,uninstalled])assert.match(String(run('read_skill',{id}).error),/not found/);
+    for(const [table,key] of [['skills',[installed[3]]],['skill_versions',[installed[3],1]],['agent_skills',[f.agent,installed[3]]]] as const){
+      f.db.prepare('UPDATE record_scopes SET account=? WHERE table_name=? AND key_json=?').run(f.foreign.accountId,table,JSON.stringify(key));assert.match(String(run('read_skill',{id:installed[3]}).error),/not found/);f.db.prepare('DELETE FROM record_scopes WHERE table_name=? AND key_json=?').run(table,JSON.stringify(key));assert.match(String(run('read_skill',{id:installed[3]}).error),/not found/);map(table,[...key]);
+    }
+    for(const [name,args] of [['list_skills',{after:'invalid'}],['read_skill',{id:'invalid'}],['read_skill_file',{id:skill,path:'notes.txt',offset:-1}]] as const)assert.equal(run(name,args).status,400);
+    assert.match(String(run('read_skill_file',{id:skill,path:'../notes.txt'}).error),/not found/);
+    f.db.prepare("DELETE FROM record_scopes WHERE table_name='skill_files' AND key_json=?").run(JSON.stringify([skill,1]));assert.deepEqual(run('read_skill',{id:skill}).files,[]);assert.match(String(run('read_skill_file',{id:skill,path:'notes.txt'}).error),/not found/);map('skill_files',[skill,1]);
+    const saved=prepare(main,'read_skill',{id:skill}),result=f.tasks.contextMutations(f.principal,main.taskId,saved,main.token);
+    f.db.prepare('UPDATE agent_skills SET enabled=0,revision=revision+1 WHERE skill=?').run(skill);assert.deepEqual(f.tasks.contextMutations(f.principal,main.taskId,saved,main.token),result);assert.match(String(run('read_skill',{id:skill}).error),/not found/);
+    const stale=prepare(main,'read_skill',{id:installed[1]});f.db.prepare('UPDATE agent_skills SET enabled=0,revision=revision+1 WHERE skill=?').run(installed[1]);assert.throws(()=>f.tasks.contextMutations(f.principal,main.taskId,stale,main.token),code('context_stale'));
+    const side=start('side');assert.equal(run('read_skill',{id:installed[2]},side).content,'PINNED_INSTRUCTIONS');
+    f.db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,f.agent);f.db.prepare('INSERT INTO response_policies VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,f.agent);
+    const member=start('direct',f.member);assert.equal(run('read_skill',{id:installed[2]},member).content,'PINNED_INSTRUCTIONS');
+    const room=start('channel'),context=f.tasks.context(f.principal,room.taskId,{requestId:randomUUID(),ownership:room.ownership,expectedTaskRevision:2},room.token);
+    assert.deepEqual((context.data.snapshot as {tools:unknown[]}).tools,[]);assert.throws(()=>run('list_skills',{},room),code('execution_denied'));
   }finally{f.close();}
 });
 
