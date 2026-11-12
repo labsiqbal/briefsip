@@ -744,6 +744,43 @@ test('canonical routine tools keep private project mappings, pagination and flow
   }finally{f.close();}
 });
 
+for(const kind of ['direct','side'] as const) test(`canonical provider settings read binding metadata only in ${kind} and stays private`, async () => {
+  const f=await fixture(['read_provider_settings']);
+  try{
+    const actor=kind==='side'?f.member:f.owner,thread=randomUUID();
+    if(kind==='side'){
+      f.db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,actor.accountId,f.agent);
+      f.db.prepare("INSERT INTO threads(id,agent,name) VALUES (?,?,'Side')").run(thread,f.agent);
+      f.db.prepare("INSERT INTO record_scopes VALUES ('threads',?,?,?,'owner','thread',?)").run(JSON.stringify([thread]),actor.accountId,f.project,thread);
+    }
+    const task=f.command({payload:{v:1,kind,...(kind==='side'?{threadId:thread}:{}),message:{text:'Read settings',files:[]}},expectedRevisions:{project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1,...(kind==='side'?{thread:1}:{})}});f.tasks.admit(actor,task);const token=randomBytes(32).toString('base64url');
+    const acquired=f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId:task.requestId,previousExecutorGeneration:0,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token),ownership=parseOwnership(acquired.data.ownership);let sequence=0;
+    const run=(name:string,args:unknown)=>{
+      const expectedTaskRevision=Number(f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(task.requestId)!.revision),context=f.tasks.context(f.principal,task.requestId,{requestId:randomUUID(),ownership,expectedTaskRevision},token),ref=context.data.snapshotRef as {snapshotId:string;digest:string},actionId=randomUUID(),toolCall={id:actionId,function:{name,arguments:JSON.stringify(args)}},expectedRevision=expectedTaskRevision+1,payloadDigest=canonicalToolDigest({toolCall,expectedRevision});
+      const intentDigest=digestCommand([task.requestId,actionId,sequence,ownership,payloadDigest,'canonical',ref.snapshotId,ref.digest,null,null,1,null,null,null]);
+      f.tasks.prepare(f.principal,task.requestId,actionId,{requestId:randomUUID(),sequence,ownership,payloadDigest,actionKind:'canonical',contextSnapshotId:ref.snapshotId,contextDigest:ref.digest,grantRevision:1,expectedTaskRevision,journalSequence:sequence+1,intentDigest},token);
+      f.tasks.commit(f.principal,task.requestId,actionId,{requestId:randomUUID(),ownership,intentDigest,expectedTaskRevision,journalSequence:sequence+1},token);
+      sequence++;
+      return f.tasks.contextMutations(f.principal,task.requestId,{requestId:randomUUID(),actionId,ownership,toolCall,payloadDigest,expectedRevision},token).data.resultContent as Record<string,unknown>;
+    };
+    assert.deepEqual(run('read_provider_settings',{}),{revision:1,providerAccount:'',model:'fixture',backupModel:'',configured:false});
+    f.db.prepare("UPDATE agents SET provider_account='LEGACY_MUST_NOT_LEAK',backup_model='backup' WHERE id=?").run(f.agent);
+    const binding=randomUUID();f.db.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','Owner account','PRIVATE_LABEL','ready',1)").run(binding,f.home,f.owner.accountId);f.db.prepare('UPDATE agent_authority SET provider_binding=? WHERE agent=?').run(binding,f.agent);
+    const otherHome=randomUUID();f.db.prepare('INSERT INTO devices SELECT ?,installation,account,signing_public_key,encryption_public_key,signing_thumbprint,encryption_thumbprint,descriptor_json,generation,connection_generation,status,zone,zone_revision,last_seen,capabilities_json,revision FROM devices WHERE id=?').run(otherHome,f.home);
+    f.db.prepare('UPDATE provider_bindings SET device=? WHERE id=?').run(otherHome,binding);assert.deepEqual(run('read_provider_settings',{}),{error:'Provider binding tidak tersedia.',status:409});f.db.prepare('UPDATE provider_bindings SET device=? WHERE id=?').run(f.home,binding);
+    const expected={revision:1,providerAccount:'Owner account',model:'fixture',backupModel:'backup',configured:true};assert.deepEqual(run('read_provider_settings',{}),expected);
+    for(const readiness of ['missing','unreadable','unavailable','revoked']){f.db.prepare('UPDATE provider_bindings SET readiness=?,revision=revision+1 WHERE id=?').run(readiness,binding);assert.deepEqual(run('read_provider_settings',{}),{...expected,configured:false});}
+    f.db.prepare('UPDATE provider_bindings SET owner_account=? WHERE id=?').run(f.foreign.accountId,binding);assert.deepEqual(run('read_provider_settings',{}),{error:'Provider binding tidak tersedia.',status:409});
+    f.db.prepare('UPDATE provider_bindings SET owner_account=? WHERE id=?').run(f.owner.accountId,binding);
+    const badCall={id:randomUUID(),function:{name:'read_provider_settings',arguments:JSON.stringify({agentId:randomUUID()})}},badExpected=Number(f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(task.requestId)!.revision);
+    assert.throws(()=>f.tasks.contextMutations(f.principal,task.requestId,{requestId:randomUUID(),actionId:randomUUID(),ownership,toolCall:badCall,expectedRevision:badExpected,payloadDigest:canonicalToolDigest({toolCall:badCall,expectedRevision:badExpected})},token),code('unknown_field'));
+    const channel=randomUUID();f.db.prepare("INSERT INTO channels(id,name,instructions,lead) VALUES (?,'Room','',?)").run(channel,f.agent);f.db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel,f.agent);f.db.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(JSON.stringify([channel]),f.owner.accountId,f.project,channel);
+    const room=f.command({payload:{v:1,kind:'channel',channelId:channel,routing:'assigned',message:{text:'Forced read',files:[]}},expectedRevisions:{project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1,channel:1}});f.tasks.admit(f.owner,room);
+    const roomOwned=f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId:room.requestId,previousExecutorGeneration:0,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token),roomOwnership=parseOwnership(roomOwned.data.ownership),roomContext=f.tasks.context(f.principal,room.requestId,{requestId:randomUUID(),ownership:roomOwnership,expectedTaskRevision:2},token),roomCall={id:randomUUID(),function:{name:'read_provider_settings',arguments:'{}'}},roomExpected=2;
+    assert.deepEqual((roomContext.data.snapshot as {tools:unknown[]}).tools,[]);assert.throws(()=>f.tasks.contextMutations(f.principal,room.requestId,{requestId:randomUUID(),actionId:randomUUID(),ownership:roomOwnership,toolCall:roomCall,expectedRevision:roomExpected,payloadDigest:canonicalToolDigest({toolCall:roomCall,expectedRevision:roomExpected})},token),code('execution_denied'));
+  }finally{f.close();}
+});
+
 test('context counts projected result bytes once, including escaped JSON content', async () => {
   const f = await preparedTask();
   try {
