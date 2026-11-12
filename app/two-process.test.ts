@@ -24,6 +24,29 @@ function memoryKeys() {
   return { values, entry(service: string, name: string) { const key = `${service}/${name}`; return { getPassword: () => values.get(key) ?? null, setPassword: (value: string) => { values.set(key, value); } }; } };
 }
 
+test('canonical avatar removal recovers its original result after a lost reply, later image and restart',async()=>{
+  const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry}),originalFetch=globalThis.fetch;
+  try{
+    await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
+    const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),agent=randomUUID(),image=await sharp({create:{width:256,height:256,channels:4,background:'#206060'}}).png().toBuffer();
+    assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Avatar project'})).status,201);
+    assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Avatar owner',model:'fixture',backupModel:'',instructions:'Remove avatar',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
+    const seed=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{seed.prepare('INSERT INTO agent_avatars VALUES (?,1,?)').run(agent,image);}finally{seed.close();}
+    const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'Remove my avatar',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
+    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
+    const owned=await runtime.startTask(taskId),context=await runtime.taskContext(taskId,owned.ownership,owned.revision),actionId=randomUUID();assert.equal((context.snapshot.profile as {avatarRevision:number}).avatarRevision,1);
+    const action={taskId,actionId,sequence:0,actionKind:'canonical' as const,ownership:owned.ownership,payload:{toolCall:{id:actionId,function:{name:'set_avatar',arguments:JSON.stringify({image:null,revision:1})}},expectedRevision:context.snapshot.taskRevision+1},context,grantRevision:1};
+    globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith('/context-mutations')){assert.equal(response.status,200,await response.clone().text());await response.body?.cancel();throw new Error('Lost avatar removal');}return response;};
+    await assert.rejects(runtime.executeAction(action,()=>assert.fail('Host effect')),/Lost avatar removal/);globalThis.fetch=originalFetch;
+    const newer=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{assert.equal(newer.prepare('SELECT image FROM agent_avatars WHERE agent=?').get(agent)!.image,null);newer.prepare('UPDATE agent_avatars SET revision=3,image=? WHERE agent=?').run(image,agent);}finally{newer.close();}
+    const generation=connection.state().generation;await f.restart();await until(()=>connection.state().phase==='connected'&&connection.state().generation>generation);
+    await until(()=>runtime.recoveryStatus().results.some(row=>row.actionId===actionId&&row.state==='acknowledged'),15000);
+    const detail=(await f.send(`/api/tasks/${taskId}`)).body.data;assert.equal(detail.results.length,1);assert.deepEqual(detail.results[0].content,{revision:2,present:false});
+    const inspect=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{const row=inspect.prepare('SELECT revision,image FROM agent_avatars WHERE agent=?').get(agent)!;assert.equal(row.revision,3);assert.deepEqual(Buffer.from(row.image as Uint8Array),image);}finally{inspect.close();}
+    const latest=await runtime.taskContext(taskId,owned.ownership,detail.revision);assert.equal((latest.snapshot.profile as {avatarRevision:number}).avatarRevision,3);
+  }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}
+});
+
 test('canonical site management keeps project scope and recovers one deletion after a lost reply and restart',async()=>{
   const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry}),originalFetch=globalThis.fetch;
   try{

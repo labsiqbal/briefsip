@@ -172,6 +172,33 @@ test('canonical question answers enforce private human, conversation, project an
   }finally{f.close();}
 });
 
+for(const kind of ['direct','side'] as const)test(`canonical avatar removal in ${kind} preserves CAS, rollback, scope and exact results`,async()=>{
+  const f=await canonicalTaskTools(['set_avatar']);
+  try{
+    const thread=randomUUID();if(kind==='side'){f.db.prepare("INSERT INTO threads VALUES (?,?,'Side',1,0,0)").run(thread,f.agent);f.db.prepare("INSERT INTO record_scopes VALUES ('threads',?,?,?,'owner','thread',?)").run(JSON.stringify([thread]),f.owner.accountId,f.project,thread);}
+    const task=f.start(f.owner,kind==='direct'?undefined:{v:1,kind:'side',threadId:thread,message:{text:'Remove avatar',files:[]}}),run=(args:unknown)=>f.stage(task,args,'set_avatar')();
+    const snapshot=f.tasks.context(f.principal,task.taskId,{requestId:randomUUID(),ownership:task.ownership,expectedTaskRevision:2},task.token).data.snapshot as {profile:{avatarRevision:number}};
+    assert.equal(snapshot.profile.avatarRevision,0);
+    assert.deepEqual(run({image:null,revision:0}).data.resultContent,{revision:1,present:false});
+    for(const revision of [-1,1.5,'1',Number.MAX_SAFE_INTEGER])assert.equal((run({image:null,revision}).data.resultContent as {status:number}).status,400);
+    for(const image of [undefined,12,{},'bad'])assert.equal((run({image,revision:1}).data.resultContent as {status:number}).status,400);
+    assert.equal((run({image:randomUUID(),revision:1}).data.resultContent as {status:number}).status,422);
+    assert.equal((run({image:null,revision:0}).data.resultContent as {status:number}).status,409);
+    f.db.prepare('UPDATE agent_avatars SET image=?,revision=2 WHERE agent=?').run(Buffer.from('saved image'),f.agent);
+    const deletion=f.stage(task,{image:null,revision:2},'set_avatar');
+    f.db.exec("CREATE TRIGGER fail_avatar_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'avatar result failed'); END");assert.throws(deletion,/avatar result failed/);assert.equal(f.db.prepare('SELECT revision FROM agent_avatars WHERE agent=?').get(f.agent)!.revision,2);assert.equal(Buffer.from(f.db.prepare('SELECT image FROM agent_avatars WHERE agent=?').get(f.agent)!.image as Uint8Array).toString(),'saved image');
+    f.db.exec('DROP TRIGGER fail_avatar_result');const saved=deletion();assert.deepEqual(saved.data.resultContent,{revision:3,present:false});assert.equal(f.db.prepare('SELECT image FROM agent_avatars WHERE agent=?').get(f.agent)!.image,null);
+    f.db.prepare('UPDATE agent_avatars SET image=?,revision=4 WHERE agent=?').run(Buffer.from('later image'),f.agent);assert.deepEqual(deletion(),saved);assert.equal(f.db.prepare('SELECT revision FROM agent_avatars WHERE agent=?').get(f.agent)!.revision,4);
+    const stale=f.stage(task,{image:null,revision:4},'set_avatar');f.db.prepare('UPDATE agent_avatars SET revision=5 WHERE agent=?').run(f.agent);assert.throws(stale,code('context_stale'));
+    f.tasks.control(f.owner,task.taskId,{requestId:randomUUID(),expectedRevision:f.tasks.lookup(f.owner,task.taskId).data.revision,operation:'cancel'});assert.deepEqual(deletion(),saved);
+    f.db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,f.agent);f.db.prepare('INSERT INTO response_policies VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,f.agent);
+    const member=f.start(f.member),memberDelete=f.stage(member,{image:null,revision:5},'set_avatar');assert.deepEqual(memberDelete().data.resultContent,{revision:6,present:false});
+    f.db.prepare('UPDATE collaborator_agents SET enabled=0,revision=2 WHERE project=? AND account=? AND agent=?').run(f.project,f.member.accountId,f.agent);assert.throws(memberDelete,code('execution_denied'));
+    const channel=randomUUID();f.db.prepare("INSERT INTO channels VALUES (?,'Room','',NULL,1,0)").run(channel);f.db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel,f.agent);f.db.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(JSON.stringify([channel]),f.owner.accountId,f.project,channel);
+    const room=f.start(f.owner,{v:1,kind:'channel',channelId:channel,routing:'assigned',message:{text:'Room avatar',files:[]}}),roomContext=f.tasks.context(f.principal,room.taskId,{requestId:randomUUID(),ownership:room.ownership,expectedTaskRevision:2},room.token).data.snapshot as {tools:unknown[]};assert.deepEqual(roomContext.tools,[]);assert.throws(()=>f.stage(room,{image:null,revision:6},'set_avatar')(),code('execution_denied'));
+  }finally{f.close();}
+});
+
 for(const kind of ['direct','side'] as const)test(`canonical sites in ${kind} page scoped metadata and retain atomic deletion`,async()=>{
   const f=await canonicalTaskTools(['list_sites','delete_site']);
   try{
