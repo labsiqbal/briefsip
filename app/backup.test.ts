@@ -3,11 +3,49 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
+import { chmodSync, linkSync, mkdtempSync, readFileSync, writeFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './server.ts';
-import { restoreWorkspace } from './backup.ts';
+import { canonicalServerLock, restoreWorkspace } from './backup.ts';
+import { ProtocolError } from './protocol.ts';
+
+test('canonical server guard fences aliases and processes, releases on SIGKILL and rejects unsafe files', async () => {
+  const dir=mkdtempSync(join(tmpdir(),'briefsip-server-lock-')),database=join(dir,'canonical.sqlite'),guardPath=database+'.server-lock.sqlite';
+  new DatabaseSync(database).close();
+  const source=`import { canonicalServerLock } from ${JSON.stringify(new URL('./backup.ts',import.meta.url).href)}; const guard=canonicalServerLock(process.argv[1]); process.on('message',()=>{guard.close();process.disconnect();}); process.send('locked');`;
+  const child=spawn(process.execPath,['--experimental-strip-types','--input-type=module','-e',source,database],{stdio:['ignore','ignore','pipe','ipc']});
+  let guard:DatabaseSync|undefined;
+  try {
+    assert.deepEqual(await once(child,'message',{signal:AbortSignal.timeout(10000)}),['locked',undefined]);
+    const busy=(error:unknown)=>error instanceof ProtocolError&&error.code==='canonical_server_busy';
+    assert.throws(()=>canonicalServerLock(database),busy);
+    const alias=join(dir,'alias.sqlite');symlinkSync(database,alias);assert.throws(()=>canonicalServerLock(alias),busy);
+    // A failed same-process acquisition must not release the other process's lock.
+    assert.throws(()=>canonicalServerLock(database),busy);
+    const exited=once(child,'exit');child.kill('SIGKILL');await exited;
+    guard=canonicalServerLock(alias);assert.equal(statSync(guardPath).mode&0o777,0o600);
+    assert.throws(()=>canonicalServerLock(database),busy);assert.throws(()=>canonicalServerLock(alias),busy);
+    const probeSource=`import { canonicalServerLock } from ${JSON.stringify(new URL('./backup.ts',import.meta.url).href)}; try { const guard=canonicalServerLock(process.argv[1]);guard.close();process.send('unexpected'); } catch(error) {process.send(error.code);} process.disconnect();`;
+    const probe=spawn(process.execPath,['--experimental-strip-types','--input-type=module','-e',probeSource,database],{stdio:['ignore','ignore','ignore','ipc']}),probeExited=once(probe,'exit');
+    try { assert.deepEqual(await once(probe,'message',{signal:AbortSignal.timeout(10000)}),['canonical_server_busy',undefined]); }
+    finally { if(probe.exitCode===null&&probe.signalCode===null)probe.kill('SIGKILL');await probeExited; }
+    guard.close();guard=undefined;
+    const retained=statSync(guardPath);guard=canonicalServerLock(database);assert.equal(statSync(guardPath).ino,retained.ino);guard.close();guard=undefined;
+    const hard=join(dir,'hard.sqlite');linkSync(database,hard);assert.throws(()=>canonicalServerLock(hard),/hard link/);rmSync(hard);
+    const initial=readFileSync(guardPath);rmSync(guardPath);symlinkSync(join(dir,'missing'),guardPath);assert.throws(()=>canonicalServerLock(database),/privat/);rmSync(guardPath);
+    writeFileSync(guardPath,initial,{mode:0o644});assert.throws(()=>canonicalServerLock(database),/privat/);chmodSync(guardPath,0o600);
+    const linked=join(dir,'guard-link');linkSync(guardPath,linked);assert.throws(()=>canonicalServerLock(database),/privat/);rmSync(linked);
+    writeFileSync(guardPath,'not sqlite');assert.throws(()=>canonicalServerLock(database));assert.equal(readFileSync(guardPath,'utf8'),'not sqlite');writeFileSync(guardPath,initial);
+    guard=canonicalServerLock(database);
+  } finally {
+    guard?.close();
+    if(child.exitCode===null&&child.signalCode===null){const exited=once(child,'exit');child.kill('SIGKILL');await exited;}
+    rmSync(dir,{recursive:true,force:true});
+  }
+});
 
 test('live backup restores history while holding pending work and disabling automation', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-backup-test-'));

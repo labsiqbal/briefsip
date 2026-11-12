@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createClerkClient } from '@clerk/backend';
 import { generateKeyPairSync, sign, randomUUID, randomBytes } from 'node:crypto';
-import { mkdtempSync, rmSync, readFileSync, existsSync, statSync, writeFileSync, renameSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, existsSync, statSync, writeFileSync, renameSync, symlinkSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer, request as httpRequest } from 'node:http';
@@ -36,7 +36,7 @@ async function fixture() {
     const response = await fetch(app.origin + path, { method, headers: { Authorization: `Bearer ${jwt(subject)}`, Origin: auth.origin, Connection: 'close', 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': body?.requestId ?? randomUUID() }, ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
   };
-  return { dir, jwt, send, origin: () => app.origin, async restart() { const port = new URL(app.origin).port; await app.close(); app = await startCanonicalApp({ ...options, port: Number(port) }); }, async restoreFrom(backup:string){
+  return { dir, jwt, send, origin: () => app.origin, startAgain: (database=options.database,port=0) => startCanonicalApp({...options,database,port}), async restart() { const port = new URL(app.origin).port; await app.close(); app = await startCanonicalApp({ ...options, port: Number(port) }); }, async restoreFrom(backup:string){
     const port=Number(new URL(app.origin).port);await app.close();renameSync(options.database,options.database+'.unavailable');
     restoreWorkspace(backup,options.database,{canonicalOnly:true});
     const restored=new DatabaseSync(options.database);
@@ -51,6 +51,19 @@ async function until(check: () => boolean | Promise<boolean>, timeout = 10000) {
   while (Date.now() < deadline) { if (await check()) return; await new Promise(resolve => setTimeout(resolve, 20)); }
   assert.fail('Device state did not settle');
 }
+
+test('canonical listener rejects a second server on the same database and releases lock on close', async () => {
+  const f=await fixture();let duplicate:Awaited<ReturnType<typeof startCanonicalApp>>|undefined;
+  try {
+    await assert.rejects(async()=>{duplicate=await f.startAgain();},(error:unknown)=>error instanceof ProtocolError&&error.code==='canonical_server_busy');
+    const alias=join(f.dir,'alias.sqlite');symlinkSync(join(f.dir,'canonical.sqlite'),alias);
+    await assert.rejects(async()=>{duplicate=await f.startAgain(alias);},(error:unknown)=>error instanceof ProtocolError&&error.code==='canonical_server_busy');
+    assert.equal((await f.send('/api/session')).status,200);
+    const failed=join(f.dir,'failed.sqlite');await assert.rejects(f.startAgain(failed,Number(new URL(f.origin()).port)),{code:'EADDRINUSE'});
+    duplicate=await f.startAgain(failed);await duplicate.close();duplicate=undefined;
+    await f.restart();assert.equal((await f.send('/api/session')).status,200);
+  } finally { await duplicate?.close();await f.close(); }
+});
 
 test('cross-device reassign survives lost reply and restart, preserves old results and waits for fixed recipient home', async () => {
   const f = await fixture(), a = memoryKeys(), b = memoryKeys();
