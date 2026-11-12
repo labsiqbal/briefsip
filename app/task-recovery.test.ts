@@ -11,6 +11,7 @@ import { openExecutorJournal, type ActionContext } from './executor-journal.ts';
 import { initializeMemory, rememberMemory } from './memory.ts';
 import { initializeSkills, saveSkill } from './skills.ts';
 import { initializeQuestions } from './questions.ts';
+import { initializeSharedData } from './shared-data.ts';
 import { initializeCompaction } from './compaction.ts';
 import { initializeFlows } from './flow-store.ts';
 import { initializeSites, saveSite } from './sites.ts';
@@ -108,10 +109,67 @@ async function canonicalTaskTools(tools=['ask_user']) {
     f.tasks.prepare(f.principal,task.taskId,actionId,{requestId:randomUUID(),sequence,ownership:task.ownership,payloadDigest,actionKind:'canonical',contextSnapshotId:ref.snapshotId,contextDigest:ref.digest,grantRevision:1,expectedTaskRevision,journalSequence:sequence+1,intentDigest},task.token);
     f.tasks.commit(f.principal,task.taskId,actionId,{requestId:randomUUID(),ownership:task.ownership,intentDigest,expectedTaskRevision,journalSequence:sequence+1},task.token);
     const request={requestId:randomUUID(),actionId,ownership:task.ownership,toolCall,payloadDigest,expectedRevision};
-    return ()=>f.tasks.contextMutations(f.principal,task.taskId,request,task.token);
+    return Object.assign(()=>f.tasks.contextMutations(f.principal,task.taskId,request,task.token),{async:async()=>{
+      const result=await f.tasks.runContextMutation(f.principal,task.taskId,request,task.token);
+      return {...result,data:{...result.data,resultContent:result.data.resultContent as Record<string,unknown>}};
+    }});
   };
   return {...f,start,stage};
 }
+
+test('canonical shared data keeps schema ownership, collaborator scope, validation and atomic receipts',async()=>{
+  const f=await canonicalTaskTools(['query_data','list_data_tables']);initializeSharedData(f.db,true);
+  try{
+    const first=f.start(),run=async(task:typeof first,sql:string,parameters?:unknown[])=>f.stage(task,{sql,...(parameters?{parameters}:{})},'query_data').async();
+    assert.equal((await run(first,'CREATE TABLE notes(text TEXT)')).data.resultContent.revision,1);
+    const secondAgent=randomUUID();await f.access.createAgent(f.owner,{requestId:secondAgent,id:secondAgent,name:'Other data agent',model:'fixture',backupModel:'',instructions:'Use project data',threadLimit:2,projectId:f.project,homeDeviceId:f.home,expectedProjectRevision:1,expectedHomeDeviceRevision:1,providerBinding:null});
+    f.db.prepare('UPDATE agent_projects SET capabilities_json=? WHERE agent=?').run(JSON.stringify({v:1,tools:['query_data','list_data_tables'],resources:[]}),secondAgent);
+    f.db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,f.agent);
+    const collaborator=f.start(f.member);assert.equal((await run(collaborator,'INSERT INTO notes VALUES (?)',['Shared project row'])).data.resultContent.revision,2);
+    const command=f.command({agentId:secondAgent}),accepted=f.tasks.admit(f.owner,command),token=randomBytes(32).toString('base64url');
+    const acquired=f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId:command.requestId,previousExecutorGeneration:0,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token);
+    const other={taskId:command.requestId,token,ownership:parseOwnership(acquired.data.ownership),actor:f.owner,sequence:0};
+    assert.equal(accepted.status,202);assert.match(String((await run(other,'DROP TABLE notes')).data.resultContent.error),/authorized/);
+    assert.deepEqual((await run(other,'SELECT * FROM notes')).data.resultContent.rows,[['Shared project row']]);
+    for(const args of [{sql:''},{sql:'SELECT 1; SELECT 2'},{sql:'ATTACH DATABASE \'/tmp/private\' AS hidden'},{sql:'SELECT ?',parameters:[true]}])assert.equal(typeof (await f.stage(first,args,'query_data').async()).data.resultContent.error,'string');
+    const insert=f.stage(first,{sql:'INSERT INTO notes VALUES (?)',parameters:['Atomic row']},'query_data');
+    f.db.exec("CREATE TRIGGER reject_data_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'result journal failed'); END");
+    await assert.rejects(insert.async(),/result journal failed/);assert.equal(f.db.prepare('SELECT revision FROM shared_data WHERE project=?').get(f.project)!.revision,2);
+    f.db.exec('DROP TRIGGER reject_data_result');const saved=await insert.async();assert.equal(saved.data.resultContent.revision,3);
+    assert.deepEqual(await insert.async(),saved);assert.deepEqual((await run(first,'SELECT text FROM notes ORDER BY rowid')).data.resultContent.rows,[['Shared project row'],['Atomic row']]);
+    const denied=f.stage(collaborator,{sql:'INSERT INTO notes VALUES (\'Revoked\')'},'query_data'),deniedWork=denied.async();f.db.prepare('UPDATE collaborator_agents SET enabled=0,revision=2 WHERE project=? AND account=? AND agent=?').run(f.project,f.member.accountId,f.agent);
+    await assert.rejects(deniedWork,code('execution_denied'));assert.equal(f.db.prepare('SELECT revision FROM shared_data WHERE project=?').get(f.project)!.revision,3);
+    await assert.rejects(f.stage(first,{sql:'SELECT 1',project:f.project},'query_data').async(),code('unknown_field'));
+  }finally{f.close();}
+});
+
+test('canonical shared data rechecks cancellation and authority across worker I/O and preserves concurrent conflicts',async()=>{
+  const f=await canonicalTaskTools(['query_data','list_data_tables']);initializeSharedData(f.db,true);
+  try{
+    const first=f.start(),second=f.start(),run=(task:typeof first,sql:string)=>f.stage(task,{sql},'query_data').async();
+    await run(first,'CREATE TABLE notes(text TEXT)');
+    const pending=f.stage(first,{sql:"INSERT INTO notes VALUES ('Once')"},'query_data');
+    const one=pending.async(),two=pending.async();await assert.rejects(pending.async(),code('server_capacity'));
+    const saved=await one;assert.deepEqual(await two,saved);assert.equal(saved.data.resultContent.revision,2);
+    const results=await Promise.all([run(first,"INSERT INTO notes VALUES ('First')"),run(second,"INSERT INTO notes VALUES ('Second')")]);
+    assert.equal(results.filter(result=>typeof result.data.resultContent.error==='string').length,1);assert.match(String(results.find(result=>result.data.resultContent.error)!.data.resultContent.error),/Data berubah/);
+    const stale=run(first,"INSERT INTO notes VALUES ('Stale')");f.db.prepare('UPDATE agents SET revision=revision+1 WHERE id=?').run(f.agent);await assert.rejects(stale,code('context_stale'));assert.equal(f.db.prepare('SELECT revision FROM shared_data WHERE project=?').get(f.project)!.revision,3);
+    const cancelled=run(second,"INSERT INTO notes VALUES ('Cancelled')");
+    const revision=Number(f.tasks.lookup(f.owner,second.taskId).data.revision);f.tasks.control(f.owner,second.taskId,{requestId:randomUUID(),expectedRevision:revision,operation:'cancel'});
+    await assert.rejects(cancelled,code('ownership_conflict'));assert.equal(f.db.prepare('SELECT revision FROM shared_data WHERE project=?').get(f.project)!.revision,3);
+  }finally{f.close();}
+});
+
+test('canonical cancellation kills SQL workers and releases query capacity',async()=>{
+  const f=await canonicalTaskTools(['query_data']);initializeSharedData(f.db,true);
+  try{
+    const tasks=[f.start(),f.start()],sql='WITH RECURSIVE forever(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM forever) SELECT sum(n) FROM forever';
+    const work=tasks.map(task=>f.stage(task,{sql},'query_data').async()),finished=Promise.allSettled(work),started=performance.now();
+    for(const task of tasks)f.tasks.control(f.owner,task.taskId,{requestId:randomUUID(),expectedRevision:Number(f.tasks.lookup(f.owner,task.taskId).data.revision),operation:'cancel'});
+    assert((await finished).every(result=>result.status==='rejected'));assert(performance.now()-started<1000,'Cancelled query workers must stop before their SQL deadline.');
+    const next=f.start(),result=await f.stage(next,{sql:'SELECT 42'},'query_data').async();assert.deepEqual(result.data.resultContent.rows,[[42]]);
+  }finally{f.close();}
+});
 
 test('canonical questions validate limits and atomically pause, answer and retain cancellation',async()=>{
   const f=await canonicalTaskTools();
