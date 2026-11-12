@@ -92,6 +92,85 @@ async function preparedTask() {
   return { ...f, taskId, token, ownership, actionId, payloadDigest, lockProof, commit, context };
 }
 
+async function canonicalQuestions() {
+  const f=await fixture(['ask_user']);
+  const start=(actor=f.owner,payload:Record<string,unknown>={v:1,kind:'direct',message:{text:'Ask first',files:[]}})=>{
+    const expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1,...(payload.kind==='channel'?{channel:1}:{}),...(payload.kind==='side'?{thread:1}:{})};
+    const command=f.command({payload,expectedRevisions});f.tasks.admit(actor,command);
+    const taskId=command.requestId,token=randomBytes(32).toString('base64url');
+    const acquired=f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId,previousExecutorGeneration:0,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token);
+    return {taskId,token,ownership:parseOwnership(acquired.data.ownership),actor,sequence:0};
+  };
+  const stage=(task:ReturnType<typeof start>,args:unknown)=>{
+    const expectedTaskRevision=Number(f.tasks.lookup(task.actor,task.taskId).data.revision),context=f.tasks.context(f.principal,task.taskId,{requestId:randomUUID(),ownership:task.ownership,expectedTaskRevision},task.token),ref=context.data.snapshotRef as {snapshotId:string;digest:string},actionId=randomUUID(),sequence=task.sequence++;
+    const toolCall={id:actionId,function:{name:'ask_user',arguments:JSON.stringify(args)}},expectedRevision=expectedTaskRevision+1,payloadDigest=canonicalToolDigest({toolCall,expectedRevision}),intentDigest=digestCommand([task.taskId,actionId,sequence,task.ownership,payloadDigest,'canonical',ref.snapshotId,ref.digest,null,null,1,null,null,null]);
+    f.tasks.prepare(f.principal,task.taskId,actionId,{requestId:randomUUID(),sequence,ownership:task.ownership,payloadDigest,actionKind:'canonical',contextSnapshotId:ref.snapshotId,contextDigest:ref.digest,grantRevision:1,expectedTaskRevision,journalSequence:sequence+1,intentDigest},task.token);
+    f.tasks.commit(f.principal,task.taskId,actionId,{requestId:randomUUID(),ownership:task.ownership,intentDigest,expectedTaskRevision,journalSequence:sequence+1},task.token);
+    const request={requestId:randomUUID(),actionId,ownership:task.ownership,toolCall,payloadDigest,expectedRevision};
+    return ()=>f.tasks.contextMutations(f.principal,task.taskId,request,task.token);
+  };
+  return {...f,start,stage};
+}
+
+test('canonical questions validate limits and atomically pause, answer and retain cancellation',async()=>{
+  const f=await canonicalQuestions();
+  try{
+    f.db.prepare("UPDATE devices SET status='ready' WHERE id=?").run(f.home);
+    const task=f.start();
+    for(const args of [{question:'?',choices:['Yes',' Yes ']},{question:'',choices:[]},{question:'?',choices:Array(9).fill('x')},{question:'?',choices:[2]},{question:'x'.repeat(2001),choices:[]}])assert.equal((f.stage(task,args)().data.resultContent as {status:number}).status,400);
+    assert.deepEqual(f.tasks.lookup(f.owner,task.taskId).data.questions,[]);
+    const ask=f.stage(task,{question:' Continue? ',choices:[' Yes ','No']});
+    f.db.exec("CREATE TRIGGER fail_question_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'question result failed'); END");
+    assert.throws(ask,/question result failed/);assert.deepEqual(f.tasks.lookup(f.owner,task.taskId).data.questions,[]);assert.equal(f.tasks.lookup(f.owner,task.taskId).data.state,'running');
+    f.db.exec('DROP TRIGGER fail_question_result');
+    const saved=ask(),question=(saved.data.resultContent as {id:string}).id;
+    assert.deepEqual(ask(),saved);assert.equal(f.tasks.lookup(f.owner,task.taskId).data.state,'paused');
+    assert.throws(()=>f.tasks.control(f.owner,task.taskId,{requestId:randomUUID(),expectedRevision:saved.receipt.recordRevision,operation:'reassign',recipientAgentId:f.agent}),code('question_pending'));
+    const answer={requestId:randomUUID(),expectedRevision:saved.receipt.recordRevision,text:'Yes'};
+    f.db.exec("CREATE TRIGGER fail_question_answer BEFORE INSERT ON question_answers BEGIN SELECT RAISE(ABORT,'answer failed'); END");
+    assert.throws(()=>f.tasks.answer(f.owner,task.taskId,question,answer),/answer failed/);
+    const unchanged=f.tasks.lookup(f.owner,task.taskId);assert.equal(unchanged.data.state,'paused');assert.equal(unchanged.data.revision,answer.expectedRevision);assert.equal((unchanged.data.questions as {answer:null}[])[0].answer,null);
+    f.db.exec('DROP TRIGGER fail_question_answer');
+    const answered=f.tasks.answer(f.owner,task.taskId,question,answer);assert.equal(answered.data.state,'running');assert.deepEqual(f.tasks.answer(f.owner,task.taskId,question,answer),answered);
+    assert.throws(()=>f.tasks.answer(f.owner,task.taskId,question,{...answer,requestId:randomUUID(),expectedRevision:answered.receipt.recordRevision}),code('question_closed'));
+    for(let n=1;n<8;n++){const asked=f.stage(task,{question:`Question ${n}`,choices:[]})(),qid=(asked.data.resultContent as {id:string}).id;f.tasks.answer(f.owner,task.taskId,qid,{requestId:randomUUID(),expectedRevision:asked.receipt.recordRevision,text:'Free text'});}
+    assert.equal((f.stage(task,{question:'Ninth question',choices:[]})().data.resultContent as {status:number}).status,409);assert.equal((f.tasks.lookup(f.owner,task.taskId).data.questions as unknown[]).length,8);
+    const cancelled=f.start(),pending=f.stage(cancelled,{question:'Stop?',choices:[]}),pendingResult=pending(),pendingId=(pendingResult.data.resultContent as {id:string}).id;
+    const stopped=f.tasks.control(f.owner,cancelled.taskId,{requestId:randomUUID(),expectedRevision:pendingResult.receipt.recordRevision,operation:'cancel'});
+    assert.deepEqual(pending(),pendingResult);assert.throws(()=>f.tasks.answer(f.owner,cancelled.taskId,pendingId,{requestId:randomUUID(),expectedRevision:stopped.receipt.recordRevision,text:'Late'}),code('question_closed'));
+    assert.equal(f.tasks.lookup(f.owner,cancelled.taskId).data.state,'cancelled');
+  }finally{f.close();}
+});
+
+test('canonical question answers enforce private human, conversation, project and current collaborator access',async()=>{
+  const f=await canonicalQuestions();
+  try{
+    f.db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,f.agent);
+    f.db.prepare('INSERT INTO response_policies VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,f.agent);
+    const task=f.start(f.member),asked=f.stage(task,{question:'Member private?',choices:['Yes']})(),question=(asked.data.resultContent as {id:string}).id,answer={requestId:randomUUID(),expectedRevision:asked.receipt.recordRevision,text:'Yes'};
+    assert.throws(()=>f.tasks.answer(f.owner,task.taskId,question,answer),code('resource_not_found'));
+    assert.throws(()=>f.tasks.answer(f.foreign,task.taskId,question,answer),code('resource_not_found'));
+    assert.throws(()=>f.tasks.answer(f.member,task.taskId,randomUUID(),answer),code('resource_not_found'));
+    const other=f.start(f.member);assert.throws(()=>f.tasks.answer(f.member,other.taskId,question,answer),code('resource_not_found'));
+    const answered=f.tasks.answer(f.member,task.taskId,question,answer);assert.equal(answered.receipt.actorId,f.member.accountId);
+    f.db.prepare('UPDATE collaborator_agents SET enabled=0 WHERE account=?').run(f.member.accountId);
+    assert.throws(()=>f.tasks.answer(f.member,task.taskId,question,answer),code('execution_denied'));
+    f.db.prepare('UPDATE collaborator_agents SET enabled=1 WHERE account=?').run(f.member.accountId);
+    const thread=randomUUID();f.db.prepare("INSERT INTO threads VALUES (?,?,'Side',1,0,0)").run(thread,f.agent);
+    f.db.prepare("INSERT INTO record_scopes VALUES ('threads',?,?,?,'owner','thread',?)").run(JSON.stringify([thread]),f.member.accountId,f.project,thread);
+    const side=f.start(f.member,{v:1,kind:'side',threadId:thread,message:{text:'Side question',files:[]}}),sideResult=f.stage(side,{question:'Side?',choices:[]})(),sideQuestion=(sideResult.data.resultContent as {id:string}).id;
+    f.db.prepare('UPDATE threads SET archived=1,revision=revision+1 WHERE id=?').run(thread);
+    assert.throws(()=>f.tasks.answer(f.member,side.taskId,sideQuestion,{requestId:randomUUID(),expectedRevision:sideResult.receipt.recordRevision,text:'Late'}),code('execution_denied'));
+    const channel=randomUUID();f.db.prepare("INSERT INTO channels VALUES (?,'Room','',NULL,1,0)").run(channel);f.db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel,f.agent);
+    f.db.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(JSON.stringify([channel]),f.owner.accountId,f.project,channel);
+    const room=f.start(f.owner,{v:1,kind:'channel',channelId:channel,routing:'assigned',message:{text:'Shared question',files:[]}}),roomResult=f.stage(room,{question:'Room?',choices:[]})(),roomQuestion=(roomResult.data.resultContent as {id:string}).id;
+    assert.throws(()=>f.tasks.answer(f.member,side.taskId,roomQuestion,{requestId:randomUUID(),expectedRevision:sideResult.receipt.recordRevision,text:'Wrong conversation'}),code('resource_not_found'));
+    assert.equal(f.tasks.answer(f.member,room.taskId,roomQuestion,{requestId:randomUUID(),expectedRevision:roomResult.receipt.recordRevision,text:'Shared answer'}).data.answer,'Shared answer');
+    f.db.prepare('UPDATE project_members SET deleted=1 WHERE account=?').run(f.member.accountId);
+    assert.throws(()=>f.tasks.answer(f.member,task.taskId,question,answer),code('resource_not_found'));
+  }finally{f.close();}
+});
+
 test('reassign denies unresolved effects, revoked initiators and invalid successor provenance atomically', async () => {
   const f = await preparedTask(), recipient = randomUUID();
   try {

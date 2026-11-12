@@ -22,6 +22,54 @@ function memoryKeys() {
   const values = new Map<string, string>();
   return { values, entry(service: string, name: string) { const key = `${service}/${name}`; return { getPassword: () => values.get(key) ?? null, setPassword: (value: string) => { values.set(key, value); } }; } };
 }
+
+test('canonical questions survive lost RPC and answer replies, restart and home outage without duplicate work', async () => {
+  const f=await fixture(),keys=memoryKeys(),originalFetch=globalThis.fetch;
+  const runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry});
+  let closed=false;
+  try {
+    await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
+    const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),agent=randomUUID();
+    assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Questions'})).status,201);
+    assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Reader',model:'fixture',backupModel:'',instructions:'Ask first',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
+    const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'Ask before continuing',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
+    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
+    const owned=await runtime.startTask(taskId),context=await runtime.taskContext(taskId,owned.ownership,owned.revision),actionId=randomUUID();
+    const input={taskId,actionId,sequence:0,actionKind:'canonical' as const,ownership:owned.ownership,payload:{toolCall:{id:actionId,function:{name:'ask_user',arguments:JSON.stringify({question:'Continue?',choices:['Yes','No']})}},expectedRevision:context.snapshot.taskRevision+1},context,grantRevision:1};
+    globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith('/context-mutations')){assert.equal(response.status,200,await response.clone().text());await response.body?.cancel();throw new Error('Lost question result');}return response;};
+    await assert.rejects(runtime.executeAction(input,()=>assert.fail('Host effect')),/Lost question result/);globalThis.fetch=originalFetch;
+    let detail=(await f.send(`/api/tasks/${taskId}`)).body.data;
+    assert.equal(detail.state,'paused');assert.equal(detail.questions.length,1);assert.equal(detail.questions[0].answer,null);
+    const generation=(await f.send('/api/devices')).body.data[0].connection_generation;
+    await f.restart();await until(async()=>connection.state().phase==='connected'&&(await f.send('/api/devices')).body.data[0].connection_generation>generation);
+    await until(()=>runtime.recoveryStatus().results.some(row=>row.actionId===actionId&&row.state==='acknowledged'),15000);
+    detail=(await f.send(`/api/tasks/${taskId}`)).body.data;assert.equal(detail.questions.length,1);assert.equal(detail.results.length,1);
+    const path=`/api/tasks/${taskId}/questions/${detail.questions[0].id}/answer`,answer={requestId:randomUUID(),expectedRevision:detail.revision,text:'Yes'};
+    assert.equal((await f.send(path,{...answer,text:'Maybe'})).status,400);
+    assert.equal((await f.send(path,answer,'user_foreign')).status,404);
+    assert.equal((await f.send(`/api/tasks/${taskId}/control`,{requestId:randomUUID(),expectedRevision:detail.revision,operation:'resume'})).body.error.code,'question_pending');
+    assert.equal((await f.send(path,{...answer,expectedRevision:1})).body.error.code,'stale_revision');
+    globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith('/answer')){assert.equal(response.status,200,await response.clone().text());await response.body?.cancel();throw new Error('Lost answer result');}return response;};
+    await assert.rejects(f.send(path,answer),/Lost answer result/);globalThis.fetch=originalFetch;
+    const beforeAnswerRestart=(await f.send('/api/devices')).body.data[0].connection_generation;
+    await f.restart();await until(async()=>connection.state().phase==='connected'&&(await f.send('/api/devices')).body.data[0].connection_generation>beforeAnswerRestart);
+    const replay=await f.send(path,answer);assert.equal(replay.status,200);assert.equal(replay.body.data.answer,'Yes');
+    assert.equal((await f.send(path,{...answer,text:'No'})).body.error.code,'payload_conflict');
+    detail=(await f.send(`/api/tasks/${taskId}`)).body.data;assert.equal(detail.state,'running');assert.equal(detail.questions[0].answer,'Yes');
+    const continued=await runtime.taskContext(taskId,owned.ownership,detail.revision);
+    assert.equal((continued.snapshot.conversation as {questions:{answer:string}[]}).questions[0].answer,'Yes');
+    await runtime.executeAction({taskId,actionId:randomUUID(),sequence:1,actionKind:'read',ownership:owned.ownership,payload:{operation:'after answer'},context:continued,grantRevision:1},()=>({text:'Continued once'}));
+    detail=(await f.send(`/api/tasks/${taskId}`)).body.data;assert.equal(detail.results.length,2);
+    const nextContext=await runtime.taskContext(taskId,owned.ownership,detail.revision),nextAction=randomUUID();
+    await runtime.executeAction({taskId,actionId:nextAction,sequence:2,actionKind:'canonical',ownership:owned.ownership,payload:{toolCall:{id:nextAction,function:{name:'ask_user',arguments:JSON.stringify({question:'More input?',choices:[]})}},expectedRevision:nextContext.snapshot.taskRevision+1},context:nextContext,grantRevision:1},()=>assert.fail('Host effect'));
+    await runtime.close();closed=true;
+    await until(async()=>(await f.send('/api/devices')).body.data[0].status!=='ready');
+    detail=(await f.send(`/api/tasks/${taskId}`)).body.data;
+    const offline=await f.send(`/api/tasks/${taskId}/questions/${detail.questions[1].id}/answer`,{requestId:randomUUID(),expectedRevision:detail.revision,text:'Saved while offline'});
+    assert.equal(offline.status,200);assert.equal(offline.body.data.state,'waiting_device');
+    assert.deepEqual((await f.send(path,answer)).body.receipt,replay.body.receipt);
+  } finally {globalThis.fetch=originalFetch;if(!closed)await runtime.close();await f.close();}
+});
 async function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-device-http-')), keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const auth: AuthConfig = { secretKey: 'sk_test_fixture', publishableKey: `pk_test_${Buffer.from('fixture.clerk.accounts.dev$').toString('base64')}`, issuer: 'https://fixture.clerk.accounts.dev', origin: 'http://127.0.0.1', development: true };
