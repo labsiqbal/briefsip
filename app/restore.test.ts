@@ -114,6 +114,27 @@ test('pre-v3 canonical restore disables retained automation and rejects downgrad
   }finally{rmSync(dir,{recursive:true,force:true});}
 });
 
+test('read-only restore upgrades legacy canonical owner marker before reconcile',async()=>{
+  const dir=mkdtempSync(join(tmpdir(),'briefsip-restore-legacy-marker-')),db=new DatabaseSync(join(dir,'source.sqlite'));
+  initializeCanonicalSchema(db);
+  const owner={accountId:randomUUID(),issuer:'https://fixture.example',subject:'owner',sessionId:'owner-session',expiresAt:Date.now()+60000};
+  db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(owner.accountId,owner.issuer,owner.subject,Date.now());
+  const project=randomUUID();db.prepare('INSERT INTO projects(id,account,name,private,deleted,revision) VALUES (?,?,?,1,0,1)').run(project,owner.accountId,'Owner project');
+  db.prepare("INSERT INTO project_members(project,account,role,grant_revision,deleted) VALUES (?,?, 'owner',1,0)").run(project,owner.accountId);
+  const backup=await workspaceSnapshot(db);db.close();
+  try{
+    const legacy=new DatabaseSync(backup.file);const generation=legacy.prepare('SELECT generation FROM briefsip_backup_authority').get()!.generation;
+    legacy.exec('ALTER TABLE briefsip_backup_authority RENAME TO briefsip_backup_authority_new; CREATE TABLE briefsip_backup_authority(generation TEXT NOT NULL) STRICT;');
+    legacy.prepare('INSERT INTO briefsip_backup_authority VALUES (?)').run(generation);legacy.exec('DROP TABLE briefsip_backup_authority_new');legacy.close();
+    const restoredPath=join(dir,'restored.sqlite');restoreWorkspace(backup.file,restoredPath,{canonicalOnly:true});
+    const restored=new DatabaseSync(restoredPath);try{
+      assert.equal(restored.prepare('SELECT owner_account FROM briefsip_backup_authority').get()!.owner_account,owner.accountId);
+      const gate=prepareRestoreBootstrap(restored);const auth={requireCurrent:(actor:HumanActor)=>actor};
+      assert.equal(issueRestoreSession(restored,auth,owner,gate.bootstrap).recoveryGeneration,gate.recoveryGeneration);
+    }finally{restored.close();}
+  }finally{backup.cleanup();rmSync(dir,{recursive:true,force:true});}
+});
+
 test('operator CLI restores a canonical backup read-only without script credentials',async()=>{
   const dir=mkdtempSync(join(tmpdir(),'briefsip-restore-cli-')),db=new DatabaseSync(join(dir,'source.sqlite'));initializeCanonicalSchema(db);
   const backup=await workspaceSnapshot(db);db.close();

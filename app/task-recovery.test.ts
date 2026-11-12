@@ -17,6 +17,7 @@ import { createProjectAccess } from './project-access.ts';
 import { createDevices, parseLinkChallenge, deviceLinkBody, descriptorBody, type DeviceDescriptor } from './devices.ts';
 import { canonicalJson, digestCommand, sha256, ProtocolError } from './protocol.ts';
 import { canonicalToolDigest, createTaskRecovery, parseTaskCommand, parseOwnership, journalEntryBody, stopEvidenceBody, recoveryEnvelopeBody, type StopEvidence, type JournalEntry } from './task-recovery.ts';
+import { prepareRestoreBootstrap, issueRestoreSession } from './backup.ts';
 
 async function fixture() {
   const db = new DatabaseSync(':memory:'); initializeCanonicalSchema(db);
@@ -618,6 +619,39 @@ function recoveryEnvelope(f: Awaited<ReturnType<typeof preparedTask>>, requestId
   const signature=sign(null,Buffer.from(JSON.stringify(['briefsip-recovery-envelope-v1',recoveryGeneration,requestId,envelope.sourceAuthority,envelope.sourceDeviceId,envelope.sourceDeviceGeneration,envelope.watermark,envelope.entries.map(e=>[e.taskId,e.actionId,e.sequence,e.executorGeneration,e.actionKind,e.payloadDigest,e.intentDigest,e.bindingId??null,e.bindingRevision??null,e.grantRevision,e.state,e.effectStatus,e.resultDigest??null,e.resultRef??null,e.journalSequence,e.signature]),[]])),f.signing.privateKey).toString('base64url');
   return {requestId,recoveryGeneration,envelope,signature,...(resultContent===undefined?{}:{resultContent})};
 }
+
+test('disaster mixed batches reconcile known evidence and privately quarantine only unknown actions atomically',async()=>{
+  const f=await preparedTask();
+  try{
+    f.tasks.commit(f.principal,f.taskId,f.actionId,f.commit,f.token);
+    f.db.exec('CREATE TABLE briefsip_backup_authority(generation TEXT,owner_account TEXT)');
+    f.db.prepare('INSERT INTO briefsip_backup_authority VALUES (?,?)').run(f.principal.authorityGeneration,f.owner.accountId);
+    f.db.prepare("UPDATE authority_state SET generation=?,serving_state='read_only_recovery'").run(randomUUID());
+    const auth={requireCurrent:(actor:HumanActor)=>actor},gate=prepareRestoreBootstrap(f.db),proof=issueRestoreSession(f.db,auth,f.owner,gate.bootstrap);
+    const request=recoveryEnvelope(f,randomUUID(),proof.recoveryGeneration),unknown=structuredClone(request.envelope.entries[0]);
+    unknown.actionId=randomUUID();unknown.sequence=1;unknown.journalSequence=3;
+    const resign=()=>{
+      for(const entry of request.envelope.entries)entry.signature=sign(null,Buffer.from(JSON.stringify(journalEntryBody(f.principal.authorityGeneration,f.home,1,entry))),f.signing.privateKey).toString('base64url');
+      request.signature=sign(null,Buffer.from(JSON.stringify(recoveryEnvelopeBody(proof.recoveryGeneration,request.requestId,request.envelope))),f.signing.privateKey).toString('base64url');
+    };
+    request.envelope.entries.push(unknown);request.envelope.entries.sort((a,b)=>a.actionId.localeCompare(b.actionId));request.envelope.watermark=3;
+    const known=request.envelope.entries.find(entry=>entry.actionId===f.actionId)!;known.intentDigest=sha256('wrong known intent');resign();
+    assert.throws(()=>f.tasks.recoveryImport(f.owner,f.taskId,request,proof.session),code('recovery_provenance_invalid'));
+    assert.equal(f.db.prepare('SELECT count(*) n FROM recovery_quarantine').get()!.n,0);
+    assert.equal(f.db.prepare('SELECT count(*) n FROM recovery_imports').get()!.n,0);
+    known.intentDigest=f.commit.intentDigest;resign();
+    const result=f.tasks.recoveryImport(f.owner,f.taskId,request,proof.session);
+    assert.deepEqual(result.data.importedActionIds,[f.actionId]);assert.deepEqual(result.data.quarantinedActionIds,[unknown.actionId]);
+    assert.equal(result.receipt.projectId,undefined);assert.deepEqual(f.tasks.recoveryImport(f.owner,f.taskId,request,proof.session),result);
+    assert.equal(f.db.prepare('SELECT count(*) n FROM task_actions').get()!.n,1);
+    const saved=f.db.prepare('SELECT * FROM recovery_quarantine').get()!;
+    assert.equal(saved.owner_account,f.owner.accountId);assert.deepEqual(JSON.parse(String(saved.envelope_json)),request);
+    const previousReceipt=result.receipt.requestId;
+    request.requestId=randomUUID();resign();
+    assert.throws(()=>f.tasks.recoveryImport(f.owner,f.taskId,request,proof.session),code('recovery_conflict'));
+    assert.equal(f.db.prepare('SELECT receipt_id FROM task_reports').get()!.receipt_id,previousReceipt);
+  }finally{f.close();}
+});
 
 test('owner recovery session is scoped, nonsecret on retry, rotates and requires revoked original source', async()=>{
   const f=await preparedTask();

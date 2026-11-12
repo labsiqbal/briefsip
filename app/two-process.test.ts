@@ -522,3 +522,51 @@ test('disaster recovery imports original host result without original server and
     assert.equal(calls,1);
   }finally{globalThis.fetch=originalFetch;backup?.cleanup();await runtime.close();await f.close();}
 });
+
+test('disaster recovery quarantines signed post-backup actions and tasks without publishing or admitting them',async()=>{
+  const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry});
+  const originalFetch=globalThis.fetch;let calls=0,backup:Awaited<ReturnType<typeof workspaceSnapshot>>|undefined;
+  try{
+    await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
+    const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),agent=randomUUID();
+    assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Quarantine'})).status,201);
+    assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Agent',model:'fixture',backupModel:'',instructions:'Recover',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
+    const admit=async()=>{
+      const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'Post-backup action',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
+      assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
+      return taskId;
+    };
+    const knownTask=await admit(),source=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{backup=await workspaceSnapshot(source);}finally{source.close();}
+    const unknownTask=await admit(),actions=[];
+    globalThis.fetch=async(url,init)=>{if(String(url).endsWith('/reconcile'))throw new Error('Original server lost');return originalFetch(url,init);};
+    for(const taskId of [knownTask,unknownTask]){
+      const owned=await runtime.startTask(taskId),context=await runtime.taskContext(taskId,owned.ownership,owned.revision),actionId=randomUUID();actions.push({taskId,actionId});
+      await assert.rejects(runtime.executeAction({taskId,actionId,sequence:0,actionKind:'read',ownership:owned.ownership,payload:{operation:'one call'},context,grantRevision:1},()=>{calls++;return{text:'Keep result on original host'};}),/Original server lost/);
+    }
+    await connection.stop();globalThis.fetch=originalFetch;const proof=await f.restoreFrom(backup.file);
+    const send=async(taskId:string,body:ReturnType<typeof runtime.exportRecovery>,session=proof.session,subject='user_owner')=>{
+      const response=await fetch(f.origin()+`/api/tasks/${taskId}/recovery-import`,{method:'POST',headers:{Authorization:`Bearer ${f.jwt(subject)}`,Origin:f.origin(),Connection:'close','Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':body.requestId,'X-Briefsip-Recovery':session},body:JSON.stringify(body)});
+      return{status:response.status,body:await response.json()};
+    };
+    for(const {taskId,actionId} of actions){
+      const metadata=runtime.exportRecovery(taskId,[actionId],randomUUID(),proof.recoveryGeneration);
+      assert.equal((await send(taskId,metadata,Buffer.alloc(32).toString('base64url'))).status,403);
+      assert.equal((await send(taskId,metadata,proof.session,'user_other')).status,403);
+      const altered=structuredClone(metadata);altered.signature=Buffer.alloc(64).toString('base64url');assert.equal((await send(taskId,altered)).status,403);
+      const result=await send(taskId,metadata);assert.equal(result.status,200,JSON.stringify(result.body));
+      assert.deepEqual(result.body.data.quarantinedActionIds,[actionId]);assert.deepEqual(result.body.data.importedActionIds,[]);assert.equal(result.body.data.dispatchable,false);
+      assert.equal((await send(taskId,metadata)).body.receipt.requestId,result.body.receipt.requestId);
+    }
+    await f.restart();
+    const restored=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{
+      assert.equal(restored.prepare('SELECT count(*) n FROM tasks').get()!.n,1);
+      assert.equal(restored.prepare('SELECT count(*) n FROM task_actions').get()!.n,0);
+      assert.equal(restored.prepare('SELECT count(*) n FROM task_results').get()!.n,0);
+      assert.equal(restored.prepare('SELECT count(*) n FROM recovery_imports').get()!.n,2);
+      const privateReceipt=restored.prepare('SELECT project,result_json FROM receipts WHERE scope=?').get(`tasks:recovery-import:${unknownTask}`)!;
+      assert.equal(privateReceipt.project,null);assert.equal(JSON.parse(String(privateReceipt.result_json)).receipt.projectId,undefined);
+      assert.equal(restored.prepare('SELECT serving_state FROM authority_state').get()!.serving_state,'read_only_recovery');
+    }finally{restored.close();}
+    assert.equal(calls,2);assert.equal((await f.send(`/api/tasks/${unknownTask}`)).status,404);
+  }finally{globalThis.fetch=originalFetch;backup?.cleanup();await runtime.close();await f.close();}
+});
