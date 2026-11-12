@@ -8,10 +8,15 @@ import { join } from 'node:path';
 import type { HumanActor } from './auth.ts';
 import { initializeCanonicalSchema, initializeDeviceSchema } from './schema.ts';
 import { openExecutorJournal, type ActionContext } from './executor-journal.ts';
+import { initializeMemory, rememberMemory } from './memory.ts';
+import { initializeSkills, saveSkill } from './skills.ts';
+import { initializeQuestions } from './questions.ts';
+import { initializeCompaction } from './compaction.ts';
+import { initializeFlows } from './flow-store.ts';
 import { createProjectAccess } from './project-access.ts';
 import { createDevices, parseLinkChallenge, deviceLinkBody, descriptorBody, type DeviceDescriptor } from './devices.ts';
 import { canonicalJson, digestCommand, sha256, ProtocolError } from './protocol.ts';
-import { createTaskRecovery, parseTaskCommand, parseOwnership, journalEntryBody, stopEvidenceBody, type StopEvidence, type JournalEntry } from './task-recovery.ts';
+import { canonicalToolDigest, createTaskRecovery, parseTaskCommand, parseOwnership, journalEntryBody, stopEvidenceBody, type StopEvidence, type JournalEntry } from './task-recovery.ts';
 
 async function fixture() {
   const db = new DatabaseSync(':memory:'); initializeCanonicalSchema(db);
@@ -19,7 +24,7 @@ async function fixture() {
   const owner = actor('owner'), member = actor('member'), foreign = actor('foreign');
   for (const a of [owner, member, foreign]) db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(a.accountId, a.issuer, a.subject, Date.now());
   const auth = { requireCurrent(a: HumanActor) { if (db.prepare('SELECT blocked FROM accounts WHERE id=?').get(a.accountId)?.blocked !== 0) throw new ProtocolError(401, 'session_invalid', 'Denied'); return a; }, async verifiedMailboxes() { return []; } };
-  const access = createProjectAccess(db, auth, () => { throw new Error('No mail'); });
+  const access = createProjectAccess(db, auth, () => { throw new Error('No mail'); }, ['transfer_task']);
   const devices = createDevices(db, auth), signing = generateKeyPairSync('ed25519'), installation = generateKeyPairSync('ed25519'), encryption = generateKeyPairSync('x25519');
   const encoded = (key: typeof signing.publicKey) => key.export({ type: 'spki', format: 'der' }).toString('base64url');
   const candidate = parseLinkChallenge({ requestId: randomUUID(), installationId: randomUUID(), deviceId: randomUUID(), mode: 'new', installationPublicKey: encoded(installation.publicKey), deviceSigningKey: encoded(signing.publicKey), deviceEncryptionKey: encoded(encryption.publicKey), deviceLabel: 'Home', requestedCapabilities: ['execution'], zone: 'Asia/Jakarta', zoneRevision: 1 });
@@ -30,7 +35,7 @@ async function fixture() {
   access.createProject(owner, { requestId: randomUUID(), id: project, name: 'A' });
   await access.createAgent(owner, { requestId: agent, id: agent, name: 'Agent', model: 'fixture', backupModel: '', instructions: 'Research', threadLimit: 2, projectId: project, homeDeviceId: home, expectedProjectRevision: 1, expectedHomeDeviceRevision: 1, providerBinding: null });
   db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(project, member.accountId);
-  const tasks = createTaskRecovery(db, auth, access, devices);
+  const tasks = createTaskRecovery(db, auth, access, devices, [{ type: 'function', function: { name: 'transfer_task', parameters: { type: 'object' } } }]);
   function command(change: Record<string, unknown> = {}) {
     const c = { requestId: randomUUID(), projectId: project, agentId: agent, homeDeviceId: home, payload: { v: 1, kind: 'direct', message: { text: 'Research this', files: [] } }, expectedRevisions: { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 }, ...change };
     return { ...c, payloadDigest: digestCommand(['briefsip-task-payload-v1', c.requestId, c.projectId, c.agentId, c.homeDeviceId, c.payload, c.expectedRevisions]) };
@@ -39,6 +44,37 @@ async function fixture() {
   return { db, owner, member, foreign, project, agent, home, tasks, access, devices, command, signing, principal, close() { devices.close(); db.close(); } };
 }
 const code = (expected: string) => (error: unknown) => error instanceof ProtocolError && error.code === expected;
+
+test('reassign creates one immutable successor, keeps original receipt and fences source controls', async () => {
+  const f = await fixture(), recipient = randomUUID();
+  try {
+    await f.access.createAgent(f.owner, { requestId: recipient, id: recipient, name: 'Recipient', model: 'fixture', backupModel: '', instructions: 'Continue', threadLimit: 2, projectId: f.project, homeDeviceId: f.home, expectedProjectRevision: 1, expectedHomeDeviceRevision: 1, providerBinding: null });
+    const command = f.command(), accepted = f.tasks.admit(f.owner, command), taskId = command.requestId;
+    const reassign = { requestId: randomUUID(), expectedRevision: 1, operation: 'reassign', recipientAgentId: recipient };
+    assert.throws(() => f.tasks.control(f.owner, taskId, reassign), code('task_not_paused'));
+    const paused = f.tasks.control(f.owner, taskId, { requestId: randomUUID(), expectedRevision: 1, operation: 'pause' });
+    reassign.expectedRevision = paused.receipt.recordRevision;
+    const transferred = f.tasks.control(f.owner, taskId, reassign), successor = String(transferred.data.taskId);
+    assert.notEqual(successor, taskId);
+    assert.equal(transferred.data.logicalTurnId, taskId);
+    assert.equal(transferred.data.previousTaskId, taskId);
+    assert.equal(transferred.data.homeDeviceId, f.home);
+    assert.deepEqual(f.tasks.control(f.owner, taskId, reassign).data, transferred.data);
+    const original = f.tasks.lookup(f.owner, taskId), next = f.tasks.lookup(f.owner, successor);
+    assert.equal(original.data.currentTaskId, successor);
+    assert.equal(original.data.state, 'transferred');
+    assert.equal(original.data.agentId, f.agent);
+    assert.deepEqual(original.receipt, accepted.receipt);
+    assert.equal(next.data.agentId, recipient);
+    assert.equal(next.data.state, 'waiting_device');
+    assert.equal(next.data.logicalTurnId, taskId);
+    assert.throws(() => f.tasks.control(f.owner, taskId, { ...reassign, requestId: randomUUID() }), code('task_transferred'));
+    assert.throws(() => f.tasks.control(f.owner, successor, { requestId: randomUUID(), expectedRevision: 1, operation: 'pause', recipientAgentId: recipient }), code('recipient_forbidden'));
+    assert.throws(() => f.tasks.control(f.foreign, successor, { requestId: randomUUID(), expectedRevision: 1, operation: 'pause' }), code('resource_not_found'));
+    assert.throws(() => f.db.prepare('UPDATE tasks SET agent=? WHERE id=?').run(recipient, taskId), /immutable task admission/);
+    assert.equal(f.tasks.admit(f.owner, command).data.taskId, taskId);
+  } finally { f.close(); }
+});
 
 async function preparedTask() {
   const f = await fixture(), command = f.command();
@@ -54,6 +90,37 @@ async function preparedTask() {
   const commit = { requestId: randomUUID(), ownership, intentDigest, expectedTaskRevision: taskRevision, journalSequence: 1 };
   return { ...f, taskId, token, ownership, actionId, payloadDigest, lockProof, commit, context };
 }
+
+test('reassign denies unresolved effects, revoked initiators and invalid successor provenance atomically', async () => {
+  const f = await preparedTask(), recipient = randomUUID();
+  try {
+    await f.access.createAgent(f.owner, { requestId:recipient,id:recipient,name:'Recipient',model:'fixture',backupModel:'',instructions:'Continue',threadLimit:2,projectId:f.project,homeDeviceId:f.home,expectedProjectRevision:1,expectedHomeDeviceRevision:1,providerBinding:null });
+    const committed=f.tasks.commit(f.principal,f.taskId,f.actionId,f.commit,f.token);
+    const paused=f.tasks.control(f.owner,f.taskId,{requestId:randomUUID(),expectedRevision:committed.receipt.recordRevision,operation:'pause'});
+    const reassign={requestId:randomUUID(),expectedRevision:paused.receipt.recordRevision,operation:'reassign',recipientAgentId:recipient};
+    assert.throws(()=>f.tasks.control(f.owner,f.taskId,reassign),code('outcome_unresolved'));
+    assert.equal(f.tasks.lookup(f.owner,f.taskId).data.currentTaskId,f.taskId);
+    const resultContent={text:'Reconciled'},resultDigest=sha256(canonicalJson(resultContent));
+    const published=f.tasks.reconcile(f.principal,f.taskId,{requestId:randomUUID(),actionId:f.actionId,ownership:f.ownership,payloadDigest:f.payloadDigest,state:'acknowledged',effectStatus:'known',journalSequence:2,resultContent,resultDigest,resultRef:{v:1,taskId:f.taskId,actionId:f.actionId,digest:resultDigest,size:Buffer.byteLength(canonicalJson(resultContent)),encoding:'canonical-json-v1'}},f.token);
+    reassign.expectedRevision=published.receipt.recordRevision;
+    const transferred=f.tasks.control(f.owner,f.taskId,reassign), next=String(transferred.data.taskId);
+    assert.throws(()=>f.tasks.context(f.principal,f.taskId,{requestId:randomUUID(),ownership:f.ownership,expectedTaskRevision:reassign.expectedRevision},f.token),code('ownership_conflict'));
+    const original=f.db.prepare('SELECT * FROM tasks WHERE id=?').get(next)!;
+    const unused=f.command(); f.tasks.admit(f.owner,unused);
+    f.db.prepare("UPDATE tasks SET state='transferred' WHERE id=?").run(unused.requestId);
+    const columns=Object.keys(original), insert=f.db.prepare(`INSERT INTO tasks(${columns.join(',')}) VALUES (${columns.map(()=>'?').join(',')})`);
+    const base: typeof original={...original,id:randomUUID(),logical_turn:unused.requestId,predecessor_task:unused.requestId};
+    const invalid: typeof original={...base,initiator_account:f.member.accountId};
+    assert.throws(()=>insert.run(...columns.map(key=>invalid[key])),/invalid task successor provenance/);
+    for (const key of ['capability_snapshot_json','capability_digest']) {
+      const forged: typeof original={...base,[key]:key==='capability_snapshot_json'?'{}':'0'.repeat(64)};
+      assert.throws(()=>insert.run(...columns.map(key=>forged[key])),/invalid task successor provenance/);
+    }
+    insert.run(...columns.map(key=>base[key]));
+    f.db.prepare('UPDATE project_members SET deleted=1 WHERE project=? AND account=?').run(f.project,f.owner.accountId);
+    assert.throws(()=>f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId:next,previousExecutorGeneration:0,executorTokenHash:sha256(f.token),lockProof:{...f.lockProof,lockId:randomUUID()}},f.token),code('execution_denied'));
+  } finally { f.close(); }
+});
 
 test('local journal locks sole runner and retains immutable intent/result until exact ACK', async () => {
   const f=await preparedTask(), db=new DatabaseSync(':memory:'), dir=mkdtempSync(join(tmpdir(),'briefsip-executor-journal-'));
@@ -354,4 +421,190 @@ test('action prepare grants no dispatch; commit has one live grant and stale con
     assert.throws(()=>f.tasks.commit(f.principal,c.requestId,action,{...commit,requestId:randomUUID()},token),code('action_conflict'));
     assert.throws(()=>f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId:c.requestId,previousExecutorGeneration:1,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token),code('ownership_conflict'));
   }finally{f.close();}
+});
+
+async function canonicalTransfer() {
+  const f = await fixture(), recipient = randomUUID(), channel=randomUUID();
+  await f.access.createAgent(f.owner, { requestId: recipient, id: recipient, name: 'Recipient', model: 'fixture', backupModel: '', instructions: 'Continue', threadLimit: 2, projectId: f.project, homeDeviceId: f.home, expectedProjectRevision: 1, expectedHomeDeviceRevision: 1, providerBinding: null });
+  f.db.prepare('INSERT INTO channels(id,name,instructions,lead) VALUES (?,?,?,?)').run(channel,'Transfer','Project work',f.agent);
+  for(const agent of [f.agent,recipient]) f.db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel,agent);
+  f.db.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(JSON.stringify([channel]),f.owner.accountId,f.project,channel);
+  const command=f.command({payload:{v:1,kind:'channel',channelId:channel,routing:'assigned',message:{text:'Research this',files:[]}},expectedRevisions:{project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1,channel:1}}),taskId=command.requestId;
+  f.tasks.admit(f.owner, command);
+  const token = randomBytes(32).toString('base64url');
+  const acquired = f.tasks.acquire(f.principal, { requestId: randomUUID(), taskId, previousExecutorGeneration: 0, executorTokenHash: sha256(token), lockProof: { bootId: randomUUID(), processId: 1234, processStart: '999', lockId: randomUUID(), previousOwnerStopped: true, reconciledThrough: 0, journalDigest: sha256('journal') } }, token);
+  const ownership = parseOwnership(acquired.data.ownership), revision = acquired.receipt.recordRevision;
+  const context = f.tasks.context(f.principal, taskId, { requestId: randomUUID(), ownership, expectedTaskRevision: revision }, token).data as ActionContext;
+  const actionId = randomUUID(), toolCall = { id: 'transfer', function: { name: 'transfer_task', arguments: JSON.stringify({ recipient, task: 'Continue from saved evidence' }) } };
+  const payload = { toolCall, expectedRevision: revision + 1 }, payloadDigest = canonicalToolDigest(payload);
+  const intentDigest = digestCommand([taskId,actionId,0,ownership,payloadDigest,'canonical',context.snapshotRef.snapshotId,context.snapshotRef.digest,null,null,1,null,null,null]);
+  f.tasks.prepare(f.principal, taskId, actionId, { requestId: randomUUID(), sequence: 0, ownership, payloadDigest, actionKind: 'canonical', contextSnapshotId: context.snapshotRef.snapshotId, contextDigest: context.snapshotRef.digest, grantRevision: 1, expectedTaskRevision: revision, journalSequence: 1, intentDigest }, token);
+  const commit = { requestId: randomUUID(), ownership, intentDigest, expectedTaskRevision: revision, journalSequence: 1 };
+  const mutation = { ...payload, requestId: randomUUID(), actionId, ownership, payloadDigest };
+  return { ...f, taskId, recipient, token, ownership, actionId, context, commit, mutation };
+}
+
+test('canonical transfer commits one successor and immutable result, fences old executor and retries without mutation', async () => {
+  const f = await canonicalTransfer();
+  try {
+    assert.throws(() => f.tasks.contextMutations(f.principal, f.taskId, { ...f.mutation, expectedRevision: 2, payloadDigest: canonicalToolDigest({ toolCall: f.mutation.toolCall, expectedRevision: 2 }) }, f.token), code('action_conflict'));
+    f.tasks.commit(f.principal, f.taskId, f.actionId, f.commit, f.token);
+    const result = f.tasks.contextMutations(f.principal, f.taskId, f.mutation, f.token);
+    const content = result.data.resultContent as Record<string, unknown>, successor = String(content.taskId);
+    assert.notEqual(successor, f.taskId);
+    assert.equal(content.homeDeviceId, f.home);
+    assert.equal(f.tasks.lookup(f.owner, f.taskId).data.state, 'transferred');
+    assert.equal(f.tasks.lookup(f.owner, f.taskId).data.currentTaskId, successor);
+    assert.equal(f.tasks.lookup(f.owner, successor).data.agentId, f.recipient);
+    assert.equal(JSON.parse(String(f.db.prepare('SELECT payload_json FROM tasks WHERE id=?').get(successor)!.payload_json)).message.text, 'Continue from saved evidence');
+    assert.deepEqual(f.tasks.contextMutations(f.principal, f.taskId, f.mutation, f.token), result);
+    assert.equal(f.db.prepare('SELECT count(*) n FROM tasks WHERE logical_turn=?').get(f.taskId)!.n, 2);
+    assert.equal(f.db.prepare('SELECT count(*) n FROM task_results WHERE action=?').get(f.actionId)!.n, 1);
+    assert.throws(() => f.tasks.contextMutations(f.principal, f.taskId, { ...f.mutation, actionId: randomUUID() }, f.token), code('payload_conflict'));
+    assert.throws(() => f.tasks.contextMutations(f.principal, f.taskId, f.mutation, 'x'.repeat(43)), code('executor_invalid'));
+    assert.throws(() => f.tasks.contextMutations({ ...f.principal, deviceId: randomUUID() }, f.taskId, f.mutation, f.token));
+    assert.throws(() => f.tasks.contextMutations(f.principal, f.taskId, { ...f.mutation, requestId: randomUUID() }, f.token), code('ownership_conflict'));
+    f.db.prepare('UPDATE project_members SET deleted=1 WHERE project=? AND account=?').run(f.project, f.owner.accountId);
+    assert.throws(() => f.tasks.contextMutations(f.principal, f.taskId, f.mutation, f.token), code('execution_denied'));
+  } finally { f.close(); }
+});
+
+test('canonical RPC rejects changed input, stale grants and fabricated results without partial transfer', async () => {
+  const f = await canonicalTransfer();
+  try {
+    const committed = f.tasks.commit(f.principal, f.taskId, f.actionId, f.commit, f.token);
+    const changedCall = { ...f.mutation.toolCall, function: { ...f.mutation.toolCall.function, arguments: JSON.stringify({ recipient: f.recipient, task: 'Changed' }) } };
+    assert.throws(() => f.tasks.contextMutations(f.principal, f.taskId, { ...f.mutation, toolCall: changedCall }, f.token), code('payload_digest_mismatch'));
+    assert.throws(() => f.tasks.contextMutations(f.principal, f.taskId, { ...f.mutation, toolCall: changedCall, payloadDigest: canonicalToolDigest({ toolCall: changedCall, expectedRevision: f.mutation.expectedRevision }) }, f.token), code('action_conflict'));
+    const content = { text: 'Forged' }, digest = sha256(canonicalJson(content));
+    assert.throws(() => f.tasks.reconcile(f.principal, f.taskId, { requestId: randomUUID(), actionId: f.actionId, ownership: f.ownership, payloadDigest: f.mutation.payloadDigest, state: 'reported', effectStatus: 'known', journalSequence: 2, resultContent: content, resultDigest: digest, resultRef: { v: 1, taskId: f.taskId, actionId: f.actionId, digest, size: Buffer.byteLength(canonicalJson(content)), encoding: 'canonical-json-v1' } }, f.token), code('canonical_result_required'));
+    f.access.editAgentRules(f.owner, f.project, f.agent, { requestId: randomUUID(), expectedParticipationRevision: 1, rules: 'Changed after commit' });
+    assert.throws(() => f.tasks.contextMutations(f.principal, f.taskId, f.mutation, f.token), code('context_stale'));
+    assert.equal(f.tasks.lookup(f.owner, f.taskId).data.revision, committed.receipt.recordRevision);
+    assert.equal(f.db.prepare('SELECT count(*) n FROM task_results').get()!.n, 0);
+    assert.equal(f.db.prepare('SELECT count(*) n FROM tasks').get()!.n, 1);
+    assert.equal(f.db.prepare('SELECT stopped FROM execution_owners WHERE task=?').get(f.taskId)!.stopped, 0);
+  } finally { f.close(); }
+});
+
+test('canonical transfer keeps channel-only tool boundary for private tasks', async () => {
+  const f=await preparedTask();
+  try {
+    const payload={toolCall:{id:'transfer',function:{name:'transfer_task',arguments:JSON.stringify({recipient:randomUUID(),task:'Handoff'})}},expectedRevision:2};
+    assert.throws(()=>f.tasks.contextMutations(f.principal,f.taskId,{...payload,requestId:randomUUID(),actionId:randomUUID(),ownership:f.ownership,payloadDigest:canonicalToolDigest(payload)},f.token),code('execution_denied'));
+    assert.equal(f.db.prepare('SELECT count(*) n FROM tasks').get()!.n,1);
+  } finally {f.close();}
+});
+
+
+test('context projects authorized memory, pinned skills and byte-free asset refs, invalidating changed sources', async () => {
+  const f=await preparedTask();
+  try {
+    initializeMemory(f.db);initializeSkills(f.db);initializeQuestions(f.db);initializeCompaction(f.db);
+    const scope=`project:${f.project}/agents:${f.agent}/human:${f.owner.accountId}`;
+    const memory=rememberMemory(f.db,scope,{text:'Project A decision'});
+    f.db.prepare('UPDATE memories SET essential=1 WHERE scope=? AND id=?').run(scope,memory.id);
+    f.db.prepare("INSERT INTO record_scopes VALUES ('memories',?,?,?,?,?,?)").run(JSON.stringify([scope,memory.id]),f.owner.accountId,f.project,'owner','agent',f.agent);
+    const privateScope=`private:${f.member.accountId}`,privateMemory=rememberMemory(f.db,privateScope,{text:'PRIVATE_OTHER_HUMAN'});
+    f.db.prepare('UPDATE memories SET essential=1 WHERE scope=? AND id=?').run(privateScope,privateMemory.id);
+    f.db.prepare("INSERT INTO record_scopes VALUES ('memories',?,?,?,?,?,?)").run(JSON.stringify([privateScope,privateMemory.id]),f.member.accountId,f.project,'owner','agent',f.agent);
+    rememberMemory(f.db,'agents:'+f.agent,{text:'UNMAPPED_LEGACY_PRIVATE'});
+    const skill=randomUUID();saveSkill(f.db,skill,{revision:0,name:'Pinned skill',description:'Reference configuration',content:'Use project rules'});
+    saveSkill(f.db,skill,{revision:1,name:'Latest skill',description:'Must not substitute',content:'UNINSTALLED_LATEST_VERSION'});
+    f.db.prepare('INSERT INTO agent_skills(agent,skill,version,enabled,revision,removed) VALUES (?,?,1,1,7,0)').run(f.agent,skill);
+    const raw=Buffer.from('PRIVATE_ASSET_BYTES');f.db.prepare('INSERT INTO skill_files VALUES (?,1,?)').run(skill,JSON.stringify([{path:'asset.bin',content:raw.toString('base64'),encoding:'base64'}]));
+    f.db.prepare("UPDATE task_actions SET state='not_sent',effect_status='none' WHERE id=?").run(f.actionId);
+    const context=f.tasks.context(f.principal,f.taskId,{requestId:randomUUID(),ownership:f.ownership,expectedTaskRevision:2},f.token).data as ActionContext;
+    const snapshot=context.snapshot as typeof context.snapshot&{memories:{text:string}[];skills:{id:string;revision:number;installationRevision:number}[];skillAssets:{source:string;digest:string;size:number}[];sourceRevisions:{kind:string;id:string;revision:number}[];tools:{function:{name:string}}[]};
+    assert.equal(snapshot.memories[0].text,'Project A decision');assert.equal(snapshot.memories.length,1);
+    assert.equal(snapshot.skills[0].id,skill);assert.equal(snapshot.skills[0].revision,1);assert.equal(snapshot.skills[0].installationRevision,7);
+    assert.deepEqual(snapshot.skillAssets,[{skillId:skill,skillRevision:1,installationRevision:7,source:'asset.bin',digest:sha256(raw),size:raw.byteLength}]);
+    assert.equal(snapshot.tools.length,0);
+    const encoded=canonicalJson(snapshot);for(const secret of ['PRIVATE_OTHER_HUMAN','UNMAPPED_LEGACY_PRIVATE','UNINSTALLED_LATEST_VERSION','PRIVATE_ASSET_BYTES',raw.toString('base64')])assert(!encoded.includes(secret));
+    assert.equal(context.snapshotRef.digest,sha256(encoded));
+    f.db.prepare('UPDATE memories SET text=?,revision=revision+1 WHERE scope=? AND id=?').run('Changed decision',scope,memory.id);
+    const actionId=randomUUID(),payloadDigest=sha256('next'),intentDigest=digestCommand([f.taskId,actionId,1,f.ownership,payloadDigest,'read',context.snapshotRef.snapshotId,context.snapshotRef.digest,null,null,1,null,null,null]);
+    const prepare={requestId:randomUUID(),sequence:1,ownership:f.ownership,payloadDigest,actionKind:'read',contextSnapshotId:context.snapshotRef.snapshotId,contextDigest:context.snapshotRef.digest,grantRevision:1,expectedTaskRevision:2,journalSequence:2,intentDigest};
+    assert.throws(()=>f.tasks.prepare(f.principal,f.taskId,actionId,prepare,f.token),code('context_stale'));
+    const next=f.tasks.context(f.principal,f.taskId,{requestId:randomUUID(),ownership:f.ownership,expectedTaskRevision:2},f.token).data as ActionContext;
+    f.db.prepare('UPDATE agent_skills SET enabled=0,revision=revision+1 WHERE agent=? AND skill=?').run(f.agent,skill);
+    assert.throws(()=>f.tasks.prepare(f.principal,f.taskId,actionId,{...prepare,contextSnapshotId:next.snapshotRef.snapshotId,contextDigest:next.snapshotRef.digest,intentDigest:digestCommand([f.taskId,actionId,1,f.ownership,payloadDigest,'read',next.snapshotRef.snapshotId,next.snapshotRef.digest,null,null,1,null,null,null])},f.token),code('context_stale'));
+  } finally {f.close();}
+});
+
+test('context preserves scoped history, questions, compaction and child evidence without foreign records or file bytes', async () => {
+  const f = await fixture();
+  try {
+    initializeQuestions(f.db); initializeCompaction(f.db);
+    f.db.exec(`CREATE TABLE routines(id TEXT PRIMARY KEY,agent TEXT);
+      CREATE TABLE coordination(seq INTEGER PRIMARY KEY AUTOINCREMENT,turn TEXT,owner TEXT,target TEXT,kind TEXT,prompt TEXT,call TEXT,child TEXT);
+      CREATE TABLE files(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE,scope TEXT,name TEXT,digest TEXT,bytes BLOB,created TEXT);
+      CREATE TABLE generated_files(seq INTEGER PRIMARY KEY AUTOINCREMENT,turn TEXT,file TEXT,call_id TEXT,call TEXT,after_action INTEGER);`);
+    initializeFlows(f.db);
+    const otherProject = randomUUID(); f.access.createProject(f.owner,{requestId:randomUUID(),id:otherProject,name:'Other'});
+    const turn = (text: string, project=f.project, account=f.owner.accountId, root=f.agent) => {
+      const id=randomUUID();
+      f.db.prepare("INSERT INTO turns(id,agent,text,reply,status,created) VALUES (?,?,?,?,'done','fixture')").run(id,f.agent,text,`${text} reply`);
+      f.db.prepare("INSERT INTO record_scopes VALUES ('turns',?,?,?,'owner','agent',?)").run(JSON.stringify([id]),account,project,root);
+      return id;
+    };
+    const old = Array.from({length:42},(_,i)=>turn(`History ${i}`));
+    const privateTurn=turn('PRIVATE_HUMAN',f.project,f.member.accountId), foreignTurn=turn('FOREIGN_PROJECT',otherProject);
+    turn('OTHER_CONVERSATION',f.project,f.owner.accountId,randomUUID());
+    const scope=`project:${f.project}/agent:${f.agent}/human:${f.owner.accountId}`;
+    const through=Number(f.db.prepare('SELECT seq FROM turns WHERE id=?').get(old[0])!.seq);
+    f.db.prepare('INSERT INTO compactions VALUES (?,?,?,?)').run(scope,randomUUID(),through,'Earlier summary');
+    f.db.prepare("INSERT INTO compaction_sources VALUES (?,?,1,'done')").run(scope,through);
+    f.db.prepare("INSERT INTO record_scopes VALUES ('compactions',?,?,?,'owner','agent',?)").run(JSON.stringify([scope]),f.owner.accountId,f.project,f.agent);
+    const command=f.command(),taskId=command.requestId; f.tasks.admit(f.owner,command);
+    const child=turn('Visible child',f.project,f.owner.accountId,randomUUID());
+    const call=(id:string)=>({id,function:{name:'search_memory',arguments:'{}'}});
+    for(const target of [child,privateTurn,foreignTurn]) f.db.prepare('INSERT INTO coordination(turn,owner,target,kind,prompt,call,child) VALUES (?,?,?,?,?,?,?)').run(taskId,f.agent,f.agent,'delegate_task','Subtask',JSON.stringify(call(target)),target);
+    for(const [id,result] of [[taskId,'Parent result'],[child,'Child result'],[privateTurn,'PRIVATE_TOOL'],[foreignTurn,'FOREIGN_TOOL']]) f.db.prepare('INSERT INTO flow_tool_calls(turn,call_id,call,result,after_output,after_action) VALUES (?,?,?,?,0,0)').run(id,id,JSON.stringify(call(id)),JSON.stringify({text:result}));
+    const file=randomUUID(),raw=Buffer.from('ATTACHMENT_BYTES');
+    f.db.prepare("INSERT INTO files(id,scope,name,digest,bytes,created) VALUES (?,'legacy-private','result.txt',?,?,'fixture')").run(file,sha256(raw),raw);
+    f.db.prepare("INSERT INTO record_scopes VALUES ('files',?,?,?,'owner','agent',?)").run(JSON.stringify([file]),f.owner.accountId,f.project,f.agent);
+    f.db.prepare('INSERT INTO generated_files(turn,file,call_id,call,after_action) VALUES (?,?,?,?,0)').run(child,file,'output',JSON.stringify(call('output')));
+    const question=randomUUID(); f.db.prepare('INSERT INTO questions VALUES (?,?,?,?,?,?,?,0,0)').run(question,old[5],'question',JSON.stringify(call('question')),'Keep scope?',JSON.stringify(['Yes']),'Yes');
+    const token=randomBytes(32).toString('base64url'),acquired=f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId,previousExecutorGeneration:0,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token);
+    const ownership=parseOwnership(acquired.data.ownership),request={requestId:randomUUID(),ownership,expectedTaskRevision:2};
+    const context=f.tasks.context(f.principal,taskId,request,token).data as ActionContext;
+    const snapshot=context.snapshot as typeof context.snapshot & {conversation:{history:{text:string}[];questions:{id:string}[];compaction:{summary:string}|null};coordination:{child?:{reply:string}}[];toolJournal:{result:{text:string}}[];artifacts:unknown[]};
+    assert.equal(snapshot.conversation.history.length,40); assert.equal(snapshot.conversation.history[0].text,'History 2');
+    assert.equal(snapshot.conversation.compaction?.summary,'Earlier summary'); assert.equal(snapshot.conversation.questions[0].id,question);
+    assert.equal(snapshot.coordination.filter(row=>row.child).length,1); assert.equal(snapshot.coordination[0].child?.reply,'Visible child reply');
+    assert.equal(snapshot.coordination.length,1);
+    assert.deepEqual(snapshot.toolJournal.map(row=>row.result.text).filter(Boolean),['Parent result','Child result']);
+    assert.equal((snapshot.toolJournal.at(-1) as unknown as {kind:string}).kind,'generated_output');
+    assert.deepEqual(snapshot.artifacts,[{id:file,name:'result.txt',digest:sha256(raw),size:raw.length}]);
+    const encoded=canonicalJson(snapshot); for(const secret of ['PRIVATE_HUMAN','FOREIGN_PROJECT','OTHER_CONVERSATION','PRIVATE_TOOL','FOREIGN_TOOL','ATTACHMENT_BYTES','legacy-private']) assert(!encoded.includes(secret));
+    f.db.prepare('UPDATE flow_tool_calls SET result=? WHERE turn=?').run(JSON.stringify({text:'Changed child'}),child);
+    const actionId=randomUUID(),payloadDigest=sha256('read'),ref=context.snapshotRef;
+    const prepare={requestId:randomUUID(),sequence:0,ownership,payloadDigest,actionKind:'read',contextSnapshotId:ref.snapshotId,contextDigest:ref.digest,grantRevision:1,expectedTaskRevision:2,journalSequence:1,intentDigest:digestCommand([taskId,actionId,0,ownership,payloadDigest,'read',ref.snapshotId,ref.digest,null,null,1,null,null,null])};
+    assert.throws(()=>f.tasks.prepare(f.principal,taskId,actionId,prepare,token),code('context_stale'));
+    assert.equal(canonicalJson(f.tasks.context(f.principal,taskId,request,token).data),canonicalJson(context));
+    const privateSeq=f.db.prepare('SELECT seq FROM turns WHERE id=?').get(privateTurn)!.seq;
+    f.db.prepare("INSERT INTO compaction_sources VALUES (?,?,1,'done')").run(scope,privateSeq);
+    const fresh=f.tasks.context(f.principal,taskId,{...request,requestId:randomUUID()},token).data as typeof context;
+    assert.equal((fresh.snapshot as typeof snapshot).conversation.compaction,null);
+    const count=f.db.prepare('SELECT count(*) n FROM task_context_snapshots').get()!.n;
+    f.db.prepare('UPDATE flow_tool_calls SET result=? WHERE turn=?').run(JSON.stringify({text:'x'.repeat(9*1024*1024)}),child);
+    assert.throws(()=>f.tasks.context(f.principal,taskId,{...request,requestId:randomUUID()},token),code('context_too_large'));
+    assert.equal(canonicalJson(f.tasks.context(f.principal,taskId,request,token).data),canonicalJson(context));
+    assert.equal(f.db.prepare('SELECT count(*) n FROM task_context_snapshots').get()!.n,count);
+    assert.equal(f.db.prepare('SELECT count(*) n FROM task_actions').get()!.n,0);
+  } finally { f.close(); }
+});
+
+
+test('context counts projected result bytes once, including escaped JSON content', async () => {
+  const f = await preparedTask();
+  try {
+    f.tasks.commit(f.principal,f.taskId,f.actionId,f.commit,f.token);
+    const resultContent = { text: '\\'.repeat(2*1024*1024+100000) }, encoded = canonicalJson(resultContent), resultDigest = sha256(encoded);
+    const report = f.tasks.reconcile(f.principal,f.taskId,{requestId:randomUUID(),actionId:f.actionId,ownership:f.ownership,payloadDigest:f.payloadDigest,state:'acknowledged',effectStatus:'known',journalSequence:2,resultContent,resultDigest,resultRef:{v:1,taskId:f.taskId,actionId:f.actionId,digest:resultDigest,size:Buffer.byteLength(encoded),encoding:'canonical-json-v1'}},f.token);
+    const context = f.tasks.context(f.principal,f.taskId,{requestId:randomUUID(),ownership:f.ownership,expectedTaskRevision:report.receipt.recordRevision},f.token);
+    assert.deepEqual((context.data.snapshot as any).toolJournal[0].result,resultContent);
+    assert(Buffer.byteLength(canonicalJson(context.data)) < 8*1024*1024);
+  } finally { f.close(); }
 });

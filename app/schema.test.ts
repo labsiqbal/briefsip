@@ -10,6 +10,11 @@ test('canonical v1 schema initializes empty and current SQLite stores idempotent
   assert.equal(db.prepare('SELECT serving_state FROM authority_state').get()!.serving_state, 'active');
   initializeCanonicalSchema(db, 2000);
   assert.equal(db.prepare('SELECT count(*) AS n FROM schema_migrations').get()!.n, SCHEMA_VERSION);
+  const checksum = db.prepare('SELECT checksum FROM schema_migrations WHERE version=3').get()!.checksum;
+  db.exec('DROP TRIGGER task_successor_provenance');
+  initializeCanonicalSchema(db, 3000);
+  assert.equal(db.prepare('SELECT checksum FROM schema_migrations WHERE version=3').get()!.checksum, checksum);
+  assert(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='task_successor_provenance'").get());
   for (const table of ['accounts', 'projects', 'project_members', 'agent_projects', 'collaborator_agents', 'response_policies', 'invitations', 'mail_outbox', 'receipts', 'record_scopes']) assert(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(table));
   db.close();
 });

@@ -5,7 +5,7 @@ import { generateKeyPairSync, sign, randomUUID, randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync, readFileSync, existsSync, statSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -41,6 +41,46 @@ async function until(check: () => boolean | Promise<boolean>, timeout = 10000) {
   while (Date.now() < deadline) { if (await check()) return; await new Promise(resolve => setTimeout(resolve, 20)); }
   assert.fail('Device state did not settle');
 }
+
+test('cross-device reassign survives lost reply and restart, preserves old results and waits for fixed recipient home', async () => {
+  const f = await fixture(), a = memoryKeys(), b = memoryKeys();
+  const first = openDeviceRuntime({ database: join(f.dir,'a.sqlite'), server: f.origin(), development: true, entry: a.entry });
+  const second = openDeviceRuntime({ database: join(f.dir,'b.sqlite'), server: f.origin(), development: true, entry: b.entry });
+  const originalFetch = globalThis.fetch;
+  let effects = 0;
+  try {
+    await first.enroll(f.jwt()); await second.enroll(f.jwt());
+    const connection = first.connect(); await until(() => connection.state().phase === 'connected');
+    const homes = (await f.send('/api/devices')).body.data, project = randomUUID(), source = randomUUID(), recipient = randomUUID();
+    assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Transfer'})).status,201);
+    for (const [agentId,homeId] of [[source,first.deviceId()],[recipient,second.deviceId()]]) {
+      assert.equal((await f.send('/api/agents',{requestId:agentId,id:agentId,name:agentId,model:'fixture',backupModel:'',instructions:'Continue safely',threadLimit:2,projectId:project,homeDeviceId:homeId,expectedProjectRevision:1,expectedHomeDeviceRevision:homes.find((home:{id:string})=>home.id===homeId).revision,providerBinding:null})).status,201);
+    }
+    const taskId = randomUUID(), payload = {v:1,kind:'direct',message:{text:'Keep earlier evidence',files:[]}}, expectedRevisions = {project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
+    const command = {requestId:taskId,projectId:project,agentId:source,homeDeviceId:first.deviceId(),payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,source,first.deviceId(),payload,expectedRevisions])};
+    const accepted = await f.send('/api/tasks',command); assert.equal(accepted.status,202);
+    const owned = await first.startTask(taskId), context = await first.taskContext(taskId,owned.ownership,owned.revision);
+    await first.executeAction({taskId,actionId:randomUUID(),sequence:0,actionKind:'read',ownership:owned.ownership,payload:{operation:'original'},context,grantRevision:1},()=>{effects++;return{text:'Saved source output'};});
+    const detail = (await f.send(`/api/tasks/${taskId}`)).body.data;
+    const paused = await f.send(`/api/tasks/${taskId}/control`,{requestId:randomUUID(),expectedRevision:detail.revision,operation:'pause'}); assert.equal(paused.status,200);
+    const reassign = {requestId:randomUUID(),expectedRevision:paused.body.data.revision,operation:'reassign',recipientAgentId:recipient};
+    globalThis.fetch = async (url,init) => { const response = await originalFetch(url,init); if(String(url).endsWith(`/api/tasks/${taskId}/control`)){await response.body?.cancel();throw new Error('Lost transfer ACK');} return response; };
+    await assert.rejects(f.send(`/api/tasks/${taskId}/control`,reassign),/Lost transfer ACK/); globalThis.fetch = originalFetch;
+    await f.restart();
+    const retry = await f.send(`/api/tasks/${taskId}/control`,reassign); assert.equal(retry.status,200,JSON.stringify(retry.body));
+    const nextId = retry.body.data.taskId; assert.notEqual(nextId,taskId); assert.equal(retry.body.data.homeDeviceId,second.deviceId());
+    const original = await f.send(`/api/tasks/${taskId}`), next = await f.send(`/api/tasks/${nextId}`);
+    assert.equal(original.body.data.currentTaskId,nextId); assert.equal(original.body.data.state,'transferred');
+    assert.deepEqual(original.body.receipt,accepted.body.receipt);
+    assert.equal(next.body.data.state,'waiting_device'); assert.equal(next.body.data.agentId,recipient);
+    assert.equal((await f.send(`/api/tasks/${taskId}/control`,{...reassign,requestId:randomUUID()})).body.error.code,'task_transferred');
+    const nextConnection = second.connect(); await until(()=>nextConnection.state().phase==='connected');
+    const nextOwner = await second.startTask(nextId), continued = await second.taskContext(nextId,nextOwner.ownership,nextOwner.revision);
+    assert.equal((continued.snapshot.toolJournal as {result:{text:string}}[])[0].result.text,'Saved source output');
+    await first.recoverPending(); assert.equal(effects,1);
+    assert.equal((await f.send('/api/tasks',command)).body.data.taskId,taskId);
+  } finally { globalThis.fetch=originalFetch; await first.close(); await second.close(); await f.close(); }
+});
 
 test('local possession gate enrolls only configured server and retains identity across reconnect/revoke', async () => {
   const f = await fixture(), store = memoryKeys(), database = join(f.dir, 'device.sqlite');
@@ -322,4 +362,61 @@ test('SIGKILL recovery proves no send before marker and never repeats marked eff
     if(child&&child.exitCode===null&&child.signalCode===null){const exited=once(child,'exit');child.kill('SIGKILL');await exited;}
     await runtime.close();effect.closeAllConnections();await new Promise<void>(resolve=>effect.close(()=>resolve()));await f.close();
   }
+});
+
+
+test('stalled normal requests cannot starve control reads and disconnected requests release capacity', async () => {
+  const f=await fixture(), held: ReturnType<typeof httpRequest>[]=[];
+  try {
+    for(let i=0;i<64;i++) {
+      const request=httpRequest(f.origin()+'/api/projects',{method:'POST',headers:{Authorization:`Bearer ${f.jwt()}`,Origin:f.origin(),'Content-Type':'application/json','Content-Length':'8','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':randomUUID()}});
+      request.on('error',()=>{});request.write('{');held.push(request);
+    }
+    await until(async()=> (await f.send('/api/projects')).status===429);
+    const control=await f.send('/api/session');assert.equal(control.status,200,JSON.stringify(control.body));
+    for (const path of [`/api/tasks/${randomUUID()}`, `/api/tasks/${randomUUID()}/results/${randomUUID()}`]) {
+      const receipt = await f.send(path); assert.equal(receipt.status,404,JSON.stringify(receipt.body));
+    }
+    const logout = await f.send('/api/session/logout',{requestId:randomUUID()},'user_logout');
+    assert([200,202,503].includes(logout.status),JSON.stringify(logout));
+    const taskControl=await f.send(`/api/tasks/${randomUUID()}/control`,{requestId:randomUUID(),expectedRevision:1,operation:'cancel'});
+    assert.equal(taskControl.status,404,JSON.stringify(taskControl.body));
+    for(const request of held)request.destroy();
+    await until(async()=> (await f.send('/api/projects')).status===200);
+  } finally { for(const request of held)request.destroy();await f.close(); }
+});
+
+test('canonical transfer survives lost RPC reply and canonical restart without duplicate successor or caller effects', async () => {
+  const f=await fixture(), keys=memoryKeys(), targetKeys=memoryKeys();
+  const home=openDeviceRuntime({database:join(f.dir,'source.sqlite'),server:f.origin(),development:true,entry:keys.entry});
+  const target=openDeviceRuntime({database:join(f.dir,'target.sqlite'),server:f.origin(),development:true,entry:targetKeys.entry});
+  const originalFetch=globalThis.fetch;let effects=0;
+  try {
+    await home.enroll(f.jwt());await target.enroll(f.jwt());const connection=home.connect();await until(()=>connection.state().phase==='connected');
+    const devices=(await f.send('/api/devices')).body.data,project=randomUUID(),source=randomUUID(),recipient=randomUUID();
+    assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Canonical transfer'})).status,201);
+    for(const [agentId,deviceId] of [[source,home.deviceId()],[recipient,target.deviceId()]])assert.equal((await f.send('/api/agents',{requestId:agentId,id:agentId,name:agentId,model:'fixture',backupModel:'',instructions:'Continue',threadLimit:2,projectId:project,homeDeviceId:deviceId,expectedProjectRevision:1,expectedHomeDeviceRevision:devices.find((d:{id:string})=>d.id===deviceId).revision,providerBinding:null})).status,201);
+    const channel=randomUUID(),seed=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    try {
+      const ownerId=String(seed.prepare('SELECT account FROM projects WHERE id=?').get(project)!.account);
+      seed.prepare('INSERT INTO channels(id,name,instructions,lead) VALUES (?,?,?,?)').run(channel,'Handoff','Continue project work',source);
+      for(const agent of [source,recipient]) seed.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel,agent);
+      seed.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(JSON.stringify([channel]),ownerId,project,channel);
+    } finally {seed.close();}
+    const taskId=randomUUID(),payload={v:1,kind:'channel',channelId:channel,routing:'assigned',message:{text:'Original request',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1,channel:1};
+    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:source,homeDeviceId:home.deviceId(),payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,source,home.deviceId(),payload,expectedRevisions])})).status,202);
+    const owned=await home.startTask(taskId),context=await home.taskContext(taskId,owned.ownership,owned.revision),actionId=randomUUID();
+    const transferSchema=(context.snapshot.tools as any[]).find((tool:any)=>tool.function.name==='transfer_task') as any;
+    assert.deepEqual(transferSchema.function.parameters.properties.recipient.enum,[recipient]);
+    const toolCall={id:'transfer',function:{name:'transfer_task',arguments:JSON.stringify({recipient,task:'Continue from saved evidence'})}};
+    const action={taskId,actionId,sequence:0,actionKind:'canonical' as const,ownership:owned.ownership,payload:{toolCall,expectedRevision:owned.revision+1},context,grantRevision:1};
+    globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith(`/api/tasks/${taskId}/context-mutations`)){assert.equal(response.status,200,await response.clone().text());await response.body?.cancel();throw new Error('Lost canonical ACK');}return response;};
+    await assert.rejects(home.executeAction(action,()=>{effects++;return{text:'Must not execute'};}),/Lost canonical ACK/);globalThis.fetch=originalFetch;
+    const transferred=(await f.send(`/api/tasks/${taskId}`)).body.data,successor=transferred.currentTaskId;assert.equal(transferred.state,'transferred');assert.notEqual(successor,taskId);
+    await f.restart();await until(()=>connection.state().phase==='connected');
+    await until(()=>home.recoveryStatus().results.some(row=>row.actionId===actionId&&row.state==='acknowledged'),15000);
+    assert.equal(effects,0);assert.equal((await f.send(`/api/tasks/${taskId}`)).body.data.currentTaskId,successor);
+    const next=(await f.send(`/api/tasks/${successor}`)).body.data;assert.equal(next.homeDeviceId,target.deviceId());assert.equal(next.state,'waiting_device');
+    const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{assert.equal(db.prepare('SELECT count(*) n FROM tasks WHERE logical_turn=?').get(taskId)!.n,2);assert.equal(db.prepare('SELECT count(*) n FROM task_results WHERE action=?').get(actionId)!.n,1);}finally{db.close();}
+  } finally {globalThis.fetch=originalFetch;await home.close();await target.close();await f.close();}
 });
