@@ -857,6 +857,71 @@ for(const kind of ['direct','side'] as const) test(`canonical profile edit in ${
   }finally{f.close();}
 });
 
+test('canonical agent directory pages authorized teammates and scopes activity to project, human and channel', async () => {
+  const f=await fixture(['list_agents']);
+  try {
+    const other=randomUUID();f.access.createProject(f.owner,{requestId:randomUUID(),id:other,name:'Other'});
+    const add=async(project=f.project)=>{
+      const agent=randomUUID();await f.access.createAgent(f.owner,{requestId:agent,id:agent,name:'Peer',model:'fixture',backupModel:'',instructions:'x'.repeat(400),threadLimit:2,projectId:project,homeDeviceId:f.home,expectedProjectRevision:1,expectedHomeDeviceRevision:1,providerBinding:null});return agent;
+    };
+    const visible=(await Promise.all(Array.from({length:11},()=>add()))).sort(),hidden=await add(),deleted=await add(),foreign=await add(other),unowned=randomUUID();
+    f.db.exec('CREATE TABLE agent_visibility(agent TEXT PRIMARY KEY,hidden INTEGER,revision INTEGER);');
+    f.db.prepare('INSERT INTO agent_visibility VALUES (?,1,1)').run(hidden);
+    f.db.prepare('UPDATE agent_projects SET deleted=1 WHERE agent=?').run(deleted);
+    f.db.prepare("INSERT INTO agents(id,name,model,instructions) VALUES (?,'Foreign','fixture','PRIVATE_PROFILE')").run(unowned);
+    f.db.prepare("INSERT INTO agent_projects VALUES (?,?,'','{\"tools\":[]}',1,0)").run(f.project,unowned);
+    f.db.prepare('INSERT INTO agent_authority VALUES (?,?,?,NULL,1)').run(unowned,f.foreign.accountId,f.home);
+    for(const agent of [f.agent,visible[0]])f.db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,agent);
+    f.db.prepare('INSERT INTO response_policies VALUES (?,?,?,0,1)').run(f.project,f.member.accountId,visible[0]);
+    const channel=randomUUID();f.db.prepare("INSERT INTO channels(id,name,instructions,lead) VALUES (?,'Room','',?)").run(channel,f.agent);
+    for(const agent of [f.agent,visible[0],foreign,hidden])f.db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel,agent);
+    f.db.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(JSON.stringify([channel]),f.owner.accountId,f.project,channel);
+    const admit=(agent=f.agent,actor=f.owner,project=f.project,kind:'direct'|'side'|'channel'='direct')=>{
+      const thread=randomUUID();
+      if(kind==='side'){
+        f.db.prepare("INSERT INTO threads(id,agent,name) VALUES (?,?,'Side')").run(thread,agent);
+        f.db.prepare("INSERT INTO record_scopes VALUES ('threads',?,?,?,'owner','thread',?)").run(JSON.stringify([thread]),actor.accountId,project,thread);
+      }
+      const command=f.command({agentId:agent,projectId:project,payload:{v:1,kind,...(kind==='side'?{threadId:thread}:kind==='channel'?{channelId:channel,routing:'assigned'}:{}),message:{text:'Directory',files:[]}},expectedRevisions:{project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1,...(kind==='side'?{thread:1}:kind==='channel'?{channel:1}:{})}});
+      f.tasks.admit(actor,command);return command.requestId;
+    };
+    const start=(taskId:string)=>{
+      const token=randomBytes(32).toString('base64url'),acquired=f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId,previousExecutorGeneration:0,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token);
+      return {taskId,token,ownership:parseOwnership(acquired.data.ownership),sequence:0};
+    };
+    type AgentPage={agents:{id:string;description:string;status:string;queuedMessages:number}[];next_after:string|null;status?:number};
+    const run=(task:ReturnType<typeof start>,args:unknown={})=>{
+      const expectedTaskRevision=Number(f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(task.taskId)!.revision),context=f.tasks.context(f.principal,task.taskId,{requestId:randomUUID(),ownership:task.ownership,expectedTaskRevision},task.token),ref=context.data.snapshotRef as {snapshotId:string;digest:string},actionId=randomUUID(),toolCall={id:actionId,function:{name:'list_agents',arguments:JSON.stringify(args)}},expectedRevision=expectedTaskRevision+1,payloadDigest=canonicalToolDigest({toolCall,expectedRevision}),sequence=task.sequence++;
+      const intentDigest=digestCommand([task.taskId,actionId,sequence,task.ownership,payloadDigest,'canonical',ref.snapshotId,ref.digest,null,null,1,null,null,null]);
+      f.tasks.prepare(f.principal,task.taskId,actionId,{requestId:randomUUID(),sequence,ownership:task.ownership,payloadDigest,actionKind:'canonical',contextSnapshotId:ref.snapshotId,contextDigest:ref.digest,grantRevision:1,expectedTaskRevision,journalSequence:sequence+1,intentDigest},task.token);
+      f.tasks.commit(f.principal,task.taskId,actionId,{requestId:randomUUID(),ownership:task.ownership,intentDigest,expectedTaskRevision,journalSequence:sequence+1},task.token);
+      return f.tasks.contextMutations(f.principal,task.taskId,{requestId:randomUUID(),actionId,ownership:task.ownership,toolCall,payloadDigest,expectedRevision},task.token).data.resultContent as AgentPage;
+    };
+    const main=start(admit()),first=run(main);
+    assert.deepEqual(first.agents.map(row=>row.id),visible.slice(0,10));assert.equal(first.next_after,visible[9]);assert(first.agents.every(row=>row.description.length===300&&row.status==='idle'&&row.queuedMessages===0));
+    const second=run(main,{after:first.next_after});assert.deepEqual(second.agents.map(row=>row.id),visible.slice(10));assert.equal(second.next_after,null);
+    for(const after of ['',null,42,'bad'])assert.equal(run(main,{after}).status,400);
+    const peer=visible[0],side=start(admit(f.agent,f.member,f.project,'side')),room=start(admit(f.agent,f.member,f.project,'channel'));
+    assert.deepEqual(run(side).agents.map(row=>row.id),[peer]);assert.deepEqual(run(room).agents.map(row=>row.id),[peer]);
+    const privateTask=start(admit(peer));assert.equal(run(side).agents[0].status,'idle');assert.equal(run(room).agents[0].status,'idle');
+    assert.equal(run(main).agents[0].status,'working');
+    f.db.prepare("INSERT INTO agent_projects SELECT ?,agent,rules,capabilities_json,1,0 FROM agent_projects WHERE project=? AND agent=?").run(other,f.project,peer);
+    start(admit(peer,f.owner,other));
+    f.tasks.control(f.owner,privateTask.taskId,{requestId:randomUUID(),expectedRevision:2,operation:'cancel'});
+    assert.equal(run(main).agents[0].status,'idle');
+    admit(peer,f.member);assert.equal(run(side).agents[0].status,'waiting');assert.equal(run(side).agents[0].queuedMessages,1);assert.equal(run(room).agents[0].status,'idle');
+    const shared=start(admit(peer,f.member,f.project,'channel'));assert.equal(run(room).agents[0].status,'working');assert.equal(run(room).agents[0].queuedMessages,0);
+    f.tasks.control(f.member,shared.taskId,{requestId:randomUUID(),expectedRevision:2,operation:'pause'});assert.equal(run(room).agents[0].status,'waiting');
+    f.db.prepare('UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE project=? AND account=? AND agent=?').run(f.project,f.member.accountId,peer);
+    assert.deepEqual(run(side).agents,[]);assert.deepEqual(run(room).agents,[]);
+    const toolCall={id:randomUUID(),function:{name:'list_agents',arguments:JSON.stringify({projectId:other})}},expectedRevision=Number(f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(main.taskId)!.revision);
+    assert.throws(()=>f.tasks.contextMutations(f.principal,main.taskId,{requestId:randomUUID(),actionId:randomUUID(),ownership:main.ownership,toolCall,expectedRevision,payloadDigest:canonicalToolDigest({toolCall,expectedRevision})},main.token),code('unknown_field'));
+    f.tasks.control(f.owner,main.taskId,{requestId:randomUUID(),expectedRevision,operation:'pause'});
+    const paused=Number(f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(main.taskId)!.revision),moved=f.tasks.control(f.owner,main.taskId,{requestId:randomUUID(),expectedRevision:paused,operation:'reassign',recipientAgentId:peer});
+    const successor=start(String(moved.data.taskId));assert(!run(successor).agents.some(row=>row.id===f.agent||row.id===peer));
+  } finally { f.close(); }
+});
+
 test('context counts projected result bytes once, including escaped JSON content', async () => {
   const f = await preparedTask();
   try {

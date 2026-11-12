@@ -706,6 +706,28 @@ test('canonical skill reads recover exact pinned text after lost response, disab
   }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}
 });
 
+test('canonical agent directory isolates projects and recovers exact roster after lost reply', async () => {
+  const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry}),originalFetch=globalThis.fetch;
+  try{
+    await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
+    const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),other=randomUUID(),agent=randomUUID(),peer=randomUUID(),foreign=randomUUID();
+    for(const id of [project,other])assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id,name:'Directory'})).status,201);
+    for(const [id,projectId] of [[agent,project],[peer,project],[foreign,other]])assert.equal((await f.send('/api/agents',{requestId:id,id,name:id===peer?'Original teammate':'Agent',model:'fixture',backupModel:'',instructions:'Project teammate',threadLimit:2,projectId,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
+    const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'List teammates',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
+    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
+    const owned=await runtime.startTask(taskId),context=await runtime.taskContext(taskId,owned.ownership,owned.revision),actionId=randomUUID();
+    assert((context.snapshot.tools as {function:{name:string}}[]).some(tool=>tool.function.name==='list_agents'));
+    const input={taskId,actionId,sequence:0,actionKind:'canonical' as const,ownership:owned.ownership,payload:{toolCall:{id:actionId,function:{name:'list_agents',arguments:'{}'}},expectedRevision:context.snapshot.taskRevision+1},context,grantRevision:1};
+    globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith('/context-mutations')){assert.equal(response.status,200,await response.clone().text());await response.body?.cancel();throw new Error('Lost directory result');}return response;};
+    await assert.rejects(runtime.executeAction(input,()=>assert.fail('Host effect')),/Lost directory result/);globalThis.fetch=originalFetch;
+    const changed=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{changed.prepare("UPDATE agents SET name='Later teammate',revision=revision+1 WHERE id=?").run(peer);changed.prepare('UPDATE agent_projects SET deleted=1,revision=revision+1 WHERE project=? AND agent=?').run(project,peer);}finally{changed.close();}
+    await f.restart();await until(()=>connection.state().phase==='connected');await until(()=>runtime.recoveryStatus().results.some(row=>row.actionId===actionId&&row.state==='acknowledged'),15000);
+    const detail=(await f.send(`/api/tasks/${taskId}`)).body.data;
+    assert.equal(detail.results.length,1);assert.deepEqual(detail.results[0].content,{agents:[{id:peer,name:'Original teammate',description:'Project teammate',status:'idle',queuedMessages:0}],next_after:null});
+    const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{assert.equal(db.prepare('SELECT count(*) n FROM task_results WHERE action=?').get(actionId)!.n,1);assert.equal(db.prepare('SELECT count(*) n FROM task_reports WHERE action=?').get(actionId)!.n,1);}finally{db.close();}
+  }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}
+});
+
 test('canonical profile edits recover exact result without replacing later edits or current task instructions', async () => {
   const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry}),originalFetch=globalThis.fetch;
   try{
