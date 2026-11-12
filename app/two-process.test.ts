@@ -17,11 +17,47 @@ import { canonicalJson, ProtocolError, digestCommand, sha256 } from './protocol.
 import { parseOwnership } from './task-recovery.ts';
 import sharp from 'sharp';
 import { saveSkill } from './skills.ts';
+import { initializeSites, saveSite } from './sites.ts';
 
 function memoryKeys() {
   const values = new Map<string, string>();
   return { values, entry(service: string, name: string) { const key = `${service}/${name}`; return { getPassword: () => values.get(key) ?? null, setPassword: (value: string) => { values.set(key, value); } }; } };
 }
+
+test('canonical site management keeps project scope and recovers one deletion after a lost reply and restart',async()=>{
+  const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry}),originalFetch=globalThis.fetch;
+  try{
+    await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
+    const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),otherProject=randomUUID(),agent=randomUUID(),site=randomUUID(),foreign=randomUUID();
+    for(const id of [project,otherProject])assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id,name:id})).status,201);
+    assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Site owner',model:'fixture',backupModel:'',instructions:'Manage sites',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
+    const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    try{
+      initializeSites(db);const owner=db.prepare("SELECT id FROM accounts WHERE clerk_sub='user_owner'").get()!.id;
+      for(const [id,scope] of [[site,project],[foreign,otherProject]]){
+        saveSite(db,agent,{id,name:'Scoped site',source:'<p>PRIVATE_SITE_SOURCE</p>'});
+        db.prepare("INSERT INTO record_scopes VALUES ('local_sites',?,?,?,'owner','agent',?)").run(JSON.stringify([id]),owner,scope,agent);
+      }
+    }finally{db.close();}
+    const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'List and delete my site',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
+    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
+    const owned=await runtime.startTask(taskId);let sequence=0;
+    const input=async(name:string,args:unknown)=>{
+      const detail=(await f.send(`/api/tasks/${taskId}`)).body.data,context=await runtime.taskContext(taskId,owned.ownership,detail.revision),actionId=randomUUID();
+      return {taskId,actionId,sequence:sequence++,actionKind:'canonical' as const,ownership:owned.ownership,payload:{toolCall:{id:actionId,function:{name,arguments:JSON.stringify(args)}},expectedRevision:context.snapshot.taskRevision+1},context,grantRevision:1};
+    };
+    const listing=await runtime.executeAction(await input('list_sites',{}),()=>assert.fail('Host effect')),result=JSON.parse(String(listing.result_json));
+    assert.deepEqual(result.sites.map((row:{id:string})=>row.id),[site]);assert(!JSON.stringify(result).includes('PRIVATE_SITE_SOURCE'));
+    const deletion=await input('delete_site',{site,revision:1});
+    globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith('/context-mutations')){assert.equal(response.status,200,await response.clone().text());await response.body?.cancel();throw new Error('Lost site deletion');}return response;};
+    await assert.rejects(runtime.executeAction(deletion,()=>assert.fail('Host effect')),/Lost site deletion/);globalThis.fetch=originalFetch;
+    const generation=connection.state().generation;
+    await f.restart();await until(()=>connection.state().phase==='connected'&&connection.state().generation>generation);
+    await until(()=>runtime.recoveryStatus().results.some(row=>row.actionId===deletion.actionId&&row.state==='acknowledged'),15000);
+    const detail=(await f.send(`/api/tasks/${taskId}`)).body.data;assert.equal(detail.results.length,2);assert.deepEqual(detail.results[1].content,{id:site,name:'Scoped site',revision:2,deleted:1,path:null});
+    const inspect=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{assert.deepEqual({...inspect.prepare('SELECT revision,deleted,source,html FROM local_sites WHERE id=?').get(site)!},{revision:2,deleted:1,source:'',html:''});assert.equal(inspect.prepare('SELECT deleted FROM local_sites WHERE id=?').get(foreign)!.deleted,0);assert.equal(inspect.prepare('SELECT count(*) n FROM site_commands WHERE site=?').get(site)!.n,2);}finally{inspect.close();}
+  }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}
+});
 
 test('canonical questions survive lost RPC and answer replies, restart and home outage without duplicate work', async () => {
   const f=await fixture(),keys=memoryKeys(),originalFetch=globalThis.fetch;
@@ -40,8 +76,8 @@ test('canonical questions survive lost RPC and answer replies, restart and home 
     await assert.rejects(runtime.executeAction(input,()=>assert.fail('Host effect')),/Lost question result/);globalThis.fetch=originalFetch;
     let detail=(await f.send(`/api/tasks/${taskId}`)).body.data;
     assert.equal(detail.state,'paused');assert.equal(detail.questions.length,1);assert.equal(detail.questions[0].answer,null);
-    const generation=(await f.send('/api/devices')).body.data[0].connection_generation;
-    await f.restart();await until(async()=>connection.state().phase==='connected'&&(await f.send('/api/devices')).body.data[0].connection_generation>generation);
+    const generation=connection.state().generation;
+    await f.restart();await until(()=>connection.state().phase==='connected'&&connection.state().generation>generation);
     await until(()=>runtime.recoveryStatus().results.some(row=>row.actionId===actionId&&row.state==='acknowledged'),15000);
     detail=(await f.send(`/api/tasks/${taskId}`)).body.data;assert.equal(detail.questions.length,1);assert.equal(detail.results.length,1);
     const path=`/api/tasks/${taskId}/questions/${detail.questions[0].id}/answer`,answer={requestId:randomUUID(),expectedRevision:detail.revision,text:'Yes'};
@@ -51,8 +87,8 @@ test('canonical questions survive lost RPC and answer replies, restart and home 
     assert.equal((await f.send(path,{...answer,expectedRevision:1})).body.error.code,'stale_revision');
     globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith('/answer')){assert.equal(response.status,200,await response.clone().text());await response.body?.cancel();throw new Error('Lost answer result');}return response;};
     await assert.rejects(f.send(path,answer),/Lost answer result/);globalThis.fetch=originalFetch;
-    const beforeAnswerRestart=(await f.send('/api/devices')).body.data[0].connection_generation;
-    await f.restart();await until(async()=>connection.state().phase==='connected'&&(await f.send('/api/devices')).body.data[0].connection_generation>beforeAnswerRestart);
+    const beforeAnswerRestart=connection.state().generation;
+    await f.restart();await until(()=>connection.state().phase==='connected'&&connection.state().generation>beforeAnswerRestart);
     const replay=await f.send(path,answer);assert.equal(replay.status,200);assert.equal(replay.body.data.answer,'Yes');
     assert.equal((await f.send(path,{...answer,text:'No'})).body.error.code,'payload_conflict');
     detail=(await f.send(`/api/tasks/${taskId}`)).body.data;assert.equal(detail.state,'running');assert.equal(detail.questions[0].answer,'Yes');

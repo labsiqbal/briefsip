@@ -13,6 +13,7 @@ import { initializeSkills, saveSkill } from './skills.ts';
 import { initializeQuestions } from './questions.ts';
 import { initializeCompaction } from './compaction.ts';
 import { initializeFlows } from './flow-store.ts';
+import { initializeSites, saveSite } from './sites.ts';
 import { createProjectAccess } from './project-access.ts';
 import { createDevices, parseLinkChallenge, deviceLinkBody, descriptorBody, type DeviceDescriptor } from './devices.ts';
 import { canonicalJson, digestCommand, sha256, ProtocolError } from './protocol.ts';
@@ -92,8 +93,8 @@ async function preparedTask() {
   return { ...f, taskId, token, ownership, actionId, payloadDigest, lockProof, commit, context };
 }
 
-async function canonicalQuestions() {
-  const f=await fixture(['ask_user']);
+async function canonicalTaskTools(tools=['ask_user']) {
+  const f=await fixture(tools);
   const start=(actor=f.owner,payload:Record<string,unknown>={v:1,kind:'direct',message:{text:'Ask first',files:[]}})=>{
     const expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1,...(payload.kind==='channel'?{channel:1}:{}),...(payload.kind==='side'?{thread:1}:{})};
     const command=f.command({payload,expectedRevisions});f.tasks.admit(actor,command);
@@ -101,9 +102,9 @@ async function canonicalQuestions() {
     const acquired=f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId,previousExecutorGeneration:0,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token);
     return {taskId,token,ownership:parseOwnership(acquired.data.ownership),actor,sequence:0};
   };
-  const stage=(task:ReturnType<typeof start>,args:unknown)=>{
+  const stage=(task:ReturnType<typeof start>,args:unknown,name='ask_user')=>{
     const expectedTaskRevision=Number(f.tasks.lookup(task.actor,task.taskId).data.revision),context=f.tasks.context(f.principal,task.taskId,{requestId:randomUUID(),ownership:task.ownership,expectedTaskRevision},task.token),ref=context.data.snapshotRef as {snapshotId:string;digest:string},actionId=randomUUID(),sequence=task.sequence++;
-    const toolCall={id:actionId,function:{name:'ask_user',arguments:JSON.stringify(args)}},expectedRevision=expectedTaskRevision+1,payloadDigest=canonicalToolDigest({toolCall,expectedRevision}),intentDigest=digestCommand([task.taskId,actionId,sequence,task.ownership,payloadDigest,'canonical',ref.snapshotId,ref.digest,null,null,1,null,null,null]);
+    const toolCall={id:actionId,function:{name,arguments:JSON.stringify(args)}},expectedRevision=expectedTaskRevision+1,payloadDigest=canonicalToolDigest({toolCall,expectedRevision}),intentDigest=digestCommand([task.taskId,actionId,sequence,task.ownership,payloadDigest,'canonical',ref.snapshotId,ref.digest,null,null,1,null,null,null]);
     f.tasks.prepare(f.principal,task.taskId,actionId,{requestId:randomUUID(),sequence,ownership:task.ownership,payloadDigest,actionKind:'canonical',contextSnapshotId:ref.snapshotId,contextDigest:ref.digest,grantRevision:1,expectedTaskRevision,journalSequence:sequence+1,intentDigest},task.token);
     f.tasks.commit(f.principal,task.taskId,actionId,{requestId:randomUUID(),ownership:task.ownership,intentDigest,expectedTaskRevision,journalSequence:sequence+1},task.token);
     const request={requestId:randomUUID(),actionId,ownership:task.ownership,toolCall,payloadDigest,expectedRevision};
@@ -113,7 +114,7 @@ async function canonicalQuestions() {
 }
 
 test('canonical questions validate limits and atomically pause, answer and retain cancellation',async()=>{
-  const f=await canonicalQuestions();
+  const f=await canonicalTaskTools();
   try{
     f.db.prepare("UPDATE devices SET status='ready' WHERE id=?").run(f.home);
     const task=f.start();
@@ -143,7 +144,7 @@ test('canonical questions validate limits and atomically pause, answer and retai
 });
 
 test('canonical question answers enforce private human, conversation, project and current collaborator access',async()=>{
-  const f=await canonicalQuestions();
+  const f=await canonicalTaskTools();
   try{
     f.db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,f.agent);
     f.db.prepare('INSERT INTO response_policies VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,f.agent);
@@ -168,6 +169,39 @@ test('canonical question answers enforce private human, conversation, project an
     assert.equal(f.tasks.answer(f.member,room.taskId,roomQuestion,{requestId:randomUUID(),expectedRevision:roomResult.receipt.recordRevision,text:'Shared answer'}).data.answer,'Shared answer');
     f.db.prepare('UPDATE project_members SET deleted=1 WHERE account=?').run(f.member.accountId);
     assert.throws(()=>f.tasks.answer(f.member,task.taskId,question,answer),code('resource_not_found'));
+  }finally{f.close();}
+});
+
+for(const kind of ['direct','side'] as const)test(`canonical sites in ${kind} page scoped metadata and retain atomic deletion`,async()=>{
+  const f=await canonicalTaskTools(['list_sites','delete_site']);
+  try{
+    initializeSites(f.db);
+    const other=randomUUID(),peer=randomUUID();f.access.createProject(f.owner,{requestId:randomUUID(),id:other,name:'Other'});
+    await f.access.createAgent(f.owner,{requestId:peer,id:peer,name:'Peer',model:'fixture',backupModel:'',instructions:'Peer',threadLimit:2,projectId:f.project,homeDeviceId:f.home,expectedProjectRevision:1,expectedHomeDeviceRevision:1,providerBinding:null});
+    const seed=(id=randomUUID(),project=f.project,account=f.owner.accountId,agent=f.agent,visibility='owner',mapped=true,root=agent)=>{
+      saveSite(f.db,agent,{id,name:'Scoped site',source:'<p>PRIVATE_SITE_SOURCE</p>'});
+      if(mapped)f.db.prepare("INSERT INTO record_scopes VALUES ('local_sites',?,?,?,?, 'agent',?)").run(JSON.stringify([id]),account,project,visibility,root);
+      return id;
+    };
+    const sites=Array.from({length:12},(_,n)=>seed(`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`));
+    const privateSite=seed(undefined,f.project,f.member.accountId),foreign=seed(undefined,other),foreignAgent=seed(undefined,f.project,f.owner.accountId,peer),unmapped=seed(undefined,f.project,f.owner.accountId,f.agent,'owner',false),wrongRoot=seed(undefined,f.project,f.owner.accountId,f.agent,'owner',true,peer),deleted=seed();f.db.prepare('UPDATE local_sites SET deleted=1 WHERE id=?').run(deleted);
+    const thread=randomUUID();if(kind==='side'){f.db.prepare("INSERT INTO threads VALUES (?,?,'Side',1,0,0)").run(thread,f.agent);f.db.prepare("INSERT INTO record_scopes VALUES ('threads',?,?,?,'owner','thread',?)").run(JSON.stringify([thread]),f.owner.accountId,f.project,thread);}
+    const task=f.start(f.owner,kind==='direct'?undefined:{v:1,kind:'side',threadId:thread,message:{text:'Sites',files:[]}}),run=(name:string,args:unknown)=>f.stage(task,args,name)();
+    const first=run('list_sites',{}).data.resultContent as {sites:{id:string}[];next_after:string};assert.deepEqual(first.sites.map(row=>row.id),sites.slice(0,10));assert.equal(first.next_after,sites[9]);assert(!JSON.stringify(first).includes('PRIVATE_SITE_SOURCE'));
+    const last=run('list_sites',{after:first.next_after.toUpperCase()}).data.resultContent as {sites:{id:string}[];next_after:null};assert.deepEqual(last.sites.map(row=>row.id),sites.slice(10));assert.equal(last.next_after,null);
+    for(const after of [0,[],{},'bad'])assert.equal((run('list_sites',{after}).data.resultContent as {status:number}).status,400);
+    for(const site of [privateSite,foreign,foreignAgent,unmapped,wrongRoot])assert.equal((run('delete_site',{site,revision:1}).data.resultContent as {status:number}).status,404);
+    for(const revision of [0,1.5,Number.MAX_SAFE_INTEGER])assert.equal((run('delete_site',{site:sites[0],revision}).data.resultContent as {status:number}).status,400);
+    assert.equal((run('delete_site',{site:sites[0],revision:2}).data.resultContent as {status:number}).status,409);
+    const deletion=f.stage(task,{site:sites[0],revision:1},'delete_site');
+    f.db.exec("CREATE TRIGGER fail_site_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'site result failed'); END");assert.throws(deletion,/site result failed/);assert.equal(f.db.prepare('SELECT revision FROM local_sites WHERE id=?').get(sites[0])!.revision,1);assert.equal(f.db.prepare('SELECT deleted FROM local_sites WHERE id=?').get(sites[0])!.deleted,0);
+    f.db.exec('DROP TRIGGER fail_site_result');const saved=deletion();assert.deepEqual(saved.data.resultContent,{id:sites[0],name:'Scoped site',revision:2,deleted:1,path:null});assert.deepEqual(deletion(),saved);assert.equal(f.db.prepare('SELECT source FROM local_sites WHERE id=?').get(sites[0])!.source,'');
+    assert.equal((run('delete_site',{site:sites[0],revision:2}).data.resultContent as {status:number}).status,410);
+    f.tasks.control(f.owner,task.taskId,{requestId:randomUUID(),expectedRevision:f.tasks.lookup(f.owner,task.taskId).data.revision,operation:'cancel'});assert.deepEqual(deletion(),saved);
+    f.db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,f.agent);f.db.prepare('INSERT INTO response_policies VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,f.agent);
+    const member=f.start(f.member),shared=seed(undefined,f.project,f.owner.accountId,f.agent,'project');assert.equal((f.stage(member,{site:privateSite,revision:1},'delete_site')().data.resultContent as {deleted:number}).deleted,1);assert.equal((f.stage(member,{site:sites[1],revision:1},'delete_site')().data.resultContent as {status:number}).status,404);assert.equal((f.stage(member,{site:shared,revision:1},'delete_site')().data.resultContent as {deleted:number}).deleted,1);
+    const channel=randomUUID();f.db.prepare("INSERT INTO channels VALUES (?,'Room','',NULL,1,0)").run(channel);f.db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel,f.agent);f.db.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(JSON.stringify([channel]),f.owner.accountId,f.project,channel);
+    for(const name of ['list_sites','delete_site']){const room=f.start(f.owner,{v:1,kind:'channel',channelId:channel,routing:'assigned',message:{text:'Room sites',files:[]}});assert.throws(()=>f.stage(room,name==='list_sites'?{}:{site:sites[1],revision:1},name)(),code('execution_denied'));}
   }finally{f.close();}
 });
 
