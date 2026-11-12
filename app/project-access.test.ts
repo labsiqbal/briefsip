@@ -10,7 +10,7 @@ import { ProtocolError } from './protocol.ts';
 
 function fixture() {
   const db = new DatabaseSync(':memory:');
-  db.exec('CREATE TABLE agents(id TEXT PRIMARY KEY,revision INTEGER NOT NULL) STRICT'); initializeCanonicalSchema(db);
+  db.exec('CREATE TABLE agents(id TEXT PRIMARY KEY,revision INTEGER NOT NULL) STRICT'); initializeCanonicalSchema(db, Date.now(), 1);
   const project = randomUUID(), agent = randomUUID(), secondAgent = randomUUID();
   const actor = (subject: string): HumanActor => ({ accountId: randomUUID(), issuer: 'https://fixture.example', subject, sessionId: `sess_${subject}`, expiresAt: Date.now() + 60000 });
   const owner = actor('owner'), member = actor('member'), stranger = actor('stranger');

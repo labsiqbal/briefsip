@@ -67,3 +67,142 @@ test('prompt creation atomically queues one restricted setup and recovers withou
     app = await startApp(options); const rollback = command(); await request('/api/agents', rollback, 500); assert(!(await request('/api/agents')).agents.some((a: any) => a.id === rollback.id));
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
+
+import { createProjectAccess } from './project-access.ts';
+import { createDevices, descriptorBody, deviceLinkBody, parseLinkChallenge, type DeviceDescriptor } from './devices.ts';
+import { initializeCanonicalSchema } from './schema.ts';
+import { generateKeyPairSync, sign } from 'node:crypto';
+import type { HumanActor } from './auth.ts';
+import { ProtocolError, digestCommand, sha256 } from './protocol.ts';
+import { parseCanonicalAgentCreation, restoreCanonicalAgentCreation } from './agent-create.ts';
+import { retainedToolNames } from './server.ts';
+import sharp from 'sharp';
+
+function canonicalFixture() {
+  const db = new DatabaseSync(':memory:'); initializeCanonicalSchema(db);
+  const actor = (subject: string): HumanActor => ({ accountId: randomUUID(), issuer: 'https://fixture.example', subject, sessionId: `sess_${subject}`, expiresAt: Date.now() + 60000 });
+  const owner = actor('owner'), member = actor('member'), foreign = actor('foreign');
+  for (const a of [owner, member, foreign]) db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(a.accountId, a.issuer, a.subject, Date.now());
+  const auth = { requireCurrent(a: HumanActor) { if (db.prepare('SELECT blocked FROM accounts WHERE id=?').get(a.accountId)?.blocked !== 0) throw new ProtocolError(401, 'session_invalid', 'Sesi ditolak.'); return a; }, async verifiedMailboxes() { return []; } };
+  const devices = createDevices(db, auth), access = createProjectAccess(db, auth, () => { throw new Error('No mail in agent fixture'); }, retainedToolNames);
+  function enroll(a = owner, capabilities = ['execution']) {
+    const installation = generateKeyPairSync('ed25519'), signing = generateKeyPairSync('ed25519'), encryption = generateKeyPairSync('x25519');
+    const encode = (key: typeof signing.publicKey) => key.export({ type: 'spki', format: 'der' }).toString('base64url');
+    const c = parseLinkChallenge({ requestId: randomUUID(), installationId: randomUUID(), deviceId: randomUUID(), mode: 'new', installationPublicKey: encode(installation.publicKey), deviceSigningKey: encode(signing.publicKey), deviceEncryptionKey: encode(encryption.publicKey), deviceLabel: 'Home', requestedCapabilities: capabilities, zone: 'Asia/Jakarta', zoneRevision: 1 });
+    const r = devices.createChallenge(a, c, a.accountId), body = Buffer.from(JSON.stringify(deviceLinkBody(c, r)));
+    const d: Omit<DeviceDescriptor, 'signature'> = { v: 1, accountId: a.accountId, installationId: c.installationId, deviceId: c.deviceId, authorityGeneration: r.authorityGeneration, deviceGeneration: 1, keyRevision: 1, zone: c.zone, zoneRevision: 1, signingPublicKey: c.deviceSigningKey, encryptionPublicKey: c.deviceEncryptionKey };
+    devices.link(a, { requestId: randomUUID(), challengeId: r.challengeId, nonce: r.nonce, installationSignature: sign(null, body, installation.privateKey).toString('base64url'), deviceSignature: sign(null, body, signing.privateKey).toString('base64url'), descriptor: { ...d, signature: sign(null, Buffer.from(JSON.stringify(descriptorBody(d))), signing.privateKey).toString('base64url') } }, a.accountId);
+    return c.deviceId;
+  }
+  const home = enroll(), project = randomUUID();
+  access.createProject(owner, { requestId: randomUUID(), id: project, name: 'A' });
+  db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(project, member.accountId);
+  const command = (change = {}) => { const id = randomUUID(); return { requestId: id, id, name: 'Agent', model: 'fixture', backupModel: '', instructions: 'Help with research', threadLimit: 2, projectId: project, homeDeviceId: home, expectedProjectRevision: 1, expectedHomeDeviceRevision: 1, providerBinding: null, setup: false, ...change }; };
+  return { db, devices, access, owner, member, foreign, home, project, command, enroll, close() { devices.close(); db.close(); } };
+}
+const code = (expected: string) => (error: unknown) => error instanceof ProtocolError && error.code === expected;
+
+test('canonical draft carries project/home authority and rejects legacy or malformed provenance', () => {
+  const f = canonicalFixture();
+  try {
+    const command = f.command(); assert.deepEqual(restoreCanonicalAgentCreation(JSON.stringify(command)), command);
+    assert.equal(restoreCanonicalAgentCreation(null), null);
+    for (const change of [{ homeDeviceId: 'bad' }, { requestId: randomUUID() }, { expectedProjectRevision: 0 }, { expectedHomeDeviceRevision: 1.5 }, { providerBinding: {} }, { providerAccount: '' }, { setup: 'yes' }]) assert.throws(() => parseCanonicalAgentCreation({ ...command, ...change }));
+    assert.throws(() => restoreCanonicalAgentCreation(JSON.stringify({ id: randomUUID(), name: 'Old draft' })));
+  } finally { f.close(); }
+});
+
+test('canonical creation is owner/home scoped, offline-safe, exact and fully atomic', async () => {
+  const f = canonicalFixture(), { db, access, owner, member, foreign, home, project } = f;
+  try {
+    await assert.rejects(access.createAgent(member, f.command()), code('owner_required'));
+    await assert.rejects(access.createAgent(foreign, f.command()), code('resource_not_found'));
+    await assert.rejects(access.createAgent(owner, f.command({ expectedProjectRevision: 2 })), code('stale_revision'));
+    await assert.rejects(access.createAgent(owner, f.command({ expectedHomeDeviceRevision: 2 })), code('stale_revision'));
+    await assert.rejects(access.createAgent(owner, f.command({ homeDeviceId: f.enroll(foreign) })), code('resource_not_found'));
+    await assert.rejects(access.createAgent(owner, f.command({ homeDeviceId: f.enroll(owner, []) })), code('capability_missing'));
+    await assert.rejects(access.createAgent(owner, f.command({ setup: true })), code('setup_unavailable'));
+    db.prepare("UPDATE devices SET status='blocked' WHERE id=?").run(home);
+    await assert.rejects(access.createAgent(owner, f.command()), code('resource_not_found'));
+    db.prepare("UPDATE devices SET status='offline' WHERE id=?").run(home);
+    const command = f.command(), result = await access.createAgent(owner, command);
+    assert.equal(result.status, 201); assert.equal(result.data.homeDeviceId, home);
+    assert.equal(db.prepare('SELECT count(*) AS n FROM turns').get()!.n, 0);
+    assert.deepEqual(JSON.parse(String(db.prepare('SELECT capabilities_json FROM agent_projects WHERE agent=?').get(command.id)!.capabilities_json)), { v: 1, tools: retainedToolNames, resources: [] });
+    assert.equal(db.prepare('SELECT rules FROM agent_projects WHERE agent=?').get(command.id)!.rules, '');
+    assert.equal(db.prepare('SELECT count(*) AS n FROM collaborator_agents').get()!.n, 0);
+    db.prepare("UPDATE devices SET status='revoked',revision=revision+1 WHERE id=?").run(home);
+    assert.deepEqual((await access.createAgent(owner, command)).data, result.data);
+    await assert.rejects(access.createAgent(owner, { ...command, instructions: 'Changed' }), code('payload_conflict'));
+    assert.throws(() => db.prepare('UPDATE agent_authority SET home_device=? WHERE agent=?').run(f.enroll(), command.id), /agent_home_immutable/);
+    db.prepare("UPDATE devices SET status='offline',revision=1 WHERE id=?").run(home);
+    for (const table of ['agents', 'agent_authority', 'agent_projects', 'record_scopes', 'agent_creations', 'receipts']) {
+      const failed = f.command(); db.exec(`CREATE TRIGGER reject_insert BEFORE INSERT ON ${table} BEGIN SELECT RAISE(ABORT,'synthetic insertion fault'); END`);
+      await assert.rejects(access.createAgent(owner, failed), /synthetic insertion fault/);
+      db.exec('DROP TRIGGER reject_insert');
+      for (const [table, key] of [['agents', 'id'], ['agent_authority', 'agent'], ['agent_projects', 'agent'], ['agent_creations', 'id'], ['receipts', 'request_id']]) assert.equal(db.prepare(`SELECT count(*) AS n FROM ${table} WHERE ${key}=?`).get(failed.id)!.n, 0);
+    }
+    assert.equal(db.prepare('SELECT count(*) AS n FROM agents').get()!.n, 1);
+    assert.equal(db.prepare('SELECT revision FROM projects WHERE id=?').get(project)!.revision, 1);
+  } finally { f.close(); }
+});
+
+test('provider binding stays explicit and avatar receipt hashes original bytes', async () => {
+  const f = canonicalFixture(), { db, access, owner, home } = f;
+  try {
+    const binding = randomUUID(), otherHome = f.enroll();
+    db.prepare("INSERT INTO provider_bindings VALUES (?, ?, ?, 'openai-compatible', 'owner-provider', 'Owner', 'missing', 1)").run(binding, otherHome, owner.accountId);
+    const command = f.command({ providerBinding: { bindingId: binding, expectedRevision: 1 } });
+    await assert.rejects(access.createAgent(owner, command), code('resource_not_found'));
+    db.prepare('UPDATE provider_bindings SET device=? WHERE id=?').run(home, binding);
+    await assert.rejects(access.createAgent(owner, { ...command, providerBinding: { bindingId: binding, expectedRevision: 2 } }), code('stale_revision'));
+    const original = await sharp({ create: { width: 12, height: 20, channels: 4, background: '#c53e20' } }).png().toBuffer();
+    const withAvatar = { ...command, avatar: original.toString('base64') };
+    const result = await access.createAgent(owner, withAvatar);
+    assert.equal(db.prepare('SELECT provider_account FROM agents').get()!.provider_account, 'owner-provider');
+    const image = db.prepare('SELECT image,revision FROM agent_avatars').get()!, metadata = await sharp(image.image as Uint8Array).metadata();
+    assert.equal(metadata.width, 256); assert.equal(metadata.height, 256); assert.equal(image.revision, 1);
+    assert.equal(result.receipt.payloadDigest, digestCommand(['briefsip-agent-create-v1', { ...command, avatar: sha256(original) }]));
+    assert(!String(db.prepare('SELECT request FROM agent_creations').get()!.request).includes(withAvatar.avatar));
+    db.prepare("UPDATE provider_bindings SET readiness='revoked',revision=2").run();
+    assert.equal((await access.createAgent(owner, withAvatar)).status, 200);
+    await assert.rejects(access.createAgent(owner, f.command({ avatar: 'iVBORw0KGgo=' })), code('invalid_avatar'));
+  } finally { f.close(); }
+});
+
+test('second project participation and shared CAS isolate rules/capabilities and stale grants', async () => {
+  const f = canonicalFixture(), { db, access, owner, member, foreign, project } = f;
+  try {
+    const command = f.command(); await access.createAgent(owner, command);
+    const second = randomUUID(); access.createProject(owner, { requestId: randomUUID(), id: second, name: 'B' });
+    const participation = { requestId: randomUUID(), expectedProjectRevision: 1, expectedAgentRevision: 1, expectedAuthorityRevision: 1, expectedParticipationRevision: 0, rules: 'Only B', capabilities: { v: 1, tools: ['read_history'], resources: [] } };
+    const result = access.agentParticipation(owner, second, command.id, participation); assert.equal(result.status, 201);
+    assert.equal(access.agentParticipation(owner, second, command.id, participation).status, 200);
+    assert.throws(() => access.agentParticipation(owner, second, command.id, { ...participation, requestId: randomUUID() }), code('participation_exists'));
+    assert.throws(() => access.agentParticipation(foreign, second, command.id, participation), code('resource_not_found'));
+    assert.throws(() => access.requireAgentExecution(member, second, command.id), code('resource_not_found'));
+    const rules = { requestId: randomUUID(), expectedParticipationRevision: 1, rules: 'B only, revised' };
+    access.editAgentRules(owner, second, command.id, rules);
+    assert.equal(access.editAgentRules(owner, second, command.id, rules).data.revision, 2);
+    assert.throws(() => access.editAgentRules(owner, second, command.id, { ...rules, rules: 'changed' }), code('payload_conflict'));
+    const caps = { requestId: randomUUID(), expectedRevision: 1, capabilities: { v: 1, tools: [], resources: [] } };
+    assert.throws(() => access.editAgentCapabilities(owner, second, command.id, caps), code('stale_revision'));
+    const update = { ...caps, expectedRevision: 2 }; access.editAgentCapabilities(owner, second, command.id, update);
+    assert.equal(access.editAgentCapabilities(owner, second, command.id, update).data.revision, 3);
+    assert.throws(() => access.editAgentCapabilities(owner, second, command.id, { ...update, capabilities: { v: 1, tools: ['unknown'], resources: [] } }), code('capability_missing'));
+    assert.throws(() => access.editAgentCapabilities(owner, second, command.id, { ...update, capabilities: { v: 1, tools: [], resources: [], role: 'owner' } }), code('invalid_capabilities'));
+    assert.equal(db.prepare('SELECT rules FROM agent_projects WHERE project=?').get(project)!.rules, '');
+    db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(second, member.accountId);
+    db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(second, member.accountId, command.id);
+    db.prepare('INSERT INTO response_policies VALUES (?,?,?,1,1)').run(second, member.accountId, command.id);
+    db.prepare('UPDATE agent_projects SET deleted=1 WHERE project=?').run(second);
+    assert.throws(() => access.editAgentRules(owner, second, command.id, rules), code('resource_not_found'));
+    const reactivate = { ...participation, requestId: randomUUID(), expectedParticipationRevision: 3 };
+    assert.throws(() => access.agentParticipation(owner, second, command.id, { ...reactivate, expectedParticipationRevision: 0 }), code('stale_revision'));
+    assert.equal(access.agentParticipation(owner, second, command.id, reactivate).data.participationRevision, 4);
+    assert.equal(db.prepare('SELECT enabled FROM collaborator_agents').get()!.enabled, 0);
+    assert.equal(db.prepare('SELECT respond FROM response_policies').get()!.respond, 0);
+    assert.throws(() => access.requireAgentExecution(member, second, command.id), code('execution_denied'));
+    assert.equal(db.prepare('SELECT count(*) AS n FROM agent_authority').get()!.n, 1);
+  } finally { f.close(); }
+});

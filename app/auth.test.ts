@@ -93,7 +93,8 @@ test('canonical HTTP verifies identity, isolates projects and cannot dispatch le
     assert.equal((await send('/api/projects', 'POST', { ...create, requestId: randomUUID(), id: randomUUID(), private: true })).status, 400);
     const other = jwt({ sub: 'user_other' }); assert.deepEqual((await send('/api/projects', 'GET', undefined, other)).body.data, []);
     const hidden = await send(`/api/projects/${create.id}`, 'GET', undefined, other); assert.equal(hidden.status, 404); assert.equal(hidden.body.error.code, 'resource_not_found');
-    const legacy = await send('/api/agents', 'POST', { requestId: randomUUID(), id: randomUUID(), text: 'Never execute' }); assert.equal(legacy.status, 404);
+    const legacy = await send('/api/agents', 'POST', { requestId: randomUUID(), id: randomUUID(), text: 'Never execute' }); assert.equal(legacy.status, 400); assert.equal(legacy.body.error.code, 'invalid_agent');
+    assert.equal((await send(`/api/agents/${randomUUID()}/turns`)).status, 404);
     const invalid = await send('/api/projects', 'GET', undefined, 'invalid'); assert.equal(invalid.status, 401); assert.equal(invalid.body.ok, false);
     const duplicateId = randomUUID();
     const duplicate = await fetch(app.origin + '/api/projects', { method: 'POST', headers: { Authorization: `Bearer ${jwt()}`, Origin: config.origin, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': duplicateId }, body: `{"requestId":"${duplicateId}","id":"${randomUUID()}","name":"First","name":"Second"}` });
