@@ -824,6 +824,39 @@ for(const kind of ['direct','side'] as const) test(`canonical provider settings 
   }finally{f.close();}
 });
 
+for(const kind of ['direct','side'] as const) test(`canonical profile edit in ${kind} keeps atomic CAS errors and channel privacy`, async () => {
+  const f=await fixture(['edit_profile']);
+  try{
+    const actor=kind==='side'?f.member:f.owner,thread=randomUUID();
+    if(kind==='side'){
+      f.db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,actor.accountId,f.agent);
+      f.db.prepare("INSERT INTO threads(id,agent,name) VALUES (?,?,'Side')").run(thread,f.agent);
+      f.db.prepare("INSERT INTO record_scopes VALUES ('threads',?,?,?,'owner','thread',?)").run(JSON.stringify([thread]),actor.accountId,f.project,thread);
+    }
+    const task=f.command({payload:{v:1,kind,...(kind==='side'?{threadId:thread}:{}),message:{text:'Edit profile',files:[]}},expectedRevisions:{project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1,...(kind==='side'?{thread:1}:{})}});f.tasks.admit(actor,task);const token=randomBytes(32).toString('base64url');
+    const acquired=f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId:task.requestId,previousExecutorGeneration:0,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token),ownership=parseOwnership(acquired.data.ownership);let sequence=0,pending:unknown;
+    const run=(args:unknown)=>{
+      const expectedTaskRevision=Number(f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(task.requestId)!.revision),context=f.tasks.context(f.principal,task.requestId,{requestId:randomUUID(),ownership,expectedTaskRevision},token),ref=context.data.snapshotRef as {snapshotId:string;digest:string},actionId=randomUUID(),toolCall={id:actionId,function:{name:'edit_profile',arguments:JSON.stringify(args)}},expectedRevision=expectedTaskRevision+1,payloadDigest=canonicalToolDigest({toolCall,expectedRevision}),intentDigest=digestCommand([task.requestId,actionId,sequence,ownership,payloadDigest,'canonical',ref.snapshotId,ref.digest,null,null,1,null,null,null]);
+      f.tasks.prepare(f.principal,task.requestId,actionId,{requestId:randomUUID(),sequence,ownership,payloadDigest,actionKind:'canonical',contextSnapshotId:ref.snapshotId,contextDigest:ref.digest,grantRevision:1,expectedTaskRevision,journalSequence:sequence+1,intentDigest},token);f.tasks.commit(f.principal,task.requestId,actionId,{requestId:randomUUID(),ownership,intentDigest,expectedTaskRevision,journalSequence:sequence+1},token);sequence++;
+      pending={requestId:randomUUID(),actionId,ownership,toolCall,payloadDigest,expectedRevision};return f.tasks.contextMutations(f.principal,task.requestId,pending,token).data.resultContent as Record<string,unknown>;
+    };
+    assert.deepEqual(run({revision:1,name:'Renamed'}),{name:'Renamed',instructions:'Research',revision:2});
+    assert.deepEqual(run({revision:1,instructions:'Stale'}),{error:'Profil berubah. Minta arahan pengguna sebelum mengubahnya lagi.',status:409});
+    for(const args of [{revision:2},{revision:2,name:''},{revision:2,name:null},{revision:2,name:'x'.repeat(81)},{revision:2,instructions:'\u0000'},{revision:2,instructions:' '},{revision:2,instructions:'x'.repeat(8001)},...[0,-1,1.5,Number.MAX_SAFE_INTEGER].map(revision=>({revision,name:'No'}))])assert.equal(run(args).status,400);
+    assert.deepEqual(run({revision:2,instructions:'  Updated instructions  '}),{name:'Renamed',instructions:'Updated instructions',revision:3});
+    f.db.exec("CREATE TRIGGER fail_profile_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'fixture_result_fail'); END;");assert.throws(()=>run({revision:3,name:'Rolled back'}),/fixture_result_fail/);assert.equal(f.db.prepare('SELECT revision FROM agents WHERE id=?').get(f.agent)!.revision,3);f.db.exec('DROP TRIGGER fail_profile_result');
+    const recovered=f.tasks.contextMutations(f.principal,task.requestId,pending,token);assert.deepEqual(recovered.data.resultContent,{name:'Rolled back',instructions:'Updated instructions',revision:4});assert.deepEqual(f.tasks.contextMutations(f.principal,task.requestId,pending,token),recovered);
+    for(const field of ['agentId','model','providerAccount','permissions','homeDeviceId']){
+      const toolCall={id:randomUUID(),function:{name:'edit_profile',arguments:JSON.stringify({revision:4,name:'No',[field]:randomUUID()})}},expectedRevision=Number(f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(task.requestId)!.revision);assert.throws(()=>f.tasks.contextMutations(f.principal,task.requestId,{requestId:randomUUID(),actionId:randomUUID(),ownership,toolCall,expectedRevision,payloadDigest:canonicalToolDigest({toolCall,expectedRevision})},token),code('unknown_field'));
+    }
+    const channel=randomUUID();f.db.prepare("INSERT INTO channels(id,name,instructions,lead) VALUES (?,'Room','',?)").run(channel,f.agent);f.db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel,f.agent);f.db.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(JSON.stringify([channel]),f.owner.accountId,f.project,channel);
+    const room=f.command({payload:{v:1,kind:'channel',channelId:channel,routing:'assigned',message:{text:'Forced profile edit',files:[]}},expectedRevisions:{project:1,agent:4,homeBinding:1,membership:1,assignment:1,capability:1,channel:1}});f.tasks.admit(f.owner,room);
+    const roomOwned=f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId:room.requestId,previousExecutorGeneration:0,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token),roomOwnership=parseOwnership(roomOwned.data.ownership),roomContext=f.tasks.context(f.principal,room.requestId,{requestId:randomUUID(),ownership:roomOwnership,expectedTaskRevision:2},token),roomCall={id:randomUUID(),function:{name:'edit_profile',arguments:JSON.stringify({revision:2,name:'No'})}},roomExpected=2;
+    assert.deepEqual((roomContext.data.snapshot as {tools:unknown[]}).tools,[]);assert.throws(()=>f.tasks.contextMutations(f.principal,room.requestId,{requestId:randomUUID(),actionId:randomUUID(),ownership:roomOwnership,toolCall:roomCall,expectedRevision:roomExpected,payloadDigest:canonicalToolDigest({toolCall:roomCall,expectedRevision:roomExpected})},token),code('execution_denied'));
+    assert.equal(f.db.prepare('SELECT instructions FROM agents WHERE id=?').get(f.agent)!.instructions,'Updated instructions');
+  }finally{f.close();}
+});
+
 test('context counts projected result bytes once, including escaped JSON content', async () => {
   const f = await preparedTask();
   try {
