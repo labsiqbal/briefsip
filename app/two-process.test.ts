@@ -1338,6 +1338,9 @@ test('canonical routine configuration and flow stay scoped across projects resta
     const created=await f.send(list,command);assert.equal(created.status,201,JSON.stringify(created.body));
     assert.equal(created.body.data.homeDeviceId,f.home.id);assert.equal(created.body.data.projectId,f.project);
     assert.equal((await f.send(detail)).body.data.prompt,command.prompt);
+    const calendar=await fetch(f.origin()+`/api/projects/${f.project}/agents/${f.agent}/routines/calendar.ics`,{headers:{Authorization:`Bearer ${f.jwt()}`,Origin:f.origin(),Connection:'close','Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':randomUUID()}});
+    const calendarText=await calendar.text();assert.equal(calendar.status,200);assert(calendarText.includes(`UID:${routine}@briefsip.local`));assert(calendarText.includes('RRULE:FREQ=SECONDLY;INTERVAL=300'));assert(!calendarText.includes(command.prompt));
+    const foreignCalendar=await f.send(`/api/projects/${f.other}/agents/${f.agent}/routines/calendar.ics`);assert.equal(foreignCalendar.status,404);
     assert.deepEqual((await f.send(list,command)).body.receipt,created.body.receipt);
     assert.equal((await f.send(list,{...command,name:'Other'})).status,409);
     assert.equal((await f.send(`/api/projects/${f.other}/agents/${f.agent}`,{requestId:randomUUID(),expectedProjectRevision:1,expectedAgentRevision:1,expectedAuthorityRevision:1,expectedParticipationRevision:0,rules:'Separate',capabilities:{v:1,tools:[],resources:[]}},'user_owner','PUT')).status,201);
@@ -1402,6 +1405,42 @@ test('canonical routines recheck assignments private mappings flow agents and re
     assert.equal((await f.send(detail)).body.data.name,'Collaborator');
     db.exec('DROP TRIGGER fail_routine_receipt');assert.equal((await f.send(detail+'/edit',edit2)).status,200);
     const short=randomUUID();assert.equal((await f.send(detail+'/edit',{...edit2,requestId:short,id:short,revision:3,intervalSeconds:60})).status,400);
+  }finally{db.close();await f.close();}
+});
+
+test('canonical routine calendar exports only current project and reader schedules without prompts',async()=>{
+  const f=await workflowConfigurationFixture(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,path=list+'/calendar.ics',db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  const at=Date.parse('2027-01-01T09:00:00Z'),entries:Record<string,string>={};
+  const calendar=async(subject='user_owner',suffix='',extra:Record<string,string>={})=>{
+    const res=await fetch(f.origin()+path+suffix,{headers:{Authorization:`Bearer ${f.jwt(subject)}`,Origin:f.origin(),Connection:'close','Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':randomUUID(),...extra}});
+    return {res,text:await res.text()};
+  };
+  try{
+    const owner=(await f.send('/api/session')).body.data.accountId,collaborator=(await f.send('/api/session',undefined,'user_collaborator')).body.data.accountId;
+    db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project,collaborator);
+    for(const name of ['shared','private','disabled','webhook','foreign']){
+      const id=randomUUID();entries[name]=id;
+      assert.equal((await f.send(list,{requestId:id,id,revision:0,name,prompt:'CALENDAR_PRIVATE_PROMPT',nextAt:at,intervalSeconds:name==='shared'?300:null,enabled:name!=='disabled',trigger:name==='webhook'?'webhook':'schedule'})).status,201);
+    }
+    db.prepare("UPDATE record_scopes SET visibility='owner' WHERE table_name='routines' AND key_json=?").run(JSON.stringify([entries.private]));
+    db.prepare("UPDATE record_scopes SET project=? WHERE table_name='routines' AND key_json=?").run(f.other,JSON.stringify([entries.foreign]));
+    const owned=await calendar();assert.equal(owned.res.status,200);assert.equal(owned.res.headers.get('content-type'),'text/calendar; charset=utf-8');
+    assert.equal(owned.res.headers.get('x-briefsip-protocol'),'1');assert.equal(owned.res.headers.get('cache-control'),'no-store');
+    assert(owned.text.includes(`UID:${entries.shared}@briefsip.local`));assert(owned.text.includes(`UID:${entries.private}@briefsip.local`));
+    for(const name of ['disabled','webhook','foreign'])assert(!owned.text.includes(entries[name]),name);
+    assert(!owned.text.includes('CALENDAR_PRIVATE_PROMPT'));assert(owned.text.includes('DTSTART:20270101T090000Z'));assert(owned.text.includes('RRULE:FREQ=SECONDLY;INTERVAL=300'));
+    assert.equal((await calendar('user_collaborator')).res.status,404);
+    db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,collaborator,f.agent);
+    db.prepare('INSERT INTO response_policies VALUES (?,?,?,0,1)').run(f.project,collaborator,f.agent);
+    const shared=await calendar('user_collaborator');assert.equal(shared.res.status,200);assert(shared.text.includes(entries.shared));assert(!shared.text.includes(entries.private));
+    db.prepare("UPDATE devices SET zone='Pacific/Honolulu',zone_revision=zone_revision+1 WHERE id=?").run(f.home.id);
+    await f.restart();assert((await calendar('user_collaborator')).text.includes('DTSTART:20270101T090000Z'),'Viewer/home-zone changes cannot rewrite absolute timing');
+    for(const suffix of ['?projectId='+f.project,'?after='+entries.shared])assert.equal((await calendar('user_collaborator',suffix)).res.status,404);
+    assert.equal((await calendar('user_collaborator','',{'X-Briefsip-Project-Id':f.project})).res.status,404);
+    db.prepare('UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE project=? AND account=?').run(f.project,collaborator);
+    const denied=await calendar('user_collaborator');assert.equal(denied.res.status,404);assert(!denied.text.includes(entries.shared));
+    assert.equal((await f.send(`/api/agents/${f.agent}/routines/calendar.ics`)).status,404);
+    assert.equal(db.prepare('SELECT enabled FROM routines WHERE id=?').get(entries.shared)!.enabled,1,'Export cannot mutate a schedule');
   }finally{db.close();await f.close();}
 });
 
