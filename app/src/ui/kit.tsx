@@ -166,8 +166,9 @@ export function PageHeader({ title, description, actions, headingRef }: { title:
   return <header className="k-page-head"><div className="k-page-head__text"><h1 ref={headingRef} tabIndex={-1}>{title}</h1>{description && <p>{description}</p>}</div>{actions && <div className="k-page-head__actions">{actions}</div>}</header>;
 }
 
-export function Collapsible({ title, children, defaultOpen = false }: { title: ReactNode; children: ReactNode; defaultOpen?: boolean }) {
-  return <RadixCollapsible.Root className="k-collapsible" defaultOpen={defaultOpen}>
+/** Disclosure. Uncontrolled by default; pass `open` and `onOpenChange` to control it (for example to load data only while open). */
+export function Collapsible({ title, children, defaultOpen = false, open, onOpenChange }: { title: ReactNode; children: ReactNode; defaultOpen?: boolean; open?: boolean; onOpenChange?: (open: boolean) => void }) {
+  return <RadixCollapsible.Root className="k-collapsible" defaultOpen={defaultOpen} open={open} onOpenChange={onOpenChange}>
     <RadixCollapsible.Trigger className="k-collapsible__trigger"><ChevronRight size={14} aria-hidden className="k-collapsible__chev" />{title}</RadixCollapsible.Trigger>
     {/* Force-mounted so fields inside stay part of their form while collapsed. */}
     <RadixCollapsible.Content forceMount className="k-collapsible__content">{children}</RadixCollapsible.Content>
