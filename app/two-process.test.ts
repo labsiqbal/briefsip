@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createClerkClient } from '@clerk/backend';
-import { createHmac, createDecipheriv, createPublicKey, diffieHellman, hkdfSync, generateKeyPairSync, sign, randomUUID, randomBytes } from 'node:crypto';
+import { createHash, createHmac, createDecipheriv, createPublicKey, diffieHellman, hkdfSync, generateKeyPairSync, sign, randomUUID, randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync, readFileSync, existsSync, statSync, writeFileSync, renameSync, symlinkSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -16,6 +16,7 @@ import { createAuth, type AuthConfig } from './auth.ts';
 import { prepareRestoreBootstrap, issueRestoreSession, restoreWorkspace, workspaceSnapshot } from './backup.ts';
 import { canonicalJson, ProtocolError, digestCommand, sha256 } from './protocol.ts';
 import { parseOwnership } from './task-recovery.ts';
+import { createRoutineRuntime } from './routine-runtime.ts';
 import sharp from 'sharp';
 import { saveSkill } from './skills.ts';
 import { initializeSites, saveSite } from './sites.ts';
@@ -1362,6 +1363,176 @@ test('canonical routine configuration and flow stay scoped across projects resta
     assert.equal((await f.send(detail+'/edit',{...edited,projectId:f.project})).status,404);
     const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
     try{assert.equal(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='routine_runs'").get(),undefined,'Configuration never starts legacy dispatch');assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);}finally{db.close();}
+  }finally{await f.close();}
+});
+
+test('canonical routine runtime coalesces offline intervals once and retains task receipts across restart',async()=>{
+  const f=await workflowConfigurationFixture(),routine=randomUUID(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,detail=`/api/projects/${f.project}/routines/${routine}`;
+  const due=Date.now()-960000,command={requestId:routine,id:routine,revision:0,name:'Catch-up',prompt:'Scheduled isolated input',nextAt:due,intervalSeconds:300,enabled:true};
+  try{
+    const saved=await f.send(list,command);assert.equal(saved.status,201,JSON.stringify(saved.body));
+    let runs:any;
+    await until(async()=>{runs=(await f.send(detail+'/runs')).body.data;return runs.items?.length===1;});
+    const pending=runs.items[0];assert.equal(pending.state,'pending');assert.equal(pending.dueAt,due);assert.equal(pending.missedCount,3);assert.equal(pending.taskId,null);
+    assert.equal(pending.id,createHash('sha256').update(JSON.stringify([routine,1,1,due,0])).digest('base64url'),'Elapsed occurrence identity follows approved schedule tuple');
+    await f.restart();assert.deepEqual((await f.send(detail+'/runs')).body.data,runs);
+    const connection=f.runtime.connect();await until(()=>connection.state().phase==='connected');
+    await until(async()=>{runs=(await f.send(detail+'/runs')).body.data;return runs.items[0]?.state==='admitted';});
+    assert.equal(runs.items.length,1);assert.equal(runs.items[0].id,pending.id);
+    const taskId=runs.items[0].taskId,task=(await f.send(`/api/tasks/${taskId}`)).body;
+    assert.equal(task.data.homeDeviceId,f.home.id);assert.equal(task.data.agentId,f.agent);assert.equal(task.receipt.requestId,taskId);
+    const current=(await f.send(detail)).body.data;assert(current.next_at>Date.now());assert.equal(current.revision,2);
+    assert.deepEqual((await f.send(list,command)).body.receipt,saved.body.receipt);
+    await f.restart();assert.equal((await f.send(detail+'/runs')).body.data.items[0].taskId,taskId);
+    const stale=randomUUID();assert.equal((await f.send(detail+'/edit',{...command,requestId:stale,id:stale,revision:1})).status,409);
+    const processed=randomUUID();assert.equal((await f.send(detail+'/edit',{...command,requestId:processed,id:processed,revision:2})).body.error.code,'schedule_processed');
+    assert.equal((await f.send(`/api/projects/${f.other}/routines/${routine}/runs`)).status,404);
+    for(const suffix of ['?before=0','?before=1&before=2','?projectId='+f.project])assert.equal((await f.send(detail+'/runs'+suffix)).status,404);
+    assert.equal((await f.send(detail+'/runs',{requestId:randomUUID()})).status,404);
+    const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    try{assert.equal(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='routine_runs'").get(),undefined);assert.equal(db.prepare('SELECT count(*) n FROM tasks WHERE id=?').get(taskId)!.n,1);assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);}finally{db.close();}
+  }finally{await f.close();}
+});
+
+test('canonical routine runtime snapshots flows and hands off once using current home authority',async()=>{
+  const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  const secondRuntime=openDeviceRuntime({database:join(f.dir,'routine-second-home.sqlite'),server:f.origin(),development:true,entry:f.keys.entry});
+  try{
+    await secondRuntime.enroll(f.jwt());
+    const connection=f.runtime.connect();await until(()=>connection.state().phase==='connected');
+    const homes=(await f.send('/api/devices')).body.data,home=homes.find((home:any)=>home.id===f.home.id),secondHome=homes.find((home:any)=>home.id!==f.home.id),second=randomUUID(),owner=(await f.send('/api/session')).body.data.accountId;
+    assert.equal((await f.send('/api/agents',{requestId:second,id:second,name:'Next',model:'fixture',backupModel:'',instructions:'Help',threadLimit:2,projectId:f.project,homeDeviceId:secondHome.id,expectedProjectRevision:1,expectedHomeDeviceRevision:secondHome.revision,providerBinding:null})).status,201);
+    for(const [device,agent] of [[home.id,f.agent],[secondHome.id,second]]){
+      const binding=randomUUID();db.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','routine-fixture','Fixture','ready',1)").run(binding,device,owner);
+      db.prepare('UPDATE agent_authority SET provider_binding=?,revision=revision+1 WHERE agent=?').run(binding,agent);
+    }
+    const create={requestId:routine,id:routine,revision:0,name:'Flow run',prompt:'Root work',nextAt:Date.now()+600000,intervalSeconds:null,enabled:true};
+    assert.equal((await f.send(`/api/projects/${f.project}/agents/${f.agent}/routines`,create)).status,201);
+    const flow=randomUUID();assert.equal((await f.send(detail+'/flow',{requestId:flow,id:flow,revision:0,links:[{from:f.agent,to:second}]})).status,200);
+    const edit=randomUUID();assert.equal((await f.send(detail+'/edit',{...create,requestId:edit,id:edit,revision:1,nextAt:Date.now()-1000})).status,200);
+    let run:any;await until(async()=>{run=(await f.send(detail+'/runs')).body.data.items[0];return run?.state==='admitted';});
+    assert.equal(run.steps.length,2);assert.equal((await f.send(detail)).body.data.enabled,0);
+    const rootTask=run.taskId;
+    const change=randomUUID();assert.equal((await f.send(detail+'/flow',{requestId:change,id:change,revision:1,links:[]})).status,200);
+    assert.equal((await f.runtime.runTask(rootTask,context=>{const snapshot=context.snapshot as any;assert.equal(snapshot.conversation.history.length,0);assert.equal(snapshot.conversation.message.text,'Root work');return {text:'Original root result'};})).state,'completed');
+    await until(async()=>{run=(await f.send(detail+'/runs')).body.data.items[0];return run.steps.find((step:any)=>step.agentId===second)?.taskId;});
+    const next=run.steps.find((step:any)=>step.agentId===second).taskId;
+    const nextTask=(await f.send(`/api/tasks/${next}`)).body.data;assert.equal(nextTask.homeDeviceId,secondHome.id);assert.equal(nextTask.state,'waiting_device');
+    const generation=connection.state().generation;await f.restart();await until(()=>connection.state().phase==='connected'&&connection.state().generation>generation);assert.equal((await f.send(detail+'/runs')).body.data.items[0].steps.find((step:any)=>step.agentId===second).taskId,next);
+    const secondConnection=secondRuntime.connect();await until(()=>secondConnection.state().phase==='connected');
+    assert.equal((await secondRuntime.runTask(next,context=>{const snapshot=context.snapshot as any;assert.equal(snapshot.conversation.history.length,0);assert.match(snapshot.conversation.message.text,/Original root result/);return {text:'Next result'};})).state,'completed');
+    await until(async()=>{run=(await f.send(detail+'/runs')).body.data.items[0];return run.state==='done';});
+    assert.deepEqual(run.steps.map((step:any)=>step.state),['done','done']);
+    assert.equal((await f.send(detail+'/runs')).body.data.items.length,1);
+    assert.equal(db.prepare('SELECT count(*) n FROM routine_steps WHERE occurrence=?').get(run.id)!.n,2);
+  }finally{db.close();await secondRuntime.close();await f.close();}
+});
+
+test('canonical routine keeps no-reply descendants executable after completion and fences revoked root authority',async()=>{
+  const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  try{
+    const connection=f.runtime.connect();await until(()=>connection.state().phase==='connected');
+    const binding=randomUUID(),peer=randomUUID(),owner=(await f.send('/api/session')).body.data.accountId,home=(await f.send('/api/devices')).body.data[0];
+    db.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','routine-fixture','Fixture','ready',1)").run(binding,f.home.id,owner);
+    db.prepare('UPDATE agent_authority SET provider_binding=?,revision=revision+1 WHERE agent=?').run(binding,f.agent);
+    assert.equal((await f.send('/api/agents',{requestId:peer,id:peer,name:'Teammate',model:'fixture',backupModel:'',instructions:'Help',threadLimit:2,projectId:f.project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
+    assert.equal((await f.send(`/api/projects/${f.project}/agents/${f.agent}/routines`,{requestId:routine,id:routine,revision:0,name:'Background work',prompt:'Delegate without waiting',nextAt:Date.now()-1000,intervalSeconds:null,enabled:true})).status,201);
+    let run:any,calls=0;await until(async()=>{run=(await f.send(detail+'/runs')).body.data.items[0];return run?.state==='admitted';});
+    assert.equal((await f.runtime.runTask(run.taskId,()=>++calls===1?{toolCall:{id:'delegate',function:{name:'send_message',arguments:JSON.stringify({recipients:[peer],text:'Background work',expects_reply:false})}}}:{text:'Parent done'})).state,'completed');
+    await until(async()=>{run=(await f.send(detail+'/runs')).body.data.items[0];return run.state==='done';});
+    const child=String(db.prepare('SELECT id FROM turns WHERE parent=?').get(run.taskId)!.id),owned=await f.runtime.startTask(child);
+    await f.runtime.taskContext(child,owned.ownership,owned.revision);
+    db.prepare('UPDATE agent_projects SET deleted=1 WHERE project=? AND agent=?').run(f.project,f.agent);
+    await assert.rejects(f.runtime.taskContext(child,owned.ownership,owned.revision),{code:'execution_denied'});
+    assert.equal(db.prepare('SELECT reply FROM turns WHERE id=?').get(run.taskId)!.reply,'Parent done');
+  }finally{db.close();await f.close();}
+});
+
+test('canonical routine runtime rechecks grants and rolls back failed task admissions without consuming occurrence',async()=>{
+  const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  try{
+    const collaborator=(await f.send('/api/session',undefined,'user_collaborator')).body.data.accountId;
+    db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project,collaborator);
+    db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,collaborator,f.agent);
+    const command={requestId:routine,id:routine,revision:0,name:'Revocable',prompt:'Check',nextAt:Date.now()-1000,intervalSeconds:null,enabled:true};
+    assert.equal((await f.send(`/api/projects/${f.project}/agents/${f.agent}/routines`,command,'user_collaborator')).status,201);
+    let run:any;await until(async()=>{run=(await f.send(detail+'/runs',undefined,'user_collaborator')).body.data.items[0];return run?.state==='pending';});
+    const occurrenceId=run.id;
+    db.prepare('UPDATE collaborator_agents SET enabled=0,revision=2 WHERE project=? AND account=?').run(f.project,collaborator);
+    const connection=f.runtime.connect();await until(()=>connection.state().phase==='connected');
+    db.function('briefsip_capability_digest',{ deterministic: true }, value => digestCommand(['briefsip-capabilities-v1', JSON.parse(String(value))]));
+    const scheduler=createRoutineRuntime(db);scheduler.maintain();
+    assert.equal(db.prepare('SELECT task FROM routine_occurrences WHERE id=?').get(occurrenceId)!.task,null);
+    assert.equal((await f.send(detail+'/runs',undefined,'user_collaborator')).status,404);
+    db.prepare('UPDATE collaborator_agents SET enabled=1,revision=3 WHERE project=? AND account=?').run(f.project,collaborator);scheduler.maintain();
+    assert.equal(db.prepare('SELECT task FROM routine_occurrences WHERE id=?').get(occurrenceId)!.task,null,'Regrant never revives old schedule authority');
+    const rebind=randomUUID();assert.equal((await f.send(detail+'/edit',{...command,requestId:rebind,id:rebind,revision:1},'user_collaborator')).status,200);
+    db.exec("CREATE TRIGGER fail_routine_admission BEFORE INSERT ON receipts WHEN NEW.scope LIKE 'tasks:routine-step:%' BEGIN SELECT RAISE(ABORT,'synthetic routine receipt failure'); END");
+    assert.throws(()=>scheduler.maintain(),/synthetic routine receipt failure/);
+    assert.equal(db.prepare('SELECT count(*) n FROM routine_steps').get()!.n,0);assert.equal(db.prepare('SELECT count(*) n FROM tasks').get()!.n,0);assert.equal((await f.send(detail)).body.data.enabled,1);
+    db.exec('DROP TRIGGER fail_routine_admission');scheduler.maintain();
+    const accepted=(await f.send(detail+'/runs',undefined,'user_collaborator')).body.data.items.find((row:any)=>row.state==='admitted');assert(accepted);
+    assert.equal((await f.send(`/api/tasks/${accepted.taskId}`,undefined,'user_collaborator')).body.receipt.actorId,collaborator);
+    db.prepare('UPDATE collaborator_agents SET enabled=0,revision=4 WHERE project=? AND account=?').run(f.project,collaborator);
+    await assert.rejects(f.runtime.startTask(accepted.taskId),error=>error instanceof ProtocolError&&error.code==='execution_denied');
+    assert.equal(db.prepare('SELECT count(*) n FROM task_actions').get()!.n,0);assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+  }finally{db.close();await f.close();}
+});
+
+test('canonical routine edit cancels unstarted scheduled work and retains accepted evidence',async()=>{
+  const f=await workflowConfigurationFixture(),routine=randomUUID(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,detail=`/api/projects/${f.project}/routines/${routine}`;
+  try{
+    const connection=f.runtime.connect();await until(()=>connection.state().phase==='connected');
+    const command={requestId:routine,id:routine,revision:0,name:'Disable queued',prompt:'Never start after disable',nextAt:Date.now()-1000,intervalSeconds:300,enabled:true};
+    assert.equal((await f.send(list,command)).status,201);
+    let run:any;await until(async()=>{run=(await f.send(detail+'/runs')).body.data.items[0];return run?.state==='admitted';});
+    const task=await f.send(`/api/tasks/${run.taskId}`);assert.equal(task.body.data.state,'queued');
+    const current=(await f.send(detail)).body.data,edit=randomUUID(),saved=await f.send(detail+'/edit',{...command,requestId:edit,id:edit,revision:current.revision,nextAt:current.next_at,enabled:false});
+    assert.equal(saved.status,200,JSON.stringify(saved.body));
+    assert.equal((await f.send(`/api/tasks/${run.taskId}`)).body.data.state,'cancelled');
+    assert.deepEqual((await f.send(`/api/tasks/${run.taskId}`)).body.receipt,task.body.receipt);
+    await f.restart();assert.equal((await f.send(`/api/tasks/${run.taskId}`)).body.data.state,'cancelled');
+  }finally{await f.close();}
+});
+
+test('canonical routine runtime preserves started snapshots through edits and restore holds unfinished occurrences',async()=>{
+  const f=await workflowConfigurationFixture(),routine=randomUUID(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,detail=`/api/projects/${f.project}/routines/${routine}`;
+  try{
+    const connection=f.runtime.connect();await until(()=>connection.state().phase==='connected');
+    const command={requestId:routine,id:routine,revision:0,name:'Started',prompt:'Retain started work',nextAt:Date.now()-1000,intervalSeconds:300,enabled:true};
+    assert.equal((await f.send(list,command)).status,201);
+    let run:any;await until(async()=>{run=(await f.send(detail+'/runs')).body.data.items[0];return run?.state==='admitted';});
+    const owned=await f.runtime.startTask(run.taskId),current=(await f.send(detail)).body.data,edit=randomUUID();
+    assert.equal((await f.send(detail+'/edit',{...command,requestId:edit,id:edit,revision:current.revision,nextAt:current.next_at,enabled:false})).status,200);
+    assert.equal((await f.send(`/api/tasks/${run.taskId}`)).body.data.state,'running','Configuration edits keep started snapshot under task controls');
+    const db=new DatabaseSync(join(f.dir,'canonical.sqlite')),backup=await workspaceSnapshot(db);
+    db.close();await connection.stop();
+    try{await f.restoreFrom(backup.file);}finally{backup.cleanup();}
+    const restored=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    try{
+      const row=restored.prepare('SELECT * FROM routine_occurrences WHERE id=?').get(run.id)!;
+      assert.equal(row.state,'blocked');assert.equal(row.task,run.taskId);assert.equal(row.due_at,run.dueAt);assert.equal(row.schedule_revision,run.scheduleRevision);
+      assert.equal(restored.prepare('SELECT enabled FROM routines WHERE id=?').get(routine)!.enabled,0);
+      assert.equal(restored.prepare('SELECT state FROM tasks WHERE id=?').get(run.taskId)!.state,'uncertain');
+      createRoutineRuntime(restored).maintain();assert.equal(restored.prepare('SELECT count(*) n FROM routine_occurrences').get()!.n,1);
+      assert.equal(restored.prepare('SELECT state FROM routine_occurrences WHERE id=?').get(run.id)!.state,'blocked');assert.deepEqual(restored.prepare('PRAGMA foreign_key_check').all(),[]);
+    }finally{restored.close();}
+    await assert.rejects(f.runtime.taskContext(run.taskId,owned.ownership,owned.revision));
+  }finally{await f.close();}
+});
+
+test('canonical routine cancellation settles terminal occurrence after task cancel',async()=>{
+  const f=await workflowConfigurationFixture(),routine=randomUUID(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,detail=`/api/projects/${f.project}/routines/${routine}`;
+  try{
+    const connection=f.runtime.connect();await until(()=>connection.state().phase==='connected');
+    const due=Date.now()-1000,command={requestId:routine,id:routine,revision:0,name:'Cancel',prompt:'Cancel me',nextAt:due,intervalSeconds:300,enabled:true};
+    assert.equal((await f.send(list,command)).status,201);let run:any;await until(async()=>{run=(await f.send(detail+'/runs')).body.data.items[0];return run?.state==='admitted';});
+    const task=(await f.send(`/api/tasks/${run.taskId}`)).body.data,control=randomUUID();
+    assert.equal((await f.send(`/api/tasks/${run.taskId}/control`,{requestId:control,expectedRevision:task.revision,operation:'cancel'})).status,200);
+    await until(async()=>{run=(await f.send(detail+'/runs')).body.data.items[0];return run?.state==='failed';});
+    assert.equal((await f.send(`/api/tasks/${run.taskId}`)).body.data.state,'cancelled');
+    const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{assert.equal(db.prepare('SELECT state FROM routine_steps WHERE occurrence=?').get(run.id)!.state,'failed');}finally{db.close();}
+    await f.restart();assert.equal((await f.send(detail+'/runs')).body.data.items[0].state,'failed');
   }finally{await f.close();}
 });
 
