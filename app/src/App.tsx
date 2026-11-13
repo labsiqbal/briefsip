@@ -2,30 +2,21 @@ import './ui/csp-nonce';
 import { restoreChatCommand, restoreChannelCommand, type ChatCommand, type ChannelCommand } from '../conversation-command';
 import { restoreAgentCreation, type AgentCreation } from '../agent-create';
 import { AgentAvatar, AvatarEditor } from './AgentAvatar';
-import { WorkspacePanel } from './WorkspacePanel';
 import { QueuePanel } from './QueuePanel';
 import { QueueEditor } from './QueueEditor';
 import { AgentVisibility } from './AgentVisibility';
 import { Markdown } from './Markdown';
 import { EventConnection } from './EventConnection';
-import { PresentationSettings } from './PresentationSettings';
 import { applyPresentation, readPresentation } from '../presentation';
 import { AgentSidebar } from './AgentSidebar';
-import { SharedDataPanel } from './SharedDataPanel';
 import { HtmlPreview } from './HtmlPreview';
 import { QuestionCard, type Question } from './QuestionCard';
 import { CompactionPanel } from './CompactionPanel';
-import { MemoryPanel } from './MemoryPanel';
-import { BackupPanel } from './BackupPanel';
-import { AgentTemplateImport, AgentTemplateExport } from './AgentTemplateImport';
-import { UsagePanel } from './UsagePanel';
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, useId, type FormEvent, type ReactNode } from 'react';
 import { ArrowUp, Brain, ChevronDown, ChevronLeft, ChevronRight, Clock, Ellipsis, FolderOpen, Hash, MessageSquare, PanelLeft, PanelRight, Paperclip, Plus, RefreshCw, Route, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
 import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Collapsible, Combobox, ConfirmProvider, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Segmented, Select, SkeletonRows, Textarea, useConfirm, type SelectOption } from './ui/kit';
-import { WorkflowPanel } from './WorkflowPanel';
-import { WorkflowDirectory } from './WorkflowDirectory';
 import { createRoot } from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import { validateFlow, type FlowGraph, type FlowLink } from '../flows.ts';
@@ -42,6 +33,16 @@ import './ui/kit.css';
 import '@fontsource-variable/inter';
 
 const panelLoadFailure = () => ({ default: () => <section className="empty"><h1>Panel could not be loaded</h1><p role="alert">Check your connection, then reload the app.</p><button onClick={() => window.location.reload()}>Reload app</button></section> });
+const WorkspacePanel = lazy(() => import('./WorkspacePanel').then(module => ({ default: module.WorkspacePanel })).catch(panelLoadFailure));
+const MemoryPanel = lazy(() => import('./MemoryPanel').then(module => ({ default: module.MemoryPanel })).catch(panelLoadFailure));
+const WorkflowPanel = lazy(() => import('./WorkflowPanel').then(module => ({ default: module.WorkflowPanel })).catch(panelLoadFailure));
+const WorkflowDirectory = lazy(() => import('./WorkflowDirectory').then(module => ({ default: module.WorkflowDirectory })).catch(panelLoadFailure));
+const PresentationSettings = lazy(() => import('./PresentationSettings').then(module => ({ default: module.PresentationSettings })).catch(panelLoadFailure));
+const SharedDataPanel = lazy(() => import('./SharedDataPanel').then(module => ({ default: module.SharedDataPanel })).catch(panelLoadFailure));
+const UsagePanel = lazy(() => import('./UsagePanel').then(module => ({ default: module.UsagePanel })).catch(panelLoadFailure));
+const BackupPanel = lazy(() => import('./BackupPanel').then(module => ({ default: module.BackupPanel })).catch(panelLoadFailure));
+const AgentTemplateImport = lazy(() => import('./AgentTemplateImport').then(module => ({ default: module.AgentTemplateImport })).catch(panelLoadFailure));
+const AgentTemplateExport = lazy(() => import('./AgentTemplateImport').then(module => ({ default: module.AgentTemplateExport })).catch(panelLoadFailure));
 const SitesPanel = lazy(() => import('./SitesPanel').then(module => ({ default: module.SitesPanel })).catch(panelLoadFailure));
 const McpPanel = lazy(() => import('./McpPanel').then(module => ({ default: module.McpPanel })).catch(panelLoadFailure));
 const SkillsPanel = lazy(() => import('./SkillsPanel').then(module => ({ default: module.SkillsPanel })).catch(panelLoadFailure));
@@ -309,7 +310,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     element.style.height = `${Math.min(element.scrollHeight, 200)}px`;
     element.style.overflowY = element.scrollHeight > 200 ? 'auto' : 'hidden';
   }, [draft, pending, showMemory]);
-  if (showMemory) return <PageView><MemoryPanel key={scope} path={`/api/${channel ? 'channels' : 'agents'}/${agent.id}/memory`} channel={!!channel} archived={!!channel?.archived} request={api} onClose={() => { setShowMemory(false); requestAnimationFrame(() => memoryButton.current?.focus()); }} /></PageView>;
+  if (showMemory) return <PageView><Suspense fallback={<p className="empty" role="status">Loading memory...</p>}><MemoryPanel key={scope} path={`/api/${channel ? 'channels' : 'agents'}/${agent.id}/memory`} channel={!!channel} archived={!!channel?.archived} request={api} onClose={() => { setShowMemory(false); requestAnimationFrame(() => memoryButton.current?.focus()); }} /></Suspense></PageView>;
   const active = turns?.filter(turn => turn.status === 'queued' || turn.status === 'running').length ?? 0;
   const title = thread?.name ?? agent.name;
   const subtitle = channel ? `${members.length} members${channel.archived ? ' · Archived' : ''}` : thread ? `Side thread · ${agent.name}` : (agent as Agent).model;
@@ -814,8 +815,8 @@ function AgentConversations({ agent, configured, onEdit, workflowAgents, initial
   const openWorkflows = () => { leave(); setShowWorkspace(false); setShowRoutines(false); setShowWorkflows(true); };
   const openWorkspace = () => { leave(); setShowRoutines(false); setShowWorkflows(false); setForm(false); setEditing(false); setShowWorkspace(true); };
   const errorBanner = error && <p className="error" role="alert">{error} <button className="secondary" onClick={() => void load().catch(() => {})}>Reload conversation</button></p>;
-  if (showWorkspace) return <PageView>{errorBanner}<WorkspacePanel key={agent.id} agent={agent} request={api} onClose={() => { setShowWorkspace(false); requestAnimationFrame(() => workspaceButton.current?.focus()); }} /></PageView>;
-  if (showWorkflows) return <PageView wide>{errorBanner}<WorkflowPanel owner={agent} agents={workflowAgents} request={api} onNavigate={leave} onBack={() => { leave(); setShowWorkflows(false); }} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={workflowAgents.find(item => item.id === owner)} threadId={id} configured={configured} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />} /></PageView>;
+  if (showWorkspace) return <PageView>{errorBanner}<Suspense fallback={<p className="empty" role="status">Loading workspace files...</p>}><WorkspacePanel key={agent.id} agent={agent} request={api} onClose={() => { setShowWorkspace(false); requestAnimationFrame(() => workspaceButton.current?.focus()); }} /></Suspense></PageView>;
+  if (showWorkflows) return <PageView wide>{errorBanner}<Suspense fallback={<p className="empty" role="status">Loading workflows...</p>}><WorkflowPanel owner={agent} agents={workflowAgents} request={api} onNavigate={leave} onBack={() => { leave(); setShowWorkflows(false); }} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={workflowAgents.find(item => item.id === owner)} threadId={id} configured={configured} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />} /></Suspense></PageView>;
   if (showRoutines) return <PageView>{errorBanner}<Routines agent={agent} onClose={() => { leave(); setShowWorkspace(false); setShowRoutines(false); setShowWorkflows(false); }} onOpen={async (id, owner) => { if (owner === agent.id) await load(id, true); else onOpenAgent(owner, id); }} /></PageView>;
   if (!loaded) return <PageView>{errorBanner}<p className="empty" role="status">Loading conversation...</p></PageView>;
   if (form) return <PageView>{errorBanner}<ThreadForm key={editing ? `${thread?.id}:${thread?.revision}:${reload}` : 'new'} agent={agent} thread={editing ? thread : undefined} onCancel={() => { leave(); setForm(false); }} onReload={() => { void load().catch(() => {}); }} onSaved={item => navigationVersion === navigation.current ? load(item.deleted ? '' : item.id, true) : Promise.resolve()} /></PageView>;
@@ -985,7 +986,7 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
       {onVisibilityChanged && <AvatarEditor agent={profile.id} request={api} onChanged={onVisibilityChanged} />}
       {onVisibilityChanged && <AgentVisibility agent={liveProfile!} request={api} onChanged={onVisibilityChanged} />}
       <Suspense fallback={<p role="status">Loading local sites...</p>}><SitesPanel key={`sites:${profile.id}`} agent={profile.id} request={api} /></Suspense>
-      <AgentTemplateExport key={profile.id} id={profile.id} request={api} />
+      <Suspense fallback={<p className="empty" role="status">Loading agent export...</p>}><AgentTemplateExport key={profile.id} id={profile.id} request={api} /></Suspense>
     </div>}
   </Dialog>;
 }
@@ -1172,7 +1173,7 @@ function App() {
   let content: ReactNode;
   if (error) content = <PageView><div className="empty"><h1>Workspace is not open</h1><p role="alert">{error}</p><button onClick={() => void load()}>Try again</button></div></PageView>;
   else if (!directory) content = <main className="chat chat--empty bs-root"><p className="empty-chat__sub" role="status">Loading workspace...</p></main>;
-  else if (view === 'workflows') content = <PageView wide><WorkflowDirectory agents={directory.agents} request={api} onClose={() => setView('chat')} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={directory.agents.find(item => item.id === owner)} threadId={id} configured={directory.configured} onOpenAgent={openThread} onOpenChannel={openChannel} />} /></PageView>;
+  else if (view === 'workflows') content = <PageView wide><Suspense fallback={<p className="empty" role="status">Loading workflow directory...</p>}><WorkflowDirectory agents={directory.agents} request={api} onClose={() => setView('chat')} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={directory.agents.find(item => item.id === owner)} threadId={id} configured={directory.configured} onOpenAgent={openThread} onOpenChannel={openChannel} />} /></Suspense></PageView>;
   else if (view === 'flows') content = <PageView wide><FlowDirectory agents={directory.agents} onClose={() => setView('chat')} onOpen={openThread} /></PageView>;
   else if (channel) content = <Chat onOpenAgent={openThread} key={`channel:${channel.id}`} agent={channel} channel={{ ...channel, lead: directory.agents.find(agent => agent.id === channel.lead)?.hidden ? null : channel.lead }} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id) && !agent.hidden)} onEdit={() => setDialog('edit')} configured={directory.configured} />;
   else if (agent) content = <AgentConversations onOpenChannel={openChannel} key={agent.id} agent={agent} workflowAgents={directory.agents} configured={directory.configured} initialThread={openedThread?.agent === agent.id ? openedThread.thread : undefined} onThreadOpened={() => setOpenedThread(null)} onOpenAgent={openThread} onEdit={() => setDialog('edit')} />;
@@ -1242,12 +1243,12 @@ function App() {
           {!directory ? <p className="empty" role="status">Loading workspace...</p>
             : settings === 'skills' ? <Suspense fallback={<p className="empty" role="status">Loading skill library...</p>}><SkillsPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'mcp' ? <Suspense fallback={<p className="empty" role="status">Loading MCP connections...</p>}><McpPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
-            : settings === 'data' ? <SharedDataPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} />
-            : settings === 'usage' ? <UsagePanel request={api} onClose={() => setSettings(null)} />
-            : settings === 'backup' ? <BackupPanel onClose={() => setSettings(null)} />
-            : settings === 'import' ? <AgentTemplateImport request={api} onClose={() => setSettings(null)} onCreated={item => { created(item); setSettings(null); }} />
+            : settings === 'data' ? <Suspense fallback={<p className="empty" role="status">Loading shared data...</p>}><SharedDataPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
+            : settings === 'usage' ? <Suspense fallback={<p className="empty" role="status">Loading usage...</p>}><UsagePanel request={api} onClose={() => setSettings(null)} /></Suspense>
+            : settings === 'backup' ? <Suspense fallback={<p className="empty" role="status">Loading backup...</p>}><BackupPanel onClose={() => setSettings(null)} /></Suspense>
+            : settings === 'import' ? <Suspense fallback={<p className="empty" role="status">Loading agent import...</p>}><AgentTemplateImport request={api} onClose={() => setSettings(null)} onCreated={item => { created(item); setSettings(null); }} /></Suspense>
             : settings === 'sections' ? <AgentSidebar mode="editor" agents={directory.agents} request={api} renderAgent={() => null} />
-            : <PresentationSettings />}
+            : <Suspense fallback={<p className="empty" role="status">Loading appearance settings...</p>}><PresentationSettings /></Suspense>}
         </div>
       </div>
     </div>, document.body)}
