@@ -3563,6 +3563,40 @@ test('canonical routine webhook admits once offline and recovers lost response r
   } finally { globalThis.fetch = originalFetch; db.close(); await other.close(); await f.close(); }
 });
 
+test('canonical routine webhook conceals missing and inactive targets until signature verification', async () => {
+  const f = await routineWebhookFixture();
+  try {
+    const denied = { status: 401, body: { ok: false, error: { code: 'invalid_webhook', message: 'Webhook signature does not match.', retryable: false } } };
+    const expectDenied = (response: { status: number; body: any }) => {
+      const { requestId, ...error } = response.body.error;
+      assert.match(requestId, /^[a-f0-9-]{36}$/);
+      assert.deepEqual({ ...response, body: { ...response.body, error } }, denied);
+    };
+    const badSignature = () => f.event('wrong-secret');
+    expectDenied(await badSignature());
+    for (const route of [f.path.replace(f.routine, randomUUID()), f.path.replace(f.project, randomUUID()), f.path.replace(f.project, f.other)]) {
+      expectDenied(await f.event(undefined, undefined, undefined, undefined, {}, route + '/webhook-events'));
+    }
+    const routine = randomUUID(), noHook = `/api/projects/${f.project}/routines/${routine}/webhook-events`;
+    assert.equal((await f.send(`/api/projects/${f.project}/agents/${f.agent}/routines`, { ...f.configuration, requestId: routine, id: routine })).status, 201);
+    expectDenied(await f.event(undefined, undefined, undefined, undefined, {}, noHook));
+    expectDenied(await f.event('briefsip-routine-webhook-dummy-secret-v1', undefined, '{', undefined, {}, noHook));
+    f.webhookFault.read = true;
+    expectDenied(await f.event(undefined, undefined, undefined, undefined, {}, noHook));
+    const unavailable = await f.event();
+    assert.equal(unavailable.status, 503); assert.equal(unavailable.body.error.code, 'keystore_unavailable');
+    f.webhookFault.read = false;
+    for (const [revision, enabled, trigger] of [[1, false, 'webhook'], [2, true, 'schedule']] as const) {
+      const requestId = randomUUID();
+      assert.equal((await f.send(f.path + '/edit', { ...f.configuration, requestId, id: requestId, revision, enabled, trigger })).status, 200);
+      expectDenied(await badSignature());
+      const signed = await f.event();
+      assert.equal(signed.status, 409); assert.equal(signed.body.error.code, 'webhook_inactive');
+      assert.equal(signed.body.error.message, 'Webhook routine is inactive.');
+    }
+  } finally { await f.close(); }
+});
+
 test('canonical routine webhook rejects invalid deliveries and records ignored receipts across filter changes', async () => {
   const f = await routineWebhookFixture(), db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
   try {
@@ -3599,7 +3633,7 @@ test('canonical routine webhook settings require current owner while assigned co
     for (const command of [f.create, { requestId: randomUUID(), revision: 1, rotate: true }]) assert.equal((await f.send(f.path + '/webhook', command, 'user_collaborator')).status, 403);
     const foreign = f.path.replace(f.project, f.other);
     assert.equal((await f.send(foreign + '/webhook')).status, 404); assert.equal((await f.send(foreign + '/webhook', { requestId: randomUUID(), revision: 1, rotate: true })).status, 404);
-    assert.equal((await f.event(f.hook.data.secret, 'foreign', undefined, undefined, {}, foreign + '/webhook-events')).status, 403);
+    assert.equal((await f.event(f.hook.data.secret, 'foreign', undefined, undefined, {}, foreign + '/webhook-events')).status, 401);
     for (const extra of [{ unexpected: true }, { rotate: 'yes' }, { revision: -1 }, { filters: [{}] }]) assert.equal((await f.send(f.path + '/webhook', { ...f.create, requestId: randomUUID(), ...extra })).status, 400);
     const conflict = await f.send(f.path + '/webhook', { ...f.create, rotate: false }); assert.equal(conflict.status, 409); assert.equal(conflict.body.error.code, 'payload_conflict');
     db.prepare('UPDATE project_members SET deleted=1,grant_revision=grant_revision+1 WHERE project=? AND account=?').run(f.project, owner);
