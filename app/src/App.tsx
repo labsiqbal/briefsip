@@ -1246,7 +1246,7 @@ function App() {
             : settings === 'backup' ? <BackupPanel onClose={() => setSettings(null)} />
             : settings === 'import' ? <AgentTemplateImport request={api} onClose={() => setSettings(null)} onCreated={item => { created(item); setSettings(null); }} />
             : settings === 'sections' ? <AgentSidebar mode="editor" agents={directory.agents} request={api} renderAgent={() => null} />
-            : <div className="settings-appearance"><h1>Appearance</h1><PresentationSettings /></div>}
+            : <PresentationSettings />}
         </div>
       </div>
     </div>, document.body)}
