@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createClerkClient } from '@clerk/backend';
-import { createDecipheriv, createPublicKey, diffieHellman, hkdfSync, generateKeyPairSync, sign, randomUUID, randomBytes } from 'node:crypto';
+import { createHmac, createDecipheriv, createPublicKey, diffieHellman, hkdfSync, generateKeyPairSync, sign, randomUUID, randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync, readFileSync, existsSync, statSync, writeFileSync, renameSync, symlinkSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -24,6 +24,112 @@ function memoryKeys() {
   const values = new Map<string, string>();
   return { values, entry(service: string, name: string) { const key = `${service}/${name}`; return { getPassword: () => values.get(key) ?? null, setPassword: (value: string) => { values.set(key, value); } }; } };
 }
+
+async function protectedWaitFixture() {
+  const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'event-home.sqlite'), server: f.origin(), development: true, entry: keys.entry });
+  try {
+    await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const home = (await f.send('/api/devices')).body.data[0], project = randomUUID(), agent = randomUUID();
+    assert.equal((await f.send('/api/projects', { requestId: randomUUID(), id: project, name: 'Events' })).status, 201);
+    assert.equal((await f.send('/api/agents', { requestId: agent, id: agent, name: 'Waiter', model: 'fixture', backupModel: '', instructions: 'Wait', threadLimit: 2, projectId: project, homeDeviceId: home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: home.revision, providerBinding: null })).status, 201);
+    const taskId = randomUUID(), payload = { v: 1, kind: 'direct', message: { text: 'Wait', files: [] } }, expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 };
+    assert.equal((await f.send('/api/tasks', { requestId: taskId, projectId: project, agentId: agent, homeDeviceId: home.id, payload, expectedRevisions, payloadDigest: digestCommand(['briefsip-task-payload-v1', taskId, project, agent, home.id, payload, expectedRevisions]) })).status, 202);
+    const owned = await runtime.startTask(taskId), context = await runtime.taskContext(taskId, owned.ownership, owned.revision), actionId = randomUUID();
+    await assert.rejects(runtime.executeAction({ taskId, actionId, sequence: 0, actionKind: 'canonical', ownership: owned.ownership, payload: { toolCall: { id: 'wait-ready', function: { name: 'wait_for_event', arguments: JSON.stringify({ event: 'ready', timeoutSeconds: 60 }) } }, expectedRevision: context.snapshot.taskRevision + 1 }, context, grantRevision: 1 }, () => assert.fail('No host effect')), { code: 'device_offline' });
+    let waitId = '';
+    await until(async () => { const detail = (await f.send(`/api/tasks/${taskId}`)).body.data; waitId = detail.results[0]?.content?.id; return !!waitId; });
+    await runtime.recoverPending();
+    return { ...f, keys, runtime, connection, home, project, agent, taskId, waitId, ownership: owned.ownership };
+  } catch (error) { await runtime.close(); await f.close(); throw error; }
+}
+
+test('protected turn event verifies on home, saves one receipt and resumes with exact raw payload', async () => {
+  const f = await protectedWaitFixture(), { keys, runtime, connection, taskId, waitId, ownership } = f;
+  try {
+    const secret = [...keys.values].find(([key]) => key.includes('/event-wait/'))![1], delivery = randomUUID();
+    const small = '{ "event": "ready", "payload": {"message":"hello 🌏"} }', body = small + ' '.repeat(65536 - Buffer.byteLength(small));
+    const eventPath = `/api/turn-waits/${waitId}/events`, timestamp = String(Math.floor(Date.now() / 1000));
+    const sendEvent = async (text = body, eventId = delivery, time = timestamp, extra: Record<string,string> = {}) => {
+      const headers = { 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': eventId, 'X-Briefsip-Signature': createHmac('sha256', secret).update(`${time}\n${eventId}\n${text}`).digest('hex'), ...extra };
+      const response = await fetch(f.origin() + eventPath, { method: 'POST', headers, body: text });
+      return { status: response.status, body: await response.json() };
+    };
+    const oversize = await sendEvent(body + ' '); assert.equal(oversize.status, 413, JSON.stringify(oversize.body)); await until(() => connection.state().phase === 'connected');
+    assert.equal((await sendEvent(body, delivery, timestamp, { Origin: f.origin() })).status, 403);
+    const wrongSignature = await sendEvent(body, delivery, timestamp, { 'X-Briefsip-Signature': '0'.repeat(64) }); assert.equal(wrongSignature.status, 401, JSON.stringify(wrongSignature.body));
+    assert.equal((await sendEvent(body, delivery, '1')).status, 401, 'Stale unaccepted delivery denies');
+    assert.equal((await sendEvent('{')).status, 400);
+    assert.equal((await sendEvent('{"event":"other"}')).status, 409);
+    assert.equal((await sendEvent('{"event":"ready","payload":1e999}')).status, 400);
+    assert.equal((await sendEvent('{"event":"ready","extra":true}')).status, 400);
+    await connection.stop(); assert.equal((await sendEvent()).body.error.code, 'device_offline');
+    const reconnected = runtime.connect(); await until(() => reconnected.state().phase === 'connected');
+    const db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+    try { db.exec("CREATE TRIGGER fail_event_receipt BEFORE INSERT ON receipts WHEN NEW.scope LIKE 'turn-wait-event:%' BEGIN SELECT RAISE(ABORT,'fixture event failure'); END"); } finally { db.close(); }
+    assert.equal((await sendEvent()).status, 500);
+    assert.equal((await f.send(`/api/turn-waits/${waitId}`)).body.data.status, 'waiting', 'Receipt storage failure rolls back delivery and tool result');
+    const repair = new DatabaseSync(join(f.dir, 'canonical.sqlite')); repair.exec('DROP TRIGGER fail_event_receipt'); repair.close();
+    const accepted = await sendEvent(); assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+    assert.equal(accepted.body.data.accepted, true); assert.equal(accepted.body.data.delivery, delivery);
+    assert.deepEqual((await sendEvent()).body, accepted.body);
+    assert.deepEqual((await sendEvent(body, delivery, '1')).body, accepted.body, 'Accepted retry skips freshness after verifying HMAC');
+    assert.equal((await sendEvent(body, delivery, '1', { 'X-Briefsip-Signature': '0'.repeat(64) })).status, 401);
+    assert.equal((await sendEvent(small)).status, 409, 'Whitespace is part of exact raw body digest');
+    assert.equal((await sendEvent(body, randomUUID())).status, 409);
+    assert.equal((await f.send(`/api/turn-waits/${waitId}`)).body.data.status, 'received');
+    const detail = (await f.send(`/api/tasks/${taskId}`)).body.data, next = await runtime.taskContext(taskId, ownership, detail.revision);
+    const journal = next.snapshot.toolJournal as {kind:string;callId?:string;result:{payload?:{message?:string}}}[];
+    assert.equal(journal.filter(row => row.kind === 'flow_tool' && row.callId === 'wait-ready' && row.result.payload?.message === 'hello 🌏').length, 1);
+    const generation = reconnected.state().generation; await f.restart(); await until(() => reconnected.state().phase === 'connected' && reconnected.state().generation > generation);
+    assert.deepEqual((await sendEvent()).body, accepted.body, 'Canonical restart retains exact receipt');
+    const after = (await f.send(`/api/tasks/${taskId}`)).body.data;
+    assert.equal(after.revision, detail.revision, 'Retry cannot advance task revision');
+    assert.equal((await f.send(`/api/tasks/${taskId}/control`, { requestId: randomUUID(), expectedRevision: after.revision, operation: 'cancel' })).status, 200);
+    assert.deepEqual((await sendEvent()).body, accepted.body, 'Accepted delivery remains evidence after task ends');
+    assert.equal([...keys.values].filter(([key]) => key.includes('/event-wait/')).length, 1);
+    const source = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+    const owner = (await f.send('/api/session')).body.data.accountId;
+    const snapshot = await workspaceSnapshot(source, owner); source.close();
+    try {
+      await reconnected.stop(); await f.restoreFrom(snapshot.file);
+      assert.equal((await sendEvent()).status, 404, 'Restore disables old event admissions');
+      const restored = await f.send(`/api/turn-waits/${waitId}`);
+      assert.equal(restored.status, 200); assert.equal(restored.body.data.status, 'received');
+      assert.deepEqual(restored.body.data.receipt, accepted.body.receipt, 'Owner retains delivered evidence while recovery is read-only');
+      assert.equal((await f.send(`/api/turn-waits/${waitId}`, undefined, 'user_collaborator')).status, 404);
+    } finally { await snapshot.cleanup(); }
+  } finally { await runtime.close(); await f.close(); }
+});
+
+test('protected turn event rejects delayed verification after scope or connection changes', async t => {
+  for (const change of ['pause','rules','cancel','revoke','timeout'] as const) await t.test(change, async () => {
+    const f = await protectedWaitFixture(), originalFetch = globalThis.fetch;
+    let release!: () => void, held = false;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const secret = [...f.keys.values].find(([key]) => key.includes('/event-wait/'))![1], delivery = randomUUID(), body = '{"event":"ready","payload":{"ok":true}}', time = String(Math.floor(Date.now() / 1000));
+    const sendEvent = async () => {
+      const response = await originalFetch(f.origin() + `/api/turn-waits/${f.waitId}/events`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': delivery, 'X-Briefsip-Signature': createHmac('sha256', secret).update(`${time}\n${delivery}\n${body}`).digest('hex') }, body });
+      return { status: response.status, body: await response.json() };
+    };
+    try {
+      globalThis.fetch = async (url, init) => { if (String(url).endsWith('/wait-event-results')) { held = true; await gate; } return originalFetch(url, init); };
+      const pending = sendEvent(); await until(() => held);
+      assert.equal((await sendEvent()).status, 429, 'At most one pending event per home');
+      assert.equal((await f.send(`/api/turn-waits/${f.waitId}`)).body.data.status, 'waiting');
+      if (change === 'rules') assert.equal((await f.send(`/api/projects/${f.project}/agents/${f.agent}/rules`, { requestId: randomUUID(), expectedParticipationRevision: 1, rules: 'Changed context' }, 'user_owner', 'PUT')).status, 200);
+      else if (change === 'revoke') { const device = (await f.send('/api/devices')).body.data[0]; assert.equal((await f.send(`/api/devices/${device.id}/revoke`, { requestId: randomUUID(), expectedRevision: device.revision })).status, 200); }
+      else if (change !== 'timeout') { const task = (await f.send(`/api/tasks/${f.taskId}`)).body.data; assert.equal((await f.send(`/api/tasks/${f.taskId}/control`, { requestId: randomUUID(), expectedRevision: task.revision, operation: change })).status, 200); }
+      const timedOut = change === 'timeout' ? await pending : undefined;
+      release(); globalThis.fetch = originalFetch;
+      const denied = timedOut ?? await pending;
+      assert.equal(denied.status, ['revoke','timeout'].includes(change) ? 503 : 409, JSON.stringify(denied.body));
+      if (change === 'rules' || change === 'pause' || change === 'timeout') {
+        assert.equal((await sendEvent()).status, 200, 'Fresh verification may accept without replaying an effect');
+        if (change === 'pause') assert.equal((await f.send(`/api/tasks/${f.taskId}`)).body.data.state, 'paused', 'Event cannot undo manual pause');
+      }
+    } finally { release(); globalThis.fetch = originalFetch; await f.runtime.close(); await f.close(); }
+  });
+});
 
 test('protected turn wait uses outbound stream and recovers lost host ACK without another key or wait', async () => {
   const f = await fixture(), keys = memoryKeys(), originalFetch = globalThis.fetch;
