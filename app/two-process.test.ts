@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createClerkClient } from '@clerk/backend';
-import { generateKeyPairSync, sign, randomUUID, randomBytes } from 'node:crypto';
+import { createDecipheriv, createPublicKey, diffieHellman, hkdfSync, generateKeyPairSync, sign, randomUUID, randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync, readFileSync, existsSync, statSync, writeFileSync, renameSync, symlinkSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -85,6 +85,68 @@ test('protected turn wait uses outbound stream and recovers lost host ACK withou
     const detail = (await f.send(`/api/tasks/${taskId}`)).body.data;
     assert.equal(detail.results.length, 1); assert.equal(detail.results[0].content.status, 'waiting');
     assert.equal((await runtime.runTask(taskId, () => assert.fail('Waiting task must not call provider'))).state, 'event_pending');
+    const waitId = detail.results[0].content.id;
+    const path = `/api/turn-waits/${waitId}/connection`, status = await f.send(path);
+    assert.equal(status.status, 200);
+    assert.deepEqual(Object.keys(status.body.data).sort(), ['id','event','deadline','status','secretGeneration','sourceDeviceId'].sort());
+    const browser = generateKeyPairSync('x25519'), ephemeralPublicKey = browser.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url');
+    const reveal = { requestId: randomUUID(), ephemeralPublicKey, expectedSecretGeneration: 1 };
+    const encrypted = await f.send(path, reveal); assert.equal(encrypted.status, 200, JSON.stringify(encrypted.body));
+    const value = encrypted.body.data, device = (await f.send('/api/devices')).body.data.find((row: { id: string }) => row.id === home.id), owner = (await f.send('/api/session')).body.data.accountId;
+    assert.deepEqual(Object.keys(value).sort(), ['requestId','waitKey','sourceDeviceId','deviceGeneration','secretGeneration','expiresAt','iv','ciphertext','tag'].sort());
+    const secret = [...keys.values].find(([key]) => key.includes('/event-wait/'))![1];
+    assert(!JSON.stringify(encrypted.body).includes(secret));
+    const decrypt = (privateKey = browser.privateKey, associatedOwner = owner) => {
+      const shared = diffieHellman({ privateKey, publicKey: createPublicKey({ key: Buffer.from(JSON.parse(device.descriptor_json).encryptionPublicKey, 'base64url'), type: 'spki', format: 'der' }) });
+      const cipher = createDecipheriv('aes-256-gcm', Buffer.from(hkdfSync('sha256', shared, reveal.requestId, 'briefsip-wait-reveal-v1', 32)), Buffer.from(value.iv, 'base64url'));
+      cipher.setAAD(Buffer.from(JSON.stringify([value.requestId,value.waitKey,associatedOwner,value.deviceGeneration,value.secretGeneration,value.expiresAt]))); cipher.setAuthTag(Buffer.from(value.tag, 'base64url'));
+      return Buffer.concat([cipher.update(Buffer.from(value.ciphertext, 'base64url')), cipher.final()]).toString('utf8');
+    };
+    assert.equal(decrypt(), secret);
+    assert.throws(() => decrypt(generateKeyPairSync('x25519').privateKey));
+    assert.throws(() => decrypt(browser.privateKey, randomUUID()));
+    assert.equal((await f.send(path, { ...reveal, requestId: randomUUID(), expectedSecretGeneration: 2 })).status, 409);
+    assert.equal((await f.send(path, { ...reveal, requestId: randomUUID(), ephemeralPublicKey: 'invalid' })).status, 400);
+    assert.equal((await f.send(path, { ...reveal, requestId: randomUUID() }, 'user_collaborator')).status, 404);
+    const wrongOrigin = await originalFetch(f.origin() + path, { method: 'POST', headers: { Authorization: `Bearer ${f.jwt()}`, Origin: 'https://foreign.invalid', 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': reveal.requestId }, body: JSON.stringify(reveal) });
+    assert.equal(wrongOrigin.status, 403); await wrongOrigin.body?.cancel();
+    let held = false, releaseResult!: () => void;
+    const gate = new Promise<void>(resolve => { releaseResult = resolve; });
+    globalThis.fetch = async (url, init) => {
+      if (String(url).endsWith('/wait-reveal-results')) { held = true; await gate; }
+      return originalFetch(url, init);
+    };
+    const pendingReveal = f.send(path, { ...reveal, requestId: randomUUID() });
+    try {
+      await until(() => held);
+      assert.equal((await f.send(path, { ...reveal, requestId: randomUUID() })).status, 429);
+      const latest = (await f.send(`/api/tasks/${taskId}`)).body.data;
+      assert.equal((await f.send(`/api/tasks/${taskId}/control`, { requestId: randomUUID(), expectedRevision: latest.revision, operation: 'pause' })).status, 200);
+    } finally { releaseResult(); globalThis.fetch = originalFetch; }
+    assert.equal((await pendingReveal).status, 409, 'Delayed reveal cannot cross a task scope change');
+    const fresh = await f.send(path, { ...reveal, requestId: randomUUID() });
+    assert.equal(fresh.status, 200, 'Paused wait can obtain a fresh owner connection');
+    assert.notEqual(fresh.body.data.iv, value.iv);
+    held = false;
+    const rulesGate = new Promise<void>(resolve => { releaseResult = resolve; });
+    globalThis.fetch = async (url, init) => {
+      if (String(url).endsWith('/wait-reveal-results')) { held = true; await rulesGate; }
+      return originalFetch(url, init);
+    };
+    const beforeRulesChange = f.send(path, { ...reveal, requestId: randomUUID() });
+    try {
+      await until(() => held);
+      assert.equal((await f.send(`/api/projects/${project}/agents/${agent}/rules`, { requestId: randomUUID(), expectedParticipationRevision: 1, rules: 'Updated project context' }, 'user_owner', 'PUT')).status, 200);
+    } finally { releaseResult(); globalThis.fetch = originalFetch; }
+    assert.equal((await beforeRulesChange).status, 409, 'Delayed reveal cannot cross project rules/capability revisions');
+    const retained = [...keys.values].filter(([key]) => key.includes('/event-wait/'));
+    assert.equal(retained.length, 1); assert.equal(retained[0][1], secret);
+    const inspect = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+    try { for (const table of ['wait_provisions','turn_waits','receipts','task_results','sync_events']) assert(!JSON.stringify(inspect.prepare('SELECT * FROM ' + table).all()).includes(secret)); }
+    finally { inspect.close(); }
+    await connection.stop();
+    assert.equal((await f.send(path, { ...reveal, requestId: randomUUID() })).status, 503);
+    assert.equal((await f.send(path)).status, 200, 'Offline wait metadata remains owner-readable');
   } finally { globalThis.fetch = originalFetch; await runtime.close(); await f.close(); }
 });
 

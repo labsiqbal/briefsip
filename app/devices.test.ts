@@ -6,6 +6,7 @@ import { createDevices, descriptorBody, deviceLinkBody, deviceProofBody, parseLi
 import { initializeCanonicalSchema } from './schema.ts';
 import { sha256, digestCommand, ProtocolError } from './protocol.ts';
 import type { HumanActor } from './auth.ts';
+import type { WaitRevealRequest } from './wait-connection.ts';
 
 function fixture() {
   const db = new DatabaseSync(':memory:'); initializeCanonicalSchema(db); let clock = Date.now();
@@ -90,6 +91,35 @@ test('reenroll and key rotation fence old sessions while preserving original des
   } finally { devices.close(); db.close(); }
 });
 function publicThumb(key: KeyObject) { return sha256(key.export({ type: 'spki', format: 'der' })); }
+
+test('wait reveal transport binds signed results, bounds pending jobs and clears them on connection changes', async () => {
+  const f = fixture(), { db, devices, owner } = f;
+  try {
+    const linked = devices.link(owner, f.enrollment().request, 'fixture'), proof = f.proof(String(linked.data.deviceSession), 1, 'GET', '/stream');
+    const principal = devices.authenticate(proof.headers, 'GET', '/stream', Buffer.alloc(0), proof.requestId, 'fixture');
+    let frame: { body: { jobId: string; request: WaitRevealRequest; payloadDigest: string } }, blocked = false;
+    let stream = devices.openStream(principal, () => {}, value => { frame = JSON.parse(value); return !blocked; });
+    const ready = () => devices.heartbeat(principal, { requestId: randomUUID(), connectionGeneration: stream.connectionGeneration, zone: 'Asia/Jakarta', zoneRevision: 1, journalWatermark: 0 }); ready();
+    const request = (): WaitRevealRequest => ({ requestId: randomUUID(), waitKey: randomUUID(), sourceDeviceId: principal.deviceId, deviceGeneration: principal.generation, authorityGeneration: principal.authorityGeneration, secretGeneration: 1, ownerAccountId: owner.accountId, expiresAt: f.clock() + 60000, ephemeralPublicKey: f.encode(generateKeyPairSync('x25519').publicKey), connectionGeneration: stream.connectionGeneration });
+    const complete = () => ({ requestId: frame!.body.jobId, payloadDigest: frame!.body.payloadDigest, result: { requestId: frame!.body.request.requestId, waitKey: frame!.body.request.waitKey, sourceDeviceId: principal.deviceId, deviceGeneration: principal.generation, secretGeneration: 1, expiresAt: frame!.body.request.expiresAt, iv: Buffer.alloc(12).toString('base64url'), ciphertext: Buffer.alloc(64).toString('base64url'), tag: Buffer.alloc(16).toString('base64url') } });
+    const pending = devices.requestWaitReveal(request()), result = complete();
+    assert.throws(() => devices.requestWaitReveal(request()), { code: 'server_capacity' });
+    assert.throws(() => devices.resolveWaitReveal(principal, { ...result, payloadDigest: '0'.repeat(64) }), { code: 'wait_invalid' });
+    assert.throws(() => devices.resolveWaitReveal(principal, { ...result, result: { ...result.result, requestId: randomUUID() } }), { code: 'wait_invalid' });
+    devices.resolveWaitReveal(principal, result); assert.deepEqual(await pending, result.result);
+    assert.throws(() => devices.resolveWaitReveal(principal, result), { code: 'wait_invalid' });
+    const disconnected = assert.rejects(devices.requestWaitReveal(request()), { code: 'device_offline' });
+    const delayed = complete(); stream.disconnect(); await disconnected;
+    assert.throws(() => devices.resolveWaitReveal(principal, delayed), { code: 'wait_invalid' });
+    assert.throws(() => devices.requestWaitReveal(request()), { code: 'device_offline' });
+    stream = devices.openStream(principal, () => {}, value => { frame = JSON.parse(value); return !blocked; }); ready();
+    blocked = true; await assert.rejects(devices.requestWaitReveal(request()), { code: 'device_offline' }); blocked = false;
+    const failure = assert.rejects(devices.requestWaitReveal(request()), { code: 'keystore_unavailable' });
+    devices.resolveWaitReveal(principal, { requestId: frame!.body.jobId, payloadDigest: frame!.body.payloadDigest, errorCode: 'keystore_unavailable' }); await failure;
+    const revoked = assert.rejects(devices.requestWaitReveal(request()), { code: 'device_offline' });
+    devices.revoke(owner, principal.deviceId, { requestId: randomUUID(), expectedRevision: db.prepare('SELECT revision FROM devices WHERE id=?').get(principal.deviceId)!.revision }); await revoked;
+  } finally { devices.close(); db.close(); }
+});
 
 test('closed device keys, zones and signatures reject malformed or substituted enrollment', () => {
   const f = fixture(), { devices, owner, db } = f;
