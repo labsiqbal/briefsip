@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { memoryCommand, memoryDraft, type MemoryCommand, type MemoryDraft, type MemoryEntry } from '../memory-command.ts';
 
+import { ChevronLeft, ChevronRight, Ellipsis, RefreshCw } from 'lucide-react';
+import { ActionMenu, Alert, Button, Card, Checkbox, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, SkeletonRows, Textarea, useConfirm } from './ui/kit';
+
 type Entry = MemoryEntry;
 type Page = { items: Entry[]; next_after: string | null };
 export function MemoryPanel({ path, channel, archived, request, onClose }: { path: string; channel: boolean; archived: boolean; request: <T>(path: string, data?: unknown) => Promise<T>; onClose: () => void }) {
+  const confirm = useConfirm();
   const key = `briefsip:memory:${path}`;
   const draftKey = `${key}:draft`;
   const [recovery] = useState(() => {
@@ -31,18 +35,18 @@ export function MemoryPanel({ path, channel, archived, request, onClose }: { pat
     setEntry(value.entry); setText(value.text); setEssential(value.essential); setAutomatic(value.automatic ?? false);
   }
   function clear() { sessionStorage.removeItem(draftKey); setEntry(null); setText(''); setEssential(false); setAutomatic(false); }
-  function choose(value: Entry | null) {
-    if (locked || dirty && !window.confirm('Discard unsaved note changes?')) return;
+  async function choose(value: Entry | null) {
+    if (locked || dirty && !await confirm({ title: 'Discard unsaved note changes?', confirm: 'Discard changes', danger: true })) return;
     draft({ entry: value, text: value?.text ?? '', essential: !!value?.essential, automatic: value?.selection_locked === 0 }); editor.current?.focus();
   }
-  function discard() {
-    if (!window.confirm('Delete recovery data? Changes may already be saved on the server. Check the list before making new changes.')) return;
+  async function discard() {
+    if (!await confirm({ title: 'Delete recovery data?', description: 'Changes may already be saved on the server. Check the list before making new changes.', confirm: 'Delete recovery', danger: true })) return;
     try { sessionStorage.removeItem(key); setPending(null); setBlocked(''); setError(''); setNotice('Draft kept. For revision conflicts, choose Edit note from the latest list.'); if (blocked) clear(); setRefresh(n => n + 1); }
     catch { setError('Recovery data could not be deleted. Check browser storage.'); }
   }
   async function save(remove = false) {
     if (sending.current || archived && !pending || blocked) return;
-    if (!pending && remove && (!entry || !window.confirm('Delete this memory note? Conversation history and backups still retain earlier copies.'))) return;
+    if (!pending && remove && (!entry || !await confirm({ title: 'Delete this memory note?', description: 'Conversation history and backups still retain earlier copies.', confirm: 'Delete note', danger: true }))) return;
     let command;
     try {
       command = pending ?? memoryCommand({ id: crypto.randomUUID(), entry: entry?.id ?? crypto.randomUUID(), revision: entry?.revision ?? 0, text: remove ? '' : text, essential: remove ? false : essential, remove, automatic });
@@ -60,21 +64,44 @@ export function MemoryPanel({ path, channel, archived, request, onClose }: { pat
       if (mounted.current) setError(error instanceof TypeError ? 'Save result is unknown. Retry with the same changes.' : error instanceof Error ? error.message : 'Changes are not confirmed yet. Try again.');
     } finally { sending.current = false; if (mounted.current) setBusy(false); }
   }
-  return <section className="setup workflow-panel"><h1 ref={heading} tabIndex={-1}>Memory for this {channel ? 'channel' : 'agent'}</h1>
-    <p>{channel ? 'Used by members when replying in this channel. Private agent memory is excluded.' : 'Used by the agent in Main chat and all its side threads. Excluded from channels.'} Notes are sent to the provider when included or searched. Agents can add or edit note contents, but cannot delete notes. Context selection stays under your control unless delegated to the agent. Saved changes remain even if the task is canceled. Reload to see the latest changes.</p>
-    <div className="form-actions routine-actions"><button className="secondary" onClick={() => { if (draftStored || window.confirm('Draft has not been saved in the browser. Leave and discard changes?')) onClose(); }}>Back to conversation</button><button className="secondary" disabled={busy} onClick={() => setRefresh(n => n + 1)}>Reload memory</button></div>
-    {archived && <p>Channel archived. Restore the channel to change memory.</p>}
-    {(blocked || error) && <p role="alert" className="error">{blocked || error}</p>}{notice && <p role="status">{notice}</p>}
-    {(pending || blocked) && <div><p>Changes await confirmation. Retrying uses the same data.</p>{pending && <p className="message-text">{pending.remove ? 'Delete note' : pending.text}</p>}<div className="form-actions routine-actions">{pending && <button disabled={busy} onClick={() => void save()}>Retry save</button>}<button className="secondary" disabled={busy} onClick={discard}>Discard recovery and reload</button></div></div>}
-    <form onSubmit={event => { event.preventDefault(); if (!locked) void save(); }}>
-      <h2>{entry ? 'Edit note' : 'New note'}</h2><label>Memory contents<textarea ref={editor} maxLength={2000} required value={text} disabled={locked} onChange={event => draft({ entry, text: event.target.value, essential, automatic })} /></label>
-      <label className="member-option"><input type="checkbox" checked={essential} disabled={locked} onChange={event => draft({ entry, text, essential: event.target.checked, automatic })} />Always include in context</label>
-      <label className="member-option"><input type="checkbox" checked={automatic} disabled={locked} onChange={event => draft({ entry, text, essential, automatic: event.target.checked })} />Allow agent to manage context selection</label>
-      <p className="muted">When enabled, the agent may change context selection for future runs. Excluded notes can still be found by search. Maximum 2,000 characters per note, 128 notes, and 8 KiB of combined context.</p>
-      <div className="form-actions routine-actions"><button disabled={locked || !text.trim()}>Save note</button><button type="button" className="secondary" disabled={locked} onClick={() => choose(null)}>New note</button>{entry && <button type="button" className="secondary" disabled={locked} onClick={() => void save(true)}>Delete note</button>}</div>
-    </form>
-    <form onSubmit={event => { event.preventDefault(); setCursors([]); setSearch(query); setRefresh(n => n + 1); }}><label>Search memory<input value={query} maxLength={200} disabled={busy} onChange={event => setQuery(event.target.value)} /></label><button className="secondary" disabled={busy}>Search</button></form>
-    {!page ? !error && <p role="status">Loading memory...</p> : <><ul className="routine-list">{page.items.map(row => <li key={row.id}><p className="message-text">{row.text}</p><p className="muted">{row.essential ? 'Always included' : 'Searched when needed'} · {row.selection_locked === 0 ? 'Selection managed by agent' : 'Selection locked by user'}</p><button className="secondary" disabled={locked} onClick={() => choose(row)}>Edit note</button></li>)}</ul>{!page.items.length && <p>No matching notes yet.</p>}
-      <div className="form-actions routine-actions"><button className="secondary" disabled={busy || !cursors.length} onClick={() => setCursors(v => v.slice(0, -1))}>Previous page</button><button className="secondary" disabled={busy || !page.next_after} onClick={() => setCursors(v => [...v, page.next_after!])}>Next page</button></div></>}
-  </section>;
+  return <div className="k-page bs-root">
+    <PageHeader headingRef={heading} title={`Memory for this ${channel ? 'channel' : 'agent'}`}
+      description={channel ? 'Used by members when replying in this channel. Private agent memory is excluded.' : 'Used by the agent in Main chat and all its side threads. Excluded from channels.'}
+      actions={<><Button variant="ghost" onClick={async () => { if (draftStored || await confirm({ title: 'Leave and discard changes?', description: 'Draft has not been saved in the browser.', confirm: 'Leave', danger: true })) onClose(); }}>Back</Button><IconButton label="Reload" disabled={busy} onClick={() => setRefresh(n => n + 1)}><RefreshCw size={15} aria-hidden /></IconButton></>} />
+    <p className="k-field__hint" style={{ margin: 0 }}>Notes are sent to the provider when included or searched. Agents can add or edit note contents, but cannot delete notes. Context selection stays under your control unless delegated to the agent. Saved changes remain even if the task is canceled. Reload to see the latest changes.</p>
+    {archived && <Alert>Channel archived. Restore the channel to change memory.</Alert>}
+    {(blocked || error) && <Alert tone="error">{blocked || error}</Alert>}{notice && <Alert>{notice}</Alert>}
+    {(pending || blocked) && <Alert tone="warn" title="Changes await confirmation" actions={<>{pending && <Button size="sm" disabled={busy} onClick={() => void save()}>Retry save</Button>}<Button size="sm" disabled={busy} onClick={() => void discard()}>Discard recovery and reload</Button></>}>
+      Retrying uses the same data.{pending && <p style={{ whiteSpace: 'pre-wrap' }}>{pending.remove ? 'Delete note' : pending.text}</p>}
+    </Alert>}
+    <Section title={entry ? 'Edit note' : 'New note'}>
+      <form className="k-stack" onSubmit={event => { event.preventDefault(); if (!locked) void save(); }}>
+        <Field label="Memory contents"><Textarea ref={editor} maxLength={2000} required value={text} disabled={locked} onChange={event => draft({ entry, text: event.target.value, essential, automatic })} /></Field>
+        <Checkbox checked={essential} disabled={locked} onChange={checked => draft({ entry, text, essential: checked, automatic })} label="Always include in context" />
+        <Checkbox checked={automatic} disabled={locked} onChange={checked => draft({ entry, text, essential, automatic: checked })} label="Allow agent to manage context selection" />
+        <p className="k-field__hint" style={{ margin: 0 }}>When enabled, the agent may change context selection for future runs. Excluded notes can still be found by search. Maximum 2,000 characters per note, 128 notes, and 8 KiB of combined context.</p>
+        <div className="k-row-actions">
+          <Button type="submit" variant="primary" disabled={locked || !text.trim()}>Save note</Button>
+          <Button disabled={locked} onClick={() => void choose(null)}>New note</Button>
+          {entry && <ActionMenu label="Note actions" trigger={<button type="button" className="k-icon-btn" aria-label="Note actions" disabled={locked}><Ellipsis size={16} aria-hidden /></button>} items={[{ label: 'Delete note', danger: true, disabled: locked, onSelect: () => void save(true) }]} />}
+        </div>
+      </form>
+    </Section>
+    <Section title="Saved notes">
+      <form className="k-stack" onSubmit={event => { event.preventDefault(); setCursors([]); setSearch(query); setRefresh(n => n + 1); }}>
+        <Field label="Search memory"><Input value={query} maxLength={200} disabled={busy} onChange={event => setQuery(event.target.value)} /></Field>
+        <div className="k-row-actions"><Button type="submit" disabled={busy}>Search</Button></div>
+      </form>
+      {!page ? !error && <><p className="k-field__hint" role="status">Loading memory...</p><SkeletonRows /></> : <>
+        {page.items.length ? <Card>{page.items.map(row => <Row key={row.id}
+          title={<span style={{ display: 'block', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{row.text}</span>}
+          meta={<>{row.essential ? 'Always included' : 'Searched when needed'} · {row.selection_locked === 0 ? 'Selection managed by agent' : 'Selection locked by user'}</>}
+          trailing={<Button size="sm" disabled={locked} onClick={() => void choose(row)}>Edit note</Button>} />)}</Card> : <EmptyState title="No matching notes yet." />}
+        {(cursors.length > 0 || page.next_after) && <div className="k-pager">
+          <IconButton label="Previous page" disabled={busy || !cursors.length} onClick={() => setCursors(v => v.slice(0, -1))}><ChevronLeft size={16} aria-hidden /></IconButton>
+          <IconButton label="Next page" disabled={busy || !page.next_after} onClick={() => setCursors(v => [...v, page.next_after!])}><ChevronRight size={16} aria-hidden /></IconButton>
+        </div>}
+      </>}
+    </Section>
+  </div>;
 }

@@ -1,8 +1,10 @@
 import { parseQuestionAnswer, type QuestionAnswer } from '../question-answer.ts';
 import { useEffect, useRef, useState } from 'react';
+import { Alert, Button, Card, Checkbox, Field, Textarea, useConfirm } from './ui/kit';
 export type Question = { id: string; prompt: string; choices: string[]; answer: string | null };
 type Answer = QuestionAnswer;
 export function QuestionCard({ question, path, status, archived, request }: { question: Question; path: string; status: string; archived: boolean; request: <T>(path: string, data?: unknown) => Promise<T> }) {
+  const confirm = useConfirm();
   const key = `briefsip:answer:${question.id}`, draftKey = `${key}:draft`;
   const [recovery] = useState(() => {
     try {
@@ -27,12 +29,21 @@ export function QuestionCard({ question, path, status, archived, request }: { qu
     finally { sending.current = false; if (mounted.current) setBusy(false); }
   }
   const unavailable = archived || !['queued', 'interrupted'].includes(status);
-  return <section className="question-card" onFocusCapture={() => { focused.current = true; }} onBlurCapture={event => { if (event.relatedTarget) focused.current = event.currentTarget.contains(event.relatedTarget as Node); }}><h3 ref={heading} tabIndex={-1}>{question.prompt}</h3>{question.answer !== null ? <p className="message-text">Answer: {question.answer}</p> : <form onSubmit={event => { event.preventDefault(); void send(); }}>
-    {question.choices.length ? <fieldset disabled={busy || !!pending || blocked || unavailable}><legend>Answer</legend>{question.choices.map(choice => <label className="member-option" key={choice}><input type="radio" name={`answer-${question.id}`} checked={(pending?.text ?? text) === choice} onChange={() => change(choice)} /><span className="message-text">{choice}</span></label>)}</fieldset> : <label>Answer<textarea maxLength={4000} value={pending?.text ?? text} disabled={busy || !!pending || blocked || unavailable} onChange={event => change(event.target.value)} required /></label>}
-    {status === 'interrupted' && <label className="member-option"><input type="checkbox" checked={pending?.acknowledgeUncertain ?? confirmed} disabled={busy || !!pending} onChange={event => setConfirmed(event.target.checked)} />I have checked the effects of the task before continuing</label>}
-    {blocked && <p role="alert">Answer recovery data is invalid. Discard recovery before continuing.</p>}{error && <p className="error" role="alert">{error}</p>}
-    {unavailable && <p>Questions cannot be answered while the task is stopped or the conversation is archived.</p>}
-    <div className="form-actions routine-actions"><button disabled={busy || blocked || unavailable || !(pending?.text ?? text).trim() || status === 'interrupted' && !(pending?.acknowledgeUncertain ?? confirmed)}>{busy ? 'Sending...' : pending ? 'Retry answer' : 'Send answer'}</button>
-    {(pending || blocked) && <button type="button" className="secondary" disabled={busy} onClick={() => { if (!window.confirm('Discard recovery data? The answer may already be saved. Check history before sending another answer.')) return; try { sessionStorage.removeItem(key); setPending(null); setBlocked(false); setError(''); } catch { setError('Recovery data could not be deleted.'); } }}>Discard recovery</button>}</div>
-  </form>}</section>;
+  return <section className="k-stack bs-root" onFocusCapture={() => { focused.current = true; }} onBlurCapture={event => { if (event.relatedTarget) focused.current = event.currentTarget.contains(event.relatedTarget as Node); }}>
+    <Card><div className="k-stack" style={{ padding: 12 }}>
+      <h3 ref={heading} tabIndex={-1} className="k-section__title" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{question.prompt}</h3>
+      {question.answer !== null ? <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>Answer: {question.answer}</p> : <form className="k-stack" onSubmit={event => { event.preventDefault(); void send(); }}>
+        {/* Native radios preserve arrow-key selection, which kit Segmented does not support. */}
+        {question.choices.length ? <fieldset className="k-fieldset" disabled={busy || !!pending || blocked || unavailable}><legend className="k-field__label">Answer</legend>{question.choices.map(choice => <label className="k-check" key={choice}><input type="radio" name={`answer-${question.id}`} checked={(pending?.text ?? text) === choice} onChange={() => change(choice)} /><span className="k-check__label" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{choice}</span></label>)}</fieldset>
+          : <Field label="Answer"><Textarea maxLength={4000} value={pending?.text ?? text} disabled={busy || !!pending || blocked || unavailable} onChange={event => change(event.target.value)} required /></Field>}
+        {status === 'interrupted' && <Checkbox checked={pending?.acknowledgeUncertain ?? confirmed} disabled={busy || !!pending} onChange={setConfirmed} label="I have checked the effects of the task before continuing" />}
+        {blocked && <Alert tone="error">Answer recovery data is invalid. Discard recovery before continuing.</Alert>}{error && <Alert tone="error">{error}</Alert>}
+        {unavailable && <Alert>Questions cannot be answered while the task is stopped or the conversation is archived.</Alert>}
+        <div className="k-row-actions">
+          <Button type="submit" size="sm" variant="primary" disabled={busy || blocked || unavailable || !(pending?.text ?? text).trim() || status === 'interrupted' && !(pending?.acknowledgeUncertain ?? confirmed)}>{busy ? 'Sending...' : pending ? 'Retry answer' : 'Answer'}</Button>
+          {(pending || blocked) && <Button size="sm" disabled={busy} onClick={async () => { if (!await confirm({ title: 'Discard recovery data?', description: 'The answer may already be saved. Check history before sending another answer.', confirm: 'Discard recovery', danger: true })) return; try { sessionStorage.removeItem(key); setPending(null); setBlocked(false); setError(''); } catch { setError('Recovery data could not be deleted.'); } }}>Discard recovery</Button>}
+        </div>
+      </form>}
+    </div></Card>
+  </section>;
 }

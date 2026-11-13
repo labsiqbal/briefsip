@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { ChevronLeft, ChevronRight, Download, FileText, Folder, RefreshCw } from 'lucide-react';
+import { Alert, Button, Card, CodeBlock, EmptyState, IconButton, PageHeader, Row, Section, SkeletonRows } from './ui/kit';
+
 type Location = { path: string; file: boolean; after?: string; offset?: number; digest?: string };
 type Page = { path: string; entries?: { name: string; kind: string }[]; next_after?: string | null; text?: string; digest?: string; next_offset?: number | null };
 
@@ -34,19 +37,28 @@ export function WorkspacePanel({ agent, request, onClose }: { agent: { id: strin
     } catch(reason) {if(current===generation.current)setDownloadError(reason instanceof TypeError?'Download interrupted. Check the connection and try again.':reason instanceof Error?reason.message:'Download failed. Try again.');}
     finally {if(current===generation.current)setDownloading(false);}
   }
-  return <section className="setup workspace-files">
-    <h1 ref={heading} tabIndex={-1}>Workspace files for {agent.name}</h1>
-    <p className="muted">Local files linked by the host owner. Previews are read-only; opening files here does not send their contents to the model.</p>
-    <div className="form-actions"><button className="secondary" onClick={onClose}>Back to conversation</button><button className="secondary" disabled={locations.length<2} onClick={back}>Previous</button><button className="secondary" onClick={()=>{generation.current++;setPage(null);setError('');setLocations([{path:'',file:false}]);}}>Root directory</button><button className="secondary" onClick={()=>{generation.current++;setPage(null);setError('');setLocations(value=>[...value.slice(0,-1),{path:location.path,file:location.file}]);setReload(value=>value+1);}}>Reload from start</button></div>
-    <h2>{location.path || 'Root directory'}</h2>
-    {location.file && <><button className="secondary" aria-disabled={downloading} aria-busy={downloading} onClick={()=>void download()}>{downloading?'Preparing download...':'Download original file'}</button><p className="muted">Text or binary, up to 10 MiB. Downloads use the current file version.</p>{downloadError&&<p className="error" role="alert">{downloadError}</p>}</>}
-    {error ? <p className="error" role="alert">{error}</p> : !page ? <p role="status">Loading workspace...</p> : location.file ? <>
-      <p className="muted">Starting at character {(location.offset??0)+1}. Maximum 8000 characters per page.</p>
-      <pre className="skill-file-content" tabIndex={0} role="region" aria-label={`Contents of ${location.path}`}>{page.text || '(Empty file)'}</pre>
-      <button className="secondary" disabled={page.next_offset == null} onClick={()=>open({...location,offset:page.next_offset!,digest:page.digest})}>Next text page</button>
-    </> : <>
-      {page.entries?.length ? <ul className="workspace-entry-list">{page.entries.map(entry=><li key={entry.name}><button className="secondary" disabled={!['file','directory'].includes(entry.kind)||/[\x00-\x1f\x7f\\]/.test(entry.name)} onClick={()=>open({path:[location.path,entry.name].filter(Boolean).join('/'),file:entry.kind==='file'})}>{entry.name}<span className="muted">{entry.kind==='directory'?'Directory':entry.kind==='file'?'File':'Unsupported'}</span></button></li>)}</ul> : <p>Directory is empty on this page.</p>}
-      <button className="secondary" disabled={!page.next_after} onClick={()=>open({...location,after:page.next_after!})}>Next entries</button>
-    </>}
-  </section>;
+  return <div className="k-page bs-root">
+    <PageHeader headingRef={heading} title={`Workspace files for ${agent.name}`}
+      description="Local files linked by the host owner. Previews are read-only; opening files here does not send their contents to the model."
+      actions={<><Button variant="ghost" onClick={onClose}>Back</Button><IconButton label="Reload from start" onClick={()=>{generation.current++;setPage(null);setError('');setLocations(value=>[...value.slice(0,-1),{path:location.path,file:location.file}]);setReload(value=>value+1);}}><RefreshCw size={15} aria-hidden /></IconButton></>} />
+    <div className="k-row-actions">
+      <Button disabled={locations.length<2} onClick={back} icon={<ChevronLeft size={14} aria-hidden />}>Previous</Button>
+      <Button onClick={()=>{generation.current++;setPage(null);setError('');setLocations([{path:'',file:false}]);}} icon={<Folder size={14} aria-hidden />}>Root directory</Button>
+    </div>
+    <Section title={<span style={{ overflowWrap: 'anywhere' }}>{location.path || 'Root directory'}</span>}>
+      {location.file && <><div className="k-row-actions"><Button aria-disabled={downloading} aria-busy={downloading} onClick={()=>void download()} icon={<Download size={14} aria-hidden />}>{downloading?'Preparing download...':'Download original file'}</Button></div><p className="k-field__hint" style={{ margin: 0 }}>Text or binary, up to 10 MiB. Downloads use the current file version.</p>{downloadError&&<Alert tone="error">{downloadError}</Alert>}</>}
+      {error ? <Alert tone="error">{error}</Alert> : !page ? <><p className="k-field__hint" role="status">Loading workspace...</p><SkeletonRows /></> : location.file ? <>
+        <p className="k-field__hint" style={{ margin: 0 }}>Starting at character {(location.offset??0)+1}. Maximum 8000 characters per page.</p>
+        <CodeBlock label={`Contents of ${location.path}`}>{page.text || '(Empty file)'}</CodeBlock>
+        {page.next_offset != null && <div className="k-pager"><IconButton label="Next text page" disabled={page.next_offset == null} onClick={()=>open({...location,offset:page.next_offset!,digest:page.digest})}><ChevronRight size={16} aria-hidden /></IconButton></div>}
+      </> : <>
+        {page.entries?.length ? <Card>{page.entries.map(entry=><Row key={entry.name} title={entry.name}
+          leading={entry.kind==='directory'?<Folder size={16} aria-hidden />:<FileText size={16} aria-hidden />}
+          meta={entry.kind==='directory'?'Directory':entry.kind==='file'?'File':'Unsupported'}
+          disabled={!['file','directory'].includes(entry.kind)||/[\x00-\x1f\x7f\\]/.test(entry.name)}
+          onClick={()=>open({path:[location.path,entry.name].filter(Boolean).join('/'),file:entry.kind==='file'})} />)}</Card> : <EmptyState icon={<Folder size={18} />} title="Directory is empty on this page." />}
+        {page.next_after && <div className="k-pager"><IconButton label="Next entries" disabled={!page.next_after} onClick={()=>open({...location,after:page.next_after!})}><ChevronRight size={16} aria-hidden /></IconButton></div>}
+      </>}
+    </Section>
+  </div>;
 }

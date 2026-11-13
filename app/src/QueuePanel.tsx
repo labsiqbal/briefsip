@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Alert, Button, Card, Collapsible, EmptyState, IconButton, Row, useConfirm } from './ui/kit';
 type Neighbor = { id: string; agent: string; revision: number; editing: boolean };
 type Entry = { previous: Neighbor | null; next: Neighbor | null; id: string; agent: string; text: string; revision: number; paused: number; editing: boolean };
 type Command = { id: string; target: string; other: string; revision: number; otherRevision: number };
 export function QueuePanel({ path, request, onOpen }: { path: string; request: <T>(path: string, data?: unknown) => Promise<T>; onOpen: (id: string) => void }) {
+  const confirm = useConfirm();
   const endpoint = path.replace(/\/turns$/, '/queue'), key = `briefsip-queue-order:${endpoint}`;
   const [open, setOpen] = useState(false), [rows, setRows] = useState<Entry[]>([]), [more, setMore] = useState(false), [error, setError] = useState(''), [loadError, setLoadError] = useState(''), [busy, setBusy] = useState(false), [refresh, setRefresh] = useState(0);
   const [pages, setPages] = useState<{ after: number; snapshot: string }[]>([]), [nextPage, setNextPage] = useState<{ after: number; snapshot: string } | null>(null), [notice, setNotice] = useState(''), [loading, setLoading] = useState(true);
@@ -42,17 +45,31 @@ export function QueuePanel({ path, request, onOpen }: { path: string; request: <
     catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : 'Order is not confirmed yet. Try again.'); }
     finally { flight.current = false; if (mounted.current) setBusy(false); }
   }
-  return <details className="queue-panel" onToggle={event => setOpen(event.currentTarget.open)}><summary>Message queue{pending || invalid ? ' - recovery needed' : ''}</summary>
-    <p>Messages that have not started can be reordered within the same agent. History still follows message receipt time.</p>
-    <button className="secondary" onClick={() => { generation.current++; setPages([]); setRefresh(value => value + 1); }}>Reload queue</button>
-    {notice && <p role="status">{notice}</p>}
-    {loadError && <p role="alert" className="error">{loadError}</p>}
-    {error && <p role="alert" className="error">{error}</p>}
-    {invalid && <p role="alert">Saved order request is invalid.</p>}
-    {(pending || invalid) && <div className="form-actions">{pending && <button disabled={busy} onClick={() => void move()}>Retry order</button>}<button className="secondary" disabled={busy} onClick={() => { if (!window.confirm('Discard the saved order request? Changes already accepted by the server still apply.')) return; try { sessionStorage.removeItem(key); setPending(null); setInvalid(false); setError(''); setRefresh(value => value + 1); } catch { setError('Browser storage is unavailable.'); } }}>Discard saved request</button></div>}
-    {loading && <p role="status">Loading queue...</p>}
-    {!loading && !rows.length && !error && !loadError && <p>No queued messages yet.</p>}
-    <ol>{rows.map(row => <li key={row.id}><p className="message-text">{row.text}</p><p>{row.editing ? 'Being edited' : row.paused ? 'Paused' : 'Waiting in queue'}</p><div className="form-actions"><button className="secondary" onClick={() => onOpen(row.id)}>Open message</button>{[-1,1].map(direction => { const other = direction < 0 ? row.previous : row.next; return <button key={direction} className="secondary" disabled={busy || loading || !!pending || invalid || row.editing || !other || other.agent !== row.agent || other.editing} onClick={() => void move(row, other)}>{direction < 0 ? 'Move up' : 'Move down'}</button>; })}</div></li>)}</ol>
-    <div className="form-actions"><button className="secondary" aria-disabled={busy || loading || !pages.length} onClick={() => { if (!busy && !loading && pages.length) { generation.current++; setRows([]); setLoading(true); setPages(values => values.slice(0,-1)); } }}>Previous queue page</button><button className="secondary" aria-disabled={busy || loading || !more || !nextPage} onClick={() => { if (!busy && !loading && more && nextPage) { generation.current++; setRows([]); setLoading(true); setPages(values => [...values, nextPage]); } }}>Next queue page</button></div>
-  </details>;
+  // Kit Collapsible is uncontrolled; track its trigger to stop polling when closed.
+  return <div className="k-stack bs-root" onClickCapture={event => {
+    const trigger = (event.target as Element).closest('button');
+    if (trigger === event.currentTarget.querySelector('.k-collapsible__trigger')) setOpen(trigger?.getAttribute('aria-expanded') !== 'true');
+  }}><Collapsible title={<>Message queue{pending || invalid ? ' - recovery needed' : ''}</>}><div className="k-stack" style={{ display: open ? undefined : 'none' }}>
+    <p className="k-field__hint" style={{ margin: 0 }}>Messages that have not started can be reordered within the same agent. History still follows message receipt time.</p>
+    <div className="k-row-actions"><Button size="sm" onClick={() => { generation.current++; setPages([]); setRefresh(value => value + 1); }}>Reload queue</Button></div>
+    {notice && <Alert>{notice}</Alert>}
+    {loadError && <Alert tone="error">{loadError}</Alert>}
+    {error && <Alert tone="error">{error}</Alert>}
+    {invalid && <Alert tone="error">Saved order request is invalid.</Alert>}
+    {(pending || invalid) && <Alert tone="warn" title="Order awaits confirmation" actions={<>{pending && <Button size="sm" disabled={busy} onClick={() => void move()}>Retry order</Button>}<Button size="sm" disabled={busy} onClick={async () => { if (!await confirm({ title: 'Discard the saved order request?', description: 'Changes already accepted by the server still apply.', confirm: 'Discard request', danger: true })) return; try { sessionStorage.removeItem(key); setPending(null); setInvalid(false); setError(''); setRefresh(value => value + 1); } catch { setError('Browser storage is unavailable.'); } }}>Discard saved request</Button></>} />}
+    {loading && <p className="k-field__hint" role="status">Loading queue...</p>}
+    {!loading && !rows.length && !error && !loadError && <EmptyState title="No queued messages yet." />}
+    {!!rows.length && <Card>{rows.map(row => <Row key={row.id}
+      title={<span style={{ display: 'block', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{row.text}</span>}
+      meta={row.editing ? 'Being edited' : row.paused ? 'Paused' : 'Waiting in queue'}>
+      <div className="k-row-actions" style={{ marginTop: 6 }}>
+        <Button size="sm" onClick={() => onOpen(row.id)}>Open message</Button>
+        {[-1,1].map(direction => { const other = direction < 0 ? row.previous : row.next; return <IconButton key={direction} label={direction < 0 ? 'Move up' : 'Move down'} disabled={busy || loading || !!pending || invalid || row.editing || !other || other.agent !== row.agent || other.editing} onClick={() => void move(row, other)}>{direction < 0 ? <ArrowUp size={14} aria-hidden /> : <ArrowDown size={14} aria-hidden />}</IconButton>; })}
+      </div>
+    </Row>)}</Card>}
+    {(pages.length > 0 || more && nextPage) && <div className="k-pager">
+      <IconButton label="Previous queue page" aria-disabled={busy || loading || !pages.length} onClick={() => { if (!busy && !loading && pages.length) { generation.current++; setRows([]); setLoading(true); setPages(values => values.slice(0,-1)); } }}><ChevronLeft size={16} aria-hidden /></IconButton>
+      <IconButton label="Next queue page" aria-disabled={busy || loading || !more || !nextPage} onClick={() => { if (!busy && !loading && more && nextPage) { generation.current++; setRows([]); setLoading(true); setPages(values => [...values, nextPage]); } }}><ChevronRight size={16} aria-hidden /></IconButton>
+    </div>}
+  </div></Collapsible></div>;
 }
