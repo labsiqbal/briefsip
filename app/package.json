@@ -14,6 +14,7 @@
     "test:phase-0": "node ../work/rebuild/collaboration-check/t3-provenance.mjs --phase --receipt ../work/rebuild/collaboration-check/phase-0.json",
     "test:phase-1": "node ../work/rebuild/collaboration-check/phase.mjs 1",
     "test:phase-2": "node --experimental-strip-types ../work/rebuild/collaboration-check/two-process.mjs --phase --receipt ../work/rebuild/collaboration-check/phase-2.json",
+    "test:phase-3": "node ../work/rebuild/collaboration-check/phase.mjs 3",
     "cli": "node --experimental-strip-types cli.ts",
     "telegram": "node --experimental-strip-types telegram-runner.ts"
   },
