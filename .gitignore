@@ -29,3 +29,4 @@ __pycache__/
 /work/**/*.tar.gz
 /work/**/*.png
 /work/ui-spike/http-netlog.json
+/references/bot-hq/
