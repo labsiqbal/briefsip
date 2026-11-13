@@ -1434,6 +1434,100 @@ test('canonical routine runtime snapshots flows and hands off once using current
   }finally{db.close();await secondRuntime.close();await f.close();}
 });
 
+for(const name of ['no_update','report_failure'] as const) test(`canonical routine ${name} recovers terminal result after home SIGKILL and server restart without fan-out`,{timeout:30000},async()=>{
+  const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  const keys=join(f.dir,'routine-keys.json'),database=join(f.dir,'workflow-home.sqlite'),reason=name==='no_update'?'Checked all sources; nothing changed.':'Required service access is missing.';
+  let calls=0,child:ReturnType<typeof spawn>|undefined;
+  const provider=createServer(async(req,res)=>{
+    let body='';for await(const chunk of req)body+=chunk;
+    const {snapshot}=JSON.parse(body);assert(snapshot.tools.some((tool:any)=>tool.function.name===name),'Actual routine step offers outcome tools');calls++;
+    res.end(JSON.stringify({toolCall:{id:'outcome',function:{name,arguments:JSON.stringify({reason:`  ${reason}  `})}}}));
+  });
+  await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));
+  const address=provider.address();if(!address||typeof address==='string')throw new Error('Missing provider fixture address');const providerOrigin=`http://127.0.0.1:${address.port}`;
+  async function launch(taskId:string,checkpoint?:string){
+    child=spawn(process.execPath,['--experimental-strip-types','recovery-fixture.mjs'],{cwd:new URL('.',import.meta.url),env:{...process.env,BRIEFSIP_RECOVERY_FIXTURE:JSON.stringify({mode:'loop',database,keys,server:f.origin(),effect:providerOrigin,taskId,checkpoint})},stdio:['ignore','ignore','pipe','ipc']});
+    let errors='';child.stderr!.on('data',chunk=>{errors+=chunk;});const exited=once(child,'exit');
+    const message=await Promise.race([once(child,'message').then(([message])=>message),exited.then(()=>{throw new Error(`Routine fixture exited: ${errors}`);})]);
+    return {child,exited,message};
+  }
+  try{
+    const connection=f.runtime.connect();await until(()=>connection.state().phase==='connected');
+    const home=(await f.send('/api/devices')).body.data.find((row:any)=>row.id===f.home.id),peer=randomUUID(),binding=randomUUID(),owner=(await f.send('/api/session')).body.data.accountId;
+    db.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','routine-outcome','Fixture','ready',1)").run(binding,home.id,owner);
+    db.prepare('UPDATE agent_authority SET provider_binding=?,revision=revision+1 WHERE agent=?').run(binding,f.agent);
+    assert.equal((await f.send('/api/agents',{requestId:peer,id:peer,name:'Downstream',model:'fixture',backupModel:'',instructions:'Help',threadLimit:2,projectId:f.project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:{bindingId:binding,expectedRevision:1}})).status,201);
+    const create={requestId:routine,id:routine,revision:0,name:'Outcome flow',prompt:'Check for changes',nextAt:Date.now()+600000,intervalSeconds:null,enabled:true};
+    assert.equal((await f.send(`/api/projects/${f.project}/agents/${f.agent}/routines`,create)).status,201);
+    const flow=randomUUID();assert.equal((await f.send(detail+'/flow',{requestId:flow,id:flow,revision:0,links:[{from:f.agent,to:peer}]})).status,200);
+    const edit=randomUUID();assert.equal((await f.send(detail+'/edit',{...create,requestId:edit,id:edit,revision:1,nextAt:Date.now()-1000})).status,200);
+    let run:any;await until(async()=>{run=(await f.send(detail+'/runs')).body.data.items[0];return run?.state==='admitted';});
+    await f.runtime.close();writeFileSync(keys,JSON.stringify(Object.fromEntries(f.keys.values)),{mode:0o600});
+    const running=await launch(run.taskId,'tool-reply');assert.equal(running.message.checkpoint,'tool-reply');
+    running.child.kill('SIGKILL');assert.equal((await running.exited)[1],'SIGKILL');assert.equal(calls,1);
+    await until(async()=>{run=(await f.send(detail+'/runs')).body.data.items[0];return run.state===(name==='no_update'?'done':'failed');});
+    assert.deepEqual(run.steps.map((step:any)=>[step.agentId,step.state,step.taskId]).sort(),[[f.agent,name==='no_update'?'skipped':'failed',run.taskId],[peer,'skipped',null]].sort());
+    assert.equal(run.steps.find((step:any)=>step.agentId===f.agent).preview,reason);
+    assert.deepEqual({...db.prepare('SELECT status,no_update,reply,error FROM turns WHERE id=?').get(run.taskId)!},name==='no_update'?{status:'done',no_update:1,reply:reason,error:null}:{status:'failed',no_update:0,reply:null,error:reason});
+    assert.equal(db.prepare('SELECT stopped FROM execution_owners WHERE task=?').get(run.taskId)!.stopped,1);
+    const saved=db.prepare("SELECT r.action,r.content_json FROM task_results r JOIN task_actions a ON a.id=r.action WHERE r.task=? AND a.action_kind='canonical'").get(run.taskId)!;
+    await f.restart();
+    for(let restart=0;restart<2;restart++){
+      const resumed=await launch(run.taskId);assert.equal(resumed.message.state,name==='no_update'?'completed':'failed');assert.equal((await resumed.exited)[0],0);assert.equal(calls,1);
+    }
+    assert.equal(db.prepare('SELECT content_json FROM task_results WHERE action=?').get(saved.action)!.content_json,saved.content_json);
+    assert.equal(db.prepare('SELECT count(*) n FROM task_actions WHERE task=?').get(run.taskId)!.n,2);
+    assert.equal(db.prepare('SELECT count(*) n FROM task_results WHERE task=?').get(run.taskId)!.n,2);
+    assert.equal(db.prepare('SELECT count(*) n FROM tasks WHERE project=?').get(f.project)!.n,1);
+    assert.deepEqual((await f.send(detail+'/runs')).body.data.items[0],run);
+  }finally{
+    if(child&&child.exitCode===null&&child.signalCode===null){const exited=once(child,'exit');child.kill('SIGKILL');await exited;}
+    provider.closeAllConnections();await new Promise<void>(resolve=>provider.close(()=>resolve()));db.close();await f.close();
+  }
+});
+
+test('canonical routine mixed fan-in waits for success and keeps quiet and failed outcomes distinct',async()=>{
+  const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  try{
+    const connection=f.runtime.connect();await until(()=>connection.state().phase==='connected');
+    const home=(await f.send('/api/devices')).body.data.find((row:any)=>row.id===f.home.id),binding=randomUUID(),owner=(await f.send('/api/session')).body.data.accountId;
+    db.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','routine-fan-in','Fixture','ready',1)").run(binding,home.id,owner);
+    db.prepare('UPDATE agent_authority SET provider_binding=?,revision=revision+1 WHERE agent=?').run(binding,f.agent);
+    const [quiet,failed,good,joined]=Array.from({length:4},()=>randomUUID());
+    for(const agent of [quiet,failed,good,joined])assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Flow member',model:'fixture',backupModel:'',instructions:'Help',threadLimit:2,projectId:f.project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:{bindingId:binding,expectedRevision:1}})).status,201);
+    const create={requestId:routine,id:routine,revision:0,name:'Mixed flow',prompt:'Root work',nextAt:Date.now()+600000,intervalSeconds:null,enabled:true};
+    assert.equal((await f.send(`/api/projects/${f.project}/agents/${f.agent}/routines`,create)).status,201);
+    const flow=randomUUID(),links=[quiet,failed,good].flatMap(agent=>[{from:f.agent,to:agent},{from:agent,to:joined}]);
+    assert.equal((await f.send(detail+'/flow',{requestId:flow,id:flow,revision:0,links})).status,200);
+    const edit=randomUUID();assert.equal((await f.send(detail+'/edit',{...create,requestId:edit,id:edit,revision:1,nextAt:Date.now()-1000})).status,200);
+    let run:any;await until(async()=>{run=(await f.send(detail+'/runs')).body.data.items[0];return run?.state==='admitted';});
+    assert.equal((await f.runtime.runTask(run.taskId,()=>({text:'Root evidence'}))).state,'completed');
+    await until(async()=>{run=(await f.send(detail+'/runs')).body.data.items[0];return [quiet,failed,good].every(agent=>run.steps.find((step:any)=>step.agentId===agent)?.taskId);});
+    for(const [agent,name,reason] of [[quiet,'no_update','Quiet check found no change'],[failed,'report_failure','One source is unavailable']]){
+      const taskId=run.steps.find((step:any)=>step.agentId===agent).taskId;
+      assert.equal((await f.runtime.runTask(taskId,context=>{
+        assert((context.snapshot.tools as any[]).some(tool=>tool.function.name===name),'Downstream step offers outcome tools');
+        return {toolCall:{id:name,function:{name,arguments:JSON.stringify({reason})}}};
+      })).state,name==='no_update'?'completed':'failed');
+    }
+    await until(async()=>{run=(await f.send(detail+'/runs')).body.data.items[0];return run.steps.find((step:any)=>step.agentId===failed)?.state==='failed';});
+    assert.equal(run.steps.find((step:any)=>step.agentId===quiet).state,'skipped');
+    assert.equal(run.steps.find((step:any)=>step.agentId===joined).taskId,null,'Fan-in waits for every upstream result');
+    const goodTask=run.steps.find((step:any)=>step.agentId===good).taskId;
+    assert.equal((await f.runtime.runTask(goodTask,()=>({text:'Actionable result'}))).state,'completed');
+    await until(async()=>{run=(await f.send(detail+'/runs')).body.data.items[0];return run.steps.find((step:any)=>step.agentId===joined)?.taskId;});
+    const joinedTask=run.steps.find((step:any)=>step.agentId===joined).taskId;
+    assert.equal((await f.runtime.runTask(joinedTask,context=>{
+      const prompt=(context.snapshot.conversation as {message:{text:string}}).message.text;
+      assert.match(prompt,/Actionable result/);assert.match(prompt,/"status":"skipped"/);assert.match(prompt,/One source is unavailable/);
+      return {text:'Merged actionable result'};
+    })).state,'completed');
+    await until(async()=>{run=(await f.send(detail+'/runs')).body.data.items[0];return run.state==='failed';});
+    assert.equal(run.steps.find((step:any)=>step.agentId===joined).state,'done');
+    assert.equal(db.prepare('SELECT count(*) n FROM tasks WHERE project=? AND agent=?').get(f.project,joined)!.n,1);
+  }finally{db.close();await f.close();}
+});
+
 test('canonical routine keeps no-reply descendants executable after completion and fences revoked root authority',async()=>{
   const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
   try{

@@ -28,6 +28,20 @@ test('schema rollback leaves no partial v1 tables', () => {
   db.close();
 });
 
+test('routine outcome schema upgrade retains old turns and saved flags across restart', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    initializeCanonicalSchema(db);
+    const migrations = db.prepare('SELECT * FROM schema_migrations ORDER BY version').all();
+    db.exec("ALTER TABLE turns DROP COLUMN no_update; INSERT INTO agents(id,name,model,instructions) VALUES ('agent','Agent','fixture','Help'); INSERT INTO turns(id,agent,text,reply,status,created) VALUES ('turn','agent','Old request','Old reply','done','fixture')");
+    initializeCanonicalSchema(db);
+    assert.deepEqual({...db.prepare('SELECT text,reply,status,no_update FROM turns').get()!},{text:'Old request',reply:'Old reply',status:'done',no_update:0});
+    db.exec('UPDATE turns SET no_update=1');initializeCanonicalSchema(db);
+    assert.equal(db.prepare('SELECT no_update FROM turns').get()!.no_update,1);
+    assert.deepEqual(db.prepare('SELECT * FROM schema_migrations ORDER BY version').all(),migrations);
+  } finally { db.close(); }
+});
+
 test('device schema stays separate from canonical authority and is idempotent', () => {
   const db = new DatabaseSync(':memory:');
   initializeDeviceSchema(db); initializeDeviceSchema(db);

@@ -23,6 +23,7 @@ import { canonicalJson, digestCommand, sha256, ProtocolError } from './protocol.
 import { canonicalToolDigest, createTaskRecovery, parseTaskCommand, parseOwnership, journalEntryBody, stopEvidenceBody, recoveryEnvelopeBody, type StopEvidence, type JournalEntry } from './task-recovery.ts';
 import { prepareRestoreBootstrap, issueRestoreSession, workspaceSnapshot, restoreWorkspace } from './backup.ts';
 import { parseWaitProvision } from './wait-provisions.ts';
+import { initializeRoutineConfigurations } from './routine-store.ts';
 
 async function fixture(tools = ['transfer_task']) {
   const db = new DatabaseSync(':memory:'); initializeCanonicalSchema(db);
@@ -119,6 +120,104 @@ async function canonicalTaskTools(tools=['ask_user']) {
   };
   return {...f,start,stage};
 }
+
+async function routineTaskTools() {
+  const f=await canonicalTaskTools(['no_update','report_failure']);
+  initializeRoutineConfigurations(f.db);
+  f.db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,f.agent);
+  const task=f.start(f.member),routine=randomUUID(),occurrence=randomUUID();
+  f.db.prepare("INSERT INTO routines(id,agent,name,prompt,next_at,enabled) VALUES (?,?,'Outcome','Check work',1000,0)").run(routine,f.agent);
+  f.db.prepare("INSERT INTO record_scopes VALUES ('routines',?,?,?,'project','agent',?)").run(JSON.stringify([routine]),f.owner.accountId,f.project,f.agent);
+  f.db.prepare(`INSERT INTO routine_occurrences(id,routine,project,due_at,schedule_revision,initiator_account,assignment_revision,authority_generation,home_device,zone,zone_revision,missed_count,state,graph_json,task)
+    VALUES (?,?,?,1000,1,?,1,?,?,'Asia/Jakarta',1,0,'admitted',?,?)`).run(occurrence,routine,f.project,f.member.accountId,f.principal.authorityGeneration,f.home,JSON.stringify({root:f.agent,nodes:[f.agent],links:[]}),task.taskId);
+  f.db.prepare("INSERT INTO record_scopes VALUES ('routine_occurrences',?,?,?,'project','agent',?)").run(JSON.stringify([occurrence]),f.owner.accountId,f.project,f.agent);
+  f.db.prepare("INSERT INTO routine_steps VALUES (?,?,?,'queued','')").run(occurrence,f.agent,task.taskId);
+  return {...f,task,occurrence};
+}
+
+test('canonical routine outcomes validate reasons and atomically retain result receipt and task state',async()=>{
+  for(const name of ['no_update','report_failure']){
+    const f=await routineTaskTools();
+    try{
+      for(const reason of [undefined,null,0,'','  ','x'.repeat(2001),'null\u0000byte']){
+        const result=f.stage(f.task,{reason},name)();
+        assert.equal((result.data.resultContent as {status:number}).status,400);
+        assert.equal(f.db.prepare('SELECT state FROM tasks WHERE id=?').get(f.task.taskId)!.state,'running');
+        assert.equal(f.db.prepare('SELECT no_update FROM turns WHERE id=?').get(f.task.taskId)!.no_update,0);
+        assert.equal(f.db.prepare('SELECT stopped FROM execution_owners WHERE task=?').get(f.task.taskId)!.stopped,0);
+      }
+      f.db.exec(`CREATE TABLE files(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE,scope TEXT,name TEXT,digest TEXT,bytes BLOB,created TEXT);
+        CREATE TABLE generated_files(seq INTEGER PRIMARY KEY AUTOINCREMENT,turn TEXT,file TEXT,call_id TEXT,call TEXT,after_action INTEGER);`);
+      const file=randomUUID(),bytes=Buffer.from('Evidence collected before terminal outcome');
+      f.db.prepare("INSERT INTO files(id,scope,name,digest,bytes,created) VALUES (?,'fixture','partial.txt',?,?,'fixture')").run(file,sha256(bytes),bytes);
+      f.db.prepare("INSERT INTO generated_files(turn,file,call_id,call,after_action) VALUES (?,?,'partial',?,0)").run(f.task.taskId,file,JSON.stringify({function:{name:'create_text_file'}}));
+      f.db.prepare("INSERT INTO record_scopes VALUES ('files',?,?,?,'owner','agent',?)").run(JSON.stringify([file]),f.member.accountId,f.project,f.agent);
+      const reason='r'.repeat(2000),command=f.stage(f.task,{reason},name),before=f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(f.task.taskId)!.revision;
+      f.db.exec("CREATE TRIGGER fail_outcome_receipt BEFORE INSERT ON receipts WHEN NEW.scope LIKE 'tasks:context-mutations:%' BEGIN SELECT RAISE(ABORT,'outcome receipt failed'); END");
+      assert.throws(()=>command(),/outcome receipt failed/);
+      assert.equal(f.db.prepare('SELECT state FROM tasks WHERE id=?').get(f.task.taskId)!.state,'running');
+      assert.equal(f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(f.task.taskId)!.revision,before);
+      assert.equal(f.db.prepare('SELECT no_update FROM turns WHERE id=?').get(f.task.taskId)!.no_update,0);
+      assert.equal(f.db.prepare('SELECT stopped FROM execution_owners WHERE task=?').get(f.task.taskId)!.stopped,0);
+      assert.equal(f.db.prepare('SELECT 1 FROM task_results WHERE action=?').get(command.request.actionId),undefined);
+      assert.equal(f.db.prepare('SELECT 1 FROM task_reports WHERE action=?').get(command.request.actionId),undefined);
+      f.db.exec('DROP TRIGGER fail_outcome_receipt');
+      const saved=command();assert.equal((saved.data.resultContent as {reason:string}).reason,reason);
+      assert.deepEqual(Buffer.from(f.db.prepare('SELECT bytes FROM files WHERE id=?').get(file)!.bytes as Uint8Array),bytes);
+      assert.equal(f.db.prepare('SELECT file FROM generated_files WHERE turn=?').get(f.task.taskId)!.file,file);
+      assert.deepEqual(command(),saved,'Exact retry returns original terminal result');
+      f.db.prepare('UPDATE routine_steps SET state=? WHERE occurrence=?').run(name==='no_update'?'skipped':'failed',f.occurrence);
+      f.db.prepare('UPDATE routine_occurrences SET state=? WHERE id=?').run(name==='no_update'?'done':'failed',f.occurrence);
+      assert.deepEqual(command(),saved,'Settlement cannot prevent exact result recovery');
+      assert.equal(f.tasks.execution(f.principal,f.task.taskId,{requestId:randomUUID(),ownership:f.task.ownership},f.task.token).state,name==='no_update'?'completed':'failed');
+      f.db.prepare('UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE project=? AND account=? AND agent=?').run(f.project,f.member.accountId,f.agent);
+      assert.throws(()=>command(),code('execution_denied'),'Saved evidence still requires current assignment');
+    }finally{f.close();}
+  }
+});
+
+test('canonical routine outcomes deny forced ordinary chat and descendant calls',async()=>{
+  for(const name of ['no_update','report_failure']){
+    const f=await routineTaskTools();
+    try{
+      const direct=f.start(),descendant=f.start(f.member);
+      f.db.prepare('UPDATE turns SET parent=? WHERE id=?').run(f.task.taskId,descendant.taskId);
+      const side=randomUUID(),channel=randomUUID();
+      f.db.prepare("INSERT INTO threads(id,agent,name) VALUES (?,?,'Side')").run(side,f.agent);
+      f.db.prepare("INSERT INTO record_scopes VALUES ('threads',?,?,?,'owner','thread',?)").run(JSON.stringify([side]),f.owner.accountId,f.project,side);
+      f.db.prepare("INSERT INTO channels(id,name,instructions) VALUES (?,'Room','Help')").run(channel);
+      f.db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel,f.agent);
+      f.db.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(JSON.stringify([channel]),f.owner.accountId,f.project,channel);
+      const tasks=[direct,descendant,f.start(f.owner,{v:1,kind:'side',threadId:side,message:{text:'Ordinary side chat',files:[]}}),f.start(f.owner,{v:1,kind:'channel',channelId:channel,routing:'assigned',message:{text:'Ordinary channel',files:[]}})];
+      for(const task of tasks){
+        const context=f.tasks.context(f.principal,task.taskId,{requestId:randomUUID(),ownership:task.ownership,expectedTaskRevision:Number(f.tasks.lookup(task.actor,task.taskId).data.revision)},task.token);
+        assert(!(context.data.snapshot as {tools:{function:{name:string}}[]}).tools.some(tool=>['no_update','report_failure'].includes(tool.function.name)));
+        const command=f.stage(task,{reason:'Forced terminal call'},name);
+        assert.throws(()=>command(),code('execution_denied'));
+        assert.equal(f.db.prepare('SELECT state FROM tasks WHERE id=?').get(task.taskId)!.state,'running');
+      }
+    }finally{f.close();}
+  }
+});
+
+test('canonical routine outcomes reject late results after pause cancel revoke or context change',async()=>{
+  for(const change of ['pause','cancel','revoke','capability','scope','rules','setup','unknown-field']){
+    const f=await routineTaskTools();
+    try{
+      const command=f.stage(f.task,change==='unknown-field'?{reason:'No changes',taskId:f.task.taskId}:{reason:'No changes'},'no_update');
+      if(change==='pause'||change==='cancel')f.tasks.control(f.task.actor,f.task.taskId,{requestId:randomUUID(),expectedRevision:command.request.expectedRevision,operation:change});
+      if(change==='revoke')f.db.prepare('UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE project=? AND account=? AND agent=?').run(f.project,f.member.accountId,f.agent);
+      if(change==='scope')f.db.prepare("DELETE FROM record_scopes WHERE table_name='routine_occurrences'").run();
+      if(change==='capability')f.db.prepare('UPDATE agent_projects SET capabilities_json=?,revision=revision+1 WHERE project=? AND agent=?').run(JSON.stringify({v:1,tools:[],resources:[]}),f.project,f.agent);
+      if(change==='rules')f.db.prepare("UPDATE agent_projects SET rules='Changed',revision=revision+1 WHERE project=? AND agent=?").run(f.project,f.agent);
+      if(change==='setup')f.db.prepare('UPDATE turns SET profile_setup=1 WHERE id=?').run(f.task.taskId);
+      assert.throws(()=>command(),error=>error instanceof ProtocolError&&['execution_denied','task_not_runnable','stale_revision','context_stale','unknown_field','ownership_conflict'].includes(error.code));
+      assert.equal(f.db.prepare('SELECT no_update FROM turns WHERE id=?').get(f.task.taskId)!.no_update,0);
+      assert.equal(f.db.prepare('SELECT 1 FROM task_results WHERE action=?').get(command.request.actionId),undefined);
+      assert.notEqual(f.db.prepare('SELECT state FROM tasks WHERE id=?').get(f.task.taskId)!.state,'completed');
+    }finally{f.close();}
+  }
+});
 
 test('canonical turn wait reserves one deadline and activates only after matching home secret result', async () => {
   const f = await canonicalTaskTools(['wait_for_event']);
