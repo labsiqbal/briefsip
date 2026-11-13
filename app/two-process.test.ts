@@ -585,6 +585,81 @@ test('protected workflow wait discards delayed reveal and event replies after au
   });
 });
 
+test('canonical workflow schedule coalesces offline intervals with one durable identity across restart', async () => {
+  const f = await workflowConfigurationFixture();
+  try {
+    assert.equal((await f.send(f.list, { requestId: f.workflow, id: f.workflow, revision: 0, name: 'Scheduled', graph: f.graph })).status, 201);
+    const requestId = randomUUID(), anchorAt = Date.now() - 960000;
+    const command = { requestId, id: requestId, revision: 0, spec: { kind: 'interval', amount: 5, unit: 'minute', anchorAt }, input: 'Scheduled input', enabled: true };
+    const accepted = await f.send(f.detail + '/schedule', command);
+    assert.equal(accepted.status, 201, JSON.stringify(accepted.body));
+    assert.equal(accepted.body.data.homeDeviceId, f.home.id);
+    let current: any;
+    await until(async () => { current = (await f.send(f.detail + '/schedule')).body.data; return current.occurrences?.length === 1; });
+    const occurrence = current.occurrences[0];
+    assert.equal(occurrence.state, 'pending'); assert.equal(occurrence.dueAt, anchorAt); assert.equal(occurrence.missedCount, 3);
+    assert.match(occurrence.occurrenceId, /^[A-Za-z0-9_-]{43}$/);
+    assert.deepEqual((await f.send(f.detail + '/runs')).body.data.items, []);
+    await f.restart();
+    assert.deepEqual((await f.send(f.detail + '/schedule')).body.data.occurrences, current.occurrences);
+    const connection = f.runtime.connect(); await until(() => connection.state().phase === 'connected');
+    await until(async () => { current = (await f.send(f.detail + '/schedule')).body.data; return current.occurrences[0]?.state === 'admitted'; });
+    assert.equal(current.occurrences.length, 1); assert.equal(current.occurrences[0].occurrenceId, occurrence.occurrenceId);
+    assert(current.nextAt > Date.now()); assert.equal(current.revision, 1);
+    const runId = current.occurrences[0].runId, runPath = `/api/projects/${f.project}/workflow-runs/${runId}`;
+    await until(async () => (await f.send(runPath)).body.data.status === 'done');
+    assert.equal((await f.send(runPath)).body.data.input, command.input);
+    assert.equal((await f.send(f.detail + '/runs')).body.data.items.length, 1);
+    assert.deepEqual((await f.send(f.detail + '/schedule', command)).body.receipt, accepted.body.receipt);
+    await f.restart();
+    assert.equal((await f.send(f.detail + '/schedule')).body.data.occurrences.length, 1);
+    assert.equal((await f.send(`/api/projects/${f.other}/workflows/${f.workflow}/schedule`)).status, 404);
+  } finally { await f.close(); }
+});
+
+test('canonical workflow occurrence attaches its first recovery task atomically on the original home', async () => {
+  const f = await workflowConfigurationFixture();
+  try {
+    const graph = {entry:'model',maxSteps:2,nodes:[{id:'model',kind:'model',model:'fixture',prompt:'Scheduled task',next:'out'},{id:'out',kind:'output'}]};
+    assert.equal((await f.send(f.list,{requestId:f.workflow,id:f.workflow,revision:0,name:'Scheduled model',graph})).status,201);
+    const connection=f.runtime.connect(); await until(()=>connection.state().phase==='connected');
+    const requestId=randomUUID(),command={requestId,id:requestId,revision:0,spec:{kind:'instant',at:Date.now()},input:'Isolated input',enabled:true};
+    assert.equal((await f.send(f.detail+'/schedule',command)).status,201);
+    let current:any,run:any;
+    await until(async()=>{current=(await f.send(f.detail+'/schedule')).body.data; const runId=current.occurrences[0]?.runId; if(!runId)return false; run=(await f.send(`/api/projects/${f.project}/workflow-runs/${runId}`)).body.data;return run.status==='waiting';});
+    assert.equal(current.occurrences[0].taskId,run.steps[0].turn);
+    const task=await f.send(`/api/tasks/${current.occurrences[0].taskId}`);
+    assert.equal(task.status,200,JSON.stringify(task.body)); assert.equal(task.body.data.homeDeviceId,f.home.id);
+    await f.restart();
+    assert.equal((await f.send(f.detail+'/schedule')).body.data.occurrences[0].taskId,run.steps[0].turn);
+  }finally{await f.close();}
+});
+
+test('canonical workflow schedule rejects foreign scope and rechecks current assignment before receipt replay', async()=>{
+  const f=await workflowConfigurationFixture();
+  try{
+    assert.equal((await f.send(f.list,{requestId:f.workflow,id:f.workflow,revision:0,name:'Schedule authority',graph:f.graph})).status,201);
+    const member=(await f.send('/api/session',undefined,'user_member')).body.data.accountId,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    try{
+      db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project,member);
+      db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,member,f.agent);
+      const requestId=randomUUID(),command={requestId,id:requestId,revision:0,spec:{kind:'instant',at:Date.now()+600000},input:'Scoped',enabled:true};
+      const accepted=await f.send(f.detail+'/schedule',command,'user_member'); assert.equal(accepted.status,201,JSON.stringify(accepted.body));
+      const stale=randomUUID();assert.equal((await f.send(f.detail+'/schedule',{...command,requestId:stale,id:stale},'user_member')).status,409);
+      const extra=randomUUID();assert.equal((await f.send(f.detail+'/schedule',{...command,requestId:extra,id:extra,projectId:f.project},'user_member')).status,404);
+      assert.equal((await f.send(f.detail+'/schedule?zone=UTC')).status,404);
+      assert.equal((await f.send(`/api/projects/${f.other}/workflows/${f.workflow}/schedule`)).status,404);
+      db.prepare('UPDATE collaborator_agents SET enabled=0 WHERE project=? AND account=?').run(f.project,member);
+      assert.equal((await f.send(f.detail+'/schedule',command,'user_member')).status,404);
+      assert.equal((await f.send(f.detail+'/schedule',undefined,'user_member')).status,404);
+      db.prepare('UPDATE collaborator_agents SET enabled=1 WHERE project=? AND account=?').run(f.project,member);
+      db.prepare("UPDATE record_scopes SET visibility='owner' WHERE root_kind='workflow' AND root_id=?").run(f.workflow);
+      assert.equal((await f.send(f.detail+'/schedule',command,'user_member')).status,404);
+      assert.equal((await f.send(f.detail+'/schedule')).status,200);
+    }finally{db.close();}
+  }finally{await f.close();}
+});
+
 test('canonical workflow executes conditions and approval once across restart', async () => {
   const f = await workflowConfigurationFixture(), { workflow, project, list, detail } = f;
   try {
