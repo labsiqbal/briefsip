@@ -895,10 +895,10 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
     return () => { stopped = true; };
   }, [accountReload]);
   const [models, setModels] = useState<string[]>([]);
-  const [catalogStatus, setCatalogStatus] = useState('Loading model list...');
+  const [catalogStatus, setCatalogStatus] = useState('Loading model list. Wait for suggestions or enter a model ID.');
   useEffect(() => {
     let stopped = false;
-    setModels([]); setCatalogStatus('Loading model list...');
+    setModels([]); setCatalogStatus('Loading model list. Wait for suggestions or enter a model ID.');
     void api<{ models: string[] }>(`/api/models?account=${encodeURIComponent(account)}`).then(data => {
       if (!stopped) { setModels(data.models); setCatalogStatus(data.models.length ? `${data.models.length} models available. Select a suggestion or enter a model ID.` : 'Provider has not listed any models. Enter a model ID available in your account.'); }
     }).catch(error => { if (!stopped) setCatalogStatus(`${message(error)} Model ID can still be entered manually.`); });
@@ -960,7 +960,7 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
         <Input ref={nameInput} name="name" required={!setup} maxLength={80} readOnly={locked} defaultValue={profile?.name ?? recovery.command?.name} placeholder="For example: Research partner" />
       </Field>
       <div className="k-grid-2">
-        <Field label="Provider account" hint={accountError ? undefined : 'API keys stay on the server.'} error={accountError && <>Account list has not loaded. <button type="button" className="k-link" onClick={() => setAccountReload(value => value + 1)}>Reload</button></>}>
+        <Field label="Provider account" hint={accountError ? undefined : 'API keys stay on the server.'} error={accountError && <>{accountError} <button type="button" className="k-link" onClick={() => setAccountReload(value => value + 1)}>Reload</button></>}>
           <Select value={account} onChange={setAccount} disabled={locked} options={accountOptions} />
         </Field>
         <Field label="Model" hint={catalogStatus}>

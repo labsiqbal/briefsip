@@ -32,7 +32,7 @@ test('model discovery validates catalog and never follows credential redirects',
     mode = 'ok';
     assert.deepEqual(await discoverModels(base, 'fixture-secret'), ['a', 'z']);
     for (mode of ['redirect', 'error', 'large', 'bad-json', 'invalid', 'spaces']) {
-      await assert.rejects(discoverModels(base, 'fixture-secret'), error => error instanceof Error && error.message.startsWith('Model list is unavailable') && !error.message.includes('private'));
+      await assert.rejects(discoverModels(base, 'fixture-secret'), error => error instanceof Error && (/^(The provider|The model catalog)/.test(error.message)) && !error.message.includes('private'));
     }
     assert.equal(calls, 9);
     mode = 'empty'; assert.deepEqual(await discoverModels(base, 'fixture-secret'), []);
