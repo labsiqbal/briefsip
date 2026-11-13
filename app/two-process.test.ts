@@ -649,6 +649,7 @@ test('canonical workflow occurrence attaches its first recovery task atomically 
     const graph = {entry:'model',maxSteps:2,nodes:[{id:'model',kind:'model',model:'fixture',prompt:'Scheduled task',next:'out'},{id:'out',kind:'output'}]};
     assert.equal((await f.send(f.list,{requestId:f.workflow,id:f.workflow,revision:0,name:'Scheduled model',graph})).status,201);
     const connection=f.runtime.connect(); await until(()=>connection.state().phase==='connected');
+    const syncPath='/api/sync?projectId='+f.project,before=(await f.send(syncPath)).body.data;
     const requestId=randomUUID(),command={requestId,id:requestId,revision:0,spec:{kind:'instant',at:Date.now()},input:'Isolated input',enabled:true};
     assert.equal((await f.send(f.detail+'/schedule',command)).status,201);
     let current:any,run:any;
@@ -656,9 +657,66 @@ test('canonical workflow occurrence attaches its first recovery task atomically 
     assert.equal(current.occurrences[0].taskId,run.steps[0].turn);
     const task=await f.send(`/api/tasks/${current.occurrences[0].taskId}`);
     assert.equal(task.status,200,JSON.stringify(task.body)); assert.equal(task.body.data.homeDeviceId,f.home.id);
+    const events=(await f.send(syncPath+'&cursor='+encodeURIComponent(before.nextCursor))).body.data.page.events.filter((event:any)=>event.recordKind==='workflow_schedule_occurrence');
+    assert(events.length>=2);assert.equal(events.at(-1).body.taskId,run.steps[0].turn);assert.equal(events.at(-1).body.state,'admitted');
+    assert(events.at(-1).revision>events[0].revision);assert(!JSON.stringify(events).includes(command.input));
     await f.restart();
     assert.equal((await f.send(f.detail+'/schedule')).body.data.occurrences[0].taskId,run.steps[0].turn);
   }finally{await f.close();}
+});
+
+test('workflow schedule sync retains scoped metadata and exact deltas across restart without replaying commands',async()=>{
+  const f=await workflowConfigurationFixture();
+  try{
+    assert.equal((await f.send(f.list,{requestId:f.workflow,id:f.workflow,revision:0,name:'Schedule observations',graph:f.graph})).status,201);
+    const syncPath='/api/sync?projectId='+f.project,before=(await f.send(syncPath)).body.data;
+    const requestId=randomUUID(),command={requestId,id:requestId,revision:0,spec:{kind:'interval',amount:5,unit:'minute',anchorAt:Date.now()-960000},input:'PRIVATE_SCHEDULE_INPUT_CANARY',enabled:true};
+    const accepted=await f.send(f.detail+'/schedule',command);assert.equal(accepted.status,201,JSON.stringify(accepted.body));
+    let current:any;await until(async()=>{current=(await f.send(f.detail+'/schedule')).body.data;return current.occurrences.length===1;});
+    const changed=(await f.send(syncPath+'&cursor='+encodeURIComponent(before.nextCursor))).body.data;
+    const events=changed.page.events.filter((event:any)=>event.recordKind.startsWith('workflow_schedule'));
+    assert.deepEqual(events.map((event:any)=>[event.recordKind,event.revision]),[['workflow_schedule',1],['workflow_schedule_occurrence',1]]);
+    assert.equal(events[0].body.detailRef,f.detail+'/schedule');assert.equal(events[0].body.scheduleRevision,1);assert.equal(events[1].body.missedCount,3);
+    assert.equal(events[1].recordId,JSON.stringify([f.workflow,current.occurrences[0].occurrenceId]));
+    assert(!JSON.stringify(changed).includes(command.input));assert(!('spec' in events[0].body));
+    await f.restart();
+    assert.deepEqual((await f.send(f.detail+'/schedule',command)).body.receipt,accepted.body.receipt);
+    const retry=(await f.send(syncPath+'&cursor='+encodeURIComponent(before.nextCursor))).body.data;assert.deepEqual(retry.page.events,changed.page.events);
+    assert.deepEqual((await f.send(syncPath+'&cursor='+encodeURIComponent(changed.nextCursor))).body.data.page.events,[]);
+    const snapshot=(await f.send(syncPath)).body.data;
+    for(const event of events)assert.deepEqual(snapshot.page.events.find((item:any)=>item.recordKind===event.recordKind).body,event.body);
+  }finally{await f.close();}
+});
+
+test('workflow schedule sync rechecks current assignment private versions and root visibility for every human',async()=>{
+  const f=await workflowConfigurationFixture(),db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  try{
+    assert.equal((await f.send(f.list,{requestId:f.workflow,id:f.workflow,revision:0,name:'Private schedules',graph:f.graph})).status,201);
+    const requestId=randomUUID(),command={requestId,id:requestId,revision:0,spec:{kind:'instant',at:Date.now()-1000},input:'PRIVATE_SCOPE_CANARY',enabled:true};
+    assert.equal((await f.send(f.detail+'/schedule',command)).status,201);
+    await until(async()=>(await f.send(f.detail+'/schedule')).body.data.occurrences.length===1);
+    const account=(await f.send('/api/session',undefined,'user_collaborator')).body.data.accountId,syncPath='/api/sync?projectId='+f.project;
+    db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project,account);
+    const read=async(subject='user_collaborator')=>(await f.send(syncPath,undefined,subject)).body.data;
+    const scheduleEvents=(data:any)=>data.page.events.filter((event:any)=>event.recordKind.startsWith('workflow_schedule'));
+    assert.deepEqual(scheduleEvents(await read()),[]);
+    db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,account,f.agent);
+    db.prepare('INSERT INTO response_policies VALUES (?,?,?,0,1)').run(f.project,account,f.agent);
+    assert.equal(scheduleEvents(await read()).length,2,'Response OFF preserves schedule visibility');
+    assert.deepEqual(scheduleEvents((await f.send('/api/sync?projectId='+f.other)).body.data),[]);
+    for(const [table,key] of [['workflows',[f.workflow]],['workflow_versions',[f.workflow,1]]] as const){
+      const before=await read();db.prepare("UPDATE record_scopes SET visibility='owner' WHERE table_name=? AND key_json=?").run(table,canonicalJson(key));
+      assert.equal((await f.send(syncPath+'&cursor='+encodeURIComponent(before.nextCursor),undefined,'user_collaborator')).status,410);
+      assert.deepEqual(scheduleEvents(await read()),[]);assert.equal((await f.send(f.detail+'/schedule',undefined,'user_collaborator')).status,404);
+      db.prepare("UPDATE record_scopes SET visibility='project' WHERE table_name=? AND key_json=?").run(table,canonicalJson(key));
+    }
+    db.prepare("UPDATE record_scopes SET visibility='owner',account=? WHERE table_name='workflows' AND key_json=?").run(account,canonicalJson([f.workflow]));
+    assert.deepEqual(scheduleEvents(await read('user_owner')),[]);assert.equal(scheduleEvents(await read()).length,2);
+    db.prepare("UPDATE record_scopes SET visibility='project' WHERE table_name='workflows' AND key_json=?").run(canonicalJson([f.workflow]));
+    const granted=await read();db.prepare('UPDATE collaborator_agents SET enabled=0,revision=2 WHERE project=? AND account=? AND agent=?').run(f.project,account,f.agent);
+    assert.equal((await f.send(syncPath+'&cursor='+encodeURIComponent(granted.nextCursor),undefined,'user_collaborator')).status,410);
+    assert.deepEqual(scheduleEvents(await read()),[]);assert.equal((await f.send(syncPath,undefined,'user_stranger')).status,403);
+  }finally{db.close();await f.close();}
 });
 
 test('canonical workflow schedule rejects foreign scope and rechecks current assignment before receipt replay', async()=>{
