@@ -21,22 +21,25 @@ test('presentation settings validate persisted values and fail safely without ov
 });
 
 test('both appearance palettes keep text and control contrast', () => {
-  const css = readFileSync(new URL('./src/style.css', import.meta.url), 'utf8');
-  const luminance = (color: string) => {
-    const rgb = color.slice(1).match(/../g)!.map(value => parseInt(value, 16) / 255).map(value => value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4);
-    return rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722;
-  };
-  for (const selector of [':root', ':root[data-theme="light"]']) {
+  const css = readFileSync(new URL('./src/ui/tokens.css', import.meta.url), 'utf8');
+  const tokens = (selector: string) => {
     const block = css.slice(css.indexOf(selector));
-    const palette = Object.fromEntries([...block.slice(0, block.indexOf('}')).matchAll(/--([a-z-]+): (#[a-f0-9]{6});/g)].map(match => [match[1], match[2]]));
-    const pairs = [['text', 'background'], ['text', 'surface'], ['text', 'sidebar'], ['text', 'secondary'], ['text', 'secondary-hover'], ['text', 'selected'], ['row-muted', 'selected'], ['row-muted', 'sidebar'], ['muted', 'background'], ['muted', 'surface'], ['muted', 'sidebar'], ['button-text', 'accent'], ['button-text', 'accent-hover'], ['accent', 'background'], ['accent', 'surface'], ['avatar-text', 'avatar'], ['error', 'surface'], ['error', 'sidebar'], ['notice', 'background'], ['answer-title', 'surface']];
-    for (const [foreground, background] of pairs) {
-      const a = luminance(palette[foreground]), b = luminance(palette[background]);
-      assert((Math.max(a, b) + .05) / (Math.min(a, b) + .05) >= 4.5, `${selector}: ${foreground} on ${background}`);
-    }
-    for (const [foreground, background] of [['focus', 'background'], ['input-line', 'surface'], ['online', 'sidebar'], ['offline', 'sidebar']]) {
-      const a = luminance(palette[foreground]), b = luminance(palette[background]);
-      assert((Math.max(a, b) + .05) / (Math.min(a, b) + .05) >= 3, `${selector}: ${foreground} on ${background}`);
-    }
+    return Object.fromEntries([...block.slice(0, block.indexOf('}')).matchAll(/--([a-z0-9-]+):\s*(#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?);/g)].map(match => [match[1], match[2]]));
+  };
+  const light = tokens(':root {'), dark = { ...light, ...tokens(":root[data-theme='dark'] {") };
+  const rgba = (color: string) => { const [r, g, b, a = 255] = color.slice(1).match(/../g)!.map(value => parseInt(value, 16)); return [r, g, b, a / 255]; };
+  const over = (color: string, base: number[]) => { const [r, g, b, a] = rgba(color); return [r * a + base[0] * (1 - a), g * a + base[1] * (1 - a), b * a + base[2] * (1 - a)]; };
+  const luminance = (rgb: number[]) => rgb.map(value => value / 255).map(value => value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4).reduce((sum, value, index) => sum + value * [.2126, .7152, .0722][index], 0);
+  const ratio = (foreground: string, background: string) => {
+    const base = over(background, [255, 255, 255]), a = luminance(over(foreground, base)), b = luminance(base);
+    return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+  };
+  const surfaces = ['color-bg-chrome', 'color-bg-pane', 'color-bg-sidebar', 'color-bg-elevated'];
+  for (const [name, palette] of [['light', light], ['dark', dark]] as const) {
+    for (const text of ['color-text-primary', 'color-text-secondary', 'color-text-tertiary', 'color-danger-text', 'color-warn-text', 'color-success-text', 'color-brand-text'])
+      for (const surface of surfaces) assert(ratio(palette[text], palette[surface]) >= 4.5, `${name}: ${text} on ${surface}`);
+    assert(ratio(palette['color-on-primary'], palette['color-primary']) >= 4.5, `${name}: on-primary on primary`);
+    assert(ratio('#FFFFFF', palette['bot-bubble'] ?? palette['color-brand']) >= 4.5, `${name}: user bubble text`);
+    for (const surface of surfaces) assert(ratio(palette['color-border-focus'], palette[surface]) >= 3, `${name}: focus ring on ${surface}`);
   }
 });

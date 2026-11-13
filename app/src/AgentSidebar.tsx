@@ -11,9 +11,11 @@ function recover(): Command | null {
     || !Number.isSafeInteger(value.revision) || value.revision < 0) throw new Error('Permintaan sidebar tersimpan tidak valid.');
   return { id: value.id, revision: value.revision, sections: parseSections(value.sections) };
 }
-export function AgentSidebar({ agents, renderAgent, request }: {
+export function AgentSidebar({ agents, renderAgent, request, mode = 'full' }: {
   agents: { id: string; name: string; hidden?: boolean }[]; renderAgent: (id: string) => ReactNode;
   request: <T>(path: string, body?: unknown) => Promise<T>;
+  /** `list` renders only the agent sections; `editor` renders only the section editor. */
+  mode?: 'full' | 'list' | 'editor';
 }) {
   const [saved, setSaved] = useState<Sidebar | null>(null), [draft, setDraft] = useState<SidebarSection[]>([]);
   const [pending, setPending] = useState<Command | null>(null), [invalid, setInvalid] = useState(false), [editing, setEditing] = useState(false);
@@ -31,6 +33,7 @@ export function AgentSidebar({ agents, renderAgent, request }: {
     catch { setInvalid(true); setEditing(true); setError('Permintaan tersimpan tidak dapat dibaca. Muat ulang pengaturan untuk melanjutkan.'); }
     void load(); return () => { generation.current++; };
   }, [request]);
+  useEffect(() => { if (mode === 'editor') setEditing(true); }, [mode]);
   useEffect(() => { if (editing) heading.current?.focus(); }, [editing]);
   async function save() {
     if (flight.current || busy || invalid || !saved) return;
@@ -62,11 +65,11 @@ export function AgentSidebar({ agents, renderAgent, request }: {
     const next = [...draft]; [next[index], next[index + offset]] = [next[index + offset], next[index]]; setDraft(next);
   }
   return <nav aria-label="Pilih agent" className="agent-sidebar">
-    <button ref={editButton} className="secondary" aria-expanded={editing} onClick={() => setEditing(!editing)}>Atur bagian agent</button>
+    {mode === 'full' && <button ref={editButton} className="secondary" aria-expanded={editing} onClick={() => setEditing(!editing)}>Atur bagian agent</button>}
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p role="status">{notice}</p>}
     {!saved && <button className="secondary" disabled={busy} onClick={() => void load()}>{busy ? 'Memuat bagian...' : 'Muat ulang bagian'}</button>}
-    {editing && <section className="sidebar-editor" aria-labelledby="sidebar-editor-title"><h2 id="sidebar-editor-title" ref={heading} tabIndex={-1}>Bagian agent</h2><p>Bagian hanya mengatur daftar. Menghapus bagian tidak menghapus agent atau riwayat.</p>
+    {editing && mode !== 'list' && <section className="sidebar-editor" aria-labelledby="sidebar-editor-title"><h2 id="sidebar-editor-title" ref={heading} tabIndex={-1}>Bagian agent</h2><p>Bagian hanya mengatur daftar. Menghapus bagian tidak menghapus agent atau riwayat.</p>
       {(pending || invalid) && <p role="status">Perubahan belum terkonfirmasi. Coba simpan lagi atau muat pengaturan terbaru.</p>}
       <form onSubmit={event => { event.preventDefault(); void save(); }}><fieldset disabled={busy || !!pending || invalid || !saved}><legend>Susunan bagian</legend>
         {displayed.map((section, index) => <div key={section.id} className="sidebar-section-editor"><label>Nama bagian<input required maxLength={80} value={section.name} onChange={event => patch(section.id, { name: event.target.value })} /></label>
@@ -76,8 +79,8 @@ export function AgentSidebar({ agents, renderAgent, request }: {
         {agents.map(agent => <label key={agent.id}>{agent.name}<select value={displayed.find(section => section.agents.includes(agent.id))?.id ?? ''} onChange={event => setDraft(draft.map(section => ({ ...section, agents: [...section.agents.filter(id => id !== agent.id), ...(section.id === event.target.value ? [agent.id] : [])] })))}><option value="">Tanpa bagian</option>{displayed.map(section => <option key={section.id} value={section.id}>{section.name}</option>)}</select></label>)}
       </fieldset><div className="form-actions"><button disabled={busy || invalid || !saved}>{busy ? 'Menyimpan...' : pending ? 'Coba simpan lagi' : 'Simpan bagian'}</button><button type="button" className="secondary" disabled={busy} onClick={() => void reload()}>Muat ulang pengaturan</button></div></form>
     </section>}
-    {saved?.sections.map(section => <details key={section.id} open><summary>{section.name}</summary>{section.agents.filter(id => shown.has(id)).map(id => renderAgent(id))}{!section.agents.some(id => shown.has(id)) && <p className="muted">Belum ada agent.</p>}</details>)}
+    {mode !== 'editor' && <>{saved?.sections.map(section => <details key={section.id} open><summary>{section.name}</summary>{section.agents.filter(id => shown.has(id)).map(id => renderAgent(id))}{!section.agents.some(id => shown.has(id)) && <p className="muted">Belum ada agent.</p>}</details>)}
     {!!saved?.sections.length && <h3>Tanpa bagian</h3>}{agents.filter(agent => !agent.hidden && !assigned.has(agent.id)).map(agent => renderAgent(agent.id))}
-    {agents.some(agent => agent.hidden) && <details><summary>Agents disembunyikan</summary>{agents.filter(agent => agent.hidden).map(agent => renderAgent(agent.id))}</details>}
+    {agents.some(agent => agent.hidden) && <details><summary>Agents disembunyikan</summary>{agents.filter(agent => agent.hidden).map(agent => renderAgent(agent.id))}</details>}</>}
   </nav>;
 }

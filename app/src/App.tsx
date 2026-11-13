@@ -18,14 +18,25 @@ import { MemoryPanel } from './MemoryPanel';
 import { BackupPanel } from './BackupPanel';
 import { AgentTemplateImport, AgentTemplateExport } from './AgentTemplateImport';
 import { UsagePanel } from './UsagePanel';
-import { lazy, Suspense, useEffect, useRef, useState, useId, type FormEvent } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, useId, type FormEvent, type ReactNode } from 'react';
+import { ArrowUp, Brain, ChevronDown, Clock, FolderOpen, Hash, MessageSquare, PanelLeft, PanelRight, Paperclip, Plus, Route, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
+import { Menu, type MenuItem } from './ui/Menu';
+import { Modal } from './ui/Modal';
+import { PageView, useDetailsOpen } from './ui/layout';
 import { WorkflowPanel } from './WorkflowPanel';
 import { WorkflowDirectory } from './WorkflowDirectory';
 import { createRoot } from 'react-dom/client';
-import '@fontsource/ibm-plex-sans/latin-400.css';
+import { createPortal } from 'react-dom';
 import { validateFlow, type FlowGraph, type FlowLink } from '../flows.ts';
-import '@fontsource/ibm-plex-sans/latin-600.css';
-import './style.css';
+import './ui/tokens.css';
+import './ui/base.css';
+import './ui/shell.css';
+import './ui/chat.css';
+import './ui/details.css';
+import './ui/modals.css';
+import './ui/config.css';
+import './ui/legacy.css';
+import './ui/briefsip.css';
 
 const panelLoadFailure = () => ({ default: () => <section className="empty"><h1>Panel belum dapat dimuat</h1><p role="alert">Periksa koneksi, lalu muat ulang aplikasi.</p><button onClick={() => window.location.reload()}>Muat ulang aplikasi</button></section> });
 const SitesPanel = lazy(() => import('./SitesPanel').then(module => ({ default: module.SitesPanel })).catch(panelLoadFailure));
@@ -169,7 +180,7 @@ function TaskControls({ turn, path, members, archived }: { turn: Turn; path: str
   </div>;
 }
 
-function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit, onOpenAgent, onOpenChannel }: { onOpenChannel?: (channel: string) => void; onOpenAgent?: (agent: string, thread: string) => void; onRead?: () => Promise<void>; onEdit?: () => void; agent: Agent | Channel; configured: boolean; channel?: Channel; thread?: Thread; members?: Agent[] }) {
+function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit, onOpenAgent, onOpenChannel, menuItems = [], detailsExtra }: { menuItems?: MenuItem[]; detailsExtra?: ReactNode; onOpenChannel?: (channel: string) => void; onOpenAgent?: (agent: string, thread: string) => void; onRead?: () => Promise<void>; onEdit?: () => void; agent: Agent | Channel; configured: boolean; channel?: Channel; thread?: Thread; members?: Agent[] }) {
   const archived = !!(channel?.archived || thread?.archived || (!channel && (agent as Agent).hidden));
   const scope = thread ? `thread:${thread.id}` : channel ? `channel:${agent.id}` : agent.id;
   const path = thread ? `/api/threads/${thread.id}/turns` : `/api/${channel ? 'channels' : 'agents'}/${agent.id}/turns`;
@@ -272,62 +283,155 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     try { await api(`${path}/${turn.id}/cancel`, { id: crypto.randomUUID() }); setError(''); }
     catch (error) { setError(message(error)); }
   }
-  if (showMemory) return <MemoryPanel key={scope} path={`/api/${channel ? 'channels' : 'agents'}/${agent.id}/memory`} channel={!!channel} archived={!!channel?.archived} request={api} onClose={() => { setShowMemory(false); requestAnimationFrame(() => memoryButton.current?.focus()); }} />;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useDetailsOpen();
+  const filesSection = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const element = composer.current;
+    if (!element) return;
+    element.style.height = '0px';
+    element.style.height = `${Math.min(element.scrollHeight, 200)}px`;
+    element.style.overflowY = element.scrollHeight > 200 ? 'auto' : 'hidden';
+  }, [draft, pending, showMemory]);
+  if (showMemory) return <PageView><MemoryPanel key={scope} path={`/api/${channel ? 'channels' : 'agents'}/${agent.id}/memory`} channel={!!channel} archived={!!channel?.archived} request={api} onClose={() => { setShowMemory(false); requestAnimationFrame(() => memoryButton.current?.focus()); }} /></PageView>;
   const active = turns?.filter(turn => turn.status === 'queued' || turn.status === 'running').length ?? 0;
-  return <>
-    <header className="chat-header"><AgentAvatar agent={agent} /><div><h1>{thread?.name ?? agent.name}</h1><p>{channel ? `${members.length} anggota` : thread ? `Percakapan samping · ${agent.name}` : (agent as Agent).model}</p></div><span className="activity" role="status">{active ? `${active} pesan diproses` : channel ? 'Channel bersama' : 'Percakapan langsung'}</span>{onEdit && <button className="secondary" onClick={onEdit}>{channel ? 'Pengaturan channel' : thread ? 'Pengaturan percakapan' : 'Edit profil'}</button>}</header>
-    {channel && <div className="recipient"><label htmlFor="recipient">Respons oleh</label><select id="recipient" value={pending?.automatic ? '@automatic' : pending?.recipient ?? recipient} disabled={!!pending || busy} onChange={event => { setRecipient(event.target.value); try { sessionStorage.setItem(recipientKey, event.target.value); } catch { setError('Pilihan penerima tidak tersimpan. Periksa kembali sebelum mengirim.'); } }}><option value="">Pilih agent</option>{channel.lead && <option value="@automatic">Otomatis melalui lead</option>}{members.map(member => <option key={member.id} value={member.id}>{member.name}{member.id === channel.lead ? ' (lead)' : ''}</option>)}</select></div>}
-    {channel && <div className="recipient"><span>{channel.activity > channel.read_position ? 'Ada aktivitas belum dibaca' : 'Semua aktivitas sudah dibaca'}</span><button className="secondary" disabled={markingRead || channel.activity <= channel.read_position} onClick={() => { setMarkingRead(true); void onRead?.().catch(error => setError(message(error))).finally(() => setMarkingRead(false)); }}>Tandai semua dibaca</button></div>}
-    <div className="recipient"><button ref={memoryButton} className="secondary" onClick={() => setShowMemory(true)}>Memori {channel ? 'channel' : 'agent'}</button></div>
-    <CompactionPanel path={path.replace(/\/turns$/, '/compaction')} request={api} />
-    <ConversationFiles path={path.replace(/\/turns$/, '/files')} archived={archived} attached={pending?.files ?? attached} onAttach={attach} locked={blocked || !!pending || busy} />
-    <form className="recipient history-search" role="search" onSubmit={event => { event.preventDefault(); if (!searchText.trim()) return; focusHistory.current = true; nearBottom.current = false; setQuery(searchText); setFocusedTask(''); setHistoryPages([]); focusedOnce.current = ''; }}>
-      <label htmlFor="history-search">Cari di percakapan ini</label>
-      <input id="history-search" type="search" maxLength={200} value={searchText} onChange={event => setSearchText(event.target.value)} aria-describedby="history-search-help" />
-      <button type="submit" disabled={!searchText.trim()}>Cari</button>
-      <span id="history-search-help">Pesan dan balasan. Huruf besar dan kecil dibedakan.</span>
-    </form>
-    {(focusedTask || before || query) && <div className="recipient history-state"><span>{focusedTask ? channel ? 'Keluarga tugas' : 'Pesan terpilih' : query ? `Hasil pencarian: ${query}` : 'Riwayat lama'}</span><button className="secondary" onClick={() => { focusHistory.current = true; setTurns(null); setFocusedTask(''); setHistoryPages([]); setQuery(''); focusedOnce.current = ''; nearBottom.current = true; }}>Kembali ke pesan terbaru</button></div>}
-    <section className="transcript" aria-label="Riwayat percakapan" onScroll={event => { const el = event.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }}>
-      {!focusedTask && <div ref={historyTop} tabIndex={-1} className="history-navigation" aria-label="Navigasi riwayat">
-        <button className="secondary" disabled={!turns || turns.length < 100} onClick={() => { if (turns?.length) { focusHistory.current = true; setTurns(null); setHistoryPages([...historyPages, turns[0].seq]); } }}>Pesan lebih lama</button>
-        {!!before && <button className="secondary" onClick={() => { focusHistory.current = true; setTurns(null); setHistoryPages(historyPages.slice(0, -1)); nearBottom.current = true; }}>Pesan lebih baru</button>}
-      </div>}
-      {readError && <p role="alert" className="error">{readError} Riwayat akan dicoba lagi.</p>}
-      {turns === null ? <p className="empty">Memuat percakapan...</p> : turns.length === 0 && query ? <p className="empty" role="status">Tidak ada hasil di halaman ini. Ubah kata pencarian atau kembali ke halaman sebelumnya.</p> : turns.length === 0 && before ? <p className="empty" role="status">Awal riwayat tercapai. Pilih Pesan lebih baru untuk kembali.</p> : turns.length === 0 ? <div className="empty"><h2>Mulai bersama {agent.name}</h2><p>Kirim pekerjaan atau pertanyaan pertama. Percakapan tersimpan di komputer ini.</p></div> : turns.map(turn => <article key={turn.id} id={`turn-${turn.id}`} tabIndex={-1} className="turn">
-        {query && <button className="secondary" onClick={() => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(turn.id); }}>Buka pesan ini</button>}
-        <div className="message-head"><strong>{turn.workflow_run ? 'Workflow' : turn.parent ? 'Subtugas' : 'Kamu'}</strong>{turn.parent && !turn.messageOrigin && <a href={`#turn-${turn.parent}`} onClick={event => { event.preventDefault(); focusedOnce.current = ''; setQuery(''); setFocusedTask(turn.parent!); }}>Lihat tugas induk</a>}{turn.messageOrigin && <button className="secondary" onClick={() => turn.messageOrigin!.channel ? onOpenChannel?.(turn.messageOrigin!.channel) : onOpenAgent?.(turn.messageOrigin!.agent, turn.messageOrigin!.thread ?? '')}>Buka percakapan peminta</button>}<time dateTime={turn.created}>{new Date(turn.created).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time></div>
-        <p className="message-text">{turn.text}</p>{!!turn.files?.length && <ul aria-label="Lampiran pesan">{turn.files.map(file => <li key={file.id}><a href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}>{file.name}</a></li>)}</ul>}
-        <div className="answer"><div className="message-head"><strong>{turn.agent_name ?? agent.name}</strong><span>{turn.editing ? 'Sedang diedit' : turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) ? 'Menunggu jawabanmu' : turn.no_update ? 'Tidak ada pembaruan' : turn.paused && !['done','cancelled'].includes(turn.status) ? 'Dijeda' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) && turn.status === 'queued' ? 'Menunggu balasan agent' : turn.waiting_for && turn.status === 'queued' ? 'Menunggu delegasi' : turn.routing === 'pending' && turn.status === 'running' ? 'Memilih penerima' : turn.routing === 'clarify' ? 'Perlu klarifikasi' : turn.routing === 'none' ? 'Tidak perlu tugas' : statusNames[turn.status] ?? turn.status}</span></div>
-          {turn.reply ? <Markdown text={turn.reply} scope={path.slice(0, -6)} origin={window.location.origin} /> : <p className={turn.error ? 'error' : 'muted'}>{turn.error ?? (turn.questions?.some(question => question.answer === null) ? 'Jawab pertanyaan untuk melanjutkan tugas.' : turn.workflow_run ? 'Workflow selesai tanpa teks hasil.' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) ? 'Hasil akan digabung setelah semua penerima selesai. Pesan baru membawa hasil yang sudah tersedia.' : turn.events?.some(event => event.status === 'waiting') ? 'Menunggu event bertanda tangan.' : turn.waiting_for ? 'Menunggu hasil tugas anak.' : turn.status === 'queued' ? 'Menunggu giliran.' : 'Menunggu jawaban provider...')}</p>}
-          {!turn.reply && turn.partial?.text && <div><p className="muted message-text">{turn.partial.status === 'pending' ? 'Teks sementara' : 'Teks dari percobaan sebelumnya'} dari {turn.partial.model}. Belum menjadi hasil akhir.</p><p className="message-text">{turn.partial.text}</p></div>}
-          {turn.answer_model && <p className="muted message-text">Model: {turn.answer_model}</p>}
-          {turn.events?.map(event => <section key={event.id}><p>Event {event.event}: {event.status === 'waiting' ? 'Menunggu' : event.status === 'received' ? 'Diterima' : event.status === 'expired' ? 'Waktu habis' : 'Ditutup'} · {new Date(event.deadline).toLocaleString('id-ID')}</p>{event.status === 'waiting' && !archived && <EventConnection path={`/api/turn-waits/${event.id}`} request={api} />}</section>)}
-          {turn.questions?.map(question => <QuestionCard key={question.id} question={question} path={`${path}/${turn.id}`} status={turn.status} archived={archived} request={api} />)}
-          {!!turn.generatedFiles?.length && <ul aria-label="File hasil agent">{turn.generatedFiles.map(file => <li key={file.id}><a href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}>{file.name}</a> <span className="muted">{file.size} byte</span><HtmlPreview path={`${path.replace(/\/turns$/, '/files')}/${file.id}`} name={file.name} request={api} /></li>)}</ul>}
-          {!!turn.receivedAgentReplies?.length && <details><summary>Hasil agent yang diterima bersama pesan ini ({turn.receivedAgentReplies.length})</summary>{turn.receivedAgentReplies.map(item => <div key={item.id}><p className="message-text"><strong>{item.name}</strong>: {statusNames[item.status] ?? item.status}</p>{item.error && <p className="error">{item.error}</p>}{item.reply && <p className="message-text">{item.reply}</p>}{item.truncated && <p className="muted">Cuplikan hasil. Buka percakapan untuk teks lengkap.</p>}{onOpenAgent && <button className="secondary" onClick={() => onOpenAgent(item.agent, item.thread)}>Buka percakapan {item.name}</button>}</div>)}</details>}
-          {!!turn.agentMessages?.length && <details><summary>Pesan antar-agent ({turn.agentMessages.length})</summary>{turn.agentMessages.map(item => <div key={item.id}><p className="message-text"><strong>{item.name}</strong>: {item.paused && !['done','cancelled'].includes(item.status) ? 'Dijeda' : statusNames[item.status] ?? item.status}{!item.expects_reply && ' (tanpa balasan)'}</p>{item.error && <p className="error">{item.error}</p>}{item.reply && <p className="message-text">{item.reply.slice(0, 1000)}</p>}{(item.truncated || (item.reply?.length ?? 0) > 1000) && <p className="muted">Cuplikan hasil. Buka percakapan untuk teks lengkap.</p>}{onOpenAgent && <button className="secondary" onClick={() => onOpenAgent(item.agent, item.thread)}>Buka percakapan {item.name}</button>}</div>)}</details>}
-          {!!turn.coordination?.length && <details><summary>Koordinasi tugas ({turn.coordination.length})</summary>{turn.coordination.map((action, index) => <div key={index}><p>{action.owner_name} {action.kind === 'delegate_task' ? 'mendelegasikan ke' : 'mengalihkan tugas ke'} {action.target_name}.</p><p className="message-text">{action.prompt}</p>{action.child && <a href={`#turn-${action.child}`} onClick={event => { event.preventDefault(); focusedOnce.current = ''; setQuery(''); setFocusedTask(action.child!); }}>Lihat subtugas</a>}</div>)}</details>}
-          <QueueEditor turn={{ ...turn, files: turn.files ?? [] }} path={path} archived={archived} request={api} />
-          <TaskControls key={`${turn.id}:${turn.revision}`} turn={turn} path={path} members={channel ? members : []} archived={archived || !!turn.editing} />
-          {(!['done','cancelled'].includes(turn.status)) && <button className="secondary" onClick={() => void cancel(turn)}>{turn.waiting_for ? 'Batalkan tugas dan delegasi' : turn.status === 'running' ? 'Hentikan' : turn.status === 'queued' && !turn.paused ? 'Batalkan antrean' : 'Batalkan tugas'}</button>}
+  const title = thread?.name ?? agent.name;
+  const subtitle = channel ? `${members.length} anggota${channel.archived ? ' · Diarsipkan' : ''}` : thread ? `Percakapan samping · ${agent.name}` : (agent as Agent).model;
+  const editLabel = channel ? 'Pengaturan channel' : thread ? 'Pengaturan percakapan' : 'Edit profil';
+  const openFiles = () => { setDetailsOpen(true); requestAnimationFrame(() => { const details = filesSection.current?.querySelector('details'); if (details) details.open = true; filesSection.current?.querySelector<HTMLElement>('summary')?.focus(); }); };
+  const items: MenuItem[] = [
+    ...menuItems,
+    ...(onEdit ? [{ label: editLabel, onSelect: onEdit }] : []),
+    { label: `Memori ${channel ? 'channel' : 'agent'}`, onSelect: () => setShowMemory(true) },
+    { label: detailsOpen ? 'Sembunyikan detail' : 'Tampilkan detail', onSelect: () => setDetailsOpen(!detailsOpen) },
+  ];
+  const statusLabel = (turn: Turn) => turn.editing ? 'Sedang diedit' : turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) ? 'Menunggu jawabanmu' : turn.no_update ? 'Tidak ada pembaruan' : turn.paused && !['done','cancelled'].includes(turn.status) ? 'Dijeda' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) && turn.status === 'queued' ? 'Menunggu balasan agent' : turn.waiting_for && turn.status === 'queued' ? 'Menunggu delegasi' : turn.routing === 'pending' && turn.status === 'running' ? 'Memilih penerima' : turn.routing === 'clarify' ? 'Perlu klarifikasi' : turn.routing === 'none' ? 'Tidak perlu tugas' : statusNames[turn.status] ?? turn.status;
+  const tone = (turn: Turn) => turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) || turn.paused && !['done','cancelled'].includes(turn.status) ? 'attention' : ['failed','interrupted'].includes(turn.status) ? 'error' : ['queued','running'].includes(turn.status) ? 'working' : 'done';
+  const time = (value: string) => new Date(value).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+  const openFocused = (id: string) => { focusedOnce.current = ''; setQuery(''); setFocusedTask(id); };
+  return <div className="chat-row bs-root">
+    <main className="chat" aria-label={`Percakapan ${title}`}>
+      <div className="transcript-wrap">
+        <section className="transcript" aria-label="Riwayat percakapan" onScroll={event => { const el = event.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }}>
+          <div className="transcript__col">
+            {(focusedTask || before || query) && <div className="history-banner" role="status"><span>{focusedTask ? channel ? 'Keluarga tugas' : 'Pesan terpilih' : query ? `Hasil pencarian: ${query}` : 'Riwayat lama'}</span><button type="button" className="link-btn" onClick={() => { focusHistory.current = true; setTurns(null); setFocusedTask(''); setHistoryPages([]); setQuery(''); focusedOnce.current = ''; nearBottom.current = true; }}>Kembali ke pesan terbaru</button></div>}
+            {!focusedTask && <div ref={historyTop} tabIndex={-1} className="history-navigation" aria-label="Navigasi riwayat">
+              {!!turns && turns.length >= 100 && <button type="button" className="link-btn" onClick={() => { if (turns?.length) { focusHistory.current = true; setTurns(null); setHistoryPages([...historyPages, turns[0].seq]); } }}>Pesan lebih lama</button>}
+              {!!before && <button type="button" className="link-btn" onClick={() => { focusHistory.current = true; setTurns(null); setHistoryPages(historyPages.slice(0, -1)); nearBottom.current = true; }}>Pesan lebih baru</button>}
+            </div>}
+            {readError && <p role="alert" className="chat-notice is-error">{readError} Riwayat akan dicoba lagi.</p>}
+            {turns === null ? <p className="empty-chat__sub" role="status">Memuat percakapan...</p>
+              : turns.length === 0 && query ? <p className="empty-chat__sub" role="status">Tidak ada hasil di halaman ini. Ubah kata pencarian atau kembali ke halaman sebelumnya.</p>
+              : turns.length === 0 && before ? <p className="empty-chat__sub" role="status">Awal riwayat tercapai. Pilih Pesan lebih baru untuk kembali.</p>
+              : turns.length === 0 ? <div className="empty-chat"><AgentAvatar agent={agent} size={64} /><div className="empty-chat__title">Mulai bersama {agent.name}</div><div className="empty-chat__sub">Kirim pekerjaan atau pertanyaan pertama. Percakapan tersimpan di komputer ini.</div></div>
+              : turns.map(turn => <article key={turn.id} id={`turn-${turn.id}`} tabIndex={-1} className="turn-block">
+                {query && <button type="button" className="link-btn" onClick={() => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(turn.id); }}>Buka pesan ini</button>}
+                <div className="group is-right">
+                  <div className="sender-label">
+                    <span>{turn.workflow_run ? 'Workflow' : turn.parent ? 'Subtugas' : 'Kamu'}</span>
+                    {turn.parent && !turn.messageOrigin && <a className="link-btn link-btn--small" href={`#turn-${turn.parent}`} onClick={event => { event.preventDefault(); openFocused(turn.parent!); }}>Lihat tugas induk</a>}
+                    {turn.messageOrigin && <button type="button" className="link-btn link-btn--small" onClick={() => turn.messageOrigin!.channel ? onOpenChannel?.(turn.messageOrigin!.channel) : onOpenAgent?.(turn.messageOrigin!.agent, turn.messageOrigin!.thread ?? '')}>Buka percakapan peminta</button>}
+                  </div>
+                  <div className="bubble-wrap is-right"><time className="bubble__time" dateTime={turn.created}>{time(turn.created)}</time><div className="bubble is-user"><div className="bubble__plain">{turn.text}</div></div></div>
+                  {!!turn.files?.length && <ul className="chip-list" aria-label="Lampiran pesan">{turn.files.map(file => <li key={file.id}><a className="cite-chip" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}><Paperclip size={12} aria-hidden /> {file.name}</a></li>)}</ul>}
+                </div>
+                <div className="group is-left">
+                  <div className="sender-label"><span>{turn.agent_name ?? agent.name}</span></div>
+                  <div className="bubble-wrap"><div className={`bubble is-agent${turn.status === 'running' && !turn.reply ? ' is-pending' : ''}`}>
+                    {turn.reply ? <div className="legacy bubble__md"><Markdown text={turn.reply} scope={path.slice(0, -6)} origin={window.location.origin} /></div>
+                      : <p className={turn.error ? 'bubble__error' : 'bubble__muted'}>{turn.error ?? (turn.questions?.some(question => question.answer === null) ? 'Jawab pertanyaan untuk melanjutkan tugas.' : turn.workflow_run ? 'Workflow selesai tanpa teks hasil.' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) ? 'Hasil akan digabung setelah semua penerima selesai. Pesan baru membawa hasil yang sudah tersedia.' : turn.events?.some(event => event.status === 'waiting') ? 'Menunggu event bertanda tangan.' : turn.waiting_for ? 'Menunggu hasil tugas anak.' : turn.status === 'queued' ? 'Menunggu giliran.' : 'Menunggu jawaban provider...')}</p>}
+                    {!turn.reply && turn.partial?.text && <div className="bubble__partial"><p className="bubble__muted">{turn.partial.status === 'pending' ? 'Teks sementara' : 'Teks dari percobaan sebelumnya'} dari {turn.partial.model}. Belum menjadi hasil akhir.</p><p className="bubble__plain">{turn.partial.text}</p></div>}
+                  </div></div>
+                  <div className="turn-meta">
+                    <span className={`turn-status is-${tone(turn)}`}><i aria-hidden />{statusLabel(turn)}</span>
+                    {turn.answer_model && <span className="turn-model" title="Model yang menjawab">{turn.answer_model}</span>}
+                  </div>
+                  <div className="legacy turn-extras">
+                    {turn.events?.map(event => <section key={event.id}><p>Event {event.event}: {event.status === 'waiting' ? 'Menunggu' : event.status === 'received' ? 'Diterima' : event.status === 'expired' ? 'Waktu habis' : 'Ditutup'} · {new Date(event.deadline).toLocaleString('id-ID')}</p>{event.status === 'waiting' && !archived && <EventConnection path={`/api/turn-waits/${event.id}`} request={api} />}</section>)}
+                    {turn.questions?.map(question => <QuestionCard key={question.id} question={question} path={`${path}/${turn.id}`} status={turn.status} archived={archived} request={api} />)}
+                    {!!turn.generatedFiles?.length && <ul aria-label="File hasil agent">{turn.generatedFiles.map(file => <li key={file.id}><a href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}>{file.name}</a> <span className="muted">{file.size} byte</span><HtmlPreview path={`${path.replace(/\/turns$/, '/files')}/${file.id}`} name={file.name} request={api} /></li>)}</ul>}
+                    {!!turn.receivedAgentReplies?.length && <details><summary>Hasil agent yang diterima bersama pesan ini ({turn.receivedAgentReplies.length})</summary>{turn.receivedAgentReplies.map(item => <div key={item.id}><p className="message-text"><strong>{item.name}</strong>: {statusNames[item.status] ?? item.status}</p>{item.error && <p className="error">{item.error}</p>}{item.reply && <p className="message-text">{item.reply}</p>}{item.truncated && <p className="muted">Cuplikan hasil. Buka percakapan untuk teks lengkap.</p>}{onOpenAgent && <button className="secondary" onClick={() => onOpenAgent(item.agent, item.thread)}>Buka percakapan {item.name}</button>}</div>)}</details>}
+                    {!!turn.agentMessages?.length && <details><summary>Pesan antar-agent ({turn.agentMessages.length})</summary>{turn.agentMessages.map(item => <div key={item.id}><p className="message-text"><strong>{item.name}</strong>: {item.paused && !['done','cancelled'].includes(item.status) ? 'Dijeda' : statusNames[item.status] ?? item.status}{!item.expects_reply && ' (tanpa balasan)'}</p>{item.error && <p className="error">{item.error}</p>}{item.reply && <p className="message-text">{item.reply.slice(0, 1000)}</p>}{(item.truncated || (item.reply?.length ?? 0) > 1000) && <p className="muted">Cuplikan hasil. Buka percakapan untuk teks lengkap.</p>}{onOpenAgent && <button className="secondary" onClick={() => onOpenAgent(item.agent, item.thread)}>Buka percakapan {item.name}</button>}</div>)}</details>}
+                    {!!turn.coordination?.length && <details><summary>Koordinasi tugas ({turn.coordination.length})</summary>{turn.coordination.map((action, index) => <div key={index}><p>{action.owner_name} {action.kind === 'delegate_task' ? 'mendelegasikan ke' : 'mengalihkan tugas ke'} {action.target_name}.</p><p className="message-text">{action.prompt}</p>{action.child && <a href={`#turn-${action.child}`} onClick={event => { event.preventDefault(); openFocused(action.child!); }}>Lihat subtugas</a>}</div>)}</details>}
+                    <QueueEditor turn={{ ...turn, files: turn.files ?? [] }} path={path} archived={archived} request={api} />
+                    <TaskControls key={`${turn.id}:${turn.revision}`} turn={turn} path={path} members={channel ? members : []} archived={archived || !!turn.editing} />
+                    {(!['done','cancelled'].includes(turn.status)) && <button className="secondary" onClick={() => void cancel(turn)}>{turn.waiting_for ? 'Batalkan tugas dan delegasi' : turn.status === 'running' ? 'Hentikan' : turn.status === 'queued' && !turn.paused ? 'Batalkan antrean' : 'Batalkan tugas'}</button>}
+                  </div>
+                </div>
+              </article>)}
+            <div ref={bottom} />
+          </div>
+        </section>
+      </div>
+      <footer className="composer-area">
+        {archived && <p className="composer__note">{!channel && (agent as Agent).hidden ? 'Agent disembunyikan. Pulihkan melalui Edit profil untuk melanjutkan antrean dan menerima pesan baru.' : 'Percakapan diarsipkan. Riwayat tetap tersedia. Pulihkan melalui pengaturan untuk mengirim pesan baru.'}</p>}
+        {!configured && <p className="composer__note">{!channel && 'provider_account' in agent && !!agent.provider_account && agent.provider_available === false ? 'Akun provider agent ini tidak tersedia. Pilih akun yang terhubung di profil agent, atau pulihkan konfigurasi akun di server.' : 'Provider belum terhubung. Periksa konfigurasi akun provider di server, lalu mulai ulang app.'} Agent dan riwayat tetap tersimpan.</p>}
+        {error && <div className="composer__error" role="alert"><span>{error} {pending && 'Gunakan Coba kirim lagi untuk memeriksa permintaan yang sama tanpa membuat pesan ganda.'}</span></div>}
+        {blocked && <div className="composer__error" role="alert"><span>Data pemulihan pesan tidak dapat dibaca. Pengiriman diblokir. Periksa riwayat untuk memastikan pesan sebelumnya belum terkirim.</span><button type="button" className="link-btn" onClick={() => { if (!window.confirm('Buang data pemulihan? Pesan sebelumnya mungkin sudah diterima. Periksa riwayat sebelum mengirim pesan lain.')) return; try { sessionStorage.removeItem(storageKey); setBlocked(false); setError(''); composer.current?.focus(); } catch { setError('Data pemulihan belum bisa dihapus. Periksa penyimpanan situs.'); } }}>Buang pemulihan pesan</button></div>}
+        {(pending?.files ?? attached).length > 0 && <p className="composer__note"><Paperclip size={12} aria-hidden /> {(pending?.files ?? attached).length} lampiran akan dikirim ke provider bersama pesan.</p>}
+        <form className={`composer${draft.includes('\n') ? ' is-multiline' : ''}`} onSubmit={send}>
+          <div className="composer__left">
+            <span className="composer__plus-anchor"><button type="button" className="composer__btn" onClick={openFiles} aria-label="Lampirkan file percakapan" title="Lampirkan file"><Paperclip size={14} aria-hidden /></button></span>
+            {channel && <span className="composer__recipient"><label className="sr-only" htmlFor="recipient">Respons oleh</label><select id="recipient" value={pending?.automatic ? '@automatic' : pending?.recipient ?? recipient} disabled={!!pending || busy} onChange={event => { setRecipient(event.target.value); try { sessionStorage.setItem(recipientKey, event.target.value); } catch { setError('Pilihan penerima tidak tersimpan. Periksa kembali sebelum mengirim.'); } }}><option value="">Pilih agent</option>{channel.lead && <option value="@automatic">Otomatis melalui lead</option>}{members.map(member => <option key={member.id} value={member.id}>{member.name}{member.id === channel.lead ? ' (lead)' : ''}</option>)}</select></span>}
+            <label className="sr-only" htmlFor="message">Pesan untuk {agent.name}</label>
+            <textarea ref={composer} id="message" className="composer__input" rows={1} placeholder={`Pesan untuk ${agent.name}`} maxLength={16000} value={pending?.text ?? draft} readOnly={blocked || !!pending || busy} onChange={event => { setDraft(event.target.value); try { sessionStorage.setItem(draftKey, event.target.value); } catch { setError('Draft tidak tersimpan di browser. Jangan pindah agent sebelum menyalin pesan.'); } }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
+          </div>
+          <div className="composer__right">
+            {pending && !busy && <span className="composer__retry">Coba kirim lagi</span>}
+            <button type="submit" className="composer__cta" disabled={blocked || archived || !configured || busy || (!pending && !draft.trim()) || (!!channel && !recipient && !pending)} aria-label={busy ? 'Mengirim...' : pending ? 'Coba kirim lagi' : 'Kirim pesan'} title={pending ? 'Coba kirim lagi' : 'Kirim (Enter)'}>{busy ? <span className="step__spin" aria-hidden /> : <ArrowUp size={16} aria-hidden />}</button>
+          </div>
+        </form>
+        <p className="composer__foot" title="Provider menerima hingga 40 percakapan sebelumnya.">{focusedTask ? channel ? 'Keluarga tugas ditampilkan · ' : 'Pesan terpilih ditampilkan · ' : query ? 'Hingga 100 hasil per halaman · ' : before ? 'Hingga 100 pesan lama per halaman · ' : ''}Enter untuk kirim, Shift+Enter untuk baris baru</p>
+      </footer>
+      <header className="chat__header">
+        <span className="chat__pill-anchor">
+          <button type="button" className="chat__pill" onClick={() => setMenuOpen(!menuOpen)} aria-haspopup="menu" aria-expanded={menuOpen}>
+            <AgentAvatar agent={agent} size={24} />
+            <span className="chat__pill-name">{title}</span>
+            <ChevronDown size={14} aria-hidden className="chat__pill-chev" />
+          </button>
+          {menuOpen && <Menu align="center" label={`Menu ${title}`} onClose={() => setMenuOpen(false)} items={items} />}
+        </span>
+        <div className="chat__header-right">
+          <span className={`activity-chip${active ? ' is-working' : ''}`} role="status">{active ? `${active} pesan diproses` : channel ? 'Channel bersama' : 'Percakapan langsung'}</span>
+          {!detailsOpen && <button type="button" className="icon-btn icon-btn--bordered" onClick={() => setDetailsOpen(true)} aria-label="Tampilkan detail" title="Tampilkan detail"><PanelRight size={16} aria-hidden /></button>}
         </div>
-      </article>)}<div ref={bottom} />
-    </section>
-    <QueuePanel path={path} request={api} onOpen={id => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(id); }} />
-    <footer className="composer-area">
-      {archived && <p className="notice">{!channel && (agent as Agent).hidden ? 'Agent disembunyikan. Pulihkan melalui Edit profil untuk melanjutkan antrean dan menerima pesan baru.' : 'Percakapan diarsipkan. Riwayat tetap tersedia. Pulihkan melalui pengaturan untuk mengirim pesan baru.'}</p>}
-      {!configured && <p className="notice">{!channel && 'provider_account' in agent && !!agent.provider_account && agent.provider_available === false ? 'Akun provider agent ini tidak tersedia. Pilih akun yang terhubung di profil agent, atau pulihkan konfigurasi akun di server.' : 'Provider belum terhubung. Periksa konfigurasi akun provider di server, lalu mulai ulang app.'} Agent dan riwayat tetap tersimpan.</p>}
-      {error && <p className="error" role="alert">{error} {pending && 'Gunakan Coba kirim lagi untuk memeriksa permintaan yang sama tanpa membuat pesan ganda.'}</p>}
-      {blocked && <p className="error" role="alert">Data pemulihan pesan tidak dapat dibaca. Pengiriman diblokir. Periksa riwayat untuk memastikan pesan sebelumnya belum terkirim. <button className="secondary" onClick={() => { if (!window.confirm('Buang data pemulihan? Pesan sebelumnya mungkin sudah diterima. Periksa riwayat sebelum mengirim pesan lain.')) return; try { sessionStorage.removeItem(storageKey); setBlocked(false); setError(''); composer.current?.focus(); } catch { setError('Data pemulihan belum bisa dihapus. Periksa penyimpanan situs.'); } }}>Buang pemulihan pesan</button></p>}
-      {(pending?.files ?? attached).length > 0 && <p className="notice">{(pending?.files ?? attached).length} lampiran akan dikirim ke provider bersama pesan.</p>}
-      <form className="composer" onSubmit={send}>
-        <label className="sr-only" htmlFor="message">Pesan untuk {agent.name}</label>
-        <textarea ref={composer} id="message" placeholder={`Pesan untuk ${agent.name}...`} maxLength={16000} value={pending?.text ?? draft} readOnly={blocked || !!pending || busy} onChange={event => { setDraft(event.target.value); try { sessionStorage.setItem(draftKey, event.target.value); } catch { setError('Draft tidak tersimpan di browser. Jangan pindah agent sebelum menyalin pesan.'); } }} rows={3} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
-        <div className="composer-actions"><span>Ctrl / Cmd + Enter untuk kirim</span><button type="submit" disabled={blocked || archived || !configured || busy || (!pending && !draft.trim()) || (!!channel && !recipient && !pending)}>{busy ? 'Mengirim...' : pending ? 'Coba kirim lagi' : 'Kirim pesan'}</button></div>
-      </form><p className="footnote">{focusedTask ? channel ? 'Keluarga tugas ditampilkan.' : 'Pesan terpilih ditampilkan.' : query ? 'Hingga 100 hasil pencarian per halaman.' : before ? 'Hingga 100 pesan lama per halaman.' : 'Hingga 100 pesan terakhir ditampilkan.'} Provider menerima hingga 40 percakapan sebelumnya.</p>
-    </footer>
-  </>;
+      </header>
+    </main>
+    {detailsOpen && <aside className="details" aria-label="Detail percakapan">
+      <div className="details__top">
+        {onEdit && <button type="button" className="icon-btn icon-btn--bordered details__gear" onClick={onEdit} aria-label={editLabel} title={editLabel}><Settings size={16} aria-hidden /></button>}
+        <button type="button" className="icon-btn icon-btn--bordered" onClick={() => setDetailsOpen(false)} aria-label="Tutup detail"><X size={16} aria-hidden /></button>
+      </div>
+      <div className="details__scroll">
+        <div className="details__identity">
+          <AgentAvatar agent={agent} size={64} />
+          <div className="details__name" title={title}>{title}</div>
+          <div className="details__who-sub">{subtitle}</div>
+        </div>
+        <div className="details__sections">
+          {detailsExtra}
+          {channel && <section><div className="section-label">Status baca</div><div className="panel-card"><div className="panel-row panel-row--setting"><span>{channel.activity > channel.read_position ? 'Ada aktivitas belum dibaca' : 'Semua aktivitas sudah dibaca'}</span><button type="button" className="cfg-btn cfg-btn--secondary" disabled={markingRead || channel.activity <= channel.read_position} onClick={() => { setMarkingRead(true); void onRead?.().catch(error => setError(message(error))).finally(() => setMarkingRead(false)); }}>Tandai dibaca</button></div></div></section>}
+          <section>
+            <div className="section-label">Cari di percakapan</div>
+            <form className="details-search" role="search" onSubmit={event => { event.preventDefault(); if (!searchText.trim()) return; focusHistory.current = true; nearBottom.current = false; setQuery(searchText); setFocusedTask(''); setHistoryPages([]); focusedOnce.current = ''; }}>
+              <label className="sr-only" htmlFor="history-search">Cari di percakapan ini</label>
+              <input id="history-search" className="text-input" type="search" maxLength={200} value={searchText} onChange={event => setSearchText(event.target.value)} aria-describedby="history-search-help" placeholder="Pesan atau balasan" />
+              <button type="submit" className="cfg-btn cfg-btn--secondary" disabled={!searchText.trim()}>Cari</button>
+            </form>
+            <p id="history-search-help" className="details-hint">Huruf besar dan kecil dibedakan.</p>
+          </section>
+          <section>
+            <div className="section-label">Memori dan konteks</div>
+            <div className="panel-card"><button ref={memoryButton} type="button" className="panel-row panel-row--action" onClick={() => setShowMemory(true)}><Brain size={16} aria-hidden /> Memori {channel ? 'channel' : 'agent'}</button></div>
+            <div className="legacy details-legacy"><CompactionPanel path={path.replace(/\/turns$/, '/compaction')} request={api} /></div>
+          </section>
+          <section ref={filesSection}><div className="legacy details-legacy"><ConversationFiles path={path.replace(/\/turns$/, '/files')} archived={archived} attached={pending?.files ?? attached} onAttach={attach} locked={blocked || !!pending || busy} /></div></section>
+          <section><div className="legacy details-legacy"><QueuePanel path={path} request={api} onOpen={id => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(id); }} /></div></section>
+        </div>
+      </div>
+    </aside>}
+  </div>;
 }
 
 function WorkflowConversation({ agent, threadId, configured, onOpenAgent, onOpenChannel }: { agent?: Agent; threadId: string; configured: boolean; onOpenAgent: (agent: string, thread: string) => void; onOpenChannel: (channel: string) => void }) {
@@ -652,11 +756,39 @@ function AgentConversations({ agent, configured, onEdit, workflowAgents, initial
     return () => { navigation.current++; loadVersion.current++; };
   }, []);
   const navigationVersion = navigation.current;
-  return <>
-    <div className="recipient"><label htmlFor="conversation">Percakapan</label><select id="conversation" value={thread?.id ?? ''} disabled={!loaded} onChange={event => select(event.target.value)}><option value="">Chat utama</option>{threads.map(item => <option key={item.id} value={item.id}>{item.name}{item.archived ? ' (diarsipkan)' : ''}</option>)}</select><button className="secondary" disabled={!loaded} onClick={() => { navigation.current++; loadVersion.current++; setShowWorkspace(false); setShowRoutines(false); setShowWorkflows(false); setForm(true); setEditing(false); }}>Percakapan baru</button><button className="secondary" onClick={() => { navigation.current++; loadVersion.current++; setShowWorkspace(false); setShowRoutines(true); setShowWorkflows(false); }}>Rutinitas</button><button className="secondary" onClick={() => { navigation.current++; loadVersion.current++; setShowWorkspace(false); setShowRoutines(false); setShowWorkflows(true); }}>Workflow</button><button ref={workspaceButton} className="secondary" disabled={!loaded} onClick={() => { navigation.current++; loadVersion.current++; setShowRoutines(false); setShowWorkflows(false); setForm(false); setEditing(false); setShowWorkspace(true); }}>File workspace</button></div>
-    {error && <p className="error" role="alert">{error} <button className="secondary" onClick={() => void load().catch(() => {})}>Muat ulang percakapan</button></p>}
-    {showWorkspace ? <WorkspacePanel key={agent.id} agent={agent} request={api} onClose={() => { setShowWorkspace(false); workspaceButton.current?.focus(); }} /> : showWorkflows ? <WorkflowPanel owner={agent} agents={workflowAgents} request={api} onNavigate={() => { navigation.current++; loadVersion.current++; }} onBack={() => { navigation.current++; loadVersion.current++; setShowWorkflows(false); }} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={workflowAgents.find(item => item.id === owner)} threadId={id} configured={configured} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />} /> : showRoutines ? <Routines agent={agent} onClose={() => { navigation.current++; loadVersion.current++; setShowWorkspace(false); setShowRoutines(false); setShowWorkflows(false); }} onOpen={async (id, owner) => { if (owner === agent.id) await load(id, true); else onOpenAgent(owner, id); }} /> : !loaded ? <p className="empty">Memuat percakapan...</p> : form ? <ThreadForm key={editing ? `${thread?.id}:${thread?.revision}:${reload}` : 'new'} agent={agent} thread={editing ? thread : undefined} onCancel={() => { navigation.current++; loadVersion.current++; setForm(false); }} onReload={() => { void load().catch(() => {}); }} onSaved={item => navigationVersion === navigation.current ? load(item.deleted ? '' : item.id, true) : Promise.resolve()} /> : <Chat onOpenChannel={onOpenChannel} onOpenAgent={onOpenAgent} key={thread?.id ?? agent.id} agent={agent} thread={thread} configured={configured && agent.provider_available !== false} onEdit={thread ? () => { navigation.current++; loadVersion.current++; setEditing(true); setForm(true); } : onEdit} />}
+  const leave = () => { navigation.current++; loadVersion.current++; };
+  const openForm = () => { leave(); setShowWorkspace(false); setShowRoutines(false); setShowWorkflows(false); setForm(true); setEditing(false); };
+  const openRoutines = () => { leave(); setShowWorkspace(false); setShowRoutines(true); setShowWorkflows(false); };
+  const openWorkflows = () => { leave(); setShowWorkspace(false); setShowRoutines(false); setShowWorkflows(true); };
+  const openWorkspace = () => { leave(); setShowRoutines(false); setShowWorkflows(false); setForm(false); setEditing(false); setShowWorkspace(true); };
+  const errorBanner = error && <p className="error" role="alert">{error} <button className="secondary" onClick={() => void load().catch(() => {})}>Muat ulang percakapan</button></p>;
+  if (showWorkspace) return <PageView>{errorBanner}<WorkspacePanel key={agent.id} agent={agent} request={api} onClose={() => { setShowWorkspace(false); requestAnimationFrame(() => workspaceButton.current?.focus()); }} /></PageView>;
+  if (showWorkflows) return <PageView wide>{errorBanner}<WorkflowPanel owner={agent} agents={workflowAgents} request={api} onNavigate={leave} onBack={() => { leave(); setShowWorkflows(false); }} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={workflowAgents.find(item => item.id === owner)} threadId={id} configured={configured} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />} /></PageView>;
+  if (showRoutines) return <PageView>{errorBanner}<Routines agent={agent} onClose={() => { leave(); setShowWorkspace(false); setShowRoutines(false); setShowWorkflows(false); }} onOpen={async (id, owner) => { if (owner === agent.id) await load(id, true); else onOpenAgent(owner, id); }} /></PageView>;
+  if (!loaded) return <PageView>{errorBanner}<p className="empty" role="status">Memuat percakapan...</p></PageView>;
+  if (form) return <PageView>{errorBanner}<ThreadForm key={editing ? `${thread?.id}:${thread?.revision}:${reload}` : 'new'} agent={agent} thread={editing ? thread : undefined} onCancel={() => { leave(); setForm(false); }} onReload={() => { void load().catch(() => {}); }} onSaved={item => navigationVersion === navigation.current ? load(item.deleted ? '' : item.id, true) : Promise.resolve()} /></PageView>;
+  const conversations = <>
+    {error && <p className="cfg-error" role="alert">{error} <button type="button" className="link-btn" onClick={() => void load().catch(() => {})}>Muat ulang percakapan</button></p>}
+    <section aria-label="Percakapan agent">
+      <div className="section-label section-label--row"><span>Percakapan</span><button type="button" className="link-btn link-btn--small" onClick={openForm}>Percakapan baru</button></div>
+      <div className="panel-card" role="list">
+        <button type="button" role="listitem" className={`panel-row panel-row--link${!thread ? ' is-current' : ''}`} aria-current={!thread || undefined} onClick={() => select('')}><MessageSquare size={16} aria-hidden /><span className="panel-row__title">Chat utama</span></button>
+        {threads.map(item => <button key={item.id} type="button" role="listitem" className={`panel-row panel-row--link${thread?.id === item.id ? ' is-current' : ''}`} aria-current={thread?.id === item.id || undefined} onClick={() => select(item.id)}><MessageSquare size={16} aria-hidden /><span className="panel-row__text"><span className="panel-row__title">{item.name}</span>{!!item.archived && <span className="panel-row__meta">Diarsipkan</span>}</span></button>)}
+      </div>
+    </section>
+    <section aria-label="Alat agent">
+      <div className="section-label">Agent</div>
+      <div className="panel-card">
+        <button type="button" className="panel-row panel-row--action" onClick={openRoutines}><Clock size={16} aria-hidden /> Rutinitas</button>
+        <button type="button" className="panel-row panel-row--action" onClick={openWorkflows}><WorkflowIcon size={16} aria-hidden /> Workflow</button>
+        <button ref={workspaceButton} type="button" className="panel-row panel-row--action" onClick={openWorkspace}><FolderOpen size={16} aria-hidden /> File workspace</button>
+      </div>
+    </section>
   </>;
+  return <Chat onOpenChannel={onOpenChannel} onOpenAgent={onOpenAgent} key={thread?.id ?? agent.id} agent={agent} thread={thread} configured={configured && agent.provider_available !== false}
+    onEdit={thread ? () => { leave(); setEditing(true); setForm(true); } : onEdit}
+    menuItems={[{ label: 'Percakapan baru', onSelect: openForm }, { label: 'Rutinitas', onSelect: openRoutines }, { label: 'Workflow', onSelect: openWorkflows }, { label: 'File workspace', onSelect: openWorkspace }]}
+    detailsExtra={conversations} />;
 }
 
 function ThreadForm({ agent, thread, onCancel, onSaved, onReload }: { agent: Agent; thread?: Thread; onCancel: () => void; onSaved: (thread: Thread) => Promise<void>; onReload: () => void }) {
@@ -828,24 +960,34 @@ function FlowDirectory({ agents, onClose, onOpen }: { agents: Agent[]; onClose: 
   </section>;
 }
 
+type SettingsSection = 'skills' | 'mcp' | 'data' | 'usage' | 'backup' | 'import' | 'sections' | 'appearance';
+const settingsSections: { id: SettingsSection; label: string }[] = [
+  { id: 'skills', label: 'Skills' },
+  { id: 'mcp', label: 'Koneksi MCP' },
+  { id: 'data', label: 'Data bersama' },
+  { id: 'usage', label: 'Pemakaian' },
+  { id: 'import', label: 'Impor agent' },
+  { id: 'backup', label: 'Backup' },
+  { id: 'sections', label: 'Bagian agent' },
+  { id: 'appearance', label: 'Tampilan' },
+];
+type Dialog = 'agent' | 'channel' | 'edit' | null;
+const collapsedKey = 'briefsip:sidebar-collapsed';
+
 function App() {
-  const [showSkills, setShowSkills] = useState(false), skillsButton = useRef<HTMLButtonElement>(null);
-  const [showBackup, setShowBackup] = useState(false), backupButton = useRef<HTMLButtonElement>(null);
-  const [importing, setImporting] = useState(false), importButton = useRef<HTMLButtonElement>(null);
-  const [showMcp, setShowMcp] = useState(false), mcpButton = useRef<HTMLButtonElement>(null);
-  const [showData, setShowData] = useState(false), dataButton = useRef<HTMLButtonElement>(null);
-  const [showUsage, setShowUsage] = useState(false), usageButton = useRef<HTMLButtonElement>(null);
   const [directory, setDirectory] = useState<Directory | null>(null); const [selected, setSelected] = useState('');
   const [channels, setChannels] = useState<Channel[]>([]), [selectedChannel, setSelectedChannel] = useState('');
-  const [creatingChannel, setCreatingChannel] = useState(false);
-  const [showFlows, setShowFlows] = useState(false);
-  const [showWorkflows, setShowWorkflows] = useState(false);
+  const [view, setView] = useState<'chat' | 'flows' | 'workflows'>('chat');
+  const [settings, setSettings] = useState<SettingsSection | null>(null);
+  const [dialog, setDialog] = useState<Dialog>(null);
+  const [newMenu, setNewMenu] = useState(false);
+  const [collapsed, setCollapsedState] = useState(() => { try { return localStorage.getItem(collapsedKey) === '1'; } catch { return false; } });
   const [openedThread, setOpenedThread] = useState<{ agent: string; thread: string } | null>(null);
   const [activityError, setActivityError] = useState(false);
-  const [editing, setEditing] = useState(false);
   const [editReload, setEditReload] = useState(0);
-  const [creating, setCreating] = useState(false); const [error, setError] = useState('');
+  const [error, setError] = useState('');
   const directoryRequest = useRef(0);
+  function setCollapsed(value: boolean) { setCollapsedState(value); try { localStorage.setItem(collapsedKey, value ? '1' : '0'); } catch { /* Applies to this page only. */ } }
   async function load(propagate = false) {
     const version = ++directoryRequest.current;
     try { const [data, rooms] = await Promise.all([api<Directory>('/api/agents'), api<Channel[]>('/api/channels')]); if (version !== directoryRequest.current) return; directoryRequest.current++; setDirectory(data); setChannels(rooms); setSelected(id => id || data.agents[0]?.id || ''); setError(''); }
@@ -870,32 +1012,128 @@ function App() {
     timer = setTimeout(refreshActivity, 2400);
     return () => { stopped = true; clearTimeout(timer); };
   }, []);
+  useEffect(() => {
+    const key = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      const name = event.key.toLowerCase();
+      if (name === 'b') { event.preventDefault(); setCollapsedState(value => { try { localStorage.setItem(collapsedKey, value ? '0' : '1'); } catch { /* Applies to this page only. */ } return !value; }); }
+      else if (name === ',') { event.preventDefault(); setSettings(current => current ?? 'skills'); }
+    };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, []);
+  useEffect(() => {
+    if (!settings) return;
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented && !document.querySelector('.modal-root')) { event.preventDefault(); setSettings(null); } };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, [settings]);
   async function markRead(room: Channel) {
     const updated = await api<Channel>(`/api/channels/${room.id}/read`, { id: crypto.randomUUID(), position: room.activity });
     setChannels(current => current.map(item => item.id === room.id ? { ...item, activity: Math.max(item.activity, updated.activity), read_position: Math.max(item.read_position, updated.read_position) } : item));
   }
   const agent = directory?.agents.find(agent => agent.id === selected);
   const channel = channels.find(channel => channel.id === selectedChannel);
-  return <div className="workspace">
-    <aside className="sidebar"><a className="brand" href="/">Briefsip<span>Ruang kerja lokal</span></a>
-      <div className="sidebar-title"><h2>Channels</h2><button className="secondary" disabled={!directory?.agents.length} onClick={() => { setShowMcp(false); setShowData(false); setShowSkills(false); setShowBackup(false); setImporting(false); setShowUsage(false); setShowWorkflows(false); setShowFlows(false); setCreatingChannel(true); setCreating(false); setEditing(false); }} aria-label="Buat channel baru">Baru</button></div>
-      <nav aria-label="Pilih channel">{channels.map(room => <button key={room.id} className={`agent-row ${room.id === selectedChannel && !showMcp && !showData && !showSkills && !showBackup && !importing && !showUsage && !showWorkflows && !showFlows && !creatingChannel && !creating ? 'selected' : ''}`} aria-current={room.id === selectedChannel && !showMcp && !showData && !showSkills && !showBackup && !importing && !showUsage && !showWorkflows && !showFlows && !creatingChannel && !creating ? 'page' : undefined} onClick={() => { setShowMcp(false); setShowData(false); setShowSkills(false); setShowBackup(false); setImporting(false); setShowUsage(false); setShowWorkflows(false); setShowFlows(false); setSelectedChannel(room.id); setCreating(false); setCreatingChannel(false); setEditing(false); }}><span className="avatar" aria-hidden="true">#</span><span><strong>{room.name}</strong><small>{room.archived ? 'Diarsipkan' : `${room.members.length} anggota`}{room.activity > room.read_position && ' · Belum dibaca'}</small></span></button>)}</nav>
-      <div className="sidebar-title"><h2>Agents</h2><button className="secondary" onClick={() => { setShowMcp(false); setShowData(false); setShowSkills(false); setShowBackup(false); setImporting(false); setShowUsage(false); setShowWorkflows(false); setShowFlows(false); setCreating(true); setCreatingChannel(false); setEditing(false); }} aria-label="Buat agent baru">Baru</button></div>
-      <AgentSidebar agents={directory?.agents ?? []} request={api} renderAgent={id => { const agent = directory?.agents.find(agent => agent.id === id); return agent ? <button key={agent.id} className={`agent-row ${agent.id === selected && !showMcp && !showData && !showSkills && !showBackup && !importing && !showUsage && !showWorkflows && !showFlows && !selectedChannel && !creating && !creatingChannel ? 'selected' : ''}`} aria-current={agent.id === selected && !showMcp && !showData && !showSkills && !showBackup && !importing && !showUsage && !showWorkflows && !showFlows && !selectedChannel && !creating && !creatingChannel ? 'page' : undefined} onClick={() => { setShowMcp(false); setShowData(false); setShowSkills(false); setShowBackup(false); setImporting(false); setShowUsage(false); setShowWorkflows(false); setShowFlows(false); setOpenedThread(null); setSelected(agent.id); setSelectedChannel(''); setCreating(false); setCreatingChannel(false); setEditing(false); }}><AgentAvatar agent={agent} /><span><strong>{agent.name}</strong><small>{agent.hidden ? 'Disembunyikan' : agent.model}</small></span></button> : null; }} />
-      <button className="secondary" disabled={!directory} aria-pressed={showFlows && !showMcp && !showData && !showSkills && !showBackup && !importing && !showUsage} onClick={() => { setShowMcp(false); setShowData(false); setShowSkills(false); setShowBackup(false); setImporting(false); setShowUsage(false); setShowWorkflows(false); setShowFlows(true); setCreating(false); setCreatingChannel(false); setEditing(false); }}>Alur agent</button>
-      <button className="secondary" disabled={!directory} aria-pressed={showWorkflows && !showMcp && !showData && !showSkills && !showBackup && !importing && !showUsage} onClick={() => { setShowMcp(false); setShowData(false); setShowSkills(false); setShowBackup(false); setImporting(false); setShowUsage(false); setShowWorkflows(true); setShowFlows(false); setCreating(false); setCreatingChannel(false); setEditing(false); }}>Workflow</button>
-      <button className="secondary" ref={usageButton} disabled={!directory} aria-pressed={showUsage && !showMcp && !showData && !showSkills && !showBackup && !importing} onClick={() => { setShowMcp(false); setShowData(false); setShowSkills(false); setShowBackup(false); setImporting(false); setShowUsage(true); setShowWorkflows(false); setShowFlows(false); }}>Pemakaian</button>
-      <button ref={importButton} className="secondary" disabled={!directory} aria-pressed={importing && !showMcp && !showData && !showSkills && !showBackup} onClick={() => { setShowMcp(false); setShowData(false); setShowSkills(false); setShowBackup(false); setImporting(true); setShowUsage(false); setShowWorkflows(false); setShowFlows(false); }}>Impor agent</button>
-      <button ref={backupButton} className="secondary" disabled={!directory} aria-pressed={showBackup && !showMcp && !showData && !showSkills} onClick={() => { setShowMcp(false); setShowData(false); setShowSkills(false); setShowBackup(true); setImporting(false); setShowUsage(false); setShowFlows(false); setShowWorkflows(false); }}>Backup</button>
-      <button ref={skillsButton} className="secondary" disabled={!directory} aria-pressed={showSkills && !showMcp && !showData} onClick={() => { setShowMcp(false); setShowData(false); setShowSkills(true); setShowBackup(false); setImporting(false); setShowUsage(false); setShowFlows(false); setShowWorkflows(false); }}>Skills</button>
-      <button ref={dataButton} className="secondary" disabled={!directory} aria-pressed={showData && !showMcp} onClick={() => { setShowMcp(false); setShowData(true); setShowSkills(false); setShowBackup(false); setImporting(false); setShowUsage(false); setShowWorkflows(false); setShowFlows(false); }}>Data bersama</button>
-      <button ref={mcpButton} className="secondary" disabled={!directory} aria-pressed={showMcp} onClick={() => { setShowMcp(true); setShowData(false); setShowSkills(false); setShowBackup(false); setImporting(false); setShowUsage(false); setShowWorkflows(false); setShowFlows(false); }}>Koneksi MCP</button>
-      <PresentationSettings />
-      {activityError && <p className="notice" role="status">Status baca belum diperbarui. Mencoba lagi.</p>}
-      <div className="sidebar-footer"><span className={`dot ${directory?.configured ? 'connected' : ''}`} /><span>{directory?.configured ? 'Provider dikonfigurasi' : 'Provider belum terhubung'}</span></div>
+  const openAgent = (id: string) => { setView('chat'); setOpenedThread(null); setSelected(id); setSelectedChannel(''); setDialog(null); };
+  const openChannel = (id: string) => { setView('chat'); setSelectedChannel(id); setDialog(null); };
+  const openThread = (owner: string, thread: string) => { setOpenedThread({ agent: owner, thread }); setSelected(owner); setSelectedChannel(''); setView('chat'); setDialog(null); setSettings(null); };
+  const agentRow = (id: string) => {
+    const item = directory?.agents.find(agent => agent.id === id);
+    if (!item) return null;
+    const current = view === 'chat' && !selectedChannel && item.id === selected;
+    return collapsed
+      ? <button key={item.id} type="button" className={`bot-rail-item${current ? ' is-selected' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgent(item.id)} title={item.name} aria-label={item.name}><AgentAvatar agent={item} size={36} /></button>
+      : <button key={item.id} type="button" className={`bot-row${current ? ' is-selected' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgent(item.id)}>
+        <span className="bot-row__avatar"><AgentAvatar agent={item} size={36} />{item.provider_available === false && <span className="status-dot is-attention" aria-label="Akun provider tidak tersedia" />}</span>
+        <span className="bot-row__text"><span className="bot-row__name">{item.name}</span><span className="bot-row__preview">{item.hidden ? 'Disembunyikan' : item.model || 'Model belum dipilih'}</span></span>
+      </button>;
+  };
+  let content: ReactNode;
+  if (error) content = <PageView><div className="empty"><h1>Ruang kerja belum terbuka</h1><p role="alert">{error}</p><button onClick={() => void load()}>Coba lagi</button></div></PageView>;
+  else if (!directory) content = <main className="chat chat--empty bs-root"><p className="empty-chat__sub" role="status">Memuat ruang kerja...</p></main>;
+  else if (view === 'workflows') content = <PageView wide><WorkflowDirectory agents={directory.agents} request={api} onClose={() => setView('chat')} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={directory.agents.find(item => item.id === owner)} threadId={id} configured={directory.configured} onOpenAgent={openThread} onOpenChannel={openChannel} />} /></PageView>;
+  else if (view === 'flows') content = <PageView wide><FlowDirectory agents={directory.agents} onClose={() => setView('chat')} onOpen={openThread} /></PageView>;
+  else if (channel) content = <Chat onOpenAgent={openThread} key={`channel:${channel.id}`} agent={channel} channel={{ ...channel, lead: directory.agents.find(agent => agent.id === channel.lead)?.hidden ? null : channel.lead }} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id) && !agent.hidden)} onEdit={() => setDialog('edit')} configured={directory.configured} />;
+  else if (agent) content = <AgentConversations onOpenChannel={openChannel} key={agent.id} agent={agent} workflowAgents={directory.agents} configured={directory.configured} initialThread={openedThread?.agent === agent.id ? openedThread.thread : undefined} onThreadOpened={() => setOpenedThread(null)} onOpenAgent={openThread} onEdit={() => setDialog('edit')} />;
+  else content = <main className="chat chat--empty bs-root"><div className="empty-chat"><div className="empty-chat__title">Buat agent pertama</div><div className="empty-chat__sub">Beri nama, pilih model, lalu jelaskan cara kerjanya. Agent dan riwayatnya tersimpan di komputer ini.</div><button type="button" className="btn btn--primary" onClick={() => setDialog('agent')}><Plus size={16} aria-hidden /> Agent baru</button></div></main>;
+  const created = (item: Agent) => { setDirectory(current => current && { ...current, agents: [...current.agents.filter(agent => agent.id !== item.id), item] }); openAgent(item.id); };
+  return <div className={`app bs-root${collapsed ? ' is-sidebar-collapsed' : ''}`}>
+    <aside className={`sidebar${collapsed ? ' is-collapsed' : ''}`} aria-label="Navigasi ruang kerja">
+      <div className="sidebar__titlebar">
+        {!collapsed && <a className="sidebar__brand" href="/">Briefsip</a>}
+        <div className="sidebar__controls">
+          <button type="button" className="icon-btn icon-btn--plain" onClick={() => setCollapsed(!collapsed)} aria-label={collapsed ? 'Lebarkan sidebar' : 'Ciutkan sidebar'} title="Sidebar (Ctrl/Cmd+B)"><PanelLeft size={16} aria-hidden /></button>
+          {!collapsed && <span className="sidebar__new">
+            <button type="button" className="icon-btn" onClick={() => setNewMenu(!newMenu)} aria-label="Buat baru" aria-haspopup="menu" aria-expanded={newMenu} title="Buat baru"><Plus size={16} aria-hidden /></button>
+            {newMenu && <Menu align="right" label="Buat baru" onClose={() => setNewMenu(false)} items={[
+              { label: 'Agent baru', onSelect: () => setDialog('agent') },
+              { label: 'Channel baru', onSelect: () => setDialog('channel'), disabled: !directory?.agents.length },
+              { label: 'Impor agent', onSelect: () => setSettings('import'), disabled: !directory },
+            ]} />}
+          </span>}
+        </div>
+      </div>
+      <div className="sidebar__scroll">
+        <nav className="islands" aria-label="Otomasi">
+          <button type="button" className={`island${view === 'flows' ? ' is-selected' : ''}`} aria-current={view === 'flows' ? 'page' : undefined} disabled={!directory} onClick={() => { setView('flows'); setDialog(null); }} title="Alur agent"><Route size={16} aria-hidden />{!collapsed && <span>Alur agent</span>}</button>
+          <button type="button" className={`island${view === 'workflows' ? ' is-selected' : ''}`} aria-current={view === 'workflows' ? 'page' : undefined} disabled={!directory} onClick={() => { setView('workflows'); setDialog(null); }} title="Workflow"><WorkflowIcon size={16} aria-hidden />{!collapsed && <span>Workflow</span>}</button>
+        </nav>
+        {!collapsed && <div className="sidebar__label">Channel</div>}
+        <nav className="bot-list" aria-label="Pilih channel">
+          {channels.map(room => {
+            const current = view === 'chat' && room.id === selectedChannel;
+            const unread = room.activity > room.read_position;
+            return collapsed
+              ? <button key={room.id} type="button" className={`bot-rail-item${current ? ' is-selected' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openChannel(room.id)} title={room.name} aria-label={room.name}><AgentAvatar agent={room} size={36} /></button>
+              : <button key={room.id} type="button" className={`bot-row${current ? ' is-selected' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openChannel(room.id)}>
+                <span className="bot-row__avatar"><AgentAvatar agent={room} size={36} />{unread && <span className="status-dot is-unread" aria-label="Belum dibaca" />}</span>
+                <span className="bot-row__text"><span className="bot-row__name">{room.name}</span><span className="bot-row__preview">{room.archived ? 'Diarsipkan' : `${room.members.length} anggota`}{unread ? ' · Belum dibaca' : ''}</span></span>
+              </button>;
+          })}
+          {!collapsed && !channels.length && <button type="button" className="bot-list__empty" disabled={!directory?.agents.length} onClick={() => setDialog('channel')}><span className="bot-list__empty-plus"><Hash size={14} aria-hidden /></span><span><span className="bot-row__name">Channel baru</span><span className="bot-row__preview">Satukan beberapa agent dalam satu ruang</span></span></button>}
+        </nav>
+        {!collapsed && <div className="sidebar__label">Agent</div>}
+        <div className="bot-list sidebar-agents">
+          <AgentSidebar mode="list" agents={directory?.agents ?? []} request={api} renderAgent={agentRow} />
+          {!collapsed && directory && !directory.agents.length && <button type="button" className="bot-list__empty" onClick={() => setDialog('agent')}><span className="bot-list__empty-plus"><Plus size={14} aria-hidden /></span><span><span className="bot-row__name">Agent baru</span><span className="bot-row__preview">Beri tugas, misalnya riset atau ringkasan</span></span></button>}
+        </div>
+      </div>
+      <div className="sidebar__footer">
+        <div className="sidebar__fade" />
+        {!collapsed && <div className="provider-status" role="status"><i className={directory?.configured ? 'is-on' : ''} aria-hidden /><span>{activityError ? 'Status belum diperbarui. Mencoba lagi.' : directory?.configured ? 'Provider dikonfigurasi' : 'Provider belum terhubung'}</span></div>}
+        <button type="button" className="icon-btn icon-btn--bordered" onClick={() => setSettings('skills')} aria-label="Pengaturan" title="Pengaturan (Ctrl/Cmd+,)"><Settings size={16} aria-hidden /></button>
+      </div>
     </aside>
-    <main>{error ? <div className="empty"><h1>Ruang kerja belum terbuka</h1><p role="alert">{error}</p><button onClick={() => void load()}>Coba lagi</button></div> : !directory ? <p className="empty" role="status">Memuat ruang kerja...</p> : showMcp ? <Suspense fallback={<p className="empty" role="status">Memuat koneksi MCP...</p>}><McpPanel agents={directory.agents} request={api} onClose={() => { setShowMcp(false); mcpButton.current?.focus(); }} /></Suspense> : showData ? <SharedDataPanel agents={directory.agents} request={api} onClose={() => { setShowMcp(false); setShowData(false); dataButton.current?.focus(); }} /> : showSkills ? <Suspense fallback={<p className="empty" role="status">Memuat library skill...</p>}><SkillsPanel agents={directory.agents} request={api} onClose={() => { setShowMcp(false); setShowData(false); setShowSkills(false); skillsButton.current?.focus(); }} /></Suspense> : showBackup ? <BackupPanel onClose={() => { setShowMcp(false); setShowData(false); setShowSkills(false); setShowBackup(false); backupButton.current?.focus(); }} /> : importing ? <AgentTemplateImport request={api} onClose={() => { setShowMcp(false); setShowData(false); setShowSkills(false); setShowBackup(false); setImporting(false); importButton.current?.focus(); }} onCreated={created => { setDirectory({ ...directory, agents: [...directory.agents.filter(agent => agent.id !== created.id), created] }); setSelected(created.id); setSelectedChannel(''); setCreating(false); setCreatingChannel(false); setEditing(false); setImporting(false); }} /> : showUsage ? <UsagePanel request={api} onClose={() => { setShowMcp(false); setShowData(false); setShowSkills(false); setShowBackup(false); setImporting(false); setShowUsage(false); usageButton.current?.focus(); }} /> : showWorkflows ? <WorkflowDirectory agents={directory.agents} request={api} onClose={() => setShowWorkflows(false)} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={directory.agents.find(item => item.id === owner)} threadId={id} configured={directory.configured} onOpenAgent={(owner, thread) => { setOpenedThread({ agent: owner, thread }); setSelected(owner); setSelectedChannel(''); setShowWorkflows(false); }} onOpenChannel={id => { setSelectedChannel(id); setShowWorkflows(false); }} />} /> : showFlows ? <FlowDirectory agents={directory.agents} onClose={() => setShowFlows(false)} onOpen={(owner, thread) => { setOpenedThread({ agent: owner, thread }); setSelected(owner); setSelectedChannel(''); setShowWorkflows(false); setShowFlows(false); }} /> : editing && channel ? <ChannelForm key={`${channel.id}:${channel.revision}:${editReload}`} agents={directory.agents} channel={channel} onCancel={() => setEditing(false)} onReload={() => { void load().then(() => setEditReload(value => value + 1)); }} onCreated={() => { void load(); setEditing(false); }} /> : editing && agent ? <AgentForm key={`${agent.id}:${editReload}`} model={directory.defaultModel} profile={agent} onCancel={() => setEditing(false)} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} onCreated={() => { void load(); setEditing(false); }} /> : creatingChannel ? <ChannelForm agents={directory.agents} onCancel={() => setCreatingChannel(false)} onCreated={created => { setChannels([...channels.filter(room => room.id !== created.id), created]); setSelectedChannel(created.id); setCreatingChannel(false); }} /> : creating || (!agent && !channel) ? <AgentForm model={directory.defaultModel} onCancel={agent || channel ? () => setCreating(false) : undefined} onCreated={created => { setDirectory({ ...directory, agents: [...directory.agents.filter(agent => agent.id !== created.id), created] }); setSelected(created.id); setSelectedChannel(''); setCreating(false); }} /> : channel ? <Chat onOpenAgent={(owner, thread) => { setOpenedThread({ agent: owner, thread }); setSelected(owner); setSelectedChannel(''); setEditing(false); }} key={`channel:${channel.id}`} agent={channel} channel={{ ...channel, lead: directory.agents.find(agent => agent.id === channel.lead)?.hidden ? null : channel.lead }} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id) && !agent.hidden)} onEdit={() => setEditing(true)} configured={directory.configured} /> : agent && <AgentConversations onOpenChannel={id => { setSelectedChannel(id); setEditing(false); }} key={agent.id} agent={agent} workflowAgents={directory.agents} configured={directory.configured} initialThread={openedThread?.agent === agent.id ? openedThread.thread : undefined} onThreadOpened={() => setOpenedThread(null)} onOpenAgent={(owner, thread) => { setOpenedThread({ agent: owner, thread }); setSelected(owner); setSelectedChannel(''); setEditing(false); }} onEdit={() => setEditing(true)} />}</main>
+    {content}
+    {dialog === 'agent' && directory && <Modal label="Agent baru" className="form-modal" onClose={() => setDialog(null)}><div className="form-modal__body legacy"><AgentForm model={directory.defaultModel} onCancel={() => setDialog(null)} onCreated={item => { created(item); setDialog(null); }} /></div></Modal>}
+    {dialog === 'channel' && directory && <Modal label="Channel baru" className="form-modal" onClose={() => setDialog(null)}><div className="form-modal__body legacy"><ChannelForm agents={directory.agents} onCancel={() => setDialog(null)} onCreated={item => { setChannels(current => [...current.filter(room => room.id !== item.id), item]); openChannel(item.id); }} /></div></Modal>}
+    {dialog === 'edit' && directory && (channel || agent) && <Modal label={channel ? 'Pengaturan channel' : 'Edit profil agent'} className="form-modal" onClose={() => setDialog(null)}><div className="form-modal__body legacy">
+      {channel ? <ChannelForm key={`${channel.id}:${channel.revision}:${editReload}`} agents={directory.agents} channel={channel} onCancel={() => setDialog(null)} onReload={() => { void load().then(() => setEditReload(value => value + 1)); }} onCreated={() => { void load(); setDialog(null); }} />
+        : agent && <AgentForm key={`${agent.id}:${editReload}`} model={directory.defaultModel} profile={agent} onCancel={() => setDialog(null)} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} onCreated={() => { void load(); setDialog(null); }} />}
+    </div></Modal>}
+    {settings && createPortal(<div className="app-settings bs-root" role="dialog" aria-modal="true" aria-label="Pengaturan">
+      <aside className="app-settings__nav">
+        <button type="button" className="app-settings__back" onClick={() => setSettings(null)}><ChevronDown size={14} aria-hidden style={{ transform: 'rotate(90deg)' }} /> Kembali ke ruang kerja</button>
+        <div className="app-settings__heading">Pengaturan</div>
+        {settingsSections.map(section => <button key={section.id} type="button" className={`cfg-nav__item${settings === section.id ? ' is-active' : ''}`} aria-current={settings === section.id || undefined} onClick={() => setSettings(section.id)}>{section.label}</button>)}
+      </aside>
+      <div className="app-settings__main">
+        <button type="button" className="app-settings__close icon-btn" onClick={() => setSettings(null)} aria-label="Tutup pengaturan" title="Tutup (Esc)"><X size={16} aria-hidden /></button>
+        <div className="app-settings__page legacy">
+          {!directory ? <p className="empty" role="status">Memuat ruang kerja...</p>
+            : settings === 'skills' ? <Suspense fallback={<p className="empty" role="status">Memuat library skill...</p>}><SkillsPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
+            : settings === 'mcp' ? <Suspense fallback={<p className="empty" role="status">Memuat koneksi MCP...</p>}><McpPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
+            : settings === 'data' ? <SharedDataPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} />
+            : settings === 'usage' ? <UsagePanel request={api} onClose={() => setSettings(null)} />
+            : settings === 'backup' ? <BackupPanel onClose={() => setSettings(null)} />
+            : settings === 'import' ? <AgentTemplateImport request={api} onClose={() => setSettings(null)} onCreated={item => { created(item); setSettings(null); }} />
+            : settings === 'sections' ? <AgentSidebar mode="editor" agents={directory.agents} request={api} renderAgent={() => null} />
+            : <div className="settings-appearance"><h1>Tampilan</h1><PresentationSettings /></div>}
+        </div>
+      </div>
+    </div>, document.body)}
   </div>;
 }
+
 applyPresentation(document.documentElement, readPresentation().value);
 createRoot(document.getElementById('root')!).render(<App />);

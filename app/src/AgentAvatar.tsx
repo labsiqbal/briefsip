@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 
 type State = { revision: number; present: boolean };
 type Command = { id: string; revision: number; image: string | null };
-export function AgentAvatar({ agent }: { agent: { id: string; name: string; avatar_revision?: number } }) {
-  return <span className="avatar">{agent.avatar_revision ? <img key={agent.avatar_revision} src={`/api/agents/${agent.id}/avatar/image?v=${agent.avatar_revision}`} alt="" /> : agent.name.slice(0, 1)}</span>;
+export function AgentAvatar({ agent, size }: { agent: { id: string; name: string; avatar_revision?: number; members?: string[] }; size?: number }) {
+  const channel = Array.isArray(agent.members);
+  return <span className={`avatar${size ? ' bs-avatar' : ''}${channel ? ' is-channel' : ''}`} style={size ? { width: size, height: size, fontSize: Math.round(size * 0.42) } : undefined} aria-hidden="true">{!channel && agent.avatar_revision ? <img key={agent.avatar_revision} src={`/api/agents/${agent.id}/avatar/image?v=${agent.avatar_revision}`} alt="" /> : channel ? '#' : agent.name.slice(0, 1).toUpperCase()}</span>;
 }
 export function AvatarEditor({ agent, request, onChanged }: { agent: string; request: <T>(path: string, body?: unknown) => Promise<T>; onChanged: () => Promise<void> }) {
   const path = `/api/agents/${agent}/avatar`, key = `briefsip-avatar:${agent}`;

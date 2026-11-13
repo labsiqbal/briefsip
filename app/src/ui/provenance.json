@@ -1,0 +1,18 @@
+{
+  "repository": "https://github.com/nickvasilescu/bot-hq",
+  "revision": "decf9a215cddd8792a5f20f4a11a87d4dffa6d15",
+  "license": "MIT",
+  "notice": "app/src/ui/NOTICE",
+  "entries": [
+    { "sourcePath": "web/src/styles/tokens.css", "localPath": "app/src/ui/tokens.css", "adaptation": "Briefsip brand colors replace per-bot pink; data-theme dark/light/system selectors; legacy panel variables mapped onto tokens." },
+    { "sourcePath": "web/src/styles/base.css", "localPath": "app/src/ui/base.css", "adaptation": "Focus ring uses Briefsip token." },
+    { "sourcePath": "web/src/styles/shell.css", "localPath": "app/src/ui/shell.css", "adaptation": "Unchanged layout; Briefsip additions live in app/src/ui/briefsip.css." },
+    { "sourcePath": "web/src/styles/chat.css", "localPath": "app/src/ui/chat.css", "adaptation": "Notice class renamed to chat-notice; system-theme dark variant." },
+    { "sourcePath": "web/src/styles/details.css", "localPath": "app/src/ui/details.css", "adaptation": "Focus ring uses Briefsip token." },
+    { "sourcePath": "web/src/styles/modals.css", "localPath": "app/src/ui/modals.css", "adaptation": "Focus ring uses Briefsip token." },
+    { "sourcePath": "web/src/styles/config.css", "localPath": "app/src/ui/config.css", "adaptation": "Unchanged." },
+    { "sourcePath": "web/src/components/Menu.tsx", "localPath": "app/src/ui/Menu.tsx", "adaptation": "Disabled items, labelled menu, focus first item." },
+    { "sourcePath": "web/src/components/modals/Modal.tsx", "localPath": "app/src/ui/Modal.tsx", "adaptation": "Built-in header/close button with Lucide icon; stable close callback." }
+  ],
+  "notUsed": "Bot HQ icon SVGs, avatar shapes and Grok Bot-derived visuals are not copied; icons come from lucide-react (ISC)."
+}
