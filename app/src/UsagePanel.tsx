@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { HostMetricsSection } from './HostMetricsSection';
+import { Alert, Card, EmptyState, IconButton, PageHeader, Row, Section, SkeletonRows } from './ui/kit';
+import { ChevronLeft, ChevronRight, RefreshCw, Receipt } from 'lucide-react';
 
 type Call = { account?: string; family: string; seq: number; agent_name: string; model: string; origin: string; purpose: string; phase: string; status: string; created: string; input_tokens: number | null; output_tokens: number | null; total_tokens: number | null };
 type Report = { summary: { calls: number; pending: number; failed: number; interrupted: number; input_tokens: string | null; output_tokens: string | null; total_tokens: string | null; unknown_input: number; unknown_output: number; unknown_total: number }; calls: Call[]; next_before: number | null };
 const statuses: Record<string, string> = { pending: 'Waiting for response', received: 'Response received', failed: 'Failed or canceled', interrupted: 'Disconnected, result unknown' };
 const amount = (value: number | string | null) => value === null ? 'Unknown' : BigInt(value).toLocaleString('en-US');
-export function UsagePanel({ request, onClose }: { request: <T>(path: string) => Promise<T>; onClose: () => void }) {
+export function UsagePanel({ request }: { request: <T>(path: string) => Promise<T>; onClose: () => void }) {
   const [report, setReport] = useState<Report | null>(null), [error, setError] = useState(''), [refresh, setRefresh] = useState(0);
   const [cursors, setCursors] = useState<number[]>([]), before = cursors.at(-1);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -15,17 +17,23 @@ export function UsagePanel({ request, onClose }: { request: <T>(path: string) =>
     void request<Report>(`/api/usage${before ? `?before=${before}` : ''}`).then(data => { if (!stopped) setReport(data); }).catch(error => { if (!stopped) setError(error.message); });
     return () => { stopped = true; };
   }, [before, refresh]);
-  return <section className="setup workflow-panel"><h1 ref={heading} tabIndex={-1}>Usage</h1>
-    <div className="form-actions routine-actions"><button className="secondary" onClick={onClose}>Back to conversation</button><button className="secondary" onClick={() => setRefresh(value => value + 1)}>Reload usage</button></div>
+  return <div className="k-page bs-root">
+    <PageHeader headingRef={heading} title="Usage" description="Review provider calls and the host resources used by Briefsip."
+      actions={<IconButton label="Reload" onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton>} />
     <HostMetricsSection request={request} />
-    <h2>Provider usage</h2>
-    <p>Calls recorded since tracking was enabled. Tokens come from provider reports, not estimates. Cost and remaining quota are unknown.</p>
-    {error && <p className="error" role="alert">{error}</p>}
-    {!report ? !error && <p role="status">Loading usage...</p> : <><h2>All records</h2><p>{report.summary.calls} calls · {report.summary.pending} waiting · {report.summary.failed} failed or canceled · {report.summary.interrupted} disconnected</p>
-      <dl><dt>Recorded input tokens</dt><dd>{amount(report.summary.input_tokens)} ({report.summary.unknown_input} calls without counts)</dd><dt>Recorded output tokens</dt><dd>{amount(report.summary.output_tokens)} ({report.summary.unknown_output} calls without counts)</dd><dt>Total recorded tokens</dt><dd>{amount(report.summary.total_tokens)} ({report.summary.unknown_total} calls without counts)</dd></dl>
-      <p className="muted">Recorded totals may be incomplete. Failed or disconnected calls may still be billed by the provider. Tool responses are counted per call, not per user message.</p>
-      <h2>Call history</h2>{!report.calls.length ? <p>No calls on this page yet.</p> : <ul className="routine-list">{report.calls.map(call => <li key={call.seq}><h3>{call.agent_name} · {call.model}</h3><p>{call.family === 'openai-images' ? 'OpenAI Images-compatible' : call.family === 'gemini' ? 'Gemini GenerateContent' : call.family === 'anthropic' ? 'Anthropic Messages' : 'OpenAI-compatible'} · {call.origin}</p><p>Account: {call.phase === 'image' ? 'Separate image provider' : call.account || 'Server default'}</p><p>{new Date(call.created).toLocaleString('en-US')} · {call.phase === 'image' ? 'Image generation' : call.phase === 'compaction' ? 'History summary' : call.purpose === 'routing' ? 'Channel recipient selection' : 'Agent or workflow reply'}</p><p>{statuses[call.status]}</p><p>Input: {amount(call.input_tokens)} · Output: {amount(call.output_tokens)} · Total: {amount(call.total_tokens)}</p></li>)}</ul>}
-      <div className="form-actions routine-actions"><button className="secondary" disabled={!cursors.length} onClick={() => setCursors(value => value.slice(0, -1))}>Newer calls</button><button className="secondary" disabled={!report.next_before} onClick={() => setCursors(value => [...value, report.next_before!])}>Older calls</button></div>
-    </>}
-  </section>;
+    <Section title="Provider usage">
+      <p className="k-field__hint">Calls recorded since tracking was enabled. Tokens come from provider reports, not estimates. Cost and remaining quota are unknown.</p>
+      {error && <Alert tone="error">{error}</Alert>}
+      {!report ? !error && <SkeletonRows count={3} /> : <>
+        <Section title="All records">
+          <Card><Row title="Calls" trailing={report.summary.calls.toLocaleString('en-US')} /><Row title="Waiting" trailing={report.summary.pending.toLocaleString('en-US')} /><Row title="Failed or canceled" trailing={report.summary.failed.toLocaleString('en-US')} /><Row title="Disconnected" trailing={report.summary.interrupted.toLocaleString('en-US')} /><Row title="Recorded input tokens" meta={`${report.summary.unknown_input} calls without counts`} trailing={amount(report.summary.input_tokens)} /><Row title="Recorded output tokens" meta={`${report.summary.unknown_output} calls without counts`} trailing={amount(report.summary.output_tokens)} /><Row title="Total recorded tokens" meta={`${report.summary.unknown_total} calls without counts`} trailing={amount(report.summary.total_tokens)} /></Card>
+          <p className="k-field__hint">Recorded totals may be incomplete. Failed or disconnected calls may still be billed by the provider. Tool responses are counted per call, not per user message.</p>
+        </Section>
+        <Section title="Call history">
+          {!report.calls.length ? <EmptyState icon={<Receipt size={18} />} title="No calls on this page yet" /> : <div className="k-table-wrap"><table className="k-table"><thead><tr><th>Agent and model</th><th>Provider</th><th>Purpose</th><th>Status</th><th className="is-num">Input</th><th className="is-num">Output</th><th className="is-num">Total</th></tr></thead><tbody>{report.calls.map(call => <tr key={call.seq}><td><strong>{call.agent_name}</strong><br /><span className="k-field__hint">{call.model}<br />{call.phase === 'image' ? 'Separate image provider' : call.account || 'Server default'}<br />{new Date(call.created).toLocaleString('en-US')}</span></td><td>{call.family === 'openai-images' ? 'OpenAI Images-compatible' : call.family === 'gemini' ? 'Gemini GenerateContent' : call.family === 'anthropic' ? 'Anthropic Messages' : 'OpenAI-compatible'}<br /><span className="k-field__hint">{call.origin}</span></td><td>{call.phase === 'image' ? 'Image generation' : call.phase === 'compaction' ? 'History summary' : call.purpose === 'routing' ? 'Channel recipient selection' : 'Agent or workflow reply'}</td><td>{statuses[call.status]}</td><td className="is-num" style={{ whiteSpace: 'nowrap' }}>{amount(call.input_tokens)}</td><td className="is-num" style={{ whiteSpace: 'nowrap' }}>{amount(call.output_tokens)}</td><td className="is-num" style={{ whiteSpace: 'nowrap' }}>{amount(call.total_tokens)}</td></tr>)}</tbody></table></div>}
+          {(cursors.length > 0 || !!report.next_before) && <div className="k-pager"><IconButton label="Newer calls" disabled={!cursors.length} onClick={() => setCursors(value => value.slice(0, -1))}><ChevronLeft size={16} aria-hidden /></IconButton><IconButton label="Older calls" disabled={!report.next_before} onClick={() => setCursors(value => [...value, report.next_before!])}><ChevronRight size={16} aria-hidden /></IconButton></div>}
+        </Section>
+      </>}
+    </Section>
+  </div>;
 }

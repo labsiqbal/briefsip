@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { HostMetrics } from '../host-metrics';
+import { Alert, Badge, Card, IconButton, Row, Section } from './ui/kit';
+import { RefreshCw } from 'lucide-react';
 const bytes = (value: string | number | null) => {
   if (value === null) return 'Unavailable';
   const size = BigInt(value), units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']; let scale = 1n, unit = 0;
@@ -21,17 +23,17 @@ export function HostMetricsSection({ request }: { request: <T>(path: string) => 
     }
     void load(); return () => { stopped = true; clearTimeout(timer); };
   }, [refresh, request]);
-  return <section className="host-metrics" aria-labelledby="host-metrics-title"><h2 id="host-metrics-title">Machine and storage</h2>
-    <p>The host running the Briefsip server, separate from the browser device. Updates every 10 seconds while this panel is visible.</p>
-    <button className="secondary" disabled={busy} onClick={() => setRefresh(value => value + 1)}>{busy ? 'Loading metrics...' : 'Reload metrics'}</button>
-    {error && <p className="error" role="alert">{error}{metrics ? ' The last readings may have changed.' : ''}</p>}
-    {metrics && <><p className="muted">Reading {new Date(metrics.sampledAt).toLocaleString('en-US')} · {metrics.platform}</p>
-      <dl><dt>Host CPU</dt><dd>{percent(metrics.cpu.percent, metrics.cpu.cores > 0 && metrics.cpu.intervalMs === null)} · {metrics.cpu.cores} logical cores</dd><dt>Briefsip process CPU</dt><dd>{percent(metrics.process.cpuPercent, metrics.cpu.intervalMs === null)} (100% equals one core)</dd><dt>Available host memory</dt><dd>{bytes(metrics.memory.available)} of {bytes(metrics.memory.total)}</dd><dt>Briefsip process memory</dt><dd>{bytes(metrics.process.rss)}</dd><dt>OS process memory limit</dt><dd>{metrics.process.memoryLimit === null ? 'Unlimited or unknown' : bytes(metrics.process.memoryLimit)}</dd><dt>Memory available to the process</dt><dd>{bytes(metrics.process.availableMemory)}</dd></dl>
-      <p className="muted">Host CPU is not normalized to container quotas. The OS may limit process memory; filesystem size is not a container quota.</p>
-      {metrics.cpu.intervalMs !== null && <p className="muted">CPU is calculated over {(metrics.cpu.intervalMs / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })} seconds between readings.</p>}
-      {metrics.filesystem ? <><h3>Data directory filesystem</h3><p>{bytes(metrics.filesystem.available)} available · {bytes(metrics.filesystem.used)} used · {metrics.filesystem.percent.toLocaleString('en-US')}% of effective capacity used</p><p className="muted">Total {bytes(metrics.filesystem.total)}; {bytes(metrics.filesystem.reserved)} reserved by the filesystem and excluded from available space.</p>{metrics.filesystem.pressure !== 'normal' && <p className="error" role="status">{metrics.filesystem.pressure === 'critical' ? 'Storage space is critically low.' : 'Storage is almost full.'} Check free space on the host before adding data.</p>}</> : <p>Filesystem size is unavailable.</p>}
-      <h3>Briefsip data</h3><dl><dt>SQLite database pages</dt><dd>{bytes(metrics.storage.databaseBytes)}</dd><dt>Reusable internal space</dt><dd>{bytes(metrics.storage.reusableBytes)}</dd></dl><dl>{metrics.storage.files.map(file => <div key={file.kind}><dt>{fileNames[file.kind] ?? file.kind}</dt><dd>{file.status === 'present' ? bytes(file.bytes) : file.status === 'missing' ? 'File missing' : file.status === 'not-regular' ? 'Not a regular file; not followed' : 'Unreadable'}</dd></div>)}</dl>
-      <p className="muted">Logical file sizes, not allocated physical blocks. Database pages include data and free internal space; do not add them to file sizes again. Excludes backups and other project directories.</p>
+  return <Section title="Machine and storage" actions={<IconButton label="Reload metrics" disabled={busy} onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton>}>
+    <p className="k-field__hint">The host running the Briefsip server, separate from the browser device. Updates every 10 seconds while this panel is visible.</p>
+    {error && <Alert tone="error">{error}{metrics ? ' The last readings may have changed.' : ''}</Alert>}
+    {!metrics && !error && <Card><Row title="Machine metrics" trailing="Loading..." /></Card>}
+    {metrics && <>
+      <p className="k-field__hint">Reading {new Date(metrics.sampledAt).toLocaleString('en-US')} · {metrics.platform}</p>
+      <Card><Row title="Host CPU" trailing={<>{percent(metrics.cpu.percent, metrics.cpu.cores > 0 && metrics.cpu.intervalMs === null)} · {metrics.cpu.cores} logical cores</>} /><Row title="Briefsip process CPU" trailing={<>{percent(metrics.process.cpuPercent, metrics.cpu.intervalMs === null)} (100% equals one core)</>} /><Row title="Available host memory" trailing={`${bytes(metrics.memory.available)} of ${bytes(metrics.memory.total)}`} /><Row title="Briefsip process memory" trailing={bytes(metrics.process.rss)} /><Row title="OS process memory limit" trailing={metrics.process.memoryLimit === null ? 'Unlimited or unknown' : bytes(metrics.process.memoryLimit)} /><Row title="Memory available to the process" trailing={bytes(metrics.process.availableMemory)} /></Card>
+      <p className="k-field__hint">Host CPU is not normalized to container quotas. The OS may limit process memory; filesystem size is not a container quota.</p>
+      {metrics.cpu.intervalMs !== null && <p className="k-field__hint">CPU is calculated over {(metrics.cpu.intervalMs / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })} seconds between readings.</p>}
+      <Section title="Data directory filesystem"><Card>{metrics.filesystem ? <><Row title="Available" trailing={bytes(metrics.filesystem.available)} /><Row title="Used" trailing={`${bytes(metrics.filesystem.used)} · ${metrics.filesystem.percent.toLocaleString('en-US')}% of effective capacity`} /><Row title="Capacity" meta={`Total ${bytes(metrics.filesystem.total)}; ${bytes(metrics.filesystem.reserved)} reserved by the filesystem and excluded from available space.`} trailing={metrics.filesystem.pressure === 'normal' ? <Badge tone="success">Normal</Badge> : <Badge tone="warn">{metrics.filesystem.pressure === 'critical' ? 'Critically low' : 'Almost full'}</Badge>} /></> : <Row title="Filesystem size" trailing="Unavailable" />}</Card>{metrics.filesystem?.pressure !== 'normal' && metrics.filesystem && <Alert tone="error">{metrics.filesystem.pressure === 'critical' ? 'Storage space is critically low.' : 'Storage is almost full.'} Check free space on the host before adding data.</Alert>}</Section>
+      <Section title="Briefsip data"><Card><Row title="SQLite database pages" trailing={bytes(metrics.storage.databaseBytes)} /><Row title="Reusable internal space" trailing={bytes(metrics.storage.reusableBytes)} />{metrics.storage.files.map(file => <Row key={file.kind} title={fileNames[file.kind] ?? file.kind} trailing={file.status === 'present' ? bytes(file.bytes) : file.status === 'missing' ? 'File missing' : file.status === 'not-regular' ? 'Not a regular file; not followed' : 'Unreadable'} />)}</Card><p className="k-field__hint">Logical file sizes, not allocated physical blocks. Database pages include data and free internal space; do not add them to file sizes again. Excludes backups and other project directories.</p></Section>
     </>}
-  </section>;
+  </Section>;
 }

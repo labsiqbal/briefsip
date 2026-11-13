@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { applyPresentation, parsePresentation, presentationKey, readPresentation, type Presentation } from '../presentation';
+import { Alert, PageHeader, Section, Segmented } from './ui/kit';
 
 export function PresentationSettings() {
   const [state, setState] = useState(readPresentation), [notice, setNotice] = useState('');
@@ -20,9 +21,10 @@ export function PresentationSettings() {
       applyPresentation(document.documentElement, next); setState({ value: next, error: '' }); setNotice('Appearance saved in this browser.');
     } catch { setState(current => ({ ...current, error: 'Appearance has not been saved. Allow browser storage and try again.' })); setNotice(''); }
   }
-  return <details className="presentation-settings"><summary>Appearance</summary><p>Applies in this browser. Appearance does not change agents or conversations.</p>
-    <label>Theme<select value={state.value.theme} onChange={event => change({ ...state.value, theme: event.target.value as Presentation['theme'] })}><option value="dark">Dark</option><option value="light">Light</option><option value="system">Match device</option></select></label>
-    <label>Text size<select value={state.value.textSize} onChange={event => change({ ...state.value, textSize: event.target.value as Presentation['textSize'] })}><option value="standard">Standard</option><option value="large">Large</option><option value="larger">Larger</option></select></label>
-    {state.error && <p className="error" role="alert">{state.error}</p>}{notice && <p role="status">{notice}</p>}
-  </details>;
+  return <div className="k-page bs-root">
+    <PageHeader title="Appearance" description="Applies in this browser. Appearance does not change agents or conversations." />
+    <Section title="Theme"><Segmented<Presentation['theme']> label="Theme" value={state.value.theme} onChange={theme => change({ ...state.value, theme })} options={[{ value: 'dark', label: 'Dark' }, { value: 'light', label: 'Light' }, { value: 'system', label: 'Match device' }]} /></Section>
+    <Section title="Text size"><Segmented<Presentation['textSize']> label="Text size" value={state.value.textSize} onChange={textSize => change({ ...state.value, textSize })} options={[{ value: 'standard', label: 'Standard' }, { value: 'large', label: 'Large' }, { value: 'larger', label: 'Larger' }]} /></Section>
+    {state.error && <Alert tone="error">{state.error}</Alert>}{notice && <Alert>{notice}</Alert>}
+  </div>;
 }
