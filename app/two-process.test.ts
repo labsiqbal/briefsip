@@ -16,6 +16,7 @@ import { createAuth, type AuthConfig } from './auth.ts';
 import { prepareRestoreBootstrap, issueRestoreSession, restoreWorkspace, workspaceSnapshot } from './backup.ts';
 import { canonicalJson, ProtocolError, digestCommand, sha256 } from './protocol.ts';
 import { parseOwnership } from './task-recovery.ts';
+import { onceCandidate } from './schedule-time.ts';
 import { createRoutineRuntime } from './routine-runtime.ts';
 import { routineWebhookKeyring } from './routine-webhook-keyring.ts';
 import sharp from 'sharp';
@@ -1753,6 +1754,67 @@ test('canonical routines recheck assignments private mappings flow agents and re
     db.exec('DROP TRIGGER fail_routine_receipt');assert.equal((await f.send(detail+'/edit',edit2)).status,200);
     const short=randomUUID();assert.equal((await f.send(detail+'/edit',{...edit2,requestId:short,id:short,revision:3,intervalSeconds:60})).status,400);
   }finally{db.close();await f.close();}
+});
+
+test('canonical routine wall-clock HTTP keeps exact retries and pending identities across restart and catch-up admission', async () => {
+  const f = await workflowConfigurationFixture(), db = new DatabaseSync(join(f.dir, 'canonical.sqlite')), originalFetch = globalThis.fetch;
+  const list = `/api/projects/${f.project}/agents/${f.agent}/routines`, once = randomUUID(), cron = randomUUID();
+  const oncePath = `/api/projects/${f.project}/routines/${once}`, cronPath = `/api/projects/${f.project}/routines/${cron}`;
+  const schedule = { kind: 'once', date: '2024-03-10', time: '02:30' };
+  const command = { requestId: once, id: once, revision: 0, name: 'Once', prompt: 'PRIVATE_WALL_CLOCK_PROMPT', schedule, enabled: true };
+  try {
+    for (const extra of [{ nextAt: 0 }, { intervalSeconds: null }, { nextAt: 0, intervalSeconds: 300 }]) {
+      assert.equal((await f.send(list, { ...command, ...extra })).status, 400);
+    }
+    globalThis.fetch = async (url, init) => {
+      const response = await originalFetch(url, init);
+      if (String(url) === f.origin() + list) {
+        assert.equal(response.status, 201, await response.clone().text());
+        await response.body?.cancel(); throw new Error('Lost wall-clock response');
+      }
+      return response;
+    };
+    await assert.rejects(f.send(list, command), /Lost wall-clock response/); globalThis.fetch = originalFetch;
+    const saved = await f.send(list, command); assert.equal(saved.status, 200); assert.deepEqual(saved.body.data.schedule, schedule);
+    assert.equal(saved.body.data.next_at, onceCandidate(schedule, f.home.zone).at);
+    const cronCommand = { ...command, requestId: cron, id: cron, name: 'Daily cron', schedule: { kind: 'cron', expression: '0 9 * * *' } };
+    assert.equal((await f.send(list, cronCommand)).status, 201);
+    // Simulate a durable due time retained while the canonical process was down.
+    db.prepare('UPDATE routines SET next_at=? WHERE id=?').run(onceCandidate({ date: '2024-01-01', time: '09:00' }, f.home.zone).at, cron);
+    let pendingOnce: any, pendingCron: any;
+    await until(async () => {
+      pendingOnce = (await f.send(oncePath + '/runs')).body.data.items[0];
+      pendingCron = (await f.send(cronPath + '/runs')).body.data.items[0];
+      return pendingOnce?.state === 'pending' && pendingCron?.state === 'pending';
+    });
+    assert.equal(pendingOnce.scheduleKind, 'once'); assert.equal(pendingCron.scheduleKind, 'cron'); assert(pendingCron.missedCount > 1);
+    assert.equal(pendingCron.id, createHash('sha256').update(JSON.stringify([cron, 1, f.home.zone_revision, pendingCron.dueAt, 0])).digest('base64url'));
+    const response = await fetch(f.origin() + list + '/calendar.ics', { headers: { Authorization: `Bearer ${f.jwt()}`, Origin: f.origin(), Connection: 'close', 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': randomUUID() } });
+    const calendar = (await response.text()).replace(/\r\n /g, ''); assert.equal(response.status, 200);
+    assert(calendar.includes(`UID:${once}@briefsip.local`)); assert(!calendar.includes(`UID:${cron}@briefsip.local`));
+    assert(calendar.includes('Omitted cron routine "Daily cron"')); assert(!calendar.includes(command.prompt));
+    const snapshot = (await f.send('/api/sync?projectId=' + f.project)).body.data;
+    const observed = snapshot.page.events.filter((event: any) => event.recordKind.startsWith('routine'));
+    assert(observed.every((event: any) => ['once', 'cron'].includes(event.body.scheduleKind))); assert(!JSON.stringify(observed).includes('PRIVATE_'));
+    await f.restart(); assert.deepEqual((await f.send(list, command)).body.receipt, saved.body.receipt);
+    assert.deepEqual((await f.send(oncePath + '/runs')).body.data.items, [pendingOnce]);
+    assert.deepEqual((await f.send(cronPath + '/runs')).body.data.items, [pendingCron]);
+    const connection = f.runtime.connect(); await until(() => connection.state().phase === 'connected');
+    let admitted: any[] = [];
+    await until(async () => {
+      admitted = [(await f.send(oncePath + '/runs')).body.data.items[0], (await f.send(cronPath + '/runs')).body.data.items[0]];
+      return admitted.every(item => item?.state === 'admitted');
+    });
+    assert.equal(admitted[0].id, pendingOnce.id); assert.equal(admitted[1].id, pendingCron.id);
+    assert.equal((await f.send(oncePath)).body.data.enabled, 0); assert((await f.send(cronPath)).body.data.next_at > Date.now());
+    const enable = randomUUID(), rejected = await f.send(oncePath + '/edit', { ...command, requestId: enable, id: enable, revision: 2 });
+    assert.equal(rejected.status, 409); assert.equal(rejected.body.error.code, 'schedule_processed');
+    await f.restart(); assert.deepEqual((await f.send(list, command)).body.receipt, saved.body.receipt);
+    assert.equal((await f.send(oncePath + '/runs')).body.data.items[0].taskId, admitted[0].taskId);
+    assert.equal((await f.send(cronPath + '/runs')).body.data.items[0].taskId, admitted[1].taskId);
+    assert.equal(db.prepare('SELECT count(*) n FROM routine_occurrences').get()!.n, 2); assert.equal(db.prepare('SELECT count(*) n FROM tasks').get()!.n, 2);
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+  } finally { globalThis.fetch = originalFetch; db.close(); await f.close(); }
 });
 
 test('canonical routine calendar exports only current project and reader schedules without prompts',async()=>{
