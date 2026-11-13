@@ -1370,16 +1370,22 @@ test('canonical routine runtime coalesces offline intervals once and retains tas
   const f=await workflowConfigurationFixture(),routine=randomUUID(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,detail=`/api/projects/${f.project}/routines/${routine}`;
   const due=Date.now()-960000,command={requestId:routine,id:routine,revision:0,name:'Catch-up',prompt:'Scheduled isolated input',nextAt:due,intervalSeconds:300,enabled:true};
   try{
+    const syncPath='/api/sync?projectId='+f.project,before=(await f.send(syncPath)).body.data;
     const saved=await f.send(list,command);assert.equal(saved.status,201,JSON.stringify(saved.body));
     let runs:any;
     await until(async()=>{runs=(await f.send(detail+'/runs')).body.data;return runs.items?.length===1;});
     const pending=runs.items[0];assert.equal(pending.state,'pending');assert.equal(pending.dueAt,due);assert.equal(pending.missedCount,3);assert.equal(pending.taskId,null);
+    const observations=(await f.send(syncPath+'&cursor='+encodeURIComponent(before.nextCursor))).body.data;
+    assert.deepEqual(observations.page.events.filter((event:any)=>event.recordKind.startsWith('routine')).map((event:any)=>[event.recordKind,event.revision]),[['routine',1],['routine_occurrence',1]]);
+    assert(!JSON.stringify(observations).includes('Scheduled isolated input'));
     assert.equal(pending.id,createHash('sha256').update(JSON.stringify([routine,1,1,due,0])).digest('base64url'),'Elapsed occurrence identity follows approved schedule tuple');
     await f.restart();assert.deepEqual((await f.send(detail+'/runs')).body.data,runs);
     const connection=f.runtime.connect();await until(()=>connection.state().phase==='connected');
     await until(async()=>{runs=(await f.send(detail+'/runs')).body.data;return runs.items[0]?.state==='admitted';});
     assert.equal(runs.items.length,1);assert.equal(runs.items[0].id,pending.id);
     const taskId=runs.items[0].taskId,task=(await f.send(`/api/tasks/${taskId}`)).body;
+    const admittedObservations=(await f.send(syncPath+'&cursor='+encodeURIComponent(observations.nextCursor))).body.data;
+    assert.deepEqual(admittedObservations.page.events.filter((event:any)=>event.recordKind.startsWith('routine')).map((event:any)=>[event.recordKind,event.revision]),[['routine',2],['routine_occurrence',2]]);
     assert.equal(task.data.homeDeviceId,f.home.id);assert.equal(task.data.agentId,f.agent);assert.equal(task.receipt.requestId,taskId);
     const current=(await f.send(detail)).body.data;assert(current.next_at>Date.now());assert.equal(current.revision,2);
     assert.deepEqual((await f.send(list,command)).body.receipt,saved.body.receipt);
@@ -3286,7 +3292,7 @@ test('canonical routine reads and edits isolate project configuration and recove
     try{
       db.exec('ALTER TABLE routines ADD COLUMN secret TEXT');
       for(const [id,projectId] of [[routine,project],[hidden,other]]){
-        db.prepare("INSERT INTO routines VALUES (?,?,'Routine','Original prompt',123456,NULL,1,1,'webhook','WEBHOOK_SECRET')").run(id,agent);
+        db.prepare("INSERT INTO routines(id,agent,name,prompt,next_at,interval_ms,enabled,revision,trigger,secret) VALUES (?,?,'Routine','Original prompt',123456,NULL,1,1,'webhook','WEBHOOK_SECRET')").run(id,agent);
         db.prepare("INSERT INTO record_scopes VALUES ('routines',?,?,?,'owner','agent',?)").run(JSON.stringify([id]),owner,projectId,agent);
       }
       db.prepare('INSERT INTO routine_flows VALUES (?,?,1)').run(routine,JSON.stringify(graph));db.prepare("INSERT INTO record_scopes VALUES ('routine_flows',?,?,?,'owner','agent',?)").run(JSON.stringify([routine]),owner,project,agent);
