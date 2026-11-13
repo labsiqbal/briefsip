@@ -617,6 +617,32 @@ test('canonical workflow schedule coalesces offline intervals with one durable i
   } finally { await f.close(); }
 });
 
+test('canonical workflow once uses its home zone and consumes one catch-up after offline restart', async () => {
+  const previousZone=process.env.TZ;process.env.TZ='America/New_York';
+  try{
+  const f=await workflowConfigurationFixture();
+  try{
+    assert.equal((await f.send(f.list,{requestId:f.workflow,id:f.workflow,revision:0,name:'Wall clock',graph:f.graph})).status,201);
+    const requestId=randomUUID(),command={requestId,id:requestId,revision:0,spec:{kind:'once',date:'2024-03-10',time:'02:30'},input:'Wall clock input',enabled:true};
+    const saved=await f.send(f.detail+'/schedule',command);assert.equal(saved.status,201,JSON.stringify(saved.body));
+    assert.equal(saved.body.data.nextAt,Date.parse('2024-03-10T07:00:00Z'));assert.equal(saved.body.data.zone,'America/New_York');
+    let current:any;
+    await until(async()=>{current=(await f.send(f.detail+'/schedule')).body.data;return current.occurrences.length===1;});
+    const pending=current.occurrences[0];assert.equal(pending.state,'pending');assert.equal(pending.dueAt,saved.body.data.nextAt);
+    await f.restart();assert.deepEqual((await f.send(f.detail+'/schedule')).body.data.occurrences,[pending]);
+    const connection=f.runtime.connect();await until(()=>connection.state().phase==='connected');
+    await until(async()=>{current=(await f.send(f.detail+'/schedule')).body.data;return current.occurrences[0]?.state==='admitted';});
+    assert.equal(current.enabled,false);assert.equal(current.nextAt,null);assert.equal(current.occurrences.length,1);
+    assert.equal(current.occurrences[0].occurrenceId,pending.occurrenceId);assert.equal(current.occurrences[0].zoneRevision,1);
+    await until(async()=>(await f.send(`/api/projects/${f.project}/workflow-runs/${current.occurrences[0].runId}`)).body.data.status==='done');
+    assert.deepEqual((await f.send(f.detail+'/schedule',command)).body.receipt,saved.body.receipt);
+    const replay=randomUUID(),denied=await f.send(f.detail+'/schedule',{...command,requestId:replay,id:replay,revision:1});
+    assert.equal(denied.status,409);assert.equal(denied.body.error.code,'schedule_processed');
+    assert.equal((await f.send(f.detail+'/runs')).body.data.items.length,1);
+  }finally{await f.close();}
+  }finally{if(previousZone===undefined)delete process.env.TZ;else process.env.TZ=previousZone;}
+});
+
 test('canonical workflow occurrence attaches its first recovery task atomically on the original home', async () => {
   const f = await workflowConfigurationFixture();
   try {
