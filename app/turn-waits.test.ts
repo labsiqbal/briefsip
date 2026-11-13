@@ -98,7 +98,7 @@ test('agent event waits release workers, survive restart, honor pause and accept
     const resumedExpired = await until(direct, expired.id, row => ['done', 'failed'].includes(row.status));
     assert.equal(resumedExpired.status, 'done', resumedExpired.error);
     assert.equal(JSON.parse(JSON.parse(prompts.at(-1)!).messages.filter((m: any) => m.role === 'tool').at(-1).content).status, 'expired');
-    invalid = true; const bad = randomUUID(); await request(direct, { id: bad, text: bad }); const failed = await until(direct, bad, row => row.status === 'failed'); assert.match(failed.error, /Nama event atau batas tunggu/);
+    invalid = true; const bad = randomUUID(); await request(direct, { id: bad, text: bad }); const failed = await until(direct, bad, row => row.status === 'failed'); assert.match(failed.error, /Invalid event name or wait limit/);
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
 

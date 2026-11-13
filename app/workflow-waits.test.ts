@@ -104,7 +104,7 @@ test('signed workflow events are scoped, durable, once-only, expiring and cancel
     const expiring = await request(`/api/workflows/${short.id}/run`, { id: randomUUID(), revision: 1, input: '' });
     await state(expiring.id, 'waiting'); const expiringPath = `/api/workflow-waits/${expiring.id}/1`, expiringConnection = await request(expiringPath);
     await app.close(); await new Promise(resolve => setTimeout(resolve, 1100)); app = await startApp(options);
-    const expired = await state(expiring.id, 'failed'); assert.equal(expired.steps[0].status, 'failed'); assert.match(expired.error, /Waktu tunggu/);
+    const expired = await state(expiring.id, 'failed'); assert.equal(expired.steps[0].status, 'failed'); assert.match(expired.error, /Event wait timed out/);
     await send(expiringPath, expiringConnection.secret, JSON.stringify({ event: 'ready' }), randomUUID(), 409);
     const loopGraph = { entry: 'event', maxSteps: 6, nodes: [{ id: 'event', kind: 'wait', event: 'tick', timeoutSeconds: 60, next: 'check' }, { id: 'check', kind: 'condition', operator: 'contains', value: '"stop":true', yes: 'out', no: 'event' }, { id: 'out', kind: 'output' }] };
     const looping = await request(`/api/agents/${agent.id}/workflows`, { id: randomUUID(), revision: 0, name: 'Loop', graph: loopGraph });

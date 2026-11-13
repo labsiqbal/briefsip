@@ -176,7 +176,7 @@ test('workflow HTTP versions, model steps, approval receipts and cancellation su
     const reject = { id: randomUUID(), revision: awaiting.revision, accepted: false }, callsBeforeReject = models.length;
     await request(`${rejectedPath}/approve`, reject);
     let rejected = await request(rejectedPath);
-    assert.equal(rejected.status, 'failed'); assert.equal(rejected.error, 'Persetujuan workflow ditolak.');
+    assert.equal(rejected.status, 'failed'); assert.equal(rejected.error, 'Workflow approval denied.');
     assert.equal(rejected.steps.length, 2); assert.equal(rejected.steps[1].detail, 'rejected'); assert.equal(rejected.last, 'RESULT');
     await app.close(); app = await startApp(options);
     await request(`${rejectedPath}/approve`, reject);
@@ -522,7 +522,7 @@ test('workflow channel outputs deliver once and recheck channel availability at 
       await request(`/api/workflow-runs/${next.id}/approve`, { id: randomUUID(), revision: pending.revision, accepted: true });
       const failed = await settled(next.id, 'failed');
       assert.equal(failed.last, mode); assert.equal(failed.steps.at(-1).status, 'failed');
-      assert.match(failed.error, /Channel output/);
+      assert.match(failed.error, /Output channel/);
       assert.equal((await request(`/api/channels/${room.id}/turns`)).length, 1);
       await request(`/api/workflows/${workflow.id}/edit`, { id: randomUUID(), revision: 1, name: 'Publish', graph }, 409);
       room = await request(`/api/channels/${room.id}/edit`, { id: randomUUID(), revision: room.revision, name: room.name, instructions: room.instructions, archived: false, members: [owner.id, other.id], lead: owner.id });

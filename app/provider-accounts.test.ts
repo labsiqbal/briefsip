@@ -92,7 +92,7 @@ test('agents bind isolated provider accounts across channels, side threads, edit
     await app.close(); app = await startApp({ database: options.database });
     const sentBefore = calls.length;
     await request(`${path}/${lost}/questions/${waiting.questions[0].id}/answer`, { id: randomUUID(), text: 'Yes' });
-    const failed = await until(path, lost); assert.equal(failed.status, 'failed'); assert.match(failed.error, /Akun provider/); assert.equal(calls.length, sentBefore);
+    const failed = await until(path, lost); assert.equal(failed.status, 'failed'); assert.match(failed.error, /provider account/); assert.equal(calls.length, sentBefore);
 
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });

@@ -1098,7 +1098,7 @@ test('canonical workflow oversized handoff fails once without starving later run
     const later = randomUUID(), laterPath = `/api/projects/${project}/workflow-runs/${later}`;
     assert.equal((await f.send(detail + '/run', { requestId: later, id: later, revision: 1, input: 'Later' })).status, 201);
     await until(async () => (await f.send(path)).body.data.status === 'failed');
-    assert.match((await f.send(path)).body.data.error, /Input langkah melebihi 256 KiB/);
+    assert.match((await f.send(path)).body.data.error, /Step input exceeds 256 KiB/);
     await until(async () => (await f.send(laterPath)).body.data.status === 'waiting');
     const revision = (await f.send(path)).body.data.revision; await f.restart();
     assert.equal((await f.send(path)).body.data.revision, revision);

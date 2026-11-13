@@ -198,8 +198,8 @@ test('Telegram stop cannot cancel another chat and never starts an unsent task',
     const sent:any[]=[];const remote=async(_method:string,body:Record<string,unknown>)=>{sent.push(body);return {message_id:sent.length,chat:{id:body.chat_id}};};
     await telegramAgentStep(db,users,local,remote);assert.equal(writes,0);
     assert.equal(db.prepare('SELECT status FROM telegram_inbox WHERE turn=?').get(turn)!.status,'cancelled');
-    assert(sent.some(item=>item.chat_id===5&&item.text.includes('tidak ditemukan')));
-    assert(sent.some(item=>item.chat_id===4&&item.text.includes('sebelum dikirim')));
+    assert(sent.some(item=>item.chat_id===5&&item.text.includes('not found')));
+    assert(sent.some(item=>item.chat_id===4&&item.text.includes('before sending')));
   }finally{db.close();}
 });
 
@@ -212,7 +212,7 @@ for(const ask of [false,true])test(`Telegram runner ${ask?'answers a question':'
   const telegram=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const body=JSON.parse(raw);let result:any;
     if(req.url?.endsWith('/getMe'))result={id:123,is_bot:true};
     else if(req.url?.endsWith('/getUpdates')){offsets.push(body.offset);result=body.offset<8?[{update_id:7,message:{message_id:8,chat:{id:4,type:'private'},from:{id:4,is_bot:false},text:'Runner request'}}]:answerUpdate&&body.offset<9?[answerUpdate]:[];}
-    else{assert.equal(body.chat_id,4);delivered++;result={message_id:20+delivered,chat:{id:4}};if(body.text.includes('/answer ')){const id=/\/answer ([a-f0-9-]{36})/.exec(body.text)![1];answerUpdate={update_id:8,message:{message_id:10,chat:{id:4,type:'private'},from:{id:4,is_bot:false},text:`/answer ${id} Yes`}};}else if(body.text==='Runner reply')setTimeout(()=>controller.abort(),30);else assert.equal(body.text,'Jawaban diterima.');}
+    else{assert.equal(body.chat_id,4);delivered++;result={message_id:20+delivered,chat:{id:4}};if(body.text.includes('/answer ')){const id=/\/answer ([a-f0-9-]{36})/.exec(body.text)![1];answerUpdate={update_id:8,message:{message_id:10,chat:{id:4,type:'private'},from:{id:4,is_bot:false},text:`/answer ${id} Yes`}};}else if(body.text==='Runner reply')setTimeout(()=>controller.abort(),30);else assert.equal(body.text,'Answer accepted.');}
     res.end(JSON.stringify({ok:true,result}));});
   await Promise.all([new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve)),new Promise<void>(resolve=>telegram.listen(0,'127.0.0.1',resolve))]);
   const pa=provider.address(),ta=telegram.address();assert(pa&&typeof pa!=='string'&&ta&&typeof ta!=='string');
@@ -251,7 +251,7 @@ test('Telegram oversized and whitespace final replies settle without blocking ot
     const remote=async(_method:string,body:Record<string,unknown>)=>{sent.push(body);return {message_id:sent.length,chat:{id:4}};};
     await telegramAgentStep(db,users,local,remote);
     assert.equal(db.prepare("SELECT count(*) AS n FROM telegram_inbox WHERE status='done'").get()!.n,2);
-    assert(sent.some(item=>item.text.includes('Balasan dipotong')));assert(sent.some(item=>item.text==='Tugas selesai tanpa balasan teks.'));
+    assert(sent.some(item=>item.text.includes('Reply truncated')));assert(sent.some(item=>item.text==='Task completed without a text reply.'));
     const count=sent.length;await telegramAgentStep(db,users,local,remote);assert.equal(sent.length,count);
   }finally{db.close();}
 });

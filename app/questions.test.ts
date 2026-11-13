@@ -74,7 +74,7 @@ test('question cards persist, answer once in scope, and resume without repeating
     const untouched = (await request(direct)).find((r: any) => r.id === atomic.id); assert.equal(untouched.paused, 1); assert.equal(untouched.questions[0].answer, null);
     await app.close(); const recovered = new DatabaseSync(options.database); recovered.exec('DROP TRIGGER reject_answer'); recovered.close(); app = await startApp(options);
     await request(answerPath(direct, atomic), retry); await until(direct, atomic.id, row => row.status === 'done'); assert.equal(replies.at(-1), 'Atomic answer');
-    invalid = true; const bad = randomUUID(); await request(direct, { id: bad, text: bad }); const failed = await until(direct, bad, row => row.status === 'failed'); assert.match(failed.error, /Pertanyaan/); assert.equal(failed.questions.length, 0);
+    invalid = true; const bad = randomUUID(); await request(direct, { id: bad, text: bad }); const failed = await until(direct, bad, row => row.status === 'failed'); assert.match(failed.error, /question/); assert.equal(failed.questions.length, 0);
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
 

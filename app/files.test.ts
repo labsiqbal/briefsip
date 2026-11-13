@@ -21,15 +21,15 @@ test('files preserve bytes, scope, retry identity and archive boundaries', async
     const thread = await post(`/api/agents/${agent.id}/threads`, { id: randomUUID(), name: 'Files side' });
     const direct = `/api/agents/${agent.id}/files`, room = `/api/channels/${channel.id}/files`, side = `/api/threads/${thread.id}/files`;
     const id = randomUUID(), bytes = Buffer.from([0, 255, 128, 10, 13, 65]), path = `${room}/${id}`;
-    const response = await upload(path, bytes, 'laporan é.bin'); assert.equal(response.status, 200);
+    const response = await upload(path, bytes, 'report é.bin'); assert.equal(response.status, 200);
     const receipt = await response.json(); assert.equal(receipt.size, bytes.length);
     const metadata = await (await fetch(app.origin + path + '?metadata=1')).json();
     assert.equal(metadata.digest, createHash('sha256').update(bytes).digest('hex'));
     assert.equal(metadata.size, receipt.size); assert.equal(metadata.id, id);
     assert(!('bytes' in metadata));
-    assert.deepEqual(await (await upload(path, bytes, 'laporan é.bin')).json(), receipt);
-    assert.equal((await upload(path, Buffer.from('different'), 'laporan é.bin')).status, 409);
-    assert.equal((await upload(`${direct}/${id}`, bytes, 'laporan é.bin')).status, 409);
+    assert.deepEqual(await (await upload(path, bytes, 'report é.bin')).json(), receipt);
+    assert.equal((await upload(path, Buffer.from('different'), 'report é.bin')).status, 409);
+    assert.equal((await upload(`${direct}/${id}`, bytes, 'report é.bin')).status, 409);
     assert.equal((await fetch(app.origin + `${direct}/${id}`)).status, 404);
     assert.equal((await fetch(app.origin + `${direct}/${id}?metadata=1`)).status, 404);
     assert.deepEqual(await (await fetch(app.origin + direct)).json(), []);
@@ -74,7 +74,7 @@ test('files preserve bytes, scope, retry identity and archive boundaries', async
     finishUpload(); assert.equal(await delayed, 409);
     assert.equal((await fetch(app.origin + `${room}/${delayedId}`)).status, 404);
     assert.equal((await upload(`${room}/${randomUUID()}`, bytes)).status, 409);
-    assert.deepEqual(await (await upload(path, bytes, 'laporan é.bin')).json(), receipt);
+    assert.deepEqual(await (await upload(path, bytes, 'report é.bin')).json(), receipt);
     await app.close(); app = await startApp({ database });
     assert.deepEqual(Buffer.from(await (await fetch(app.origin + path)).arrayBuffer()), bytes);
     assert.equal((await (await fetch(app.origin + room)).json()).length, 1);

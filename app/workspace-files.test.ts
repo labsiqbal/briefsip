@@ -34,7 +34,7 @@ test('workspace browser API pages text and directories while enforcing host bind
     const last=await get(path+'/entries?path=pages&after='+encodeURIComponent(first.next_after));assert.deepEqual(last.entries,[{name:'100',kind:'file'}]);assert.equal(last.next_after,null);
     const file=await get(path+'/file?path=text.html');assert(file.text.startsWith('<script>'));assert.equal(file.next_offset,8000);
     const end=await get(path+'/file?path=text.html&offset=8000&digest='+file.digest);assert.equal(file.text+end.text,'<script>alert(1)</script>'+'x'.repeat(8000));assert.equal(end.next_offset,null);
-    writeFileSync(join(root,'text.html'),'new');assert.match((await get(path+'/file?path=text.html&offset=8000&digest='+file.digest,409)).error,/File berubah.*Muat ulang dari awal/);
+    writeFileSync(join(root,'text.html'),'new');assert.match((await get(path+'/file?path=text.html&offset=8000&digest='+file.digest,409)).error,/File changed.*Reload from the start/);
     assert.equal((await get(path+'/file?path=text.html')).text,'new');
     for(const name of ['../outside','/etc/passwd','link','hard','directory-link/outside','binary','large']){const response=await get(path+'/file?path='+encodeURIComponent(name),400);assert(!JSON.stringify(response).includes('PRIVATE'));assert(!JSON.stringify(response).includes(dir));}
     for(const suffix of ['/entries?extra=x','/entries?__proto__=x','/entries?path=pages&path=','/entries?offset=0','/file?path=text.html&offset=-1','/file?path=text.html&offset=1e2','/file?path=text.html&digest=bad'])await get(path+suffix,400);

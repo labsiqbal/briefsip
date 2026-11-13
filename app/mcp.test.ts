@@ -82,7 +82,7 @@ test('MCP tests before save, protects credentials/grants and journals success or
     await app.close(); assert(!readFileSync(options.database).includes(Buffer.from(token))); app = await startApp(options);
     await post(`${ap}/${failed.id}/resume`, { id: randomUUID(), revision: failed.revision, acknowledgeUncertain: true }); const done = await until(ap, failed.id, 'done'); assert.match(done.reply, /Saved one/); assert.equal(calls, 1);
     drift = true; await run(ap, 'call', 'failed'); assert.equal(calls, 1); drift = false;
-    lost = true; const uncertain = await run(ap, 'call', 'failed'); assert.equal(calls, 2); assert.match(uncertain.error, /belum pasti/);
+    lost = true; const uncertain = await run(ap, 'call', 'failed'); assert.equal(calls, 2); assert.match(uncertain.error, /uncertain/);
     await app.close(); app = await startApp(options); repeat = true;
     await post(`${ap}/${uncertain.id}/resume`, { id: randomUUID(), revision: uncertain.revision, acknowledgeUncertain: true }); await until(ap, uncertain.id, 'failed'); assert.equal(calls, 2); repeat = false;
     hold = true; const active = randomUUID(); await post(ap, { id: active, text: 'call' }, 202);
@@ -95,11 +95,11 @@ test('MCP tests before save, protects credentials/grants and journals success or
     await app.close(); const restored = join(dir, 'restored.sqlite'); restoreWorkspace(backupPath, restored); app = await startApp({ ...options, database: restored });
     assert.equal((await get('/api/mcp')).items[0].enabled, 0);
     await post(`/api/mcp/${connection}`, { id: randomUUID(), revision: 2, enabled: true });
-    await post(gp, { id: randomUUID(), revision: 2, connectionRevision: 3, tools: ['change'] }); const missingKey = await run(ap, 'call', 'failed'); assert.match(missingKey.error, /Kunci host/); assert.equal(calls, 3);
+    await post(gp, { id: randomUUID(), revision: 2, connectionRevision: 3, tools: ['change'] }); const missingKey = await run(ap, 'call', 'failed'); assert.match(missingKey.error, /host key/); assert.equal(calls, 3);
     paged = true;
     const testedPages = await post('/api/mcp/test', { id: randomUUID(), name: 'Paged', url, token }); assert.equal(testedPages.tools.length, 2);
     const pages = await post('/api/mcp', { id: randomUUID(), test: testedPages.id }); connection = pages.id;
     await post(`/api/agents/${a.id}/mcp/${connection}`, { id: randomUUID(), revision: 0, connectionRevision: 1, tools: ['change'] });
-    const invalidOutput = await run(ap, 'call', 'failed'); assert.match(invalidOutput.error, /belum pasti/); assert.equal(calls, 4); assert(!providerRaw.includes('Invalid structured output'));
+    const invalidOutput = await run(ap, 'call', 'failed'); assert.match(invalidOutput.error, /uncertain/); assert.equal(calls, 4); assert(!providerRaw.includes('Invalid structured output'));
   } finally { held?.(); await app.close(); external.closeAllConnections(); provider.closeAllConnections(); await Promise.all([new Promise<void>(resolve => external.close(() => resolve())), new Promise<void>(resolve => provider.close(() => resolve()))]); rmSync(dir, { recursive: true, force: true }); }
 });

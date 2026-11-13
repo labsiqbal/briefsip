@@ -92,8 +92,8 @@ test('caller interruption cancels only owned deliveries, journals notice and pre
     const receipt = JSON.parse(retried.reply); assert.equal(receipt.status, 'interrupted'); assert.equal(receipt.cancelled.length, 2);
     assert.equal(captures.filter(body => body.model === 'beta' && body.messages.filter((m: any) => m.role === 'user').at(-1).content.startsWith('Pekerjaan yang saya minta')).length, 1);
     assert.equal((await get(b)).find((r: any) => r.id === user).status, 'done');
-    const noOwn = await send(a, 'stop'); assert.match((await until(a, noOwn, r => r.status === 'failed')).error, /Tidak ada pekerjaan/);
-    const self = await send(a, 'self'); assert.match((await until(a, self, r => r.status === 'failed')).error, /Penghentian/);
+    const noOwn = await send(a, 'stop'); assert.match((await until(a, noOwn, r => r.status === 'failed')).error, /no active work/);
+    const self = await send(a, 'self'); assert.match((await until(a, self, r => r.status === 'failed')).error, /You can only stop/);
     const forbidden = await send(c, 'stop', { recipient: alpha.id });
     await until(c, forbidden, r => r.status === 'failed');
     const channelCall = captures.find(body => body.model === 'alpha' && body.messages[0].content.includes('Shared') && body.messages.filter((m: any) => m.role === 'user').at(-1).content === 'stop');
@@ -116,7 +116,7 @@ test('caller interruption cancels only owned deliveries, journals notice and pre
     assert(JSON.parse(stopped.reply).cancelled.includes(child.id));
     assert.equal((await until(a, rollback, r => r.status === 'done')).agentMessages[0].status, 'cancelled');
     const ancestor = await send(a, 'ANCESTOR_TASK'); const ancestorResult = await until(a, ancestor, r => r.status === 'done');
-    assert.equal(ancestorResult.agentMessages[0].status, 'failed'); assert.match(ancestorResult.agentMessages[0].error, /Penghentian/);
+    assert.equal(ancestorResult.agentMessages[0].status, 'failed'); assert.match(ancestorResult.agentMessages[0].error, /You can only stop/);
     hold = true;
     const nested = await send(a, 'NESTED_TASK'); const nesting = await until(a, nested, r => r.agentMessages.length === 1);
     const nestedBeta = nesting.agentMessages[0], nestedPath = `/api/threads/${nestedBeta.thread}/turns`;

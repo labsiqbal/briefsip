@@ -26,7 +26,7 @@ test('model condition validation requires model and question and parses only yes
   const validated = validateWorkflow(graph, new Set());
   assert.equal(workflowTransition(validated.nodes[0], ' YES\n'), 'out');
   assert.equal(workflowTransition(validated.nodes[0], 'no'), 'out');
-  assert.throws(() => workflowTransition(validated.nodes[0], 'yes because it matches'), /yes atau no/);
+  assert.throws(() => workflowTransition(validated.nodes[0], 'yes because it matches'), /yes or no/);
   for (const patch of [{ model: '' }, { value: '' }, { next: 'out' }]) assert.throws(() => validateWorkflow({ ...graph, nodes: [{ ...node, ...patch }, graph.nodes[1]] }, new Set()));
 });
 
@@ -40,7 +40,7 @@ test('workflow graphs validate explicit approval, bounded loops and terminal pat
   ] };
   const agents = new Set(['a']), graph = validateWorkflow(input, agents);
   assert.deepEqual(graph, input);
-  assert.throws(() => workflowTransition(graph.nodes[1], 'yes'), /eksplisit/);
+  assert.throws(() => workflowTransition(graph.nodes[1], 'yes'), /Explicit/);
   assert.equal(workflowTransition(graph.nodes[1], 'irrelevant', false), null);
   assert.equal(workflowTransition(graph.nodes[1], 'irrelevant', true), 'check');
   assert.equal(workflowTransition(graph.nodes[2], 'ready'), 'done');
@@ -192,9 +192,9 @@ test('graph view identifies unconditional cycles and latest run attempt without 
     { seq: 5, node: 'b', status: 'failed', detail: 'rejected' },
   ];
   const before = JSON.stringify(steps), labels = workflowNodeLabels(steps);
-  assert.equal(labels.get('a'), 'Selesai'); assert.equal(labels.get('b'), 'Ditolak'); assert.equal(labels.has('out'), false);
+  assert.equal(labels.get('a'), 'Completed'); assert.equal(labels.get('b'), 'Rejected'); assert.equal(labels.has('out'), false);
   assert.equal(JSON.stringify(steps), before);
-  assert.equal(workflowStepLabel({ seq: 1, node: 'a', status: 'failed', task_status: 'done', paused: 1 }), 'Gagal');
-  assert.equal(workflowStepLabel({ seq: 1, node: 'a', status: 'waiting', task_status: 'running', paused: 1 }), 'Dijeda');
-  assert.equal(workflowStepLabel({ seq: 1, node: 'a', status: 'waiting', task_status: 'running' }), 'Berjalan');
+  assert.equal(workflowStepLabel({ seq: 1, node: 'a', status: 'failed', task_status: 'done', paused: 1 }), 'Failed');
+  assert.equal(workflowStepLabel({ seq: 1, node: 'a', status: 'waiting', task_status: 'running', paused: 1 }), 'Paused');
+  assert.equal(workflowStepLabel({ seq: 1, node: 'a', status: 'waiting', task_status: 'running' }), 'Running');
 });

@@ -78,7 +78,7 @@ test('manual routine runs keep schedule, deduplicate across restart and enforce 
     const direct = await post(`/api/agents/${agent.id}/turns`, { id: randomUUID(), text: 'DIRECT_FAILURE' }, 202);
     let directTurn;
     for (let n = 0; n < 100; n++) { directTurn = (await get(`/api/agents/${agent.id}/turns`)).find((turn: { id: string }) => turn.id === direct.id); if (directTurn?.status === 'failed') break; await new Promise(resolve => setTimeout(resolve, 20)); }
-    assert.equal(directTurn?.status, 'failed'); assert.equal(directTurn.no_update, 0); assert.match(directTurn.error, /koordinasi/);
+    assert.equal(directTurn?.status, 'failed'); assert.equal(directTurn.no_update, 0); assert.match(directTurn.error, /coordination/);
     const hold = await post(list, { ...create, id: randomUUID(), prompt: 'HOLD', enabled: true });
     const holdPath = `/api/routines/${hold.id}/test`;
     const held = await post(holdPath, { id: randomUUID(), revision: hold.revision });

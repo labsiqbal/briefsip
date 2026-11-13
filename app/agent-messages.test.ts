@@ -130,7 +130,7 @@ test('teammate messages correlate groups, isolate context, persist receipts and 
     const outside = randomUUID(); const channelPath = `/api/channels/${channel.id}/turns`;
     await post(channelPath, { id: outside, text: 'outside', recipient: alpha.id }, 202);
     const rejected = await until(channelPath, outside, row => row.status === 'failed');
-    assert.equal(rejected.agentMessages.length, 0); assert.match(rejected.error, /Penerima/);
+    assert.equal(rejected.agentMessages.length, 0); assert.match(rejected.error, /Recipient/);
     const memory = (text: string) => ({ id: randomUUID(), entry: randomUUID(), revision: 0, text, essential: true, remove: false });
     await post(`/api/agents/${beta.id}/memory`, memory('PRIVATE_MEMORY'));
     await post(`/api/channels/${channel.id}/memory`, memory('SHARED_MEMORY'));

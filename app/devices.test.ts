@@ -38,7 +38,7 @@ test('enrollment consumes decoded nonce once, binds signed timezone and never re
     const e = f.enrollment();
     assert.equal(db.prepare('SELECT nonce_digest FROM link_challenges').get()!.nonce_digest, sha256(Buffer.from(e.response.nonce, 'base64url')));
     assert(!String(db.prepare('SELECT candidate_json FROM link_challenges').get()!.candidate_json).includes(e.response.nonce));
-    assert.throws(() => devices.link(owner, { ...e.request, nonce: randomBytes(32).toString('base64url') }, 'fixture'), /Sesi|proof/);
+    assert.throws(() => devices.link(owner, { ...e.request, nonce: randomBytes(32).toString('base64url') }, 'fixture'), /session|proof/);
     const linked = devices.link(owner, e.request, 'fixture'); assert.equal(linked.status, 201); assert.equal(typeof linked.data.deviceSession, 'string');
     const row = db.prepare('SELECT * FROM devices').get()!; assert.equal(row.zone, 'Asia/Jakarta'); assert.equal(row.zone_revision, 1);
     const replay = devices.link(owner, e.request, 'fixture'); assert.equal(replay.status, 200); assert.equal(replay.data.deviceSession, undefined);
@@ -57,19 +57,19 @@ test('device proof nonce, body, expiry and current generation gate heartbeat and
     const stream = devices.openStream(principal, () => {});
     const command = { requestId: randomUUID(), connectionGeneration: stream.connectionGeneration, zone: 'Asia/Jakarta', zoneRevision: 1, journalWatermark: 0 };
     const bytes = Buffer.from(JSON.stringify(command)), signed = f.proof(token, 1, 'POST', path, bytes);
-    assert.throws(() => devices.authenticate(signed.headers, 'POST', path, Buffer.from('{}'), signed.requestId, 'fixture'), /Sesi/);
+    assert.throws(() => devices.authenticate(signed.headers, 'POST', path, Buffer.from('{}'), signed.requestId, 'fixture'), /session/);
     const current = devices.authenticate(signed.headers, 'POST', path, bytes, signed.requestId, 'fixture');
     const heartbeat = devices.heartbeat(current, command); assert.equal(heartbeat.status, 200); assert.equal(db.prepare('SELECT status FROM devices').get()!.status, 'ready');
     assert.equal(devices.heartbeat(current, command).status, 200);
-    assert.throws(() => devices.heartbeat(current, { ...command, requestId: randomUUID(), zone: 'UTC' }), /zona waktu/);
+    assert.throws(() => devices.heartbeat(current, { ...command, requestId: randomUUID(), zone: 'UTC' }), /Time zone/);
     devices.heartbeat(current, { ...command, requestId: randomUUID(), zone: 'UTC', zoneRevision: 2 });
     const oldZone = JSON.parse(String(db.prepare('SELECT descriptor_json FROM devices').get()!.descriptor_json)); assert.equal(oldZone.zone, 'Asia/Jakarta');
     const stale = f.proof(token, 1, 'GET', '/stream', Buffer.alloc(0), { exp: Math.floor(f.clock() / 1000) - 61, iat: Math.floor(f.clock() / 1000) - 120 });
-    assert.throws(() => devices.authenticate(stale.headers, 'GET', '/stream', Buffer.alloc(0), stale.requestId, 'fixture'), /Sesi/);
+    assert.throws(() => devices.authenticate(stale.headers, 'GET', '/stream', Buffer.alloc(0), stale.requestId, 'fixture'), /session/);
     const refreshBody = Buffer.from(JSON.stringify({ requestId: randomUUID(), expectedGeneration: 1 })), refresh = f.proof(undefined, 1, 'POST', '/session', refreshBody);
     const refreshPrincipal = devices.authenticate(refresh.headers, 'POST', '/session', refreshBody, refresh.requestId, 'fixture', true);
     assert.equal(devices.refreshSession(refreshPrincipal, JSON.parse(refreshBody.toString())).generation, 1);
-    assert.throws(() => devices.requireCurrent(principal), /Sesi/);
+    assert.throws(() => devices.requireCurrent(principal), /session/);
   } finally { devices.close(); db.close(); }
 });
 
@@ -79,10 +79,10 @@ test('reenroll and key rotation fence old sessions while preserving original des
     const first = devices.link(owner, f.enrollment().request, 'fixture');
     const oldKey = f.signing(), e = f.enrollment({ mode: 'reenroll', expectedGeneration: 1, expectedKeyRevision: 1 });
     const reenrolled = devices.link(owner, e.request, 'fixture'); assert.equal(reenrolled.data.generation, 2);
-    const old = f.proof(String(first.data.deviceSession), 1, 'GET', '/stream'); assert.throws(() => devices.authenticate(old.headers, 'GET', '/stream', Buffer.alloc(0), old.requestId, 'fixture'), /Sesi/);
+    const old = f.proof(String(first.data.deviceSession), 1, 'GET', '/stream'); assert.throws(() => devices.authenticate(old.headers, 'GET', '/stream', Buffer.alloc(0), old.requestId, 'fixture'), /session/);
     f.setSigning(generateKeyPairSync('ed25519'));
     const rotate = f.enrollment({ mode: 'rotate', expectedGeneration: 2, expectedKeyRevision: 1 });
-    assert.throws(() => devices.link(owner, rotate.request, 'fixture'), /key lama/);
+    assert.throws(() => devices.link(owner, rotate.request, 'fixture'), /Old key/);
     const oldThumb = publicThumb(oldKey.publicKey);
     const rotated = devices.link(owner, { ...rotate.request, rotationSignature: sign(null, Buffer.from(JSON.stringify(['briefsip-device-key-transition-v1', oldThumb, rotate.body])), oldKey.privateKey).toString('base64url') }, 'fixture');
     assert.equal(rotated.data.generation, 3); assert.equal(rotated.data.keyRevision, 2);
@@ -165,7 +165,7 @@ test('proof replay guard survives skew and full nonce table refuses without muta
     f.advance(61000);
     assert.throws(() => devices.authenticate(proof.headers, 'GET', '/stream', Buffer.alloc(0), proof.requestId, 'fixture'), /Nonce/);
     f.advance(61000);
-    assert.throws(() => devices.authenticate(proof.headers, 'GET', '/stream', Buffer.alloc(0), proof.requestId, 'fixture'), /Sesi/);
+    assert.throws(() => devices.authenticate(proof.headers, 'GET', '/stream', Buffer.alloc(0), proof.requestId, 'fixture'), /session/);
     devices.maintain(); assert.equal(db.prepare('SELECT count(*) AS n FROM proof_replays').get()!.n, 0);
     db.exec(`WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<4096)
       INSERT INTO proof_replays SELECT id,printf('%064d',i),${f.clock() + 60000} FROM n CROSS JOIN devices`);

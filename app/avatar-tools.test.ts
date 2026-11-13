@@ -91,7 +91,7 @@ test('avatar decode completion cannot commit after cancellation or a newer revis
     // fromTool reaches sharp's first await before returning this promise.
     const cancelled = avatars.fromTool('turn', 'agent', { id: 'cancel' }, { image: randomUUID(), revision: 0 }, png, 0, signal.signal);
     db.prepare("UPDATE turns SET status='cancelled'").run();
-    await assert.rejects(cancelled, /dibatalkan/);
+    await assert.rejects(cancelled, /cancelled/);
     assert.equal(avatars.read('agent').revision, 0); assert.equal(db.prepare('SELECT count(*) AS n FROM flow_tool_calls').get()!.n, 0);
     db.prepare("UPDATE turns SET status='running'").run();
     const conflict = avatars.fromTool('turn', 'agent', { id: 'conflict' }, { image: randomUUID(), revision: 0 }, png, 0, signal.signal);

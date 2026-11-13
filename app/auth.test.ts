@@ -33,16 +33,16 @@ test('Clerk SDK verifies signed human sessions before internal account mapping',
     assert.equal(db.prepare('SELECT count(*) AS n FROM projects').get()!.n, 0);
     assert.equal(db.prepare('SELECT count(*) AS n FROM record_scopes').get()!.n, 0);
     const other = await auth.authenticate(request(jwt({ sub: 'user_other' }))); assert.notEqual(other.accountId, actor.accountId);
-    await assert.rejects(auth.authenticate(request()), /Sesi/);
-    await assert.rejects(auth.authenticate(new Request(`${config.origin}/api/session`, { headers: { Cookie: `__session=${jwt()}` } })), /Sesi/);
+    await assert.rejects(auth.authenticate(request()), /Session/);
+    await assert.rejects(auth.authenticate(new Request(`${config.origin}/api/session`, { headers: { Cookie: `__session=${jwt()}` } })), /Session/);
     await assert.rejects(auth.authenticate(request(jwt(), 'POST', 'https://evil.example')), /Origin/);
     const now = Math.floor(Date.now() / 1000);
     const wrongKey = generateKeyPairSync('rsa', { modulusLength: 2048 });
-    for (const claims of [{ iss: 'https://wrong.example' }, { exp: now }, { nbf: now + 30 }, { azp: 'https://wrong.example' }, { sid: '' }, { sub: '' }, { sts: 'pending' }]) await assert.rejects(auth.authenticate(request(jwt(claims))), /Sesi/);
-    await assert.rejects(auth.authenticate(request(jwt({}, wrongKey.privateKey))), /Sesi/);
+    for (const claims of [{ iss: 'https://wrong.example' }, { exp: now }, { nbf: now + 30 }, { azp: 'https://wrong.example' }, { sid: '' }, { sub: '' }, { sts: 'pending' }]) await assert.rejects(auth.authenticate(request(jwt(claims))), /Session/);
+    await assert.rejects(auth.authenticate(request(jwt({}, wrongKey.privateKey))), /Session/);
     db.prepare('UPDATE accounts SET blocked=1 WHERE id=?').run(actor.accountId);
-    await assert.rejects(auth.authenticate(request(jwt())), /Sesi/);
-    assert.throws(() => auth.requireCurrent(actor), /Sesi/);
+    await assert.rejects(auth.authenticate(request(jwt())), /Session/);
+    assert.throws(() => auth.requireCurrent(actor), /Session/);
   } finally { db.close(); }
 });
 
@@ -57,11 +57,11 @@ test('local logout denial survives disk reopen, old JWT expiry and upstream reco
     const actor = await auth.authenticate(request(jwt())); assert.deepEqual(await auth.logout(actor), { state: 'upstream_pending' });
     db.prepare('UPDATE session_denials SET expires_at=?').run(Date.now() - 60000);
     db.close(); db = new DatabaseSync(join(dir, 'db.sqlite')); initializeCanonicalSchema(db);
-    await assert.rejects(createAuth(db, config, authClient).authenticate(request(jwt())), /Sesi/);
+    await assert.rejects(createAuth(db, config, authClient).authenticate(request(jwt())), /Session/);
     assert.equal(db.prepare('SELECT count(*) AS n FROM session_denials').get()!.n, 1);
     upstream = true; assert.deepEqual(await createAuth(db, config, authClient).retryPendingLogouts(), { attempted: 1, completed: 1 });
     assert.equal(db.prepare('SELECT reason FROM session_denials').get()!.reason, 'logout_complete');
-    await assert.rejects(createAuth(db, config, authClient).authenticate(request(jwt())), /Sesi/);
+    await assert.rejects(createAuth(db, config, authClient).authenticate(request(jwt())), /Session/);
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -121,9 +121,9 @@ test('Clerk rotating JWKS and server-side mailbox verification fail closed', asy
     assert.equal((await clerk.users.getUser(actor.subject).catch(error => assert.fail(JSON.stringify({ status: error.status, errors: error.errors })))).id, actor.subject);
     assert.deepEqual(await auth.verifiedMailboxes(actor), ['member@example.com']); verified = false; assert.deepEqual(await auth.verifiedMailboxes(actor), []);
     includeRotated = true; const before = jwksCalls; assert.equal((await auth.authenticate(request(jwt({}, rotated.privateKey, 'rotated')))).accountId, actor.accountId); assert(jwksCalls > before);
-    await assert.rejects(auth.authenticate(request(jwt({}, keys.privateKey, 'unknown'))), /Sesi/);
+    await assert.rejects(auth.authenticate(request(jwt({}, keys.privateKey, 'unknown'))), /Session/);
     const audience = createAuth(db, { ...config, audience: 'briefsip' }, clerk);
-    await assert.rejects(audience.authenticate(request(jwt())), /Sesi/); await assert.rejects(audience.authenticate(request(jwt({ aud: 'other' }))), /Sesi/);
+    await assert.rejects(audience.authenticate(request(jwt())), /Session/); await assert.rejects(audience.authenticate(request(jwt({ aud: 'other' }))), /Session/);
     assert.equal((await audience.authenticate(request(jwt({ aud: 'briefsip' })))).accountId, actor.accountId);
   } finally { api.closeAllConnections(); await new Promise<void>(resolve => api.close(() => resolve())); db.close(); }
 });

@@ -15,17 +15,17 @@ test('mail envelope round trip uses fresh nonce, exact AAD and digest', () => {
   assert.equal(restored.payload.text, 'Join'); assert.equal(restored.payloadDigest, first.payloadDigest); assert.equal(restored.keyId, keyId);
   const tampered = { ...first.envelope, tag: first.envelope.tag.slice(0, -1) + (first.envelope.tag.endsWith('A') ? 'B' : 'A') };
   assert.throws(() => decryptMail(id, 1, generation, hash, serializeMailEnvelope(tampered), key));
-  assert.throws(() => decryptMail(id, 2, generation, hash, serializeMailEnvelope(first.envelope), key), /Envelope mail gagal/);
+  assert.throws(() => decryptMail(id, 2, generation, hash, serializeMailEnvelope(first.envelope), key), /Mail envelope failed/);
 });
 
 test('keyring rotation preserves old envelope key and failed pointer write keeps active key', () => {
   const entries = new Map<string, string>(); let interrupt = false;
   const ring = mailKeyring(randomUUID(), (service, name) => ({ getPassword: () => entries.get(`${service}/${name}`) ?? null, setPassword(value) { if (interrupt && name === 'mail-aead/active') { interrupt = false; throw new Error('synthetic pointer fault'); } entries.set(`${service}/${name}`, value); } }));
-  assert.throws(() => ring.active(), /Kunci mail/);
+  assert.throws(() => ring.active(), /Mail key/);
   const first = ring.provision(); assert.equal(first.key.length, 32); assert.notDeepEqual(first.key, first.lookupKey);
   const secondId = ring.rotate(); assert.notEqual(secondId, first.keyId); assert.deepEqual(ring.key(first.keyId), first.key);
   assert.deepEqual(ring.active().lookupKey, first.lookupKey);
-  interrupt = true; assert.throws(() => ring.rotate(), /Kunci mail/); assert.equal(ring.active().keyId, secondId);
+  interrupt = true; assert.throws(() => ring.rotate(), /Mail key/); assert.equal(ring.active().keyId, secondId);
 });
 
 test('lost mail reply retries exact bytes/key once and fences old authority or expired idempotency', async () => {

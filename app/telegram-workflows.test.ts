@@ -46,11 +46,11 @@ test('Telegram workflow approval binds requester and recovers lost run and decis
     incoming(4,`/approve ${rejected.turn} ${pending.revision} no`);await telegramAgentStep(db,users,local,remote);await telegramAgentStep(db,users,local,remote);
     assert.equal((await ui(`/api/workflow-runs/${rejected.turn}`)).status,'failed');
     incoming(4,`/approve ${rejected.turn} ${pending.revision} yes`);await telegramAgentStep(db,users,local,remote);
-    assert.equal((await ui(`/api/workflow-runs/${rejected.turn}`)).status,'failed');assert(sent.some(row=>row.text.includes('Permintaan workflow ditolak')));
+    assert.equal((await ui(`/api/workflow-runs/${rejected.turn}`)).status,'failed');assert(sent.some(row=>row.text.includes('Workflow request denied')));
     for(let i=0;i<20;i++)await ui(`/api/agents/${agent}/workflows`,{id:randomUUID(),revision:0,name:`Page ${i}`,graph:{entry:'out',maxSteps:1,nodes:[{id:'out',kind:'output'}]}});
     incoming(4,'/workflows');await telegramAgentStep(db,users,local,remote);
     const first=sent.at(-1).text;assert.equal((first.match(/\/workflow /g)||[]).length,20);
-    const cursor=/Halaman berikut: \/workflows ([a-f0-9-]{36})/.exec(first)![1];
+    const cursor=/Next page: \/workflows ([a-f0-9-]{36})/.exec(first)![1];
     incoming(4,`/workflows ${cursor}`);await telegramAgentStep(db,users,local,remote);
     assert.equal((sent.at(-1).text.match(/\/workflow /g)||[]).length,1);
 

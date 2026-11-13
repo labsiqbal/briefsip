@@ -32,12 +32,12 @@ test('model discovery validates catalog and never follows credential redirects',
     mode = 'ok';
     assert.deepEqual(await discoverModels(base, 'fixture-secret'), ['a', 'z']);
     for (mode of ['redirect', 'error', 'large', 'bad-json', 'invalid', 'spaces']) {
-      await assert.rejects(discoverModels(base, 'fixture-secret'), error => error instanceof Error && error.message.startsWith('Daftar model tidak tersedia') && !error.message.includes('private'));
+      await assert.rejects(discoverModels(base, 'fixture-secret'), error => error instanceof Error && error.message.startsWith('Model list is unavailable') && !error.message.includes('private'));
     }
     assert.equal(calls, 9);
     mode = 'empty'; assert.deepEqual(await discoverModels(base, 'fixture-secret'), []);
-    await assert.rejects(discoverModels('http://example.com/v1', 'fixture-secret'), /Alamat/);
-    await assert.rejects(discoverModels('https://user:password@example.com/v1'), /Alamat/);
+    await assert.rejects(discoverModels('http://example.com/v1', 'fixture-secret'), /address/);
+    await assert.rejects(discoverModels('https://user:password@example.com/v1'), /address/);
     await app.close(); app = await startApp({ database: join(dir, 'state.sqlite') });
     assert.equal((await fetch(app.origin + '/api/models')).status, 503);
   } finally {

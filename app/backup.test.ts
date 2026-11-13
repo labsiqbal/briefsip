@@ -39,9 +39,9 @@ test('canonical server guard fences aliases and processes, releases on SIGKILL a
     guard.close();guard=undefined;
     const retained=statSync(guardPath);guard=canonicalServerLock(database);assert.equal(statSync(guardPath).ino,retained.ino);guard.close();guard=undefined;
     const hard=join(dir,'hard.sqlite');linkSync(database,hard);assert.throws(()=>canonicalServerLock(hard),/hard link/);rmSync(hard);
-    const initial=readFileSync(guardPath);rmSync(guardPath);symlinkSync(join(dir,'missing'),guardPath);assert.throws(()=>canonicalServerLock(database),/privat/);rmSync(guardPath);
-    writeFileSync(guardPath,initial,{mode:0o644});assert.throws(()=>canonicalServerLock(database),/privat/);chmodSync(guardPath,0o600);
-    const linked=join(dir,'guard-link');linkSync(guardPath,linked);assert.throws(()=>canonicalServerLock(database),/privat/);rmSync(linked);
+    const initial=readFileSync(guardPath);rmSync(guardPath);symlinkSync(join(dir,'missing'),guardPath);assert.throws(()=>canonicalServerLock(database),/private/);rmSync(guardPath);
+    writeFileSync(guardPath,initial,{mode:0o644});assert.throws(()=>canonicalServerLock(database),/private/);chmodSync(guardPath,0o600);
+    const linked=join(dir,'guard-link');linkSync(guardPath,linked);assert.throws(()=>canonicalServerLock(database),/private/);rmSync(linked);
     writeFileSync(guardPath,'not sqlite');assert.throws(()=>canonicalServerLock(database));assert.equal(readFileSync(guardPath,'utf8'),'not sqlite');writeFileSync(guardPath,initial);
     guard=canonicalServerLock(database);
   } finally {
@@ -130,12 +130,12 @@ test('live backup restores history while holding pending work and disabling auto
     const turns = await (await fetch(restored.origin + `/api/agents/${agent.id}/turns`)).json();
     assert.equal(turns[0].text, 'Pending provider result'); assert.equal(turns[0].status, 'interrupted');
     await new Promise(resolve => setTimeout(resolve, 1100)); assert.equal(calls, 1);
-    assert.throws(() => restoreWorkspace(file, destination), /database baru/);
-    const symlink = join(dir, 'symlink.sqlite'); symlinkSync(destination, symlink); assert.throws(() => restoreWorkspace(file, symlink), /database baru/);
+    assert.throws(() => restoreWorkspace(file, destination), /new database/);
+    const symlink = join(dir, 'symlink.sqlite'); symlinkSync(destination, symlink); assert.throws(() => restoreWorkspace(file, symlink), /new database/);
     const dangling = join(dir, 'dangling.sqlite'); symlinkSync(join(dir, 'missing'), dangling + '-wal');
-    assert.throws(() => restoreWorkspace(file, dangling), /database baru/);
+    assert.throws(() => restoreWorkspace(file, dangling), /new database/);
     const unknown = join(dir, 'unknown.sqlite'), unknownDb = new DatabaseSync(unknown); unknownDb.exec("CREATE TABLE briefsip_backup(format TEXT,version INTEGER); INSERT INTO briefsip_backup VALUES ('briefsip-workspace',99)"); unknownDb.close();
-    assert.throws(() => restoreWorkspace(unknown, join(dir, 'unknown-target.sqlite')), /Format backup/);
+    assert.throws(() => restoreWorkspace(unknown, join(dir, 'unknown-target.sqlite')), /backup format/);
     const corrupt = join(dir, 'corrupt'); writeFileSync(corrupt, 'not sqlite'); assert.throws(() => restoreWorkspace(corrupt, join(dir, 'invalid.sqlite')));
   } finally { await restored?.close(); await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });

@@ -75,11 +75,11 @@ test('coordination: durable delegation, transfer, cancellation, rejection and re
     assert.equal((await rows(path)).length, 3);
     const outsider = { id: randomUUID(), text: 'outsider', recipient: alpha.id };
     const before = calls.length; await post(path, outsider);
-    assert.match((await waitTurn(path, outsider.id, 'failed')).error, /anggota/);
+    assert.match((await waitTurn(path, outsider.id, 'failed')).error, /member/);
     assert.equal(calls.length, before + 1);
     const cycle = { id: randomUUID(), text: 'cycle', recipient: alpha.id };
     await post(path, cycle);
-    assert.match((await waitTurn(path, cycle.id, 'failed')).error, /Batas koordinasi/);
+    assert.match((await waitTurn(path, cycle.id, 'failed')).error, /Coordination limit/);
     const cancellation = { id: randomUUID(), text: 'cancel-tree', recipient: alpha.id };
     await post(path, cancellation);
     for (let i = 0; i < 100; i++) {
@@ -90,8 +90,8 @@ test('coordination: durable delegation, transfer, cancellation, rejection and re
     assert.equal(child.status, 'running');
     await post(`${path}/${cancellation.id}/cancel`, { id: randomUUID() });
     const cancelledParent = await waitTurn(path, cancellation.id, 'cancelled');
-    assert.match(cancelledParent.error, /sudah dikirim/);
-    assert(!cancelledParent.error.includes('sebelum dikirim'));
+    assert.match(cancelledParent.error, /already sent/);
+    assert(!cancelledParent.error.includes('before sending'));
     await waitTurn(path, child.id, 'cancelled');
     assert.equal((await waitTurn(path, parent.id, 'done')).reply, 'parent:child-result');
     const pausing = { id: randomUUID(), text: 'pause-tree', recipient: alpha.id };
@@ -109,7 +109,7 @@ test('coordination: durable delegation, transfer, cancellation, rejection and re
     assert.equal(calls.filter(call => call.task === 'paused-child').length, 1);
     const childResume = await fetch(`${app.origin}${path}/${child.id}/resume`, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ id: randomUUID(), revision: 2, acknowledgeUncertain: true }) });
     assert.equal(childResume.status, 409);
-    assert.match((await childResume.json()).error, /induk/);
+    assert.match((await childResume.json()).error, /parent/);
     assert.equal((await waitTurn(path, child.id, 'interrupted')).paused, 1);
     allowPausedChild = true;
     await post(`${path}/${pausing.id}/resume`, { id: randomUUID(), revision: 2, acknowledgeUncertain: true });

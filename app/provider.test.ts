@@ -87,7 +87,7 @@ test('native Anthropic messages, catalog, tools, resume, cancellation and fallba
   }
   try {
     assert.deepEqual((await request('/api/models')).models, ['first', 'second']); assert.equal(catalogCalls, 2);
-    for (catalogMode of ['bad', 'cycle', 'redirect']) await assert.rejects(discoverModels(options.baseURL, options.apiKey, 'anthropic'), /Daftar model/);
+    for (catalogMode of ['bad', 'cycle', 'redirect']) await assert.rejects(discoverModels(options.baseURL, options.apiKey, 'anthropic'), /Model list/);
     const a = await request('/api/agents', { id: randomUUID(), name: 'Native', model: 'primary', backupModel: 'backup', instructions: 'Use native tools' });
     const path = `/api/agents/${a.id}/turns`;
     for (const scenario of ['text', 'artifact', 'partial', 'unknown', 'multiple', 'overloaded', 'redirect', 'malformed']) {

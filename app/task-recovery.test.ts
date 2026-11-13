@@ -396,7 +396,7 @@ test('canonical shared data rechecks cancellation and authority across worker I/
     const one=pending.async(),two=pending.async();await assert.rejects(pending.async(),code('server_capacity'));
     const saved=await one;assert.deepEqual(await two,saved);assert.equal(saved.data.resultContent.revision,2);
     const results=await Promise.all([run(first,"INSERT INTO notes VALUES ('First')"),run(second,"INSERT INTO notes VALUES ('Second')")]);
-    assert.equal(results.filter(result=>typeof result.data.resultContent.error==='string').length,1);assert.match(String(results.find(result=>result.data.resultContent.error)!.data.resultContent.error),/Data berubah/);
+    assert.equal(results.filter(result=>typeof result.data.resultContent.error==='string').length,1);assert.match(String(results.find(result=>result.data.resultContent.error)!.data.resultContent.error),/Data changed/);
     const stale=run(first,"INSERT INTO notes VALUES ('Stale')");f.db.prepare('UPDATE agents SET revision=revision+1 WHERE id=?').run(f.agent);await assert.rejects(stale,code('context_stale'));assert.equal(f.db.prepare('SELECT revision FROM shared_data WHERE project=?').get(f.project)!.revision,3);
     const cancelled=run(second,"INSERT INTO notes VALUES ('Cancelled')");
     const revision=Number(f.tasks.lookup(f.owner,second.taskId).data.revision);f.tasks.control(f.owner,second.taskId,{requestId:randomUUID(),expectedRevision:revision,operation:'cancel'});
@@ -1252,10 +1252,10 @@ for(const kind of ['direct','side'] as const) test(`canonical provider settings 
     f.db.prepare("UPDATE agents SET provider_account='LEGACY_MUST_NOT_LEAK',backup_model='backup' WHERE id=?").run(f.agent);
     const binding=randomUUID();f.db.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','Owner account','PRIVATE_LABEL','ready',1)").run(binding,f.home,f.owner.accountId);f.db.prepare('UPDATE agent_authority SET provider_binding=? WHERE agent=?').run(binding,f.agent);
     const otherHome=randomUUID();f.db.prepare('INSERT INTO devices SELECT ?,installation,account,signing_public_key,encryption_public_key,signing_thumbprint,encryption_thumbprint,descriptor_json,generation,connection_generation,status,zone,zone_revision,last_seen,capabilities_json,revision FROM devices WHERE id=?').run(otherHome,f.home);
-    f.db.prepare('UPDATE provider_bindings SET device=? WHERE id=?').run(otherHome,binding);assert.deepEqual(run('read_provider_settings',{}),{error:'Provider binding tidak tersedia.',status:409});f.db.prepare('UPDATE provider_bindings SET device=? WHERE id=?').run(f.home,binding);
+    f.db.prepare('UPDATE provider_bindings SET device=? WHERE id=?').run(otherHome,binding);assert.deepEqual(run('read_provider_settings',{}),{error:'Provider binding is unavailable.',status:409});f.db.prepare('UPDATE provider_bindings SET device=? WHERE id=?').run(f.home,binding);
     const expected={revision:1,providerAccount:'Owner account',model:'fixture',backupModel:'backup',configured:true};assert.deepEqual(run('read_provider_settings',{}),expected);
     for(const readiness of ['missing','unreadable','unavailable','revoked']){f.db.prepare('UPDATE provider_bindings SET readiness=?,revision=revision+1 WHERE id=?').run(readiness,binding);assert.deepEqual(run('read_provider_settings',{}),{...expected,configured:false});}
-    f.db.prepare('UPDATE provider_bindings SET owner_account=? WHERE id=?').run(f.foreign.accountId,binding);assert.deepEqual(run('read_provider_settings',{}),{error:'Provider binding tidak tersedia.',status:409});
+    f.db.prepare('UPDATE provider_bindings SET owner_account=? WHERE id=?').run(f.foreign.accountId,binding);assert.deepEqual(run('read_provider_settings',{}),{error:'Provider binding is unavailable.',status:409});
     f.db.prepare('UPDATE provider_bindings SET owner_account=? WHERE id=?').run(f.owner.accountId,binding);
     const badCall={id:randomUUID(),function:{name:'read_provider_settings',arguments:JSON.stringify({agentId:randomUUID()})}},badExpected=Number(f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(task.requestId)!.revision);
     assert.throws(()=>f.tasks.contextMutations(f.principal,task.requestId,{requestId:randomUUID(),actionId:randomUUID(),ownership,toolCall:badCall,expectedRevision:badExpected,payloadDigest:canonicalToolDigest({toolCall:badCall,expectedRevision:badExpected})},token),code('unknown_field'));
@@ -1308,7 +1308,7 @@ for(const kind of ['direct','side'] as const) test(`canonical profile edit in ${
       pending={requestId:randomUUID(),actionId,ownership,toolCall,payloadDigest,expectedRevision};return f.tasks.contextMutations(f.principal,task.requestId,pending,token).data.resultContent as Record<string,unknown>;
     };
     assert.deepEqual(run({revision:1,name:'Renamed'}),{name:'Renamed',instructions:'Research',revision:2});
-    assert.deepEqual(run({revision:1,instructions:'Stale'}),{error:'Profil berubah. Minta arahan pengguna sebelum mengubahnya lagi.',status:409});
+    assert.deepEqual(run({revision:1,instructions:'Stale'}),{error:'Profile changed. Ask the user for guidance before changing it again.',status:409});
     for(const args of [{revision:2},{revision:2,name:''},{revision:2,name:null},{revision:2,name:'x'.repeat(81)},{revision:2,instructions:'\u0000'},{revision:2,instructions:' '},{revision:2,instructions:'x'.repeat(8001)},...[0,-1,1.5,Number.MAX_SAFE_INTEGER].map(revision=>({revision,name:'No'}))])assert.equal(run(args).status,400);
     assert.deepEqual(run({revision:2,instructions:'  Updated instructions  '}),{name:'Renamed',instructions:'Updated instructions',revision:3});
     f.db.exec("CREATE TRIGGER fail_profile_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'fixture_result_fail'); END;");assert.throws(()=>run({revision:3,name:'Rolled back'}),/fixture_result_fail/);assert.equal(f.db.prepare('SELECT revision FROM agents WHERE id=?').get(f.agent)!.revision,3);f.db.exec('DROP TRIGGER fail_profile_result');

@@ -25,7 +25,7 @@ function fixture() {
   let mailbox = 'member@example.com';
   const config = { from: 'Briefsip <noreply@example.com>', origin: 'https://briefsip.example', keyId: randomUUID(), key: randomBytes(32), lookupKey: randomBytes(32) };
   const access = createProjectAccess(db, {
-    requireCurrent(a) { if (db.prepare('SELECT blocked FROM accounts WHERE id=?').get(a.accountId)?.blocked !== 0 || db.prepare('SELECT 1 FROM session_denials WHERE issuer=? AND sid=?').get(a.issuer, a.sessionId)) throw new ProtocolError(401, 'session_invalid', 'Sesi ditolak.'); return a; },
+    requireCurrent(a) { if (db.prepare('SELECT blocked FROM accounts WHERE id=?').get(a.accountId)?.blocked !== 0 || db.prepare('SELECT 1 FROM session_denials WHERE issuer=? AND sid=?').get(a.issuer, a.sessionId)) throw new ProtocolError(401, 'session_invalid', 'Session denied.'); return a; },
     async verifiedMailboxes() { return [mailbox]; },
   }, () => config);
   const assignment = (agentId = agent) => ({ agentId, expectedAgentRevision: 1, expectedParticipationRevision: 1 });
@@ -44,7 +44,7 @@ function fixture() {
 test('closed invitation/member/policy parsers normalize flags and reject obsolete authority', () => {
   const input = { requestId: randomUUID(), email: 'User@Example.COM', expiresAt: Date.now() + 60000, expectedProjectRevision: 1, agentAssignments: [{ agentId: randomUUID().toUpperCase(), expectedAgentRevision: 1, expectedParticipationRevision: 1 }] };
   const result = parseInvitationCreate(input); assert.equal(result.email, 'user@example.com'); assert.equal(result.agentAssignments[0].enabled, true); assert.equal(result.agentAssignments[0].respond, true);
-  assert.throws(() => parseInvitationCreate({ ...input, agentAssignments: [...input.agentAssignments, ...input.agentAssignments] }), /duplikat/);
+  assert.throws(() => parseInvitationCreate({ ...input, agentAssignments: [...input.agentAssignments, ...input.agentAssignments] }), /Duplicate/);
   for (const change of [{ expectedProjectRevision: 0 }, { role: 'owner' }, { agentAssignments: [{ ...input.agentAssignments[0], respond: 'false' }] }]) assert.throws(() => parseInvitationCreate({ ...input, ...change }));
   assert.throws(() => parseMemberEdit({ requestId: randomUUID(), expectedRevision: 1, deleted: true, agentAssignments: [] }));
   assert.throws(() => parseMemberEdit({ requestId: randomUUID(), expectedRevision: 1, agents: [] }));
@@ -64,8 +64,8 @@ test('accept consumes once; exact retry preserves later policy changes and revok
     assert.deepEqual((await access.acceptInvitation(member, invite.command.requestId, invite.accept)).data, accepted.data); assert.equal(access.requireAgentResponsePolicy(member, project, agent), false);
     assert.equal(db.prepare('SELECT revision FROM collaborator_agents').get()!.revision, 1);
     assert.equal(access.setResponsePolicy(owner, project, agent, toggle).status, 200);
-    assert.throws(() => access.setResponsePolicy(owner, project, agent, { ...toggle, requestId: randomUUID() }), /revisi/);
-    await assert.rejects(access.acceptInvitation(member, invite.command.requestId, { ...invite.accept, requestId: randomUUID() }), /digunakan/);
+    assert.throws(() => access.setResponsePolicy(owner, project, agent, { ...toggle, requestId: randomUUID() }), /revision/);
+    await assert.rejects(access.acceptInvitation(member, invite.command.requestId, { ...invite.accept, requestId: randomUUID() }), /used/);
     const revoke = { requestId: randomUUID(), expectedRevision: 1, deleted: true };
     access.editMember(owner, project, member.accountId, revoke);
     assert.throws(() => access.requireProjectMember(member, project), /Resource/); assert.throws(() => access.requireProjectMember(stranger, project), /Resource/);

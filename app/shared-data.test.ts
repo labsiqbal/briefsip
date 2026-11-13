@@ -38,14 +38,14 @@ test('SQLite authorizer enforces schema ownership, blocks host access and keeps 
     const oldRevision = (await execute('SELECT * FROM renamed')).revision;
     const one = await prepareData(db, dataRequest('query', { sql: "INSERT INTO renamed(text) VALUES ('one')" }), 'beta', AbortSignal.timeout(5000));
     const two = await prepareData(db, dataRequest('query', { sql: "INSERT INTO renamed(text) VALUES ('two')" }), 'beta', AbortSignal.timeout(5000));
-    assert.equal(commitData(db, one).revision, oldRevision + 1); assert.throws(() => commitData(db, two), /Data berubah/);
+    assert.equal(commitData(db, one).revision, oldRevision + 1); assert.throws(() => commitData(db, two), /Data changed/);
     assert.deepEqual((await execute('SELECT text FROM renamed ORDER BY id')).rows, [['shared'], ['one']]);
     await assert.rejects(execute("INSERT INTO renamed(text) VALUES (hex(zeroblob(100000))) RETURNING text"), /128 KiB/);
     assert.equal((await execute('SELECT count(*) FROM renamed')).rows[0][0], 2);
-    const started = Date.now(); await assert.rejects(execute('WITH RECURSIVE forever(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM forever) SELECT sum(n) FROM forever'), /interrupted|waktu|resource/); assert(Date.now() - started < 5000);
-    assert.throws(() => dataRequest('query', { sql: 'SELECT ?', parameters: [Number.MAX_SAFE_INTEGER + 1] }), /Parameter/);
+    const started = Date.now(); await assert.rejects(execute('WITH RECURSIVE forever(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM forever) SELECT sum(n) FROM forever'), /interrupted|timed out|resource/); assert(Date.now() - started < 5000);
+    assert.throws(() => dataRequest('query', { sql: 'SELECT ?', parameters: [Number.MAX_SAFE_INTEGER + 1] }), /parameters/);
     await assert.rejects(execute('SELECT 1; DELETE FROM renamed'), /one statement/);
-    const aborted = new AbortController(); aborted.abort(); await assert.rejects(prepareData(db, dataRequest('query', { sql: 'SELECT 1' }), 'alpha', aborted.signal), /dibatalkan/);
+    const aborted = new AbortController(); aborted.abort(); await assert.rejects(prepareData(db, dataRequest('query', { sql: 'SELECT 1' }), 'alpha', aborted.signal), /cancelled/);
     const listing = await prepareData(db, dataRequest('list', {}), null, AbortSignal.timeout(5000), true);
     assert.deepEqual((listing.result.tables as any[]).map(row => [row.name, row.owner]), [['renamed', 'alpha']]);
     const dropped = await prepareData(db, dataRequest('drop', { table: 'renamed' }), null, AbortSignal.timeout(5000), false, true); commitData(db, dropped);
@@ -60,6 +60,6 @@ test('SQLite authorizer enforces schema ownership, blocks host access and keeps 
     assert.equal(names.length, 21); assert.equal(new Set(names).size, 21);
     const cancel = new AbortController();
     const slow = prepareData(db, dataRequest('query', { sql: 'WITH RECURSIVE forever(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM forever) SELECT sum(n) FROM forever' }), 'alpha', cancel.signal);
-    setTimeout(() => cancel.abort(), 50); await assert.rejects(slow, /dibatalkan/);
+    setTimeout(() => cancel.abort(), 50); await assert.rejects(slow, /cancelled/);
   } finally { db.close(); }
 });

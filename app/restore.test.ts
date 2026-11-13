@@ -108,7 +108,7 @@ test('pre-v3 canonical restore disables retained automation and rejects downgrad
         tampered.exec("UPDATE briefsip_backup_authority SET generation='wrong'");tampered.close();
         const invalid=join(dir,`invalid-${version}.sqlite`);assert.throws(()=>restoreWorkspace(backup.file,invalid),/authority mismatch/);assert(!existsSync(invalid));
         const downgraded=new DatabaseSync(backup.file);downgraded.exec("UPDATE briefsip_backup SET format='briefsip-workspace',version=1");downgraded.close();
-        assert.throws(()=>restoreWorkspace(backup.file,invalid),/Format backup/);assert(!existsSync(invalid));
+        assert.throws(()=>restoreWorkspace(backup.file,invalid),/backup format/);assert(!existsSync(invalid));
       }finally{backup.cleanup();}
     }
   }finally{rmSync(dir,{recursive:true,force:true});}
@@ -144,7 +144,7 @@ test('operator CLI restores a canonical backup read-only without script credenti
     const restored=new DatabaseSync(target);try{assert.equal(restored.prepare('SELECT serving_state FROM authority_state').get()!.serving_state,'read_only_recovery');}finally{restored.close();}
     await assert.rejects(cli(['restore','--read-only',backup.file,'--db',target,'--activate'],undefined),/restore/);
     const legacy=join(dir,'legacy.sqlite'),old=new DatabaseSync(legacy);old.exec("CREATE TABLE briefsip_backup(format TEXT,version INTEGER); INSERT INTO briefsip_backup VALUES ('briefsip-workspace',1)");old.close();
-    const invalid=join(dir,'invalid.sqlite');await assert.rejects(cli(['restore','--read-only',legacy,'--db',invalid],undefined),/backup canonical/);assert(!existsSync(invalid));
+    const invalid=join(dir,'invalid.sqlite');await assert.rejects(cli(['restore','--read-only',legacy,'--db',invalid],undefined),/canonical backup/);assert(!existsSync(invalid));
   }finally{backup.cleanup();rmSync(dir,{recursive:true,force:true});}
 });
 

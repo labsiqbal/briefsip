@@ -42,7 +42,7 @@ test('a hostile MCP output schema cannot block HTTP, exceed the worker deadline 
     const health = await fetch(origin + '/api/agents', { signal: AbortSignal.timeout(500) }); assert(health.ok);
     let failed; const deadline = Date.now() + 24000;
     while (Date.now() < deadline) { const rows = await (await fetch(origin + path, { signal: AbortSignal.timeout(2000) })).json(); failed = rows.find((row: any) => row.id === id); if (failed?.status === 'failed') break; await new Promise(resolve => setTimeout(resolve, 50)); }
-    assert.equal(failed?.status, 'failed'); assert.match(failed.error, /belum pasti/);
+    assert.equal(failed?.status, 'failed'); assert.match(failed.error, /uncertain/);
     const cancelId = randomUUID(); await post(path, { id: cancelId, text: 'Cancel this tool' });
     for (let i = 0; i < 300 && effects < 2; i++) await new Promise(resolve => setTimeout(resolve, 10)); assert.equal(effects, 2);
     await post(`${path}/${cancelId}/cancel`, { id: randomUUID() });

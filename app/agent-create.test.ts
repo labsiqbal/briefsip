@@ -83,7 +83,7 @@ function canonicalFixture() {
   const actor = (subject: string): HumanActor => ({ accountId: randomUUID(), issuer: 'https://fixture.example', subject, sessionId: `sess_${subject}`, expiresAt: Date.now() + 60000 });
   const owner = actor('owner'), member = actor('member'), foreign = actor('foreign');
   for (const a of [owner, member, foreign]) db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(a.accountId, a.issuer, a.subject, Date.now());
-  const auth = { requireCurrent(a: HumanActor) { if (db.prepare('SELECT blocked FROM accounts WHERE id=?').get(a.accountId)?.blocked !== 0) throw new ProtocolError(401, 'session_invalid', 'Sesi ditolak.'); return a; }, async verifiedMailboxes() { return []; } };
+  const auth = { requireCurrent(a: HumanActor) { if (db.prepare('SELECT blocked FROM accounts WHERE id=?').get(a.accountId)?.blocked !== 0) throw new ProtocolError(401, 'session_invalid', 'Session denied.'); return a; }, async verifiedMailboxes() { return []; } };
   const devices = createDevices(db, auth), access = createProjectAccess(db, auth, () => { throw new Error('No mail in agent fixture'); }, retainedToolNames);
   function enroll(a = owner, capabilities = ['execution']) {
     const installation = generateKeyPairSync('ed25519'), signing = generateKeyPairSync('ed25519'), encryption = generateKeyPairSync('x25519');

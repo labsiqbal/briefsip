@@ -51,7 +51,7 @@ test('signed infrastructure fence preflight survives restart and exact retry wit
     f.db().exec("CREATE TRIGGER reject_fence_request BEFORE UPDATE ON restore_fence_request BEGIN SELECT RAISE(ABORT,'fixture request failure'); END");
     assert.throws(() => f.prepare(), /fixture request failure/); assert.deepEqual(f.verify(evidence), result);
     f.db().exec('DROP TRIGGER reject_fence_request');
-    f.prepare(); assert.throws(() => f.verify(evidence), /Bukti fence/);
+    f.prepare(); assert.throws(() => f.verify(evidence), /Infrastructure fence evidence/);
     assert.equal(f.db().prepare('SELECT serving_state FROM authority_state').get()!.serving_state, 'read_only_recovery');
   } finally { f.close(); }
 });
@@ -158,7 +158,7 @@ test('activation rolls back on receipt failure and rejects changed plans', async
     assert.equal(f.db().prepare("SELECT count(*) AS n FROM receipts WHERE scope='restore.activate'").get()!.n, 0);
     f.db().exec('DROP TRIGGER fail_activation_receipt');
     f.db().exec('UPDATE authority_state SET revision=revision+1 WHERE id=1');
-    assert.throws(() => activateRestore(f.db(), f.auth(), f.owner, f.proof.session, f.trust, evidence, plan.command), /Bukti pemulihan berubah/);
+    assert.throws(() => activateRestore(f.db(), f.auth(), f.owner, f.proof.session, f.trust, evidence, plan.command), /Recovery evidence changed/);
     const revised = planRestoreActivation(f.db(), f.auth(), f.owner, f.proof.session, f.proof.recoveryGeneration, f.trust, evidence);
     f.db().exec("CREATE TABLE restore_activation_proofs(request_id TEXT PRIMARY KEY REFERENCES receipts(request_id),session_hash TEXT NOT NULL,trust_digest TEXT NOT NULL,evidence_json TEXT NOT NULL); CREATE TRIGGER fail_activation_proof BEFORE INSERT ON restore_activation_proofs BEGIN SELECT RAISE(ABORT,'fixture proof failure'); END");
     assert.throws(() => activateRestore(f.db(), f.auth(), f.owner, f.proof.session, f.trust, evidence, revised.command), /fixture proof failure/);
@@ -210,7 +210,7 @@ test('activation retains populated revoked grants and held tasks, refusing unsaf
 test('activation requires current schema, owner session and fresh infrastructure proof', async () => {
   for (const version of [1, 2] as const) {
     const f = await fixture(version);
-    try { assert.throws(() => planRestoreActivation(f.db(), f.auth(), f.owner, f.proof.session, f.proof.recoveryGeneration, f.trust, f.signed(f.prepare())), /Upgrade schema/); } finally { f.close(); }
+    try { assert.throws(() => planRestoreActivation(f.db(), f.auth(), f.owner, f.proof.session, f.proof.recoveryGeneration, f.trust, f.signed(f.prepare())), /Upgrade the canonical schema/); } finally { f.close(); }
   }
   const f = await fixture();
   try {
