@@ -441,6 +441,112 @@ async function workflowConfigurationFixture() {
   } catch (error) { await runtime.close(); await f.close(); throw error; }
 }
 
+test('canonical workflow run admission keeps its graph and receipt across restart and revision changes', async () => {
+  const f = await workflowConfigurationFixture(), { project, workflow, graph, list, detail } = f;
+  try {
+    assert.equal((await f.send(list, { requestId: workflow, id: workflow, revision: 0, name: 'Run', graph })).status, 201);
+    const requestId = randomUUID(), command = { requestId, id: requestId, revision: 1, input: 'Original input' }, path = `/api/projects/${project}/workflow-runs/${requestId}`;
+    const accepted = await f.send(detail + '/run', command); assert.equal(accepted.status, 201, JSON.stringify(accepted.body));
+    assert.equal(accepted.body.data.id, requestId); assert.equal(accepted.body.data.homeDeviceId, f.home.id);
+    const read = await f.send(path); assert.equal(read.status, 200); assert.deepEqual(read.body.data.graph, graph); assert.equal(read.body.data.input, command.input);
+    const editId = randomUUID();
+    assert.equal((await f.send(detail + '/edit', { requestId: editId, id: editId, revision: 1, name: 'Changed', graph: { ...graph, maxSteps: 2 } })).status, 200);
+    await f.restart();
+    const replay = await f.send(detail + '/run', command); assert.equal(replay.status, 200); assert.deepEqual(replay.body.receipt, accepted.body.receipt);
+    assert.deepEqual((await f.send(path)).body.data.graph, graph); assert.equal((await f.send(path)).body.data.version, 1);
+    assert.equal((await f.send(`/api/projects/${f.other}/workflow-runs/${requestId}`)).status, 404);
+    const listed = (await f.send(detail + '/runs')).body.data; assert.deepEqual(listed.items.map((row:{id:string}) => row.id), [requestId]); assert.equal(listed.nextCursor, null);
+    assert.equal((await f.send(detail + '/run', { ...command, input: 'Changed payload' })).status, 409);
+    const staleId = randomUUID(); assert.equal((await f.send(detail + '/run', { ...command, requestId: staleId, id: staleId })).status, 409);
+    const cancelId = randomUUID(), cancel = { requestId: cancelId, id: cancelId, revision: read.body.data.revision };
+    const cancelled = await f.send(path + '/cancel', cancel); assert.equal(cancelled.status, 200, JSON.stringify(cancelled.body));
+    assert.equal((await f.send(path)).body.data.status, 'cancelled'); assert.deepEqual((await f.send(path + '/cancel', cancel)).body, cancelled.body);
+    const nextId = randomUUID(); assert.equal((await f.send(path + '/cancel', { ...cancel, requestId: nextId, id: nextId })).status, 409);
+    assert.equal((await f.send(`/api/workflow-runs/${requestId}?before=1`)).status, 404);
+  } finally { await f.close(); }
+});
+
+test('canonical workflow runs deny revoked private and unmapped state and roll back controls with receipts', async () => {
+  const f = await workflowConfigurationFixture(), { project, workflow, detail, list, agent } = f, db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  try {
+    const graph = { entry: 'approve', maxSteps: 2, nodes: [{ id: 'approve', kind: 'approval', prompt: 'Accept?', yes: 'out' }, { id: 'out', kind: 'output' }] };
+    assert.equal((await f.send(list, { requestId: workflow, id: workflow, revision: 0, name: 'Approval', graph })).status, 201);
+    const owner = (await f.send('/api/session')).body.data.accountId, collaborator = (await f.send('/api/session', undefined, 'user_collaborator')).body.data.accountId;
+    db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(project, collaborator);
+    db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(project, collaborator, agent);
+    db.prepare('INSERT INTO response_policies VALUES (?,?,?,0,1)').run(project, collaborator, agent);
+    const run = randomUUID(), command = { requestId: run, id: run, revision: 1, input: 'Approval input' }, path = `/api/projects/${project}/workflow-runs/${run}`;
+    const accepted = await f.send(detail + '/run', command, 'user_collaborator'); assert.equal(accepted.status, 201, JSON.stringify(accepted.body));
+    db.prepare('UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE project=? AND account=?').run(project, collaborator);
+    assert.equal((await f.send(path, undefined, 'user_collaborator')).status, 404);
+    assert.equal((await f.send(detail + '/run', command, 'user_collaborator')).status, 404);
+    assert.equal((await f.send(detail + '/runs', undefined, 'user_collaborator')).status, 404);
+    db.prepare('UPDATE collaborator_agents SET enabled=1,revision=revision+1 WHERE project=? AND account=?').run(project, collaborator);
+    db.prepare("UPDATE record_scopes SET visibility='owner',account=? WHERE table_name='workflow_runs' AND key_json=?").run(owner, JSON.stringify([run]));
+    assert.equal((await f.send(path, undefined, 'user_collaborator')).status, 404); assert.deepEqual((await f.send(detail + '/runs', undefined, 'user_collaborator')).body.data.items, []);
+    db.prepare("UPDATE record_scopes SET visibility='project' WHERE table_name='workflow_runs' AND key_json=?").run(JSON.stringify([run]));
+    db.prepare("UPDATE record_scopes SET project=? WHERE table_name='workflow_versions' AND key_json=?").run(f.other, JSON.stringify([workflow, 1]));
+    assert.equal((await f.send(path)).status, 404); assert.equal((await f.send(detail + '/run', command, 'user_collaborator')).status, 404);
+    db.prepare("UPDATE record_scopes SET project=? WHERE table_name='workflow_versions' AND key_json=?").run(project, JSON.stringify([workflow, 1]));
+    db.prepare("INSERT INTO workflow_steps(run,seq,node,status,settings) VALUES (?,1,'approve','approval',?)").run(run, JSON.stringify(graph.nodes[0]));
+    db.prepare("UPDATE workflow_runs SET steps=1,status='approval',revision=2 WHERE id=?").run(run);
+    const approvalId = randomUUID(), approval = { requestId: approvalId, id: approvalId, revision: 2, accepted: true };
+    assert.equal((await f.send(path + '/approve', approval)).status, 404, 'Unmapped step cannot be approved');
+    const cancellationId = randomUUID(); assert.equal((await f.send(path + '/cancel', { requestId: cancellationId, id: cancellationId, revision: 2 })).status, 404, 'Unmapped step cannot be cancelled');
+    db.prepare("INSERT INTO record_scopes VALUES ('workflow_steps',?,?,?,'project','workflow',?)").run(JSON.stringify([run, 1]), collaborator, project, workflow);
+    db.exec("CREATE TRIGGER fail_run_receipt BEFORE INSERT ON receipts WHEN NEW.scope LIKE 'retained:%/workflow-runs/%/approve' BEGIN SELECT RAISE(ABORT,'run receipt failure'); END");
+    assert.equal((await f.send(path + '/approve', approval)).status, 500);
+    assert.equal((await f.send(path)).body.data.status, 'approval'); assert.equal((await f.send(path)).body.data.steps[0].status, 'approval');
+    db.exec('DROP TRIGGER fail_run_receipt');
+    const approved = await f.send(path + '/approve', approval); assert.equal(approved.status, 200, JSON.stringify(approved.body));
+    assert.equal((await f.send(path)).body.data.status, 'ready'); assert.equal((await f.send(path)).body.data.cursor, 'out');
+    await f.restart(); assert.deepEqual((await f.send(path + '/approve', approval)).body, approved.body);
+    const staleId = randomUUID(); assert.equal((await f.send(path + '/approve', { ...approval, requestId: staleId, id: staleId })).status, 409);
+    const failedId = randomUUID(), failed = { ...command, requestId: failedId, id: failedId };
+    db.exec("CREATE TRIGGER fail_run_mapping BEFORE INSERT ON record_scopes WHEN NEW.table_name='workflow_runs' BEGIN SELECT RAISE(ABORT,'run mapping failure'); END");
+    assert.equal((await f.send(detail + '/run', failed)).status, 500); assert.equal(db.prepare('SELECT count(*) n FROM workflow_runs WHERE id=?').get(failedId)!.n, 0); assert.equal(db.prepare('SELECT count(*) n FROM receipts WHERE request_id=?').get(failedId)!.n, 0);
+    db.exec('DROP TRIGGER fail_run_mapping'); assert.equal((await f.send(detail + '/run', failed)).status, 201);
+    for (const query of ['projectId=' + project, 'before=0', 'before=1&before=2', 'before=x']) assert.equal((await f.send(detail + '/runs?' + query)).status, 404);
+    assert.equal((await f.send(path + '?after=0')).status, 404);
+    assert.equal((await f.send(path + '/cancel', { requestId: randomUUID(), id: randomUUID(), revision: 3, projectId: project })).status, 404);
+  } finally { db.close(); await f.close(); }
+});
+
+test('canonical workflow run and step pages preserve old approvals and admission rolls back failed receipts', async () => {
+  const f = await workflowConfigurationFixture(), { project, workflow, graph, detail, list } = f, db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  try {
+    assert.equal((await f.send(list, { requestId: workflow, id: workflow, revision: 0, name: 'Pages', graph })).status, 201);
+    const runs: string[] = [];
+    for (let index = 0; index < 23; index++) {
+      const requestId = randomUUID(); runs.push(requestId);
+      assert.equal((await f.send(detail + '/run', { requestId, id: requestId, revision: 1, input: String(index) })).status, 201);
+    }
+    const first = (await f.send(detail + '/runs')).body.data, second = (await f.send(detail + '/runs?before=' + first.nextCursor)).body.data;
+    assert.equal(first.items.length, 20); assert.equal(second.items.length, 3); assert.equal(second.nextCursor, null);
+    assert.deepEqual([...first.items, ...second.items].map((row:{id:string}) => row.id), runs.toReversed());
+    const run = runs[0], path = `/api/projects/${project}/workflow-runs/${run}`, owner = (await f.send('/api/session')).body.data.accountId;
+    for (let seq = 1; seq <= 21; seq++) {
+      db.prepare("INSERT INTO workflow_steps(run,seq,node,status) VALUES (?,?,?,'approval')").run(run, seq, 'out');
+      db.prepare("INSERT INTO record_scopes VALUES ('workflow_steps',?,?,?,'project','workflow',?)").run(JSON.stringify([run, seq]), owner, project, workflow);
+    }
+    const steps = (await f.send(path)).body.data, tail = (await f.send(path + '?after=' + steps.nextCursor)).body.data;
+    assert.equal(steps.steps.length, 20); assert.equal(tail.steps.length, 1); assert.equal(tail.nextCursor, null); assert.equal(tail.steps[0].seq, 21);
+    const requestId = randomUUID(), command = { requestId, id: requestId, revision: 1, input: 'Atomic' };
+    db.exec("CREATE TRIGGER fail_run_receipt BEFORE INSERT ON receipts WHEN NEW.scope LIKE 'retained:%/workflows/%/run' BEGIN SELECT RAISE(ABORT,'run receipt failure'); END");
+    assert.equal((await f.send(detail + '/run', command)).status, 500);
+    assert.equal(db.prepare('SELECT count(*) n FROM workflow_runs WHERE id=?').get(requestId)!.n, 0); assert.equal(db.prepare("SELECT count(*) n FROM record_scopes WHERE table_name='workflow_runs' AND key_json=?").get(JSON.stringify([requestId]))!.n, 0);
+    db.exec('DROP TRIGGER fail_run_receipt'); assert.equal((await f.send(detail + '/run', command)).status, 201);
+    const foreign = (await f.send('/api/session', undefined, 'user_stranger')).body.data.accountId;
+    db.prepare('UPDATE installations SET account=? WHERE id=(SELECT installation FROM devices WHERE id=?)').run(foreign, f.home.id);
+    const foreignId = randomUUID(); assert.equal((await f.send(detail + '/run', { ...command, requestId: foreignId, id: foreignId })).status, 404, 'Device installation must belong to its account');
+    assert.equal(db.prepare('SELECT count(*) n FROM workflow_runs WHERE id=?').get(foreignId)!.n, 0); assert.equal(db.prepare('SELECT count(*) n FROM receipts WHERE request_id=?').get(foreignId)!.n, 0);
+    db.prepare('UPDATE installations SET account=? WHERE id=(SELECT installation FROM devices WHERE id=?)').run(owner, f.home.id);
+    db.prepare("UPDATE devices SET status='revoked' WHERE id=?").run(f.home.id);
+    const deniedId = randomUUID(); assert.equal((await f.send(detail + '/run', { ...command, requestId: deniedId, id: deniedId })).status, 404);
+    assert.equal((await f.send(detail + '/run', command)).status, 200, 'Revoked device never re-dispatches an already accepted command');
+  } finally { db.close(); await f.close(); }
+});
+
 test('canonical workflow configuration stays project scoped with immutable versions and retry receipts', async () => {
   const f = await workflowConfigurationFixture(), { home, project, other, workflow, graph, list, detail } = f;
   try {
@@ -471,7 +577,7 @@ test('canonical workflow configuration stays project scoped with immutable versi
     assert.deepEqual((await f.send(detail + '/delete', { ...deletion, id: deletion.requestId })).body.receipt, deleted.body.receipt);
     assert.deepEqual((await f.send(`/api/projects/${project}/workflows`)).body.data.items, []);
     assert.equal((await f.send(`/api/projects/${project}/workflows?deleted=1`)).body.data.items[0].id, workflow);
-    assert.equal((await f.send(detail + '/run', { requestId: randomUUID(), revision: 3, input: 'Must not execute' })).status, 404);
+    const runId = randomUUID(); assert.equal((await f.send(detail + '/run', { requestId: runId, id: runId, revision: 3, input: 'Must not execute' })).status, 404);
   } finally { await f.close(); }
 });
 
@@ -536,7 +642,7 @@ test('canonical workflows enforce current assignments private mappings selectors
     assert.equal((await f.send(`/api/projects/${project}/workflows`)).body.data.items.length, 1, 'Failed mapping leaves no partial workflow');
     db.exec('DROP TRIGGER fail_workflow_mapping');
     assert.equal((await f.send(list, { ...command, requestId: bad, id: bad })).status, 201);
-    assert.equal(db.prepare("SELECT count(*) n FROM sqlite_schema WHERE type='table' AND name IN('workflow_waits','workflow_runs','workflow_webhooks')").get()!.n, 0, 'Configuration startup never installs legacy dispatcher or secret tables');
+    assert.equal(db.prepare("SELECT count(*) n FROM sqlite_schema WHERE type='table' AND name IN('workflow_waits','workflow_webhooks','workflow_schedules')").get()!.n, 0, 'Canonical startup never installs legacy secret or schedule tables');
     db.prepare('UPDATE project_members SET deleted=1,grant_revision=grant_revision+1 WHERE project=? AND account=?').run(project, collaborator);
     assert.equal((await f.send(detail, undefined, 'user_collaborator')).status, 404);
     assert.equal((await f.send(detail, undefined, 'user_stranger')).status, 404);
