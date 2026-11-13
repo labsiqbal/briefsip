@@ -1,3 +1,4 @@
+import './ui/csp-nonce';
 import { restoreChatCommand, restoreChannelCommand, type ChatCommand, type ChannelCommand } from '../conversation-command';
 import { restoreAgentCreation, type AgentCreation } from '../agent-create';
 import { AgentAvatar, AvatarEditor } from './AgentAvatar';

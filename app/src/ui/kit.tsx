@@ -2,6 +2,7 @@
 import { createContext, forwardRef, useCallback, useContext, useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type Ref, type TextareaHTMLAttributes } from 'react';
 import { AlertDialog, Checkbox as RadixCheckbox, Collapsible as RadixCollapsible, Dialog as RadixDialog, DropdownMenu, Popover, Select as RadixSelect, Switch as RadixSwitch, Tabs as RadixTabs, Tooltip as RadixTooltip } from 'radix-ui';
 import { AlertTriangle, Check, ChevronDown, ChevronRight, CircleAlert, Info, X } from 'lucide-react';
+import { getNonce } from 'get-nonce';
 
 const cx = (...names: (string | false | null | undefined)[]) => names.filter(Boolean).join(' ');
 
@@ -53,7 +54,7 @@ export function Select({ value, onChange, options, disabled, placeholder, name, 
     </RadixSelect.Trigger>
     <RadixSelect.Portal>
       <RadixSelect.Content className="k-pop k-select__content" position="popper" sideOffset={6}>
-        <RadixSelect.Viewport className="k-select__viewport">
+        <RadixSelect.Viewport className="k-select__viewport" nonce={getNonce()}>
           {options.map(option => <RadixSelect.Item key={option.value} value={encode(option.value)} disabled={option.disabled} className="k-menu__item k-select__item">
             <span className="k-select__text"><RadixSelect.ItemText>{option.label}</RadixSelect.ItemText>{option.hint && <span className="k-menu__hint">{option.hint}</span>}</span>
             <RadixSelect.ItemIndicator className="k-select__check"><Check size={14} aria-hidden /></RadixSelect.ItemIndicator>
