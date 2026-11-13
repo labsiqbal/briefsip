@@ -23,6 +23,7 @@ import { ArrowUp, Brain, ChevronDown, Clock, FolderOpen, Hash, MessageSquare, Pa
 import { Menu, type MenuItem } from './ui/Menu';
 import { Modal } from './ui/Modal';
 import { PageView, useDetailsOpen } from './ui/layout';
+import { Alert, Button, Collapsible, Combobox, ConfirmProvider, Dialog, Field, Input, Segmented, Select, Textarea, useConfirm, type SelectOption } from './ui/kit';
 import { WorkflowPanel } from './WorkflowPanel';
 import { WorkflowDirectory } from './WorkflowDirectory';
 import { createRoot } from 'react-dom/client';
@@ -37,6 +38,8 @@ import './ui/modals.css';
 import './ui/config.css';
 import './ui/legacy.css';
 import './ui/briefsip.css';
+import './ui/kit.css';
+import '@fontsource-variable/inter';
 
 const panelLoadFailure = () => ({ default: () => <section className="empty"><h1>Panel belum dapat dimuat</h1><p role="alert">Periksa koneksi, lalu muat ulang aplikasi.</p><button onClick={() => window.location.reload()}>Muat ulang aplikasi</button></section> });
 const SitesPanel = lazy(() => import('./SitesPanel').then(module => ({ default: module.SitesPanel })).catch(panelLoadFailure));
@@ -815,7 +818,8 @@ function ThreadForm({ agent, thread, onCancel, onSaved, onReload }: { agent: Age
   </form></section>;
 }
 
-function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload, onVisibilityChanged }: { model: string; profile?: Agent; onCreated: (agent: Agent) => void; onCancel?: () => void; onReload?: () => Promise<void>; onVisibilityChanged?: () => Promise<void> }) {
+function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload, onVisibilityChanged }: { model: string; profile?: Agent; onCreated: (agent: Agent) => void; onCancel: () => void; onReload?: () => Promise<void>; onVisibilityChanged?: () => Promise<void> }) {
+  const confirm = useConfirm();
   const [profile] = useState(liveProfile);
   const creationKey = 'briefsip-agent-creation';
   const nameInput = useRef<HTMLInputElement>(null);
@@ -845,6 +849,8 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
     return () => { stopped = true; };
   }, [account, accountReload]);
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
+  const [modelValue, setModelValue] = useState(profile?.model ?? recovery.command?.model ?? model);
+  const [backupValue, setBackupValue] = useState(profile?.backup_model ?? recovery.command?.backupModel ?? '');
   const pending = useRef<(AgentCreation & { revision?: number }) | null>(recovery.command);
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (busy || invalid) return;
@@ -863,23 +869,70 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
     } finally { if (active.current) setBusy(false); }
 
   }
-  return <section className="setup"><h1>{profile ? 'Edit profil agent' : 'Agent baru'}</h1><p className="muted">Beri nama, pilih model, lalu jelaskan cara kerjanya.</p>{invalid && <p className="error" role="alert">Data pemulihan pembuatan agent tidak dapat dibaca. Periksa daftar agent sebelum membuangnya.</p>}{invalid && <button className="secondary" onClick={() => { if (confirm('Agent mungkin sudah dibuat. Buang data pemulihan setelah memeriksa daftar agent?')) { try { sessionStorage.removeItem(creationKey); setInvalid(false); nameInput.current?.focus(); } catch { setError('Penyimpanan pemulihan belum dapat dibersihkan.'); } } }}>Buang data pemulihan</button>}{!profile && pending.current && <p className="notice">Pembuatan belum terkonfirmasi. Coba lagi memakai permintaan yang sama agar tidak membuat agent ganda.</p>}<form onSubmit={create}>
-    {!profile && <label className="member-option"><input type="checkbox" checked={setup} disabled={busy || !!pending.current || invalid} onChange={event => setSetup(event.target.checked)} />Susun nama dan instruksi dari deskripsi kebutuhan</label>}
-    {!profile && setup && <p className="muted">Memakai provider yang dipilih. Agent dan tugas penyusunan dibuat bersama; hasil, kegagalan, atau pertanyaan muncul di chat. Penyusunan hanya dapat mengubah profil atau meminta klarifikasi.</p>}
-    <label>{!profile && setup ? 'Nama sementara (opsional)' : 'Nama'}<input ref={nameInput} name="name" required={!setup} maxLength={80} readOnly={!!pending.current} autoFocus defaultValue={profile?.name ?? recovery.command?.name} placeholder="Misalnya: Rekan riset" /></label>
-    <label>Akun provider<select value={account} disabled={!!pending.current} onChange={event => setAccount(event.target.value)} aria-describedby="provider-account-help">
-      {!accounts.some(item => item.id === '') && <option value="">Default server</option>}
-      {account && !accounts.some(item => item.id === account) && <option value={account}>Akun tidak tersedia</option>}
-      {accounts.map(item => <option key={item.id} value={item.id}>{item.name.slice(0, 28)}{item.configured ? '' : ' (belum terhubung)'}</option>)}
-    </select><span id="provider-account-help" className="muted account-help">{accounts.find(item => item.id === account)?.name ?? account} - Pilih model yang tersedia pada akun ini. Kunci API tetap di server.</span></label>
-    {accountError && <div><p className="error" role="alert">Daftar akun belum dimuat. {accountError}</p><button type="button" className="secondary" onClick={() => setAccountReload(value => value + 1)}>Muat ulang akun</button></div>}
-    <label>Model<input name="model" list="provider-models" aria-describedby="model-catalog-status" required maxLength={160} readOnly={!!pending.current} defaultValue={profile?.model ?? recovery.command?.model ?? model} placeholder="ID model dari provider kamu" /><datalist id="provider-models">{models.map(id => <option key={id} value={id} />)}</datalist><span id="model-catalog-status" className="muted" role="status">{catalogStatus}</span></label>
-    <label>Model cadangan (opsional)<input name="backupModel" list="provider-models" maxLength={160} readOnly={!!pending.current} defaultValue={profile?.backup_model ?? recovery.command?.backupModel ?? ''} aria-describedby="backup-model-help" /><span id="backup-model-help" className="muted">Dicoba sekali jika model utama menolak karena kuota atau sedang tidak tersedia, sebelum jawaban atau tool diterima. Memakai provider yang sama. Kosongkan untuk menonaktifkan.</span></label>
-    <label>Percakapan samping bersamaan<input name="threadLimit" type="number" min={1} max={32} step={1} required readOnly={!!pending.current} defaultValue={profile?.thread_limit ?? recovery.command?.threadLimit ?? 2} /><span className="muted">Chat utama memiliki antrean sendiri. Semua percakapan tetap berbagi kapasitas server.</span></label>
-    <label>{!profile && setup ? 'Deskripsi kebutuhan' : 'Instruksi'}<textarea name="instructions" required maxLength={8000} readOnly={!!pending.current} defaultValue={profile?.instructions ?? recovery.command?.instructions} rows={6} placeholder="Apa tugas agent ini? Bagaimana hasilnya perlu disampaikan?" /></label>
-    {error && <p role="alert" className="error">{error}</p>}
-    <div className="form-actions">{onCancel && <button type="button" className="secondary" onClick={onCancel}>Batal</button>}<button disabled={busy || invalid}>{busy ? 'Menyimpan...' : profile ? 'Simpan profil' : pending.current ? 'Coba pembuatan lagi' : setup ? 'Buat dan susun agent' : 'Buat agent'}</button>{!profile && pending.current && <button type="button" className="secondary" disabled={busy} onClick={() => { if (confirm('Agent mungkin sudah dibuat. Periksa daftar agent sebelum membuang permintaan ini dan membuat yang baru. Buang pemulihan?')) { try { sessionStorage.removeItem(creationKey); pending.current = null; setRecovery({ command: null, invalid: false }); setError(''); nameInput.current?.focus(); } catch { setError('Penyimpanan pemulihan belum dapat dibersihkan.'); } } }}>Buang pemulihan</button>}{profile && error && onReload && <button type="button" className="secondary" onClick={onReload}>Buang perubahan dan muat ulang</button>}</div>
-  </form>{profile && onVisibilityChanged && <AvatarEditor agent={profile.id} request={api} onChanged={onVisibilityChanged} />}{profile && onVisibilityChanged && <AgentVisibility agent={liveProfile!} request={api} onChanged={onVisibilityChanged} />}{profile && <Suspense fallback={<p role="status">Memuat situs lokal...</p>}><SitesPanel key={`sites:${profile.id}`} agent={profile.id} request={api} /></Suspense>}{profile && <AgentTemplateExport key={profile.id} id={profile.id} request={api} />}</section>;
+  const locked = !!pending.current;
+  const discardInvalid = async () => {
+    if (!await confirm({ title: 'Buang data pemulihan?', description: 'Agent mungkin sudah dibuat. Periksa daftar agent sebelum membuangnya.', confirm: 'Buang', danger: true })) return;
+    try { sessionStorage.removeItem(creationKey); setInvalid(false); nameInput.current?.focus(); } catch { setError('Penyimpanan pemulihan belum dapat dibersihkan.'); }
+  };
+  const discardPending = async () => {
+    if (!await confirm({ title: 'Buang permintaan ini?', description: 'Agent mungkin sudah dibuat. Periksa daftar agent sebelum membuat yang baru.', confirm: 'Buang pemulihan', danger: true })) return;
+    try { sessionStorage.removeItem(creationKey); pending.current = null; setRecovery({ command: null, invalid: false }); setError(''); nameInput.current?.focus(); } catch { setError('Penyimpanan pemulihan belum dapat dibersihkan.'); }
+  };
+  const accountOptions: SelectOption[] = [
+    ...(!accounts.some(item => item.id === '') ? [{ value: '', label: 'Default server' }] : []),
+    ...(account && !accounts.some(item => item.id === account) ? [{ value: account, label: 'Akun tidak tersedia' }] : []),
+    ...accounts.map(item => ({ value: item.id, label: item.name.slice(0, 40), hint: item.configured ? undefined : 'Belum terhubung' })),
+  ];
+  const submitLabel = profile ? 'Simpan profil' : pending.current ? 'Coba buat lagi' : setup ? 'Buat dan susun' : 'Buat agent';
+  return <Dialog open size={profile ? 'lg' : 'md'} onOpenChange={next => { if (!next && !busy) onCancel(); }}
+    title={profile ? 'Edit profil agent' : 'Agent baru'}
+    description={profile ? undefined : 'Beri nama, pilih model, lalu jelaskan cara kerjanya.'}
+    footer={<>
+      {!profile && pending.current && <Button variant="ghost" disabled={busy} onClick={() => void discardPending()} className="k-dialog__foot-start">Buang pemulihan</Button>}
+      {profile && error && onReload && <Button variant="ghost" onClick={onReload} className="k-dialog__foot-start">Buang perubahan dan muat ulang</Button>}
+      <Button disabled={busy} onClick={onCancel}>Batal</Button>
+      <Button type="submit" form="agent-form" variant="primary" busy={busy} disabled={invalid}>{busy ? 'Menyimpan...' : submitLabel}</Button>
+    </>}>
+    {invalid && <Alert tone="error" title="Data pemulihan tidak dapat dibaca" actions={<Button size="sm" onClick={() => void discardInvalid()}>Buang data pemulihan</Button>}>Periksa daftar agent sebelum membuangnya.</Alert>}
+    {!profile && pending.current && <Alert tone="warn" title="Pembuatan belum terkonfirmasi">Coba lagi memakai permintaan yang sama supaya tidak membuat agent ganda.</Alert>}
+    <form id="agent-form" className="k-fieldset" onSubmit={create}>
+      {!profile && <Segmented label="Cara membuat agent" value={setup ? 'describe' : 'manual'} disabled={busy || locked || invalid} onChange={value => setSetup(value === 'describe')} options={[
+        { value: 'manual', label: 'Isi sendiri', description: 'Tulis nama dan instruksinya.' },
+        { value: 'describe', label: 'Susun dari deskripsi', description: 'Agent menyusun profilnya lewat chat.' },
+      ]} />}
+      <Field label={!profile && setup ? 'Nama sementara' : 'Nama'} optional={!profile && setup}>
+        <Input ref={nameInput} name="name" required={!setup} maxLength={80} readOnly={locked} defaultValue={profile?.name ?? recovery.command?.name} placeholder="Misalnya: Rekan riset" />
+      </Field>
+      <div className="k-grid-2">
+        <Field label="Akun provider" hint={accountError ? undefined : 'Kunci API tetap di server.'} error={accountError && <>Daftar akun belum dimuat. <button type="button" className="k-link" onClick={() => setAccountReload(value => value + 1)}>Muat ulang</button></>}>
+          <Select value={account} onChange={setAccount} disabled={locked} options={accountOptions} />
+        </Field>
+        <Field label="Model" hint={catalogStatus}>
+          <Combobox name="model" value={modelValue} onChange={setModelValue} suggestions={models} required maxLength={160} readOnly={locked} placeholder="ID model dari provider" />
+        </Field>
+      </div>
+      <Field label={!profile && setup ? 'Deskripsi kebutuhan' : 'Instruksi'} hint={!profile && setup ? 'Memakai provider yang dipilih. Agent dan tugas penyusunan dibuat bersama; hasil atau pertanyaan muncul di chat.' : undefined}>
+        <Textarea name="instructions" required maxLength={8000} readOnly={locked} defaultValue={profile?.instructions ?? recovery.command?.instructions} rows={5} placeholder={!profile && setup ? 'Ceritakan pekerjaan yang perlu dibantu agent ini.' : 'Apa tugas agent ini? Bagaimana hasilnya perlu disampaikan?'} />
+      </Field>
+      <Collapsible title="Pengaturan lanjutan" defaultOpen={!!(profile?.backup_model || recovery.command?.backupModel)}>
+        <div className="k-grid-2">
+          <Field label="Model cadangan" optional hint="Dicoba sekali jika model utama menolak karena kuota atau tidak tersedia.">
+            <Combobox name="backupModel" value={backupValue} onChange={setBackupValue} suggestions={models} maxLength={160} readOnly={locked} placeholder="Kosongkan untuk nonaktif" />
+          </Field>
+          <Field label="Percakapan samping bersamaan" hint="Chat utama punya antrean sendiri.">
+            <Input name="threadLimit" type="number" min={1} max={32} step={1} required readOnly={locked} defaultValue={profile?.thread_limit ?? recovery.command?.threadLimit ?? 2} />
+          </Field>
+        </div>
+      </Collapsible>
+      {error && <Alert tone="error">{error}</Alert>}
+    </form>
+    {profile && <div className="legacy k-legacy-block">
+      {onVisibilityChanged && <AvatarEditor agent={profile.id} request={api} onChanged={onVisibilityChanged} />}
+      {onVisibilityChanged && <AgentVisibility agent={liveProfile!} request={api} onChanged={onVisibilityChanged} />}
+      <Suspense fallback={<p role="status">Memuat situs lokal...</p>}><SitesPanel key={`sites:${profile.id}`} agent={profile.id} request={api} /></Suspense>
+      <AgentTemplateExport key={profile.id} id={profile.id} request={api} />
+    </div>}
+  </Dialog>;
 }
 
 function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agents: Agent[]; channel?: Channel; onCreated: (channel: Channel) => void; onCancel: () => void; onReload?: () => void }) {
@@ -1105,12 +1158,10 @@ function App() {
       </div>
     </aside>
     {content}
-    {dialog === 'agent' && directory && <Modal label="Agent baru" className="form-modal" onClose={() => setDialog(null)}><div className="form-modal__body legacy"><AgentForm model={directory.defaultModel} onCancel={() => setDialog(null)} onCreated={item => { created(item); setDialog(null); }} /></div></Modal>}
+    {dialog === 'agent' && directory && <AgentForm model={directory.defaultModel} onCancel={() => setDialog(null)} onCreated={item => { created(item); setDialog(null); }} />}
     {dialog === 'channel' && directory && <Modal label="Channel baru" className="form-modal" onClose={() => setDialog(null)}><div className="form-modal__body legacy"><ChannelForm agents={directory.agents} onCancel={() => setDialog(null)} onCreated={item => { setChannels(current => [...current.filter(room => room.id !== item.id), item]); openChannel(item.id); }} /></div></Modal>}
-    {dialog === 'edit' && directory && (channel || agent) && <Modal label={channel ? 'Pengaturan channel' : 'Edit profil agent'} className="form-modal" onClose={() => setDialog(null)}><div className="form-modal__body legacy">
-      {channel ? <ChannelForm key={`${channel.id}:${channel.revision}:${editReload}`} agents={directory.agents} channel={channel} onCancel={() => setDialog(null)} onReload={() => { void load().then(() => setEditReload(value => value + 1)); }} onCreated={() => { void load(); setDialog(null); }} />
-        : agent && <AgentForm key={`${agent.id}:${editReload}`} model={directory.defaultModel} profile={agent} onCancel={() => setDialog(null)} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} onCreated={() => { void load(); setDialog(null); }} />}
-    </div></Modal>}
+    {dialog === 'edit' && directory && channel && <Modal label="Pengaturan channel" className="form-modal" onClose={() => setDialog(null)}><div className="form-modal__body legacy"><ChannelForm key={`${channel.id}:${channel.revision}:${editReload}`} agents={directory.agents} channel={channel} onCancel={() => setDialog(null)} onReload={() => { void load().then(() => setEditReload(value => value + 1)); }} onCreated={() => { void load(); setDialog(null); }} /></div></Modal>}
+    {dialog === 'edit' && directory && !channel && agent && <AgentForm key={`${agent.id}:${editReload}`} model={directory.defaultModel} profile={agent} onCancel={() => setDialog(null)} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} onCreated={() => { void load(); setDialog(null); }} />}
     {settings && createPortal(<div className="app-settings bs-root" role="dialog" aria-modal="true" aria-label="Pengaturan">
       <aside className="app-settings__nav">
         <button type="button" className="app-settings__back" onClick={() => setSettings(null)}><ChevronDown size={14} aria-hidden style={{ transform: 'rotate(90deg)' }} /> Kembali ke ruang kerja</button>
@@ -1136,4 +1187,4 @@ function App() {
 }
 
 applyPresentation(document.documentElement, readPresentation().value);
-createRoot(document.getElementById('root')!).render(<App />);
+createRoot(document.getElementById('root')!).render(<ConfirmProvider><App /></ConfirmProvider>);

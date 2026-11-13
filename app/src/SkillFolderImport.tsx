@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
+import { FileUp, FolderUp } from 'lucide-react';
+import { Button } from './ui/kit';
 import { parseSkillFiles, skillFileFromBytes, type SkillFile } from '../skill-files';
 import { readSkillZip, writeSkillZip } from '../skill-zip';
 
-export function SkillFolderImport({ disabled, onImport, onBusy }: { disabled: boolean; onImport: (files: SkillFile[]) => void; onBusy: (busy: boolean) => void }) {
-  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+export function SkillFolderImport({ disabled, onImport, onBusy, compact = false, onError }: { disabled: boolean; onImport: (files: SkillFile[]) => void; onBusy: (busy: boolean) => void; compact?: boolean; onError?: (message: string) => void }) {
+  const [busy, setBusy] = useState(false), [error, setErrorState] = useState('');
+  const setError = (message: string) => { setErrorState(message); if (message) onError?.(message); };
+  const folderInput = useRef<HTMLInputElement>(null), fileInput = useRef<HTMLInputElement>(null);
   const generation = useRef(0);
   useEffect(() => () => { generation.current++; }, []);
   async function read(selected: FileList | null) {
@@ -27,6 +31,12 @@ export function SkillFolderImport({ disabled, onImport, onBusy }: { disabled: bo
     } catch (error) { if (current === generation.current) setError(error instanceof Error && !(error instanceof TypeError) ? error.message : 'File gagal dibaca. Pilih folder UTF-8 atau ZIP biasa yang tidak rusak.'); }
     finally { if (current === generation.current) { setBusy(false); onBusy(false); } }
   }
+  if (compact) return <>
+    <input ref={element => { if (element) { element.setAttribute('webkitdirectory', ''); (folderInput as { current: HTMLInputElement | null }).current = element; } }} type="file" multiple hidden onChange={event => { void read(event.target.files); event.target.value = ''; }} />
+    <input ref={fileInput} type="file" accept=".md,.json,.zip" hidden onChange={event => { void read(event.target.files); event.target.value = ''; }} />
+    <Button size="sm" variant="ghost" icon={<FolderUp size={14} aria-hidden />} disabled={disabled} busy={busy} onClick={() => folderInput.current?.click()} title="Folder berisi SKILL.md dan file pendukung">Impor folder</Button>
+    <Button size="sm" variant="ghost" icon={<FileUp size={14} aria-hidden />} disabled={disabled || busy} onClick={() => fileInput.current?.click()} title="SKILL.md, ZIP, atau ekspor JSON Briefsip">Impor file</Button>
+  </>;
   return <fieldset disabled={disabled || busy}><legend>Impor folder skill</legend>
     <p>Pilih folder berisi SKILL.md dan file pendukung, ZIP, atau ekspor JSON Briefsip. Periksa seluruh file sebelum menyimpan. Folder sumber tidak diubah; script tidak dijalankan.</p>
     <p className="muted">Maksimum 32 file, teks 48 KB dan aset binary 2 MiB. Aset disimpan untuk ekspor; tidak dijalankan atau dibaca sebagai teks oleh agent. Folder ditolak utuh jika ada file tidak valid.</p>
