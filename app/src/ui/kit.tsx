@@ -1,6 +1,6 @@
 // Briefsip component kit: Radix primitives for behavior, Bot HQ tokens for the look (see kit.css).
 import { createContext, forwardRef, useCallback, useContext, useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type Ref, type TextareaHTMLAttributes } from 'react';
-import { AlertDialog, Collapsible as RadixCollapsible, Dialog as RadixDialog, DropdownMenu, Popover, Select as RadixSelect, Switch as RadixSwitch, Tooltip as RadixTooltip } from 'radix-ui';
+import { AlertDialog, Checkbox as RadixCheckbox, Collapsible as RadixCollapsible, Dialog as RadixDialog, DropdownMenu, Popover, Select as RadixSelect, Switch as RadixSwitch, Tabs as RadixTabs, Tooltip as RadixTooltip } from 'radix-ui';
 import { AlertTriangle, Check, ChevronDown, ChevronRight, CircleAlert, Info, X } from 'lucide-react';
 
 const cx = (...names: (string | false | null | undefined)[]) => names.filter(Boolean).join(' ');
@@ -101,6 +101,28 @@ export function Combobox({ value, onChange, suggestions, name, placeholder, read
 
 export function Switch({ checked, onChange, label, disabled }: { checked: boolean; onChange: (checked: boolean) => void; label: string; disabled?: boolean }) {
   return <RadixSwitch.Root className="k-switch" checked={checked} onCheckedChange={onChange} disabled={disabled} aria-label={label}><RadixSwitch.Thumb className="k-switch__thumb" /></RadixSwitch.Root>;
+}
+
+export function Checkbox({ checked, onChange, label, description, disabled }: { checked: boolean; onChange: (checked: boolean) => void; label: ReactNode; description?: ReactNode; disabled?: boolean }) {
+  const id = useId();
+  return <div className={cx('k-check', disabled && 'is-disabled')}>
+    <RadixCheckbox.Root id={id} className="k-check__box" checked={checked} onCheckedChange={value => onChange(value === true)} disabled={disabled}><RadixCheckbox.Indicator><Check size={12} strokeWidth={3} aria-hidden /></RadixCheckbox.Indicator></RadixCheckbox.Root>
+    <label htmlFor={id} className="k-check__text"><span className="k-check__label">{label}</span>{description && <span className="k-check__desc">{description}</span>}</label>
+  </div>;
+}
+
+/** Tabs for switching views inside one page or dialog. */
+export function Tabs<T extends string>({ value, onChange, tabs, label, children }: { value: T; onChange: (value: T) => void; tabs: { value: T; label: ReactNode; count?: number }[]; label: string; children?: ReactNode }) {
+  return <RadixTabs.Root value={value} onValueChange={next => onChange(next as T)} className="k-tabs">
+    <RadixTabs.List className="k-tabs__list" aria-label={label}>{tabs.map(tab => <RadixTabs.Trigger key={tab.value} value={tab.value} className="k-tabs__tab">{tab.label}{tab.count !== undefined && <span className="k-tabs__count">{tab.count}</span>}</RadixTabs.Trigger>)}</RadixTabs.List>
+    {children}
+  </RadixTabs.Root>;
+}
+export function TabPanel({ value, children }: { value: string; children: ReactNode }) { return <RadixTabs.Content value={value} className="k-tabs__panel">{children}</RadixTabs.Content>; }
+
+/** Scrollable read-only text (file contents, JSON, logs). */
+export function CodeBlock({ children, label, maxHeight = 280 }: { children: ReactNode; label: string; maxHeight?: number }) {
+  return <pre className="k-code" tabIndex={0} role="region" aria-label={label} style={{ maxHeight }}>{children}</pre>;
 }
 
 export function Segmented<T extends string>({ value, onChange, options, label, disabled }: { value: T; onChange: (value: T) => void; options: { value: T; label: ReactNode; description?: ReactNode }[]; label: string; disabled?: boolean }) {
