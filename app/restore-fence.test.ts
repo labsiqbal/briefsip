@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { generateKeyPairSync, sign, randomBytes } from 'node:crypto';
+import { generateKeyPairSync, sign, randomBytes, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -9,18 +9,19 @@ import { spawn } from 'node:child_process';
 import { initializeCanonicalSchema } from './schema.ts';
 import { canonicalServerLock, prepareRestoreBootstrap, issueRestoreSession, restoreWorkspace, workspaceSnapshot } from './backup.ts';
 import { createAuth, type HumanActor } from './auth.ts';
-import { canonicalJson } from './protocol.ts';
-import { fenceEvidenceBody, prepareRestoreFence, verifyRestoreFence, type FenceEvidence, type FenceRequest, type FenceTrust } from './restore-fence.ts';
+import { canonicalJson, sha256 } from './protocol.ts';
+import { activateRestore, fenceEvidenceBody, planRestoreActivation, prepareRestoreFence, verifyRestoreFence, type FenceEvidence, type FenceRequest, type FenceTrust } from './restore-fence.ts';
 
-async function fixture() {
+async function fixture(version: 1 | 2 | 3 = 3, seed?: (db: DatabaseSync, owner: HumanActor, project: string) => void) {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-fence-')), database = join(dir, 'restored.sqlite');
-  let db = new DatabaseSync(join(dir, 'source.sqlite')); initializeCanonicalSchema(db);
+  let db = new DatabaseSync(join(dir, 'source.sqlite')); initializeCanonicalSchema(db, Date.now(), version);
   const owner: HumanActor = { accountId: '11111111-1111-4111-8111-111111111111', issuer: 'https://fixture.clerk.accounts.dev', subject: 'user_owner', sessionId: 'sess_owner', expiresAt: Date.now() + 300000 };
   const config = { origin: 'https://briefsip.example', issuer: owner.issuer, secretKey: 'sk_test_fixture', publishableKey: `pk_test_${Buffer.from('fixture.clerk.accounts.dev$').toString('base64')}` };
   const project = '22222222-2222-4222-8222-222222222222';
   db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(owner.accountId, owner.issuer, owner.subject, Date.now());
   db.prepare('INSERT INTO projects(id,account,name,private,deleted,revision) VALUES (?,?,?,1,0,1)').run(project, owner.accountId, 'Restore');
   db.prepare("INSERT INTO project_members(project,account,role,grant_revision,deleted) VALUES (?,?,'owner',1,0)").run(project, owner.accountId);
+  seed?.(db, owner, project);
   const snapshot = await workspaceSnapshot(db); db.close();
   try { restoreWorkspace(snapshot.file, database, { canonicalOnly: true }); } finally { snapshot.cleanup(); }
   db = new DatabaseSync(database);
@@ -101,5 +102,137 @@ test('operator CLI creates and verifies bounded private fence files while keepin
     const symlink = join(f.dir, 'proof-link.json'); symlinkSync(evidenceFile, symlink); assert.equal((await run([...verifyArgs.slice(0, -1), symlink])).code, 1); chmodSync(evidenceFile, 0o644); assert.equal((await run(verifyArgs)).code, 1); chmodSync(evidenceFile, 0o600);
     writeFileSync(evidenceFile, 'x'.repeat(65537)); assert.equal((await run(verifyArgs)).code, 1); writeFileSync(evidenceFile, JSON.stringify({ ...f.signed(request), routeFenced: false })); assert.equal((await run(verifyArgs)).code, 1);
     assert.equal((await run(['restore', 'activate', '--db', f.database])).code, 1); assert.equal(f.db().prepare('SELECT serving_state FROM authority_state').get()!.serving_state, 'read_only_recovery');
+    writeFileSync(evidenceFile, JSON.stringify(f.signed(request)));
+    const planned = await run(['restore', 'activation-plan', ...verifyArgs.slice(2)]); assert.equal(planned.code, 0, planned.output);
+    const planFile = planned.value.planFile, plan = JSON.parse(readFileSync(planFile, 'utf8'));
+    assert.equal(statSync(planFile).mode & 0o777, 0o600); assert(!readFileSync(planFile, 'utf8').includes(f.proof.session));
+    const activateArgs = ['restore', 'activate', ...verifyArgs.slice(2), '--plan', planFile];
+    writeFileSync(planFile, JSON.stringify({ ...plan, recovery: { ...plan.recovery, targetId: 'tampered' } }));
+    assert.equal((await run(activateArgs)).code, 1); writeFileSync(planFile, JSON.stringify(plan));
+    const held = canonicalServerLock(f.database); try { assert.equal((await run(activateArgs)).code, 1); } finally { held.close(); }
+    const activated = await run(activateArgs); assert.equal(activated.code, 0, activated.output); assert.equal(activated.value.state, 'active');
+    assert.deepEqual((await run(activateArgs)).value, activated.value); assert(!activated.output.includes(f.proof.session));
+    assert.equal((await run(activateArgs, 'user_other')).code, 1);
   } finally { f.close(); }
+});
+
+test('activation plan commits one fenced recovery receipt and exact retry', async () => {
+  const f = await fixture();
+  try {
+    const request = f.prepare(), evidence = f.signed(request), plan = planRestoreActivation(f.db(), f.auth(), f.owner, f.proof.session, f.proof.recoveryGeneration, f.trust, evidence);
+    assert.equal(plan.state, 'read_only_recovery');
+    const result = activateRestore(f.db(), f.auth(), f.owner, f.proof.session, f.trust, evidence, plan.command);
+    assert.equal(result.state, 'active');
+    assert.equal(f.db().prepare("SELECT serving_state FROM authority_state WHERE id=1").get()!.serving_state, 'active');
+    assert.equal(f.db().prepare("SELECT scope FROM receipts WHERE request_id=?").get(plan.command.requestId)!.scope, 'restore.activate');
+    const cutover = f.db().prepare('SELECT cutover_version,revision FROM authority_state WHERE id=1').get();
+    f.reopen();
+    assert.equal(canonicalJson(activateRestore(f.db(), f.auth(), f.owner, f.proof.session, f.trust, evidence, plan.command)), canonicalJson(result));
+    assert.deepEqual(f.db().prepare('SELECT cutover_version,revision FROM authority_state WHERE id=1').get(), cutover);
+    const now = Date.now;
+    try {
+      Date.now = () => now() + 60000;
+      assert.equal(canonicalJson(activateRestore(f.db(), f.auth(), f.owner, f.proof.session, f.trust, evidence, plan.command)), canonicalJson(result));
+    } finally { Date.now = now; }
+    for (const [actor, session, trust, proof, command] of [
+      [f.owner, randomBytes(32).toString('base64url'), f.trust, evidence, plan.command],
+      [f.owner, f.proof.session, { ...f.trust, targetId: 'other' }, evidence, plan.command],
+      [f.owner, f.proof.session, f.trust, { ...evidence, routeFenced: false }, plan.command],
+      [f.owner, f.proof.session, f.trust, evidence, { ...plan.command, scopeDigest: '0'.repeat(64) }],
+      [{ ...f.owner, subject: 'other' }, f.proof.session, f.trust, evidence, plan.command],
+    ] as const) assert.throws(() => activateRestore(f.db(), f.auth(), actor, session, trust, proof, command));
+    f.db().prepare('UPDATE accounts SET blocked=1 WHERE id=?').run(f.owner.accountId);
+    assert.throws(() => activateRestore(f.db(), f.auth(), f.owner, f.proof.session, f.trust, evidence, plan.command));
+  } finally { f.close(); }
+});
+
+test('activation rolls back on receipt failure and rejects changed plans', async () => {
+  const f = await fixture();
+  try {
+    const request = f.prepare(), evidence = f.signed(request), plan = planRestoreActivation(f.db(), f.auth(), f.owner, f.proof.session, f.proof.recoveryGeneration, f.trust, evidence);
+    assert.throws(() => activateRestore(f.db(), f.auth(), f.owner, f.proof.session, f.trust, evidence, { ...plan.command, scopeDigest: '0'.repeat(64) }));
+    assert.equal(f.db().prepare("SELECT serving_state FROM authority_state WHERE id=1").get()!.serving_state, 'read_only_recovery');
+    f.db().exec("CREATE TRIGGER fail_activation_receipt BEFORE INSERT ON receipts BEGIN SELECT RAISE(ABORT,'fixture activation failure'); END");
+    assert.throws(() => activateRestore(f.db(), f.auth(), f.owner, f.proof.session, f.trust, evidence, plan.command), /fixture activation failure/);
+    assert.equal(f.db().prepare("SELECT serving_state FROM authority_state WHERE id=1").get()!.serving_state, 'read_only_recovery');
+    assert.equal(f.db().prepare("SELECT count(*) AS n FROM receipts WHERE scope='restore.activate'").get()!.n, 0);
+    f.db().exec('DROP TRIGGER fail_activation_receipt');
+    f.db().exec('UPDATE authority_state SET revision=revision+1 WHERE id=1');
+    assert.throws(() => activateRestore(f.db(), f.auth(), f.owner, f.proof.session, f.trust, evidence, plan.command), /Bukti pemulihan berubah/);
+    const revised = planRestoreActivation(f.db(), f.auth(), f.owner, f.proof.session, f.proof.recoveryGeneration, f.trust, evidence);
+    f.db().exec("CREATE TABLE restore_activation_proofs(request_id TEXT PRIMARY KEY REFERENCES receipts(request_id),session_hash TEXT NOT NULL,trust_digest TEXT NOT NULL,evidence_json TEXT NOT NULL); CREATE TRIGGER fail_activation_proof BEFORE INSERT ON restore_activation_proofs BEGIN SELECT RAISE(ABORT,'fixture proof failure'); END");
+    assert.throws(() => activateRestore(f.db(), f.auth(), f.owner, f.proof.session, f.trust, evidence, revised.command), /fixture proof failure/);
+    assert.equal(f.db().prepare("SELECT serving_state FROM authority_state WHERE id=1").get()!.serving_state, 'read_only_recovery');
+    assert.equal(f.db().prepare("SELECT count(*) AS n FROM receipts WHERE scope='restore.activate'").get()!.n, 0);
+  } finally { f.close(); }
+});
+
+test('activation retains populated revoked grants and held tasks, refusing unsafe recovery state', async () => {
+  const member = randomUUID(), installation = randomUUID(), device = randomUUID(), agent = randomUUID(), task = randomUUID();
+  const f = await fixture(3, (db, owner, project) => {
+    const authority = String(db.prepare('SELECT generation FROM authority_state').get()!.generation);
+    db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(member, owner.issuer, 'user_member', Date.now());
+    db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(project, member);
+    db.prepare('INSERT INTO installations VALUES (?,?,?,?,1,0,1,?)').run(installation, owner.accountId, 'fixture-key', sha256('installation'), Date.now());
+    db.prepare("INSERT INTO devices VALUES (?,?,?,?,?,?,?, ?,1,1,'ready','Asia/Jakarta',1,?,'[]',1)").run(device, installation, owner.accountId, 'signing-key', 'encryption-key', sha256('signing'), sha256('encryption'), JSON.stringify({ authorityGeneration: authority }), Date.now());
+    db.prepare('INSERT INTO device_sessions VALUES (?,?,1,?,?,0)').run(sha256('old-session'), device, authority, Date.now() + 60000);
+    db.prepare('INSERT INTO agents(id,name,model,instructions) VALUES (?,?,?,?)').run(agent, 'Agent', 'fixture', 'Help');
+    db.prepare("INSERT INTO agent_projects VALUES (?,?,'','{\"tools\":[]}',1,0)").run(project, agent);
+    db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(project, member, agent);
+    db.prepare("INSERT INTO turns(id,agent,text,status,created) VALUES (?,?,'Recover','running',?)").run(task, agent, new Date().toISOString());
+    db.prepare("INSERT INTO tasks VALUES (?,?,NULL,?,?,?,?,1,1,?,'{\"tools\":[]}',NULL,NULL,NULL,'running',?,'{}',1,?)").run(task, task, project, agent, owner.accountId, device, sha256('capabilities'), sha256('{}'), Date.now());
+    db.prepare("INSERT INTO execution_owners VALUES (?,?,?,1,1,?,'{}',0,?,0)").run(task, device, authority, sha256('executor'), Date.now());
+    db.exec('CREATE TABLE routines(enabled INTEGER,revision INTEGER); INSERT INTO routines VALUES (1,1)');
+  });
+  try {
+    const evidence = f.signed(f.prepare()), plan = () => planRestoreActivation(f.db(), f.auth(), f.owner, f.proof.session, f.proof.recoveryGeneration, f.trust, evidence);
+    const initial = plan();
+    assert.equal(initial.recovery.revokedMemberships.length, 1); assert.equal(initial.recovery.revokedAssignments.length, 1);
+    assert.equal(initial.recovery.revokedDevices.length, 1); assert.equal(initial.recovery.revokedSessions.length, 1);
+    assert.equal(initial.recovery.heldTasks[0].state, 'uncertain');
+    for (const [unsafe, reset] of [
+      ["UPDATE project_members SET deleted=0 WHERE role='member'", "UPDATE project_members SET deleted=1 WHERE role='member'"],
+      ['UPDATE collaborator_agents SET enabled=1', 'UPDATE collaborator_agents SET enabled=0'],
+      ['UPDATE device_sessions SET revoked=0', 'UPDATE device_sessions SET revoked=1'],
+      ["UPDATE devices SET status='ready'", "UPDATE devices SET status='revoked'"],
+      ['UPDATE execution_owners SET stopped=0', 'UPDATE execution_owners SET stopped=1'],
+      ["UPDATE tasks SET state='queued'", "UPDATE tasks SET state='uncertain'"],
+      ['UPDATE turns SET paused=0', 'UPDATE turns SET paused=1'],
+      ['UPDATE routines SET enabled=1', 'UPDATE routines SET enabled=0'],
+    ]) { f.db().exec(unsafe); assert.throws(plan); assert.throws(() => activateRestore(f.db(), f.auth(), f.owner, f.proof.session, f.trust, evidence, initial.command)); f.db().exec(reset); }
+    const result = activateRestore(f.db(), f.auth(), f.owner, f.proof.session, f.trust, evidence, initial.command);
+    assert.equal(result.state, 'active'); assert.equal(f.db().prepare('SELECT state FROM tasks').get()!.state, 'uncertain');
+    assert.equal(f.db().prepare('SELECT stopped FROM execution_owners').get()!.stopped, 1); assert.equal(f.db().prepare('SELECT enabled FROM routines').get()!.enabled, 0);
+    assert.equal(f.db().prepare("SELECT deleted FROM project_members WHERE role='member'").get()!.deleted, 1);
+  } finally { f.close(); }
+});
+
+test('activation requires current schema, owner session and fresh infrastructure proof', async () => {
+  for (const version of [1, 2] as const) {
+    const f = await fixture(version);
+    try { assert.throws(() => planRestoreActivation(f.db(), f.auth(), f.owner, f.proof.session, f.proof.recoveryGeneration, f.trust, f.signed(f.prepare())), /Upgrade schema/); } finally { f.close(); }
+  }
+  const f = await fixture();
+  try {
+    const request = f.prepare(), evidence = f.signed(request), plan = planRestoreActivation(f.db(), f.auth(), f.owner, f.proof.session, f.proof.recoveryGeneration, f.trust, evidence);
+    for (const input of [f.signed(request, { expiresAt: Date.now() - 1 }), { ...evidence, admissionsFenced: false }, { ...evidence, signature: Buffer.alloc(64).toString('base64url') }]) assert.throws(() => planRestoreActivation(f.db(), f.auth(), f.owner, f.proof.session, f.proof.recoveryGeneration, f.trust, input));
+    const now = Date.now;
+    try { Date.now = () => now() + 60000; assert.throws(() => activateRestore(f.db(), f.auth(), f.owner, f.proof.session, f.trust, evidence, plan.command)); } finally { Date.now = now; }
+    const bootstrap = prepareRestoreBootstrap(f.db()), replacement = issueRestoreSession(f.db(), f.auth(), f.owner, bootstrap.bootstrap);
+    assert.throws(() => activateRestore(f.db(), f.auth(), f.owner, replacement.session, f.trust, evidence, plan.command));
+    assert.equal(f.db().prepare("SELECT serving_state FROM authority_state WHERE id=1").get()!.serving_state, 'read_only_recovery');
+  } finally { f.close(); }
+});
+
+test('proof expiring during manifest review cannot activate recovery', async () => {
+  const f = await fixture(), now = Date.now, base = now();
+  try {
+    Date.now = () => base;
+    const evidence = f.signed(f.prepare(), { expiresAt: base + 1 }), plan = planRestoreActivation(f.db(), f.auth(), f.owner, f.proof.session, f.proof.recoveryGeneration, f.trust, evidence);
+    let calls = 0;
+    Date.now = () => ++calls <= 3 ? base : base + 2;
+    assert.throws(() => activateRestore(f.db(), f.auth(), f.owner, f.proof.session, f.trust, evidence, plan.command));
+    assert.equal(f.db().prepare('SELECT serving_state FROM authority_state WHERE id=1').get()!.serving_state, 'read_only_recovery');
+    assert.equal(f.db().prepare("SELECT count(*) n FROM receipts WHERE scope='restore.activate'").get()!.n, 0);
+  } finally { Date.now = now; f.close(); }
 });
