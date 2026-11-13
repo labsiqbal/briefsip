@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Database, Ellipsis, RefreshCw } from 'lucide-react';
-import { ActionMenu, Alert, Button, Card, CodeBlock, EmptyState, Field, IconButton, PageHeader, Row, Section, SkeletonRows, Textarea, useConfirm } from './ui/kit';
+import { ActionMenu, Alert, Button, Card, CodeBlock, Collapsible, EmptyState, Field, IconButton, PageHeader, Row, Section, SkeletonRows, Textarea, useConfirm } from './ui/kit';
 type Table = { name: string; owner: string; columns: { name: string; type: string }[] };
 type Listing = { tables: Table[]; next_after: string | null; revision: number };
 type QueryResult = { columns: string[]; rows: unknown[][]; truncated: boolean; changes: number; revision: number };
@@ -50,7 +50,7 @@ export function SharedDataPanel({ request, agents }: { agents: { id: string; nam
           <Row title={table.name} leading={<Database size={16} aria-hidden />} meta={`Creator: ${agents.find(agent => agent.id === table.owner)?.name ?? table.owner}`} trailing={<ActionMenu label={`Menu ${table.name}`} trigger={<button type="button" className="k-icon-btn" aria-label={`Menu ${table.name}`} disabled={busy || !!pending}><Ellipsis size={16} aria-hidden /></button>} items={[
             { label: `Delete table ${table.name}`, danger: true, onSelect: () => void execute(table.name) },
           ]} />} />
-          <details style={{ padding: '0 10px 10px' }}><summary className="k-field__hint">Columns</summary><CodeBlock label={`Columns in ${table.name}`}>{table.columns.map(column => `${column.name}: ${column.type || 'untyped'}`).join('\n')}</CodeBlock></details>
+          <div style={{ padding: '0 10px 10px' }}><Collapsible title="Columns"><CodeBlock label={`Columns in ${table.name}`}>{table.columns.map(column => `${column.name}: ${column.type || 'untyped'}`).join('\n')}</CodeBlock></Collapsible></div>
         </div>)}</Card>}
         {(after || listing.next_after) && <div className="k-pager">
           <IconButton label="First page" disabled={busy || !after} onClick={() => { setAfter(''); heading.current?.focus(); }}><ChevronLeft size={16} aria-hidden /></IconButton>
@@ -62,14 +62,14 @@ export function SharedDataPanel({ request, agents }: { agents: { id: string; nam
       <Field label="Read-only query"><Textarea rows={4} placeholder={'SELECT * FROM "table_name" LIMIT 50'} value={sql} maxLength={16000} disabled={busy || !!pending} onChange={event => setSQL(event.target.value)} /></Field>
       <div className="k-row-actions"><Button variant="primary" disabled={busy || !!pending || !sql.trim()} busy={busy} onClick={() => void execute()}>{busy ? 'Processing...' : 'Run read query'}</Button></div>
     </Section>}
-    {result !== null && <details open><summary className="k-section__title">Last query results</summary>
+    {result !== null && <Collapsible title="Last query results" defaultOpen>
       {result.columns.length > 0 ? <div className="k-table-wrap"><table className="k-table">
         <caption className="sr-only">Last query results</caption>
         <thead><tr>{result.columns.map((column, index) => <th key={index} scope="col">{column}</th>)}</tr></thead>
         <tbody>{result.rows.map((row, index) => <tr key={index}>{row.map((cell, column) => <td key={column} className={typeof cell === 'number' ? 'is-num' : undefined} style={{ whiteSpace: 'pre-wrap' }}>{typeof cell === 'string' ? cell : JSON.stringify(cell)}</td>)}</tr>)}</tbody>
       </table></div> : <EmptyState title="No result columns" />}
       <p className="k-field__hint">{result.rows.length} rows returned. {result.changes} changes. Revision {result.revision}.{result.truncated && ' Results truncated at 200 rows.'}</p>
-      <details><summary className="k-field__hint">Response details</summary><CodeBlock label="Query response">{JSON.stringify(result, null, 2)}</CodeBlock></details>
-    </details>}
+      <Collapsible title="Response details"><CodeBlock label="Query response">{JSON.stringify(result, null, 2)}</CodeBlock></Collapsible>
+    </Collapsible>}
   </div>;
 }

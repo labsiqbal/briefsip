@@ -1,6 +1,7 @@
 import { useId, useRef, useState } from 'react';
 import { workflowEdges, type WorkflowGraph as Graph } from '../workflows';
 import { workflowLayout } from '../workflow-editor-state';
+import { Collapsible } from './ui/kit';
 
 const kinds = { agent: 'Agent', model: 'Model', condition: 'Condition', approval: 'Approval', wait: 'Wait for event', output: 'Output' };
 export function WorkflowGraph({ graph, selected, locked, onSelect, onMove, buttonRefs, labels, loops }: {
@@ -51,7 +52,7 @@ export function WorkflowGraph({ graph, selected, locked, onSelect, onMove, butto
           return <g key={`${edge.from}:${index}`}><path d={path} fill="none" stroke="var(--color-border-primary)" strokeWidth="1.5" markerEnd={`url(#${marker})`} /><text x={(startX + endX) / 2} y={forward ? (startY + endY) / 2 - 8 : laneY - 5} textAnchor="middle">{edge.label}</text></g>;
         })}
       </svg>
-      {graph.nodes.map(node => { const point = byId.get(node.id)!; return <button type="button" className={`secondary workflow-graph-node${labels || loops?.has(node.id) ? ' workflow-run-node' : ''}`} data-movable={onMove ? '' : undefined} key={node.id}
+      {graph.nodes.map(node => { const point = byId.get(node.id)!; return <button type="button" className={`workflow-graph-node${labels || loops?.has(node.id) ? ' workflow-run-node' : ''}`} data-movable={onMove ? '' : undefined} key={node.id}
         ref={element => { if (element) buttonRefs.set(node.id, element); else buttonRefs.delete(node.id); }}
         style={{ left: point.x, top: point.y }} disabled={locked} aria-current={selected === node.id ? 'step' : undefined}
         title={node.id} aria-describedby={help}
@@ -85,5 +86,5 @@ export function WorkflowGraph({ graph, selected, locked, onSelect, onMove, butto
         }}
         onClick={() => { if (suppressClick.current) suppressClick.current = false; else onSelect(node.id); }}><strong>{node.id}</strong><span>{kinds[node.kind]}{graph.entry === node.id ? ' · Start' : ''}</span>{labels ? <small>{labels.get(node.id) ?? 'Not run yet'}</small> : loops?.has(node.id) && <small>Unconditional loop</small>}</button>; })}
     </div>
-  </div><details className="workflow-graph-links"><summary>Step connections</summary><ul>{edges.map((edge, index) => <li key={`${edge.from}:${index}`}>{edge.from}: {edge.label.toLowerCase()} to {edge.to || 'not selected yet'}{edge.to && !byId.has(edge.to) ? ' (step not found)' : ''}</li>)}</ul></details></>;
+  </div><div className="workflow-graph-links"><Collapsible title="Step connections"><ul>{edges.map((edge, index) => <li key={`${edge.from}:${index}`}>{edge.from}: {edge.label.toLowerCase()} to {edge.to || 'not selected yet'}{edge.to && !byId.has(edge.to) ? ' (step not found)' : ''}</li>)}</ul></Collapsible></div></>;
 }

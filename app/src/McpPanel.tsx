@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Ellipsis, Plug, Plus, RefreshCw } from 'lucide-react';
-import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, useConfirm } from './ui/kit';
+import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Collapsible, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, useConfirm } from './ui/kit';
 type Connection = { id: string; name: string; url: string; hasToken: boolean; enabled: number; revision: number };
 type Tool = { name: string; title?: string; description?: string; inputSchema: unknown; _meta?: Record<string, unknown> };
 const label = (tool: Tool) => `${tool._meta?.['briefsip.kind'] === 'resource-template' ? 'Resource template: ' : tool._meta?.['briefsip.kind'] === 'resource' ? 'Resource: ' : tool._meta?.['briefsip.kind'] === 'prompt' ? 'Prompt: ' : 'Tool: '}${tool.title && tool.title !== tool.name && !tool._meta?.['briefsip.kind'] ? `${tool.title} (${tool.name})` : tool.title ?? tool.name}`;
@@ -104,7 +104,7 @@ export function McpPanel({ agents, request }: { agents: { id: string; name: stri
             <div className="k-fieldset" style={{ padding: '0 10px 10px' }}>
               {tool._meta?.['briefsip.kind'] === 'resource-template' && <div id={`template-scope-${tool.name}`}><Alert tone="warn">Permissions cover all URIs this template can form, including parameter values chosen by the agent. The target server still controls access to its data.</Alert></div>}
               {typeof tool._meta?.['briefsip.target'] === 'string' && <span className="k-field__hint" style={{ overflowWrap: 'anywhere' }}>{tool._meta['briefsip.target']}</span>}
-              <details><summary className="k-field__hint">Parameter {label(tool)}</summary><CodeBlock label={`Parameter ${label(tool)}`}>{JSON.stringify(tool.inputSchema, null, 2)}</CodeBlock></details>
+              <Collapsible title={<>Parameter {label(tool)}</>}><CodeBlock label={`Parameter ${label(tool)}`}>{JSON.stringify(tool.inputSchema, null, 2)}</CodeBlock></Collapsible>
             </div>
           </div>)}</Card>
           <Button type="submit" disabled={locked}>Save access permissions</Button>

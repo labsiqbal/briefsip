@@ -7,7 +7,7 @@ import type { WorkflowGraph } from '../workflows';
 import { WorkflowGraph as GraphView } from './WorkflowGraph';
 import { restoreWorkflowEditorDraft, workflowDraftMatches, workflowStatusLabels as statuses, workflowStepLabel, workflowNodeLabels } from '../workflow-editor-state';
 import { restoreWorkflowCommand, type WorkflowCommand as Command } from '../workflow-command';
-import { ActionMenu, Alert, Badge, Button, Card, CodeBlock, EmptyState, Field, IconButton, PageHeader, Row, Section, SkeletonRows, Textarea, useConfirm } from './ui/kit';
+import { ActionMenu, Alert, Badge, Button, Card, CodeBlock, Collapsible, EmptyState, Field, IconButton, PageHeader, Row, Section, SkeletonRows, Textarea, useConfirm } from './ui/kit';
 import { ChevronLeft, ChevronRight, Ellipsis, RefreshCw } from 'lucide-react';
 
 type Agent = { id: string; name: string; model: string };
@@ -29,7 +29,7 @@ function WorkflowVersions({ workflow, request, locked, refresh, onRestore }: {
     <p className="k-field__hint">Restore the graph as a new revision. The workflow name and runs already started stay unchanged.</p>
     {error ? <Alert tone="error" actions={<Button size="sm" onClick={() => setRetry(value => value + 1)}>Reload versions</Button>}>{error}</Alert> : !page ? <><span className="sr-only" role="status">Loading versions...</span><SkeletonRows /></> : <Card>{page.versions.map(version => <Row key={version.revision} title={`Version ${version.revision}`} meta={<><span>{version.graph.nodes.length} steps</span><span>Start: {version.graph.entry}</span>{version.revision === workflow.revision && <Badge>Current</Badge>}</>}
       trailing={<ActionMenu label={`Version ${version.revision} actions`} trigger={<IconButton label={`Version ${version.revision} actions`}><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: `Restore version ${version.revision}`, disabled: locked || version.revision === workflow.revision, onSelect: async () => { if (await confirm({ title: `Restore graph version ${version.revision} as a new revision?`, description: 'Runs already started stay unchanged.', confirm: 'Restore version' })) onRestore(version.revision); } }]} />}>
-      <details><summary className="k-collapsible__trigger">View graph version {version.revision}</summary><CodeBlock label={`Graph version ${version.revision}`}>{JSON.stringify(version.graph, null, 2)}</CodeBlock></details>
+      <Collapsible title={<>View graph version {version.revision}</>}><CodeBlock label={`Graph version ${version.revision}`}>{JSON.stringify(version.graph, null, 2)}</CodeBlock></Collapsible>
     </Row>)}</Card>}
     {(cursors.length > 0 || page?.next_before) && <div className="k-pager"><IconButton label="Newer versions" disabled={!cursors.length} onClick={() => setCursors(value => value.slice(0, -1))}><ChevronLeft size={16} aria-hidden /></IconButton><IconButton label="Older versions" disabled={!page?.next_before} onClick={() => { if (page?.next_before) setCursors(value => [...value, page.next_before!]); }}><ChevronRight size={16} aria-hidden /></IconButton></div>}
   </Section>;

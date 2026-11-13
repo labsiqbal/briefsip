@@ -19,7 +19,7 @@ export function UsagePanel({ request }: { request: <T>(path: string) => Promise<
   }, [before, refresh]);
   return <div className="k-page bs-root">
     <PageHeader headingRef={heading} title="Usage" description="Review provider calls and the host resources used by Briefsip."
-      actions={<IconButton label="Reload" onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton>} />
+      actions={<IconButton label="Reload usage" onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton>} />
     <HostMetricsSection request={request} />
     <Section title="Provider usage">
       <p className="k-field__hint">Calls recorded since tracking was enabled. Tokens come from provider reports, not estimates. Cost and remaining quota are unknown.</p>

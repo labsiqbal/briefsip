@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { restoreSkillCommand, type SkillCommand } from '../skill-command';
 import { ArrowLeft, ChevronLeft, ChevronRight, Ellipsis, FileText, Package, Plus, RefreshCw } from 'lucide-react';
-import { ActionMenu, Alert, Badge, Button, Card, CodeBlock, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, useConfirm } from './ui/kit';
+import { ActionMenu, Alert, Badge, Button, Card, CodeBlock, Collapsible, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, useConfirm } from './ui/kit';
 type Member = { skill: string; version: number; name: string; description: string; content: string };
 type Pack = { id: string; name: string; revision: number; latest: number; members: Member[] };
 type Binding = { revision: number; version: number; enabled: number; removed: number };
@@ -115,7 +115,7 @@ export function SkillPacksPanel({ agents, initialOwner, request, onClose }: { ag
                     trailing={<ActionMenu label={`Menu ${member.name}`} trigger={<button type="button" className="k-icon-btn" aria-label={`Menu ${member.name}`} disabled={locked}><Ellipsis size={16} aria-hidden /></button>} items={[
                       { label: 'Remove from draft', danger: true, onSelect: () => setEditor({ ...editor, members: editor.members.filter(row => row.skill !== member.skill) }) },
                     ]} />}>
-                    <details><summary className="k-field__hint">Review instructions for {member.name}</summary><p className="k-field__hint">{member.description}</p><CodeBlock label={`Instructions for ${member.name}`}>{member.content}</CodeBlock></details>
+                    <Collapsible title={<>Review instructions for {member.name}</>}><p className="k-field__hint">{member.description}</p><CodeBlock label={`Instructions for ${member.name}`}>{member.content}</CodeBlock></Collapsible>
                   </Row>)}</Card>}
             </Section>
             <div className="k-grid-2">
