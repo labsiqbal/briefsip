@@ -25,7 +25,7 @@ test('caller interruption cancels only owned deliveries, journals notice and pre
     } else if (body.model === 'beta') {
       if (prompt === 'NESTED_TASK' && !results.length) answer = tool('send_message', { recipients: [nestedRecipient], text: 'NESTED_CHILD', expects_reply: true });
       else if (prompt === 'ANCESTOR_TASK') answer = tool('interrupt_agent', { recipient: callerId, reason: 'Cannot stop requester' });
-      else if (prompt.startsWith('Pekerjaan yang saya minta')) {
+      else if (prompt.startsWith('The work I asked for')) {
         assert(!body.tools.some((t: any) => ['send_message', 'interrupt_agent'].includes(t.function.name)));
         answer = text('Notice recorded');
       } else { if (hold) await new Promise<void>(resolve => releases.push(resolve)); answer = text('Work finished'); }
@@ -43,7 +43,7 @@ test('caller interruption cancels only owned deliveries, journals notice and pre
   let app = await startApp(options);
   await app.close();
   const setup = new DatabaseSync(options.database);
-  setup.exec("CREATE TRIGGER reject_interrupt_notice BEFORE INSERT ON turns WHEN NEW.text LIKE 'Pekerjaan yang saya minta%fixture failure check%' BEGIN SELECT RAISE(ABORT,'fixture notice failure'); END");
+  setup.exec("CREATE TRIGGER reject_interrupt_notice BEFORE INSERT ON turns WHEN NEW.text LIKE 'The work I asked for%fixture failure check%' BEGIN SELECT RAISE(ABORT,'fixture notice failure'); END");
   setup.close(); app = await startApp(options);
   const post = async (path: string, data: unknown, expected = 200) => {
     const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
@@ -90,7 +90,7 @@ test('caller interruption cancels only owned deliveries, journals notice and pre
     const retried = await until(a, stop, r => r.status === 'done');
     assert.equal(retried.agentMessages[0].id, noticeId);
     const receipt = JSON.parse(retried.reply); assert.equal(receipt.status, 'interrupted'); assert.equal(receipt.cancelled.length, 2);
-    assert.equal(captures.filter(body => body.model === 'beta' && body.messages.filter((m: any) => m.role === 'user').at(-1).content.startsWith('Pekerjaan yang saya minta')).length, 1);
+    assert.equal(captures.filter(body => body.model === 'beta' && body.messages.filter((m: any) => m.role === 'user').at(-1).content.startsWith('The work I asked for')).length, 1);
     assert.equal((await get(b)).find((r: any) => r.id === user).status, 'done');
     const noOwn = await send(a, 'stop'); assert.match((await until(a, noOwn, r => r.status === 'failed')).error, /no active work/);
     const self = await send(a, 'self'); assert.match((await until(a, self, r => r.status === 'failed')).error, /You can only stop/);

@@ -305,7 +305,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   const items: MenuItem[] = [
     ...menuItems,
     ...(onEdit ? [{ label: editLabel, onSelect: onEdit }] : []),
-    { label: `Memory for ${channel ? 'channel' : 'agent'}`, onSelect: () => setShowMemory(true) },
+    { label: `${channel ? 'Channel' : 'Agent'} memory`, onSelect: () => setShowMemory(true) },
     { label: detailsOpen ? 'Hide details' : 'Show details', onSelect: () => setDetailsOpen(!detailsOpen) },
   ];
   const statusLabel = (turn: Turn) => turn.editing ? 'Editing' : turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) ? 'Waiting for your answer' : turn.no_update ? 'No updates' : turn.paused && !['done','cancelled'].includes(turn.status) ? 'Paused' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) && turn.status === 'queued' ? 'Waiting for agent reply' : turn.waiting_for && turn.status === 'queued' ? 'Waiting for delegation' : turn.routing === 'pending' && turn.status === 'running' ? 'Selecting recipient' : turn.routing === 'clarify' ? 'Needs clarification' : turn.routing === 'none' ? 'No task needed' : statusNames[turn.status] ?? turn.status;
@@ -376,8 +376,8 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
           <div className="composer__left">
             <span className="composer__plus-anchor"><button type="button" className="composer__btn" onClick={openFiles} aria-label="Attach conversation file" title="Attach file"><Paperclip size={14} aria-hidden /></button></span>
             {channel && <span className="composer__recipient"><label className="sr-only" htmlFor="recipient">Reply from</label><select id="recipient" value={pending?.automatic ? '@automatic' : pending?.recipient ?? recipient} disabled={!!pending || busy} onChange={event => { setRecipient(event.target.value); try { sessionStorage.setItem(recipientKey, event.target.value); } catch { setError('Recipient selection was not saved. Check again before sending.'); } }}><option value="">Select agent</option>{channel.lead && <option value="@automatic">Automatic via lead</option>}{members.map(member => <option key={member.id} value={member.id}>{member.name}{member.id === channel.lead ? ' (lead)' : ''}</option>)}</select></span>}
-            <label className="sr-only" htmlFor="message">Message for {agent.name}</label>
-            <textarea ref={composer} id="message" className="composer__input" rows={1} placeholder={`Message for ${agent.name}`} maxLength={16000} value={pending?.text ?? draft} readOnly={blocked || !!pending || busy} onChange={event => { setDraft(event.target.value); try { sessionStorage.setItem(draftKey, event.target.value); } catch { setError('Draft was not saved in the browser. Copy the message before switching agents.'); } }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
+            <label className="sr-only" htmlFor="message">Message {agent.name}</label>
+            <textarea ref={composer} id="message" className="composer__input" rows={1} placeholder={`Message ${agent.name}`} maxLength={16000} value={pending?.text ?? draft} readOnly={blocked || !!pending || busy} onChange={event => { setDraft(event.target.value); try { sessionStorage.setItem(draftKey, event.target.value); } catch { setError('Draft was not saved in the browser. Copy the message before switching agents.'); } }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
           </div>
           <div className="composer__right">
             {pending && !busy && <span className="composer__retry">Retry send</span>}
@@ -426,7 +426,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
           </section>
           <section>
             <div className="section-label">Memory and context</div>
-            <div className="panel-card"><button ref={memoryButton} type="button" className="panel-row panel-row--action" onClick={() => setShowMemory(true)}><Brain size={16} aria-hidden /> Memory for {channel ? 'channel' : 'agent'}</button></div>
+            <div className="panel-card"><button ref={memoryButton} type="button" className="panel-row panel-row--action" onClick={() => setShowMemory(true)}><Brain size={16} aria-hidden /> {channel ? 'Channel' : 'Agent'} memory</button></div>
             <div className="legacy details-legacy"><CompactionPanel path={path.replace(/\/turns$/, '/compaction')} request={api} /></div>
           </section>
           <section ref={filesSection}><div className="legacy details-legacy"><ConversationFiles path={path.replace(/\/turns$/, '/files')} archived={archived} attached={pending?.files ?? attached} onAttach={attach} locked={blocked || !!pending || busy} /></div></section>
@@ -1131,7 +1131,7 @@ function App() {
           <button type="button" className={`island${view === 'flows' ? ' is-selected' : ''}`} aria-current={view === 'flows' ? 'page' : undefined} disabled={!directory} onClick={() => { setView('flows'); setDialog(null); }} title="Agent flows"><Route size={16} aria-hidden />{!collapsed && <span>Agent flows</span>}</button>
           <button type="button" className={`island${view === 'workflows' ? ' is-selected' : ''}`} aria-current={view === 'workflows' ? 'page' : undefined} disabled={!directory} onClick={() => { setView('workflows'); setDialog(null); }} title="Workflows"><WorkflowIcon size={16} aria-hidden />{!collapsed && <span>Workflows</span>}</button>
         </nav>
-        {!collapsed && <div className="sidebar__label">Channel</div>}
+        {!collapsed && <div className="sidebar__label">Channels</div>}
         <nav className="bot-list" aria-label="Select channel">
           {channels.map(room => {
             const current = view === 'chat' && room.id === selectedChannel;
@@ -1145,7 +1145,7 @@ function App() {
           })}
           {!collapsed && !channels.length && <button type="button" className="bot-list__empty" disabled={!directory?.agents.length} onClick={() => setDialog('channel')}><span className="bot-list__empty-plus"><Hash size={14} aria-hidden /></span><span><span className="bot-row__name">New channel</span><span className="bot-row__preview">Bring several agents into one space</span></span></button>}
         </nav>
-        {!collapsed && <div className="sidebar__label">Agent</div>}
+        {!collapsed && <div className="sidebar__label">Agents</div>}
         <div className="bot-list sidebar-agents">
           <AgentSidebar mode="list" agents={directory?.agents ?? []} request={api} renderAgent={agentRow} />
           {!collapsed && directory && !directory.agents.length && <button type="button" className="bot-list__empty" onClick={() => setDialog('agent')}><span className="bot-list__empty-plus"><Plus size={14} aria-hidden /></span><span><span className="bot-row__name">New agent</span><span className="bot-row__preview">Assign a task, such as research or a summary</span></span></button>}
