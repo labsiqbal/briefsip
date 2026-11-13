@@ -13,12 +13,12 @@ import { digestCommand, ProtocolError } from './protocol.ts';
 import { startCanonicalApp } from './server.ts';
 import { createServer } from 'node:http';
 import { createMailWorker } from './mail.ts';
-import { createProjectWorkflows, initializeWorkflowConfigurations, initializeWorkflowRuns } from './workflow-store.ts';
+import { createProjectWorkflows, initializeWorkflowConfigurations, initializeWorkflowRuns, initializeWorkflowNotifications } from './workflow-store.ts';
 
 function fixture(workflows = false) {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-sync-')), db = new DatabaseSync(join(dir, 'canonical.sqlite'));
   initializeCanonicalSchema(db);
-  if (workflows) { initializeWorkflowConfigurations(db); initializeWorkflowRuns(db); }
+  if (workflows) { initializeWorkflowConfigurations(db); initializeWorkflowRuns(db); initializeWorkflowNotifications(db); }
   const owner: HumanActor = { accountId: randomUUID(), issuer: 'https://fixture.example', subject: 'owner', sessionId: 'session_owner', expiresAt: Date.now() + 60000 };
   const auth = { requireCurrent(actor: HumanActor) { if (actor.expiresAt <= Date.now() || db.prepare('SELECT blocked FROM accounts WHERE id=?').get(actor.accountId)?.blocked !== 0) throw new ProtocolError(401, 'session_invalid', 'Denied'); return actor; }, async verifiedMailboxes() { return []; } };
   db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(owner.accountId, owner.issuer, owner.subject, Date.now());
@@ -314,6 +314,20 @@ test('workflow maintenance rolls back failed observations and retries one transi
     workflows.maintain(); workflows.maintain();
     const recovered = f.sync.read(f.owner,{projectId:f.project,cursor:before.nextCursor!});
     assert.deepEqual(recovered.page.events.map(event => [event.recordId,event.revision,event.body.status]),[[run,2,'approval']]);
+    const approved=randomUUID(); workflows.runCommand(f.owner,f.project,`/api/projects/${f.project}/workflow-runs/${run}/approve`,'approve',run,{requestId:approved,id:approved,revision:2,accepted:true});
+    const beforeOutput=f.sync.read(f.owner,{projectId:f.project});
+    for (const trigger of ["BEFORE INSERT ON project_workflow_notifications", "BEFORE INSERT ON sync_events WHEN NEW.record_kind='workflow_notification'"]) {
+      f.db.exec(`CREATE TRIGGER fail_notice ${trigger} BEGIN SELECT RAISE(ABORT,'synthetic inbox failure'); END`);
+      assert.throws(()=>workflows.maintain(),/synthetic inbox failure/);
+      const unchanged=workflows.runRead(f.owner,f.project,{runId:run},new URLSearchParams()) as Record<string,any>;
+      assert.equal(unchanged.status,'ready'); assert.equal(unchanged.revision,3); assert.equal(unchanged.steps.length,1);
+      assert.deepEqual(workflows.notifications(f.owner,f.project,new URLSearchParams()).items,[]);
+      assert.deepEqual(f.sync.read(f.owner,{projectId:f.project,cursor:beforeOutput.nextCursor!}).page.events,[]);
+      f.db.exec('DROP TRIGGER fail_notice');
+    }
+    workflows.maintain(); workflows.maintain();
+    assert.equal(workflows.notifications(f.owner,f.project,new URLSearchParams()).items.length,1);
+    assert.deepEqual(f.sync.read(f.owner,{projectId:f.project,cursor:beforeOutput.nextCursor!}).page.events.map(event=>[event.recordKind,event.revision]),[['workflow_notification',1],['workflow_run',4]]);
   } finally { f.close(); }
 });
 

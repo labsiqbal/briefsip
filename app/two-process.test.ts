@@ -1270,6 +1270,129 @@ test('canonical workflow pages bound graph bytes and preserve list and version c
   } finally { await f.close(); }
 });
 
+test('canonical workflow inbox keeps read state per authorized human across retry restart and deletion', async () => {
+  const f = await workflowConfigurationFixture(), db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  try {
+    const inbox = `/api/projects/${f.project}/workflow-notifications`, collaborator = (await f.send('/api/session', undefined, 'user_collaborator')).body.data.accountId;
+    db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project, collaborator);
+    db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project, collaborator, f.agent);
+    db.prepare('INSERT INTO response_policies VALUES (?,?,?,0,1)').run(f.project, collaborator, f.agent);
+    const empty = await f.send(inbox); assert.equal(empty.status, 200); assert.deepEqual(empty.body.data.items, []);
+    assert.equal((await f.send(f.list, { requestId: f.workflow, id: f.workflow, revision: 0, name: 'Reader scoped', graph: f.graph })).status, 201);
+    const run = randomUUID(), runPath = `/api/projects/${f.project}/workflow-runs/${run}`;
+    assert.equal((await f.send(f.detail + '/run', { requestId: run, id: run, revision: 1, input: 'Private result canary' })).status, 201);
+    await until(async () => (await f.send(runPath)).body.data.status === 'done');
+    for (const subject of ['user_owner','user_collaborator']) {
+      const page = await f.send(inbox, undefined, subject); assert.equal(page.status, 200);
+      assert.equal(page.body.data.unread, 1); assert.equal(page.body.data.items[0].run, run); assert.equal(page.body.data.items[0].read, 0);
+      assert(!JSON.stringify(page.body).includes('Private result canary'));
+    }
+    const syncPath = '/api/sync?projectId=' + f.project, ownerCursor = (await f.send(syncPath)).body.data.nextCursor, memberCursor = (await f.send(syncPath,undefined,'user_collaborator')).body.data.nextCursor;
+    const id = randomUUID(), command = { requestId: id, id }, readPath = inbox + '/' + run + '/read';
+    db.exec(`CREATE TRIGGER fail_notice_receipt BEFORE INSERT ON receipts WHEN NEW.request_id='${id}' BEGIN SELECT RAISE(ABORT,'synthetic read receipt failure'); END`);
+    assert.equal((await f.send(readPath,command)).status,500);
+    assert.equal((await f.send(inbox)).body.data.unread,1);
+    assert.deepEqual((await f.send(syncPath + '&cursor=' + encodeURIComponent(ownerCursor))).body.data.page.events,[]);
+    db.exec('DROP TRIGGER fail_notice_receipt');
+    const accepted = await f.send(readPath, command); assert.equal(accepted.status, 200);
+    assert.deepEqual((await f.send(readPath, command)).body.receipt, accepted.body.receipt);
+    assert.equal((await f.send(inbox)).body.data.unread, 0);
+    assert.equal((await f.send(inbox, undefined, 'user_collaborator')).body.data.unread, 1);
+    const ownerDelta = (await f.send(syncPath + '&cursor=' + encodeURIComponent(ownerCursor))).body.data;
+    assert.deepEqual(ownerDelta.page.events.map((event: any) => [event.recordKind,event.recordId,event.revision,event.body.read]), [['workflow_notification',run,2,true]]);
+    assert.deepEqual((await f.send(syncPath + '&cursor=' + encodeURIComponent(memberCursor),undefined,'user_collaborator')).body.data.page.events, []);
+    const secondId = randomUUID(); assert.equal((await f.send(readPath,{requestId:secondId,id:secondId})).status,200);
+    assert.deepEqual((await f.send(syncPath + '&cursor=' + encodeURIComponent(ownerDelta.nextCursor))).body.data.page.events, []);
+    assert.equal((await f.send(readPath, command, 'user_collaborator')).status, 404);
+    await f.restart();
+    assert.deepEqual((await f.send(readPath, command)).body.receipt, accepted.body.receipt);
+    const deleteId = randomUUID(); assert.equal((await f.send(f.detail + '/delete', { requestId: deleteId, id: deleteId, revision: 1 })).status, 200);
+    const retained = (await f.send(inbox)).body.data; assert.equal(retained.items.length,1); assert.equal(retained.items[0].read, 1);
+    assert.equal((await f.send(runPath)).body.data.last, 'Private result canary');
+  } finally { db.close(); await f.close(); }
+});
+
+test('canonical workflow inbox hides foreign selectors and rechecks current reader scopes before receipt replay', async () => {
+  const f = await workflowConfigurationFixture(), db = new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  try {
+    const inbox = `/api/projects/${f.project}/workflow-notifications`, collaborator = (await f.send('/api/session',undefined,'user_collaborator')).body.data.accountId;
+    db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project,collaborator);
+    db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,collaborator,f.agent);
+    assert.equal((await f.send(f.list,{requestId:f.workflow,id:f.workflow,revision:0,name:'Scoped inbox',graph:f.graph})).status,201);
+    const run = randomUUID(), detail = `/api/projects/${f.project}/workflow-runs/${run}`, readPath = inbox + '/' + run + '/read';
+    assert.equal((await f.send(f.detail+'/run',{requestId:run,id:run,revision:1,input:'Scoped result'})).status,201);
+    await until(async () => (await f.send(detail)).body.data.status === 'done');
+    const id = randomUUID(), command = {requestId:id,id};
+    assert.equal((await f.send(readPath,command,'user_collaborator')).status,200);
+    for (const path of ['/api/workflow-notifications','/api/workflow-notifications?before=2',inbox+'?projectId='+f.project,inbox+'?before=0',inbox+'?before=-1',inbox+'?before=1.5',inbox+'?before=9007199254740992',inbox+'?before=2&before=3',inbox+'/bad/read',readPath+'?before=2']) {
+      const response = await f.send(path,path === readPath+'?before=2' ? command : undefined);
+      assert.equal(response.status,404,path); assert.equal(response.body.error.code,'resource_not_found',path);
+    }
+    for (const path of [readPath.replace(f.project,f.other),readPath.replace(run,randomUUID())]) assert.equal((await f.send(path,command)).status,404);
+    assert.equal((await f.send(inbox,undefined,'user_stranger')).status,404);
+    assert.deepEqual((await f.send(inbox.replace(f.project,f.other))).body.data.items,[]);
+    assert.equal((await f.send(readPath,{...command,projectId:f.project})).status,404);
+    assert.equal((await f.send(readPath,{...command,read:true})).status,400);
+    assert.equal((await f.send(readPath,{...command,id:randomUUID()})).status,400);
+    for (const header of ['X-Briefsip-Project','X-Briefsip-Project-Id']) {
+      const response = await fetch(f.origin()+inbox,{headers:{Authorization:`Bearer ${f.jwt()}`,Origin:f.origin(),'Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':randomUUID(),[header]:f.project}});
+      assert.equal(response.status,404); await response.arrayBuffer();
+    }
+    for (const [table,key] of [['workflows',[f.workflow]],['workflow_versions',[f.workflow,1]],['workflow_runs',[run]]] as const) {
+      const syncPath='/api/sync?projectId='+f.project, before=(await f.send(syncPath,undefined,'user_collaborator')).body.data;
+      db.prepare("UPDATE record_scopes SET visibility='owner' WHERE table_name=? AND key_json=?").run(table,canonicalJson(key));
+      const hidden = (await f.send(inbox,undefined,'user_collaborator')).body.data; assert.deepEqual(hidden.items,[]); assert.equal(hidden.unread,0);
+      const denied = await f.send(readPath,command,'user_collaborator'); assert.equal(denied.status,404); assert.equal(denied.body.receipt,undefined);
+      assert.equal((await f.send(syncPath+'&cursor='+encodeURIComponent(before.nextCursor),undefined,'user_collaborator')).status,410);
+      assert(!(await f.send(syncPath,undefined,'user_collaborator')).body.data.page.events.some((event:any)=>event.recordKind==='workflow_notification'));
+      db.prepare("UPDATE record_scopes SET visibility='project' WHERE table_name=? AND key_json=?").run(table,canonicalJson(key));
+      assert.equal((await f.send(readPath,command,'user_collaborator')).status,200);
+    }
+    db.prepare("UPDATE record_scopes SET visibility='owner',account=? WHERE table_name='workflow_runs' AND key_json=?").run(collaborator,canonicalJson([run]));
+    assert.deepEqual((await f.send(inbox)).body.data.items,[],'Owner cannot see another human private result notice');
+    assert.equal((await f.send(inbox,undefined,'user_collaborator')).body.data.items.length,1);
+    db.prepare("UPDATE record_scopes SET visibility='project' WHERE table_name='workflow_runs' AND key_json=?").run(canonicalJson([run]));
+    db.prepare('UPDATE agent_projects SET deleted=1 WHERE project=? AND agent=?').run(f.project,f.agent);
+    assert.deepEqual((await f.send(inbox)).body.data.items,[]); assert.equal((await f.send(readPath,command,'user_collaborator')).status,404);
+    db.prepare('UPDATE agent_projects SET deleted=0 WHERE project=? AND agent=?').run(f.project,f.agent);
+    db.prepare('UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE project=? AND account=? AND agent=?').run(f.project,collaborator,f.agent);
+    assert.deepEqual((await f.send(inbox,undefined,'user_collaborator')).body.data.items,[]); assert.equal((await f.send(readPath,command,'user_collaborator')).status,404);
+    db.prepare('UPDATE project_members SET deleted=1 WHERE project=? AND account=?').run(f.project,collaborator);
+    assert.equal((await f.send(inbox,undefined,'user_collaborator')).status,404);
+  } finally { db.close(); await f.close(); }
+});
+
+test('canonical workflow inbox pages twenty outputs without duplicate completion or recipient backfill', async () => {
+  const f = await workflowConfigurationFixture(), db = new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  try {
+    const inbox = `/api/projects/${f.project}/workflow-notifications`, collaborator = (await f.send('/api/session',undefined,'user_collaborator')).body.data.accountId;
+    db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project,collaborator);
+    assert.equal((await f.send(f.list,{requestId:f.workflow,id:f.workflow,revision:0,name:'Paged inbox',graph:f.graph})).status,201);
+    const runs: string[] = [];
+    for (let n=0;n<21;n++) {
+      const run=randomUUID(), command={requestId:run,id:run,revision:1,input:String(n)}; runs.push(run);
+      const accepted=await f.send(f.detail+'/run',command); assert.equal(accepted.status,201);
+      assert.deepEqual((await f.send(f.detail+'/run',command)).body.receipt,accepted.body.receipt);
+    }
+    await until(async () => (await f.send(inbox)).body.data.unread === 21);
+    const first=(await f.send(inbox)).body.data; assert.equal(first.items.length,20); assert(first.nextCursor);
+    const second=(await f.send(inbox+'?before='+first.nextCursor)).body.data; assert.equal(second.items.length,1); assert.equal(second.nextCursor,null); assert.equal(second.unread,21);
+    assert.deepEqual([...first.items,...second.items].map((item:any)=>item.run).sort(),runs.sort());
+    assert.deepEqual((await f.send(inbox,undefined,'user_collaborator')).body.data.items,[]);
+    db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,collaborator,f.agent);
+    assert.equal((await f.send(`/api/projects/${f.project}/workflow-runs/${runs[0]}`,undefined,'user_collaborator')).status,200);
+    assert.deepEqual((await f.send(inbox,undefined,'user_collaborator')).body.data.items,[]);
+    await f.restart(); assert.equal((await f.send(inbox)).body.data.unread,21);
+    assert.deepEqual((await f.send(inbox+'?before='+first.nextCursor)).body.data,second);
+    const last=randomUUID(); assert.equal((await f.send(f.detail+'/run',{requestId:last,id:last,revision:1,input:'Newly assigned reader'})).status,201);
+    await until(async ()=>(await f.send(inbox,undefined,'user_collaborator')).body.data.unread===1);
+    assert.equal((await f.send(inbox,undefined,'user_collaborator')).body.data.items[0].run,last);
+    const read=randomUUID(), command={requestId:read,id:read};
+    assert.equal((await f.send(inbox+'/'+runs[0]+'/read',command)).status,200);
+    assert.equal((await f.send(inbox+'/'+last+'/read',command)).status,409);
+  } finally { db.close(); await f.close(); }
+});
+
 test('workflow sync publishes metadata and revisioned run transitions once across retry and restart', async () => {
   const f = await workflowConfigurationFixture();
   try {
@@ -1291,7 +1414,7 @@ test('workflow sync publishes metadata and revisioned run transitions once acros
     await f.restart();
     assert.equal((await f.send(path + '/approve', approve)).status, 200);
     const delta = (await f.send(syncPath + '&cursor=' + encodeURIComponent(created.nextCursor))).body.data;
-    assert.deepEqual(delta.page.events.map((event: any) => [event.recordKind,event.revision,event.body.status]), [['workflow_run',1,'ready'],['workflow_run',2,'approval'],['workflow_run',3,'ready'],['workflow_run',4,'done']]);
+    assert.deepEqual(delta.page.events.map((event: any) => [event.recordKind,event.revision,event.body.status]), [['workflow_run',1,'ready'],['workflow_run',2,'approval'],['workflow_run',3,'ready'],['workflow_notification',1,undefined],['workflow_run',4,'done']]);
     for (const event of delta.page.events) { assert.equal(event.recordId, run); assert.equal(event.body.detailRef, path); }
     const snapshot = (await f.send(syncPath)).body.data;
     assert.equal(snapshot.page.events.find((event: any) => event.recordKind === 'workflow_run').revision, 4);
@@ -1321,7 +1444,7 @@ test('workflow sync includes protected wait activation delivery and expiry witho
     await until(async () => (await f.send(f.path)).body.data.status === 'done');
     assert.deepEqual((await send()).body.receipt, accepted.body.receipt);
     const delta = (await f.send(syncPath + '&cursor=' + encodeURIComponent(snapshot.nextCursor))).body.data;
-    assert.deepEqual(delta.page.events.map((event: any) => [event.revision,event.body.status]), [[3,'ready'],[4,'done']]);
+    assert.deepEqual(delta.page.events.map((event: any) => [event.recordKind,event.revision,event.body.status]), [['workflow_run',3,'ready'],['workflow_notification',1,undefined],['workflow_run',4,'done']]);
     const observations = JSON.stringify([snapshot,delta]);
     for (const value of [secret,'secret_ref','secretRef','secret_generation','Private event canary']) assert(!observations.includes(value));
     const editId = randomUUID(), graph = { entry: 'event', maxSteps: 2, nodes: [{ id: 'event', kind: 'wait', event: 'ready', timeoutSeconds: 2, next: 'out' }, { id: 'out', kind: 'output' }] };
