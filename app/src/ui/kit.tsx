@@ -25,7 +25,7 @@ export function Field({ label, hint, error, children, optional }: { label: React
   const describedBy = [hint && hintId, error && errorId].filter(Boolean).join(' ') || undefined;
   return <FieldCtx.Provider value={{ id, hintId, errorId, describedBy }}>
     <div className={cx('k-field', !!error && 'is-invalid')}>
-      <label className="k-field__label" htmlFor={id}>{label}{optional && <span className="k-field__optional">Opsional</span>}</label>
+      <label className="k-field__label" htmlFor={id}>{label}{optional && <span className="k-field__optional">Optional</span>}</label>
       {children}
       {hint && <div id={hintId} className="k-field__hint">{hint}</div>}
       {error && <div id={errorId} className="k-field__error" role="alert">{error}</div>}
@@ -178,7 +178,7 @@ export function Dialog({ open, onOpenChange, title, description, children, foote
       }}>
         <div className="k-dialog__head">
           <div><RadixDialog.Title className="k-dialog__title">{title}</RadixDialog.Title>{description ? <RadixDialog.Description className="k-dialog__desc">{description}</RadixDialog.Description> : <RadixDialog.Description className="sr-only">{title}</RadixDialog.Description>}</div>
-          <RadixDialog.Close asChild><button type="button" className="k-icon-btn" aria-label="Tutup"><X size={16} aria-hidden /></button></RadixDialog.Close>
+          <RadixDialog.Close asChild><button type="button" className="k-icon-btn" aria-label="Close"><X size={16} aria-hidden /></button></RadixDialog.Close>
         </div>
         <div className="k-dialog__body">{children}</div>
         {footer && <div className="k-dialog__foot">{footer}</div>}
@@ -202,8 +202,8 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         <AlertDialog.Content className="k-dialog k-dialog--sm">
           <div className="k-dialog__head"><div><AlertDialog.Title className="k-dialog__title">{request?.title}</AlertDialog.Title>{request?.description ? <AlertDialog.Description className="k-dialog__desc">{request.description}</AlertDialog.Description> : <AlertDialog.Description className="sr-only">{request?.title}</AlertDialog.Description>}</div></div>
           <div className="k-dialog__foot">
-            <AlertDialog.Cancel asChild><Button>Batal</Button></AlertDialog.Cancel>
-            <AlertDialog.Action asChild><Button variant={request?.danger ? 'danger' : 'primary'} onClick={() => settle(true)}>{request?.confirm ?? 'Lanjutkan'}</Button></AlertDialog.Action>
+            <AlertDialog.Cancel asChild><Button>Cancel</Button></AlertDialog.Cancel>
+            <AlertDialog.Action asChild><Button variant={request?.danger ? 'danger' : 'primary'} onClick={() => settle(true)}>{request?.confirm ?? 'Resume'}</Button></AlertDialog.Action>
           </div>
         </AlertDialog.Content>
       </AlertDialog.Portal>

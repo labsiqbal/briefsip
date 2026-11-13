@@ -20,7 +20,7 @@ export function Modal({ onClose, children, className, label, title }: { onClose:
       <div className="modal-scrim" onMouseDown={onClose} />
       <div ref={ref} className={`modal ${className ?? ''}`} role="dialog" aria-modal="true" aria-label={label}>
         {title !== undefined && <div className="modal__header"><span className="modal__title">{title}</span></div>}
-        <button type="button" className="modal__close" onClick={onClose} aria-label="Tutup"><X size={16} aria-hidden /></button>
+        <button type="button" className="modal__close" onClick={onClose} aria-label="Close"><X size={16} aria-hidden /></button>
         {children}
       </div>
     </div>,
