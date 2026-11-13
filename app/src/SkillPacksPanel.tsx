@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { restoreSkillCommand, type SkillCommand } from '../skill-command';
+import { ArrowLeft, ChevronLeft, ChevronRight, Ellipsis, FileText, Package, Plus, RefreshCw } from 'lucide-react';
+import { ActionMenu, Alert, Badge, Button, Card, CodeBlock, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, useConfirm } from './ui/kit';
 type Member = { skill: string; version: number; name: string; description: string; content: string };
 type Pack = { id: string; name: string; revision: number; latest: number; members: Member[] };
 type Binding = { revision: number; version: number; enabled: number; removed: number };
@@ -15,7 +17,8 @@ export function SkillPacksPanel({ agents, initialOwner, request, onClose }: { ag
   const [pending, setPending] = useState(recovery.command), [invalid, setInvalid] = useState(recovery.invalid), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const heading = useRef<HTMLHeadingElement>(null), generation = useRef(0), inFlight = useRef(false);
   const after = cursors.at(-1)!, skillAfter = skillCursors.at(-1)!, locked = busy || !!pending || invalid;
-  const replace = () => !editor || JSON.stringify(editor) === baseline || window.confirm('Discard unsaved pack changes?');
+  const confirm = useConfirm();
+  const replace = async () => !editor || JSON.stringify(editor) === baseline || confirm({ title: 'Discard unsaved pack changes?', confirm: 'Discard changes', danger: true });
   useEffect(() => { heading.current?.focus(); return () => { generation.current++; }; }, []);
   useEffect(() => {
     let stopped = false; setPage(null); setLibrary(null); setError('');
@@ -28,7 +31,7 @@ export function SkillPacksPanel({ agents, initialOwner, request, onClose }: { ag
     return () => { stopped = true; };
   }, [owner, editor?.id, refresh]);
   async function open(id: string, revision?: number) {
-    if (locked || !replace()) return;
+    if (locked || !await replace()) return;
     const current = ++generation.current; setBusy(true); setError('');
     try { const row = await request<Pack>(`/api/skill-packs/${id}${revision ? `?version=${revision}` : ''}`); if (current === generation.current) { setEditor(row); setBaseline(JSON.stringify(row)); setVersion(row.revision); heading.current?.focus(); } }
     catch (error) { if (current === generation.current) setError(error instanceof Error ? error.message : 'Pack could not load.'); }
@@ -53,26 +56,95 @@ export function SkillPacksPanel({ agents, initialOwner, request, onClose }: { ag
     } catch (error) { if (current === generation.current) setError(error instanceof Error ? error.message : 'Changes are not confirmed yet.'); }
     finally { inFlight.current = false; if (current === generation.current) setBusy(false); }
   }
-  function mutate(enabled: boolean, remove = false) {
+  async function mutate(enabled: boolean, remove = false) {
     if (!editor?.id || !owner || binding === undefined || locked) return;
     const selectedVersion = remove || !enabled ? binding?.version : editor.revision;
-    if (!selectedVersion || !window.confirm(remove ? 'Remove the pack and all skills it manages? The library remains available.' : `Apply pack version ${selectedVersion} to this agent? All members change together; unsaved drafts are excluded.`)) return;
+    if (!selectedVersion || !await confirm(remove ? { title: 'Remove the pack and all skills it manages?', description: 'The library remains available.', confirm: 'Remove pack', danger: true } : { title: `Apply pack version ${selectedVersion} to this agent?`, description: 'All members change together; unsaved drafts are excluded.', confirm: 'Apply pack' })) return;
     void execute({ path: `/api/agents/${owner}/skill-packs/${editor.id}`, body: { id: crypto.randomUUID(), revision: binding?.revision ?? 0, version: selectedVersion, enabled, ...(remove ? { remove: true } : {}) } });
   }
-  return <section className="setup workflow-panel"><h1 ref={heading} tabIndex={-1}>Skill packs</h1><p>A pack installs revisions of multiple skills at once. Manual installations and other packs will not be overwritten.</p>
-    <div className="form-actions"><button className="secondary" onClick={() => { if (replace()) onClose(); }}>Back to library</button><button className="secondary" disabled={busy} onClick={() => setRefresh(value => value + 1)}>Reload packs</button></div>
-    {error && <p className="error" role="alert">{error}</p>}{invalid && <p role="alert">Pack recovery is invalid.</p>}{pending && <button disabled={busy} onClick={() => void execute(pending)}>Retry pack change</button>}{(pending || invalid) && <button className="secondary" disabled={busy} onClick={() => { if (window.confirm('Ignore recovery? Changes may already have succeeded. Check the list before trying again.')) try { sessionStorage.removeItem(storage); setPending(null); setInvalid(false); setRefresh(value => value + 1); } catch { setError('Browser storage could not be updated.'); } }}>Ignore pack recovery</button>}
-    <label>Agent<select disabled={locked} value={owner} onChange={event => setOwner(event.target.value)}>{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name.length > 24 ? agent.name.slice(0, 21) + '...' : agent.name}</option>)}</select><span className="flow-selected-name muted">{agents.find(agent => agent.id === owner)?.name}</span></label>
-    <button className="secondary" disabled={locked} onClick={() => { if (replace()) { const row = { id: '', name: '', revision: 0, latest: 0, members: [] }; setEditor(row); setBaseline(JSON.stringify(row)); } }}>Create pack</button>
-    {editor && <form onSubmit={event => { event.preventDefault(); void execute({ path: editor.id ? `/api/skill-packs/${editor.id}` : '/api/skill-packs', body: { id: crypto.randomUUID(), revision: editor.latest, name: editor.name, members: editor.members.map(({ skill, version }) => ({ skill, version })) } }); }}><fieldset disabled={locked}><legend>{editor.id ? `Version ${editor.revision}; latest ${editor.latest}` : 'New pack'}</legend><label>Pack name<input required maxLength={80} value={editor.name} onChange={event => setEditor({ ...editor, name: event.target.value })} /></label>
-      <ul className="routine-list">{editor.members.map(member => <li key={member.skill}><strong>{member.name} · Version {member.version}</strong><details><summary>Review instructions for {member.name}</summary><p>{member.description}</p><pre className="message-text">{member.content}</pre></details><button type="button" className="secondary" onClick={() => setEditor({ ...editor, members: editor.members.filter(row => row.skill !== member.skill) })}>Remove {member.name} from draft</button></li>)}</ul>
-      <label>Skill from library<select value={skill} onChange={event => { setSkill(event.target.value); setSkillVersion(library?.skills.find(row => row.id === event.target.value)?.revision ?? 1); }}><option value="">Choose skill</option>{library?.skills.map(row => <option key={row.id} value={row.id}>{row.name.length > 24 ? row.name.slice(0, 21) + '...' : row.name}</option>)}</select><span className="flow-selected-name muted">{library?.skills.find(row => row.id === skill)?.name}</span></label><label>Skill version<input type="number" min={1} step={1} value={skillVersion} onChange={event => setSkillVersion(Number(event.target.value))} /></label><button type="button" className="secondary" disabled={!skill || editor.members.length >= 64} onClick={() => void addMember()}>Add version to draft</button>
-      <div className="form-actions"><button type="button" className="secondary" disabled={skillCursors.length < 2} onClick={() => { setSkill(''); setSkillCursors(value => value.slice(0, -1)); }}>Previous library page</button><button type="button" className="secondary" disabled={!library?.next_after} onClick={() => { setSkill(''); setSkillCursors(value => [...value, library!.next_after!]); }}>Next library page</button></div>
-      <button disabled={!editor.members.length}>Save pack revision</button>
-      {editor.id && <><label>Pack version to review<input type="number" min={1} max={editor.latest} value={version} onChange={event => setVersion(Number(event.target.value))} /></label><button type="button" className="secondary" disabled={!Number.isSafeInteger(version) || version < 1 || version > editor.latest} onClick={() => void open(editor.id, version)}>Load pack version</button><p>{binding === undefined ? 'Loading installation...' : !binding || binding.removed ? 'Pack is not installed yet.' : `Installed version ${binding.version}, ${binding.enabled ? 'active' : 'inactive'}.`}</p>
-        <button type="button" disabled={!owner || binding === undefined} onClick={() => mutate(true)}>Install saved version {editor.revision}</button>{binding && !binding.removed && <><button type="button" className="secondary" disabled={!binding.enabled} onClick={() => mutate(false)}>Disable entire pack</button><button type="button" className="secondary" onClick={() => mutate(false, true)}>Remove entire pack</button></>}</>}
-    </fieldset></form>}
-    {!page ? !error && <p role="status">Loading packs...</p> : <ul className="routine-list">{page.packs.map(pack => <li key={pack.id}><strong>{pack.name}</strong><p>Revision {pack.revision}</p><button className="secondary" disabled={locked} onClick={() => void open(pack.id)}>Open pack {pack.name}</button></li>)}</ul>}
-    <div className="form-actions"><button className="secondary" disabled={locked || cursors.length < 2} onClick={() => setCursors(value => value.slice(0, -1))}>Previous packs</button><button className="secondary" disabled={locked || !page?.next_after} onClick={() => setCursors(value => [...value, page!.next_after!])}>Next packs</button></div>
-  </section>;
+  const startNew = async () => { if (await replace()) { const row = { id: '', name: '', revision: 0, latest: 0, members: [] }; setEditor(row); setBaseline(JSON.stringify(row)); } };
+  const discard = async () => {
+    if (await confirm({ title: 'Ignore recovery?', description: 'Changes may already have succeeded. Check the list before trying again.', confirm: 'Ignore recovery', danger: true })) try { sessionStorage.removeItem(storage); setPending(null); setInvalid(false); setRefresh(value => value + 1); } catch { setError('Browser storage could not be updated.'); }
+  };
+  const pager = (back: boolean, next: boolean, disabled: boolean, onBack: () => void, onNext: () => void, label: string) => (back || next) && <div className="k-pager">
+    <IconButton label={`Previous ${label}`} disabled={disabled || !back} onClick={onBack}><ChevronLeft size={16} aria-hidden /></IconButton>
+    <IconButton label={`Next ${label}`} disabled={disabled || !next} onClick={onNext}><ChevronRight size={16} aria-hidden /></IconButton>
+  </div>;
+  const recoveryActions = <>
+    {pending && <Button size="sm" variant="primary" busy={busy} onClick={() => void execute(pending)}>Try again</Button>}
+    <Button size="sm" disabled={busy} onClick={() => void discard()}>Ignore pack recovery</Button>
+  </>;
+  const recoveryNotice = <>
+    {invalid && <Alert tone="error" title="Pack recovery is invalid" actions={recoveryActions} />}
+    {pending && <Alert tone="warn" title="Changes are not confirmed yet" actions={!invalid && recoveryActions}>Retry sends the same request to avoid saving it twice.</Alert>}
+  </>;
+  return <div className="k-page bs-root">
+    <PageHeader headingRef={heading} title="Skill packs" description="Install revisions of multiple skills together; manual installations and other packs will not be overwritten."
+      actions={<>
+        <Button variant="ghost" icon={<ArrowLeft size={14} aria-hidden />} onClick={async () => { if (await replace()) onClose(); }}>Back to skills</Button>
+        <IconButton label="Reload packs" disabled={busy} onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton>
+        <Button variant="primary" icon={<Plus size={14} aria-hidden />} disabled={locked} onClick={() => void startNew()}>Create pack</Button>
+      </>} />
+    {error && <Alert tone="error">{error}</Alert>}
+    {recoveryNotice}
+    <Section title="Installed on agent" actions={<Select size="sm" label="Agent" disabled={locked} value={owner} onChange={setOwner} options={agents.map(agent => ({ value: agent.id, label: agent.name.length > 24 ? agent.name.slice(0, 21) + '...' : agent.name }))} />}>
+      <p className="k-field__hint">{agents.find(agent => agent.id === owner)?.name || 'No agents yet.'} Open a pack to review its installation.</p>
+    </Section>
+    <Section title="Library">
+      {!page ? !error && <><span className="sr-only" role="status">Loading packs...</span><SkeletonRows /></>
+        : !page.packs.length ? <EmptyState icon={<Package size={18} />} title="No packs on this page">Create a pack from saved skill versions.</EmptyState>
+        : <Card>{page.packs.map(pack => <Row key={pack.id} title={pack.name} leading={<Package size={16} aria-hidden />} meta={<Badge>Revision {pack.revision}</Badge>} disabled={locked} onClick={() => void open(pack.id)} />)}</Card>}
+      {pager(cursors.length > 1, !!page?.next_after, locked, () => setCursors(value => value.slice(0, -1)), () => setCursors(value => [...value, page!.next_after!]), 'packs')}
+    </Section>
+    <Dialog open={!!editor} size="lg" title={editor?.id ? editor.name : 'New pack'}
+      description={editor?.id ? `Version ${editor.revision}; latest ${editor.latest}. Saving creates a new revision.` : undefined}
+      onOpenChange={async next => { if (!next && await replace()) setEditor(null); }}
+      footer={<>
+        <Button disabled={busy} onClick={async () => { if (await replace()) setEditor(null); }}>Close</Button>
+        <Button type="submit" form="pack-editor" variant="primary" busy={busy} disabled={locked || !editor?.members.length}>Save pack revision</Button>
+      </>}>
+      {editor && <>
+        {error && <Alert tone="error">{error}</Alert>}
+        {recoveryNotice}
+        <form id="pack-editor" className="k-stack" onSubmit={event => { event.preventDefault(); void execute({ path: editor.id ? `/api/skill-packs/${editor.id}` : '/api/skill-packs', body: { id: crypto.randomUUID(), revision: editor.latest, name: editor.name, members: editor.members.map(({ skill, version }) => ({ skill, version })) } }); }}>
+          <fieldset disabled={locked} className="k-fieldset">
+            <Field label="Pack name"><Input required maxLength={80} value={editor.name} onChange={event => setEditor({ ...editor, name: event.target.value })} /></Field>
+            <Section title="Skills in draft">
+              {!editor.members.length ? <EmptyState icon={<FileText size={18} />} title="No skills in draft">Choose a skill version from the library.</EmptyState>
+                : <Card>{editor.members.map(member => <Row key={member.skill} title={member.name} meta={<Badge>Version {member.version}</Badge>}
+                    trailing={<ActionMenu label={`Menu ${member.name}`} trigger={<button type="button" className="k-icon-btn" aria-label={`Menu ${member.name}`} disabled={locked}><Ellipsis size={16} aria-hidden /></button>} items={[
+                      { label: 'Remove from draft', danger: true, onSelect: () => setEditor({ ...editor, members: editor.members.filter(row => row.skill !== member.skill) }) },
+                    ]} />}>
+                    <details><summary className="k-field__hint">Review instructions for {member.name}</summary><p className="k-field__hint">{member.description}</p><CodeBlock label={`Instructions for ${member.name}`}>{member.content}</CodeBlock></details>
+                  </Row>)}</Card>}
+            </Section>
+            <div className="k-grid-2">
+              <Field label="Skill from library" hint={library?.skills.find(row => row.id === skill)?.name}>
+                <Select value={skill} disabled={locked} onChange={value => { setSkill(value); setSkillVersion(library?.skills.find(row => row.id === value)?.revision ?? 1); }} options={[{ value: '', label: 'Choose skill' }, ...(library?.skills.map(row => ({ value: row.id, label: row.name.length > 24 ? row.name.slice(0, 21) + '...' : row.name })) ?? [])]} />
+              </Field>
+              <Field label="Skill version"><Input type="number" min={1} step={1} value={skillVersion} onChange={event => setSkillVersion(Number(event.target.value))} /></Field>
+            </div>
+            <div className="k-inline"><Button size="sm" disabled={!skill || editor.members.length >= 64} onClick={() => void addMember()}>Add version to draft</Button>
+              {pager(skillCursors.length > 1, !!library?.next_after, locked, () => { setSkill(''); setSkillCursors(value => value.slice(0, -1)); }, () => { setSkill(''); setSkillCursors(value => [...value, library!.next_after!]); }, 'library page')}
+            </div>
+            {editor.id && <Section title="Version">
+              <Field label="Pack version to review"><div className="k-inline"><Input type="number" min={1} max={editor.latest} value={version} onChange={event => setVersion(Number(event.target.value))} style={{ width: 96 }} /><Button size="sm" disabled={!Number.isSafeInteger(version) || version < 1 || version > editor.latest} onClick={() => void open(editor.id, version)}>Load pack version</Button></div></Field>
+            </Section>}
+          </fieldset>
+        </form>
+        <Section title="Installed on agent" actions={<Select size="sm" label="Agent" disabled={locked} value={owner} onChange={setOwner} options={agents.map(agent => ({ value: agent.id, label: agent.name.length > 24 ? agent.name.slice(0, 21) + '...' : agent.name }))} />}>
+          <p className="k-field__hint">{agents.find(agent => agent.id === owner)?.name}</p>
+          {!editor.id ? <Alert>Save a pack revision before installing it.</Alert>
+            : <Card><Row title={editor.name} meta={binding === undefined ? <span role="status">Loading installation...</span> : !binding || binding.removed ? 'Pack is not installed yet.' : <><Badge>Installed version {binding.version}</Badge><Badge>{binding.enabled ? 'Active' : 'Inactive'}</Badge></>}
+                trailing={<>
+                  {binding && !binding.removed && <Switch checked={!!binding.enabled} disabled={locked || !owner || binding === undefined || !binding.enabled} label="Disable entire pack" onChange={() => void mutate(false)} />}
+                  <ActionMenu label="Pack installation actions" trigger={<button type="button" className="k-icon-btn" aria-label="Pack installation actions" disabled={locked}><Ellipsis size={16} aria-hidden /></button>} items={[
+                    { label: `Install saved version ${editor.revision}`, disabled: !owner || binding === undefined, onSelect: () => void mutate(true) },
+                    ...(binding && !binding.removed ? [{ label: 'Remove entire pack', danger: true, onSelect: () => void mutate(false, true) }] : []),
+                  ]} />
+                </>} /></Card>}
+        </Section>
+      </>}
+    </Dialog>
+  </div>;
 }

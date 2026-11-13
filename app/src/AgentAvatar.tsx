@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { Alert, Button, Card, Field, IconButton, Input, Row, Section, useConfirm } from './ui/kit';
+import { RefreshCw } from 'lucide-react';
 
 type State = { revision: number; present: boolean };
 type Command = { id: string; revision: number; image: string | null };
@@ -61,19 +63,24 @@ export function AvatarEditor({ agent, request, onChanged }: { agent: string; req
     } catch (error) { if (current === version.current) setError(error instanceof Error ? error.message : 'Avatar has not been saved. Try again.'); }
     finally { flight.current = false; if (current === version.current) setBusy(false); }
   }
+  const confirm = useConfirm();
   async function reload() {
-    if (busy || flight.current || (pending || invalid) && !window.confirm('Discard the saved avatar request and load the latest version? Changes already accepted by the server still apply.')) return;
+    if (busy || flight.current || (pending || invalid) && !await confirm({ title: 'Discard the saved avatar request and load the latest version?', description: 'Changes already accepted by the server still apply.', confirm: 'Discard and reload', danger: true })) return;
     try { sessionStorage.removeItem(key); setPending(null); setInvalid(false); setNotice(''); await load(true); }
     catch { setError('Browser storage is unavailable. Try again.'); }
   }
-  return <section className="avatar-editor" aria-label="Agent avatar"><h2>Avatar</h2>
-    <p className="muted">Static PNG, JPEG, or WebP, up to 512 KiB and 16 megapixels. Images are cropped to a square; metadata is removed.</p>
-    {state?.present && <img className="avatar-preview" src={`${path}/image?v=${state.revision}`} alt="Current agent avatar" />}
-    <label>Avatar image<input ref={file} type="file" accept="image/png,image/jpeg,image/webp" disabled={busy || !!pending || invalid || !state} /></label>
-    {invalid && <p role="alert">Saved request is invalid. Reload the avatar to continue.</p>}
-    {error && <p role="alert" className="error">{error}</p>}{notice && <p role="status">{notice}</p>}
-    <div className="form-actions"><button disabled={busy || invalid || !state} onClick={() => void save(false)}>{busy ? 'Processing avatar...' : pending ? 'Retry avatar change' : 'Save avatar'}</button>
-      <button className="secondary" aria-disabled={busy || !!pending || invalid || !state?.present} onClick={() => { if (!busy && !pending && !invalid && state?.present) void save(true); }}>Delete avatar</button>
-      <button className="secondary" disabled={busy} onClick={() => void reload()}>Reload avatar</button></div>
-  </section>;
+  return <div className="k-stack bs-root">
+    <Section title="Avatar" actions={<IconButton label="Reload avatar" disabled={busy} onClick={() => void reload()}><RefreshCw size={15} aria-hidden /></IconButton>}>
+      <Card><Row title="Agent image" meta="Static PNG, JPEG, or WebP, up to 512 KiB and 16 megapixels. Images are cropped to a square; metadata is removed."
+        trailing={state?.present && <img src={`${path}/image?v=${state.revision}`} alt="Current agent avatar" width={64} height={64} style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8 }} />} /></Card>
+      <Field label="Avatar image"><Input ref={file} type="file" accept="image/png,image/jpeg,image/webp" disabled={busy || !!pending || invalid || !state} /></Field>
+      {invalid && <Alert tone="error">Saved request is invalid. Reload the avatar to continue.</Alert>}
+      {error && <Alert tone="error">{error}</Alert>}{notice && <Alert>{notice}</Alert>}
+      {pending && <Alert tone="warn" title="Changes are not confirmed yet">Retry sends the same avatar request and ID.</Alert>}
+      <div className="k-inline">
+        <Button size="sm" variant="primary" busy={busy} disabled={busy || invalid || !state} onClick={() => void save(false)}>{busy ? 'Processing avatar...' : pending ? 'Retry avatar change' : 'Save avatar'}</Button>
+        <Button size="sm" aria-disabled={busy || !!pending || invalid || !state?.present} onClick={() => { if (!busy && !pending && !invalid && state?.present) void save(true); }}>Delete avatar</Button>
+      </div>
+    </Section>
+  </div>;
 }
