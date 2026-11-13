@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { initializeCanonicalSchema } from './schema.ts';
+import { initializeCanonicalSchema, schemaVersion } from './schema.ts';
 import { startApp } from './server.ts';
 
 test('v1 migration preserves actual legacy rows without inferring ownership or scope', async () => {
@@ -37,5 +37,26 @@ test('mid-migration SQL failure rolls back DDL and preserves legacy content', ()
     assert.throws(() => initializeCanonicalSchema(db), /already exists/);
     assert.equal(db.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE name='accounts'").get()!.n, 0);
     assert.equal(db.prepare('SELECT body FROM legacy_private').get()!.body, 'private');
+  } finally { db.close(); }
+});
+
+test('v4 sync migration preserves v3 record identities and rolls back conflicting DDL', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    initializeCanonicalSchema(db, 1000, 3);
+    const account = randomUUID(), project = randomUUID();
+    db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(account, 'https://fixture.example', 'owner', 1000);
+    db.prepare('INSERT INTO projects VALUES (?,?,?,1,0,1)').run(project, account, 'Private v3 record');
+    const before = db.prepare('SELECT * FROM projects').all(), oldMigrations = db.prepare('SELECT * FROM schema_migrations ORDER BY version').all();
+    db.exec('CREATE TABLE retention_floors(conflict TEXT)');
+    assert.throws(() => initializeCanonicalSchema(db, 2000), /already exists/);
+    assert.equal(schemaVersion(db), 3);
+    assert.equal(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='sync_events'").get(), undefined);
+    assert.deepEqual(db.prepare('SELECT * FROM projects').all(), before);
+    db.exec('DROP TABLE retention_floors');
+    initializeCanonicalSchema(db, 3000); initializeCanonicalSchema(db, 4000);
+    assert.equal(schemaVersion(db), 4); assert.deepEqual(db.prepare('SELECT * FROM projects').all(), before);
+    assert.deepEqual(db.prepare('SELECT * FROM schema_migrations WHERE version<4 ORDER BY version').all(), oldMigrations);
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
   } finally { db.close(); }
 });

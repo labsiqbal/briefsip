@@ -9,8 +9,12 @@ import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './server.ts';
-import { canonicalServerLock, restoreWorkspace } from './backup.ts';
+import { canonicalServerLock, restoreWorkspace, workspaceSnapshot } from './backup.ts';
 import { ProtocolError } from './protocol.ts';
+import { initializeCanonicalSchema } from './schema.ts';
+import { createApplicationSync } from './application-sync.ts';
+import { createProjectAccess } from './project-access.ts';
+import type { HumanActor } from './auth.ts';
 
 test('canonical server guard fences aliases and processes, releases on SIGKILL and rejects unsafe files', async () => {
   const dir=mkdtempSync(join(tmpdir(),'briefsip-server-lock-')),database=join(dir,'canonical.sqlite'),guardPath=database+'.server-lock.sqlite';
@@ -45,6 +49,33 @@ test('canonical server guard fences aliases and processes, releases on SIGKILL a
     if(child.exitCode===null&&child.signalCode===null){const exited=once(child,'exit');child.kill('SIGKILL');await exited;}
     rmSync(dir,{recursive:true,force:true});
   }
+});
+
+test('v4 backup retains sync floors, monotonic heads, tombstones and receipts while restored authority stays fenced', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-sync-backup-')), db = new DatabaseSync(join(dir, 'source.sqlite'));
+  initializeCanonicalSchema(db);
+  const owner: HumanActor = { accountId: randomUUID(), issuer: 'https://fixture.example', subject: 'owner', sessionId: 'session_owner', expiresAt: Date.now() + 60000 };
+  db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(owner.accountId, owner.issuer, owner.subject, Date.now());
+  let now = Date.now();
+  const auth = { requireCurrent: (actor: HumanActor) => actor, verifiedMailboxes: async () => [] };
+  const sync = createApplicationSync(db, auth, { key: () => Buffer.alloc(32, 7), now: () => now });
+  const access = createProjectAccess(db, auth, () => { throw new Error('No mail'); }, [], sync), project = randomUUID();
+  let backup: Awaited<ReturnType<typeof workspaceSnapshot>> | undefined;
+  try {
+    access.createProject(owner, { requestId: randomUUID(), id: project, name: 'Retained tombstone' });
+    access.editProject(owner, project, { requestId: randomUUID(), expectedRevision: 1, deleted: true });
+    now += 90 * 86400_000 + 1; assert.equal(sync.prune().removed, 2);
+    const retained = Object.fromEntries(['sync_heads','retention_floors','receipts','projects'].map(table => [table, db.prepare('SELECT * FROM ' + table).all()]));
+    backup = await workspaceSnapshot(db, owner.accountId);
+    const destination = join(dir, 'restored.sqlite'); restoreWorkspace(backup.file, destination, { canonicalOnly: true });
+    const restored = new DatabaseSync(destination);
+    try {
+      for (const [table, rows] of Object.entries(retained)) assert.deepEqual(restored.prepare('SELECT * FROM ' + table).all(), rows);
+      const recoverySync = createApplicationSync(restored, auth, { key: () => Buffer.alloc(32, 7) });
+      try { assert.throws(() => recoverySync.read(owner, { projectId: project }), error => error instanceof ProtocolError && error.code === 'authority_unavailable'); } finally { recoverySync.close(); }
+      assert.equal(restored.prepare('SELECT serving_state FROM authority_state').get()!.serving_state, 'read_only_recovery');
+    } finally { restored.close(); }
+  } finally { backup?.cleanup(); sync.close(); db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('live backup restores history while holding pending work and disabling automation', async () => {

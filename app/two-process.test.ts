@@ -171,7 +171,8 @@ async function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-device-http-')), keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const auth: AuthConfig = { secretKey: 'sk_test_fixture', publishableKey: `pk_test_${Buffer.from('fixture.clerk.accounts.dev$').toString('base64')}`, issuer: 'https://fixture.clerk.accounts.dev', origin: 'http://127.0.0.1', development: true };
   const clerk = createClerkClient({ secretKey: auth.secretKey, publishableKey: auth.publishableKey, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), telemetry: { disabled: true } });
-  const options = { database: join(dir, 'canonical.sqlite'), auth, clerk };
+  const syncSecret = randomBytes(32);
+  const options = { database: join(dir, 'canonical.sqlite'), auth, clerk, syncKey: () => syncSecret };
   let app = await startCanonicalApp(options); auth.origin = app.origin;
   const jwt = (subject = 'user_owner') => {
     const now = Math.floor(Date.now() / 1000), header = Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'fixture', typ: 'JWT' })).toString('base64url'), claims = Buffer.from(JSON.stringify({ iss: auth.issuer, sub: subject, sid: `sess_${subject}`, azp: auth.origin, exp: now + 300, nbf: now - 1, iat: now - 1 })).toString('base64url');
@@ -196,6 +197,27 @@ async function until(check: () => boolean | Promise<boolean>, timeout = 10000) {
   while (Date.now() < deadline) { if (await check()) return; await new Promise(resolve => setTimeout(resolve, 20)); }
   assert.fail('Device state did not settle');
 }
+
+test('signed human sync preserves delta cursors through canonical restart and rejects foreign or revoked reads', async () => {
+  const f = await fixture();
+  try {
+    const project = randomUUID(), create = { requestId: randomUUID(), id: project, name: 'Sync project' };
+    assert.equal((await f.send('/api/projects', create)).status, 201);
+    const path = '/api/sync?projectId=' + project, first = await f.send(path);
+    assert.equal(first.status, 200); assert(first.body.data.nextCursor);
+    const edit = { requestId: randomUUID(), expectedRevision: 1, name: 'Persisted sync value' };
+    const saved = await f.send('/api/projects/' + project, edit, 'user_owner', 'PATCH'); assert.equal(saved.status, 200);
+    assert.deepEqual((await f.send('/api/projects/' + project, edit, 'user_owner', 'PATCH')).body.receipt, saved.body.receipt);
+    await f.restart();
+    const deltaPath = path + '&cursor=' + encodeURIComponent(first.body.data.nextCursor), delta = await f.send(deltaPath);
+    assert.equal(delta.status, 200); assert.equal(delta.body.data.page.events.length, 1); assert.equal(delta.body.data.page.events[0].body.name, 'Persisted sync value');
+    assert.equal((await f.send(deltaPath, undefined, 'user_stranger')).status, 403);
+    for (const suffix of ['&cursor=', '&page=broken', '&repo=private', '&projectId=' + project]) assert.equal((await f.send(path + suffix)).status, 400);
+    const denied = await f.send('/api/projects/' + project, { requestId: randomUUID(), expectedRevision: 2, deleted: true }, 'user_owner', 'PATCH');
+    assert.equal(denied.status, 200);
+    const revoked = await f.send(deltaPath); assert.equal(revoked.status, 403); assert.equal(revoked.body.ok, false); assert.equal(revoked.body.data, undefined);
+  } finally { await f.close(); }
+});
 
 async function loopTask(f: Awaited<ReturnType<typeof fixture>>, runtime: ReturnType<typeof openDeviceRuntime>, setup = false, existingBinding?: string | null) {
   const home = (await f.send('/api/devices')).body.data.find((row: { id: string }) => row.id === runtime.deviceId()), project = randomUUID(), agent = randomUUID(), binding = existingBinding === undefined ? randomUUID() : existingBinding;
