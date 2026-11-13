@@ -643,6 +643,33 @@ test('canonical workflow once uses its home zone and consumes one catch-up after
   }finally{if(previousZone===undefined)delete process.env.TZ;else process.env.TZ=previousZone;}
 });
 
+test('canonical workflow cron validates HTTP input and admits one retained overdue occurrence after reconnect',async()=>{
+  const f=await workflowConfigurationFixture();
+  try{
+    assert.equal((await f.send(f.list,{requestId:f.workflow,id:f.workflow,revision:0,name:'Cron',graph:f.graph})).status,201);
+    const path=f.detail+'/schedule',requestId=randomUUID(),command={requestId,id:requestId,revision:0,spec:{kind:'cron',expression:'*/5 * * * *'},input:'Private cron input',enabled:true};
+    for(const expression of ['* * * * *','0 0 31 2 *','0 9 * * MON']){
+      const invalid=randomUUID(),response=await f.send(path,{...command,requestId:invalid,id:invalid,spec:{kind:'cron',expression}});
+      assert([400,422].includes(response.status),JSON.stringify(response.body));assert.equal((await f.send(path)).body.data.schedule,null);
+    }
+    const saved=await f.send(path,command);assert.equal(saved.status,201,JSON.stringify(saved.body));assert(saved.body.data.nextAt>Date.now());
+    // Model a persisted cron that became overdue while canonical and home were offline.
+    const dueAt=Math.floor(Date.now()/300000)*300000-900000,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    try{db.prepare('UPDATE schedules SET next_at=? WHERE id=?').run(dueAt,f.workflow);}finally{db.close();}
+    await f.restart();let current:any;
+    await until(async()=>{current=(await f.send(path)).body.data;return current.occurrences.length===1;});
+    const pending=current.occurrences[0];assert.equal(pending.state,'pending');assert.equal(pending.dueAt,dueAt);assert(pending.missedCount>=3);
+    await f.restart();assert.equal((await f.send(path)).body.data.occurrences[0].occurrenceId,pending.occurrenceId);
+    const connection=f.runtime.connect();await until(()=>connection.state().phase==='connected');
+    await until(async()=>{current=(await f.send(path)).body.data;return current.occurrences[0]?.state==='admitted';});
+    assert.equal(current.enabled,true);assert(current.nextAt>Date.now());assert.equal(current.occurrences.length,1);assert.equal(current.occurrences[0].occurrenceId,pending.occurrenceId);
+    await until(async()=>(await f.send(`/api/projects/${f.project}/workflow-runs/${current.occurrences[0].runId}`)).body.data.status==='done');
+    assert.equal((await f.send(f.detail+'/runs')).body.data.items.length,1);
+    assert.deepEqual((await f.send(path,command)).body.receipt,saved.body.receipt);
+    assert.equal((await f.send(`/api/projects/${f.other}/workflows/${f.workflow}/schedule`)).status,404);
+  }finally{await f.close();}
+});
+
 test('canonical workflow occurrence attaches its first recovery task atomically on the original home', async () => {
   const f = await workflowConfigurationFixture();
   try {
