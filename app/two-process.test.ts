@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { startCanonicalApp } from './server.ts';
 import { openDeviceRuntime } from './device-runtime.ts';
+import type { ActionContext } from './executor-journal.ts';
 import { createAuth, type AuthConfig } from './auth.ts';
 import { prepareRestoreBootstrap, issueRestoreSession, restoreWorkspace, workspaceSnapshot } from './backup.ts';
 import { canonicalJson, ProtocolError, digestCommand, sha256 } from './protocol.ts';
@@ -195,6 +196,228 @@ async function until(check: () => boolean | Promise<boolean>, timeout = 10000) {
   while (Date.now() < deadline) { if (await check()) return; await new Promise(resolve => setTimeout(resolve, 20)); }
   assert.fail('Device state did not settle');
 }
+
+async function loopTask(f: Awaited<ReturnType<typeof fixture>>, runtime: ReturnType<typeof openDeviceRuntime>, setup = false, existingBinding?: string | null) {
+  const home = (await f.send('/api/devices')).body.data.find((row: { id: string }) => row.id === runtime.deviceId()), project = randomUUID(), agent = randomUUID(), binding = existingBinding === undefined ? randomUUID() : existingBinding;
+  assert.equal((await f.send('/api/projects', { requestId: randomUUID(), id: project, name: 'Execution loop' })).status, 201);
+  if (existingBinding === undefined) {
+    const seed = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+    try { seed.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible',?,'Synthetic','ready',1)").run(binding, home.id, seed.prepare('SELECT account FROM devices WHERE id=?').get(home.id)!.account, binding); } finally { seed.close(); }
+  }
+  assert.equal((await f.send('/api/agents', { requestId: agent, id: agent, name: 'Loop agent', model: 'fixture', backupModel: '', instructions: 'Answer carefully', threadLimit: 2, projectId: project, homeDeviceId: home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: home.revision, providerBinding: binding ? { bindingId: binding, expectedRevision: 1 } : null, setup })).status, 201);
+  const taskId = setup ? agent : randomUUID();
+  if (!setup) {
+    const payload = { v: 1, kind: 'direct', message: { text: 'Answer once', files: [] } }, expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 };
+    assert.equal((await f.send('/api/tasks', { requestId: taskId, projectId: project, agentId: agent, homeDeviceId: home.id, payload, expectedRevisions, payloadDigest: digestCommand(['briefsip-task-payload-v1', taskId, project, agent, home.id, payload, expectedRevisions]) })).status, 202);
+  }
+  return { taskId, agent, project, binding };
+}
+
+test('home execution loop publishes one provider answer through signed canonical HTTP', async () => {
+  const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'loop.sqlite'), server: f.origin(), development: true, entry: keys.entry });
+  try {
+    await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const { taskId } = await loopTask(f, runtime); let calls = 0;
+    const provider = (context: ActionContext) => {
+      calls++;
+      assert.equal(context.snapshotRef?.digest, sha256(canonicalJson(context.snapshot)));
+      for (const tool of context.snapshot.tools as { function: { name: string } }[]) assert(!['read_attachment','create_text_file','wait_for_event','publish_site','delegate_task'].includes(tool.function.name));
+      return { text: 'Canonical loop answer' };
+    };
+    assert.equal((await runtime.runTask(taskId, provider)).state, 'completed');
+    assert.equal((await runtime.runTask(taskId, provider)).state, 'completed');
+    const detail = (await f.send(`/api/tasks/${taskId}`)).body.data;
+    assert.equal(detail.state, 'completed'); assert.deepEqual(detail.results.map((row: { content: unknown }) => row.content), [{ text: 'Canonical loop answer' }]);
+    assert.equal(calls, 1);
+  } finally { await runtime.close(); await f.close(); }
+});
+
+test('home execution loop saves setup tools, pauses for answers and continues without repeating saved provider output', async () => {
+  const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'setup-loop.sqlite'), server: f.origin(), development: true, entry: keys.entry });
+  try {
+    await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const { taskId } = await loopTask(f, runtime, true); let calls = 0;
+    const provider = (context: { snapshot: Record<string, unknown> }) => {
+      calls++;
+      if (calls === 1) return { toolCall: { id: 'question', function: { name: 'ask_user', arguments: JSON.stringify({ question: 'Research or writing?', choices: ['Research', 'Writing'] }) } } };
+      assert.match(JSON.stringify(context.snapshot.conversation), /Research/);
+      if (calls === 2) return { toolCall: { id: 'profile', function: { name: 'edit_profile', arguments: JSON.stringify({ revision: 1, name: 'Researcher', instructions: 'Research carefully' }) } } };
+      assert.equal((context.snapshot.profile as { name: string }).name, 'Loop agent');
+      assert.match(JSON.stringify(context.snapshot.toolJournal), /Researcher/);
+      return { text: 'Research profile saved' };
+    };
+    assert.equal((await runtime.runTask(taskId, provider)).state, 'paused'); assert.equal(calls, 1);
+    const paused = (await f.send(`/api/tasks/${taskId}`)).body.data;
+    assert.equal((await f.send(`/api/tasks/${taskId}/questions/${paused.questions[0].id}/answer`, { requestId: randomUUID(), expectedRevision: paused.revision, text: 'Research' })).status, 200);
+    assert.equal((await runtime.runTask(taskId, provider)).state, 'completed'); assert.equal(calls, 3);
+    const detail = (await f.send(`/api/tasks/${taskId}`)).body.data; assert.equal(detail.results.length, 5);
+    assert.deepEqual(detail.results[3].content, { name: 'Researcher', instructions: 'Research carefully', revision: 2 });
+  } finally { await runtime.close(); await f.close(); }
+});
+
+test('home execution loop rejects malformed or unadvertised provider outputs and never retries uncertain effects', async () => {
+  const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'invalid-loop.sqlite'), server: f.origin(), development: true, entry: keys.entry });
+  try {
+    await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const call = { id: 'bad', function: { name: 'not_advertised', arguments: '{}' } };
+    for (const output of [{ text: '' }, { text: 'Mixed', toolCall: call }, { toolCall: call }, { toolCall: { ...call, function: { name: 'ask_user', arguments: 'not json' } } }, { unexpected: 'bad' }]) {
+      const { taskId } = await loopTask(f, runtime); let calls = 0;
+      const provider = () => { calls++; return output; };
+      await assert.rejects(runtime.runTask(taskId, provider), (error: unknown) => error instanceof ProtocolError && error.code === 'provider_result_invalid');
+      assert.equal((await runtime.runTask(taskId, provider)).state, 'uncertain'); assert.equal(calls, 1);
+      const detail = (await f.send(`/api/tasks/${taskId}`)).body.data; assert.equal(detail.state, 'uncertain'); assert.deepEqual(detail.results, []);
+    }
+  } finally { await runtime.close(); await f.close(); }
+});
+
+test('home execution loop resumes saved provider output after completion reply loss without another provider call', async () => {
+  const f = await fixture(), keys = memoryKeys(), database = join(f.dir, 'loop-restart.sqlite');
+  let runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: keys.entry }), originalFetch = globalThis.fetch, calls = 0;
+  try {
+    await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const { taskId } = await loopTask(f, runtime); const provider = () => { calls++; return { text: 'Restart-safe answer' }; };
+    let lost = true;
+    globalThis.fetch = async (url, init) => { const response = await originalFetch(url, init); if (lost && String(url).endsWith('/complete')) { lost = false; await response.body?.cancel(); throw new Error('Lost completion reply'); } return response; };
+    await assert.rejects(runtime.runTask(taskId, provider), /Lost completion reply/); globalThis.fetch = originalFetch;
+    await runtime.close(); runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: keys.entry });
+    const resumed = runtime.connect(); await until(() => resumed.state().phase === 'connected');
+    assert.equal((await runtime.runTask(taskId, () => { calls++; return { text: 'WRONG' }; })).state, 'completed');
+    assert.equal(calls, 1); assert.deepEqual((await f.send(`/api/tasks/${taskId}`)).body.data.results.map((row: { content: unknown }) => row.content), [{ text: 'Restart-safe answer' }]);
+  } finally { globalThis.fetch = originalFetch; await runtime.close(); await f.close(); }
+});
+
+test('home execution loop survives SIGKILL across provider and tool results without replaying effects', { timeout: 30000 }, async () => {
+  const f = await fixture(), store = memoryKeys(), database = join(f.dir, 'killed-loop.sqlite'), keys = join(f.dir, 'loop-keys.json');
+  const runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: store.entry }), calls = new Map<string, number>();
+  const provider = createServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    const { snapshot } = JSON.parse(body); calls.set(snapshot.taskId, (calls.get(snapshot.taskId) ?? 0) + 1);
+    res.end(JSON.stringify(snapshot.toolJournal.some((row: { kind: string; result: { name?: string } }) => row.result?.name === 'Saved by loop') ? { text: 'Saved profile once' } : { toolCall: { id: 'profile', function: { name: 'edit_profile', arguments: JSON.stringify({ revision: 1, name: 'Saved by loop', instructions: 'Retain saved changes' }) } } }));
+  });
+  await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve)); const address = provider.address(); if (!address || typeof address === 'string') throw new Error('Missing provider fixture address'); const providerOrigin = `http://127.0.0.1:${address.port}`;
+  let child: ReturnType<typeof spawn> | undefined;
+  try {
+    await runtime.enroll(f.jwt()); await runtime.close(); writeFileSync(keys, JSON.stringify(Object.fromEntries(store.values)), { mode: 0o600 });
+    async function launch(taskId: string, checkpoint?: string) {
+      child = spawn(process.execPath, ['--experimental-strip-types', 'recovery-fixture.mjs'], { cwd: new URL('.', import.meta.url), env: { ...process.env, BRIEFSIP_RECOVERY_FIXTURE: JSON.stringify({ mode: 'loop', database, keys, server: f.origin(), effect: providerOrigin, taskId, checkpoint }) }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+      let errors = ''; child.stderr!.on('data', chunk => { errors += chunk; }); const exited = once(child, 'exit');
+      const message = await Promise.race([once(child, 'message').then(([message]) => message), exited.then(() => { throw new Error(`Loop fixture exited: ${errors}`); })]);
+      return { child, exited, message };
+    }
+    for (const checkpoint of ['provider-not-sent', 'canonical-not-sent', 'provider-saved', 'tool-reply', 'tool-report', 'provider-in-flight']) {
+      const { taskId } = await loopTask(f, runtime), running = await launch(taskId, checkpoint); assert.equal(running.message.checkpoint, checkpoint);
+      running.child.kill('SIGKILL'); assert.equal((await running.exited)[1], 'SIGKILL'); await f.restart();
+      for (let restart = 0; restart < 2; restart++) {
+        const recovered = await launch(taskId); assert.equal(recovered.message.state, checkpoint === 'provider-in-flight' ? 'uncertain' : 'completed'); assert.equal((await recovered.exited)[0], 0);
+        assert.equal(calls.get(taskId), checkpoint === 'provider-in-flight' ? 1 : 2);
+      }
+      const detail = (await f.send(`/api/tasks/${taskId}`)).body.data;
+      assert.equal(detail.results.length, checkpoint === 'provider-in-flight' ? 0 : 3);
+      if (checkpoint !== 'provider-in-flight') assert.deepEqual(detail.results[1].content, { name: 'Saved by loop', instructions: 'Retain saved changes', revision: 2 });
+    }
+  } finally {
+    if (child && child.exitCode === null && child.signalCode === null) { const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited; }
+    await runtime.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); await f.close();
+  }
+});
+
+test('home execution loop uses explicit uncertainty retry reservation and never retries before that decision', async () => {
+  const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'risk-loop.sqlite'), server: f.origin(), development: true, entry: keys.entry });
+  try {
+    await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const { taskId } = await loopTask(f, runtime); let calls = 0;
+    await assert.rejects(runtime.runTask(taskId, () => { calls++; throw new Error('Provider reply lost'); }), /Provider reply lost/);
+    const recovered = await runtime.recoverPending(); assert.equal(recovered[0].state, 'uncertain');
+    assert.equal((await runtime.runTask(taskId, () => { calls++; return { text: 'MUST NOT CALL' }; })).state, 'uncertain'); assert.equal(calls, 1);
+    const detail = (await f.send(`/api/tasks/${taskId}`)).body.data, requestId = randomUUID();
+    const decision = await f.send(`/api/tasks/${taskId}/control`, { requestId, expectedRevision: detail.revision, operation: 'resolve_uncertain', decision: { kind: 'retry_with_risk', actionId: recovered[0].actionId, acknowledgement: 'effect_may_have_happened', reason: 'Synthetic provider output lost; retry explicitly approved' } });
+    assert.equal(decision.status, 200); assert.equal(decision.body.data.replacementActionId, requestId);
+    assert.equal((await runtime.runTask(taskId, () => { calls++; return { text: 'Approved replacement answer' }; })).state, 'completed'); assert.equal(calls, 2);
+    const completed = (await f.send(`/api/tasks/${taskId}`)).body.data; assert.equal(completed.results[0].actionId, requestId); assert.deepEqual(completed.results[0].content, { text: 'Approved replacement answer' });
+  } finally { await runtime.close(); await f.close(); }
+});
+
+test('home execution loop consumes resolved late-known output without repeating its provider call', async () => {
+  const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'known-loop.sqlite'), server: f.origin(), development: true, entry: keys.entry }), originalFetch = globalThis.fetch;
+  try {
+    await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const { taskId } = await loopTask(f, runtime); let calls = 0, prepared: Record<string, any> = {}, lastReport: Record<string, any> = {};
+    globalThis.fetch = async (url, init) => { const path = new URL(String(url)).pathname; if (path.endsWith('/prepare')) prepared = { ...JSON.parse(String(init!.body)), actionId: path.split('/').at(-2) }; if (path.endsWith('/reconcile')) lastReport = JSON.parse(String(init!.body)); return originalFetch(url, init); };
+    await assert.rejects(runtime.runTask(taskId, () => { calls++; throw new Error('Reply lost'); }), /Reply lost/); await runtime.recoverPending();
+    const resultContent = { toolCall: { id: 'settings', function: { name: 'read_provider_settings', arguments: '{}' } } }, encoded = canonicalJson(resultContent), resultRef = { v: 1, taskId, actionId: prepared.actionId, digest: sha256(encoded), size: Buffer.byteLength(encoded), encoding: 'canonical-json-v1' }, evidenceRequestId = randomUUID();
+    await runtime.reconcileTask(taskId, { requestId: evidenceRequestId, actionId: prepared.actionId, ownership: prepared.ownership, payloadDigest: prepared.payloadDigest, state: 'reported', effectStatus: 'known', journalSequence: lastReport.journalSequence + 1, resultDigest: resultRef.digest, resultRef, resultContent });
+    const detail = (await f.send(`/api/tasks/${taskId}`)).body.data;
+    assert.equal((await f.send(`/api/tasks/${taskId}/control`, { requestId: randomUUID(), expectedRevision: detail.revision, operation: 'resolve_uncertain', decision: { kind: 'known_result', actionId: prepared.actionId, evidenceRequestId, resultRef } })).status, 200);
+    globalThis.fetch = originalFetch;
+    assert.equal((await runtime.runTask(taskId, context => { calls++; assert.match(JSON.stringify(context.snapshot.toolJournal), /configured/); return { text: 'Known tool choice retained' }; })).state, 'completed'); assert.equal(calls, 2);
+    assert.equal((await f.send(`/api/tasks/${taskId}`)).body.data.results.length, 3);
+    const home = (await f.send('/api/devices')).body.data.find((row: { id: string }) => row.id === runtime.deviceId());
+    assert.equal((await f.send(`/api/devices/${home.id}/revoke`, { requestId: randomUUID(), expectedRevision: home.revision })).status, 200);
+    await connection.stop();
+    const recovery = await f.send(`/api/tasks/${taskId}/recovery-session`, { requestId: randomUUID(), expectedAuthorityGeneration: prepared.ownership.authorityGeneration, sourceDeviceId: home.id, sourceDeviceGeneration: prepared.ownership.deviceGeneration });
+    assert.equal(recovery.status, 201);
+    const exported = runtime.exportRecovery(taskId, [String(prepared.actionId)], randomUUID(), recovery.body.data.recoveryGeneration, true);
+    const response = await fetch(f.origin() + `/api/tasks/${taskId}/recovery-results`, { method: 'POST', headers: { Authorization: `Bearer ${f.jwt()}`, Origin: f.origin(), 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': exported.requestId, 'X-Briefsip-Recovery': recovery.body.data.session }, body: JSON.stringify(exported) });
+    assert.equal(response.status, 200, await response.text());
+    assert.equal(exported.envelope.entries[0].effectStatus, 'known');
+    assert.deepEqual(exported.envelope.entries[0].resultRef, resultRef); assert.deepEqual(exported.resultContent, resultContent);
+    assert.equal(calls, 2);
+  } finally { globalThis.fetch = originalFetch; await runtime.close(); await f.close(); }
+});
+
+test('home execution loop persists provider wait across reply loss and preserves concurrent pause', async () => {
+  const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'wait-loop.sqlite'), server: f.origin(), development: true, entry: keys.entry }), originalFetch = globalThis.fetch;
+  try {
+    await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const missing = await loopTask(f, runtime, false, null);
+    globalThis.fetch = async (url, init) => {
+      const response = await originalFetch(url, init);
+      if (String(url).endsWith('/wait-provider')) { await response.body?.cancel(); throw new Error('Lost provider wait reply'); }
+      return response;
+    };
+    await assert.rejects(runtime.runTask(missing.taskId, () => assert.fail('No provider binding')), /Lost provider wait reply/);
+    globalThis.fetch = originalFetch;
+    const waiting = (await f.send(`/api/tasks/${missing.taskId}`)).body.data;
+    assert.equal(waiting.state, 'waiting_resource');
+    assert.equal((await runtime.runTask(missing.taskId, () => assert.fail('No provider binding'))).state, 'waiting_resource');
+    assert.equal((await f.send(`/api/tasks/${missing.taskId}`)).body.data.revision, waiting.revision);
+    const paused = await loopTask(f, runtime, false, null);
+    globalThis.fetch = async (url, init) => {
+      if (String(url).endsWith('/wait-provider')) {
+        const detail = (await f.send(`/api/tasks/${paused.taskId}`)).body.data;
+        assert.equal((await f.send(`/api/tasks/${paused.taskId}/control`, { requestId: randomUUID(), expectedRevision: detail.revision, operation: 'pause' })).status, 200);
+      }
+      return originalFetch(url, init);
+    };
+    await assert.rejects(runtime.runTask(paused.taskId, () => assert.fail('Paused task must not dispatch')), (error: unknown) => error instanceof ProtocolError && error.code === 'stale_revision');
+    assert.equal((await f.send(`/api/tasks/${paused.taskId}`)).body.data.state, 'paused');
+  } finally { globalThis.fetch = originalFetch; await runtime.close(); await f.close(); }
+});
+
+test('home execution loop holds missing bindings and enforces provider slots before dispatch', async () => {
+  const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'capacity-loop.sqlite'), server: f.origin(), development: true, entry: keys.entry });
+  const releases: (() => void)[] = [], running: Promise<unknown>[] = [];
+  const hold = () => new Promise<unknown>(resolve => { releases.push(() => resolve({ text: 'Released answer' })); });
+  try {
+    await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const missing = await loopTask(f, runtime, false, null);
+    assert.equal((await runtime.runTask(missing.taskId, () => assert.fail('Missing binding must not dispatch'))).state, 'waiting_resource');
+    assert.equal((await f.send(`/api/tasks/${missing.taskId}`)).body.data.state, 'waiting_resource');
+    const first = await loopTask(f, runtime); running.push(runtime.runTask(first.taskId, hold)); await until(() => releases.length === 1);
+    await assert.rejects(runtime.runTask(first.taskId, hold), (error: unknown) => error instanceof ProtocolError && error.code === 'executor_busy');
+    const same = randomUUID(), payload = { v: 1, kind: 'direct', message: { text: 'Same agent/project', files: [] } }, expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 };
+    assert.equal((await f.send('/api/tasks', { requestId: same, projectId: first.project, agentId: first.agent, homeDeviceId: runtime.deviceId(), payload, expectedRevisions, payloadDigest: digestCommand(['briefsip-task-payload-v1', same, first.project, first.agent, runtime.deviceId(), payload, expectedRevisions]) })).status, 202);
+    assert.equal((await runtime.runTask(same, () => assert.fail('Same agent/project must wait'))).state, 'waiting_capacity');
+    const second = await loopTask(f, runtime, false, first.binding); running.push(runtime.runTask(second.taskId, hold)); await until(() => releases.length === 2);
+    const third = await loopTask(f, runtime, false, first.binding); assert.equal((await runtime.runTask(third.taskId, () => assert.fail('Third binding call must wait'))).state, 'waiting_capacity');
+    for (let count = 2; count < 4; count++) { const task = await loopTask(f, runtime); running.push(runtime.runTask(task.taskId, hold)); await until(() => releases.length === count + 1); }
+    const fifth = await loopTask(f, runtime); assert.equal((await runtime.runTask(fifth.taskId, () => assert.fail('Fifth host call must wait'))).state, 'waiting_capacity');
+    // Refill the real 40-proof/2s device budget before releasing four held calls.
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    releases.forEach(release => release()); await Promise.all(running);
+    assert.equal((await runtime.runTask(same, () => ({ text: 'Later same-agent answer' }))).state, 'completed');
+  } finally { releases.forEach(release => release()); await Promise.allSettled(running); await runtime.close(); await f.close(); }
+});
 
 for (const lostAt of ['request', 'reply', 'receipt', 'revoked', 'storage'] as const) test(`canonical completion recovery handles ${lostAt} without another provider call`, async () => {
   const f = await fixture(), keys = memoryKeys(), database = join(f.dir, 'completion-home.sqlite');
