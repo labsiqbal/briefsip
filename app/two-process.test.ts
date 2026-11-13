@@ -1332,6 +1332,77 @@ test('canonical workflow run and step pages preserve old approvals and admission
   } finally { db.close(); await f.close(); }
 });
 
+test('canonical routine manual run waits for its home and recovers lost replies and restart without moving schedule',async()=>{
+  const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=new DatabaseSync(join(f.dir,'canonical.sqlite')),originalFetch=globalThis.fetch;
+  const otherRuntime=openDeviceRuntime({database:join(f.dir,'manual-other-home.sqlite'),server:f.origin(),development:true,entry:f.keys.entry});
+  const command={requestId:routine,id:routine,revision:0,name:'Manual',prompt:'PRIVATE_MANUAL_PROMPT',nextAt:Date.now()+600000,intervalSeconds:300,enabled:false};
+  const request={requestId:randomUUID()};let calls=0;
+  try{
+    await otherRuntime.enroll(f.jwt());const otherConnection=otherRuntime.connect();await until(()=>otherConnection.state().phase==='connected');
+    const binding=randomUUID(),owner=(await f.send('/api/session')).body.data.accountId;
+    db.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','manual-fixture','Fixture','ready',1)").run(binding,f.home.id,owner);
+    db.prepare('UPDATE agent_authority SET provider_binding=?,revision=revision+1 WHERE agent=?').run(binding,f.agent);
+    assert.equal((await f.send(`/api/projects/${f.project}/agents/${f.agent}/routines`,command)).status,201);
+    const before=(await f.send(detail)).body.data,syncPath='/api/sync?projectId='+f.project,cursor=(await f.send(syncPath)).body.data.nextCursor;
+    globalThis.fetch=async(url,init)=>{
+      const response=await originalFetch(url,init);
+      if(String(url)===f.origin()+detail+'/run'){assert.equal(response.status,202,await response.clone().text());await response.body?.cancel();throw new Error('Lost manual response');}
+      return response;
+    };
+    await assert.rejects(f.send(detail+'/run',request),/Lost manual response/);globalThis.fetch=originalFetch;
+    const retry=await f.send(detail+'/run',request);assert.equal(retry.status,200,JSON.stringify(retry.body));
+    const accepted=retry.body,run=(await f.send(detail+'/runs')).body.data.items[0];
+    assert.equal(run.source,'manual');assert.equal(run.id,accepted.data.occurrenceId);assert.equal(run.taskId,accepted.data.taskId);assert.equal(run.state,'admitted');
+    assert.equal((await f.send(`/api/tasks/${run.taskId}`)).body.data.state,'waiting_device');assert.equal(accepted.data.homeDeviceId,f.home.id);
+    assert((await f.send('/api/devices')).body.data.some((device:any)=>device.id!==f.home.id&&device.status==='ready'),'Another ready device never takes the offline home task');
+    assert.deepEqual((await f.send(detail)).body.data,before,'Manual admission never changes configuration or catch-up');
+    const overlap=await f.send(detail+'/run',{requestId:randomUUID()});assert.equal(overlap.status,409);assert.match(overlap.body.error.message,/active run.*Complete or cancel/);
+    const observations=(await f.send(syncPath+'&cursor='+encodeURIComponent(cursor))).body.data;
+    assert.deepEqual(observations.page.events.filter((event:any)=>event.recordKind==='routine_occurrence').map((event:any)=>event.body.source),['manual']);
+    assert(!JSON.stringify(observations).includes('PRIVATE_'));
+    await f.restart();assert.deepEqual((await f.send(detail+'/run',request)).body,accepted);
+    const connection=f.runtime.connect();await until(()=>connection.state().phase==='connected');
+    assert.equal((await f.runtime.runTask(run.taskId,context=>{calls++;assert.equal((context.snapshot as any).conversation.message.text,command.prompt);return {text:'PRIVATE_MANUAL_RESULT'};})).state,'completed');
+    await until(async()=>(await f.send(detail+'/runs')).body.data.items[0].state==='done');
+    assert.equal(calls,1);assert.deepEqual((await f.send(detail+'/run',request)).body,accepted);
+    const snapshot=(await f.send(syncPath)).body.data;
+    assert.equal(snapshot.page.events.find((event:any)=>event.recordKind==='routine_occurrence').body.source,'manual');assert(!JSON.stringify(snapshot).includes('PRIVATE_'));
+    assert.equal((await f.send(detail)).body.data.next_at,command.nextAt);assert.equal(db.prepare('SELECT count(*) n FROM routine_occurrences').get()!.n,1);
+  }finally{globalThis.fetch=originalFetch;db.close();await otherRuntime.close();await f.close();}
+});
+
+test('canonical routine manual admission enforces current authority private scopes closed requests and receipt conflicts',async()=>{
+  const f=await workflowConfigurationFixture(),routine=randomUUID(),otherRoutine=randomUUID(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,detail=`/api/projects/${f.project}/routines/${routine}`,otherDetail=`/api/projects/${f.project}/routines/${otherRoutine}`,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  try{
+    for(const requestId of [routine,otherRoutine])assert.equal((await f.send(list,{requestId,id:requestId,revision:0,name:'Manual',prompt:'Private work',nextAt:Date.now()+600000,intervalSeconds:null,enabled:true})).status,201);
+    const owner=(await f.send('/api/session')).body.data.accountId,member=(await f.send('/api/session',undefined,'user_collaborator')).body.data.accountId;
+    db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project,member);
+    db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,member,f.agent);
+    db.prepare('INSERT INTO response_policies VALUES (?,?,?,0,1)').run(f.project,member,f.agent);
+    const request={requestId:randomUUID()},accepted=await f.send(detail+'/run',request,'user_collaborator');
+    assert.equal(accepted.status,202,JSON.stringify(accepted.body));
+    const conflict=await f.send(otherDetail+'/run',request,'user_collaborator');assert.equal(conflict.status,409);assert.equal(conflict.body.error.code,'payload_conflict');
+    db.prepare('UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE project=? AND account=?').run(f.project,member);
+    for(const payload of [request,{requestId:randomUUID()}])assert.equal((await f.send(detail+'/run',payload,'user_collaborator')).status,404);
+    db.prepare('UPDATE collaborator_agents SET enabled=1,revision=revision+1 WHERE project=? AND account=?').run(f.project,member);
+    db.prepare('UPDATE project_members SET deleted=1,grant_revision=grant_revision+1 WHERE project=? AND account=?').run(f.project,member);
+    assert.equal((await f.send(detail+'/run',request,'user_collaborator')).status,404);
+    db.prepare('UPDATE project_members SET deleted=0,grant_revision=grant_revision+1 WHERE project=? AND account=?').run(f.project,member);
+    db.prepare("UPDATE record_scopes SET account=?,visibility='owner' WHERE table_name='routines' AND key_json=?").run(member,JSON.stringify([routine]));
+    assert.equal((await f.send(detail+'/run',{requestId:randomUUID()})).status,404,'Project owner cannot run another human private routine');
+    assert.equal((await f.send(detail+'/run',request,'user_collaborator')).status,200);
+    db.prepare("UPDATE record_scopes SET account=?,visibility='owner' WHERE table_name='routine_occurrences'").run(owner);
+    assert.equal((await f.send(detail+'/run',request,'user_collaborator')).status,404,'Retry must still see its occurrence');
+    for(const path of [`/api/projects/${f.other}/routines/${routine}/run`,`/api/routines/${routine}/run`,otherDetail+'/run?projectId='+f.project,otherDetail+'/run?after=1'])assert.equal((await f.send(path,{requestId:randomUUID()})).status,404,path);
+    assert.equal((await f.send(otherDetail+'/run',{requestId:randomUUID(),projectId:f.project})).status,404);
+    assert.equal((await f.send(otherDetail+'/run',{requestId:'bad'})).status,400);
+    assert.equal((await f.send(otherDetail+'/run',{requestId:randomUUID(),prompt:'Extra'})).status,400);
+    assert.equal((await f.send(otherDetail+'/run')).status,404);
+    const selectorId=randomUUID(),selector=await fetch(f.origin()+otherDetail+'/run',{method:'POST',headers:{Authorization:`Bearer ${f.jwt()}`,Origin:f.origin(),'Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':selectorId,'X-Briefsip-Project':f.other},body:JSON.stringify({requestId:selectorId})});assert.equal(selector.status,404);await selector.body?.cancel();
+    assert.equal(db.prepare('SELECT count(*) n FROM routine_occurrences').get()!.n,1);
+  }finally{db.close();await f.close();}
+});
+
 test('canonical routine configuration and flow stay scoped across projects restart and lost replies', async () => {
   const f=await workflowConfigurationFixture(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`;
   const command={requestId:routine,id:routine,revision:0,name:'Routine',prompt:'Private prompt\nCheck work',nextAt:Date.now()+600000,intervalSeconds:300,enabled:true};
