@@ -22,18 +22,33 @@ export function WorkflowGraph({ graph, selected, locked, onSelect, onMove, butto
   const width = Math.max(360, ...positions.map(item => item.x + 244)), height = Math.max(200, ...positions.map(item => item.y + 144));
   const edges = graph.nodes.flatMap(node => workflowEdges(node).map((target, index) => ({ from: node.id, to: target, portY: node.kind === 'condition' ? index === 0 ? 20 : 60 : 40,
     label: node.kind === 'condition' ? index === 0 ? 'Matched' : 'Not matched' : node.kind === 'approval' ? 'Approved' : 'Continue' })));
-  return <><p className="muted" id={help}>{onMove ? 'Drag nodes to position them. With a keyboard, focus a node and press Alt and an arrow key. Enter opens settings.' : 'Graph version when the run started. Status shows the last attempt for each step. Choose a node to see its details.'}</p><div ref={viewport} className="workflow-graph" role="region" aria-label="Workflow graph, scroll to see all steps" tabIndex={0} onScroll={() => {
+  return <><style>{`
+    .bs-root .workflow-graph { max-height: 420px; overflow: auto; border: .5px solid var(--color-border-secondary); border-radius: 14px; background: var(--color-bg-pane); }
+    .bs-root .workflow-graph-content { position: relative; }
+    .bs-root .workflow-graph svg { display: block; }
+    .bs-root .workflow-graph text { font: 12px var(--font-stack); fill: var(--color-text-secondary); }
+    .bs-root .workflow-graph-node { position: absolute; width: 180px; height: 80px; padding: 8px 10px; display: flex; flex-direction: column; justify-content: center; gap: 4px; border: .5px solid var(--color-border-secondary); border-radius: 10px; background: var(--color-bg-pane); color: var(--color-text-primary); font: 13px var(--font-stack); text-align: left; }
+    .bs-root .workflow-run-node { height: 100px; }
+    .bs-root .workflow-graph-node span, .bs-root .workflow-graph-node small { color: var(--color-text-secondary); font-size: 12px; }
+    .bs-root .workflow-graph-node strong { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bs-root .workflow-graph-node[aria-current] { border-color: var(--color-brand); box-shadow: inset 0 0 0 1px var(--color-brand); }
+    .bs-root .workflow-graph-node:hover:not(:disabled) { background: var(--color-bg-hover); }
+    .bs-root .workflow-graph-node:disabled { opacity: .5; }
+    .bs-root .workflow-graph:focus-visible, .bs-root .workflow-graph-node:focus-visible, .bs-root .workflow-node:focus, .bs-root .workflow-step-detail:focus { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+    .bs-root .workflow-graph-node[data-movable] { touch-action: none; user-select: none; }
+    .bs-root .workflow-graph-links { margin-block: 12px; font-size: 12px; color: var(--color-text-secondary); }
+  `}</style><p className="k-field__hint" id={help}>{onMove ? 'Drag nodes to position them. With a keyboard, focus a node and press Alt and an arrow key. Enter opens settings.' : 'Graph version when the run started. Status shows the last attempt for each step. Choose a node to see its details.'}</p><div ref={viewport} className="workflow-graph" role="region" aria-label="Workflow graph, scroll to see all steps" tabIndex={0} onScroll={() => {
     if (drag.current && !locked) { drag.current.moved = true; setPreview(position(drag.current.lastX, drag.current.lastY)); }
   }}>
     <div className="workflow-graph-content" style={{ width, height }}>
-      <svg width={width} height={height} aria-hidden="true"><defs><marker id={marker} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="currentColor" /></marker></defs>
+      <svg width={width} height={height} aria-hidden="true"><defs><marker id={marker} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="var(--color-border-primary)" /></marker></defs>
         {edges.map((edge, index) => {
           const from = byId.get(edge.from), to = byId.get(edge.to); if (!from || !to) return null;
           const startX = from.x + 180, startY = from.y + edge.portY, endX = to.x, endY = to.y + edge.portY;
           const forward = endX > startX, laneY = Math.min(from.y, to.y) - 28 - index % 3 * 10;
           const path = forward ? `M${startX},${startY} C${startX + 50},${startY} ${endX - 50},${endY} ${endX},${endY}`
             : `M${startX},${startY} C${startX + 40},${startY} ${startX + 40},${laneY} ${startX},${laneY} L${endX},${laneY} C${endX - 40},${laneY} ${endX - 40},${endY} ${endX},${endY}`;
-          return <g key={`${edge.from}:${index}`}><path d={path} fill="none" stroke="currentColor" strokeWidth="1.5" markerEnd={`url(#${marker})`} /><text x={(startX + endX) / 2} y={forward ? (startY + endY) / 2 - 8 : laneY - 5} textAnchor="middle">{edge.label}</text></g>;
+          return <g key={`${edge.from}:${index}`}><path d={path} fill="none" stroke="var(--color-border-primary)" strokeWidth="1.5" markerEnd={`url(#${marker})`} /><text x={(startX + endX) / 2} y={forward ? (startY + endY) / 2 - 8 : laneY - 5} textAnchor="middle">{edge.label}</text></g>;
         })}
       </svg>
       {graph.nodes.map(node => { const point = byId.get(node.id)!; return <button type="button" className={`secondary workflow-graph-node${labels || loops?.has(node.id) ? ' workflow-run-node' : ''}`} data-movable={onMove ? '' : undefined} key={node.id}

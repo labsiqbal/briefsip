@@ -1,11 +1,19 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type SelectHTMLAttributes } from 'react';
 import { WorkflowGraph as GraphView } from './WorkflowGraph';
+import { ActionMenu, Alert, Button, Field, IconButton, Input, PageHeader, Select, Textarea, useConfirm, useField } from './ui/kit';
+import { Ellipsis, Plus, Redo2, Undo2 } from 'lucide-react';
 import { editWorkflowHistory, moveWorkflowNode, restoreWorkflowEditorDraft, workflowAutosaveDraft, workflowDraftMatches, workflowUnconditionalCycles, type WorkflowHistory } from '../workflow-editor-state';
 import { removeWorkflowNode, validateWorkflow, type WorkflowGraph, type WorkflowNode } from '../workflows.ts';
 
 export type Workflow = { id: string; agent: string; name: string; revision: number; graph: WorkflowGraph; deleted?: number };
 export type WorkflowDraft = { name: string; graph: WorkflowGraph; revision: number };
 type Agent = { id: string; name: string; model: string };
+
+// ponytail: keep native required-select validation; use kit Select when it supports required.
+function RequiredSelect(props: SelectHTMLAttributes<HTMLSelectElement>) {
+  const field = useField();
+  return <select id={field?.id} aria-describedby={field?.describedBy} className="k-input" {...props} />;
+}
 
 export function WorkflowEditor({ owner, agents, request, initial, saved, reload = 0, locked: parentLocked, draftKey, pendingSave, onReload, onSave, onBack }: {
   owner: Agent; agents: Agent[]; initial?: WorkflowDraft; saved?: WorkflowDraft; locked: boolean;
@@ -76,6 +84,7 @@ export function WorkflowEditor({ owner, agents, request, initial, saved, reload 
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
+  const confirm = useConfirm();
   const heading = useRef<HTMLHeadingElement>(null);
   const appliedReload = useRef(reload);
   useEffect(() => { heading.current?.focus(); }, []);
@@ -111,58 +120,58 @@ export function WorkflowEditor({ owner, agents, request, initial, saved, reload 
       setError(''); await submit({ name: name.trim(), graph: validated, revision: saved?.revision ?? initial?.revision ?? 0 });
     } catch (error) { setError(error instanceof Error ? error.message : 'Workflow has not been saved.'); }
   }
-  return <section className="setup workflow-panel"><h1 ref={heading} tabIndex={-1}>{initial ? 'Edit workflow' : 'New workflow'}</h1>
-    <p className="muted">Arrange steps and their next destinations. Approvals wait for your decision. Saved changes apply only to new runs.</p>
-    {recovery.held && !pendingSave && <p className="notice" role="alert">The request has completed. Review the local draft before continuing to edit. <button type="button" className="secondary" disabled={parentLocked} onClick={() => {
+  return <div className="k-page bs-root">
+    <PageHeader headingRef={heading} title={initial ? 'Edit workflow' : 'New workflow'} description="Arrange steps and their next destinations. Approvals wait for your decision. Saved changes apply only to new runs." actions={<><Button variant="ghost" onClick={async () => { if (!dirty || await confirm({ title: 'Leave editor?', description: 'There are unsaved changes. Leave the editor?', confirm: 'Leave', danger: true })) onBack(); }}>Back</Button><Button type="submit" form="workflow-editor" variant="primary" disabled={locked}>Save workflow</Button></>} />
+    {recovery.held && !pendingSave && <Alert tone="warn">The request has completed. Review the local draft before continuing to edit. <Button type="button" disabled={parentLocked} onClick={() => {
       try {
         const local = restoreWorkflowEditorDraft(sessionStorage.getItem(draftKey));
         setRecovery({ draft: local, invalid: false, held: false });
         setDraftConflict(!!local && local.revision !== (saved?.revision ?? 0));
         if (local) { setName(local.name); setHistory(current => editWorkflowHistory(current, local.graph)); }
       } catch { setRecovery({ draft: null, invalid: true, held: false }); }
-    }}>Review local draft</button></p>}
-    {storageError && <p className="error" role="alert">Draft has not been saved in the browser. Do not close the page before saving to the server.</p>}
-    {recovery.invalid && <p className="error" role="alert">Browser draft could not be read. <button type="button" className="secondary" onClick={() => { if (window.confirm('Discard the unreadable browser draft?')) try { sessionStorage.removeItem(draftKey); setRecovery({ draft: null, invalid: false, held: false }); } catch { setStorageError(true); } }}>Discard browser draft</button></p>}
-    {draftConflict && <p className="notice" role="alert">Draft is from an older revision. Load the latest version before saving; the draft graph remains available through Undo graph. <button type="button" className="secondary" disabled={parentLocked} onClick={onReload}>Load latest version</button></p>}
-    {saved && <p className="muted" role="status">{locked ? 'Saving awaits confirmation or recovery.' : !dirty ? `Saved, version ${saved.revision}.` : draft ? attempted.current === stamp ? 'Changes have not been saved. Use Save workflow to try again.' : 'Changes save automatically after you stop typing.' : 'Complete the graph and name to save changes.'}</p>}
-    <form onSubmit={event => void save(event)}><fieldset disabled={locked}>
-      <label>Workflow name<input required maxLength={80} value={name} onChange={event => setName(event.target.value)} /></label>
-      <label>Starting step<select required value={graph.entry} onChange={event => setGraph({ ...graph, entry: event.target.value })}>{targets}</select></label>
-      <label>Step limit<input type="number" min={1} max={1000} required value={graph.maxSteps} onChange={event => setGraph({ ...graph, maxSteps: Number(event.target.value) })} /><span className="muted">Loops stop with a failed status when this limit is reached.</span></label>
-      <div className="form-actions routine-actions"><button type="button" className="secondary" disabled={!history.past.length} onClick={() => setHistory(current => editWorkflowHistory(current, 'undo'))}>Undo graph</button><button type="button" className="secondary" disabled={!history.future.length} onClick={() => setHistory(current => editWorkflowHistory(current, 'redo'))}>Redo graph</button><button type="button" className="secondary" disabled={!graph.positions} onClick={() => { const { positions, ...automatic } = graph; void positions; setGraph(automatic); }}>Auto-arrange</button></div>
-      <p className="muted">Choose a step in the graph to open its settings. Undo and redo apply to graph changes, not the workflow name.</p>
-      {!!cycles.length && <p className="notice" role="status">Unconditional loop: {cycles.map(cycle => cycle.join(', ')).join('; ')}. The loop stops if approval is denied, the run is canceled, or the step limit is reached.</p>}
+    }}>Review local draft</Button></Alert>}
+    {storageError && <Alert tone="error">Draft has not been saved in the browser. Do not close the page before saving to the server.</Alert>}
+    {recovery.invalid && <Alert tone="error">Browser draft could not be read. <Button type="button" onClick={async () => { if (await confirm({ title: 'Discard the unreadable browser draft?', confirm: 'Discard draft', danger: true })) try { sessionStorage.removeItem(draftKey); setRecovery({ draft: null, invalid: false, held: false }); } catch { setStorageError(true); } }}>Discard browser draft</Button></Alert>}
+    {draftConflict && <Alert tone="warn">Draft is from an older revision. Load the latest version before saving; the draft graph remains available through Undo graph. <Button type="button" disabled={parentLocked} onClick={onReload}>Load latest version</Button></Alert>}
+    {saved && <p className="k-field__hint" role="status">{locked ? 'Saving awaits confirmation or recovery.' : !dirty ? `Saved, version ${saved.revision}.` : draft ? attempted.current === stamp ? 'Changes have not been saved. Use Save workflow to try again.' : 'Changes save automatically after you stop typing.' : 'Complete the graph and name to save changes.'}</p>}
+    <form id="workflow-editor" className="k-fieldset" onSubmit={event => void save(event)}><fieldset className="k-fieldset" disabled={locked}>
+      <Field label="Workflow name"><Input required maxLength={80} value={name} onChange={event => setName(event.target.value)} /></Field>
+      <Field label="Starting step"><RequiredSelect aria-label="Starting step" required value={graph.entry} onChange={event => setGraph({ ...graph, entry: event.target.value })}>{targets}</RequiredSelect></Field>
+      <Field label="Step limit" hint="Loops stop with a failed status when this limit is reached."><Input type="number" min={1} max={1000} required value={graph.maxSteps} onChange={event => setGraph({ ...graph, maxSteps: Number(event.target.value) })} /></Field>
+      <div className="k-inline"><Button type="button" disabled={!history.past.length} onClick={() => setHistory(current => editWorkflowHistory(current, 'undo'))} icon={<Undo2 size={14} aria-hidden />}>Undo graph</Button><Button type="button" disabled={!history.future.length} onClick={() => setHistory(current => editWorkflowHistory(current, 'redo'))} icon={<Redo2 size={14} aria-hidden />}>Redo graph</Button><Button type="button" disabled={!graph.positions} onClick={() => { const { positions, ...automatic } = graph; void positions; setGraph(automatic); }}>Auto-arrange</Button></div>
+      <p className="k-field__hint">Choose a step in the graph to open its settings. Undo and redo apply to graph changes, not the workflow name.</p>
+      {!!cycles.length && <Alert tone="warn">Unconditional loop: {cycles.map(cycle => cycle.join(', ')).join('; ')}. The loop stops if approval is denied, the run is canceled, or the step limit is reached.</Alert>}
       <GraphView graph={graph} loops={new Set(cycles.flat())} onMove={(id, x, y) => { setSelected(id); setGraph(current => moveWorkflowNode(current, id, x, y)); }} selected={selected} locked={locked} buttonRefs={buttons.current} onSelect={id => { setSelected(id); panels.current.get(id)?.focus(); panels.current.get(id)?.scrollIntoView({ block: 'nearest' }); }} />
-      {graph.nodes.map((node, index) => <fieldset className="workflow-node" key={node.id} tabIndex={-1} ref={element => { if (element) panels.current.set(node.id, element); else panels.current.delete(node.id); }}><legend>Step {node.id}</legend>
-        <button type="button" className="secondary" onClick={() => { setSelected(node.id); buttons.current.get(node.id)?.focus(); buttons.current.get(node.id)?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }}>Back to graph {node.id}</button>
-        <label>Step type<select value={node.kind} onChange={event => changeKind(index, event.target.value as WorkflowNode['kind'])}><option value="agent">Agent</option><option value="model">Model</option><option value="condition">Condition</option><option value="approval">Approval</option><option value="wait">Wait for event</option><option value="output">Output</option></select></label>
-        {node.kind === 'agent' && <label>Executing agent<select value={node.agent} onChange={event => update(index, { agent: event.target.value })}>{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name.length > 24 ? agent.name.slice(0, 21) + '...' : agent.name}</option>)}</select><span className="flow-selected-name muted">{agents.find(agent => agent.id === node.agent)?.name}</span></label>}
-        {node.kind === 'model' && <label>Model<input required maxLength={200} value={node.model} onChange={event => update(index, { model: event.target.value })} /></label>}
-        {node.kind === 'wait' && <><label>Event name<input required maxLength={256} value={node.event} onChange={event => update(index, { event: event.target.value })} /></label><label>Wait timeout (seconds)<input type="number" required min={1} max={604800} value={node.timeoutSeconds} onChange={event => update(index, { timeoutSeconds: Number(event.target.value) })} /></label><p className="muted">Waits for a signed event for this run and step. The payload becomes the step result; a timeout fails the workflow.</p></>}
-        {'prompt' in node && <label>{node.kind === 'approval' ? 'Approval question' : 'Step instructions'}<textarea required maxLength={node.kind === 'approval' ? 4000 : 16000} rows={3} value={node.prompt} onChange={event => update(index, { prompt: event.target.value })} /></label>}
-        {node.kind === 'condition' && <><label>Condition evaluation<select value={node.operator} onChange={event => {
-          const operator = event.target.value as 'equals' | 'contains' | 'model';
+      {graph.nodes.map((node, index) => <fieldset className="k-fieldset workflow-node" style={{ padding: 16, border: '0.5px solid var(--color-border-secondary)', borderRadius: 14 }} key={node.id} tabIndex={-1} ref={element => { if (element) panels.current.set(node.id, element); else panels.current.delete(node.id); }}><legend>Step {node.id}</legend>
+        <div className="k-inline"><Button type="button" onClick={() => { setSelected(node.id); buttons.current.get(node.id)?.focus(); buttons.current.get(node.id)?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }}>Back to graph {node.id}</Button></div>
+        <Field label="Step type"><Select disabled={locked} value={node.kind} onChange={value => changeKind(index, value as WorkflowNode['kind'])} options={[{ value: 'agent', label: 'Agent' }, { value: 'model', label: 'Model' }, { value: 'condition', label: 'Condition' }, { value: 'approval', label: 'Approval' }, { value: 'wait', label: 'Wait for event' }, { value: 'output', label: 'Output' }]} /></Field>
+        {node.kind === 'agent' && <Field label="Executing agent" hint={agents.find(agent => agent.id === node.agent)?.name}><Select disabled={locked} value={node.agent} onChange={value => update(index, { agent: value })} options={agents.map(agent => ({ value: agent.id, label: agent.name.length > 24 ? agent.name.slice(0, 21) + '...' : agent.name }))} /></Field>}
+        {node.kind === 'model' && <Field label="Model"><Input required maxLength={200} value={node.model} onChange={event => update(index, { model: event.target.value })} /></Field>}
+        {node.kind === 'wait' && <><Field label="Event name"><Input required maxLength={256} value={node.event} onChange={event => update(index, { event: event.target.value })} /></Field><Field label="Wait timeout (seconds)"><Input type="number" required min={1} max={604800} value={node.timeoutSeconds} onChange={event => update(index, { timeoutSeconds: Number(event.target.value) })} /></Field><p className="k-field__hint">Waits for a signed event for this run and step. The payload becomes the step result; a timeout fails the workflow.</p></>}
+        {'prompt' in node && <Field label={node.kind === 'approval' ? 'Approval question' : 'Step instructions'}><Textarea required maxLength={node.kind === 'approval' ? 4000 : 16000} rows={3} value={node.prompt} onChange={event => update(index, { prompt: event.target.value })} /></Field>}
+        {node.kind === 'condition' && <><Field label="Condition evaluation"><Select disabled={locked} value={node.operator} onChange={value => {
+          const operator = value as 'equals' | 'contains' | 'model';
           const base = { id: node.id, kind: 'condition' as const, value: node.value, yes: node.yes, no: node.no };
           const replacement: WorkflowNode = operator === 'model' ? { ...base, operator, model: owner.model } : { ...base, operator };
           setGraph(current => ({ ...current, nodes: current.nodes.map((item, i) => i === index ? replacement : item) }));
-        }}><option value="equals">Exact match</option><option value="contains">Contains text</option><option value="model">Model judgment</option></select></label>{node.operator === 'model' && <label>Condition model<input required maxLength={200} value={node.model} onChange={event => update(index, { model: event.target.value })} /></label>}<label>{node.operator === 'model' ? 'Condition question' : 'Comparison text'}<input required={node.operator === 'model'} maxLength={16000} value={node.value} onChange={event => update(index, { value: event.target.value })} /><span className="muted">{node.operator === 'model' ? 'The model answers yes or no without tools. Any other answer fails the step; the previous result is still passed on.' : 'Case-sensitive.'}</span></label></>}
-        {'next' in node && <label>Continue to<select required value={node.next} onChange={event => update(index, { next: event.target.value })}>{targets}</select></label>}
-        {'yes' in node && <><label>{node.kind === 'approval' ? 'If approved' : 'If matched'}<select required value={node.yes} onChange={event => update(index, { yes: event.target.value })}>{targets}</select></label>{node.kind === 'condition' ? <label>If not matched<select required value={node.no} onChange={event => update(index, { no: event.target.value })}>{targets}</select></label> : <p className="muted">Rejection stops the run. Previous results remain saved.</p>}</>}
-        {node.kind === 'output' && <><label>Result destination<select value={node.channel === undefined ? 'inbox' : 'channel'} onChange={event => {
-          setGraph(current => ({ ...current, nodes: current.nodes.map(item => item.id === node.id ? { id: node.id, kind: 'output', ...(event.target.value === 'channel' ? { channel: '' } : {}) } : item) }));
-        }}><option value="inbox">Workflow inbox</option><option value="channel">Channel and inbox</option></select></label>
-          {node.channel !== undefined && <><label>Destination channel<select required value={node.channel} onChange={event => update(index, { channel: event.target.value })}><option value="">Choose channel</option>{node.channel && !channels?.some(channel => channel.id === node.channel) && <option value={node.channel}>Channel unavailable</option>}{channels?.map(channel => <option key={channel.id} value={channel.id}>{channel.name.length > 24 ? channel.name.slice(0, 21) + '...' : channel.name}</option>)}</select><span className="flow-selected-name muted">{channels?.find(channel => channel.id === node.channel)?.name}</span></label>
-            {channelError && <p className="error" role="alert">{channelError}</p>}{!channels && !channelError && <p role="status">Loading channels...</p>}<button type="button" className="secondary" onClick={() => setChannelRefresh(value => value + 1)}>Reload destination channels</button>
-            <p className="muted">Results are sent on behalf of the workflow owner agent. The channel must be active and the agent must still be a member when results are sent.</p></>}
-          <p className="muted">Complete the workflow with the last step result.</p></>}
-        <button type="button" className="secondary" disabled={graph.nodes.length === 1} onClick={() => {
+        }} options={[{ value: 'equals', label: 'Exact match' }, { value: 'contains', label: 'Contains text' }, { value: 'model', label: 'Model judgment' }]} /></Field>{node.operator === 'model' && <Field label="Condition model"><Input required maxLength={200} value={node.model} onChange={event => update(index, { model: event.target.value })} /></Field>}<Field label={node.operator === 'model' ? 'Condition question' : 'Comparison text'} hint={node.operator === 'model' ? 'The model answers yes or no without tools. Any other answer fails the step; the previous result is still passed on.' : 'Case-sensitive.'}><Input required={node.operator === 'model'} maxLength={16000} value={node.value} onChange={event => update(index, { value: event.target.value })} /></Field></>}
+        {'next' in node && <Field label="Continue to"><RequiredSelect aria-label="Continue to" required value={node.next} onChange={event => update(index, { next: event.target.value })}>{targets}</RequiredSelect></Field>}
+        {'yes' in node && <><Field label={node.kind === 'approval' ? 'If approved' : 'If matched'}><RequiredSelect aria-label={node.kind === 'approval' ? 'If approved' : 'If matched'} required value={node.yes} onChange={event => update(index, { yes: event.target.value })}>{targets}</RequiredSelect></Field>{node.kind === 'condition' ? <Field label="If not matched"><RequiredSelect aria-label="If not matched" required value={node.no} onChange={event => update(index, { no: event.target.value })}>{targets}</RequiredSelect></Field> : <p className="k-field__hint">Rejection stops the run. Previous results remain saved.</p>}</>}
+        {node.kind === 'output' && <><Field label="Result destination"><Select disabled={locked} value={node.channel === undefined ? 'inbox' : 'channel'} onChange={value => {
+          setGraph(current => ({ ...current, nodes: current.nodes.map(item => item.id === node.id ? { id: node.id, kind: 'output', ...(value === 'channel' ? { channel: '' } : {}) } : item) }));
+        }} options={[{ value: 'inbox', label: 'Workflow inbox' }, { value: 'channel', label: 'Channel and inbox' }]} /></Field>
+          {node.channel !== undefined && <><Field label="Destination channel" hint={channels?.find(channel => channel.id === node.channel)?.name}><RequiredSelect aria-label="Destination channel" required value={node.channel} onChange={event => update(index, { channel: event.target.value })}><option value="">Choose channel</option>{node.channel && !channels?.some(channel => channel.id === node.channel) && <option value={node.channel}>Channel unavailable</option>}{channels?.map(channel => <option key={channel.id} value={channel.id}>{channel.name.length > 24 ? channel.name.slice(0, 21) + '...' : channel.name}</option>)}</RequiredSelect></Field>
+            {channelError && <Alert tone="error">{channelError}</Alert>}{!channels && !channelError && <p role="status">Loading channels...</p>}<Button type="button" onClick={() => setChannelRefresh(value => value + 1)}>Reload destination channels</Button>
+            <p className="k-field__hint">Results are sent on behalf of the workflow owner agent. The channel must be active and the agent must still be a member when results are sent.</p></>}
+          <p className="k-field__hint">Complete the workflow with the last step result.</p></>}
+        <ActionMenu label={`Step ${node.id} actions`} trigger={<IconButton label={`Step ${node.id} actions`} disabled={locked}><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: `Delete step ${node.id}`, danger: true, disabled: locked || graph.nodes.length === 1, onSelect: () => {
           const next = graph.nodes.find(item => item.id !== node.id)?.id;
           if (next) { focusAfterRemoval.current = next; setSelected(next); setGraph(current => removeWorkflowNode(current, node.id)); }
-        }}>Delete step {node.id}</button>
+        } }]} />
       </fieldset>)}
-      <button type="button" className="secondary" disabled={graph.nodes.length >= 64} onClick={() => { let n = graph.nodes.length + 1; while (graph.nodes.some(node => node.id === `step${n}`)) n++; setGraph({ ...graph, nodes: [...graph.nodes, { id: `step${n}`, kind: 'output' }] }); }}>Add step</button>
+      <div className="k-inline"><Button type="button" disabled={graph.nodes.length >= 64} onClick={() => { let n = graph.nodes.length + 1; while (graph.nodes.some(node => node.id === `step${n}`)) n++; setGraph({ ...graph, nodes: [...graph.nodes, { id: `step${n}`, kind: 'output' }] }); }} icon={<Plus size={14} aria-hidden />}>Add step</Button></div>
     </fieldset>
-    {error && <p className="error" role="alert">{error}</p>}
-    <div className="form-actions routine-actions"><button type="button" className="secondary" onClick={() => { if (!dirty || window.confirm('There are unsaved changes. Leave the editor?')) onBack(); }}>Back to workflows</button><button disabled={locked}>Save workflow</button></div></form>
-  </section>;
+    {error && <Alert tone="error">{error}</Alert>}
+    </form>
+  </div>;
 }

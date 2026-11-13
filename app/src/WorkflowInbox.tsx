@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { Alert, Badge, Button, Card, EmptyState, IconButton, PageHeader, Row, Section, SkeletonRows } from './ui/kit';
+import { ChevronLeft, ChevronRight, Inbox, RefreshCw } from 'lucide-react';
 
 type Notice = { seq: number; run: string; name: string; created: string; read: number };
 type Page = { notifications: Notice[]; next_before: number | null; unread: number };
@@ -55,20 +57,20 @@ export function WorkflowInbox({ request, onBack }: {
     } catch (error) { if (current === version.current) setError(error instanceof Error ? error.message : 'Result could not open. Try again.'); }
     finally { if (current === version.current) setBusy(false); }
   }
-  return <section className="setup workflow-panel"><h1 ref={heading} tabIndex={-1}>{result ? result.name : 'Workflow inbox'}</h1>
-    <div className="form-actions routine-actions"><button className="secondary" onClick={onBack}>Back to workflows</button>{result && <button className="secondary" onClick={() => setResult(null)}>Back to inbox</button>}</div>
-    {error && <p className="error" role="alert">{error}</p>}
-    {result ? <p className="message-text">{result.last || 'Workflow completed without result text.'}</p> : <>
-      <p>Results are saved on the server. Browser notifications cover only new results while this inbox is open; result contents are not shown in notifications.</p>
-      <button className="secondary" disabled={permission === 'unsupported' || permission === 'denied'} onClick={async () => {
+  return <div className="k-page bs-root">
+    <PageHeader headingRef={heading} title={result ? result.name : 'Workflow inbox'} actions={<><Button variant="ghost" onClick={onBack}>Back to workflows</Button>{result ? <Button variant="ghost" onClick={() => setResult(null)}>Back to inbox</Button> : <IconButton label="Reload inbox" onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton>}</>} />
+    {error && <Alert tone="error">{error}</Alert>}
+    {result ? <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{result.last || 'Workflow completed without result text.'}</p> : <>
+      <Alert actions={<Button disabled={permission === 'unsupported' || permission === 'denied'} onClick={async () => {
         if (enabled) { setEnabled(false); return; }
         try { const value = await Notification.requestPermission(); setPermission(value); setEnabled(value === 'granted'); }
         catch { setError('Notification permission could not be requested. Check browser settings.'); }
-      }}>{enabled ? 'Turn off browser notifications' : 'Enable browser notifications'}</button>
-      {permission === 'unsupported' && <p>This browser does not support notifications.</p>}{permission === 'denied' && <p>Notifications are blocked. Change site permissions in browser settings.</p>}
-      <button className="secondary" onClick={() => setRefresh(value => value + 1)}>Reload inbox</button>
-      {page ? <><p>{page.unread} unread results</p><ul className="routine-list">{page.notifications.map(item => <li key={item.run}><h2>{item.name}</h2><p>{new Date(item.created).toLocaleString()} · {item.read ? 'Read' : 'Unread'}</p><button className="secondary" disabled={busy} onClick={() => void open(item)}>Open result {item.name}</button></li>)}</ul>{!page.notifications.length && <p>No results on this page yet.</p>}</> : !error && <p role="status">Loading inbox...</p>}
-      <div className="form-actions routine-actions"><button className="secondary" disabled={!cursors.length || busy} onClick={() => setCursors(value => value.slice(0, -1))}>Newer results</button><button className="secondary" disabled={!page?.next_before || busy} onClick={() => { if (page?.next_before) setCursors(value => [...value, page.next_before!]); }}>Older results</button></div>
+      }}>{enabled ? 'Turn off browser notifications' : 'Enable browser notifications'}</Button>}>Results are saved on the server. Browser notifications cover only new results while this inbox is open; result contents are not shown in notifications.</Alert>
+      {permission === 'unsupported' && <Alert>This browser does not support notifications.</Alert>}{permission === 'denied' && <Alert>Notifications are blocked. Change site permissions in browser settings.</Alert>}
+      <Section title={page ? `${page.unread} unread results` : 'Results'}>
+        {page ? page.notifications.length ? <Card>{page.notifications.map(item => <Row key={item.run} title={item.name} meta={<><span>{new Date(item.created).toLocaleString()}</span><Badge tone={item.read ? 'neutral' : 'brand'}>{item.read ? 'Read' : 'Unread'}</Badge></>} onClick={() => void open(item)} disabled={busy} />)}</Card> : <EmptyState icon={<Inbox size={18} />} title="No results on this page yet" /> : !error && <><span className="sr-only" role="status">Loading inbox...</span><SkeletonRows /></>}
+        {(cursors.length > 0 || page?.next_before) && <div className="k-pager"><IconButton label="Newer results" disabled={!cursors.length || busy} onClick={() => setCursors(value => value.slice(0, -1))}><ChevronLeft size={16} aria-hidden /></IconButton><IconButton label="Older results" disabled={!page?.next_before || busy} onClick={() => { if (page?.next_before) setCursors(value => [...value, page.next_before!]); }}><ChevronRight size={16} aria-hidden /></IconButton></div>}
+      </Section>
     </>}
-  </section>;
+  </div>;
 }
