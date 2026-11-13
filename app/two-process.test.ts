@@ -405,10 +405,10 @@ async function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-device-http-')), keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const auth: AuthConfig = { secretKey: 'sk_test_fixture', publishableKey: `pk_test_${Buffer.from('fixture.clerk.accounts.dev$').toString('base64')}`, issuer: 'https://fixture.clerk.accounts.dev', origin: 'http://127.0.0.1', development: true };
   const clerk = createClerkClient({ secretKey: auth.secretKey, publishableKey: auth.publishableKey, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), telemetry: { disabled: true } });
-  const syncSecret = randomBytes(32), webhookKeys = memoryKeys(), webhookFault = { read: false, write: false };
+  const syncSecret = randomBytes(32), webhookKeys = memoryKeys(), webhookFault = { read: false, write: false, reads: [] as { service: string; name: string }[] };
   const routineWebhookKeys = routineWebhookKeyring(randomUUID(), (service, name) => {
     const entry = webhookKeys.entry(service, name);
-    return { getPassword: () => webhookFault.read ? null : entry.getPassword(), setPassword: value => { if (webhookFault.write) throw new Error('Key write failed'); entry.setPassword(value); } };
+    return { getPassword: () => { webhookFault.reads.push({ service, name }); if (webhookFault.read) throw new Error('PRIVATE_KEYRING_FAILURE'); return entry.getPassword(); }, setPassword: value => { if (webhookFault.write) throw new Error('Key write failed'); entry.setPassword(value); } };
   });
   const options = { database: join(dir, 'canonical.sqlite'), auth, clerk, syncKey: () => syncSecret, routineWebhookKeys };
   let app = await startCanonicalApp(options); auth.origin = app.origin;
@@ -3558,8 +3558,9 @@ async function routineWebhookFixture() {
     assert.equal((await f.send(`/api/projects/${f.project}/agents/${f.agent}/routines`, configuration)).status, 201);
     const create = { requestId: randomUUID(), revision: 0, rotate: true, filters: [{ pointer: '/count', equals: 4 }] };
     const hook = await f.send(path + '/webhook', create); assert.equal(hook.status, 201, JSON.stringify(hook.body));
-    const event = async (secret = hook.body.data.secret, eventId = 'fixture.event', body: string | Uint8Array = '{"event":"ready","payload":{"count":4}}', time = String(Math.floor(Date.now() / 1000)), extra: Record<string,string> = {}, route = path + '/webhook-events') => {
-      const headers = { Connection: 'close', 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': eventId, 'X-Briefsip-Signature': createHmac('sha256', secret).update(`${time}\n${eventId}\n`).update(body).digest('hex'), ...extra };
+    const event = async (secret = hook.body.data.secret, eventId = 'fixture.event', body: string | Uint8Array = '{"event":"ready","payload":{"count":4}}', time = String(Math.floor(Date.now() / 1000)), extra: Record<string,string | undefined> = {}, route = path + '/webhook-events') => {
+      const headers = new Headers({ Connection: 'close', 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': eventId, 'X-Briefsip-Signature': createHmac('sha256', secret).update(`${time}\n${eventId}\n`).update(body).digest('hex') });
+      for (const [name, value] of Object.entries(extra)) { if (value === undefined) headers.delete(name); else headers.set(name, value); }
       const response = await fetch(f.origin() + route, { method: 'POST', headers, body: typeof body === 'string' ? body : new Uint8Array(body) });
       return { status: response.status, body: await response.json() };
     };
@@ -3626,7 +3627,8 @@ test('canonical routine webhook admits once offline and recovers lost response r
 });
 
 test('canonical routine webhook conceals missing and inactive targets until signature verification', async () => {
-  const f = await routineWebhookFixture();
+  const f = await routineWebhookFixture(), originalError = console.error, logs: unknown[][] = [];
+  console.error = (...args: unknown[]) => { logs.push(args); };
   try {
     const denied = { status: 401, body: { ok: false, error: { code: 'invalid_webhook', message: 'Webhook signature does not match.', retryable: false } } };
     const expectDenied = (response: { status: number; body: any }) => {
@@ -3636,6 +3638,10 @@ test('canonical routine webhook conceals missing and inactive targets until sign
     };
     const badSignature = () => f.event('wrong-secret');
     expectDenied(await badSignature());
+    for (const header of ['X-Briefsip-Time', 'X-Briefsip-Id', 'X-Briefsip-Signature']) {
+      for (const value of ['', 'invalid!', undefined]) expectDenied(await f.event(undefined, undefined, undefined, undefined, { [header]: value }));
+    }
+    for (const offset of [-301, 301]) expectDenied(await f.event(undefined, undefined, undefined, String(Math.floor(Date.now() / 1000) + offset)));
     for (const route of [f.path.replace(f.routine, randomUUID()), f.path.replace(f.project, randomUUID()), f.path.replace(f.project, f.other)]) {
       expectDenied(await f.event(undefined, undefined, undefined, undefined, {}, route + '/webhook-events'));
     }
@@ -3645,9 +3651,17 @@ test('canonical routine webhook conceals missing and inactive targets until sign
     expectDenied(await f.event('briefsip-routine-webhook-dummy-secret-v1', undefined, '{', undefined, {}, noHook));
     f.webhookFault.read = true;
     expectDenied(await f.event(undefined, undefined, undefined, undefined, {}, noHook));
-    const unavailable = await f.event();
-    assert.equal(unavailable.status, 503); assert.equal(unavailable.body.error.code, 'keystore_unavailable');
+    for (const extra of [{}, { 'X-Briefsip-Signature': '' }, { 'X-Briefsip-Signature': '0'.repeat(64) }]) {
+      const before = logs.length;
+      expectDenied(await f.event(undefined, undefined, undefined, undefined, extra));
+      assert.deepEqual(logs.slice(before), [[`Webhook keystore is unavailable for routine ${f.routine}.`]]);
+    }
+    assert.equal((await f.send(f.path + '/webhook')).body.data.keystore, 'unavailable');
+    assert.equal((await f.send(f.path + '/webhook', f.create)).status, 503);
+    assert(!JSON.stringify(logs).includes(f.hook.data.secret));
+    assert(!JSON.stringify(logs).includes('PRIVATE_'));
     f.webhookFault.read = false;
+    assert.equal((await f.send(f.path + '/webhook')).body.data.keystore, 'ok');
     for (const [revision, enabled, trigger] of [[1, false, 'webhook'], [2, true, 'schedule']] as const) {
       const requestId = randomUUID();
       assert.equal((await f.send(f.path + '/edit', { ...f.configuration, requestId, id: requestId, revision, enabled, trigger })).status, 200);
@@ -3655,6 +3669,29 @@ test('canonical routine webhook conceals missing and inactive targets until sign
       const signed = await f.event();
       assert.equal(signed.status, 409); assert.equal(signed.body.error.code, 'webhook_inactive');
       assert.equal(signed.body.error.message, 'Webhook routine is inactive.');
+    }
+  } finally { console.error = originalError; await f.close(); }
+});
+
+test('canonical routine webhook performs one keyring read for configured and missing targets', async () => {
+  const f = await routineWebhookFixture();
+  try {
+    const read = async (route: string, extra: Record<string, string | undefined> = {}) => {
+      f.webhookFault.reads.length = 0;
+      assert.equal((await f.event('wrong-secret', undefined, undefined, undefined, extra, route)).status, 401);
+      assert.equal(f.webhookFault.reads.length, 1);
+      return f.webhookFault.reads[0];
+    };
+    const configured = await read(f.path + '/webhook-events');
+    const missing = await read(f.path.replace(f.routine, randomUUID()) + '/webhook-events');
+    const otherMissing = await read(f.path.replace(f.project, randomUUID()) + '/webhook-events');
+    assert.equal(missing.service, configured.service);
+    assert.notEqual(missing.name, configured.name);
+    assert.deepEqual(otherMissing, missing);
+    assert(!f.webhookKeys.values.has(`${missing.service}/${missing.name}`));
+    for (const extra of [{ 'X-Briefsip-Signature': '' }, { 'X-Briefsip-Id': 'invalid!' }, { 'X-Briefsip-Time': undefined }]) {
+      assert.deepEqual(await read(f.path + '/webhook-events', extra), configured);
+      assert.deepEqual(await read(f.path.replace(f.routine, randomUUID()) + '/webhook-events', extra), missing);
     }
   } finally { await f.close(); }
 });
