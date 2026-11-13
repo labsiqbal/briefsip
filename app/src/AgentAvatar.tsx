@@ -19,7 +19,7 @@ export function AvatarEditor({ agent, request, onChanged }: { agent: string; req
       if (syncDirectory) await onChanged();
       if (current === version.current) setState(value);
     }
-    catch { if (current === version.current) setError('Avatar belum dimuat. Coba muat ulang.'); }
+    catch { if (current === version.current) setError('Avatar could not load. Try reloading.'); }
     finally { if (current === version.current) setBusy(false); }
   }
   useEffect(() => {
@@ -42,7 +42,7 @@ export function AvatarEditor({ agent, request, onChanged }: { agent: string; req
         let image: string | null = null;
         if (!remove) {
           const selected = file.current?.files?.[0];
-          if (!selected || selected.size > 512 * 1024) throw new Error('Pilih PNG, JPEG, atau WebP maksimum 512 KiB.');
+          if (!selected || selected.size > 512 * 1024) throw new Error('Choose a PNG, JPEG, or WebP image up to 512 KiB.');
           const bytes = new Uint8Array(await selected.arrayBuffer());
           if (current !== version.current) return;
           let binary = ''; for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -57,23 +57,23 @@ export function AvatarEditor({ agent, request, onChanged }: { agent: string; req
       await onChanged();
       if (current !== version.current) return;
       sessionStorage.removeItem(key); setPending(null); setState(latest); if (file.current) file.current.value = '';
-      setNotice('Avatar diperbarui.');
-    } catch (error) { if (current === version.current) setError(error instanceof Error ? error.message : 'Avatar belum tersimpan. Coba lagi.'); }
+      setNotice('Avatar updated.');
+    } catch (error) { if (current === version.current) setError(error instanceof Error ? error.message : 'Avatar has not been saved. Try again.'); }
     finally { flight.current = false; if (current === version.current) setBusy(false); }
   }
   async function reload() {
-    if (busy || flight.current || (pending || invalid) && !window.confirm('Buang permintaan avatar tersimpan dan muat versi terbaru? Perubahan yang sudah diterima server tetap berlaku.')) return;
+    if (busy || flight.current || (pending || invalid) && !window.confirm('Discard the saved avatar request and load the latest version? Changes already accepted by the server still apply.')) return;
     try { sessionStorage.removeItem(key); setPending(null); setInvalid(false); setNotice(''); await load(true); }
-    catch { setError('Penyimpanan browser belum tersedia. Coba lagi.'); }
+    catch { setError('Browser storage is unavailable. Try again.'); }
   }
-  return <section className="avatar-editor" aria-label="Avatar agent"><h2>Avatar</h2>
-    <p className="muted">PNG, JPEG, atau WebP statis, maksimum 512 KiB dan 16 megapiksel. Gambar dipotong persegi; metadata dibuang.</p>
-    {state?.present && <img className="avatar-preview" src={`${path}/image?v=${state.revision}`} alt="Avatar agent saat ini" />}
-    <label>Gambar avatar<input ref={file} type="file" accept="image/png,image/jpeg,image/webp" disabled={busy || !!pending || invalid || !state} /></label>
-    {invalid && <p role="alert">Permintaan tersimpan tidak valid. Muat ulang avatar untuk melanjutkan.</p>}
+  return <section className="avatar-editor" aria-label="Agent avatar"><h2>Avatar</h2>
+    <p className="muted">Static PNG, JPEG, or WebP, up to 512 KiB and 16 megapixels. Images are cropped to a square; metadata is removed.</p>
+    {state?.present && <img className="avatar-preview" src={`${path}/image?v=${state.revision}`} alt="Current agent avatar" />}
+    <label>Avatar image<input ref={file} type="file" accept="image/png,image/jpeg,image/webp" disabled={busy || !!pending || invalid || !state} /></label>
+    {invalid && <p role="alert">Saved request is invalid. Reload the avatar to continue.</p>}
     {error && <p role="alert" className="error">{error}</p>}{notice && <p role="status">{notice}</p>}
-    <div className="form-actions"><button disabled={busy || invalid || !state} onClick={() => void save(false)}>{busy ? 'Memproses avatar...' : pending ? 'Coba perubahan avatar lagi' : 'Simpan avatar'}</button>
-      <button className="secondary" aria-disabled={busy || !!pending || invalid || !state?.present} onClick={() => { if (!busy && !pending && !invalid && state?.present) void save(true); }}>Hapus avatar</button>
-      <button className="secondary" disabled={busy} onClick={() => void reload()}>Muat ulang avatar</button></div>
+    <div className="form-actions"><button disabled={busy || invalid || !state} onClick={() => void save(false)}>{busy ? 'Processing avatar...' : pending ? 'Retry avatar change' : 'Save avatar'}</button>
+      <button className="secondary" aria-disabled={busy || !!pending || invalid || !state?.present} onClick={() => { if (!busy && !pending && !invalid && state?.present) void save(true); }}>Delete avatar</button>
+      <button className="secondary" disabled={busy} onClick={() => void reload()}>Reload avatar</button></div>
   </section>;
 }

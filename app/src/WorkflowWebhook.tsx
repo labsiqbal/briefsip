@@ -21,24 +21,24 @@ export function WorkflowWebhook({ workflow, request, pending, locked, busy, refr
     return () => { stopped = true; };
   }, [workflow, refresh, reload, busy]);
   const snapshot = pending?.body, hook = state?.hook;
-  return <section><h2>Webhook workflow</h2><p>Kirim event bertanda tangan untuk menjalankan workflow. Event saat workflow masih aktif dilewati dan tidak dijalankan ulang.</p>
+  return <section><h2>Workflow webhook</h2><p>Send signed events to run the workflow. Events received while the workflow is still active are skipped and will not run again.</p>
     {error && <p className="error" role="alert">{error}</p>}
-    <button className="secondary" disabled={locked} onClick={() => { if (!state || window.confirm('Muat ulang webhook dan buang perubahan form yang belum disimpan?')) { setState(null); setReload(value => value + 1); } }}>Muat ulang webhook</button>
-    {!state ? !error && <p role="status">Memuat webhook...</p> : <form key={`${hook?.revision ?? 0}:${refresh}:${reload}`} onSubmit={event => {
+    <button className="secondary" disabled={locked} onClick={() => { if (!state || window.confirm('Reload the webhook and discard unsaved form changes?')) { setState(null); setReload(value => value + 1); } }}>Reload webhook</button>
+    {!state ? !error && <p role="status">Loading webhook...</p> : <form key={`${hook?.revision ?? 0}:${refresh}:${reload}`} onSubmit={event => {
       event.preventDefault(); if (locked || conflict) return;
       const form = new FormData(event.currentTarget);
       void onSave({ id: crypto.randomUUID(), revision: hook?.revision ?? 0, enabled: form.get('enabled') === 'on', rotate: !hook?.route || form.get('rotate') === 'on' });
     }}>
-      {hook?.route && <label>URL webhook workflow<input readOnly value={hook.url} onFocus={event => event.currentTarget.select()} /></label>}
-      {secret && <label>Secret webhook workflow<input readOnly type="password" value={secret} onFocus={event => event.currentTarget.select()} /><span className="muted">Simpan secret ini. Secret tidak ditampilkan lagi setelah keluar atau memuat ulang halaman.</span></label>}
-      <label className="member-option"><input name="enabled" type="checkbox" disabled={locked || conflict} defaultChecked={snapshot ? Boolean(snapshot.enabled) : !!hook?.enabled} /> Webhook workflow aktif</label>
-      {hook?.route && <label className="member-option"><input name="rotate" type="checkbox" disabled={locked || conflict} defaultChecked={Boolean(snapshot?.rotate)} /> Ganti secret. Pengirim harus memakai secret baru.</label>}
-      {conflict && <p role="alert">Webhook sudah berubah. Muat ulang pengaturan sebelum menyimpan lagi.</p>}
-      <button disabled={locked || conflict}>Simpan webhook workflow</button>
+      {hook?.route && <label>Workflow webhook URL<input readOnly value={hook.url} onFocus={event => event.currentTarget.select()} /></label>}
+      {secret && <label>Workflow webhook secret<input readOnly type="password" value={secret} onFocus={event => event.currentTarget.select()} /><span className="muted">Save this secret. It will not be shown again after you leave or reload the page.</span></label>}
+      <label className="member-option"><input name="enabled" type="checkbox" disabled={locked || conflict} defaultChecked={snapshot ? Boolean(snapshot.enabled) : !!hook?.enabled} /> Workflow webhook active</label>
+      {hook?.route && <label className="member-option"><input name="rotate" type="checkbox" disabled={locked || conflict} defaultChecked={Boolean(snapshot?.rotate)} /> Replace secret. Senders must use the new secret.</label>}
+      {conflict && <p role="alert">Webhook has changed. Reload settings before saving again.</p>}
+      <button disabled={locked || conflict}>Save workflow webhook</button>
       {hook?.route && <button type="button" className="secondary" disabled={locked || conflict} onClick={() => {
-        if (window.confirm('Hapus pemicu webhook? URL dan secret lama tidak dapat dipakai lagi. Eksekusi yang sudah dimulai dan riwayat tetap tersimpan.')) void onSave({ id: crypto.randomUUID(), revision: hook.revision, remove: true, route: hook.route });
-      }}>Hapus pemicu webhook</button>}
+        if (window.confirm('Delete the webhook trigger? The old URL and secret will no longer work. Runs already started and history remain saved.')) void onSave({ id: crypto.randomUUID(), revision: hook.revision, remove: true, route: hook.route });
+      }}>Delete webhook trigger</button>}
     </form>}
-    {state && <><h3>Event webhook terakhir</h3>{!state.receipts.length ? <p>Belum ada event webhook.</p> : <ul className="routine-list">{state.receipts.map(row => <li key={`${row.route}:${row.delivery}`}><p>{row.delivery} · {new Date(row.received).toLocaleString('id-ID')} · {row.result.outcome === 'queued' ? 'Eksekusi dibuat' : row.result.reason === 'busy' ? 'Dilewati: workflow masih aktif' : 'Dilewati: webhook nonaktif'}</p>{row.result.id && <button className="secondary" onClick={() => onRun(row.result.id!)}>Buka hasil webhook</button>}</li>)}</ul>}</>}
+    {state && <><h3>Recent webhook events</h3>{!state.receipts.length ? <p>No webhook events yet.</p> : <ul className="routine-list">{state.receipts.map(row => <li key={`${row.route}:${row.delivery}`}><p>{row.delivery} · {new Date(row.received).toLocaleString('en-US')} · {row.result.outcome === 'queued' ? 'Run created' : row.result.reason === 'busy' ? 'Skipped: workflow still active' : 'Skipped: webhook inactive'}</p>{row.result.id && <button className="secondary" onClick={() => onRun(row.result.id!)}>Open webhook result</button>}</li>)}</ul>}</>}
   </section>;
 }

@@ -14,10 +14,10 @@ export function AgentTemplateImport({ request, onCreated, onClose }: { request: 
     if (!file || pending || invalid || inFlight.current) return;
     const current = ++generation.current; setError(''); setDraft(null); setBusy(true);
     try {
-      if (file.size > 750000) throw new Error('Template maksimum 750 KB.');
+      if (file.size > 750000) throw new Error('Template must be no larger than 750 KB.');
       const parsed = parseAgentTemplate(JSON.parse(await file.text()));
       if (current === generation.current) setDraft(parsed);
-    } catch (error) { if (current === generation.current) setError(error instanceof SyntaxError ? 'File bukan JSON valid.' : error instanceof Error ? error.message : 'Template gagal dibaca.'); }
+    } catch (error) { if (current === generation.current) setError(error instanceof SyntaxError ? 'File is not valid JSON.' : error instanceof Error ? error.message : 'Template could not be read.'); }
     finally { if (current === generation.current) setBusy(false); }
   }
   async function apply() {
@@ -32,33 +32,33 @@ export function AgentTemplateImport({ request, onCreated, onClose }: { request: 
       // Remove only this command; preserve any newer recovery data.
       if (sessionStorage.getItem(storage) === JSON.stringify(command)) sessionStorage.removeItem(storage);
       onCreated(agent);
-    } catch (error) { if (current === generation.current) setError(error instanceof Error ? error.message : 'Impor belum terkonfirmasi. Coba lagi.'); }
+    } catch (error) { if (current === generation.current) setError(error instanceof Error ? error.message : 'Import is not confirmed yet. Try again.'); }
     finally { inFlight.current = false; if (current === generation.current) setBusy(false); }
   }
   function discard() {
-    if (inFlight.current || busy || !window.confirm('Abaikan pemulihan impor? Agent mungkin sudah dibuat. Periksa daftar agent sebelum mengimpor lagi.')) return;
+    if (inFlight.current || busy || !window.confirm('Ignore import recovery? The agent may already have been created. Check the agent list before importing again.')) return;
     try { sessionStorage.removeItem(storage); setPending(null); setDraft(null); setInvalid(false); setError(''); }
-    catch { setError('Penyimpanan browser belum dapat diubah. Coba lagi.'); }
+    catch { setError('Browser storage could not be updated. Try again.'); }
   }
-  return <section className="setup"><h1 ref={heading} tabIndex={-1}>Impor template agent</h1>
-    <p>Periksa nama, model, dan instruksi sebelum membuat agent baru. Template tidak memberikan izin tool, tidak mengubah konfigurasi kredensial provider, dan tidak mengganti agent yang sudah ada.</p>
-    <button className="secondary" onClick={onClose}>Kembali ke agent</button>
+  return <section className="setup"><h1 ref={heading} tabIndex={-1}>Import agent template</h1>
+    <p>Check the name, model, and instructions before creating a new agent. Templates do not grant tool permissions, change provider credential settings, or replace existing agents.</p>
+    <button className="secondary" onClick={onClose}>Back to agent</button>
     {error && <p role="alert" className="error">{error}</p>}
-    {invalid ? <p role="alert">Data pemulihan impor tidak dapat dibaca. <button className="secondary" disabled={busy} onClick={discard}>Abaikan pemulihan impor</button></p> : <>
-      <label>File template JSON<input type="file" accept=".json,application/json" disabled={!!pending || busy} onChange={event => void choose(event.target.files?.[0])} /></label>
-      {busy && <p role="status">Memproses template...</p>}
-      {pending && <p className="notice">Pembuatan belum terkonfirmasi. Coba lagi memakai permintaan yang sama untuk menghindari duplikasi.</p>}
+    {invalid ? <p role="alert">Import recovery data could not be read. <button className="secondary" disabled={busy} onClick={discard}>Ignore import recovery</button></p> : <>
+      <label>JSON template file<input type="file" accept=".json,application/json" disabled={!!pending || busy} onChange={event => void choose(event.target.files?.[0])} /></label>
+      {busy && <p role="status">Processing template...</p>}
+      {pending && <p className="notice">Creation is not confirmed yet. Retry with the same request to avoid duplicates.</p>}
       {draft && <form onSubmit={event => { event.preventDefault(); void apply(); }}><fieldset disabled={busy || !!pending}>
-        <legend>Pratinjau profil baru</legend>
-        {draft.avatar && <img className="avatar-preview" src={`data:image/png;base64,${draft.avatar}`} alt="Avatar yang akan diimpor" />}
-        <button type="button" className="secondary" aria-disabled={!draft.avatar} onClick={() => { if (draft.avatar) { const { avatar, ...profile } = draft; setDraft(profile); } }}>Tanpa avatar</button>
-        <label>Nama<input required maxLength={80} value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} /></label>
+        <legend>New profile preview</legend>
+        {draft.avatar && <img className="avatar-preview" src={`data:image/png;base64,${draft.avatar}`} alt="Avatar to import" />}
+        <button type="button" className="secondary" aria-disabled={!draft.avatar} onClick={() => { if (draft.avatar) { const { avatar, ...profile } = draft; setDraft(profile); } }}>Remove avatar</button>
+        <label>Name<input required maxLength={80} value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} /></label>
         <label>Model<input required maxLength={160} value={draft.model} onChange={event => setDraft({ ...draft, model: event.target.value })} /></label>
-        <label>Model cadangan (opsional)<input maxLength={160} value={draft.backupModel ?? ''} onChange={event => setDraft({ ...draft, backupModel: event.target.value })} /></label>
-        <p className="muted">Model memakai provider yang dikonfigurasi di komputer ini. ID model dari komputer lain mungkin tidak tersedia.</p>
-        <label>Instruksi<textarea required maxLength={8000} rows={8} value={draft.instructions} onChange={event => setDraft({ ...draft, instructions: event.target.value })} /></label>
-        <label>Percakapan samping bersamaan<input type="number" required min={1} max={32} step={1} value={draft.threadLimit} onChange={event => setDraft({ ...draft, threadLimit: Number(event.target.value) })} /></label>
-      </fieldset><div className="form-actions"><button disabled={busy}>{pending ? 'Coba pembuatan lagi' : 'Buat agent dari template'}</button>{pending && <button type="button" className="secondary" disabled={busy} onClick={discard}>Abaikan pemulihan impor</button>}</div></form>}
+        <label>Fallback model (optional)<input maxLength={160} value={draft.backupModel ?? ''} onChange={event => setDraft({ ...draft, backupModel: event.target.value })} /></label>
+        <p className="muted">Models use the provider configured on this computer. Model IDs from another computer may be unavailable.</p>
+        <label>Instructions<textarea required maxLength={8000} rows={8} value={draft.instructions} onChange={event => setDraft({ ...draft, instructions: event.target.value })} /></label>
+        <label>Concurrent side threads<input type="number" required min={1} max={32} step={1} value={draft.threadLimit} onChange={event => setDraft({ ...draft, threadLimit: Number(event.target.value) })} /></label>
+      </fieldset><div className="form-actions"><button disabled={busy}>{pending ? 'Retry creation' : 'Create agent from template'}</button>{pending && <button type="button" className="secondary" disabled={busy} onClick={discard}>Ignore import recovery</button>}</div></form>}
     </>}
   </section>;
 }
@@ -70,16 +70,16 @@ export function AgentTemplateExport({ id, request }: { id: string; request: <T>(
   async function preview() {
     const current = ++version.current; setBusy(true); setError(''); setTemplate(null);
     try { const data = parseAgentTemplate(await request(`/api/agents/${id}/template`)); if (current === version.current) setTemplate(data); }
-    catch (error) { if (current === version.current) setError(error instanceof Error ? error.message : 'Template gagal dimuat.'); }
+    catch (error) { if (current === version.current) setError(error instanceof Error ? error.message : 'Template could not load.'); }
     finally { if (current === version.current) setBusy(false); }
   }
-  return <section><h2>Ekspor template profil</h2><p>Ekspor mengambil profil tersimpan, termasuk avatar, tanpa riwayat, file percakapan, atau konfigurasi kredensial provider. Instruksi tetap ikut diunduh: periksa informasi sensitif sebelum membagikan file.</p>
-    <button className="secondary" disabled={busy} onClick={() => void preview()}>{busy ? 'Memuat profil tersimpan...' : 'Pratinjau template ekspor'}</button>
+  return <section><h2>Export profile template</h2><p>Export includes the saved profile and avatar, without history, conversation files, or provider credential settings. Instructions are included in the download: check for sensitive information before sharing the file.</p>
+    <button className="secondary" disabled={busy} onClick={() => void preview()}>{busy ? 'Loading saved profile...' : 'Preview export template'}</button>
     {error && <p className="error" role="alert">{error}</p>}
-    {template && <>{template.avatar && <img className="avatar-preview" src={`data:image/png;base64,${template.avatar}`} alt="Avatar dalam template" />}<label>Isi file yang akan diunduh<textarea readOnly rows={10} value={JSON.stringify(template, null, 2)} /></label><button className="secondary" onClick={() => {
+    {template && <>{template.avatar && <img className="avatar-preview" src={`data:image/png;base64,${template.avatar}`} alt="Template avatar" />}<label>File contents to download<textarea readOnly rows={10} value={JSON.stringify(template, null, 2)} /></label><button className="secondary" onClick={() => {
       const url = URL.createObjectURL(new Blob([JSON.stringify(template, null, 2) + '\n'], { type: 'application/json' }));
       const link = document.createElement('a'); link.href = url; link.download = 'briefsip-agent-template.json'; link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-    }}>Unduh template yang diperiksa</button></>}
+    }}>Download reviewed template</button></>}
   </section>;
 }

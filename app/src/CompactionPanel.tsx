@@ -8,13 +8,13 @@ export function CompactionPanel({ path, request }: { path: string; request: <T>(
   useEffect(() => {
     if (!open) return;
     let stopped = false; setLoaded(false); setError('');
-    void request<Summary | null>(`${path}?after=${after}`).then(value => { if (!stopped) { setData(value); setLoaded(true); } }).catch(error => { if (!stopped) setError(error instanceof TypeError ? 'Ringkasan belum termuat. Coba muat ulang.' : error.message); });
+    void request<Summary | null>(`${path}?after=${after}`).then(value => { if (!stopped) { setData(value); setLoaded(true); } }).catch(error => { if (!stopped) setError(error instanceof TypeError ? 'Summary could not load. Try reloading.' : error.message); });
     return () => { stopped = true; };
   }, [open, after, refresh, path]);
-  return <details className="conversation-files" open={open} onToggle={event => setOpen(event.currentTarget.open)}><summary>Ringkasan riwayat</summary>
-    {open && <><p>Pesan lama diringkas bertahap dengan provider; panggilan tambahan tercatat di Pemakaian. Riwayat asli tetap utuh. Ringkasan bisa melewatkan detail; periksa pesan sumber untuk keputusan penting.</p>
-      <button className="secondary" onClick={() => setRefresh(n => n + 1)}>Muat ulang ringkasan</button>
-      {error ? <p role="alert">{error}</p> : !loaded ? <p role="status">Memuat ringkasan...</p> : !data ? <p>Belum ada ringkasan yang valid. Jawaban tetap memakai riwayat terbaru.</p> : <><p>{data.source_count} pesan sumber, sampai posisi eksekusi {data.through}. Urutan penerimaan pesan tetap ditampilkan pada daftar sumber.</p><pre>{data.summary}</pre><details open><summary>Sumber pesan</summary><h2 ref={heading} tabIndex={-1}>Daftar sumber</h2><ul>{data.sources.map(source => <li key={source.id}><span>Urutan {source.seq} · {source.status}</span><code>{source.id}</code></li>)}</ul><div className="form-actions routine-actions"><button className="secondary" disabled={!pages.length} onClick={() => { focusPage.current = true; setPages(v => v.slice(0, -1)); }}>Sumber sebelumnya</button><button className="secondary" disabled={!data.next_after} onClick={() => { focusPage.current = true; setPages(v => [...v, data.next_after!]); }}>Sumber berikutnya</button></div></details></>}
+  return <details className="conversation-files" open={open} onToggle={event => setOpen(event.currentTarget.open)}><summary>History summary</summary>
+    {open && <><p>Older messages are summarized incrementally by the provider; additional calls are recorded in Usage. Original history stays intact. Summaries may miss details; check source messages for important decisions.</p>
+      <button className="secondary" onClick={() => setRefresh(n => n + 1)}>Reload summary</button>
+      {error ? <p role="alert">{error}</p> : !loaded ? <p role="status">Loading summary...</p> : !data ? <p>No valid summary yet. Replies still use recent history.</p> : <><p>{data.source_count} source messages, through execution position {data.through}. Message receipt order remains visible in the source list.</p><pre>{data.summary}</pre><details open><summary>Source messages</summary><h2 ref={heading} tabIndex={-1}>Source list</h2><ul>{data.sources.map(source => <li key={source.id}><span>Order {source.seq} · {source.status}</span><code>{source.id}</code></li>)}</ul><div className="form-actions routine-actions"><button className="secondary" disabled={!pages.length} onClick={() => { focusPage.current = true; setPages(v => v.slice(0, -1)); }}>Previous sources</button><button className="secondary" disabled={!data.next_after} onClick={() => { focusPage.current = true; setPages(v => [...v, data.next_after!]); }}>Next sources</button></div></details></>}
     </>}
   </details>;
 }

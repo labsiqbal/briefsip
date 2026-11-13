@@ -23,7 +23,7 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
   const navigation = useRef(0), inFlight = useRef(false), heading = useRef<HTMLHeadingElement>(null);
   const dirty = !!editor && JSON.stringify(editor) !== baseline;
   const confirm = useConfirm();
-  const canReplace = async () => !dirty || confirm({ title: 'Buang perubahan skill?', description: 'Perubahan yang belum disimpan akan hilang.', confirm: 'Buang perubahan', danger: true });
+  const canReplace = async () => !dirty || confirm({ title: 'Discard skill changes?', description: 'Unsaved changes will be lost.', confirm: 'Discard changes', danger: true });
   const locked = busy || importBusy || !!pending || invalid, after = cursors.at(-1)!;
   useEffect(() => { heading.current?.focus(); return () => { navigation.current++; }; }, []);
   useEffect(() => { heading.current?.focus(); }, [after, showPacks]);
@@ -41,7 +41,7 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
     if (locked || !await canReplace()) return;
     const current = ++navigation.current; setBusy(true); setError('');
     try { const skill = await request<Skill>(`/api/skills/${id}${revision ? `?version=${revision}` : ''}`); if (current === navigation.current) { setEditor(skill); setBaseline(JSON.stringify(skill)); setVersion(skill.revision); } }
-    catch (error) { if (current === navigation.current) setError(error instanceof Error ? error.message : 'Skill gagal dimuat.'); }
+    catch (error) { if (current === navigation.current) setError(error instanceof Error ? error.message : 'Skill could not load.'); }
     finally { if (current === navigation.current) setBusy(false); }
   }
   async function execute(command: SkillCommand) {
@@ -53,13 +53,13 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
       if (current !== navigation.current) return;
       if (sessionStorage.getItem(storage) === JSON.stringify(command)) sessionStorage.removeItem(storage);
       setPending(null); setRefresh(value => value + 1); if (!command.path.startsWith('/api/agents/')) { setEditor(null); heading.current?.focus(); }
-    } catch (error) { if (current === navigation.current) setError(error instanceof Error ? error.message : 'Perubahan belum terkonfirmasi. Coba lagi.'); }
+    } catch (error) { if (current === navigation.current) setError(error instanceof Error ? error.message : 'Changes are not confirmed yet. Try again.'); }
     finally { inFlight.current = false; if (current === navigation.current) setBusy(false); }
   }
   async function discard() {
-    if (busy || !await confirm({ title: 'Abaikan permintaan tersimpan?', description: 'Perubahan itu mungkin sudah berhasil. Daftar dimuat ulang sebelum perubahan berikutnya.', confirm: 'Abaikan' })) return;
+    if (busy || !await confirm({ title: 'Ignore saved request?', description: 'Changes may already have succeeded. The list reloads before the next change.', confirm: 'Ignore' })) return;
     try { sessionStorage.removeItem(storage); setPending(null); setInvalid(false); setRefresh(value => value + 1); }
-    catch { setError('Penyimpanan browser belum dapat diubah.'); }
+    catch { setError('Browser storage could not be updated.'); }
   }
   if (showPacks) return <SkillPacksPanel agents={agents} initialOwner={owner} request={request} onClose={() => { setShowPacks(false); setRefresh(value => value + 1); }} />;
   const ownerName = agents.find(agent => agent.id === owner)?.name ?? '';
@@ -67,76 +67,76 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
   const importFiles = async (files: SkillFile[]) => { if (!await canReplace()) return; const parsed = parseSkillFiles(files); setEditor({ id: editor?.id ?? '', revision: editor?.revision ?? 0, latest: editor?.latest ?? 0, ...parsed }); setVersion(editor?.revision || 1); };
   const save = () => { if (!editor || locked) return; void execute({ path: editor.id ? `/api/skills/${editor.id}` : '/api/skills', body: { id: crypto.randomUUID(), revision: editor.latest, ...(editor.files ? { files: editor.files } : { name: editor.name, description: editor.description, content: editor.content }) } }); };
   const install = async () => {
-    if (!editor || !await confirm({ title: `Pasang versi ${editor.revision} ke ${ownerName}?`, description: 'Perubahan teks yang belum disimpan tidak ikut dipasang. Eksekusi yang sedang berjalan tidak berubah.', confirm: 'Pasang' })) return;
+    if (!editor || !await confirm({ title: `Install version ${editor.revision} on ${ownerName}?`, description: 'Unsaved text changes are excluded from installation. Running executions stay unchanged.', confirm: 'Install' })) return;
     void execute({ path: `/api/agents/${owner}/skills/${editor.id}`, body: { id: crypto.randomUUID(), revision: binding?.revision ?? 0, version: editor.revision, enabled: true } });
   };
   const pager = (back: boolean, next: boolean, onBack: () => void, onNext: () => void, label: string) => (back || next) && <div className="k-pager">
-    <IconButton label={`${label} sebelumnya`} disabled={locked || !back} onClick={onBack}><ChevronLeft size={16} aria-hidden /></IconButton>
-    <IconButton label={`${label} berikutnya`} disabled={locked || !next} onClick={onNext}><ChevronRight size={16} aria-hidden /></IconButton>
+    <IconButton label={`${label} previous`} disabled={locked || !back} onClick={onBack}><ChevronLeft size={16} aria-hidden /></IconButton>
+    <IconButton label={`${label} next`} disabled={locked || !next} onClick={onNext}><ChevronRight size={16} aria-hidden /></IconButton>
   </div>;
   return <div className="k-page bs-root">
-    <PageHeader headingRef={heading} title="Skills" description="Instruksi tambahan yang bisa dipasang ke agent. Skill tidak menambah izin tool dan tidak menjalankan script."
+    <PageHeader headingRef={heading} title="Skills" description="Additional instructions that can be installed on agents. Skills do not grant tool permissions or run scripts."
       actions={<>
-        <IconButton label="Muat ulang" disabled={busy} onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton>
-        <Button icon={<Package size={14} aria-hidden />} disabled={locked} onClick={() => setShowPacks(true)}>Paket skill</Button>
-        <Button variant="primary" icon={<Plus size={14} aria-hidden />} disabled={locked} onClick={() => void startNew()}>Buat skill</Button>
+        <IconButton label="Reload" disabled={busy} onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton>
+        <Button icon={<Package size={14} aria-hidden />} disabled={locked} onClick={() => setShowPacks(true)}>Skill packs</Button>
+        <Button variant="primary" icon={<Plus size={14} aria-hidden />} disabled={locked} onClick={() => void startNew()}>Create skill</Button>
       </>} />
     {error && <Alert tone="error">{error}</Alert>}
-    {invalid && <Alert tone="error" title="Data pemulihan skill tidak dapat dibaca." actions={<Button size="sm" disabled={busy} onClick={() => void discard()}>Abaikan pemulihan</Button>} />}
-    {pending && <Alert tone="warn" title="Perubahan belum terkonfirmasi" actions={<><Button size="sm" variant="primary" busy={busy} onClick={() => void execute(pending)}>Coba lagi</Button><Button size="sm" disabled={busy} onClick={() => void discard()}>Abaikan</Button></>}>Permintaan yang sama dikirim ulang supaya tidak tersimpan dua kali.</Alert>}
+    {invalid && <Alert tone="error" title="Skill recovery data could not be read." actions={<Button size="sm" disabled={busy} onClick={() => void discard()}>Ignore recovery</Button>} />}
+    {pending && <Alert tone="warn" title="Changes are not confirmed yet" actions={<><Button size="sm" variant="primary" busy={busy} onClick={() => void execute(pending)}>Try again</Button><Button size="sm" disabled={busy} onClick={() => void discard()}>Ignore</Button></>}>The same request is sent again to avoid saving it twice.</Alert>}
 
-    <Section id="skills-installed" title="Terpasang di agent" actions={agents.length > 0 && <Select size="sm" label="Agent" value={owner} disabled={locked} onChange={value => { navigation.current++; setOwner(value); setInstallCursors(['']); }} options={agents.map(agent => ({ value: agent.id, label: agent.name }))} />}>
-      {!owner ? <EmptyState icon={<BookOpen size={18} />} title="Belum ada agent">Buat agent dulu, lalu pasang skill ke agent itu.</EmptyState>
+    <Section id="skills-installed" title="Installed on agent" actions={agents.length > 0 && <Select size="sm" label="Agent" value={owner} disabled={locked} onChange={value => { navigation.current++; setOwner(value); setInstallCursors(['']); }} options={agents.map(agent => ({ value: agent.id, label: agent.name }))} />}>
+      {!owner ? <EmptyState icon={<BookOpen size={18} />} title="No agents yet">Create an agent first, then install skills on it.</EmptyState>
         : installed === null ? <SkeletonRows count={2} />
-        : installed.length === 0 ? <EmptyState icon={<BookOpen size={18} />} title={`${ownerName} belum memakai skill`}>Buka skill di library, lalu pasang versinya ke agent ini.</EmptyState>
+        : installed.length === 0 ? <EmptyState icon={<BookOpen size={18} />} title={`${ownerName} has no skills yet`}>Open a skill in the library, then install its version on this agent.</EmptyState>
         : <Card>{installed.map(row => <Row key={row.skill} title={row.name} leading={<BookOpen size={16} aria-hidden />}
-            meta={<><span>Versi {row.version}</span>{row.latest > row.version && <Badge tone="warn">Versi {row.latest} tersedia</Badge>}{row.pack && <Badge>Paket</Badge>}{!row.enabled && <Badge>Nonaktif</Badge>}</>}
+            meta={<><span>Version {row.version}</span>{row.latest > row.version && <Badge tone="warn">Version {row.latest} available</Badge>}{row.pack && <Badge>Pack</Badge>}{!row.enabled && <Badge>Inactive</Badge>}</>}
             trailing={<>
-              <Switch checked={!!row.enabled} disabled={locked || !!row.pack} label={`${row.enabled ? 'Nonaktifkan' : 'Aktifkan'} ${row.name}`} onChange={() => void execute({ path: `/api/agents/${owner}/skills/${row.skill}`, body: { id: crypto.randomUUID(), revision: row.revision, version: row.version, enabled: !row.enabled } })} />
+              <Switch checked={!!row.enabled} disabled={locked || !!row.pack} label={`${row.enabled ? 'Disable' : 'Enable'} ${row.name}`} onChange={() => void execute({ path: `/api/agents/${owner}/skills/${row.skill}`, body: { id: crypto.randomUUID(), revision: row.revision, version: row.version, enabled: !row.enabled } })} />
               <ActionMenu label={`Menu ${row.name}`} trigger={<button type="button" className="k-icon-btn" aria-label={`Menu ${row.name}`} disabled={locked}><Ellipsis size={16} aria-hidden /></button>} items={[
-                { label: `Periksa versi ${row.version}`, onSelect: () => void open(row.skill, row.version) },
+                { label: `Review version ${row.version}`, onSelect: () => void open(row.skill, row.version) },
                 'separator',
-                { label: row.pack ? 'Dikelola Paket skill' : 'Lepas dari agent', danger: !row.pack, disabled: !!row.pack, onSelect: async () => { if (await confirm({ title: `Lepas ${row.name} dari ${ownerName}?`, description: 'Revisi library tetap tersedia. Eksekusi yang sudah berjalan tidak berubah.', confirm: 'Lepas', danger: true })) void execute({ path: `/api/agents/${owner}/skills/${row.skill}`, body: { id: crypto.randomUUID(), revision: row.revision, version: row.version, enabled: false, remove: true } }); } },
+                { label: row.pack ? 'Managed by Skill packs' : 'Remove from agent', danger: !row.pack, disabled: !!row.pack, onSelect: async () => { if (await confirm({ title: `Remove ${row.name} from ${ownerName}?`, description: 'Library revisions remain available. Executions already running stay unchanged.', confirm: 'Remove', danger: true })) void execute({ path: `/api/agents/${owner}/skills/${row.skill}`, body: { id: crypto.randomUUID(), revision: row.revision, version: row.version, enabled: false, remove: true } }); } },
               ]} />
             </>} />)}</Card>}
-      {pager(installCursors.length > 1, !!installNext, () => setInstallCursors(value => value.slice(0, -1)), () => setInstallCursors(value => [...value, installNext!]), 'Pemasangan')}
+      {pager(installCursors.length > 1, !!installNext, () => setInstallCursors(value => value.slice(0, -1)), () => setInstallCursors(value => [...value, installNext!]), 'Installation')}
     </Section>
 
     <Section id="skills-library" title="Library" actions={<SkillFolderImport compact disabled={locked} onBusy={setImportBusy} onError={setError} onImport={files => void importFiles(files)} />}>
       {!page ? !error && <SkeletonRows count={3} />
-        : page.skills.length === 0 ? <EmptyState icon={<FileText size={18} />} title="Library masih kosong" action={<Button variant="primary" size="sm" icon={<Plus size={14} aria-hidden />} disabled={locked} onClick={() => void startNew()}>Buat skill</Button>}>Tulis skill baru, atau impor folder berisi SKILL.md.</EmptyState>
-        : <Card>{page.skills.map(skill => <Row key={skill.id} title={skill.name} meta={`Revisi ${skill.revision}`} leading={<FileText size={16} aria-hidden />} disabled={locked} onClick={() => void open(skill.id)} />)}</Card>}
+        : page.skills.length === 0 ? <EmptyState icon={<FileText size={18} />} title="Library is empty" action={<Button variant="primary" size="sm" icon={<Plus size={14} aria-hidden />} disabled={locked} onClick={() => void startNew()}>Create skill</Button>}>Write a new skill, or import a folder containing SKILL.md.</EmptyState>
+        : <Card>{page.skills.map(skill => <Row key={skill.id} title={skill.name} meta={`Revision ${skill.revision}`} leading={<FileText size={16} aria-hidden />} disabled={locked} onClick={() => void open(skill.id)} />)}</Card>}
       {pager(cursors.length > 1, !!page?.next_after, () => setCursors(value => value.slice(0, -1)), () => setCursors(value => [...value, page!.next_after!]), 'Skill')}
     </Section>
 
     <Dialog open={!!editor} size="lg" onOpenChange={async next => { if (!next && await canReplace()) setEditor(null); }}
-      title={editor?.id ? editor.name : editor?.files ? `Impor ${editor.name}` : 'Skill baru'}
-      description={editor?.id ? `Versi ${editor.revision} dari ${editor.latest}. Simpan membuat revisi baru; agent tetap memakai versi terpasang sampai kamu menggantinya.` : 'Simpan membuat revisi pertama di library.'}
+      title={editor?.id ? editor.name : editor?.files ? `Import ${editor.name}` : 'New skill'}
+      description={editor?.id ? `Version ${editor.revision} of ${editor.latest}. Saving creates a new revision; agents keep using their installed version until you change it.` : 'Saving creates the first revision in the library.'}
       footer={<>
         {editor?.id && <span className="k-dialog__foot-note"><SkillFolderImport compact disabled={locked} onBusy={setImportBusy} onError={setError} onImport={files => void importFiles(files)} /></span>}
-        <Button disabled={busy} onClick={async () => { if (await canReplace()) setEditor(null); }}>Tutup</Button>
-        <Button type="submit" form="skill-editor" variant="primary" busy={busy} disabled={locked && !busy}>Simpan revisi</Button>
+        <Button disabled={busy} onClick={async () => { if (await canReplace()) setEditor(null); }}>Close</Button>
+        <Button type="submit" form="skill-editor" variant="primary" busy={busy} disabled={locked && !busy}>Save revision</Button>
       </>}>
       {editor && <form id="skill-editor" className="k-page" style={{ gap: 18 }} onSubmit={event => { event.preventDefault(); save(); }}>
         {error && <Alert tone="error">{error}</Alert>}
         <fieldset disabled={locked} className="k-fieldset">
-          <Field label="Nama"><Input required readOnly={!!editor.files} maxLength={80} value={editor.name} onChange={event => setEditor({ ...editor, name: event.target.value })} placeholder="Misalnya: ringkas-rapat" /></Field>
-          <Field label="Deskripsi" hint="Kapan agent sebaiknya memakai skill ini."><Textarea required readOnly={!!editor.files} maxLength={1024} rows={2} style={{ minHeight: 60 }} value={editor.description} onChange={event => setEditor({ ...editor, description: event.target.value })} /></Field>
-          <Field label="Instruksi"><Textarea required readOnly={!!editor.files} maxLength={16000} rows={10} style={{ minHeight: 200 }} value={editor.content} onChange={event => setEditor({ ...editor, content: event.target.value })} /></Field>
+          <Field label="Name"><Input required readOnly={!!editor.files} maxLength={80} value={editor.name} onChange={event => setEditor({ ...editor, name: event.target.value })} placeholder="For example: meeting-summary" /></Field>
+          <Field label="Description" hint="When the agent should use this skill."><Textarea required readOnly={!!editor.files} maxLength={1024} rows={2} style={{ minHeight: 60 }} value={editor.description} onChange={event => setEditor({ ...editor, description: event.target.value })} /></Field>
+          <Field label="Instructions"><Textarea required readOnly={!!editor.files} maxLength={16000} rows={10} style={{ minHeight: 200 }} value={editor.content} onChange={event => setEditor({ ...editor, content: event.target.value })} /></Field>
         </fieldset>
-        {editor.files && <Section title={`${editor.files.length} file dari folder`} actions={<>
-          <Button size="sm" variant="ghost" onClick={() => downloadSkillFolder(editor.files!)}>Ekspor JSON</Button>
-          <Button size="sm" variant="ghost" onClick={() => { try { downloadSkillFolder(editor.files!, true); } catch (error) { setError(error instanceof Error ? error.message : 'Ekspor ZIP gagal. Periksa file skill.'); } }}>Ekspor ZIP</Button>
+        {editor.files && <Section title={`${editor.files.length} files from folder`} actions={<>
+          <Button size="sm" variant="ghost" onClick={() => downloadSkillFolder(editor.files!)}>Export JSON</Button>
+          <Button size="sm" variant="ghost" onClick={() => { try { downloadSkillFolder(editor.files!, true); } catch (error) { setError(error instanceof Error ? error.message : 'ZIP export failed. Check skill files.'); } }}>Export ZIP</Button>
         </>}>
-          <Alert>Metadata folder dipertahankan. Untuk memperbarui, impor ulang folder lengkap saat skill ini terbuka.</Alert>
-          <Card className="k-file-list">{editor.files.map(file => <div key={file.path} className="k-file"><Collapsible title={<span className="k-file__path">{file.path}</span>}>{file.encoding ? <p className="k-file__note">Aset binary. Ekspor ZIP untuk mendapatkan file asli.</p> : <pre className="k-file__content" tabIndex={0} role="region" aria-label={`Isi ${file.path}`}>{file.content}</pre>}</Collapsible></div>)}</Card>
+          <Alert>Folder metadata is preserved. To update, import the full folder again while this skill is open.</Alert>
+          <Card className="k-file-list">{editor.files.map(file => <div key={file.path} className="k-file"><Collapsible title={<span className="k-file__path">{file.path}</span>}>{file.encoding ? <p className="k-file__note">Binary asset. Export ZIP to get the original file.</p> : <pre className="k-file__content" tabIndex={0} role="region" aria-label={`Contents of ${file.path}`}>{file.content}</pre>}</Collapsible></div>)}</Card>
         </Section>}
-        {editor.id && <Section title="Versi">
+        {editor.id && <Section title="Version">
           <div className="k-version">
-            <Field label="Periksa versi lain"><div className="k-inline"><Input type="number" min={1} max={editor.latest} step={1} value={version} onChange={event => setVersion(Number(event.target.value))} style={{ width: 96 }} /><Button disabled={!Number.isSafeInteger(version) || version < 1 || version > editor.latest || locked} onClick={() => void open(editor.id, version)}>Muat</Button></div></Field>
+            <Field label="Review another version"><div className="k-inline"><Input type="number" min={1} max={editor.latest} step={1} value={version} onChange={event => setVersion(Number(event.target.value))} style={{ width: 96 }} /><Button disabled={!Number.isSafeInteger(version) || version < 1 || version > editor.latest || locked} onClick={() => void open(editor.id, version)}>Load</Button></div></Field>
             <div className="k-version__install">
-              {binding?.removed === 1 && <p className="k-field__hint">Skill ini pernah dilepas dari {ownerName}. Pasang versi tersimpan untuk memakainya lagi.</p>}
-              <Button variant="brand" disabled={!owner || binding === undefined || (!!binding?.pack && !binding.removed) || locked} onClick={() => void install()}>Pasang versi {editor.revision} ke {ownerName || 'agent'}</Button>
+              {binding?.removed === 1 && <p className="k-field__hint">This skill was previously removed from {ownerName}. Install a saved version to use it again.</p>}
+              <Button variant="brand" disabled={!owner || binding === undefined || (!!binding?.pack && !binding.removed) || locked} onClick={() => void install()}>Install version {editor.revision} on {ownerName || 'agent'}</Button>
             </div>
           </div>
         </Section>}

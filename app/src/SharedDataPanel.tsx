@@ -18,9 +18,9 @@ export function SharedDataPanel({ request, onClose, agents }: { agents: { id: st
     if (busy || !listing) return;
     let command = pending;
     if (table && !command) {
-      if (!confirm(`Hapus tabel ${table} beserta seluruh datanya? Tindakan ini tidak dapat dibatalkan.`)) return;
+      if (!confirm(`Delete table ${table} and all its data? This action cannot be undone.`)) return;
       command = { id: crypto.randomUUID(), revision: listing.revision, table };
-      try { sessionStorage.setItem(key, JSON.stringify(command)); } catch { setError('Browser tidak bisa menyimpan ID pemulihan. Penghapusan belum dikirim.'); return; }
+      try { sessionStorage.setItem(key, JSON.stringify(command)); } catch { setError('The browser could not save the recovery ID. Deletion has not been sent.'); return; }
       setPending(command);
     }
     const active = ++version.current; setBusy(true); setError('');
@@ -32,17 +32,17 @@ export function SharedDataPanel({ request, onClose, agents }: { agents: { id: st
     } catch (error) { if (active === version.current) setError((error as Error).message); }
     finally { if (active === version.current) setBusy(false); }
   }
-  return <section className="setup workflow-panel shared-data-panel"><h1 ref={heading} tabIndex={-1}>Data bersama</h1>
-    <p>Semua agent dapat membaca dan mengubah baris. Hanya pembuat tabel yang dapat mengubah struktur. Jangan simpan rahasia atau data yang tidak boleh dibagikan.</p>
-    <div className="form-actions"><button className="secondary" onClick={onClose}>Kembali ke percakapan</button><button className="secondary" disabled={busy} onClick={() => setReload(n => n + 1)}>Muat ulang data</button></div>
+  return <section className="setup workflow-panel shared-data-panel"><h1 ref={heading} tabIndex={-1}>Shared data</h1>
+    <p>All agents can read and change rows. Only the table creator can change its structure. Do not store secrets or data that must not be shared.</p>
+    <div className="form-actions"><button className="secondary" onClick={onClose}>Back to conversation</button><button className="secondary" disabled={busy} onClick={() => setReload(n => n + 1)}>Reload data</button></div>
     {error && <p className="error" role="alert">{error}</p>}
-    {pending && <div><p className="message-text">Penghapusan {pending.table} belum terkonfirmasi. Coba lagi tidak mengulang penghapusan yang sudah tersimpan.</p><button disabled={busy || !listing} onClick={() => void execute()}>Coba hapus lagi</button><button className="secondary" disabled={busy} onClick={() => { sessionStorage.removeItem(key); setPending(null); setReload(n => n + 1); }}>Tutup pemulihan dan muat ulang</button></div>}
-    {!listing ? <p role="status">{error ? 'Data belum tersedia.' : 'Memuat tabel...'}</p> : <>
-      {!listing.tables.length && <p>Tidak ada tabel di halaman ini. Minta agent membuat tabel melalui percakapan.</p>}
-      {listing.tables.map(table => <details key={table.name}><summary className="message-text">{table.name}</summary><p className="message-text">Pembuat: {agents.find(agent => agent.id === table.owner)?.name ?? table.owner}</p><p className="message-text">{table.columns.map(column => `${column.name}: ${column.type || 'tanpa tipe'}`).join('\n')}</p><button className="secondary" disabled={busy || !!pending} onClick={() => void execute(table.name)}>Hapus tabel {table.name}</button></details>)}
-      <div className="form-actions"><button className="secondary" disabled={busy || !after} onClick={() => { setAfter(''); heading.current?.focus(); }}>Halaman pertama</button><button className="secondary" disabled={busy || !listing.next_after} onClick={() => { setAfter(listing.next_after!); heading.current?.focus(); }}>Tabel berikutnya</button></div>
-      <label>Query baca saja<textarea rows={4} placeholder={'SELECT * FROM "nama_tabel" LIMIT 50'} value={sql} maxLength={16000} disabled={busy || !!pending} onChange={event => setSQL(event.target.value)} /></label><button disabled={busy || !!pending || !sql.trim()} onClick={() => void execute()}>{busy ? 'Memproses...' : 'Jalankan query baca'}</button>
+    {pending && <div><p className="message-text">Deletion of {pending.table} is not confirmed yet. Retrying does not repeat a deletion already saved.</p><button disabled={busy || !listing} onClick={() => void execute()}>Retry deletion</button><button className="secondary" disabled={busy} onClick={() => { sessionStorage.removeItem(key); setPending(null); setReload(n => n + 1); }}>Close recovery and reload</button></div>}
+    {!listing ? <p role="status">{error ? 'Data is unavailable.' : 'Loading tables...'}</p> : <>
+      {!listing.tables.length && <p>No tables on this page. Ask an agent to create a table through a conversation.</p>}
+      {listing.tables.map(table => <details key={table.name}><summary className="message-text">{table.name}</summary><p className="message-text">Creator: {agents.find(agent => agent.id === table.owner)?.name ?? table.owner}</p><p className="message-text">{table.columns.map(column => `${column.name}: ${column.type || 'untyped'}`).join('\n')}</p><button className="secondary" disabled={busy || !!pending} onClick={() => void execute(table.name)}>Delete table {table.name}</button></details>)}
+      <div className="form-actions"><button className="secondary" disabled={busy || !after} onClick={() => { setAfter(''); heading.current?.focus(); }}>First page</button><button className="secondary" disabled={busy || !listing.next_after} onClick={() => { setAfter(listing.next_after!); heading.current?.focus(); }}>Next tables</button></div>
+      <label>Read-only query<textarea rows={4} placeholder={'SELECT * FROM "table_name" LIMIT 50'} value={sql} maxLength={16000} disabled={busy || !!pending} onChange={event => setSQL(event.target.value)} /></label><button disabled={busy || !!pending || !sql.trim()} onClick={() => void execute()}>{busy ? 'Processing...' : 'Run read query'}</button>
     </>}
-    {result !== null && <details open><summary>Hasil query terakhir</summary><pre className="message-text">{JSON.stringify(result, null, 2)}</pre></details>}
+    {result !== null && <details open><summary>Last query results</summary><pre className="message-text">{JSON.stringify(result, null, 2)}</pre></details>}
   </section>;
 }

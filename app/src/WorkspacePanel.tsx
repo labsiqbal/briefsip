@@ -17,7 +17,7 @@ export function WorkspacePanel({ agent, request, onClose }: { agent: { id: strin
     if(location.digest !== undefined)params.set('digest',location.digest);
     void request<Page>(`/api/agents/${agent.id}/workspace/${location.file?'file':'entries'}?${params}`).then(value => {
       if(current === generation.current)setPage(value);
-    }).catch(reason => {if(current === generation.current)setError(reason instanceof Error ? reason.message : 'Workspace belum dapat dimuat. Coba lagi.');});
+    }).catch(reason => {if(current === generation.current)setError(reason instanceof Error ? reason.message : 'Workspace could not load. Try again.');});
     return () => {generation.current++;};
   },[agent.id,location,reload,request]);
   function open(next:Location){generation.current++;setPage(null);setError('');setLocations(value=>[...value,next]);}
@@ -31,22 +31,22 @@ export function WorkspacePanel({ agent, request, onClose }: { agent: { id: strin
       const blob=await response.blob();if(current!==generation.current)return;
       const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=location.path.split('/').pop()!;
       document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
-    } catch(reason) {if(current===generation.current)setDownloadError(reason instanceof TypeError?'Unduhan terputus. Periksa koneksi, lalu coba lagi.':reason instanceof Error?reason.message:'Unduhan gagal. Coba lagi.');}
+    } catch(reason) {if(current===generation.current)setDownloadError(reason instanceof TypeError?'Download interrupted. Check the connection and try again.':reason instanceof Error?reason.message:'Download failed. Try again.');}
     finally {if(current===generation.current)setDownloading(false);}
   }
   return <section className="setup workspace-files">
-    <h1 ref={heading} tabIndex={-1}>File workspace {agent.name}</h1>
-    <p className="muted">File lokal yang dihubungkan pemilik host. Preview hanya baca; membuka file di sini tidak mengirim isinya ke model.</p>
-    <div className="form-actions"><button className="secondary" onClick={onClose}>Kembali ke percakapan</button><button className="secondary" disabled={locations.length<2} onClick={back}>Sebelumnya</button><button className="secondary" onClick={()=>{generation.current++;setPage(null);setError('');setLocations([{path:'',file:false}]);}}>Direktori utama</button><button className="secondary" onClick={()=>{generation.current++;setPage(null);setError('');setLocations(value=>[...value.slice(0,-1),{path:location.path,file:location.file}]);setReload(value=>value+1);}}>Muat ulang dari awal</button></div>
-    <h2>{location.path || 'Direktori utama'}</h2>
-    {location.file && <><button className="secondary" aria-disabled={downloading} aria-busy={downloading} onClick={()=>void download()}>{downloading?'Menyiapkan unduhan...':'Unduh file asli'}</button><p className="muted">Teks atau binary, maksimum 10 MiB. File diunduh dari versi saat ini.</p>{downloadError&&<p className="error" role="alert">{downloadError}</p>}</>}
-    {error ? <p className="error" role="alert">{error}</p> : !page ? <p role="status">Memuat workspace...</p> : location.file ? <>
-      <p className="muted">Mulai karakter {(location.offset??0)+1}. Maksimum 8000 karakter per halaman.</p>
-      <pre className="skill-file-content" tabIndex={0} role="region" aria-label={`Isi ${location.path}`}>{page.text || '(File kosong)'}</pre>
-      <button className="secondary" disabled={page.next_offset == null} onClick={()=>open({...location,offset:page.next_offset!,digest:page.digest})}>Teks berikutnya</button>
+    <h1 ref={heading} tabIndex={-1}>Workspace files for {agent.name}</h1>
+    <p className="muted">Local files linked by the host owner. Previews are read-only; opening files here does not send their contents to the model.</p>
+    <div className="form-actions"><button className="secondary" onClick={onClose}>Back to conversation</button><button className="secondary" disabled={locations.length<2} onClick={back}>Previous</button><button className="secondary" onClick={()=>{generation.current++;setPage(null);setError('');setLocations([{path:'',file:false}]);}}>Root directory</button><button className="secondary" onClick={()=>{generation.current++;setPage(null);setError('');setLocations(value=>[...value.slice(0,-1),{path:location.path,file:location.file}]);setReload(value=>value+1);}}>Reload from start</button></div>
+    <h2>{location.path || 'Root directory'}</h2>
+    {location.file && <><button className="secondary" aria-disabled={downloading} aria-busy={downloading} onClick={()=>void download()}>{downloading?'Preparing download...':'Download original file'}</button><p className="muted">Text or binary, up to 10 MiB. Downloads use the current file version.</p>{downloadError&&<p className="error" role="alert">{downloadError}</p>}</>}
+    {error ? <p className="error" role="alert">{error}</p> : !page ? <p role="status">Loading workspace...</p> : location.file ? <>
+      <p className="muted">Starting at character {(location.offset??0)+1}. Maximum 8000 characters per page.</p>
+      <pre className="skill-file-content" tabIndex={0} role="region" aria-label={`Contents of ${location.path}`}>{page.text || '(Empty file)'}</pre>
+      <button className="secondary" disabled={page.next_offset == null} onClick={()=>open({...location,offset:page.next_offset!,digest:page.digest})}>Next text page</button>
     </> : <>
-      {page.entries?.length ? <ul className="workspace-entry-list">{page.entries.map(entry=><li key={entry.name}><button className="secondary" disabled={!['file','directory'].includes(entry.kind)||/[\x00-\x1f\x7f\\]/.test(entry.name)} onClick={()=>open({path:[location.path,entry.name].filter(Boolean).join('/'),file:entry.kind==='file'})}>{entry.name}<span className="muted">{entry.kind==='directory'?'Direktori':entry.kind==='file'?'File':'Tidak didukung'}</span></button></li>)}</ul> : <p>Direktori kosong pada halaman ini.</p>}
-      <button className="secondary" disabled={!page.next_after} onClick={()=>open({...location,after:page.next_after!})}>Entri berikutnya</button>
+      {page.entries?.length ? <ul className="workspace-entry-list">{page.entries.map(entry=><li key={entry.name}><button className="secondary" disabled={!['file','directory'].includes(entry.kind)||/[\x00-\x1f\x7f\\]/.test(entry.name)} onClick={()=>open({path:[location.path,entry.name].filter(Boolean).join('/'),file:entry.kind==='file'})}>{entry.name}<span className="muted">{entry.kind==='directory'?'Directory':entry.kind==='file'?'File':'Unsupported'}</span></button></li>)}</ul> : <p>Directory is empty on this page.</p>}
+      <button className="secondary" disabled={!page.next_after} onClick={()=>open({...location,after:page.next_after!})}>Next entries</button>
     </>}
   </section>;
 }

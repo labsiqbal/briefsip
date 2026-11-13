@@ -31,13 +31,13 @@ export function WorkflowInbox({ request, onBack }: {
           if (enabled && seen.current !== null && newest > seen.current && Notification.permission === 'granted') {
             const count = current.notifications.filter(item => item.seq > seen.current! && !item.read).length;
             if (count) {
-              try { new Notification('Hasil workflow tersedia', { body: 'Buka inbox Briefsip untuk membaca hasil.', tag: 'briefsip-workflow-results' }); }
-              catch { setEnabled(false); setError('Notifikasi browser tidak tersedia. Hasil tetap tersimpan di inbox.'); }
+              try { new Notification('Workflow results available', { body: 'Open the Briefsip inbox to read results.', tag: 'briefsip-workflow-results' }); }
+              catch { setEnabled(false); setError('Browser notifications are unavailable. Results remain saved in the inbox.'); }
             }
           }
           seen.current = newest;
         }
-      } catch (error) { if (!stopped) setError(error instanceof Error ? error.message : 'Inbox gagal dimuat. Coba lagi.'); }
+      } catch (error) { if (!stopped) setError(error instanceof Error ? error.message : 'Inbox could not load. Try again.'); }
       finally { if (!stopped) timer = setTimeout(load, 5000); }
     }
     void load();
@@ -52,23 +52,23 @@ export function WorkflowInbox({ request, onBack }: {
       await request(`/api/workflow-notifications/${item.run}/read`, { id: crypto.randomUUID() });
       if (current !== version.current) return;
       setResult({ name: item.name, last: run.last }); setRefresh(value => value + 1);
-    } catch (error) { if (current === version.current) setError(error instanceof Error ? error.message : 'Hasil gagal dibuka. Coba lagi.'); }
+    } catch (error) { if (current === version.current) setError(error instanceof Error ? error.message : 'Result could not open. Try again.'); }
     finally { if (current === version.current) setBusy(false); }
   }
-  return <section className="setup workflow-panel"><h1 ref={heading} tabIndex={-1}>{result ? result.name : 'Inbox workflow'}</h1>
-    <div className="form-actions routine-actions"><button className="secondary" onClick={onBack}>Kembali ke workflow</button>{result && <button className="secondary" onClick={() => setResult(null)}>Kembali ke inbox</button>}</div>
+  return <section className="setup workflow-panel"><h1 ref={heading} tabIndex={-1}>{result ? result.name : 'Workflow inbox'}</h1>
+    <div className="form-actions routine-actions"><button className="secondary" onClick={onBack}>Back to workflows</button>{result && <button className="secondary" onClick={() => setResult(null)}>Back to inbox</button>}</div>
     {error && <p className="error" role="alert">{error}</p>}
-    {result ? <p className="message-text">{result.last || 'Workflow selesai tanpa teks hasil.'}</p> : <>
-      <p>Hasil tersimpan di server. Notifikasi browser hanya untuk hasil baru selama inbox ini terbuka; isi hasil tidak ditampilkan di notifikasi.</p>
+    {result ? <p className="message-text">{result.last || 'Workflow completed without result text.'}</p> : <>
+      <p>Results are saved on the server. Browser notifications cover only new results while this inbox is open; result contents are not shown in notifications.</p>
       <button className="secondary" disabled={permission === 'unsupported' || permission === 'denied'} onClick={async () => {
         if (enabled) { setEnabled(false); return; }
         try { const value = await Notification.requestPermission(); setPermission(value); setEnabled(value === 'granted'); }
-        catch { setError('Izin notifikasi gagal diminta. Periksa pengaturan browser.'); }
-      }}>{enabled ? 'Matikan notifikasi browser' : 'Aktifkan notifikasi browser'}</button>
-      {permission === 'unsupported' && <p>Browser ini tidak mendukung notifikasi.</p>}{permission === 'denied' && <p>Notifikasi diblokir. Ubah izin situs melalui pengaturan browser.</p>}
-      <button className="secondary" onClick={() => setRefresh(value => value + 1)}>Muat ulang inbox</button>
-      {page ? <><p>{page.unread} hasil belum dibaca</p><ul className="routine-list">{page.notifications.map(item => <li key={item.run}><h2>{item.name}</h2><p>{new Date(item.created).toLocaleString()} · {item.read ? 'Sudah dibaca' : 'Belum dibaca'}</p><button className="secondary" disabled={busy} onClick={() => void open(item)}>Buka hasil {item.name}</button></li>)}</ul>{!page.notifications.length && <p>Belum ada hasil pada halaman ini.</p>}</> : !error && <p role="status">Memuat inbox...</p>}
-      <div className="form-actions routine-actions"><button className="secondary" disabled={!cursors.length || busy} onClick={() => setCursors(value => value.slice(0, -1))}>Hasil lebih baru</button><button className="secondary" disabled={!page?.next_before || busy} onClick={() => { if (page?.next_before) setCursors(value => [...value, page.next_before!]); }}>Hasil lebih lama</button></div>
+        catch { setError('Notification permission could not be requested. Check browser settings.'); }
+      }}>{enabled ? 'Turn off browser notifications' : 'Enable browser notifications'}</button>
+      {permission === 'unsupported' && <p>This browser does not support notifications.</p>}{permission === 'denied' && <p>Notifications are blocked. Change site permissions in browser settings.</p>}
+      <button className="secondary" onClick={() => setRefresh(value => value + 1)}>Reload inbox</button>
+      {page ? <><p>{page.unread} unread results</p><ul className="routine-list">{page.notifications.map(item => <li key={item.run}><h2>{item.name}</h2><p>{new Date(item.created).toLocaleString()} · {item.read ? 'Read' : 'Unread'}</p><button className="secondary" disabled={busy} onClick={() => void open(item)}>Open result {item.name}</button></li>)}</ul>{!page.notifications.length && <p>No results on this page yet.</p>}</> : !error && <p role="status">Loading inbox...</p>}
+      <div className="form-actions routine-actions"><button className="secondary" disabled={!cursors.length || busy} onClick={() => setCursors(value => value.slice(0, -1))}>Newer results</button><button className="secondary" disabled={!page?.next_before || busy} onClick={() => { if (page?.next_before) setCursors(value => [...value, page.next_before!]); }}>Older results</button></div>
     </>}
   </section>;
 }

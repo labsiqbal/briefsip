@@ -2,7 +2,7 @@ import { useId, useRef, useState } from 'react';
 import { workflowEdges, type WorkflowGraph as Graph } from '../workflows';
 import { workflowLayout } from '../workflow-editor-state';
 
-const kinds = { agent: 'Agent', model: 'Model', condition: 'Kondisi', approval: 'Persetujuan', wait: 'Tunggu event', output: 'Output' };
+const kinds = { agent: 'Agent', model: 'Model', condition: 'Condition', approval: 'Approval', wait: 'Wait for event', output: 'Output' };
 export function WorkflowGraph({ graph, selected, locked, onSelect, onMove, buttonRefs, labels, loops }: {
   graph: Graph; selected: string; locked: boolean; onSelect: (id: string) => void;
   buttonRefs: Map<string, HTMLButtonElement>;
@@ -21,8 +21,8 @@ export function WorkflowGraph({ graph, selected, locked, onSelect, onMove, butto
   }
   const width = Math.max(360, ...positions.map(item => item.x + 244)), height = Math.max(200, ...positions.map(item => item.y + 144));
   const edges = graph.nodes.flatMap(node => workflowEdges(node).map((target, index) => ({ from: node.id, to: target, portY: node.kind === 'condition' ? index === 0 ? 20 : 60 : 40,
-    label: node.kind === 'condition' ? index === 0 ? 'Cocok' : 'Tidak cocok' : node.kind === 'approval' ? 'Disetujui' : 'Lanjut' })));
-  return <><p className="muted" id={help}>{onMove ? 'Geser node untuk mengatur posisi. Dengan keyboard, fokuskan node lalu tekan Alt dan tombol panah. Enter membuka pengaturan.' : 'Graph versi saat eksekusi dimulai. Status menunjukkan percobaan terakhir setiap langkah. Pilih node untuk melihat detailnya.'}</p><div ref={viewport} className="workflow-graph" role="region" aria-label="Graph workflow, gulir untuk melihat semua langkah" tabIndex={0} onScroll={() => {
+    label: node.kind === 'condition' ? index === 0 ? 'Matched' : 'Not matched' : node.kind === 'approval' ? 'Approved' : 'Continue' })));
+  return <><p className="muted" id={help}>{onMove ? 'Drag nodes to position them. With a keyboard, focus a node and press Alt and an arrow key. Enter opens settings.' : 'Graph version when the run started. Status shows the last attempt for each step. Choose a node to see its details.'}</p><div ref={viewport} className="workflow-graph" role="region" aria-label="Workflow graph, scroll to see all steps" tabIndex={0} onScroll={() => {
     if (drag.current && !locked) { drag.current.moved = true; setPreview(position(drag.current.lastX, drag.current.lastY)); }
   }}>
     <div className="workflow-graph-content" style={{ width, height }}>
@@ -68,7 +68,7 @@ export function WorkflowGraph({ graph, selected, locked, onSelect, onMove, butto
           event.preventDefault();
           onMove(node.id, point.x + (event.key === 'ArrowLeft' ? -20 : event.key === 'ArrowRight' ? 20 : 0), point.y + (event.key === 'ArrowUp' ? -20 : event.key === 'ArrowDown' ? 20 : 0));
         }}
-        onClick={() => { if (suppressClick.current) suppressClick.current = false; else onSelect(node.id); }}><strong>{node.id}</strong><span>{kinds[node.kind]}{graph.entry === node.id ? ' · Awal' : ''}</span>{labels ? <small>{labels.get(node.id) ?? 'Belum dijalankan'}</small> : loops?.has(node.id) && <small>Loop tanpa kondisi</small>}</button>; })}
+        onClick={() => { if (suppressClick.current) suppressClick.current = false; else onSelect(node.id); }}><strong>{node.id}</strong><span>{kinds[node.kind]}{graph.entry === node.id ? ' · Start' : ''}</span>{labels ? <small>{labels.get(node.id) ?? 'Not run yet'}</small> : loops?.has(node.id) && <small>Unconditional loop</small>}</button>; })}
     </div>
-  </div><details className="workflow-graph-links"><summary>Daftar hubungan langkah</summary><ul>{edges.map((edge, index) => <li key={`${edge.from}:${index}`}>{edge.from}: {edge.label.toLowerCase()} ke {edge.to || 'belum dipilih'}{edge.to && !byId.has(edge.to) ? ' (langkah tidak ditemukan)' : ''}</li>)}</ul></details></>;
+  </div><details className="workflow-graph-links"><summary>Step connections</summary><ul>{edges.map((edge, index) => <li key={`${edge.from}:${index}`}>{edge.from}: {edge.label.toLowerCase()} to {edge.to || 'not selected yet'}{edge.to && !byId.has(edge.to) ? ' (step not found)' : ''}</li>)}</ul></details></>;
 }

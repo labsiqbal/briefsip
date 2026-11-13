@@ -30,19 +30,19 @@ export const Markdown = memo(function Markdown({ text, scope, origin }: { text: 
         case 'blockquote': return h('blockquote', { key }, child());
         case 'br': case 'hr': return h(token.type, { key });
         case 'codespan': return h('code', { key }, token.text);
-        case 'code': return h('pre', { key, tabIndex: 0, role: 'region', 'aria-label': 'Blok kode' }, h('code', null, token.text));
-        case 'checkbox': return h('span', { key, role: 'img', 'aria-label': token.checked ? 'Selesai' : 'Belum selesai' }, token.checked ? '[x] ' : '[ ] ');
+        case 'code': return h('pre', { key, tabIndex: 0, role: 'region', 'aria-label': 'Code block' }, h('code', null, token.text));
+        case 'checkbox': return h('span', { key, role: 'img', 'aria-label': token.checked ? 'Done' : 'Not done' }, token.checked ? '[x] ' : '[ ] ');
         case 'list': return h(token.ordered ? 'ol' : 'ul', { key, ...(token.ordered ? { start: token.start } : {}) }, token.items.map((item: Tokens.ListItem, index: number) => h('li', { key: index }, render(item.tokens, depth + 1))));
         case 'link': {
           const target = markdownLink(token.href, scope, origin);
           return target ? h('a', { key, href: target.href, ...(target.external ? { target: '_blank', rel: 'noopener noreferrer', title: target.href } : { download: true }) }, child()) : h('span', { key }, child());
         }
-        case 'image': return h('span', { key }, token.text ? `[Gambar: ${token.text}]` : '[Gambar]');
+        case 'image': return h('span', { key }, token.text ? `[Image: ${token.text}]` : '[Image]');
         case 'table': {
           count += token.header.length * (token.rows.length + 1) + token.rows.length;
           if (count > 6000) throw new Error('Markdown table nodes');
           const alignment = (cell: Tokens.TableCell) => ({ textAlign: cell.align ?? 'left' });
-          return h('div', { key, className: 'markdown-table', tabIndex: 0, role: 'region', 'aria-label': 'Tabel jawaban' }, h('table', null,
+          return h('div', { key, className: 'markdown-table', tabIndex: 0, role: 'region', 'aria-label': 'Response table' }, h('table', null,
             h('thead', null, h('tr', null, token.header.map((cell: Tokens.TableCell, index: number) => h('th', { key: index, scope: 'col', style: alignment(cell) }, render(cell.tokens, depth + 1))))),
             h('tbody', null, token.rows.map((row: Tokens.TableCell[], index: number) => h('tr', { key: index }, row.map((cell, column) => h('td', { key: column, style: alignment(cell) }, render(cell.tokens, depth + 1))))))));
         }
