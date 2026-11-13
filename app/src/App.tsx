@@ -64,7 +64,7 @@ async function api<T>(path: string, data?: unknown): Promise<T> {
 }
 const message = (error: unknown) => error instanceof Error ? error.message : 'Connection failed. Try again.';
 
-function ConversationFiles({ path, archived, attached, onAttach, locked }: { path: string; archived: boolean; attached: string[]; onAttach: (ids: string[]) => void; locked: boolean }) {
+function ConversationFiles({ path, archived, attached, onAttach, locked, open, onOpenChange }: { path: string; archived: boolean; attached: string[]; onAttach: (ids: string[]) => void; locked: boolean; open: boolean; onOpenChange: (open: boolean) => void }) {
   type StoredFile = { seq: number; id: string; name: string; size: number };
   type Upload = { id: string; name: string; size: number; digest: string; file?: File };
   const storageKey = `briefsip:upload:${path}`;
@@ -74,7 +74,7 @@ function ConversationFiles({ path, archived, attached, onAttach, locked }: { pat
       return value && /^[0-9a-f-]{36}$/i.test(value.id) && typeof value.name === 'string' && Number.isSafeInteger(value.size) && value.size >= 0 && value.size <= 10 * 1024 * 1024 && /^[0-9a-f]{64}$/.test(value.digest) ? { id: value.id, name: value.name, size: value.size, digest: value.digest } : null;
     } catch { return null; }
   });
-  const [open, setOpen] = useState(false), [files, setFiles] = useState<StoredFile[]>([]);
+  const [files, setFiles] = useState<StoredFile[]>([]);
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [more, setMore] = useState(false);
   const [loading, setLoading] = useState(false), [reload, setReload] = useState(0);
   const [selected, setSelected] = useState<File | null>(null);
@@ -146,9 +146,7 @@ function ConversationFiles({ path, archived, attached, onAttach, locked }: { pat
     } catch (error) { setError(message(error)); }
     finally { setBusy(false); }
   }
-  // ponytail: Chat opens details and focuses summary; use kit Collapsible when that caller can change too.
-  return <div className="k-stack bs-root"><details className="k-collapsible" onToggle={event => setOpen(event.currentTarget.open)}>
-    <summary className="k-collapsible__trigger"><ChevronRight size={14} aria-hidden style={{ transform: open ? 'rotate(90deg)' : undefined }} />Conversation files</summary>
+  return <div className="k-stack bs-root"><Collapsible title="Conversation files" open={open} onOpenChange={onOpenChange}>
     <div className="k-stack">
       <p className="k-field__hint">Maximum 10 MiB per file. Select attachments to send with your next message. Up to four attachments: 32 KiB total UTF-8 text and 4 MiB total PNG/JPEG/WebP images. Select a model that supports images.</p>
       <form className="k-stack" onSubmit={upload}>
@@ -166,7 +164,7 @@ function ConversationFiles({ path, archived, attached, onAttach, locked }: { pat
       {preview && <Section title={preview.name} actions={<Button size="sm" variant="ghost" onClick={() => setPreview(null)}>Close preview</Button>}>{previewError ? <Alert tone="error">{previewError}</Alert> : previewText === null ? <p role="status">Loading preview...</p> : <CodeBlock label={`Preview ${preview.name}`}>{previewText || '(Empty file)'}</CodeBlock>}</Section>}
       {more && <Button size="sm" disabled={busy} onClick={() => void loadMore()}>Earlier files</Button>}
     </div>
-  </details></div>;
+  </Collapsible></div>;
 }
 
 function TaskControls({ turn, path, members, archived }: { turn: Turn; path: string; members: Agent[]; archived: boolean }) {
@@ -197,6 +195,7 @@ function TaskControls({ turn, path, members, archived }: { turn: Turn; path: str
 }
 
 function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit, onOpenAgent, onOpenChannel, menuItems = [], detailsExtra }: { menuItems?: MenuItem[]; detailsExtra?: ReactNode; onOpenChannel?: (channel: string) => void; onOpenAgent?: (agent: string, thread: string) => void; onRead?: () => Promise<void>; onEdit?: () => void; agent: Agent | Channel; configured: boolean; channel?: Channel; thread?: Thread; members?: Agent[] }) {
+  const confirm = useConfirm();
   const archived = !!(channel?.archived || thread?.archived || (!channel && (agent as Agent).hidden));
   const scope = thread ? `thread:${thread.id}` : channel ? `channel:${agent.id}` : agent.id;
   const path = thread ? `/api/threads/${thread.id}/turns` : `/api/${channel ? 'channels' : 'agents'}/${agent.id}/turns`;
@@ -301,6 +300,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   }
   const [menuOpen, setMenuOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useDetailsOpen();
+  const [filesOpen, setFilesOpen] = useState(false);
   const filesSection = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const element = composer.current;
@@ -314,7 +314,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   const title = thread?.name ?? agent.name;
   const subtitle = channel ? `${members.length} members${channel.archived ? ' · Archived' : ''}` : thread ? `Side thread · ${agent.name}` : (agent as Agent).model;
   const editLabel = channel ? 'Channel settings' : thread ? 'Conversation settings' : 'Edit profile';
-  const openFiles = () => { setDetailsOpen(true); requestAnimationFrame(() => { const details = filesSection.current?.querySelector('details'); if (details) details.open = true; filesSection.current?.querySelector<HTMLElement>('summary')?.focus(); }); };
+  const openFiles = () => { setDetailsOpen(true); setFilesOpen(true); requestAnimationFrame(() => filesSection.current?.querySelector<HTMLButtonElement>('.k-collapsible__trigger')?.focus()); };
   const items: MenuItem[] = [
     ...menuItems,
     ...(onEdit ? [{ label: editLabel, onSelect: onEdit }] : []),
@@ -362,16 +362,16 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
                     <span className={`turn-status is-${tone(turn)}`}><i aria-hidden />{statusLabel(turn)}</span>
                     {turn.answer_model && <span className="turn-model" title="Answering model">{turn.answer_model}</span>}
                   </div>
-                  <div className="legacy turn-extras">
-                    {turn.events?.map(event => <section key={event.id}><p>Event {event.event}: {event.status === 'waiting' ? 'Waiting' : event.status === 'received' ? 'Received' : event.status === 'expired' ? 'Expired' : 'Closed'} · {new Date(event.deadline).toLocaleString('en-US')}</p>{event.status === 'waiting' && !archived && <EventConnection path={`/api/turn-waits/${event.id}`} request={api} />}</section>)}
+                  <div className="turn-extras k-stack">
+                    {turn.events?.map(event => <section className="k-stack" key={event.id}><Row title={`Event ${event.event}: ${event.status === 'waiting' ? 'Waiting' : event.status === 'received' ? 'Received' : event.status === 'expired' ? 'Expired' : 'Closed'}`} meta={new Date(event.deadline).toLocaleString('en-US')} />{event.status === 'waiting' && !archived && <EventConnection path={`/api/turn-waits/${event.id}`} request={api} />}</section>)}
                     {turn.questions?.map(question => <QuestionCard key={question.id} question={question} path={`${path}/${turn.id}`} status={turn.status} archived={archived} request={api} />)}
-                    {!!turn.generatedFiles?.length && <ul aria-label="Agent output files">{turn.generatedFiles.map(file => <li key={file.id}><a href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}>{file.name}</a> <span className="muted">{file.size} byte</span><HtmlPreview path={`${path.replace(/\/turns$/, '/files')}/${file.id}`} name={file.name} request={api} /></li>)}</ul>}
-                    {!!turn.receivedAgentReplies?.length && <details><summary>Agent results received with this message ({turn.receivedAgentReplies.length})</summary>{turn.receivedAgentReplies.map(item => <div key={item.id}><p className="message-text"><strong>{item.name}</strong>: {statusNames[item.status] ?? item.status}</p>{item.error && <p className="error">{item.error}</p>}{item.reply && <p className="message-text">{item.reply}</p>}{item.truncated && <p className="muted">Result excerpt. Open the conversation for the full text.</p>}{onOpenAgent && <button className="secondary" onClick={() => onOpenAgent(item.agent, item.thread)}>Open conversation {item.name}</button>}</div>)}</details>}
-                    {!!turn.agentMessages?.length && <details><summary>Inter-agent messages ({turn.agentMessages.length})</summary>{turn.agentMessages.map(item => <div key={item.id}><p className="message-text"><strong>{item.name}</strong>: {item.paused && !['done','cancelled'].includes(item.status) ? 'Paused' : statusNames[item.status] ?? item.status}{!item.expects_reply && ' (no reply)'}</p>{item.error && <p className="error">{item.error}</p>}{item.reply && <p className="message-text">{item.reply.slice(0, 1000)}</p>}{(item.truncated || (item.reply?.length ?? 0) > 1000) && <p className="muted">Result excerpt. Open the conversation for the full text.</p>}{onOpenAgent && <button className="secondary" onClick={() => onOpenAgent(item.agent, item.thread)}>Open conversation {item.name}</button>}</div>)}</details>}
-                    {!!turn.coordination?.length && <details><summary>Task coordination ({turn.coordination.length})</summary>{turn.coordination.map((action, index) => <div key={index}><p>{action.owner_name} {action.kind === 'delegate_task' ? 'delegated to' : 'reassigned to'} {action.target_name}.</p><p className="message-text">{action.prompt}</p>{action.child && <a href={`#turn-${action.child}`} onClick={event => { event.preventDefault(); openFocused(action.child!); }}>View subtask</a>}</div>)}</details>}
+                    {!!turn.generatedFiles?.length && <section aria-label="Agent output files"><Card>{turn.generatedFiles.map(file => <Row key={file.id} title={<a className="k-link" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}>{file.name}</a>} meta={`${file.size} byte`}><HtmlPreview path={`${path.replace(/\/turns$/, '/files')}/${file.id}`} name={file.name} request={api} /></Row>)}</Card></section>}
+                    {!!turn.receivedAgentReplies?.length && <Collapsible title={`Agent results received with this message (${turn.receivedAgentReplies.length})`}>{turn.receivedAgentReplies.map(item => <div className="k-stack" key={item.id}><div className="k-section__title bubble__plain"><strong>{item.name}</strong>: {statusNames[item.status] ?? item.status}</div>{item.error && <div className="k-field__error">{item.error}</div>}{item.reply && <div className="bubble__plain">{item.reply}</div>}{item.truncated && <div className="k-field__hint">Result excerpt. Open the conversation for the full text.</div>}{onOpenAgent && <div className="k-row-actions"><Button size="sm" variant="ghost" onClick={() => onOpenAgent(item.agent, item.thread)}>Open conversation {item.name}</Button></div>}</div>)}</Collapsible>}
+                    {!!turn.agentMessages?.length && <Collapsible title={`Inter-agent messages (${turn.agentMessages.length})`}>{turn.agentMessages.map(item => <div className="k-stack" key={item.id}><div className="k-section__title bubble__plain"><strong>{item.name}</strong>: {item.paused && !['done','cancelled'].includes(item.status) ? 'Paused' : statusNames[item.status] ?? item.status}{!item.expects_reply && ' (no reply)'}</div>{item.error && <div className="k-field__error">{item.error}</div>}{item.reply && <div className="bubble__plain">{item.reply.slice(0, 1000)}</div>}{(item.truncated || (item.reply?.length ?? 0) > 1000) && <div className="k-field__hint">Result excerpt. Open the conversation for the full text.</div>}{onOpenAgent && <div className="k-row-actions"><Button size="sm" variant="ghost" onClick={() => onOpenAgent(item.agent, item.thread)}>Open conversation {item.name}</Button></div>}</div>)}</Collapsible>}
+                    {!!turn.coordination?.length && <Collapsible title={`Task coordination (${turn.coordination.length})`}>{turn.coordination.map((action, index) => <div className="k-stack" key={index}><div className="k-section__title">{action.owner_name} {action.kind === 'delegate_task' ? 'delegated to' : 'reassigned to'} {action.target_name}.</div><div className="bubble__plain">{action.prompt}</div>{action.child && <div className="k-row-actions"><Button size="sm" variant="ghost" onClick={() => openFocused(action.child!)}>View subtask</Button></div>}</div>)}</Collapsible>}
                     <QueueEditor turn={{ ...turn, files: turn.files ?? [] }} path={path} archived={archived} request={api} />
                     <TaskControls key={`${turn.id}:${turn.revision}`} turn={turn} path={path} members={channel ? members : []} archived={archived || !!turn.editing} />
-                    {(!['done','cancelled'].includes(turn.status)) && <button className="secondary" onClick={() => void cancel(turn)}>{turn.waiting_for ? 'Cancel task and delegation' : turn.status === 'running' ? 'Stop' : turn.status === 'queued' && !turn.paused ? 'Cancel queued task' : 'Cancel task'}</button>}
+                    {(!['done','cancelled'].includes(turn.status)) && <div className="k-row-actions"><Button size="sm" variant="secondary" onClick={() => void cancel(turn)}>{turn.waiting_for ? 'Cancel task and delegation' : turn.status === 'running' ? 'Stop' : turn.status === 'queued' && !turn.paused ? 'Cancel queued task' : 'Cancel task'}</Button></div>}
                   </div>
                 </div>
               </article>)}
@@ -383,7 +383,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
         {archived && <p className="composer__note">{!channel && (agent as Agent).hidden ? 'Agent is hidden. Restore it through Edit profile to resume the queue and receive new messages.' : 'Conversation is archived. History remains available. Restore it through settings to send new messages.'}</p>}
         {!configured && <p className="composer__note">{!channel && 'provider_account' in agent && !!agent.provider_account && agent.provider_available === false ? 'This agent provider account is unavailable. Select a connected account in the agent profile, or restore the account configuration on the server.' : 'Provider not connected. Check provider account configuration on the server, then restart the app.'} Agent and history remain saved.</p>}
         {error && <div className="composer__error" role="alert"><span>{error} {pending && 'Use Retry send to check the same request without creating a duplicate message.'}</span></div>}
-        {blocked && <div className="composer__error" role="alert"><span>Message recovery data could not be read. Sending is blocked. Check history to confirm the previous message was not sent.</span><button type="button" className="link-btn" onClick={() => { if (!window.confirm('Discard recovery data? The previous message may already have been received. Check history before sending another message.')) return; try { sessionStorage.removeItem(storageKey); setBlocked(false); setError(''); composer.current?.focus(); } catch { setError('Recovery data could not be deleted. Check site storage.'); } }}>Discard message recovery</button></div>}
+        {blocked && <div className="composer__error" role="alert"><span>Message recovery data could not be read. Sending is blocked. Check history to confirm the previous message was not sent.</span><Button size="sm" variant="ghost" onClick={async () => { if (!await confirm({ title: 'Discard recovery data?', description: 'The previous message may already have been received. Check history before sending another message.', confirm: 'Discard message recovery', danger: true })) return; try { sessionStorage.removeItem(storageKey); setBlocked(false); setError(''); requestAnimationFrame(() => composer.current?.focus()); } catch { setError('Recovery data could not be deleted. Check site storage.'); } }}>Discard message recovery</Button></div>}
         {(pending?.files ?? attached).length > 0 && <p className="composer__note"><Paperclip size={12} aria-hidden /> {(pending?.files ?? attached).length} attachments will be sent to the provider with the message.</p>}
         <form className={`composer${draft.includes('\n') ? ' is-multiline' : ''}`} onSubmit={send}>
           <div className="composer__left">
@@ -440,10 +440,10 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
           <section>
             <div className="section-label">Memory and context</div>
             <div className="panel-card"><button ref={memoryButton} type="button" className="panel-row panel-row--action" onClick={() => setShowMemory(true)}><Brain size={16} aria-hidden /> {channel ? 'Channel' : 'Agent'} memory</button></div>
-            <div className="legacy details-legacy"><CompactionPanel path={path.replace(/\/turns$/, '/compaction')} request={api} /></div>
+            <CompactionPanel path={path.replace(/\/turns$/, '/compaction')} request={api} />
           </section>
-          <section ref={filesSection}><div className="legacy details-legacy"><ConversationFiles path={path.replace(/\/turns$/, '/files')} archived={archived} attached={pending?.files ?? attached} onAttach={attach} locked={blocked || !!pending || busy} /></div></section>
-          <section><div className="legacy details-legacy"><QueuePanel path={path} request={api} onOpen={id => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(id); }} /></div></section>
+          <section ref={filesSection}><ConversationFiles path={path.replace(/\/turns$/, '/files')} archived={archived} attached={pending?.files ?? attached} onAttach={attach} locked={blocked || !!pending || busy} open={filesOpen} onOpenChange={setFilesOpen} /></section>
+          <section><QueuePanel path={path} request={api} onOpen={id => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(id); }} /></section>
         </div>
       </div>
     </aside>}
