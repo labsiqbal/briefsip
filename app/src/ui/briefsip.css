@@ -141,5 +141,30 @@
 .bs-root .details .legacy .conversation-files form { padding-block: 8px; }
 .bs-root .details .legacy .conversation-files a { min-height: 32px; }
 .form-modal__body { flex: 1 1 auto; min-height: 0; }
-.bs-root .legacy.form-modal__body .setup label { font-weight: 500; }
-.bs-root .legacy .setup label :is(span, small, p):not(.sr-only) { font-weight: 400; color: var(--color-text-secondary); }
+.legacy .setup label :is(span, small, p):not(.sr-only) { font-weight: 400; color: var(--color-text-secondary); }
+
+/* legacy panels: Bot HQ settings polish */
+.legacy [tabindex="-1"]:focus { outline: none; }
+.app-settings .legacy fieldset, .page.legacy fieldset { padding: 14px 16px; border: 0.5px solid var(--color-border-tertiary); border-radius: var(--radius-md); }
+.app-settings .legacy fieldset { background: var(--color-bg-chrome); }
+.page.legacy fieldset { background: var(--color-bg-pane); }
+.legacy fieldset > legend { float: left; width: 100%; margin: 0 0 12px; padding: 0; }
+.legacy fieldset > legend + * { clear: both; }
+.legacy input[type="file"] { padding: 6px; cursor: pointer; }
+.legacy input[type="file"]::file-selector-button {
+  height: 26px; margin-right: 10px; padding: 0 12px; border: 0; border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary); color: var(--color-ink); box-shadow: var(--color-border-secondary) 0 0 0 0.5px inset;
+  font: inherit; font-size: 12px; cursor: pointer;
+}
+.legacy input[type="file"]::file-selector-button:hover { background: var(--color-bg-secondary-hover); }
+.legacy fieldset > p { font-size: 0.8125rem; color: var(--color-text-secondary); }
+.legacy dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 16px; margin: 12px 0; padding: 2px 14px; border: 0.5px solid var(--color-border-tertiary); border-radius: var(--radius-md); background: var(--color-bg-pane); font-size: 0.8125rem; }
+.app-settings .legacy dl { background: var(--color-bg-chrome); }
+.legacy dt { padding: 9px 0; color: var(--color-text-secondary); }
+.legacy dd { margin: 0; padding: 9px 0; text-align: right; color: var(--color-ink); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.legacy dt:not(:first-of-type), .legacy dt:not(:first-of-type) + dd { border-top: 0.5px solid var(--color-border-tertiary); }
+.legacy summary { display: flex; align-items: center; gap: 8px; list-style: none; }
+.legacy summary::-webkit-details-marker { display: none; }
+.legacy summary::before { content: ''; flex-shrink: 0; width: 6px; height: 6px; margin: 0 2px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; opacity: 0.6; transform: rotate(-45deg); transition: transform 160ms var(--ease-out); }
+.legacy details[open] > summary::before { transform: rotate(45deg); }
+.details .legacy p { color: var(--color-text-secondary); }

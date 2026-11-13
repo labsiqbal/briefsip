@@ -1,223 +1,237 @@
-/* Legacy panel styles derived from the pre-Bot HQ style.css: scoped to .legacy, bounded by .bs-root and maintained by hand. */
+/* Legacy panel styles from the pre-Bot HQ style.css, limited to .legacy subtrees and stopped at .bs-root. Maintained by hand. */
 :root[data-text-size="large"] { font-size: 112.5%; }
 :root[data-text-size="larger"] { font-size: 125%; }
-.legacy { margin: 0; font-size: 0.875rem; line-height: 1.55; color: var(--color-text-primary); }
-.legacy button:not(.bs-root button), .bs-root .legacy button, .legacy input:not(.bs-root input), .bs-root .legacy input, .legacy textarea:not(.bs-root textarea), .bs-root .legacy textarea, .legacy select:not(.bs-root select), .bs-root .legacy select { font: inherit; }
-.legacy button:not(.bs-root button), .bs-root .legacy button { min-height: 36px; border: 0; padding: 8px 16px; border-radius: var(--radius-full); background: var(--color-primary); color: var(--color-on-primary); cursor: pointer; font-weight: 500; font-size: 14px; line-height: 20px; transition: background-color 120ms var(--ease-out); }
-.legacy button:hover:not(:disabled):not(.bs-root button:hover:not(:disabled)), .bs-root .legacy button:hover:not(:disabled) { background: var(--color-bg-primary-hover); }
-.legacy button:disabled:not(.bs-root button:disabled), .bs-root .legacy button:disabled { opacity: .5; cursor: not-allowed; }
-.legacy button:focus-visible:not(.bs-root button:focus-visible), .bs-root .legacy button:focus-visible, .legacy a:focus-visible:not(.bs-root a:focus-visible), .bs-root .legacy a:focus-visible, .legacy input:focus-visible:not(.bs-root input:focus-visible), .bs-root .legacy input:focus-visible, .legacy textarea:focus-visible:not(.bs-root textarea:focus-visible), .bs-root .legacy textarea:focus-visible, .legacy select:focus-visible:not(.bs-root select:focus-visible), .bs-root .legacy select:focus-visible, .legacy summary:focus-visible:not(.bs-root summary:focus-visible), .bs-root .legacy summary:focus-visible, .legacy .turn:focus:not(.bs-root .turn:focus), .bs-root .legacy .turn:focus { outline: 2px solid var(--focus); outline-offset: 3px; }
-.legacy a:not(.bs-root a), .bs-root .legacy a { color: var(--color-brand-text); }
-.legacy summary:not(.bs-root summary), .bs-root .legacy summary { cursor: pointer; min-height: 40px; padding-block: 8px; }
-.legacy .turn a:not(.bs-root .turn a), .bs-root .legacy .turn a { display: inline-flex; align-items: center; min-height: 40px; max-width: 100%; overflow-wrap: anywhere; }
-.legacy input:not(.bs-root input), .bs-root .legacy input, .legacy textarea:not(.bs-root textarea), .bs-root .legacy textarea, .legacy select:not(.bs-root select), .bs-root .legacy select { width: 100%; color: inherit; background: var(--color-bg-pane); border: 0.5px solid var(--color-border-primary); padding: 9px 12px; border-radius: var(--radius-md); }
-.legacy input:focus:not(.bs-root input:focus), .bs-root .legacy input:focus, .legacy textarea:focus:not(.bs-root textarea:focus), .bs-root .legacy textarea:focus, .legacy select:focus:not(.bs-root select:focus), .bs-root .legacy select:focus { border-color: var(--color-border-focus); box-shadow: 0 0 0 3px var(--color-focus-ring); }
-.legacy textarea:not(.bs-root textarea), .bs-root .legacy textarea { resize: vertical; min-height: 90px; }
-.legacy input:not(.bs-root input)::placeholder, .bs-root .legacy input::placeholder, .legacy textarea:not(.bs-root textarea)::placeholder, .bs-root .legacy textarea::placeholder { color: var(--muted); opacity: 1; }
-.legacy h1:not(.bs-root h1), .bs-root .legacy h1, .legacy h2:not(.bs-root h2), .bs-root .legacy h2, .legacy p:not(.bs-root p), .bs-root .legacy p { margin: 0; }
-.legacy h1:not(.bs-root h1), .bs-root .legacy h1 { font-size: 1.3125rem; font-weight: 600; letter-spacing: -.02em; text-wrap: balance; }
-.legacy h2:not(.bs-root h2), .bs-root .legacy h2 { font-size: 1.125rem; text-wrap: balance; }
-.legacy p:not(.bs-root p), .bs-root .legacy p { text-wrap: pretty; }
-.legacy .workspace:not(.bs-root .workspace), .bs-root .legacy .workspace { display: grid; grid-template-columns: 248px minmax(0, 1fr); height: 100dvh; }
-.legacy .sidebar:not(.bs-root .sidebar), .bs-root .legacy .sidebar { display: flex; flex-direction: column; min-height: 0; background: var(--sidebar); border-right: 1px solid var(--line); padding: 24px 12px 16px; }
-.legacy .brand:not(.bs-root .brand), .bs-root .legacy .brand { color: var(--text); text-decoration: none; font-weight: 600; font-size: 1.5rem; letter-spacing: -.03em; padding: 0 12px 30px; }
-.legacy .brand span:not(.bs-root .brand span), .bs-root .legacy .brand span { display: block; color: var(--muted); font-size: 0.75rem; font-weight: 400; letter-spacing: 0; }
-.legacy .sidebar-title:not(.bs-root .sidebar-title), .bs-root .legacy .sidebar-title { display: flex; align-items: center; justify-content: space-between; padding: 0 10px 12px; }
-.legacy .sidebar-title h2:not(.bs-root .sidebar-title h2), .bs-root .legacy .sidebar-title h2 { font-size: 0.8125rem; color: var(--muted); }
-.legacy .secondary:not(.bs-root .secondary), .bs-root .legacy .secondary { color: var(--color-ink); background: var(--color-bg-tertiary); box-shadow: var(--color-border-secondary) 0 0 0 0.5px inset; }
-.legacy .secondary:hover:not(:disabled):not(.bs-root .secondary:hover:not(:disabled)), .bs-root .legacy .secondary:hover:not(:disabled) { background: var(--color-bg-secondary-hover); }
-.legacy nav:not(.bs-root nav), .bs-root .legacy nav { overflow-y: auto; min-height: 0; }
-.legacy .agent-row:not(.bs-root .agent-row), .bs-root .legacy .agent-row { width: 100%; display: flex; align-items: center; text-align: left; gap: 10px; background: transparent; color: var(--text); margin-bottom: 4px; padding: 10px; }
-.legacy .agent-row:hover:not(:disabled):not(.bs-root .agent-row:hover:not(:disabled)), .bs-root .legacy .agent-row:hover:not(:disabled) { background: var(--row-hover); }
-.legacy .agent-row.selected:not(.bs-root .agent-row.selected), .bs-root .legacy .agent-row.selected { background: var(--selected); }
-.legacy .agent-row > span:last-child:not(.bs-root .agent-row > span:last-child), .bs-root .legacy .agent-row > span:last-child { overflow: hidden; }
-.legacy .agent-row strong:not(.bs-root .agent-row strong), .bs-root .legacy .agent-row strong, .legacy .agent-row small:not(.bs-root .agent-row small), .bs-root .legacy .agent-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.legacy .agent-row small:not(.bs-root .agent-row small), .bs-root .legacy .agent-row small { color: var(--row-muted); font-weight: 400; font-size: 0.6875rem; }
-.legacy .avatar:not(.bs-root .avatar), .bs-root .legacy .avatar { display: grid; place-items: center; flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; background: var(--avatar); color: var(--avatar-text); font-weight: 600; }
-.legacy .sidebar-footer:not(.bs-root .sidebar-footer), .bs-root .legacy .sidebar-footer { margin-top: auto; padding: 24px 10px 0; color: var(--muted); font-size: 0.6875rem; display: flex; align-items: center; gap: 8px; }
-.legacy .dot:not(.bs-root .dot), .bs-root .legacy .dot { width: 6px; height: 6px; flex-shrink: 0; background: var(--offline); border-radius: 50%; }
-.legacy .dot.connected:not(.bs-root .dot.connected), .bs-root .legacy .dot.connected { background: var(--online); }
-.legacy main:not(.bs-root main), .bs-root .legacy main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.legacy .chat-header:not(.bs-root .chat-header), .bs-root .legacy .chat-header { display: flex; align-items: center; gap: 12px; padding: 20px 28px; border-bottom: 1px solid var(--line); }
-.legacy .chat-header h1:not(.bs-root .chat-header h1), .bs-root .legacy .chat-header h1 { font-size: 1rem; overflow-wrap: anywhere; }
-.legacy .chat-header p:not(.bs-root .chat-header p), .bs-root .legacy .chat-header p { font-size: 0.75rem; color: var(--muted); overflow-wrap: anywhere; }
-.legacy .activity:not(.bs-root .activity), .bs-root .legacy .activity { margin-left: auto; color: var(--muted); font-size: 0.75rem; font-variant-numeric: tabular-nums; }
-.legacy .transcript:not(.bs-root .transcript), .bs-root .legacy .transcript { flex: 1; overflow-y: auto; padding: 28px max(28px, calc((100% - 760px) / 2)); min-height: 0; }
-.legacy .turn:not(.bs-root .turn), .bs-root .legacy .turn { padding-bottom: 32px; }
-.legacy .message-head:not(.bs-root .message-head), .bs-root .legacy .message-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; margin-bottom: 6px; }
-.legacy .message-head time:not(.bs-root .message-head time), .bs-root .legacy .message-head time, .legacy .message-head span:not(.bs-root .message-head span), .bs-root .legacy .message-head span { color: var(--muted); font-size: 0.6875rem; font-variant-numeric: tabular-nums; }
-.legacy .message-text:not(.bs-root .message-text), .bs-root .legacy .message-text { white-space: pre-wrap; overflow-wrap: anywhere; }
-.legacy .markdown:not(.bs-root .markdown), .bs-root .legacy .markdown { min-width: 0; overflow-wrap: anywhere; line-height: 1.6; }
-.legacy .markdown > :first-child:not(.bs-root .markdown > :first-child), .bs-root .legacy .markdown > :first-child { margin-top: 0; }
-.legacy .markdown > :last-child:not(.bs-root .markdown > :last-child), .bs-root .legacy .markdown > :last-child { margin-bottom: 0; }
-.legacy .markdown p:not(.bs-root .markdown p), .bs-root .legacy .markdown p, .legacy .markdown ul:not(.bs-root .markdown ul), .bs-root .legacy .markdown ul, .legacy .markdown ol:not(.bs-root .markdown ol), .bs-root .legacy .markdown ol, .legacy .markdown blockquote:not(.bs-root .markdown blockquote), .bs-root .legacy .markdown blockquote { margin-block: 0.75em; }
-.legacy .markdown h3:not(.bs-root .markdown h3), .bs-root .legacy .markdown h3, .legacy .markdown h4:not(.bs-root .markdown h4), .bs-root .legacy .markdown h4, .legacy .markdown h5:not(.bs-root .markdown h5), .bs-root .legacy .markdown h5, .legacy .markdown h6:not(.bs-root .markdown h6), .bs-root .legacy .markdown h6 { margin-block: 1.2em 0.5em; font-size: 1.05em; }
-.legacy .markdown ul:not(.bs-root .markdown ul), .bs-root .legacy .markdown ul, .legacy .markdown ol:not(.bs-root .markdown ol), .bs-root .legacy .markdown ol { padding-left: 1.5em; }
-.legacy .markdown blockquote:not(.bs-root .markdown blockquote), .bs-root .legacy .markdown blockquote { margin-inline: 0; padding: 8px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; }
-.legacy .markdown a:not(.bs-root .markdown a), .bs-root .legacy .markdown a { text-decoration: underline; text-underline-offset: 3px; }
-.legacy .markdown pre:not(.bs-root .markdown pre), .bs-root .legacy .markdown pre, .legacy .markdown-table:not(.bs-root .markdown-table), .bs-root .legacy .markdown-table { max-width: 100%; overflow-x: auto; padding: 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
-.legacy .markdown pre:not(.bs-root .markdown pre), .bs-root .legacy .markdown pre { white-space: pre; overflow-wrap: normal; }
-.legacy .markdown code:not(.bs-root .markdown code), .bs-root .legacy .markdown code { font-family: monospace; font-size: 0.9em; }
-.legacy .markdown pre:focus-visible:not(.bs-root .markdown pre:focus-visible), .bs-root .legacy .markdown pre:focus-visible, .legacy .markdown-table:focus-visible:not(.bs-root .markdown-table:focus-visible), .bs-root .legacy .markdown-table:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
-.legacy .markdown table:not(.bs-root .markdown table), .bs-root .legacy .markdown table { border-collapse: collapse; min-width: 100%; }
-.legacy .markdown th:not(.bs-root .markdown th), .bs-root .legacy .markdown th, .legacy .markdown td:not(.bs-root .markdown td), .bs-root .legacy .markdown td { text-align: left; vertical-align: top; border: 1px solid var(--line); padding: 8px 12px; }
-.legacy .answer:not(.bs-root .answer), .bs-root .legacy .answer { margin-top: 20px; padding: 16px 18px; background: var(--surface); border-radius: 12px; }
-.legacy .answer strong:not(.bs-root .answer strong), .bs-root .legacy .answer strong { color: var(--answer-title); }
-.legacy .task-controls:not(.bs-root .task-controls), .bs-root .legacy .task-controls { margin-block: 12px; }
-.legacy .task-controls .member-option:not(.bs-root .task-controls .member-option), .bs-root .legacy .task-controls .member-option { display: flex; align-items: center; gap: 10px; min-height: 44px; margin-block: 8px; }
-.legacy .task-controls select:not(.bs-root .task-controls select), .bs-root .legacy .task-controls select { margin-block: 8px; }
-.legacy .muted:not(.bs-root .muted), .bs-root .legacy .muted, .legacy .empty p:not(.bs-root .empty p), .bs-root .legacy .empty p { color: var(--muted); }
-.legacy .empty:not(.bs-root .empty), .bs-root .legacy .empty { margin: auto; max-width: 440px; padding: 52px 24px; }
-.legacy .empty h2:not(.bs-root .empty h2), .bs-root .legacy .empty h2, .legacy .empty h1:not(.bs-root .empty h1), .bs-root .legacy .empty h1 { margin-bottom: 12px; }
-.legacy .empty button:not(.bs-root .empty button), .bs-root .legacy .empty button { margin-top: 20px; }
-.legacy .composer-area:not(.bs-root .composer-area), .bs-root .legacy .composer-area { width: 100%; max-width: 816px; align-self: center; padding: 12px 28px 20px; }
-.legacy .composer:not(.bs-root .composer), .bs-root .legacy .composer { padding: 10px; border: 1px solid var(--input-line); border-radius: 16px; background: var(--surface); }
-.legacy .composer textarea:not(.bs-root .composer textarea), .bs-root .legacy .composer textarea { border: 0; background: transparent; padding: 8px; max-height: 240px; }
-.legacy .composer-actions:not(.bs-root .composer-actions), .bs-root .legacy .composer-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-top: 8px; }
-.legacy .composer-actions span:not(.bs-root .composer-actions span), .bs-root .legacy .composer-actions span, .legacy .footnote:not(.bs-root .footnote), .bs-root .legacy .footnote { color: var(--muted); font-size: 0.6875rem; }
-.legacy .footnote:not(.bs-root .footnote), .bs-root .legacy .footnote { padding-top: 8px; }
-.legacy .error:not(.bs-root .error), .bs-root .legacy .error { color: var(--color-danger-text); font-size: 0.8125rem; padding: 8px 0; overflow-wrap: anywhere; }
-.legacy .notice:not(.bs-root .notice), .bs-root .legacy .notice { color: var(--color-warn-text); font-size: 0.8125rem; padding-bottom: 12px; }
-.legacy .setup:not(.bs-root .setup), .bs-root .legacy .setup { width: 100%; max-width: 570px; margin: 0 auto; padding: 48px 32px; overflow-y: auto; }
-.legacy .setup > p:not(.bs-root .setup > p), .bs-root .legacy .setup > p { margin: 8px 0 28px; }
-.legacy .setup label:not(.bs-root .setup label), .bs-root .legacy .setup label { display: block; margin-bottom: 20px; font-size: 0.8125rem; font-weight: 600; }
-.legacy .setup input:not(.bs-root .setup input), .bs-root .legacy .setup input, .legacy .setup textarea:not(.bs-root .setup textarea), .bs-root .legacy .setup textarea { margin-top: 8px; font-weight: 400; }
-.legacy .form-actions:not(.bs-root .form-actions), .bs-root .legacy .form-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.legacy .recipient:not(.bs-root .recipient), .bs-root .legacy .recipient { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 10px 28px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 0.8125rem; }
-.legacy .recipient select:not(.bs-root .recipient select), .bs-root .legacy .recipient select { width: auto; max-width: 65%; min-height: 40px; padding: 8px; }
-.legacy .conversation-files:not(.bs-root .conversation-files), .bs-root .legacy .conversation-files { padding: 0 28px; border-bottom: 1px solid var(--line); max-height: 35dvh; overflow-y: auto; flex-shrink: 0; }
-.legacy .conversation-files form:not(.bs-root .conversation-files form), .bs-root .legacy .conversation-files form { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; padding-block: 12px; }
-.legacy .conversation-files form label:not(.bs-root .conversation-files form label), .bs-root .legacy .conversation-files form label { min-width: 0; flex: 1 1 180px; }
-.legacy .conversation-files li:not(.bs-root .conversation-files li), .bs-root .legacy .conversation-files li { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-.legacy .conversation-files a:not(.bs-root .conversation-files a), .bs-root .legacy .conversation-files a { overflow-wrap: anywhere; min-height: 44px; display: inline-flex; align-items: center; }
-.legacy .conversation-files pre:not(.bs-root .conversation-files pre), .bs-root .legacy .conversation-files pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 25dvh; overflow: auto; padding: 12px; background: var(--surface); border: 1px solid var(--line); }
-.legacy .conversation-files strong:not(.bs-root .conversation-files strong), .bs-root .legacy .conversation-files strong { overflow-wrap: anywhere; }
-.legacy fieldset:not(.bs-root fieldset), .bs-root .legacy fieldset { border: 0.5px solid var(--color-border-secondary); border-radius: var(--radius-md); margin: 0 0 20px; padding: 12px; }
-.legacy .setup .member-option:not(.bs-root .setup .member-option), .bs-root .legacy .setup .member-option { display: flex; align-items: center; min-height: 40px; gap: 10px; margin: 0; }
-.legacy .member-option input:not(.bs-root .member-option input), .bs-root .legacy .member-option input { width: 18px; height: 18px; margin: 0; }
-.legacy .conversation-files .member-option:not(.bs-root .conversation-files .member-option), .bs-root .legacy .conversation-files .member-option { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; flex-shrink: 0; }
-.legacy .setup select:not(.bs-root .setup select), .bs-root .legacy .setup select { margin-top: 8px; }
-.legacy .sr-only:not(.bs-root .sr-only), .bs-root .legacy .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+@scope (.legacy) to (.bs-root) {
+  :scope { margin: 0; font-size: 0.875rem; line-height: 1.55; color: var(--color-text-primary); }
+  button, input, textarea, select { font: inherit; }
+  button { min-height: 32px; border: 0; padding: 6px 14px; border-radius: var(--radius-full); background: var(--color-primary); color: var(--color-on-primary); cursor: pointer; font-weight: 500; font-size: 0.8125rem; line-height: 18px; white-space: nowrap; transition: background-color 120ms var(--ease-out), opacity 120ms; }
+  button:hover:not(:disabled) { background: var(--color-bg-primary-hover); }
+  button:disabled { opacity: .45; cursor: default; }
+  button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible, .turn:focus { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+  a { color: var(--color-brand-text); text-underline-offset: 2px; }
+  summary { cursor: pointer; min-height: 36px; padding-block: 8px; font-weight: 500; }
+  .turn a { display: inline-flex; align-items: center; min-height: 40px; max-width: 100%; overflow-wrap: anywhere; }
+  input, textarea, select { width: 100%; min-height: 35px; color: inherit; background: var(--color-bg-pane); border: 0.5px solid var(--color-border-secondary); padding: 8px 10px; border-radius: var(--radius-sm); font-size: 0.8125rem; line-height: 18px; outline: none; }
+  input:focus, textarea:focus, select:focus { border-color: var(--color-border-focus); box-shadow: 0 0 0 3px var(--color-focus-ring); }
+  input[type="checkbox"], input[type="radio"] { width: auto; min-height: 0; accent-color: var(--color-brand); }
+  textarea { resize: vertical; min-height: 90px; }
+  input::placeholder, textarea::placeholder { color: var(--color-text-tertiary); opacity: 1; }
+  h1, h2, p { margin: 0; }
+  h1 { font-size: 1.375rem; font-weight: 600; line-height: 1.3; letter-spacing: -0.01em; text-wrap: balance; }
+  h2 { font-size: 0.9375rem; font-weight: 600; line-height: 1.45; text-wrap: balance; }
+  p { text-wrap: pretty; }
+  .workspace { display: grid; grid-template-columns: 248px minmax(0, 1fr); height: 100dvh; }
+  .sidebar { display: flex; flex-direction: column; min-height: 0; background: var(--sidebar); border-right: 1px solid var(--line); padding: 24px 12px 16px; }
+  .brand { color: var(--text); text-decoration: none; font-weight: 600; font-size: 1.5rem; letter-spacing: -.03em; padding: 0 12px 30px; }
+  .brand span { display: block; color: var(--muted); font-size: 0.75rem; font-weight: 400; letter-spacing: 0; }
+  .sidebar-title { display: flex; align-items: center; justify-content: space-between; padding: 0 10px 12px; }
+  .sidebar-title h2 { font-size: 0.8125rem; color: var(--muted); }
+  .secondary { color: var(--color-ink); background: var(--color-bg-tertiary); box-shadow: var(--color-border-secondary) 0 0 0 0.5px inset; }
+  .secondary:hover:not(:disabled) { background: var(--color-bg-secondary-hover); }
+  nav { overflow-y: auto; min-height: 0; }
+  .agent-row { width: 100%; display: flex; align-items: center; text-align: left; gap: 10px; background: transparent; color: var(--text); margin-bottom: 4px; padding: 10px; }
+  .agent-row:hover:not(:disabled) { background: var(--row-hover); }
+  .agent-row.selected { background: var(--selected); }
+  .agent-row > span:last-child { overflow: hidden; }
+  .agent-row strong, .agent-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agent-row small { color: var(--row-muted); font-weight: 400; font-size: 0.6875rem; }
+  .avatar { display: grid; place-items: center; flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; background: var(--avatar); color: var(--avatar-text); font-weight: 600; }
+  .sidebar-footer { margin-top: auto; padding: 24px 10px 0; color: var(--muted); font-size: 0.6875rem; display: flex; align-items: center; gap: 8px; }
+  .dot { width: 6px; height: 6px; flex-shrink: 0; background: var(--offline); border-radius: 50%; }
+  .dot.connected { background: var(--online); }
+  main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .chat-header { display: flex; align-items: center; gap: 12px; padding: 20px 28px; border-bottom: 1px solid var(--line); }
+  .chat-header h1 { font-size: 1rem; overflow-wrap: anywhere; }
+  .chat-header p { font-size: 0.75rem; color: var(--muted); overflow-wrap: anywhere; }
+  .activity { margin-left: auto; color: var(--muted); font-size: 0.75rem; font-variant-numeric: tabular-nums; }
+  .transcript { flex: 1; overflow-y: auto; padding: 28px max(28px, calc((100% - 760px) / 2)); min-height: 0; }
+  .turn { padding-bottom: 32px; }
+  .message-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+  .message-head time, .message-head span { color: var(--muted); font-size: 0.6875rem; font-variant-numeric: tabular-nums; }
+  .message-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .markdown { min-width: 0; overflow-wrap: anywhere; line-height: 1.6; }
+  .markdown > :first-child { margin-top: 0; }
+  .markdown > :last-child { margin-bottom: 0; }
+  .markdown p, .markdown ul, .markdown ol, .markdown blockquote { margin-block: 0.75em; }
+  .markdown h3, .markdown h4, .markdown h5, .markdown h6 { margin-block: 1.2em 0.5em; font-size: 1.05em; }
+  .markdown ul, .markdown ol { padding-left: 1.5em; }
+  .markdown blockquote { margin-inline: 0; padding: 8px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; }
+  .markdown a { text-decoration: underline; text-underline-offset: 3px; }
+  .markdown pre, .markdown-table { max-width: 100%; overflow-x: auto; padding: 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
+  .markdown pre { white-space: pre; overflow-wrap: normal; }
+  .markdown code { font-family: monospace; font-size: 0.9em; }
+  .markdown pre:focus-visible, .markdown-table:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+  .markdown table { border-collapse: collapse; min-width: 100%; }
+  .markdown th, .markdown td { text-align: left; vertical-align: top; border: 1px solid var(--line); padding: 8px 12px; }
+  .answer { margin-top: 20px; padding: 16px 18px; background: var(--surface); border-radius: 12px; }
+  .answer strong { color: var(--answer-title); }
+  .task-controls { margin-block: 12px; }
+  .task-controls .member-option { display: flex; align-items: center; gap: 10px; min-height: 44px; margin-block: 8px; }
+  .task-controls select { margin-block: 8px; }
+  .muted, .empty p { color: var(--color-text-tertiary); }
+  .empty { margin: auto; max-width: 440px; padding: 52px 24px; }
+  .empty h2, .empty h1 { margin-bottom: 12px; }
+  .empty button { margin-top: 20px; }
+  .composer-area { width: 100%; max-width: 816px; align-self: center; padding: 12px 28px 20px; }
+  .composer { padding: 10px; border: 1px solid var(--input-line); border-radius: 16px; background: var(--surface); }
+  .composer textarea { border: 0; background: transparent; padding: 8px; max-height: 240px; }
+  .composer-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-top: 8px; }
+  .composer-actions span, .footnote { color: var(--muted); font-size: 0.6875rem; }
+  .footnote { padding-top: 8px; }
+  .error { color: var(--color-danger-text); font-size: 0.8125rem; padding: 8px 0; overflow-wrap: anywhere; }
+  .notice { color: var(--color-warn-text); font-size: 0.8125rem; padding-bottom: 12px; }
+  .setup { width: 100%; max-width: 640px; margin: 0 auto; padding: 0; }
+  .setup > p { margin: 6px 0 24px; font-size: 0.8125rem; color: var(--color-text-tertiary); }
+  .setup label { display: block; margin-bottom: 18px; font-size: 0.8125rem; font-weight: 500; }
+  .setup input, .setup textarea { margin-top: 6px; font-weight: 400; }
+  .form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .recipient { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 10px 28px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 0.8125rem; }
+  .recipient select { width: auto; max-width: 65%; min-height: 40px; padding: 8px; }
+  .conversation-files { padding: 0 28px; border-bottom: 1px solid var(--line); max-height: 35dvh; overflow-y: auto; flex-shrink: 0; }
+  .conversation-files form { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; padding-block: 12px; }
+  .conversation-files form label { min-width: 0; flex: 1 1 180px; }
+  .conversation-files li { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  .conversation-files a { overflow-wrap: anywhere; min-height: 44px; display: inline-flex; align-items: center; }
+  .conversation-files pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 25dvh; overflow: auto; padding: 12px; background: var(--surface); border: 1px solid var(--line); }
+  .conversation-files strong { overflow-wrap: anywhere; }
+  fieldset { border: 0.5px solid var(--color-border-tertiary); border-radius: var(--radius-md); background: var(--color-bg-pane); margin: 0 0 18px; padding: 12px 14px; min-width: 0; }
+  legend { padding: 0 4px; font-size: 0.75rem; font-weight: 500; letter-spacing: 0.02em; text-transform: uppercase; color: var(--color-text-tertiary); }
+  .setup .member-option { display: flex; align-items: center; min-height: 40px; gap: 10px; margin: 0; }
+  .member-option input { width: 18px; height: 18px; margin: 0; }
+  .conversation-files .member-option { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; flex-shrink: 0; }
+  .setup select { margin-top: 8px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+}
 @media (max-width: 680px) {
-.legacy .workspace:not(.bs-root .workspace), .bs-root .legacy .workspace { grid-template-columns: 1fr; grid-template-rows: auto minmax(0,1fr); }
-.legacy .sidebar:not(.bs-root .sidebar), .bs-root .legacy .sidebar { padding: 12px; border-right: 0; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; max-height: 34dvh; overflow-y: auto; }
-.legacy .brand:not(.bs-root .brand), .bs-root .legacy .brand { font-size: 1.25rem; padding: 0; }
-.legacy .brand span:not(.bs-root .brand span), .bs-root .legacy .brand span, .legacy .sidebar-footer:not(.bs-root .sidebar-footer), .bs-root .legacy .sidebar-footer { display: none; }
-.legacy .sidebar-title:not(.bs-root .sidebar-title), .bs-root .legacy .sidebar-title { padding: 0; gap: 12px; }
-.legacy nav:not(.bs-root nav), .bs-root .legacy nav { grid-column: 1 / -1; display: flex; gap: 6px; overflow-x: auto; }
-.legacy .agent-row:not(.bs-root .agent-row), .bs-root .legacy .agent-row { width: auto; min-width: 140px; max-width: 220px; margin: 0; }
-.legacy button:not(.bs-root button), .bs-root .legacy button { min-height: 44px; }
-.legacy summary:not(.bs-root summary), .bs-root .legacy summary, .legacy .turn a:not(.bs-root .turn a), .bs-root .legacy .turn a, .legacy .recipient select:not(.bs-root .recipient select), .bs-root .legacy .recipient select, .legacy .setup .member-option:not(.bs-root .setup .member-option), .bs-root .legacy .setup .member-option { min-height: 44px; }
-.legacy .chat-header:not(.bs-root .chat-header), .bs-root .legacy .chat-header { padding: 12px 16px; }
-.legacy .activity:not(.bs-root .activity), .bs-root .legacy .activity { max-width: 100px; text-align: right; }
-.legacy .transcript:not(.bs-root .transcript), .bs-root .legacy .transcript { padding: 20px 16px; }
-.legacy .composer-area:not(.bs-root .composer-area), .bs-root .legacy .composer-area { padding: 8px 12px 12px; }
-.legacy .composer-actions span:not(.bs-root .composer-actions span), .bs-root .legacy .composer-actions span { max-width: 130px; }
-.legacy .setup:not(.bs-root .setup), .bs-root .legacy .setup { padding: 24px 20px; }
+  @scope (.legacy) to (.bs-root) {
+    .workspace { grid-template-columns: 1fr; grid-template-rows: auto minmax(0,1fr); }
+    .sidebar { padding: 12px; border-right: 0; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; max-height: 34dvh; overflow-y: auto; }
+    .brand { font-size: 1.25rem; padding: 0; }
+    .brand span, .sidebar-footer { display: none; }
+    .sidebar-title { padding: 0; gap: 12px; }
+    nav { grid-column: 1 / -1; display: flex; gap: 6px; overflow-x: auto; }
+    .agent-row { width: auto; min-width: 140px; max-width: 220px; margin: 0; }
+    button { min-height: 44px; }
+    summary, .turn a, .recipient select, .setup .member-option { min-height: 44px; }
+    .chat-header { padding: 12px 16px; }
+    .activity { max-width: 100px; text-align: right; }
+    .transcript { padding: 20px 16px; }
+    .composer-area { padding: 8px 12px 12px; }
+    .composer-actions span { max-width: 130px; }
+    .setup { padding: 24px 20px; }
+  }
 }
-.legacy .history-navigation:not(.bs-root .history-navigation), .bs-root .legacy .history-navigation { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
-.legacy .history-state span:not(.bs-root .history-state span), .bs-root .legacy .history-state span { min-width: 0; overflow-wrap: anywhere; }
-.legacy .history-search input:not(.bs-root .history-search input), .bs-root .legacy .history-search input { flex: 1 1 160px; width: auto; min-width: 0; }
-.legacy .history-search span:not(.bs-root .history-search span), .bs-root .legacy .history-search span { flex-basis: 100%; overflow-wrap: anywhere; }
-.legacy .routine-list:not(.bs-root .routine-list), .bs-root .legacy .routine-list { list-style: none; padding: 0; margin: 20px 0; }
-.legacy .routine-list li:not(.bs-root .routine-list li), .bs-root .legacy .routine-list li { padding: 16px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
-.legacy .form-actions a:not(.bs-root .form-actions a), .bs-root .legacy .form-actions a { display: inline-flex; align-items: center; min-height: 44px; }
-.legacy .script-access:not(.bs-root .script-access), .bs-root .legacy .script-access { display: grid; gap: 8px; margin-block: 24px; }
-.legacy .script-access .form-actions:not(.bs-root .script-access .form-actions), .bs-root .legacy .script-access .form-actions, .legacy .routine-actions:not(.bs-root .routine-actions), .bs-root .legacy .routine-actions { flex-wrap: wrap; }
-.legacy .routine-actions a:not(.bs-root .routine-actions a), .bs-root .legacy .routine-actions a { white-space: nowrap; min-width: 44px; }
-.legacy .setup label[hidden]:not(.bs-root .setup label[hidden]), .bs-root .legacy .setup label[hidden] { display: none; }
-.legacy .webhook-settings > .form-actions:not(.bs-root .webhook-settings > .form-actions), .bs-root .legacy .webhook-settings > .form-actions { margin-block: 20px; }
-.legacy .routine-list li > div + div:not(.bs-root .routine-list li > div + div), .bs-root .legacy .routine-list li > div + div, .legacy .routine-list li > div + button:not(.bs-root .routine-list li > div + button), .bs-root .legacy .routine-list li > div + button { margin-top: 8px; }
-.legacy .flow-canvas:not(.bs-root .flow-canvas), .bs-root .legacy .flow-canvas { overflow-x: auto; max-width: 100%; margin-block: 20px; padding-block: 8px; color: var(--muted); }
-.legacy .flow-canvas:focus-visible:not(.bs-root .flow-canvas:focus-visible), .bs-root .legacy .flow-canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.legacy .flow-canvas rect:not(.bs-root .flow-canvas rect), .bs-root .legacy .flow-canvas rect { fill: var(--surface); stroke: var(--line); }
-.legacy .flow-canvas text:not(.bs-root .flow-canvas text), .bs-root .legacy .flow-canvas text { fill: var(--text); font-size: 13px; }
-.legacy .flow-link-fields:not(.bs-root .flow-link-fields), .bs-root .legacy .flow-link-fields { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
-.legacy .flow-link-fields label:not(.bs-root .flow-link-fields label), .bs-root .legacy .flow-link-fields label { flex: 1 1 160px; min-width: 0; margin: 0; }
-.legacy .flow-editor > .form-actions:not(.bs-root .flow-editor > .form-actions), .bs-root .legacy .flow-editor > .form-actions { margin-block: 20px; }
-.legacy .flow-run:not(.bs-root .flow-run), .bs-root .legacy .flow-run { margin-top: 20px; }
-.legacy .flow-directory > .form-actions:not(.bs-root .flow-directory > .form-actions), .bs-root .legacy .flow-directory > .form-actions { margin-block: 20px; }
-.legacy .flow-directory .flow-run:not(.bs-root .flow-directory .flow-run), .bs-root .legacy .flow-directory .flow-run { padding-block: 12px 24px; border-bottom: 1px solid var(--line); }
-.legacy .flow-directory .flow-run > ul:not(.bs-root .flow-directory .flow-run > ul), .bs-root .legacy .flow-directory .flow-run > ul { padding-left: 20px; margin-block: 12px; overflow-wrap: anywhere; }
-.legacy .flow-directory h1:focus:not(.bs-root .flow-directory h1:focus), .bs-root .legacy .flow-directory h1:focus, .legacy .flow-editor h1:focus:not(.bs-root .flow-editor h1:focus), .bs-root .legacy .flow-editor h1:focus { outline: 2px solid var(--accent); outline-offset: 4px; }
-.legacy .flow-directory:not(.bs-root .flow-directory), .bs-root .legacy .flow-directory, .legacy .flow-editor:not(.bs-root .flow-editor), .bs-root .legacy .flow-editor { overflow-wrap: anywhere; }
-.legacy .flow-directory button:not(.bs-root .flow-directory button), .bs-root .legacy .flow-directory button, .legacy .flow-editor button:not(.bs-root .flow-editor button), .bs-root .legacy .flow-editor button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
-.legacy .flow-selected-name:not(.bs-root .flow-selected-name), .bs-root .legacy .flow-selected-name { display: block; margin-top: 8px; font-weight: 400; overflow-wrap: anywhere; }
-.legacy .workflow-panel:not(.bs-root .workflow-panel), .bs-root .legacy .workflow-panel { overflow-wrap: anywhere; }
-.legacy .workflow-panel fieldset:not(.bs-root .workflow-panel fieldset), .bs-root .legacy .workflow-panel fieldset { border: 0; padding: 0; min-width: 0; }
-.legacy .workflow-panel .workflow-node:not(.bs-root .workflow-panel .workflow-node), .bs-root .legacy .workflow-panel .workflow-node { padding-block: 20px; border-top: 1px solid var(--line); }
-.legacy .workflow-panel legend:not(.bs-root .workflow-panel legend), .bs-root .legacy .workflow-panel legend { font-weight: 600; padding-right: 12px; }
-.legacy .workflow-panel button:not(.bs-root .workflow-panel button), .bs-root .legacy .workflow-panel button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
-.legacy .workflow-panel .form-actions:not(.bs-root .workflow-panel .form-actions), .bs-root .legacy .workflow-panel .form-actions { margin-block: 20px; }
-.legacy .workflow-panel h1:focus:not(.bs-root .workflow-panel h1:focus), .bs-root .legacy .workflow-panel h1:focus { outline: 2px solid var(--accent); outline-offset: 4px; }
-.legacy .workflow-graph:not(.bs-root .workflow-graph), .bs-root .legacy .workflow-graph { max-height: 420px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
-.legacy .workflow-graph-content:not(.bs-root .workflow-graph-content), .bs-root .legacy .workflow-graph-content { position: relative; }
-.legacy .workflow-graph svg:not(.bs-root .workflow-graph svg), .bs-root .legacy .workflow-graph svg { display: block; color: var(--muted); }
-.legacy .workflow-graph text:not(.bs-root .workflow-graph text), .bs-root .legacy .workflow-graph text { font: 12px 'IBM Plex Sans', sans-serif; fill: currentColor; }
-.legacy .workflow-panel .workflow-graph-node:not(.bs-root .workflow-panel .workflow-graph-node), .bs-root .legacy .workflow-panel .workflow-graph-node { position: absolute; width: 180px; height: 80px; display: flex; flex-direction: column; justify-content: center; gap: 4px; }
-.legacy .workflow-graph-node strong:not(.bs-root .workflow-graph-node strong), .bs-root .legacy .workflow-graph-node strong { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.legacy .workflow-graph-node[aria-current]:not(.bs-root .workflow-graph-node[aria-current]), .bs-root .legacy .workflow-graph-node[aria-current] { box-shadow: inset 0 0 0 2px var(--accent); }
-.legacy .workflow-graph:focus-visible:not(.bs-root .workflow-graph:focus-visible), .bs-root .legacy .workflow-graph:focus-visible, .legacy .workflow-panel .workflow-node:focus:not(.bs-root .workflow-panel .workflow-node:focus), .bs-root .legacy .workflow-panel .workflow-node:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
-.legacy .workflow-graph-links:not(.bs-root .workflow-graph-links), .bs-root .legacy .workflow-graph-links { margin-block: 12px; }
-.legacy .workflow-graph-node[data-movable]:not(.bs-root .workflow-graph-node[data-movable]), .bs-root .legacy .workflow-graph-node[data-movable] { touch-action: none; user-select: none; }
-.legacy .workflow-panel .workflow-run-node:not(.bs-root .workflow-panel .workflow-run-node), .bs-root .legacy .workflow-panel .workflow-run-node { height: 100px; }
-.legacy .workflow-step-detail:focus:not(.bs-root .workflow-step-detail:focus), .bs-root .legacy .workflow-step-detail:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
-.legacy .question-card:not(.bs-root .question-card), .bs-root .legacy .question-card { margin-block: 16px; padding-block: 12px; border-block: 1px solid var(--line); }
-.legacy .question-card h3:not(.bs-root .question-card h3), .bs-root .legacy .question-card h3 { margin: 0 0 12px; overflow-wrap: anywhere; }
-.legacy .question-card label:not(.bs-root .question-card label), .bs-root .legacy .question-card label { display: block; margin-block: 12px; }
-.legacy .question-card .member-option:not(.bs-root .question-card .member-option), .bs-root .legacy .question-card .member-option { display: flex; align-items: center; gap: 10px; min-height: 44px; }
-.legacy .html-preview:not(.bs-root .html-preview), .bs-root .legacy .html-preview { min-width: 0; max-width: 100%; width: 100%; margin-block: 8px; }
-.legacy .html-preview > button:not(.bs-root .html-preview > button), .bs-root .legacy .html-preview > button, .legacy .html-preview h3:not(.bs-root .html-preview h3), .bs-root .legacy .html-preview h3 { max-width: 100%; overflow-wrap: anywhere; white-space: normal; }
-.legacy .html-preview iframe:not(.bs-root .html-preview iframe), .bs-root .legacy .html-preview iframe { display: block; width: 100%; height: 50dvh; min-height: 240px; border: 1px solid var(--line); background: white; }
-.legacy .html-preview p:not(.bs-root .html-preview p), .bs-root .legacy .html-preview p { margin-block: 12px; }
-.legacy .shared-data-panel button:not(.bs-root .shared-data-panel button), .bs-root .legacy .shared-data-panel button { max-width: 100%; overflow-wrap: anywhere; }
-.legacy .skill-file-content:not(.bs-root .skill-file-content), .bs-root .legacy .skill-file-content { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 20rem; overflow: auto; }
-.legacy .skill-file-content:focus-visible:not(.bs-root .skill-file-content:focus-visible), .bs-root .legacy .skill-file-content:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.legacy .host-metrics:not(.bs-root .host-metrics), .bs-root .legacy .host-metrics { margin-block: 24px; padding-bottom: 24px; border-bottom: 1px solid var(--line); }
-.legacy .host-metrics > p:not(.bs-root .host-metrics > p), .bs-root .legacy .host-metrics > p { margin-block: 12px; }
-.legacy .agent-sidebar > button:not(.bs-root .agent-sidebar > button), .bs-root .legacy .agent-sidebar > button { width: 100%; margin-bottom: 8px; }
-.legacy .agent-sidebar summary:not(.bs-root .agent-sidebar summary), .bs-root .legacy .agent-sidebar summary, .legacy .agent-sidebar h3:not(.bs-root .agent-sidebar h3), .bs-root .legacy .agent-sidebar h3, .legacy .sidebar-editor label:not(.bs-root .sidebar-editor label), .bs-root .legacy .sidebar-editor label { overflow-wrap: anywhere; }
-.legacy .agent-sidebar details:not(.bs-root .agent-sidebar details), .bs-root .legacy .agent-sidebar details { margin-block: 8px; }
-.legacy .sidebar-editor:not(.bs-root .sidebar-editor), .bs-root .legacy .sidebar-editor { padding: 12px 0; }
-.legacy .sidebar-editor p:not(.bs-root .sidebar-editor p), .bs-root .legacy .sidebar-editor p { margin-block: 12px; }
-.legacy .sidebar-editor fieldset:not(.bs-root .sidebar-editor fieldset), .bs-root .legacy .sidebar-editor fieldset { padding: 8px; min-width: 0; }
-.legacy .sidebar-editor label:not(.bs-root .sidebar-editor label), .bs-root .legacy .sidebar-editor label { display: block; margin-block: 12px; }
-.legacy .sidebar-section-editor:not(.bs-root .sidebar-section-editor), .bs-root .legacy .sidebar-section-editor { padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--line); }
-.legacy .sidebar-editor .form-actions:not(.bs-root .sidebar-editor .form-actions), .bs-root .legacy .sidebar-editor .form-actions { flex-wrap: wrap; }
-.legacy .sidebar-editor button:not(.bs-root .sidebar-editor button), .bs-root .legacy .sidebar-editor button { max-width: 100%; overflow-wrap: anywhere; }
-.legacy .sidebar-editor h2:focus:not(.bs-root .sidebar-editor h2:focus), .bs-root .legacy .sidebar-editor h2:focus { outline: 2px solid var(--accent); outline-offset: 3px; }
-.legacy .presentation-settings:not(.bs-root .presentation-settings), .bs-root .legacy .presentation-settings { padding: 8px 10px; flex-shrink: 0; }
-.legacy .presentation-settings summary:not(.bs-root .presentation-settings summary), .bs-root .legacy .presentation-settings summary { font-weight: 600; }
-.legacy .presentation-settings label:not(.bs-root .presentation-settings label), .bs-root .legacy .presentation-settings label { display: block; margin-block: 12px; }
-.legacy .presentation-settings p:not(.bs-root .presentation-settings p), .bs-root .legacy .presentation-settings p { margin-block: 8px; overflow-wrap: anywhere; }
-.legacy .sidebar:not(.bs-root .sidebar), .bs-root .legacy .sidebar { overflow-y: auto; }
-.legacy .account-help:not(.bs-root .account-help), .bs-root .legacy .account-help { display: block; overflow-wrap: anywhere; }
-.legacy .queue-editor:not(.bs-root .queue-editor), .bs-root .legacy .queue-editor { margin-block: 12px; min-width: 0; }
-.legacy .queue-editor textarea:not(.bs-root .queue-editor textarea), .bs-root .legacy .queue-editor textarea { display: block; width: 100%; min-height: 100px; }
-.legacy .queue-editor fieldset:not(.bs-root .queue-editor fieldset), .bs-root .legacy .queue-editor fieldset { min-width: 0; margin-block: 12px; }
-.legacy .queue-editor .member-option:not(.bs-root .queue-editor .member-option), .bs-root .legacy .queue-editor .member-option { overflow-wrap: anywhere; }
-.legacy .queue-panel:not(.bs-root .queue-panel), .bs-root .legacy .queue-panel { flex-shrink: 0; padding: 8px 28px; max-height: 35dvh; overflow-y: auto; border-top: 1px solid var(--line); }
-.legacy .queue-panel li:not(.bs-root .queue-panel li), .bs-root .legacy .queue-panel li { margin-block: 12px; overflow-wrap: anywhere; }
-.legacy .queue-panel .message-text:not(.bs-root .queue-panel .message-text), .bs-root .legacy .queue-panel .message-text { max-height: 8em; overflow-y: auto; }
-@media (max-width: 700px) {
-.legacy .queue-panel:not(.bs-root .queue-panel), .bs-root .legacy .queue-panel { padding-inline: 12px; }
+@scope (.legacy) to (.bs-root) {
+  .history-navigation { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+  .history-state span { min-width: 0; overflow-wrap: anywhere; }
+  .history-search input { flex: 1 1 160px; width: auto; min-width: 0; }
+  .history-search span { flex-basis: 100%; overflow-wrap: anywhere; }
+  .routine-list { list-style: none; padding: 0; margin: 20px 0; }
+  .routine-list li { padding: 16px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+  .form-actions a { display: inline-flex; align-items: center; min-height: 44px; }
+  .script-access { display: grid; gap: 8px; margin-block: 24px; }
+  .script-access .form-actions, .routine-actions { flex-wrap: wrap; }
+  .routine-actions a { white-space: nowrap; min-width: 44px; }
+  .setup label[hidden] { display: none; }
+  .webhook-settings > .form-actions { margin-block: 20px; }
+  .routine-list li > div + div, .routine-list li > div + button { margin-top: 8px; }
+  .flow-canvas { overflow-x: auto; max-width: 100%; margin-block: 20px; padding-block: 8px; color: var(--muted); }
+  .flow-canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .flow-canvas rect { fill: var(--surface); stroke: var(--line); }
+  .flow-canvas text { fill: var(--text); font-size: 13px; }
+  .flow-link-fields { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+  .flow-link-fields label { flex: 1 1 160px; min-width: 0; margin: 0; }
+  .flow-editor > .form-actions { margin-block: 20px; }
+  .flow-run { margin-top: 20px; }
+  .flow-directory > .form-actions { margin-block: 20px; }
+  .flow-directory .flow-run { padding-block: 12px 24px; border-bottom: 1px solid var(--line); }
+  .flow-directory .flow-run > ul { padding-left: 20px; margin-block: 12px; overflow-wrap: anywhere; }
+  .flow-directory h1:focus, .flow-editor h1:focus { outline: 2px solid var(--accent); outline-offset: 4px; }
+  .flow-directory, .flow-editor { overflow-wrap: anywhere; }
+  .flow-directory button, .flow-editor button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+  .flow-selected-name { display: block; margin-top: 8px; font-weight: 400; overflow-wrap: anywhere; }
+  .workflow-panel { overflow-wrap: anywhere; }
+  .workflow-panel fieldset { border: 0; padding: 0; min-width: 0; }
+  .workflow-panel .workflow-node { padding-block: 20px; border-top: 1px solid var(--line); }
+  .workflow-panel legend { font-weight: 600; padding-right: 12px; }
+  .workflow-panel button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+  .workflow-panel .form-actions { margin-block: 20px; }
+  .workflow-panel h1:focus { outline: 2px solid var(--accent); outline-offset: 4px; }
+  .workflow-graph { max-height: 420px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+  .workflow-graph-content { position: relative; }
+  .workflow-graph svg { display: block; color: var(--muted); }
+  .workflow-graph text { font: 12px 'IBM Plex Sans', sans-serif; fill: currentColor; }
+  .workflow-panel .workflow-graph-node { position: absolute; width: 180px; height: 80px; display: flex; flex-direction: column; justify-content: center; gap: 4px; }
+  .workflow-graph-node strong { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .workflow-graph-node[aria-current] { box-shadow: inset 0 0 0 2px var(--accent); }
+  .workflow-graph:focus-visible, .workflow-panel .workflow-node:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .workflow-graph-links { margin-block: 12px; }
+  .workflow-graph-node[data-movable] { touch-action: none; user-select: none; }
+  .workflow-panel .workflow-run-node { height: 100px; }
+  .workflow-step-detail:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .question-card { margin-block: 16px; padding-block: 12px; border-block: 1px solid var(--line); }
+  .question-card h3 { margin: 0 0 12px; overflow-wrap: anywhere; }
+  .question-card label { display: block; margin-block: 12px; }
+  .question-card .member-option { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+  .html-preview { min-width: 0; max-width: 100%; width: 100%; margin-block: 8px; }
+  .html-preview > button, .html-preview h3 { max-width: 100%; overflow-wrap: anywhere; white-space: normal; }
+  .html-preview iframe { display: block; width: 100%; height: 50dvh; min-height: 240px; border: 1px solid var(--line); background: white; }
+  .html-preview p { margin-block: 12px; }
+  .shared-data-panel button { max-width: 100%; overflow-wrap: anywhere; }
+  .skill-file-content { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 20rem; overflow: auto; }
+  .skill-file-content:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .host-metrics { margin-block: 24px; padding-bottom: 24px; border-bottom: 1px solid var(--line); }
+  .host-metrics > p { margin-block: 12px; }
+  .agent-sidebar > button { width: 100%; margin-bottom: 8px; }
+  .agent-sidebar summary, .agent-sidebar h3, .sidebar-editor label { overflow-wrap: anywhere; }
+  .agent-sidebar details { margin-block: 8px; }
+  .sidebar-editor { padding: 12px 0; }
+  .sidebar-editor p { margin-block: 12px; }
+  .sidebar-editor fieldset { padding: 8px; min-width: 0; }
+  .sidebar-editor label { display: block; margin-block: 12px; }
+  .sidebar-section-editor { padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .sidebar-editor .form-actions { flex-wrap: wrap; }
+  .sidebar-editor button { max-width: 100%; overflow-wrap: anywhere; }
+  .sidebar-editor h2:focus { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .presentation-settings { padding: 8px 10px; flex-shrink: 0; }
+  .presentation-settings summary { font-weight: 600; }
+  .presentation-settings label { display: block; margin-block: 12px; }
+  .presentation-settings p { margin-block: 8px; overflow-wrap: anywhere; }
+  .sidebar { overflow-y: auto; }
+  .account-help { display: block; overflow-wrap: anywhere; }
+  .queue-editor { margin-block: 12px; min-width: 0; }
+  .queue-editor textarea { display: block; width: 100%; min-height: 100px; }
+  .queue-editor fieldset { min-width: 0; margin-block: 12px; }
+  .queue-editor .member-option { overflow-wrap: anywhere; }
+  .queue-panel { flex-shrink: 0; padding: 8px 28px; max-height: 35dvh; overflow-y: auto; border-top: 1px solid var(--line); }
+  .queue-panel li { margin-block: 12px; overflow-wrap: anywhere; }
+  .queue-panel .message-text { max-height: 8em; overflow-y: auto; }
 }
-.legacy .workspace-files h1:not(.bs-root .workspace-files h1), .bs-root .legacy .workspace-files h1, .legacy .workspace-files h2:not(.bs-root .workspace-files h2), .bs-root .legacy .workspace-files h2 { overflow-wrap: anywhere; }
-.legacy .workspace-files h1:focus:not(.bs-root .workspace-files h1:focus), .bs-root .legacy .workspace-files h1:focus { outline: 2px solid var(--focus); outline-offset: 3px; }
-.legacy .workspace-files .form-actions:not(.bs-root .workspace-files .form-actions), .bs-root .legacy .workspace-files .form-actions { flex-wrap: wrap; justify-content: flex-start; margin-block: 16px; }
-.legacy .workspace-entry-list:not(.bs-root .workspace-entry-list), .bs-root .legacy .workspace-entry-list { list-style: none; padding: 0; }
-.legacy .workspace-entry-list li:not(.bs-root .workspace-entry-list li), .bs-root .legacy .workspace-entry-list li { margin-block: 6px; }
-.legacy .workspace-entry-list button:not(.bs-root .workspace-entry-list button), .bs-root .legacy .workspace-entry-list button { width: 100%; text-align: left; overflow-wrap: anywhere; }
-.legacy .workspace-entry-list span:not(.bs-root .workspace-entry-list span), .bs-root .legacy .workspace-entry-list span { display: block; font-weight: 400; }
-.legacy .workspace-files button[aria-disabled="true"]:not(.bs-root .workspace-files button[aria-disabled="true"]), .bs-root .legacy .workspace-files button[aria-disabled="true"] { opacity: .5; cursor: wait; }
-.legacy .avatar img:not(.bs-root .avatar img), .bs-root .legacy .avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
-.legacy .avatar-editor:not(.bs-root .avatar-editor), .bs-root .legacy .avatar-editor { margin-block: 24px; }
-.legacy .avatar-preview:not(.bs-root .avatar-preview), .bs-root .legacy .avatar-preview { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; }
-.legacy .local-sites:not(.bs-root .local-sites), .bs-root .legacy .local-sites { margin-top: 24px; min-width: 0; }
-.legacy .site-list:not(.bs-root .site-list), .bs-root .legacy .site-list { list-style: none; padding: 0; }
-.legacy .site-list li:not(.bs-root .site-list li), .bs-root .legacy .site-list li { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-block: 12px; min-width: 0; }
-.legacy .site-list a:not(.bs-root .site-list a), .bs-root .legacy .site-list a, .legacy .site-list button:not(.bs-root .site-list button), .bs-root .legacy .site-list button { overflow-wrap: anywhere; white-space: normal; min-width: 0; max-width: 100%; }
-.legacy .site-list a:not(.bs-root .site-list a), .bs-root .legacy .site-list a { display: inline-flex; align-items: center; min-height: 40px; }
 @media (max-width: 700px) {
-.legacy .site-list a:not(.bs-root .site-list a), .bs-root .legacy .site-list a { min-height: 44px; }
+  @scope (.legacy) to (.bs-root) {
+    .queue-panel { padding-inline: 12px; }
+  }
+}
+@scope (.legacy) to (.bs-root) {
+  .workspace-files h1, .workspace-files h2 { overflow-wrap: anywhere; }
+  .workspace-files h1:focus { outline: 2px solid var(--focus); outline-offset: 3px; }
+  .workspace-files .form-actions { flex-wrap: wrap; justify-content: flex-start; margin-block: 16px; }
+  .workspace-entry-list { list-style: none; padding: 0; }
+  .workspace-entry-list li { margin-block: 6px; }
+  .workspace-entry-list button { width: 100%; text-align: left; overflow-wrap: anywhere; }
+  .workspace-entry-list span { display: block; font-weight: 400; }
+  .workspace-files button[aria-disabled="true"] { opacity: .5; cursor: wait; }
+  .avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
+  .avatar-editor { margin-block: 24px; }
+  .avatar-preview { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; }
+  .local-sites { margin-top: 24px; min-width: 0; }
+  .site-list { list-style: none; padding: 0; }
+  .site-list li { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-block: 12px; min-width: 0; }
+  .site-list a, .site-list button { overflow-wrap: anywhere; white-space: normal; min-width: 0; max-width: 100%; }
+  .site-list a { display: inline-flex; align-items: center; min-height: 40px; }
+}
+@media (max-width: 700px) {
+  @scope (.legacy) to (.bs-root) {
+    .site-list a { min-height: 44px; }
+  }
 }
