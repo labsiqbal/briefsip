@@ -196,7 +196,7 @@ async function until(check: () => boolean | Promise<boolean>, timeout = 10000) {
   assert.fail('Device state did not settle');
 }
 
-test('canonical completion publishes saved provider answer once after lost reply and restart', async () => {
+for (const lostAt of ['request', 'reply', 'receipt', 'revoked', 'storage'] as const) test(`canonical completion recovery handles ${lostAt} without another provider call`, async () => {
   const f = await fixture(), keys = memoryKeys(), database = join(f.dir, 'completion-home.sqlite');
   let runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: keys.entry });
   const originalFetch = globalThis.fetch;
@@ -214,20 +214,56 @@ test('canonical completion publishes saved provider answer once after lost reply
     const owned = await runtime.startTask(taskId), context = await runtime.taskContext(taskId, owned.ownership, owned.revision), actionId = randomUUID();
     await runtime.executeAction({ taskId, actionId, sequence: 0, actionKind: 'provider', ownership: owned.ownership, payload: { purpose: 'answer' }, context, grantRevision: 1, bindingId: binding, bindingRevision: 1 }, () => { calls++; return { text: 'Saved final answer' }; });
     globalThis.fetch = async (url, init) => {
+      if (String(url).endsWith('/complete') && ['request', 'revoked', 'storage'].includes(lostAt)) throw new Error('Lost completion request');
       const response = await originalFetch(url, init);
-      if (String(url).endsWith('/complete')) { assert.equal(response.status, 200, await response.clone().text()); await response.body?.cancel(); throw new Error('Lost completion reply'); }
+      if (String(url).endsWith('/complete')) {
+        assert.equal(response.status, 200, await response.clone().text());
+        if (lostAt === 'receipt') { const body = await response.json(); body.receipt.payloadDigest = '0'.repeat(64); return Response.json(body); }
+        await response.body?.cancel(); throw new Error('Lost completion reply');
+      }
       return response;
     };
-    await assert.rejects(runtime.completeTask(taskId, actionId), /Lost completion reply/);
+    await assert.rejects(runtime.completeTask(taskId, actionId), lostAt === 'receipt' ? (error: unknown) => error instanceof ProtocolError && error.code === 'receipt_mismatch' : /Lost completion/);
     globalThis.fetch = originalFetch;
+    if (lostAt === 'revoked' || lostAt === 'storage') {
+      const db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+      try { db.prepare('UPDATE agent_projects SET deleted=1 WHERE project=? AND agent=?').run(project, agent); } finally { db.close(); }
+    }
     await runtime.close(); await f.restart();
+    if (lostAt === 'storage') {
+      const db = new DatabaseSync(database);
+      try { db.exec("CREATE TRIGGER fail_recovery_marker BEFORE UPDATE OF intent_json ON device_journal WHEN json_extract(NEW.intent_json,'$.completionError') IS NOT NULL BEGIN SELECT RAISE(ABORT,'completion marker write failed'); END"); } finally { db.close(); }
+    }
     runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: keys.entry });
     const reconnected = runtime.connect(); await until(() => reconnected.state().phase === 'connected');
+    await until(() => runtime.recoveryStatus().results.some(row => row.actionId === actionId && (lostAt === 'storage' ? row.error === 'recovery_storage_unavailable' : lostAt === 'revoked' ? row.error === 'execution_denied' : row.state === 'completed')));
+    if (lostAt === 'storage') {
+      const db = new DatabaseSync(database);
+      try { db.exec('DROP TRIGGER fail_recovery_marker'); } finally { db.close(); }
+      assert.deepEqual(await runtime.recoverPending(), [{ taskId, actionId, error: 'execution_denied' }]);
+    }
+    if (lostAt === 'revoked' || lostAt === 'storage') {
+      assert.deepEqual(await runtime.recoverPending(), []);
+      await runtime.close();
+      runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: keys.entry });
+      const restarted = runtime.connect(); await until(() => restarted.state().phase === 'connected');
+      assert.deepEqual(await runtime.recoverPending(), []);
+      const db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+      try {
+        assert.equal(db.prepare('SELECT reply FROM turns WHERE id=?').get(taskId)!.reply, null);
+        db.prepare('UPDATE agent_projects SET deleted=0 WHERE project=? AND agent=?').run(project, agent);
+      } finally { db.close(); }
+    }
     const completed = await runtime.completeTask(taskId, actionId);
     assert.equal(completed.data.state, 'completed');
     assert.deepEqual((await runtime.completeTask(taskId, actionId)).receipt, completed.receipt);
     const detail = (await f.send(`/api/tasks/${taskId}`)).body.data;
     assert.equal(detail.state, 'completed'); assert.equal(detail.results.length, 1); assert.equal(calls, 1);
+    assert.deepEqual(await runtime.recoverPending(), []);
+    await runtime.close();
+    runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: keys.entry });
+    const restarted = runtime.connect(); await until(() => restarted.state().phase === 'connected');
+    assert.deepEqual(await runtime.recoverPending(), []);
     const inspect = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
     try {
       const row = inspect.prepare('SELECT status,reply,paused FROM turns WHERE id=?').get(taskId)!;
