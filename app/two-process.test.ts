@@ -25,6 +25,69 @@ function memoryKeys() {
   return { values, entry(service: string, name: string) { const key = `${service}/${name}`; return { getPassword: () => values.get(key) ?? null, setPassword: (value: string) => { values.set(key, value); } }; } };
 }
 
+test('protected turn wait uses outbound stream and recovers lost host ACK without another key or wait', async () => {
+  const f = await fixture(), keys = memoryKeys(), originalFetch = globalThis.fetch;
+  const database = join(f.dir, 'wait-home.sqlite');
+  let runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: keys.entry });
+  let lost = false;
+  try {
+    await runtime.enroll(f.jwt());
+    let connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const home = (await f.send('/api/devices')).body.data[0], project = randomUUID(), agent = randomUUID();
+    assert.equal((await f.send('/api/projects', { requestId: randomUUID(), id: project, name: 'Waits' })).status, 201);
+    assert.equal((await f.send('/api/agents', { requestId: agent, id: agent, name: 'Waiter', model: 'fixture', backupModel: '', instructions: 'Wait', threadLimit: 2, projectId: project, homeDeviceId: home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: home.revision, providerBinding: null })).status, 201);
+    const taskId = randomUUID(), payload = { v: 1, kind: 'direct', message: { text: 'Wait for ready', files: [] } }, expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 };
+    assert.equal((await f.send('/api/tasks', { requestId: taskId, projectId: project, agentId: agent, homeDeviceId: home.id, payload, expectedRevisions, payloadDigest: digestCommand(['briefsip-task-payload-v1', taskId, project, agent, home.id, payload, expectedRevisions]) })).status, 202);
+    const owned = await runtime.startTask(taskId), context = await runtime.taskContext(taskId, owned.ownership, owned.revision), actionId = randomUUID();
+    const input = { taskId, actionId, sequence: 0, actionKind: 'canonical' as const, ownership: owned.ownership, payload: { toolCall: { id: 'wait-ready', function: { name: 'wait_for_event', arguments: JSON.stringify({ event: 'ready', timeoutSeconds: 60 }) } }, expectedRevision: context.snapshot.taskRevision + 1 }, context, grantRevision: 1 };
+    globalThis.fetch = async (url, init) => {
+      const response = await originalFetch(url, init);
+      if (String(url).endsWith('/wait-secret-results') && !lost) { assert.equal(response.status, 200, await response.clone().text()); lost = true; await response.body?.cancel(); throw new Error('Lost wait ACK'); }
+      return response;
+    };
+    await assert.rejects(runtime.executeAction(input, () => assert.fail('Wait cannot execute a host effect')), error => error instanceof ProtocolError && error.code === 'device_offline');
+    await until(() => lost);
+    globalThis.fetch = originalFetch;
+    await connection.stop();
+    const keyFile = join(f.dir, 'wait-probe-keys.json'); writeFileSync(keyFile, JSON.stringify(Object.fromEntries(keys.values)), { mode: 0o600 });
+    const source = `import { openDeviceRuntime } from ${JSON.stringify(new URL('./device-runtime.ts', import.meta.url).href)};
+      import { readFileSync } from 'node:fs'; import { DatabaseSync } from 'node:sqlite';
+      const keys=JSON.parse(readFileSync(process.argv[2],'utf8')); let posts=0; const original=globalThis.fetch;
+      globalThis.fetch=(url,init)=>{if(String(url).endsWith('/wait-secret-results'))posts++;return original(url,init);};
+      const runtime=openDeviceRuntime({database:process.argv[1],server:process.argv[3],development:true,entry:(service,name)=>({getPassword:()=>keys[service+'/'+name]??null,setPassword:()=>{throw new Error('No writes expected');}})});
+      const connection=runtime.connect(),until=Date.now()+10000;while(connection.state().phase!=='connected'){if(Date.now()>until)throw new Error('Probe connection timeout');await new Promise(resolve=>setTimeout(resolve,50));}
+      await new Promise(resolve=>setTimeout(resolve,500));const db=new DatabaseSync(process.argv[1]);const state=db.prepare('SELECT state FROM device_wait_secrets').get().state;db.close();
+      process.send({posts,state});await runtime.close();process.disconnect();`;
+    const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', source, database, keyFile, f.origin()], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+    const childExit = once(child, 'exit');
+    try {
+      const [probe] = await once(child, 'message', { signal: AbortSignal.timeout(12000) });
+      assert.deepEqual(probe, { posts: 0, state: 'ready' }, 'Second host must not ACK or change wait evidence while original runner holds lock');
+      const [status] = await childExit; assert.equal(status, 0);
+    } finally { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); await childExit; }
+    await f.restart();
+    connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    await until(() => {
+      const host = new DatabaseSync(database);
+      try { return host.prepare('SELECT state FROM device_wait_secrets').get()?.state === 'acknowledged'; } finally { host.close(); }
+    });
+    const canonical = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+    try {
+      assert.equal(canonical.prepare('SELECT count(*) n FROM wait_provisions').get()!.n, 1);
+      assert.equal(canonical.prepare('SELECT count(*) n FROM turn_waits').get()!.n, 1);
+      assert.equal(canonical.prepare('SELECT state FROM wait_provisions').get()!.state, 'activated');
+      assert.equal(canonical.prepare("SELECT count(*) n FROM receipts WHERE scope='wait-secret-results'").get()!.n, 1);
+      const secrets = [...keys.values].filter(([reference]) => reference.includes('/event-wait/'));
+      assert.equal(secrets.length, 1);
+      for (const table of ['wait_provisions', 'turn_waits', 'receipts', 'task_results']) assert(!JSON.stringify(canonical.prepare('SELECT * FROM ' + table).all()).includes(secrets[0][1]));
+    } finally { canonical.close(); }
+    await runtime.recoverPending();
+    const detail = (await f.send(`/api/tasks/${taskId}`)).body.data;
+    assert.equal(detail.results.length, 1); assert.equal(detail.results[0].content.status, 'waiting');
+    assert.equal((await runtime.runTask(taskId, () => assert.fail('Waiting task must not call provider'))).state, 'event_pending');
+  } finally { globalThis.fetch = originalFetch; await runtime.close(); await f.close(); }
+});
+
 test('canonical shared data isolates project images and recovers one write after lost reply and restart',async()=>{
   const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry}),originalFetch=globalThis.fetch;
   try{
@@ -243,7 +306,7 @@ test('home execution loop publishes one provider answer through signed canonical
     const provider = (context: ActionContext) => {
       calls++;
       assert.equal(context.snapshotRef?.digest, sha256(canonicalJson(context.snapshot)));
-      for (const tool of context.snapshot.tools as { function: { name: string } }[]) assert(!['read_attachment','create_text_file','wait_for_event','publish_site','delegate_task'].includes(tool.function.name));
+      for (const tool of context.snapshot.tools as { function: { name: string } }[]) assert(!['read_attachment','create_text_file','publish_site','delegate_task'].includes(tool.function.name));
       return { text: 'Canonical loop answer' };
     };
     assert.equal((await runtime.runTask(taskId, provider)).state, 'completed');

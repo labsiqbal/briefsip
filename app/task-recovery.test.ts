@@ -5,6 +5,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import type { HumanActor } from './auth.ts';
 import { initializeCanonicalSchema, initializeDeviceSchema } from './schema.ts';
 import { openExecutorJournal, type ActionContext } from './executor-journal.ts';
@@ -19,7 +21,8 @@ import { createProjectAccess } from './project-access.ts';
 import { createDevices, parseLinkChallenge, deviceLinkBody, descriptorBody, type DeviceDescriptor } from './devices.ts';
 import { canonicalJson, digestCommand, sha256, ProtocolError } from './protocol.ts';
 import { canonicalToolDigest, createTaskRecovery, parseTaskCommand, parseOwnership, journalEntryBody, stopEvidenceBody, recoveryEnvelopeBody, type StopEvidence, type JournalEntry } from './task-recovery.ts';
-import { prepareRestoreBootstrap, issueRestoreSession } from './backup.ts';
+import { prepareRestoreBootstrap, issueRestoreSession, workspaceSnapshot, restoreWorkspace } from './backup.ts';
+import { parseWaitProvision } from './wait-provisions.ts';
 
 async function fixture(tools = ['transfer_task']) {
   const db = new DatabaseSync(':memory:'); initializeCanonicalSchema(db);
@@ -109,13 +112,155 @@ async function canonicalTaskTools(tools=['ask_user']) {
     f.tasks.prepare(f.principal,task.taskId,actionId,{requestId:randomUUID(),sequence,ownership:task.ownership,payloadDigest,actionKind:'canonical',contextSnapshotId:ref.snapshotId,contextDigest:ref.digest,grantRevision:1,expectedTaskRevision,journalSequence:sequence+1,intentDigest},task.token);
     f.tasks.commit(f.principal,task.taskId,actionId,{requestId:randomUUID(),ownership:task.ownership,intentDigest,expectedTaskRevision,journalSequence:sequence+1},task.token);
     const request={requestId:randomUUID(),actionId,ownership:task.ownership,toolCall,payloadDigest,expectedRevision};
-    return Object.assign(()=>f.tasks.contextMutations(f.principal,task.taskId,request,task.token),{async:async()=>{
+    return Object.assign(()=>f.tasks.contextMutations(f.principal,task.taskId,request,task.token),{request,async:async()=>{
       const result=await f.tasks.runContextMutation(f.principal,task.taskId,request,task.token);
       return {...result,data:{...result.data,resultContent:result.data.resultContent as Record<string,unknown>}};
     }});
   };
   return {...f,start,stage};
 }
+
+test('canonical turn wait reserves one deadline and activates only after matching home secret result', async () => {
+  const f = await canonicalTaskTools(['wait_for_event']);
+  try {
+    const task = f.start(), rpc = f.stage(task, { event: 'ready', timeoutSeconds: 60 }, 'wait_for_event');
+    await assert.rejects(rpc.async(), code('device_offline'));
+    const row = f.db.prepare('SELECT * FROM wait_provisions').get()!;
+    assert.equal(row.state, 'pending');
+    const provision = parseWaitProvision(JSON.parse(String(row.request_json)).provision);
+    assert.equal(provision.provisionId, rpc.request.requestId);
+    assert.equal(provision.target.kind, 'turn');
+    assert.equal(f.db.prepare('SELECT count(*) n FROM turn_waits').get()!.n, 0);
+    await assert.rejects(rpc.async(), code('device_offline'));
+    assert.equal(f.db.prepare('SELECT deadline FROM wait_provisions').get()!.deadline, row.deadline);
+    const result = { requestId: randomUUID(), provisionId: provision.provisionId, payloadDigest: provision.payloadDigest, waitKey: provision.waitKey, secretGeneration: 1, sourceDeviceGeneration: 1, state: 'ready', secretRef: JSON.stringify([provision.waitKey, 1]) };
+    const ack = f.tasks.waitSecretResult(f.principal, result);
+    assert.equal(ack.data.state, 'activated');
+    assert.equal(f.db.prepare('SELECT count(*) n FROM turn_waits').get()!.n, 1);
+    const original = await rpc.async();
+    assert.equal(original.data.resultContent.status, 'waiting');
+    assert.equal(original.data.resultContent.id, provision.waitKey);
+    assert.deepEqual(f.tasks.waitSecretResult(f.principal, result), ack);
+    assert.throws(() => f.tasks.waitSecretResult(f.principal, { ...result, state: 'failed', secretRef: undefined, errorCode: 'wait_expired' }), code('payload_conflict'));
+    assert.throws(() => f.tasks.context(f.principal, task.taskId, { requestId: randomUUID(), ownership: task.ownership, expectedTaskRevision: original.receipt.recordRevision }, task.token), code('event_pending'));
+    assert(!f.db.prepare('PRAGMA table_info(turn_waits)').all().some(row => row.name === 'secret'));
+  } finally { f.close(); }
+});
+
+test('pending turn wait closes after cancellation, stale target or failed keyring result and rolls back failed activation', async () => {
+  for (const outcome of ['cancel', 'pause', 'capability', 'keyring', 'rollback'] as const) {
+    const f = await canonicalTaskTools(['wait_for_event']);
+    try {
+      const task = f.start(), rpc = f.stage(task, { event: 'ready', timeoutSeconds: 60 }, 'wait_for_event');
+      await assert.rejects(rpc.async(), code('device_offline'));
+      const row = f.db.prepare('SELECT * FROM wait_provisions').get()!, provision = parseWaitProvision(JSON.parse(String(row.request_json)).provision);
+      if (outcome === 'cancel' || outcome === 'pause') f.tasks.control(f.owner, task.taskId, { requestId: randomUUID(), expectedRevision: rpc.request.expectedRevision, operation: outcome });
+      if (outcome === 'capability') f.db.prepare('UPDATE agent_projects SET revision=revision+1').run();
+      const result = { requestId: randomUUID(), provisionId: provision.provisionId, payloadDigest: provision.payloadDigest, waitKey: provision.waitKey, secretGeneration: 1, sourceDeviceGeneration: 1, ...(outcome === 'keyring' ? { state: 'failed', errorCode: 'keystore_unavailable' } : { state: 'ready', secretRef: JSON.stringify([provision.waitKey, 1]) }) };
+      if (outcome === 'rollback') {
+        f.db.exec("CREATE TRIGGER fail_wait_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'fixture wait result failure'); END");
+        assert.throws(() => f.tasks.waitSecretResult(f.principal, result), /fixture wait result failure/);
+        assert.equal(f.db.prepare('SELECT count(*) n FROM turn_waits').get()!.n, 0);
+        assert.equal(f.db.prepare('SELECT state FROM wait_provisions').get()!.state, 'pending');
+        f.db.exec('DROP TRIGGER fail_wait_result');
+      }
+      const ack = f.tasks.waitSecretResult(f.principal, result);
+      assert.equal(ack.data.state, outcome === 'rollback' ? 'activated' : 'closed');
+      assert.equal(f.db.prepare('SELECT count(*) n FROM turn_waits').get()!.n, outcome === 'rollback' ? 1 : 0);
+      assert.deepEqual(f.tasks.waitSecretResult(f.principal, result), ack);
+      if (outcome === 'cancel' || outcome === 'pause') assert.equal(f.db.prepare('SELECT state FROM tasks WHERE id=?').get(task.taskId)!.state, outcome === 'cancel' ? 'cancelled' : 'paused');
+    } finally { f.close(); }
+  }
+});
+
+test('canonical maintenance expires pending and activated waits once without reviving closed keys', async t => {
+  for (const activated of [false, true]) {
+    const f = await canonicalTaskTools(['wait_for_event']);
+    try {
+      const task = f.start(), rpc = f.stage(task, { event: 'ready', timeoutSeconds: 60 }, 'wait_for_event');
+      await assert.rejects(rpc.async(), code('device_offline'));
+      const row = f.db.prepare('SELECT * FROM wait_provisions').get()!, provision = parseWaitProvision(JSON.parse(String(row.request_json)).provision);
+      const result = { requestId: randomUUID(), provisionId: provision.provisionId, payloadDigest: provision.payloadDigest, waitKey: provision.waitKey, secretGeneration: 1, sourceDeviceGeneration: 1, state: 'ready', secretRef: JSON.stringify([provision.waitKey, 1]) };
+      if (activated) f.tasks.waitSecretResult(f.principal, result);
+      t.mock.method(Date, 'now', () => provision.deadline);
+      f.tasks.maintainWaitProvisions();
+      assert.equal(f.db.prepare('SELECT state FROM tasks WHERE id=?').get(task.taskId)!.state, 'failed');
+      const revision = f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(task.taskId)!.revision;
+      f.tasks.maintainWaitProvisions();
+      assert.equal(f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(task.taskId)!.revision, revision);
+      if (!activated) {
+        assert.equal(f.tasks.waitSecretResult(f.principal, result).data.state, 'closed');
+        assert.equal(f.db.prepare('SELECT count(*) n FROM turn_waits').get()!.n, 0);
+      } else {
+        assert.equal(f.db.prepare('SELECT status FROM turn_waits').get()!.status, 'expired');
+        assert.equal(f.tasks.waitSecretResult(f.principal, result).data.state, 'activated', 'Exact ACK remains immutable after expiry');
+      }
+      assert.equal(f.db.prepare('SELECT count(*) n FROM task_results').get()!.n, 1);
+    } finally { t.mock.restoreAll(); f.close(); }
+  }
+});
+
+test('canonical wait maintenance survives SQLite failure and retries after storage recovers', async () => {
+  const f = await canonicalTaskTools(['wait_for_event']);
+  let snapshot: Awaited<ReturnType<typeof workspaceSnapshot>> | undefined;
+  let child: ReturnType<typeof spawn> | undefined;
+  try {
+    const task = f.start(), rpc = f.stage(task, { event: 'ready', timeoutSeconds: 60 }, 'wait_for_event');
+    await assert.rejects(rpc.async(), code('device_offline'));
+    const provision = parseWaitProvision(JSON.parse(String(f.db.prepare('SELECT request_json FROM wait_provisions').get()!.request_json)).provision);
+    f.tasks.waitSecretResult(f.principal, { requestId: randomUUID(), provisionId: provision.provisionId, payloadDigest: provision.payloadDigest, waitKey: provision.waitKey, secretGeneration: 1, sourceDeviceGeneration: 1, state: 'ready', secretRef: JSON.stringify([provision.waitKey, 1]) });
+    snapshot = await workspaceSnapshot(f.db, f.owner.accountId);
+    const saved = new DatabaseSync(snapshot.file);
+    saved.exec("UPDATE turn_waits SET deadline=0; CREATE TRIGGER fail_wait_maintenance BEFORE UPDATE ON turn_waits BEGIN SELECT RAISE(ABORT,'fixture wait maintenance failure'); END"); saved.close();
+    const source = `import { startCanonicalApp } from ${JSON.stringify(new URL('./server.ts', import.meta.url).href)};
+      const app=await startCanonicalApp({database:process.argv[1],auth:{secretKey:'sk_test_fixture',publishableKey:'pk_test_'+Buffer.from('fixture.clerk.accounts.dev$').toString('base64'),issuer:'https://fixture.clerk.accounts.dev',origin:'http://127.0.0.1',development:true}});
+      process.on('message',async()=>{await app.close();process.disconnect();});process.send(app.origin);`;
+    child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', source, snapshot.file], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+    let errors = ''; child.stderr?.on('data', chunk => { errors += String(chunk).slice(0, 2000); });
+    const [origin] = await once(child, 'message', { signal: AbortSignal.timeout(10000) });
+    await new Promise(resolve => setTimeout(resolve, 1400));
+    assert.equal(child.exitCode, null, errors);
+    const response = await fetch(origin + '/api/session', { headers: { 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': randomUUID() } });
+    assert(response.status >= 400 && response.status < 500);
+    const probe = new DatabaseSync(snapshot.file);
+    try {
+      assert.equal(probe.prepare('SELECT status FROM turn_waits').get()!.status, 'waiting');
+      probe.exec('DROP TRIGGER fail_wait_maintenance');
+      const deadline = Date.now() + 5000;
+      while (probe.prepare('SELECT status FROM turn_waits').get()!.status !== 'expired') {
+        assert(Date.now() < deadline, 'Maintenance must retry after failure');
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    } finally { probe.close(); }
+  } finally {
+    if (child && child.exitCode === null && child.signalCode === null) { const exited = once(child, 'exit'); child.send('close'); await exited; }
+    snapshot?.cleanup(); f.close();
+  }
+});
+
+test('disaster restore closes pending provisions and activated wait references while keeping receipts', async () => {
+  const f = await canonicalTaskTools(['wait_for_event']), directory = mkdtempSync(join(tmpdir(), 'briefsip-protected-wait-restore-'));
+  let snapshot: Awaited<ReturnType<typeof workspaceSnapshot>> | undefined;
+  try {
+    for (const activated of [false, true]) {
+      const task = f.start(), rpc = f.stage(task, { event: 'ready', timeoutSeconds: 60 }, 'wait_for_event');
+      await assert.rejects(rpc.async(), code('device_offline'));
+      const row = f.db.prepare('SELECT request_json FROM wait_provisions WHERE id=?').get(rpc.request.requestId)!;
+      const provision = parseWaitProvision(JSON.parse(String(row.request_json)).provision);
+      if (activated) f.tasks.waitSecretResult(f.principal, { requestId: randomUUID(), provisionId: provision.provisionId, payloadDigest: provision.payloadDigest, waitKey: provision.waitKey, secretGeneration: 1, sourceDeviceGeneration: 1, state: 'ready', secretRef: JSON.stringify([provision.waitKey, 1]) });
+    }
+    const receipts = f.db.prepare('SELECT * FROM receipts ORDER BY request_id').all();
+    snapshot = await workspaceSnapshot(f.db, f.owner.accountId);
+    const path = restoreWorkspace(snapshot.file, join(directory, 'restored.sqlite'), { canonicalOnly: true }), restored = new DatabaseSync(path);
+    try {
+      assert.deepEqual(restored.prepare('SELECT * FROM receipts ORDER BY request_id').all(), receipts);
+      assert.equal(restored.prepare('SELECT count(*) n FROM wait_provisions').get()!.n, 2);
+      assert.equal(restored.prepare("SELECT count(*) n FROM wait_provisions WHERE state='closed'").get()!.n, 2);
+      assert.equal(restored.prepare('SELECT status FROM turn_waits').get()!.status, 'closed');
+      assert.equal(restored.prepare('SELECT serving_state FROM authority_state').get()!.serving_state, 'read_only_recovery');
+    } finally { restored.close(); }
+  } finally { snapshot?.cleanup(); f.close(); rmSync(directory, { recursive: true, force: true }); }
+});
 
 test('canonical shared data keeps schema ownership, collaborator scope, validation and atomic receipts',async()=>{
   const f=await canonicalTaskTools(['query_data','list_data_tables']);initializeSharedData(f.db,true);
