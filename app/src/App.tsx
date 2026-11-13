@@ -19,11 +19,10 @@ import { BackupPanel } from './BackupPanel';
 import { AgentTemplateImport, AgentTemplateExport } from './AgentTemplateImport';
 import { UsagePanel } from './UsagePanel';
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, useId, type FormEvent, type ReactNode } from 'react';
-import { ArrowUp, Brain, ChevronDown, Clock, FolderOpen, Hash, MessageSquare, PanelLeft, PanelRight, Paperclip, Plus, Route, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
+import { ArrowUp, Brain, ChevronDown, ChevronLeft, ChevronRight, Clock, Ellipsis, FolderOpen, Hash, MessageSquare, PanelLeft, PanelRight, Paperclip, Plus, RefreshCw, Route, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { Menu, type MenuItem } from './ui/Menu';
-import { Modal } from './ui/Modal';
 import { PageView, useDetailsOpen } from './ui/layout';
-import { Alert, Button, Collapsible, Combobox, ConfirmProvider, Dialog, Field, Input, Segmented, Select, Textarea, useConfirm, type SelectOption } from './ui/kit';
+import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Collapsible, Combobox, ConfirmProvider, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Segmented, Select, SkeletonRows, Textarea, useConfirm, type SelectOption } from './ui/kit';
 import { WorkflowPanel } from './WorkflowPanel';
 import { WorkflowDirectory } from './WorkflowDirectory';
 import { createRoot } from 'react-dom/client';
@@ -146,16 +145,27 @@ function ConversationFiles({ path, archived, attached, onAttach, locked }: { pat
     } catch (error) { setError(message(error)); }
     finally { setBusy(false); }
   }
-  return <details className="conversation-files" onToggle={event => setOpen(event.currentTarget.open)}><summary>Conversation files</summary>
-    <p className="muted">Maximum 10 MiB per file. Select attachments to send with your next message. Up to four attachments: 32 KiB total UTF-8 text and 4 MiB total PNG/JPEG/WebP images. Select a model that supports images.</p>
-    <form onSubmit={upload}><label>File<input ref={input} type="file" disabled={busy || loading || !!pending.current?.file || (archived && !pending.current)} onChange={event => setSelected(event.target.files?.[0] ?? null)} /></label><button disabled={busy || loading || (archived && !pending.current) || (!selected && !pending.current?.file)}>{busy ? 'Processing...' : pending.current ? 'Retry upload' : 'Upload file'}</button></form>
-    {pending.current && <p className="notice">Upload {pending.current.name} is not confirmed yet. Select the same file again or <button className="secondary" disabled={busy || loading} onClick={() => void checkPending()}>Check upload status</button></p>}
-    {error && <p className="error" role="alert">{error} {!pending.current && <button className="secondary" disabled={busy || loading} onClick={() => setReload(value => value + 1)}>Reload files</button>}</p>}
-    {loading ? <p role="status">Loading files...</p> : !error && files.length === 0 && <p className="muted">No files yet.</p>}
-    <ul>{files.map(file => <li key={file.id}><label className="member-option"><input type="checkbox" checked={attached.includes(file.id)} disabled={locked || archived || (!attached.includes(file.id) && attached.length >= 4)} onChange={event => onAttach(event.target.checked ? [...attached, file.id] : attached.filter(id => id !== file.id))} /><span className="sr-only">Attach {file.name}</span></label><a href={`${path}/${file.id}`} download={file.name}>{file.name}</a><span className="muted">{file.size.toLocaleString('en-US')} byte</span><button className="secondary" aria-label={`View text: ${file.name}`} onClick={() => setPreview(file)}>View text</button><HtmlPreview path={`${path}/${file.id}`} name={file.name} request={api} /></li>)}</ul>
-    {preview && <section aria-label={`Preview ${preview.name}`}><strong>{preview.name}</strong><button className="secondary" onClick={() => setPreview(null)}>Close preview</button>{previewError ? <p className="error" role="alert">{previewError}</p> : previewText === null ? <p role="status">Loading preview...</p> : <pre tabIndex={0}>{previewText || '(Empty file)'}</pre>}</section>}
-    {more && <button className="secondary" disabled={busy} onClick={() => void loadMore()}>Earlier files</button>}
-  </details>;
+  // ponytail: Chat opens details and focuses summary; use kit Collapsible when that caller can change too.
+  return <div className="k-stack bs-root"><details className="k-collapsible" onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary className="k-collapsible__trigger"><ChevronRight size={14} aria-hidden style={{ transform: open ? 'rotate(90deg)' : undefined }} />Conversation files</summary>
+    <div className="k-stack">
+      <p className="k-field__hint">Maximum 10 MiB per file. Select attachments to send with your next message. Up to four attachments: 32 KiB total UTF-8 text and 4 MiB total PNG/JPEG/WebP images. Select a model that supports images.</p>
+      <form className="k-stack" onSubmit={upload}>
+        <input ref={input} type="file" hidden disabled={busy || loading || !!pending.current?.file || (archived && !pending.current)} onChange={event => setSelected(event.target.files?.[0] ?? null)} />
+        <div className="k-row-actions"><Button size="sm" disabled={busy || loading || !!pending.current?.file || (archived && !pending.current)} onClick={() => input.current?.click()}>Choose file</Button><Button type="submit" size="sm" busy={busy} disabled={busy || loading || (archived && !pending.current) || (!selected && !pending.current?.file)}>{busy ? 'Processing...' : pending.current ? 'Retry upload' : 'Upload file'}</Button></div>
+        {selected && <span className="k-field__hint">{selected.name}</span>}
+      </form>
+      {pending.current && <Alert tone="warn" title={`Upload ${pending.current.name} is not confirmed yet`} actions={<Button size="sm" disabled={busy || loading} onClick={() => void checkPending()}>Check upload status</Button>}>Select the same file again or check upload status.</Alert>}
+      {error && <Alert tone="error" actions={!pending.current && <Button size="sm" disabled={busy || loading} onClick={() => setReload(value => value + 1)}>Reload files</Button>}>{error}</Alert>}
+      {loading ? <><span className="sr-only" role="status">Loading files...</span><SkeletonRows /></> : !error && files.length === 0 && <EmptyState title="No files yet" />}
+      {files.length > 0 && <Card>{files.map(file => <Row key={file.id} title={<a className="k-link" href={`${path}/${file.id}`} download={file.name}>{file.name}</a>} meta={`${file.size.toLocaleString('en-US')} byte`}>
+        <div className="k-stack"><Checkbox label={`Attach ${file.name}`} checked={attached.includes(file.id)} disabled={locked || archived || (!attached.includes(file.id) && attached.length >= 4)} onChange={checked => onAttach(checked ? [...attached, file.id] : attached.filter(id => id !== file.id))} />
+        <div className="k-row-actions"><Button size="sm" variant="ghost" aria-label={`View text: ${file.name}`} onClick={() => setPreview(file)}>View text</Button><HtmlPreview path={`${path}/${file.id}`} name={file.name} request={api} /></div></div>
+      </Row>)}</Card>}
+      {preview && <Section title={preview.name} actions={<Button size="sm" variant="ghost" onClick={() => setPreview(null)}>Close preview</Button>}>{previewError ? <Alert tone="error">{previewError}</Alert> : previewText === null ? <p role="status">Loading preview...</p> : <CodeBlock label={`Preview ${preview.name}`}>{previewText || '(Empty file)'}</CodeBlock>}</Section>}
+      {more && <Button size="sm" disabled={busy} onClick={() => void loadMore()}>Earlier files</Button>}
+    </div>
+  </details></div>;
 }
 
 function TaskControls({ turn, path, members, archived }: { turn: Turn; path: string; members: Agent[]; archived: boolean }) {
@@ -172,14 +182,16 @@ function TaskControls({ turn, path, members, archived }: { turn: Turn; path: str
     catch (error) { if (error instanceof HttpError && error.status < 500) pending.current = null; setError(message(error)); }
     finally { setBusy(false); }
   }
-  return <div className="task-controls">
-    {pending.current ? <button className="secondary" disabled={busy} onClick={() => void control(pending.current!.action)}>Retry control</button> : resumable ? <details><summary>Resume or reassign task</summary>
-      <p>Check previous results and effects in the provider. Resuming may resend steps that are not confirmed yet.</p>
-      <label className="member-option"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />I have checked previous results and effects</label>
-      <button className="secondary" disabled={busy || archived || !confirmed} onClick={() => void control('resume')}>Resume task</button>
-      {members.length > 0 && <><label htmlFor={`owner-${turn.id}`}>New owner</label><select id={`owner-${turn.id}`} value={recipient} onChange={event => setRecipient(event.target.value)}><option value="">Select agent</option>{members.map(member => <option key={member.id} value={member.id}>{member.name}</option>)}</select><button className="secondary" disabled={busy || archived || !confirmed || !recipient} onClick={() => void control('reassign')}>Reassign task</button></>}
-    </details> : <button className="secondary" disabled={busy || archived} onClick={() => void control('pause')}>Pause task</button>}
-    {error && <p className="error" role="alert">{error}</p>}
+  return <div className="k-stack bs-root">
+    {pending.current ? <Button size="sm" disabled={busy} onClick={() => void control(pending.current!.action)}>Retry control</Button> : resumable ? <Collapsible title="Resume or reassign">
+      <div className="k-stack">
+        <p className="k-field__hint">Check previous results and effects in the provider. Resuming may resend steps that are not confirmed yet.</p>
+        <Checkbox checked={confirmed} onChange={setConfirmed} label="I have checked previous results and effects" />
+        <div><Button size="sm" disabled={busy || archived || !confirmed} onClick={() => void control('resume')}>Resume task</Button></div>
+        {members.length > 0 && <><Field label="New owner"><Select value={recipient} onChange={setRecipient} options={[{ value: '', label: 'Select agent' }, ...members.map(member => ({ value: member.id, label: member.name }))]} /></Field><div><Button size="sm" disabled={busy || archived || !confirmed || !recipient} onClick={() => void control('reassign')}>Reassign task</Button></div></>}
+      </div>
+    </Collapsible> : <div><Button size="sm" disabled={busy || archived} onClick={() => void control('pause')}>Pause task</Button></div>}
+    {error && <Alert tone="error">{error}</Alert>}
   </div>;
 }
 
@@ -461,7 +473,7 @@ type RoutineCommand = { routineId: string | null; data: { id: string; revision?:
 function pendingRoutine(agent: string): RoutineCommand | null {
   try { const value = JSON.parse(sessionStorage.getItem(`briefsip:routine-command:${agent}`) ?? 'null'); return value && typeof value.data?.id === 'string' && typeof value.data.name === 'string' && typeof value.data.prompt === 'string' && Number.isSafeInteger(value.data.nextAt) && value.data.nextAt > 0 && value.data.nextAt <= 253370764799999 && typeof value.data.enabled === 'boolean' && (value.data.intervalSeconds === null || Number.isSafeInteger(value.data.intervalSeconds)) && (value.routineId === null || typeof value.routineId === 'string') ? value : null; } catch { return null; }
 }
-function TestRoutine({ routine }: { routine: Routine }) {
+function TestRoutine({ routine, actions }: { routine: Routine; actions: { label: string; onSelect: () => void }[] }) {
   const key = `briefsip:routine-test:${routine.id}`;
   const [pending, setPending] = useState<{ id: string; revision: number } | null>(() => {
     try { const value = JSON.parse(sessionStorage.getItem(key) ?? 'null'); return value && typeof value.id === 'string' && Number.isSafeInteger(value.revision) ? value : null; } catch { return null; }
@@ -484,7 +496,12 @@ function TestRoutine({ routine }: { routine: Routine }) {
       setError(message(error));
     } finally { if (mounted.current) setBusy(false); }
   }
-  return <div><button className="secondary" disabled={busy} onClick={() => void run()}>{busy ? 'Sending test...' : pending ? `Retry test ${routine.name}` : `Test now ${routine.name}`}</button>{error && <p className="error" role="alert">{error}</p>}{pending && !busy && <p className="muted">Try again to check the same request without creating a duplicate run.</p>}{accepted && <p role="status">Test accepted. View progress in Runs.</p>}</div>;
+  const label = busy ? 'Sending test...' : pending ? `Retry test ${routine.name}` : `Test now ${routine.name}`;
+  return <Row title={routine.name} meta={<>{routine.trigger === 'webhook' && <Badge>Webhook</Badge>}<span>{routine.trigger === 'webhook' ? routine.enabled ? 'Waiting for webhook event' : 'Webhook inactive' : routine.enabled ? `Next: ${new Date(routine.next_at).toLocaleString('en-US')}` : 'Schedule inactive'}{routine.trigger === 'webhook' ? '' : routine.interval_ms ? ` · Every ${routine.interval_ms / 60000} minutes` : ' · One time'}</span></>} trailing={<ActionMenu label={`Menu ${routine.name}`} trigger={<button type="button" className="k-icon-btn" aria-label={`Menu ${routine.name}`}><Ellipsis size={16} aria-hidden /></button>} items={[...actions, { label, disabled: busy, onSelect: () => void run() }]} />}>
+    {error && <Alert tone="error">{error}</Alert>}
+    {pending && !busy && <Alert tone="warn" title="Test is not confirmed yet">Try again to check the same request without creating a duplicate run.</Alert>}
+    {accepted && <Alert>Test accepted. View progress in Runs.</Alert>}
+  </Row>;
 }
 function ScriptAccess({ agent }: { agent: string }) {
   const key = `briefsip:script-access:${agent}`;
@@ -519,7 +536,13 @@ function ScriptAccess({ agent }: { agent: string }) {
       setError(message(error));
     } finally { if (mounted.current) setBusy(false); }
   }
-  return <section className="script-access" aria-label="Local script access"><h2>Local script</h2><p className="muted">A script with a server token can read and run routines, create side threads, send direct or side messages, read results, answer questions, approve or reject workflow approvals, and change this agent’s model and provider account. Turning off access does not stop work already accepted.</p>{access && <p role="status">{access.enabled ? 'Script access is active.' : 'Script access is inactive.'}{!access.configured && ' Script token is not configured on the server.'}</p>}{pending && <p className="muted">Permission change is not confirmed yet. Save again to check the same request.</p>}{error && <p role="alert" className="error">{error}</p>}<div className="form-actions"><button className="secondary" disabled={busy || !access || (!pending && !access.enabled && !access.configured)} onClick={() => void save()}>{busy ? 'Saving permission...' : pending ? 'Retry saving permission' : access?.enabled ? 'Disable script access' : 'Allow script access'}</button><button className="secondary" disabled={busy} onClick={() => setReload(value => value + 1)}>Reload permission</button></div></section>;
+  return <Section title="Local script">
+    <p className="k-field__hint">A script with a server token can read and run routines, create side threads, send direct or side messages, read results, answer questions, approve or reject workflow approvals, and change this agent’s model and provider account. Turning off access does not stop work already accepted.</p>
+    {access && <Alert>{access.enabled ? 'Script access is active.' : 'Script access is inactive.'}{!access.configured && ' Script token is not configured on the server.'}</Alert>}
+    {pending && <Alert tone="warn" title="Permission change is not confirmed yet">Save again to check the same request.</Alert>}
+    {error && <Alert tone="error">{error}</Alert>}
+    <div className="k-row-actions"><Button busy={busy} disabled={busy || !access || (!pending && !access.enabled && !access.configured)} onClick={() => void save()}>{busy ? 'Saving permission...' : pending ? 'Retry saving permission' : access?.enabled ? 'Disable script access' : 'Allow script access'}</Button><IconButton label="Reload permission" disabled={busy} onClick={() => setReload(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton></div>
+  </Section>;
 }
 type WebhookConfig = { route: string; revision: number; url: string; event_name: string; filters: unknown[]; secret?: string };
 function WebhookSettings({ routine, onBack }: { routine: Routine; onBack: () => void }) {
@@ -562,19 +585,21 @@ function WebhookSettings({ routine, onBack }: { routine: Routine; onBack: () => 
       setError(message(error));
     } finally { if (mounted.current) setBusy(false); }
   }
-  return <section className="setup webhook-settings"><h1>Webhook {routine.name}</h1><p className="muted">The local URL receives signed events while Briefsip is running. Payloads are sent to the provider. This URL is not available from the internet.</p>
-    {hook && <label>Webhook URL<input readOnly value={hook.url} onFocus={event => event.target.select()} /></label>}
-    {secret && <label>New secret<input readOnly value={secret} autoComplete="off" spellCheck={false} onFocus={event => event.target.select()} /><span className="muted">Copy this to the sender’s secret storage. The secret is not saved in the browser and will not be shown again after the page closes.</span></label>}
-    {hook === undefined ? <p role="status">Loading webhook...</p> : <form key={`${hook?.route ?? 'new'}:${hook?.revision ?? 0}:${reload}`} onSubmit={save}>
-      <label>Event name<input name="eventName" maxLength={256} readOnly={!!pending} defaultValue={pending?.eventName ?? hook?.event_name ?? ''} /><span className="muted">Leave empty for all events.</span></label>
-      <label>Payload filters<textarea name="filters" rows={4} readOnly={!!pending} defaultValue={JSON.stringify(pending?.filters ?? hook?.filters ?? [], null, 2)} /><span className="muted">JSON filter list, example: {'[{"pointer":"/environment","equals":"production"}]'}. All filters must match.</span></label>
-      {hook && <label className="member-option"><input type="checkbox" name="rotate" disabled={!!pending} defaultChecked={pending?.rotate ?? false} />Rotate secret. The old secret becomes invalid immediately.</label>}
-      {pending && <p className="notice">Save is not confirmed yet. Try again with the same request.</p>}
-      <div className="form-actions routine-actions"><button disabled={busy || conflict}>{busy ? 'Saving...' : pending ? 'Retry saving webhook' : hook ? 'Save webhook' : 'Create URL and secret'}</button></div>
+  return <div className="k-page bs-root">
+    <PageHeader title={`Webhook ${routine.name}`} description="The local URL receives signed events while Briefsip is running. Payloads are sent to the provider. This URL is not available from the internet."
+      actions={<><Button variant="ghost" onClick={onBack}>Back</Button><IconButton label="Reload webhook" disabled={busy} onClick={() => { setSecret(''); setReload(value => value + 1); }}><RefreshCw size={15} aria-hidden /></IconButton></>} />
+    {hook && <Field label="Webhook URL"><Input readOnly value={hook.url} onFocus={event => event.target.select()} /></Field>}
+    {secret && <Field label="New secret" hint="Copy this to the sender’s secret storage. The secret is not saved in the browser and will not be shown again after the page closes."><Input readOnly value={secret} autoComplete="off" spellCheck={false} onFocus={event => event.target.select()} /></Field>}
+    {hook === undefined ? <p role="status">Loading webhook...</p> : <form className="k-fieldset" key={`${hook?.route ?? 'new'}:${hook?.revision ?? 0}:${reload}`} onSubmit={save}>
+      <Field label="Event name" hint="Leave empty for all events."><Input name="eventName" maxLength={256} readOnly={!!pending} defaultValue={pending?.eventName ?? hook?.event_name ?? ''} /></Field>
+      <Field label="Payload filters" hint={<>JSON filter list, example: {'[{"pointer":"/environment","equals":"production"}]'}. All filters must match.</>}><Textarea name="filters" rows={4} readOnly={!!pending} defaultValue={JSON.stringify(pending?.filters ?? hook?.filters ?? [], null, 2)} /></Field>
+      {hook && <label className="k-check"><input type="checkbox" name="rotate" disabled={!!pending} defaultChecked={pending?.rotate ?? false} />Rotate secret. The old secret becomes invalid immediately.</label>}
+      {pending && <Alert tone="warn" title="Save is not confirmed yet">Try again with the same request.</Alert>}
+      <div><Button type="submit" variant="primary" busy={busy} disabled={busy || conflict}>{busy ? 'Saving...' : pending ? 'Retry saving webhook' : hook ? 'Save webhook' : 'Create URL and secret'}</Button></div>
     </form>}
-    {error && <p role="alert" className="error">{error}</p>}<div className="form-actions routine-actions"><button className="secondary" onClick={onBack}>Back to routines</button><button className="secondary" disabled={busy} onClick={() => { setSecret(''); setReload(value => value + 1); }}>Reload webhook</button></div>
-    <h2>Received events</h2>{!events.length ? <p className="muted">No saved events. Reload to see new events.</p> : <ul className="routine-list">{events.map(event => <li key={`${event.delivery}:${event.received}`}><strong>{event.delivery}</strong><p>{new Date(event.received).toLocaleString('en-US')} · {event.result.outcome === 'queued' ? 'Accepted for execution' : 'Ignored'}</p>{event.result.reason && <p>{event.result.reason}</p>}</li>)}</ul>}
-  </section>;
+    {error && <Alert tone="error">{error}</Alert>}
+    <Section title="Received events">{!events.length ? <EmptyState title="No saved events">Reload to see new events.</EmptyState> : <Card>{events.map(event => <Row key={`${event.delivery}:${event.received}`} title={event.delivery} meta={<><span>{new Date(event.received).toLocaleString('en-US')}</span><Badge>{event.result.outcome === 'queued' ? 'Accepted for execution' : 'Ignored'}</Badge></>}>{event.result.reason && <span className="k-field__hint">{event.result.reason}</span>}</Row>)}</Card>}</Section>
+  </div>;
 }
 type FlowRun = { root_turn: string; created: string; steps: { agent: string; name: string; status: string; task_status: string | null; paused: number | null; thread: string | null; result: string; result_length: number }[] };
 function FlowDiagram({ graph, agents }: { graph: FlowGraph; agents: Agent[] }) {
@@ -585,11 +610,10 @@ function FlowDiagram({ graph, agents }: { graph: FlowGraph; agents: Agent[] }) {
     depth.set(node, level); positions.set(node, { x: 12 + level * 200, y: 12 + (counts.get(level) ?? 0) * 84 }); counts.set(level, (counts.get(level) ?? 0) + 1);
   }
   const name = (id: string) => agents.find(agent => agent.id === id)?.name ?? id;
-  return <div className="flow-canvas" tabIndex={0} role="region" aria-label="Flow diagram, scroll to view the full graph"><svg width={Math.max(360, (Math.max(...depth.values()) + 1) * 200)} height={Math.max(...counts.values()) * 84} role="img" aria-label="Agent relationships in flow"><defs><marker id={marker} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" /></marker></defs>{graph.links.map(link => { const start = positions.get(link.from)!, end = positions.get(link.to)!; return <path key={`${link.from}:${link.to}`} d={`M ${start.x + 160} ${start.y + 26} L ${end.x - 4} ${end.y + 26}`} fill="none" stroke="currentColor" strokeWidth="2" markerEnd={`url(#${marker})`} />; })}{graph.nodes.map(node => { const pos = positions.get(node)!; return <g key={node} transform={`translate(${pos.x},${pos.y})`}><title>{name(node)}</title><rect width="160" height="52" rx="7" /><text x="12" y="31">{name(node).length > 20 ? `${name(node).slice(0, 18)}...` : name(node)}</text></g>; })}</svg></div>;
+  return <div className="bs-root" style={{ overflowX: 'auto', border: '0.5px solid var(--color-border-tertiary)', borderRadius: 14, padding: 8, background: 'var(--color-bg-chrome)' }} tabIndex={0} role="region" aria-label="Flow diagram, scroll to view the full graph"><svg width={Math.max(360, (Math.max(...depth.values()) + 1) * 200)} height={Math.max(...counts.values()) * 84} role="img" aria-label="Agent relationships in flow"><defs><marker id={marker} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-brand)" /></marker></defs>{graph.links.map(link => { const start = positions.get(link.from)!, end = positions.get(link.to)!; return <path key={`${link.from}:${link.to}`} d={`M ${start.x + 160} ${start.y + 26} L ${end.x - 4} ${end.y + 26}`} fill="none" stroke="var(--color-brand)" strokeWidth="2" markerEnd={`url(#${marker})`} />; })}{graph.nodes.map(node => { const pos = positions.get(node)!; return <g key={node} transform={`translate(${pos.x},${pos.y})`}><title>{name(node)}</title><rect width="160" height="52" rx="7" fill="var(--color-bg-pane)" stroke="var(--color-border-primary)" /><text x="12" y="31" fill="var(--color-text-primary)" fontSize="13">{name(node).length > 20 ? `${name(node).slice(0, 18)}...` : name(node)}</text></g>; })}</svg></div>;
 }
 function FlowEditor({ routine, onBack, onOpen }: { routine: Routine; onBack: () => void; onOpen: (thread: string, owner: string) => Promise<void> }) {
   const heading = useRef<HTMLHeadingElement>(null);
-  const fieldId = useId();
   const optionName = (name: string) => name.length > 24 ? name.slice(0, 21) + '...' : name;
   useEffect(() => { heading.current?.focus(); }, []);
   type Command = { id: string; revision: number; links: FlowLink[] };
@@ -642,14 +666,20 @@ function FlowEditor({ routine, onBack, onOpen }: { routine: Routine; onBack: () 
     } finally { if (mounted.current) setBusy(false); }
   }
   const name = (id: string) => agents.find(agent => agent.id === id)?.name ?? id;
-  return <section className="setup flow-editor"><h1 ref={heading} tabIndex={-1}>Flow {routine.name}</h1><p className="muted">Connect routine results to the next agent. Agents with multiple inputs wait for all of them; branches without successful results are skipped. Changes apply only to new runs.</p>
+  return <div className="k-page bs-root">
+    <PageHeader headingRef={heading} title={`Flow ${routine.name}`} description="Connect routine results to the next agent. Agents with multiple inputs wait for all of them; branches without successful results are skipped. Changes apply only to new runs."
+      actions={<><Button variant="ghost" onClick={onBack}>Back</Button><IconButton label="Reload flow" disabled={busy} onClick={() => setReload(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton><Button variant="primary" busy={busy} disabled={!loaded || busy || conflict} onClick={() => void save()}>{busy ? 'Saving...' : pending ? 'Retry saving flow' : 'Save flow'}</Button></>} />
     {!loaded ? <p role="status">Loading flow...</p> : <><FlowDiagram graph={graph} agents={agents} />
-    <div className="flow-link-fields"><label>From agent<select aria-describedby={`${fieldId}-from`} value={from} disabled={locked} onChange={event => { setFrom(event.target.value); if (to === event.target.value) setTo(''); }}>{graph.nodes.map(id => <option key={id} value={id} aria-label={name(id)}>{optionName(name(id))}</option>)}</select><span className="flow-selected-name muted" id={`${fieldId}-from`}>{name(from)}</span></label><label>To agent<select aria-describedby={`${fieldId}-to`} value={to} disabled={locked} onChange={event => setTo(event.target.value)}><option value="">Select agent</option>{agents.filter(agent => agent.id !== routine.agent && agent.id !== from).map(agent => <option key={agent.id} value={agent.id} aria-label={agent.name}>{optionName(agent.name)}</option>)}</select><span className="flow-selected-name muted" id={`${fieldId}-to`}>{to ? name(to) : 'Not selected'}</span></label><button disabled={locked || !to || to === from} onClick={() => change([...links, { from, to }])}>Connect</button></div>
-    <ul className="routine-list">{links.map(link => <li key={`${link.from}:${link.to}`}><p>{name(link.from)} to {name(link.to)}</p><button className="secondary" disabled={locked} onClick={() => { const remaining = links.filter(item => item !== link), reachable = new Set([routine.agent]); let changed = true; while (changed) { changed = false; for (const edge of remaining) if (reachable.has(edge.from) && !reachable.has(edge.to)) { reachable.add(edge.to); changed = true; } } change(remaining.filter(edge => reachable.has(edge.from))); setFrom(routine.agent); }}>Remove relationship {name(link.from)} to {name(link.to)}</button></li>)}</ul><p className="muted">Removing a relationship also removes branches no longer connected to the origin.</p></>}
-    {pending && <p className="notice">Save is not confirmed yet. Try again with the same request.</p>}{error && <p role="alert" className="error">{error}</p>}
-    <div className="form-actions routine-actions"><button className="secondary" onClick={onBack}>Back to routines</button><button className="secondary" disabled={busy} onClick={() => setReload(value => value + 1)}>Reload flow</button><button disabled={!loaded || busy || conflict} onClick={() => void save()}>{busy ? 'Saving...' : pending ? 'Retry saving flow' : 'Save flow'}</button></div>
-    <h2>Execution steps</h2>{runError && <p role="alert" className="error">{runError}</p>}{!runs.length ? <p className="muted">No runs with saved flows.</p> : runs.map(run => <section className="flow-run" key={run.root_turn}><h3>{new Date(run.created).toLocaleString('en-US')}</h3><ul className="routine-list">{run.steps.map(step => <li key={step.agent}><strong>{step.name}</strong><p>{step.paused ? 'Paused' : step.status === 'waiting' ? 'Waiting for input' : step.status === 'skipped' ? 'Skipped' : statusNames[step.task_status ?? step.status] ?? step.status}</p>{step.result && <p className="message-text">{step.result}{step.result_length > 1000 ? '...' : ''}</p>}{step.thread && <button className="secondary" onClick={() => void onOpen(step.thread!, step.agent).catch(error => setRunError(message(error)))}>Open step {step.name}</button>}</li>)}</ul></section>)}
-  </section>;
+      <div className="k-grid-2"><Field label="From agent" hint={name(from)}><Select value={from} disabled={locked} onChange={value => { setFrom(value); if (to === value) setTo(''); }} options={graph.nodes.map(id => ({ value: id, label: optionName(name(id)) }))} /></Field><Field label="To agent" hint={to ? name(to) : 'Not selected'}><Select value={to} disabled={locked} onChange={setTo} options={[{ value: '', label: 'Select agent' }, ...agents.filter(agent => agent.id !== routine.agent && agent.id !== from).map(agent => ({ value: agent.id, label: optionName(agent.name) }))]} /></Field></div>
+      <div><Button disabled={locked || !to || to === from} onClick={() => change([...links, { from, to }])}>Connect</Button></div>
+      <Card>{links.map(link => <Row key={`${link.from}:${link.to}`} title={`${name(link.from)} to ${name(link.to)}`} trailing={<IconButton label={`Remove relationship ${name(link.from)} to ${name(link.to)}`} disabled={locked} onClick={() => { const remaining = links.filter(item => item !== link), reachable = new Set([routine.agent]); let changed = true; while (changed) { changed = false; for (const edge of remaining) if (reachable.has(edge.from) && !reachable.has(edge.to)) { reachable.add(edge.to); changed = true; } } change(remaining.filter(edge => reachable.has(edge.from))); setFrom(routine.agent); }}><X size={14} aria-hidden /></IconButton>} />)}</Card>
+      <p className="k-field__hint">Removing a relationship also removes branches no longer connected to the origin.</p>
+    </>}
+    {pending && <Alert tone="warn" title="Save is not confirmed yet">Try again with the same request.</Alert>}{error && <Alert tone="error">{error}</Alert>}
+    <Section title="Execution steps">{runError && <Alert tone="error">{runError}</Alert>}{!runs.length ? <EmptyState title="No runs with saved flows" /> : runs.map(run => <Section key={run.root_turn} title={new Date(run.created).toLocaleString('en-US')}><Card>{run.steps.map(step => <Row key={step.agent} title={step.name} meta={<Badge>{step.paused ? 'Paused' : step.status === 'waiting' ? 'Waiting for input' : step.status === 'skipped' ? 'Skipped' : statusNames[step.task_status ?? step.status] ?? step.status}</Badge>} trailing={step.thread && <Button size="sm" onClick={() => void onOpen(step.thread!, step.agent).catch(error => setRunError(message(error)))}>Open step {step.name}</Button>}>
+      {step.result && <span className="k-field__hint" style={{ whiteSpace: 'pre-wrap' }}>{step.result}{step.result_length > 1000 ? '...' : ''}</span>}
+    </Row>)}</Card></Section>)}</Section>
+  </div>;
 }
 function Routines({ agent, onClose, onOpen }: { agent: Agent; onClose: () => void; onOpen: (thread: string, owner: string) => Promise<void> }) {
   const [rows, setRows] = useState<Routine[] | null>(null), [error, setError] = useState('');
@@ -677,14 +707,22 @@ function Routines({ agent, onClose, onOpen }: { agent: Agent; onClose: () => voi
   if (flow) return <FlowEditor key={flow.id} routine={flow} onBack={() => setFlow(null)} onOpen={onOpen} />;
   if (webhook) return <WebhookSettings key={webhook.id} routine={webhook} onBack={() => setWebhook(null)} />;
   if (editing !== undefined) return <RoutineForm key={`${editing?.id ?? 'new'}:${reload}`} agent={agent} routine={editing} onBack={() => { setEditing(undefined); setReload(value => value + 1); }} />;
-  return <section className="setup"><h1>Routines {agent.name}</h1><p className="muted">Each run has a separate conversation. Briefsip must be running for schedules to be processed.</p>
-    <p className="muted">Test now runs the saved work through the provider, even when the schedule is inactive. The schedule does not change; provider usage is still counted.</p>
+  return <div className="k-page bs-root">
+    <PageHeader title={`Routines ${agent.name}`} description="Each run has a separate conversation. Briefsip must be running for schedules to be processed."
+      actions={<><Button variant="ghost" onClick={onClose}>Back</Button><Button variant="primary" icon={<Plus size={14} aria-hidden />} onClick={() => setEditing(null)}>{pendingRoutine(agent.id) ? 'Resume saving' : 'New routine'}</Button></>} />
+    <p className="k-field__hint">Test now runs the saved work through the provider, even when the schedule is inactive. The schedule does not change; provider usage is still counted.</p>
     <ScriptAccess key={agent.id} agent={agent.id} />
-    <div className="form-actions routine-actions"><button className="secondary" onClick={onClose}>Back to chat</button><a href={`/api/agents/${agent.id}/routines/calendar.ics`} download="briefsip-routines.ics">Download calendar</a><button onClick={() => setEditing(null)}>{pendingRoutine(agent.id) ? 'Resume saving' : 'New routine'}</button></div>
-    {error && <p className="error" role="alert">{error} The list will be retried.</p>}
-    {rows === null ? <p role="status">Loading routines...</p> : !rows.length ? <p className="empty">No routines yet. Create a schedule for recurring or one-time work.</p> : <ul className="routine-list">{rows.map(row => <li key={row.id}><strong>{row.name}</strong><p className="muted">{row.trigger === 'webhook' ? row.enabled ? 'Waiting for webhook event' : 'Webhook inactive' : row.enabled ? `Next: ${new Date(row.next_at).toLocaleString('en-US')}` : 'Schedule inactive'}{row.trigger === 'webhook' ? '' : row.interval_ms ? ` · Every ${row.interval_ms / 60000} minutes` : ' · One time'}</p><div className="form-actions"><button className="secondary" onClick={() => setEditing(row)}>Edit {row.name}</button><button className="secondary" onClick={() => setSelected(row.id)} aria-pressed={selected === row.id}>Runs: {row.name}</button></div><TestRoutine routine={row} /><button className="secondary" onClick={() => setFlow(row)}>Flow {row.name}</button>{row.trigger === 'webhook' && <button className="secondary" onClick={() => setWebhook(row)}>Webhook settings: {row.name}</button>}</li>)}</ul>}
-    {selected && <section aria-label="Run history"><h2>Run history</h2>{runError && <p className="error" role="alert">{runError}</p>}{runs === null ? <p role="status">Loading runs...</p> : !runs.length ? <p>No saved runs.</p> : <ul className="routine-list">{runs.map(run => <li key={run.turn}><p>{run.source === 'webhook' ? 'Webhook · ' : run.source === 'script' ? 'Local script · ' : run.scheduled_at === null ? 'Manual test · ' : ''}{new Date(run.scheduled_at ?? run.created).toLocaleString('en-US')} · {run.paused ? 'Paused' : run.no_update ? 'No updates' : statusNames[run.status] ?? run.status}</p>{run.missed > 0 && <p className="muted">{run.missed} missed schedules were combined into this run.</p>}{run.error && <p className="error">{run.error}</p>}<button className="secondary" onClick={() => void onOpen(run.thread, agent.id).catch(error => setRunError(message(error)))}>Open result</button></li>)}</ul>}</section>}
-  </section>;
+    <Section title="Routines" actions={<a className="k-link" href={`/api/agents/${agent.id}/routines/calendar.ics`} download="briefsip-routines.ics">Download calendar</a>}>
+      {error && <Alert tone="error">{error} The list will be retried.</Alert>}
+      {rows === null ? <><span className="sr-only" role="status">Loading routines...</span><SkeletonRows /></> : !rows.length ? <EmptyState title="No routines yet">Create a schedule for recurring or one-time work.</EmptyState> : <Card>{rows.map(row => <TestRoutine key={row.id} routine={row} actions={[
+        { label: `Edit ${row.name}`, onSelect: () => setEditing(row) },
+        { label: `Runs: ${row.name}`, onSelect: () => setSelected(row.id) },
+        { label: `Flow ${row.name}`, onSelect: () => setFlow(row) },
+        ...(row.trigger === 'webhook' ? [{ label: `Webhook settings: ${row.name}`, onSelect: () => setWebhook(row) }] : []),
+      ]} />)}</Card>}
+    </Section>
+    {selected && <Section title="Run history">{runError && <Alert tone="error">{runError}</Alert>}{runs === null ? <><span className="sr-only" role="status">Loading runs...</span><SkeletonRows /></> : !runs.length ? <EmptyState title="No saved runs" /> : <Card>{runs.map(run => <Row key={run.turn} title={<>{run.source === 'webhook' ? 'Webhook · ' : run.source === 'script' ? 'Local script · ' : run.scheduled_at === null ? 'Manual test · ' : ''}{new Date(run.scheduled_at ?? run.created).toLocaleString('en-US')}</>} meta={<Badge>{run.paused ? 'Paused' : run.no_update ? 'No updates' : statusNames[run.status] ?? run.status}</Badge>} trailing={<Button size="sm" onClick={() => void onOpen(run.thread, agent.id).catch(error => setRunError(message(error)))}>Open result</Button>}>{run.missed > 0 && <span className="k-field__hint">{run.missed} missed schedules were combined into this run.</span>}{run.error && <Alert tone="error">{run.error}</Alert>}</Row>)}</Card>}</Section>}
+  </div>;
 }
 function RoutineForm({ agent, routine, onBack }: { agent: Agent; routine: Routine | null; onBack: () => void }) {
   const key = `briefsip:routine-command:${agent.id}`;
@@ -718,10 +756,20 @@ function RoutineForm({ agent, routine, onBack }: { agent: Agent; routine: Routin
       setError(message(error));
     } finally { if (mounted.current) setBusy(false); }
   }
-  return <section className="setup"><h1>{initial?.routineId || routine ? 'Edit routine' : 'New routine'}</h1><p className="muted">Time follows the browser time zone. Disabling or changing a schedule cancels queued runs; runs already in progress continue.</p>
-    <form onSubmit={save}><label>Name<input name="name" required maxLength={80} autoFocus readOnly={!!pending.current} defaultValue={snapshot?.name ?? routine?.name} /></label><label>Work<textarea name="prompt" required maxLength={16000} readOnly={!!pending.current} defaultValue={snapshot?.prompt ?? routine?.prompt} rows={5} /></label><label>Trigger<select value={trigger} disabled={!!pending.current} onChange={event => setTrigger(event.target.value as typeof trigger)}><option value="schedule">Schedule</option><option value="webhook">Webhook</option></select></label>{trigger === 'webhook' && <p className="notice">After saving, open Webhook settings to create a URL and secret. Switching to a schedule removes the old URL and secret.</p>}<label hidden={trigger === 'webhook'}>Start time<input disabled={trigger === 'webhook'} name="nextAt" type="datetime-local" required readOnly={!!pending.current} defaultValue={localDate} /></label><label hidden={trigger === 'webhook'}>Repeat every (minutes)<input disabled={trigger === 'webhook'} name="interval" type="number" min={1} max={525600} step={1} readOnly={!!pending.current} defaultValue={snapshot ? snapshot.intervalSeconds === null ? '' : snapshot.intervalSeconds / 60 : routine?.interval_ms ? routine.interval_ms / 60000 : ''} /><span className="muted">Leave empty for a one-time run.</span></label><label className="member-option"><input type="checkbox" name="enabled" disabled={!!pending.current} defaultChecked={snapshot?.enabled ?? (routine ? !!routine.enabled : true)} /> {trigger === 'webhook' ? 'Webhook active' : 'Schedule active'}</label>
-    {error && <p className="error" role="alert">{error}</p>}<div className="form-actions"><button type="button" className="secondary" disabled={busy} onClick={onBack}>{error && !pending.current ? 'Discard changes and reload' : 'Back'}</button><button disabled={busy || conflict}>{busy ? 'Saving...' : pending.current ? 'Retry save' : 'Save routine'}</button></div></form>
-  </section>;
+  return <div className="k-page bs-root">
+    <PageHeader title={initial?.routineId || routine ? 'Edit routine' : 'New routine'} description="Time follows the browser time zone. Disabling or changing a schedule cancels queued runs; runs already in progress continue." actions={<Button variant="ghost" disabled={busy} onClick={onBack}>{error && !pending.current ? 'Discard changes and reload' : 'Back'}</Button>} />
+    <form className="k-fieldset" onSubmit={save}>
+      <Field label="Name"><Input name="name" required maxLength={80} autoFocus readOnly={!!pending.current} defaultValue={snapshot?.name ?? routine?.name} /></Field>
+      <Field label="Work"><Textarea name="prompt" required maxLength={16000} readOnly={!!pending.current} defaultValue={snapshot?.prompt ?? routine?.prompt} rows={5} /></Field>
+      <Segmented label="Trigger" value={trigger} disabled={!!pending.current} onChange={setTrigger} options={[{ value: 'schedule', label: 'Schedule' }, { value: 'webhook', label: 'Webhook' }]} />
+      {trigger === 'webhook' && <Alert>After saving, open Webhook settings to create a URL and secret. Switching to a schedule removes the old URL and secret.</Alert>}
+      <div hidden={trigger === 'webhook'}><Field label="Start time"><Input disabled={trigger === 'webhook'} name="nextAt" type="datetime-local" required readOnly={!!pending.current} defaultValue={localDate} /></Field></div>
+      <div hidden={trigger === 'webhook'}><Field label="Repeat every (minutes)" hint="Leave empty for a one-time run."><Input disabled={trigger === 'webhook'} name="interval" type="number" min={1} max={525600} step={1} readOnly={!!pending.current} defaultValue={snapshot ? snapshot.intervalSeconds === null ? '' : snapshot.intervalSeconds / 60 : routine?.interval_ms ? routine.interval_ms / 60000 : ''} /></Field></div>
+      <label className="k-check"><input type="checkbox" name="enabled" disabled={!!pending.current} defaultChecked={snapshot?.enabled ?? (routine ? !!routine.enabled : true)} />{trigger === 'webhook' ? 'Webhook active' : 'Schedule active'}</label>
+      {error && <Alert tone="error">{error}</Alert>}
+      <div><Button type="submit" variant="primary" busy={busy} disabled={busy || conflict}>{busy ? 'Saving...' : pending.current ? 'Retry save' : 'Save routine'}</Button></div>
+    </form>
+  </div>;
 }
 
 function AgentConversations({ agent, configured, onEdit, workflowAgents, initialThread, onOpenAgent, onOpenChannel, onThreadOpened }: { onOpenChannel: (channel: string) => void; agent: Agent; workflowAgents: Agent[]; configured: boolean; onEdit: () => void; initialThread?: string; onThreadOpened: () => void; onOpenAgent: (owner: string, thread: string) => void }) {
@@ -809,13 +857,19 @@ function ThreadForm({ agent, thread, onCancel, onSaved, onReload }: { agent: Age
     catch (error) { if (error instanceof HttpError && error.status < 500) pending.current = null; setError(message(error)); }
     finally { setBusy(false); }
   }
-  return <section className="setup"><h1>{thread ? 'Conversation settings' : 'New side thread'}</h1><p className="muted">Agent {agent.name}, with history and a queue separate from the main chat.</p><form onSubmit={save}>
-    <label>Conversation name<input name="name" required maxLength={80} defaultValue={thread?.name} readOnly={!!pending.current} autoFocus /></label>
-    {thread && <label className="member-option"><input type="checkbox" checked={archived} disabled={!!pending.current} onChange={event => setArchived(event.target.checked)} />Archive and cancel unfinished work</label>}
-    {!!thread?.archived && <label className="member-option"><input type="checkbox" checked={confirmed} disabled={!!pending.current} onChange={event => setConfirmed(event.target.checked)} />I understand that a deleted conversation cannot be reopened</label>}
-    {error && <p className="error" role="alert">{error}</p>}
-    <div className="form-actions"><button type="button" className="secondary" onClick={onCancel}>Cancel</button><button disabled={busy}>{busy ? 'Saving...' : pending.current ? 'Retry changes' : thread ? 'Save conversation' : 'Create conversation'}</button>{!!thread?.archived && <button className="secondary" value="delete" disabled={busy || !confirmed || !!pending.current}>Delete conversation</button>}{thread && error && !pending.current && <button type="button" className="secondary" onClick={onReload}>Reload settings</button>}</div>
-  </form></section>;
+  return <Dialog open onOpenChange={next => { if (!next && !busy) onCancel(); }} title={thread ? 'Conversation settings' : 'New side thread'} description={`Agent ${agent.name}, with history and a queue separate from the main chat.`}
+    footer={<>
+      {thread && error && !pending.current && <Button variant="ghost" onClick={onReload}>Reload settings</Button>}
+      <Button onClick={onCancel}>Cancel</Button><Button type="submit" form="thread-form" variant="primary" busy={busy} disabled={busy}>{busy ? 'Saving...' : pending.current ? 'Retry changes' : thread ? 'Save conversation' : 'Create conversation'}</Button>
+      {!!thread?.archived && <Button type="submit" form="thread-form" variant="danger" value="delete" disabled={busy || !confirmed || !!pending.current} className="k-dialog__foot-start" style={{ order: -1 }}>Delete conversation</Button>}
+    </>}>
+    <form id="thread-form" className="k-fieldset bs-root" onSubmit={save}>
+      <Field label="Conversation name"><Input name="name" required maxLength={80} defaultValue={thread?.name} readOnly={!!pending.current} autoFocus /></Field>
+      {thread && <Checkbox checked={archived} disabled={!!pending.current} onChange={setArchived} label="Archive and cancel unfinished work" />}
+      {!!thread?.archived && <Checkbox checked={confirmed} disabled={!!pending.current} onChange={setConfirmed} label="I understand that a deleted conversation cannot be reopened" />}
+      {error && <Alert tone="error">{error}</Alert>}
+    </form>
+  </Dialog>;
 }
 
 function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload, onVisibilityChanged }: { model: string; profile?: Agent; onCreated: (agent: Agent) => void; onCancel: () => void; onReload?: () => Promise<void>; onVisibilityChanged?: () => Promise<void> }) {
@@ -936,6 +990,7 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
 }
 
 function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agents: Agent[]; channel?: Channel; onCreated: (channel: Channel) => void; onCancel: () => void; onReload?: () => void }) {
+  const confirm = useConfirm();
   const storageKey = `briefsip:channel-command:${channel?.id ?? 'new'}`;
   const [recovery] = useState(() => {
     try { return { command: restoreChannelCommand(sessionStorage.getItem(storageKey), !!channel), blocked: false }; }
@@ -949,8 +1004,8 @@ function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agent
   const mounted = useRef(true), sending = useRef(false), nameInput = useRef<HTMLInputElement>(null);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const locked = busy || !!pending || blocked;
-  function discard() {
-    if (!window.confirm('Discard channel recovery data? Changes may already be saved. Check the list and channel settings before creating a new request.')) return;
+  async function discard() {
+    if (!await confirm({ title: 'Discard channel recovery data?', description: 'Changes may already be saved. Check the list and channel settings before creating a new request.', confirm: 'Discard', danger: true })) return;
     try { sessionStorage.removeItem(storageKey); setPending(null); setBlocked(false); setError(''); nameInput.current?.focus(); }
     catch { setError('Recovery data could not be deleted. Check site storage.'); }
   }
@@ -975,17 +1030,27 @@ function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agent
     }
     finally { sending.current = false; if (mounted.current) setBusy(false); }
   }
-  return <section className="setup"><h1>{channel ? 'Channel settings' : 'New channel'}</h1><p className="muted">Bring agents into one conversation. Choose who coordinates the work.</p><form onSubmit={create}>
-    <label>Channel name<input ref={nameInput} name="name" required maxLength={80} readOnly={locked} value={name} onChange={event => setName(event.target.value)} autoFocus /></label>
-    <label>Purpose<textarea name="instructions" required maxLength={8000} rows={3} readOnly={locked} value={instructions} onChange={event => setInstructions(event.target.value)} /></label>
-    <fieldset disabled={locked}><legend>Members</legend>{agents.map(agent => <label className="member-option" key={agent.id}><input type="checkbox" checked={members.includes(agent.id)} onChange={event => { setMembers(event.target.checked ? [...members, agent.id] : members.filter(id => id !== agent.id)); if (!event.target.checked && lead === agent.id) setLead(''); }} />{agent.name}</label>)}</fieldset>
-    <label>Lead<select value={lead} disabled={locked} onChange={event => setLead(event.target.value)}><option value="">No lead; select a recipient when sending</option>{agents.filter(agent => members.includes(agent.id)).map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
-    {channel && <label className="member-option"><input type="checkbox" checked={archived} disabled={locked} onChange={event => setArchived(event.target.checked)} />Archive channel and cancel unfinished work</label>}
-    {blocked && <p className="error" role="alert">Channel recovery data could not be read. Check the list and channel settings before discarding recovery.</p>}
-    {pending && <p className="notice" role="status">Request result is not confirmed yet. Try the same request to check the result without creating a duplicate channel.</p>}
-    {error && <p className="error" role="alert">{error}</p>}
-    <div className="form-actions"><button type="button" className="secondary" onClick={onCancel}>Back</button><button disabled={busy || blocked || !members.length}>{busy ? 'Saving...' : pending ? 'Retry saving channel' : channel ? 'Save channel' : 'Create channel'}</button>{(pending || blocked) && <button type="button" className="secondary" disabled={busy} onClick={discard}>Discard channel recovery</button>}{channel && error && !pending && !blocked && onReload && <button type="button" className="secondary" onClick={onReload}>Discard changes and reload</button>}</div>
-  </form></section>;
+  return <Dialog open onOpenChange={next => { if (!next && !busy) onCancel(); }} title={channel ? 'Channel settings' : 'New channel'} description="Bring agents into one conversation. Choose who coordinates the work."
+    footer={<>
+      {channel && <Button variant="ghost" className="k-dialog__foot-start" disabled={locked} onClick={async () => {
+        if (!await confirm({ title: archived ? 'Restore channel?' : 'Archive channel?', description: archived ? 'Save changes to restore this channel.' : 'Archive channel and cancel unfinished work when you save changes.', confirm: archived ? 'Restore' : 'Archive', danger: !archived })) return;
+        setArchived(!archived);
+      }}>{archived ? 'Restore channel' : 'Archive channel'}</Button>}
+      {(pending || blocked) && <Button variant="ghost" disabled={busy} onClick={() => void discard()}>Discard channel recovery</Button>}
+      {channel && error && !pending && !blocked && onReload && <Button variant="ghost" onClick={onReload}>Discard changes and reload</Button>}
+      <Button onClick={onCancel}>Cancel</Button><Button type="submit" form="channel-form" variant="primary" busy={busy} disabled={busy || blocked || !members.length}>{busy ? 'Saving...' : pending ? 'Retry saving channel' : channel ? 'Save channel' : 'Create channel'}</Button>
+    </>}>
+    {blocked && <Alert tone="error" title="Channel recovery data could not be read">Check the list and channel settings before discarding recovery.</Alert>}
+    {pending && <Alert tone="warn" title="Request result is not confirmed yet">Try the same request to check the result without creating a duplicate channel.</Alert>}
+    <form id="channel-form" className="k-fieldset bs-root" onSubmit={create}>
+      <Field label="Channel name"><Input ref={nameInput} name="name" required maxLength={80} readOnly={locked} value={name} onChange={event => setName(event.target.value)} autoFocus /></Field>
+      <Field label="Purpose"><Textarea name="instructions" required maxLength={8000} rows={3} readOnly={locked} value={instructions} onChange={event => setInstructions(event.target.value)} /></Field>
+      <fieldset disabled={locked} className="k-fieldset"><legend className="k-field__label">Members</legend>{agents.map(agent => <Checkbox key={agent.id} label={agent.name} disabled={locked} checked={members.includes(agent.id)} onChange={checked => { setMembers(checked ? [...members, agent.id] : members.filter(id => id !== agent.id)); if (!checked && lead === agent.id) setLead(''); }} />)}</fieldset>
+      <Field label="Lead"><Select value={lead} disabled={locked} onChange={setLead} options={[{ value: '', label: 'No lead; select a recipient when sending' }, ...agents.filter(agent => members.includes(agent.id)).map(agent => ({ value: agent.id, label: agent.name }))]} /></Field>
+      {channel && archived !== !!channel.archived && <Alert>{archived ? 'Channel will be archived and unfinished work cancelled when you save changes.' : 'Channel will be restored when you save changes.'}</Alert>}
+      {error && <Alert tone="error">{error}</Alert>}
+    </form>
+  </Dialog>;
 }
 
 function FlowDirectory({ agents, onClose, onOpen }: { agents: Agent[]; onClose: () => void; onOpen: (owner: string, thread: string) => void }) {
@@ -1004,13 +1069,15 @@ function FlowDirectory({ agents, onClose, onOpen }: { agents: Agent[]; onClose: 
   }, [after, refresh]);
   if (editing) return <FlowEditor routine={editing} onBack={() => { setEditing(null); setRefresh(value => value + 1); }} onOpen={async (thread, owner) => onOpen(owner, thread)} />;
   const name = (id: string) => agents.find(agent => agent.id === id)?.name ?? id;
-  return <section className="setup flow-directory"><h1 ref={heading} tabIndex={-1}>Agent flows</h1><p className="muted">Relationships saved from all routines. Each diagram runs independently; relationships from different routines are not combined during execution.</p>
-    <div className="form-actions routine-actions"><button className="secondary" onClick={onClose}>Back to conversation</button><button className="secondary" onClick={() => setRefresh(value => value + 1)}>Reload flow list</button></div>
-    {error ? <p role="alert" className="error">{error}</p> : !page ? <p role="status">Loading flow list...</p> : !page.flows.length ? <p>No flows on this page. Open Routines for an agent, then save its flow.</p> : page.flows.map(row => <section key={row.id} className="flow-run"><h2>{row.name}</h2><p className="muted">{row.owner_name} · {row.trigger === 'webhook' ? 'Webhook' : 'Schedule'} · {row.enabled ? 'Active' : 'Inactive'}</p><FlowDiagram graph={row.graph} agents={agents} />
-      {row.graph.links.length ? <ul>{row.graph.links.map(link => <li key={`${link.from}:${link.to}`}>{name(link.from)} to {name(link.to)}</li>)}</ul> : <p>No relationships to other agents.</p>}
-      <button className="secondary" onClick={() => setEditing(row)}>Edit flow {row.name}</button></section>)}
-    <div className="form-actions routine-actions"><button className="secondary" disabled={cursors.length < 2} onClick={() => setCursors(values => values.slice(0, -1))}>Previous flows</button><button className="secondary" disabled={!page?.next_after} onClick={() => { if (page?.next_after) setCursors(values => [...values, page.next_after!]); }}>Next flows</button></div>
-  </section>;
+  return <div className="k-page bs-root">
+    <PageHeader headingRef={heading} title="Agent flows" description="Relationships saved from all routines. Each diagram runs independently; relationships from different routines are not combined during execution." actions={<><Button variant="ghost" onClick={onClose}>Back</Button><IconButton label="Reload flow list" onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton></>} />
+    {error ? <Alert tone="error">{error}</Alert> : !page ? <><span className="sr-only" role="status">Loading flow list...</span><SkeletonRows /></> : !page.flows.length ? <EmptyState title="No flows on this page">Open Routines for an agent, then save its flow.</EmptyState> : page.flows.map(row => <Card key={row.id}><div className="k-stack" style={{ padding: 14 }}>
+      <Row title={row.name} meta={<><span>{row.owner_name}</span><Badge>{row.trigger === 'webhook' ? 'Webhook' : 'Schedule'}</Badge><Badge>{row.enabled ? 'Active' : 'Inactive'}</Badge></>} trailing={<Button size="sm" onClick={() => setEditing(row)}>Edit flow {row.name}</Button>} />
+      <FlowDiagram graph={row.graph} agents={agents} />
+      {row.graph.links.length ? <ul className="k-field__hint">{row.graph.links.map(link => <li key={`${link.from}:${link.to}`}>{name(link.from)} to {name(link.to)}</li>)}</ul> : <p className="k-field__hint">No relationships to other agents.</p>}
+    </div></Card>)}
+    {(cursors.length > 1 || !!page?.next_after) && <div className="k-pager"><IconButton label="Previous flows" disabled={cursors.length < 2} onClick={() => setCursors(values => values.slice(0, -1))}><ChevronLeft size={16} aria-hidden /></IconButton><IconButton label="Next flows" disabled={!page?.next_after} onClick={() => { if (page?.next_after) setCursors(values => [...values, page.next_after!]); }}><ChevronRight size={16} aria-hidden /></IconButton></div>}
+  </div>;
 }
 
 type SettingsSection = 'skills' | 'mcp' | 'data' | 'usage' | 'backup' | 'import' | 'sections' | 'appearance';
@@ -1159,8 +1226,8 @@ function App() {
     </aside>
     {content}
     {dialog === 'agent' && directory && <AgentForm model={directory.defaultModel} onCancel={() => setDialog(null)} onCreated={item => { created(item); setDialog(null); }} />}
-    {dialog === 'channel' && directory && <Modal label="New channel" className="form-modal" onClose={() => setDialog(null)}><div className="form-modal__body legacy"><ChannelForm agents={directory.agents} onCancel={() => setDialog(null)} onCreated={item => { setChannels(current => [...current.filter(room => room.id !== item.id), item]); openChannel(item.id); }} /></div></Modal>}
-    {dialog === 'edit' && directory && channel && <Modal label="Channel settings" className="form-modal" onClose={() => setDialog(null)}><div className="form-modal__body legacy"><ChannelForm key={`${channel.id}:${channel.revision}:${editReload}`} agents={directory.agents} channel={channel} onCancel={() => setDialog(null)} onReload={() => { void load().then(() => setEditReload(value => value + 1)); }} onCreated={() => { void load(); setDialog(null); }} /></div></Modal>}
+    {dialog === 'channel' && directory && <ChannelForm agents={directory.agents} onCancel={() => setDialog(null)} onCreated={item => { setChannels(current => [...current.filter(room => room.id !== item.id), item]); openChannel(item.id); }} />}
+    {dialog === 'edit' && directory && channel && <ChannelForm key={`${channel.id}:${channel.revision}:${editReload}`} agents={directory.agents} channel={channel} onCancel={() => setDialog(null)} onReload={() => { void load().then(() => setEditReload(value => value + 1)); }} onCreated={() => { void load(); setDialog(null); }} />}
     {dialog === 'edit' && directory && !channel && agent && <AgentForm key={`${agent.id}:${editReload}`} model={directory.defaultModel} profile={agent} onCancel={() => setDialog(null)} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} onCreated={() => { void load(); setDialog(null); }} />}
     {settings && createPortal(<div className="app-settings bs-root" role="dialog" aria-modal="true" aria-label="Settings">
       <aside className="app-settings__nav">
