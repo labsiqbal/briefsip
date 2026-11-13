@@ -1331,6 +1331,80 @@ test('canonical workflow run and step pages preserve old approvals and admission
   } finally { db.close(); await f.close(); }
 });
 
+test('canonical routine configuration and flow stay scoped across projects restart and lost replies', async () => {
+  const f=await workflowConfigurationFixture(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`;
+  const command={requestId:routine,id:routine,revision:0,name:'Routine',prompt:'Private prompt\nCheck work',nextAt:Date.now()+600000,intervalSeconds:300,enabled:true};
+  try{
+    const created=await f.send(list,command);assert.equal(created.status,201,JSON.stringify(created.body));
+    assert.equal(created.body.data.homeDeviceId,f.home.id);assert.equal(created.body.data.projectId,f.project);
+    assert.equal((await f.send(detail)).body.data.prompt,command.prompt);
+    assert.deepEqual((await f.send(list,command)).body.receipt,created.body.receipt);
+    assert.equal((await f.send(list,{...command,name:'Other'})).status,409);
+    assert.equal((await f.send(`/api/projects/${f.other}/agents/${f.agent}`,{requestId:randomUUID(),expectedProjectRevision:1,expectedAgentRevision:1,expectedAuthorityRevision:1,expectedParticipationRevision:0,rules:'Separate',capabilities:{v:1,tools:[],resources:[]}},'user_owner','PUT')).status,201);
+    assert.deepEqual((await f.send(`/api/projects/${f.other}/agents/${f.agent}/routines`)).body.data.items,[]);
+    assert.equal((await f.send(`/api/projects/${f.other}/routines/${routine}`)).status,404);
+    const next=randomUUID(),edited={...command,requestId:next,id:next,revision:1,name:'Edited'};
+    const saved=await f.send(detail+'/edit',edited);assert.equal(saved.status,200,JSON.stringify(saved.body));
+    assert.equal((await f.send(list,command)).body.data.name,'Routine','Creation receipt never overwrites newer configuration');
+    assert.equal((await f.send(detail)).body.data.name,'Edited');
+    const flowId=randomUUID(),flow={requestId:flowId,id:flowId,revision:0,links:[]};
+    const flowSaved=await f.send(detail+'/flow',flow);assert.equal(flowSaved.status,200,JSON.stringify(flowSaved.body));
+    assert.deepEqual(flowSaved.body.data.graph,{root:f.agent,nodes:[f.agent],links:[]});
+    await f.restart();
+    assert.deepEqual((await f.send(detail+'/edit',edited)).body.receipt,saved.body.receipt);
+    assert.deepEqual((await f.send(detail+'/flow',flow)).body.receipt,flowSaved.body.receipt);
+    assert.equal((await f.send(detail+'/flow')).body.data.revision,1);
+    assert.equal((await f.send(detail+'/edit',{...edited,requestId:randomUUID(),id:randomUUID()})).status,400);
+    for(const path of [`/api/routines/${routine}`,`/api/agents/${f.agent}/routines?after=${routine}`,list+'?projectId='+f.project,list+'?after=x',list+'?after=&after=',detail+'?after='+routine])assert.equal((await f.send(path)).status,404,path);
+    assert.equal((await f.send(detail+'/edit',{...edited,projectId:f.project})).status,404);
+    const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    try{assert.equal(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='routine_runs'").get(),undefined,'Configuration never starts legacy dispatch');assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);}finally{db.close();}
+  }finally{await f.close();}
+});
+
+test('canonical routines recheck assignments private mappings flow agents and receipt rollback',async()=>{
+  const f=await workflowConfigurationFixture(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  const command={requestId:routine,id:routine,revision:0,name:'Routine',prompt:'Check',nextAt:Date.now()+600000,intervalSeconds:null,enabled:false};
+  try{
+    for(const fields of [{trigger:['webhook']},{trigger:{}},{nextAt:-1},{intervalSeconds:1.5},{prompt:''}]){
+      const invalid=randomUUID();assert.equal((await f.send(list,{...command,...fields,requestId:invalid,id:invalid})).status,400);
+    }
+    assert.deepEqual((await f.send(list)).body.data.items,[],'Invalid bodies write no configuration');
+    assert.equal((await f.send(list,command)).status,201);
+    const collaborator=(await f.send('/api/session',undefined,'user_collaborator')).body.data.accountId;
+    db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project,collaborator);
+    assert.equal((await f.send(detail,undefined,'user_collaborator')).status,404);
+    db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,collaborator,f.agent);
+    db.prepare('INSERT INTO response_policies VALUES (?,?,?,0,1)').run(f.project,collaborator,f.agent);
+    assert.equal((await f.send(detail,undefined,'user_collaborator')).status,200,'Response OFF retains assignment');
+    const editId=randomUUID(),edit={...command,requestId:editId,id:editId,revision:1,name:'Collaborator'};
+    const saved=await f.send(detail+'/edit',edit,'user_collaborator');assert.equal(saved.status,200);
+    db.prepare('UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE project=? AND account=?').run(f.project,collaborator);
+    assert.equal((await f.send(detail+'/edit',edit,'user_collaborator')).status,404,'Revoked grants cannot read old receipts');
+    db.prepare('UPDATE collaborator_agents SET enabled=1,revision=revision+1 WHERE project=? AND account=?').run(f.project,collaborator);
+    const owner=(await f.send('/api/session')).body.data.accountId;
+    db.prepare("UPDATE record_scopes SET account=?,visibility='owner' WHERE table_name='routines' AND key_json=?").run(collaborator,JSON.stringify([routine]));
+    assert.equal((await f.send(detail)).status,404,'Owner cannot read another human private root');
+    assert.equal((await f.send(detail,undefined,'user_collaborator')).status,200);
+    db.prepare("UPDATE record_scopes SET account=?,visibility='project' WHERE table_name='routines' AND key_json=?").run(owner,JSON.stringify([routine]));
+    const teammate=randomUUID();
+    assert.equal((await f.send('/api/agents',{requestId:teammate,id:teammate,name:'Teammate',model:'fixture',backupModel:'',instructions:'Help',threadLimit:2,projectId:f.project,homeDeviceId:f.home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:f.home.revision,providerBinding:null})).status,201);
+    const flowId=randomUUID(),flow={requestId:flowId,id:flowId,revision:0,links:[{from:f.agent,to:teammate}]};
+    assert.equal((await f.send(detail+'/flow',flow,'user_collaborator')).status,404,'Every flow agent needs assignment');
+    const bad=randomUUID();assert.equal((await f.send(detail+'/flow',{...flow,links:[{from:f.agent,to:bad}]})).status,400);
+    assert.equal((await f.send(detail+'/flow',flow)).status,200);
+    db.prepare("UPDATE record_scopes SET project=? WHERE table_name='routine_flows' AND key_json=?").run(f.other,JSON.stringify([routine]));
+    assert.equal((await f.send(detail+'/flow',flow)).status,404,'Receipt cannot expose a foreign flow');
+    db.prepare("UPDATE record_scopes SET project=? WHERE table_name='routine_flows' AND key_json=?").run(f.project,JSON.stringify([routine]));
+    db.exec("CREATE TRIGGER fail_routine_receipt BEFORE INSERT ON receipts WHEN NEW.scope LIKE '%/edit' BEGIN SELECT RAISE(ABORT,'synthetic routine receipt failure'); END");
+    const change=randomUUID(),edit2={...edit,requestId:change,id:change,revision:2,name:'Atomic'};
+    assert.equal((await f.send(detail+'/edit',edit2)).status,500);
+    assert.equal((await f.send(detail)).body.data.name,'Collaborator');
+    db.exec('DROP TRIGGER fail_routine_receipt');assert.equal((await f.send(detail+'/edit',edit2)).status,200);
+    const short=randomUUID();assert.equal((await f.send(detail+'/edit',{...edit2,requestId:short,id:short,revision:3,intervalSeconds:60})).status,400);
+  }finally{db.close();await f.close();}
+});
+
 test('canonical workflow configuration stays project scoped with immutable versions and retry receipts', async () => {
   const f = await workflowConfigurationFixture(), { home, project, other, workflow, graph, list, detail } = f;
   try {
@@ -3000,7 +3074,7 @@ test('canonical routine reads and edits isolate project configuration and recove
     assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Routine reader',model:'fixture',backupModel:'',instructions:'Read project routines',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
     const graph={root:agent,nodes:[agent],links:[]},db=new DatabaseSync(join(f.dir,'canonical.sqlite')),owner=String(db.prepare("SELECT id FROM accounts WHERE clerk_sub='user_owner'").get()!.id);
     try{
-      db.exec('CREATE TABLE routines(id TEXT PRIMARY KEY,agent TEXT,name TEXT,prompt TEXT,next_at INTEGER,interval_ms INTEGER,enabled INTEGER,revision INTEGER,trigger TEXT,secret TEXT); CREATE TABLE routine_flows(routine TEXT PRIMARY KEY,graph TEXT,revision INTEGER);');
+      db.exec('ALTER TABLE routines ADD COLUMN secret TEXT');
       for(const [id,projectId] of [[routine,project],[hidden,other]]){
         db.prepare("INSERT INTO routines VALUES (?,?,'Routine','Original prompt',123456,NULL,1,1,'webhook','WEBHOOK_SECRET')").run(id,agent);
         db.prepare("INSERT INTO record_scopes VALUES ('routines',?,?,?,'owner','agent',?)").run(JSON.stringify([id]),owner,projectId,agent);
