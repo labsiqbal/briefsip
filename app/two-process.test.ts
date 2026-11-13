@@ -671,6 +671,7 @@ test('canonical workflow retry preserves topology and failed evidence while usin
       { id: 'approve', kind: 'approval', prompt: 'Keep original approval?', yes: 'out' }, { id: 'out', kind: 'output' },
     ] };
     assert.equal((await f.send(list, { requestId: workflow, id: workflow, revision: 0, name: 'Retry', graph })).status, 201);
+    const syncPath = '/api/sync?projectId=' + project, before = (await f.send(syncPath)).body.data;
     const run = randomUUID(), path = `/api/projects/${project}/workflow-runs/${run}`;
     assert.equal((await f.send(detail + '/run', { requestId: run, id: run, revision: 1, input: 'Original input' })).status, 201);
     let current: any;
@@ -700,6 +701,10 @@ test('canonical workflow retry preserves topology and failed evidence while usin
     assert.equal(current.last, 'Original input'); assert.equal(current.version, 1); assert.deepEqual(current.graph, graph);
     assert.deepEqual(current.steps.map((step: {status:string}) => step.status), ['failed','done','approval']);
     assert.deepEqual((await f.send(path + '/retry', command)).body, accepted.body);
+    const observationResponse = await f.send(syncPath + '&cursor=' + encodeURIComponent(before.nextCursor)); assert.equal(observationResponse.status, 200, JSON.stringify(observationResponse.body));
+    const observations = observationResponse.body.data.page.events.filter((event: any) => event.recordKind === 'workflow_run');
+    assert.deepEqual(observations.map((event: any) => [event.revision,event.body.status]), [[1,'ready'],[2,'waiting'],[3,'failed'],[4,'ready'],[5,'waiting'],[6,'ready'],[7,'approval']]);
+    assert(!JSON.stringify(observations).includes('Original input')); assert(!JSON.stringify(observations).includes('Invalid decision'));
   } finally { await f.close(); }
 });
 
@@ -910,6 +915,8 @@ test('canonical workflow oversized handoff fails once without starving later run
     await until(async () => (await f.send(laterPath)).body.data.status === 'waiting');
     const revision = (await f.send(path)).body.data.revision; await f.restart();
     assert.equal((await f.send(path)).body.data.revision, revision);
+    const observations = (await f.send('/api/sync?projectId=' + project)).body.data.page.events;
+    assert.equal(observations.find((event: any) => event.recordKind === 'workflow_run' && event.recordId === run).body.status, 'failed');
   } finally { db.close(); await f.close(); }
 });
 
@@ -996,6 +1003,7 @@ test('canonical workflow timeout fails offline reservation without generating a 
   try{
     const graph={entry:'event',maxSteps:2,nodes:[{id:'event',kind:'wait',event:'ready',timeoutSeconds:1,next:'out'},{id:'out',kind:'output'}]};
     assert.equal((await f.send(list,{requestId:workflow,id:workflow,revision:0,name:'Timeout',graph})).status,201);
+    const syncPath='/api/sync?projectId='+project,beforeSync=(await f.send(syncPath)).body.data;
     const run=randomUUID(),path=`/api/projects/${project}/workflow-runs/${run}`;
     assert.equal((await f.send(detail+'/run',{requestId:run,id:run,revision:1,input:'Offline'})).status,201);
     await until(async()=> (await f.send(path)).body.data.status==='failed');
@@ -1005,6 +1013,8 @@ test('canonical workflow timeout fails offline reservation without generating a 
     const connection=f.runtime.connect();await until(()=>connection.state().phase==='connected');
     assert.equal((await f.send(path)).body.data.status,'failed');assert.deepEqual(db.prepare('SELECT * FROM wait_provisions').all(),before);
     assert.equal((await f.send(`/api/workflow-waits/${run}/1`)).status,404);
+    const observations=(await f.send(syncPath+'&cursor='+encodeURIComponent(beforeSync.nextCursor))).body.data.page.events.filter((event:any)=>event.recordKind==='workflow_run');
+    assert.deepEqual(observations.map((event:any)=>[event.revision,event.body.status]),[[1,'ready'],[2,'failed']]);
   }finally{db.close();await f.close();}
 });
 
@@ -1258,6 +1268,149 @@ test('canonical workflow pages bound graph bytes and preserve list and version c
     assert.deepEqual(versions, [11,10,9,8,7,6,5,4,3,2,1]);
     for (const query of ['before=0','before=-1','before=abc','before=1&before=2','projectId=' + project]) assert.equal((await f.send(detail + '/versions?' + query)).status, 404);
   } finally { await f.close(); }
+});
+
+test('workflow sync publishes metadata and revisioned run transitions once across retry and restart', async () => {
+  const f = await workflowConfigurationFixture();
+  try {
+    const syncPath = '/api/sync?projectId=' + f.project, before = (await f.send(syncPath)).body.data;
+    const graph = { entry: 'approval', maxSteps: 2, nodes: [{ id: 'approval', kind: 'approval', prompt: 'Private approval canary', yes: 'out' }, { id: 'out', kind: 'output' }] };
+    const create = { requestId: f.workflow, id: f.workflow, revision: 0, name: 'Observed workflow', graph };
+    const saved = await f.send(f.list, create); assert.equal(saved.status, 201);
+    assert.deepEqual((await f.send(f.list, create)).body.receipt, saved.body.receipt);
+    const created = (await f.send(syncPath + '&cursor=' + encodeURIComponent(before.nextCursor))).body.data;
+    assert.deepEqual(created.page.events.map((event: any) => [event.recordKind,event.recordId,event.revision]), [['workflow',f.workflow,1]]);
+    assert.equal(created.page.events[0].body.detailRef, f.detail);
+    const run = randomUUID(), path = `/api/projects/${f.project}/workflow-runs/${run}`, command = { requestId: run, id: run, revision: 1, input: 'Private workflow input canary' };
+    const accepted = await f.send(f.detail + '/run', command); assert.equal(accepted.status, 201);
+    assert.deepEqual((await f.send(f.detail + '/run', command)).body.receipt, accepted.body.receipt);
+    await until(async () => (await f.send(path)).body.data.status === 'approval');
+    const approveId = randomUUID(), approve = { requestId: approveId, id: approveId, revision: 2, accepted: true };
+    assert.equal((await f.send(path + '/approve', approve)).status, 200);
+    await until(async () => (await f.send(path)).body.data.status === 'done');
+    await f.restart();
+    assert.equal((await f.send(path + '/approve', approve)).status, 200);
+    const delta = (await f.send(syncPath + '&cursor=' + encodeURIComponent(created.nextCursor))).body.data;
+    assert.deepEqual(delta.page.events.map((event: any) => [event.recordKind,event.revision,event.body.status]), [['workflow_run',1,'ready'],['workflow_run',2,'approval'],['workflow_run',3,'ready'],['workflow_run',4,'done']]);
+    for (const event of delta.page.events) { assert.equal(event.recordId, run); assert.equal(event.body.detailRef, path); }
+    const snapshot = (await f.send(syncPath)).body.data;
+    assert.equal(snapshot.page.events.find((event: any) => event.recordKind === 'workflow_run').revision, 4);
+    assert(!JSON.stringify([created,delta,snapshot]).includes('canary'));
+    assert(!JSON.stringify(delta).includes('graph'));
+  } finally { await f.close(); }
+});
+
+test('workflow sync includes protected wait activation delivery and expiry without secret references', async () => {
+  const f = await protectedWorkflowWaitFixture(), db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  try {
+    const syncPath = '/api/sync?projectId=' + f.project, snapshot = (await f.send(syncPath)).body.data;
+    const initial = snapshot.page.events.find((event: any) => event.recordKind === 'workflow_run');
+    assert.equal(initial.revision, 2); assert.equal(initial.body.status, 'waiting');
+    const secret = [...f.keys.values].find(([key]) => key.includes('/event-wait/'))![1];
+    const time = String(Math.floor(Date.now() / 1000)), delivery = randomUUID(), body = '{"event":"ready","payload":"Private event canary"}';
+    const send = async () => {
+      const response = await fetch(f.origin() + f.waitPath + '/events', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': delivery, 'X-Briefsip-Signature': createHmac('sha256', secret).update(`${time}\n${delivery}\n${body}`).digest('hex') }, body });
+      return { status: response.status, body: await response.json() };
+    };
+    db.exec("CREATE TRIGGER fail_workflow_sync BEFORE INSERT ON sync_events WHEN NEW.record_kind='workflow_run' BEGIN SELECT RAISE(ABORT,'synthetic workflow event failure'); END");
+    assert.equal((await send()).status, 500);
+    assert.equal((await f.send(f.waitPath)).body.data.status, 'waiting');
+    assert.equal((await f.send(f.path)).body.data.revision, 2);
+    db.exec('DROP TRIGGER fail_workflow_sync');
+    const accepted = await send(); assert.equal(accepted.status, 200);
+    await until(async () => (await f.send(f.path)).body.data.status === 'done');
+    assert.deepEqual((await send()).body.receipt, accepted.body.receipt);
+    const delta = (await f.send(syncPath + '&cursor=' + encodeURIComponent(snapshot.nextCursor))).body.data;
+    assert.deepEqual(delta.page.events.map((event: any) => [event.revision,event.body.status]), [[3,'ready'],[4,'done']]);
+    const observations = JSON.stringify([snapshot,delta]);
+    for (const value of [secret,'secret_ref','secretRef','secret_generation','Private event canary']) assert(!observations.includes(value));
+    const editId = randomUUID(), graph = { entry: 'event', maxSteps: 2, nodes: [{ id: 'event', kind: 'wait', event: 'ready', timeoutSeconds: 2, next: 'out' }, { id: 'out', kind: 'output' }] };
+    assert.equal((await f.send(f.detail + '/edit', { requestId: editId, id: editId, revision: 1, name: 'Expiry', graph })).status, 200);
+    const next = randomUUID(), path = `/api/projects/${f.project}/workflow-runs/${next}`;
+    const before = (await f.send(syncPath)).body.data;
+    assert.equal((await f.send(f.detail + '/run', { requestId: next, id: next, revision: 2, input: '' })).status, 201);
+    await until(async () => (await f.send(path)).body.data.status === 'failed');
+    const expired = (await f.send(syncPath + '&cursor=' + encodeURIComponent(before.nextCursor))).body.data;
+    assert.deepEqual(expired.page.events.map((event: any) => [event.revision,event.body.status]), [[1,'ready'],[2,'waiting'],[3,'failed']]);
+  } finally { db.close(); await f.close(); }
+});
+
+test('workflow sync rolls back commands with event failures and retains deletion tombstones', async () => {
+  const f = await workflowConfigurationFixture(), db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  try {
+    const syncPath = '/api/sync?projectId=' + f.project, before = (await f.send(syncPath)).body.data;
+    const graph = { entry: 'approval', maxSteps: 2, nodes: [{ id: 'approval', kind: 'approval', prompt: 'Approve', yes: 'out' }, { id: 'out', kind: 'output' }] };
+    const create = { requestId: f.workflow, id: f.workflow, revision: 0, name: 'Original', graph };
+    db.exec("CREATE TRIGGER fail_workflow_sync BEFORE INSERT ON sync_events WHEN NEW.record_kind='workflow' BEGIN SELECT RAISE(ABORT,'synthetic workflow sync failure'); END");
+    assert.equal((await f.send(f.list, create)).status, 500); assert.equal((await f.send(f.detail)).status, 404);
+    assert.equal((await f.send(syncPath + '&cursor=' + encodeURIComponent(before.nextCursor))).body.data.page.events.length, 0);
+    db.exec('DROP TRIGGER fail_workflow_sync');
+    assert.equal((await f.send(f.list, create)).status, 201);
+    for (const [operation,fields] of [['edit',{ name: 'Edited', graph }],['restore',{ version: 1 }]] as const) {
+      const commandId = randomUUID(), revision = operation === 'edit' ? 1 : 2, command = { requestId: commandId, id: commandId, revision, ...fields };
+      const accepted = await f.send(f.detail + '/' + operation, command); assert.equal(accepted.status, 200);
+      assert.deepEqual((await f.send(f.detail + '/' + operation, command)).body.receipt, accepted.body.receipt);
+    }
+    const run = randomUUID(), path = `/api/projects/${f.project}/workflow-runs/${run}`, command = { requestId: run, id: run, revision: 3, input: '' };
+    db.exec("CREATE TRIGGER fail_run_sync BEFORE INSERT ON sync_events WHEN NEW.record_kind='workflow_run' BEGIN SELECT RAISE(ABORT,'synthetic run sync failure'); END");
+    assert.equal((await f.send(f.detail + '/run', command)).status, 500); assert.equal((await f.send(path)).status, 404);
+    db.exec('DROP TRIGGER fail_run_sync');
+    assert.equal((await f.send(f.detail + '/run', command)).status, 201);
+    await until(async () => (await f.send(path)).body.data.status === 'approval');
+    const cancelId = randomUUID(), cancellation = { requestId: cancelId, id: cancelId, revision: 2 };
+    db.exec("CREATE TRIGGER fail_run_sync BEFORE INSERT ON sync_events WHEN NEW.record_kind='workflow_run' BEGIN SELECT RAISE(ABORT,'synthetic run sync failure'); END");
+    assert.equal((await f.send(path + '/cancel', cancellation)).status, 500); assert.equal((await f.send(path)).body.data.status, 'approval');
+    db.exec('DROP TRIGGER fail_run_sync');
+    const cancelled = await f.send(path + '/cancel', cancellation); assert.equal(cancelled.status, 200);
+    assert.deepEqual((await f.send(path + '/cancel', cancellation)).body.receipt, cancelled.body.receipt);
+    const deleteId = randomUUID(), deletion = { requestId: deleteId, id: deleteId, revision: 3 };
+    assert.equal((await f.send(f.detail + '/delete', deletion)).status, 200);
+    assert.equal((await f.send(f.detail + '/delete', deletion)).status, 200);
+    const delta = (await f.send(syncPath + '&cursor=' + encodeURIComponent(before.nextCursor))).body.data;
+    assert.deepEqual(delta.page.events.map((event: any) => [event.recordKind,event.revision,event.operation]), [['workflow',1,'upsert'],['workflow',2,'upsert'],['workflow',3,'upsert'],['workflow_run',1,'upsert'],['workflow_run',2,'upsert'],['workflow_run',3,'upsert'],['workflow',4,'delete']]);
+    const snapshot = (await f.send(syncPath)).body.data;
+    assert.equal(snapshot.page.events.find((event: any) => event.recordKind === 'workflow').operation, 'delete');
+    assert.equal(snapshot.page.events.find((event: any) => event.recordKind === 'workflow_run').body.status, 'cancelled');
+  } finally { db.close(); await f.close(); }
+});
+
+test('workflow sync rechecks assignment project and private root version and run scopes', async () => {
+  const f = await workflowConfigurationFixture(), db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  try {
+    const collaborator = (await f.send('/api/session', undefined, 'user_collaborator')).body.data.accountId;
+    db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project, collaborator);
+    const graph = { entry: 'approval', maxSteps: 2, nodes: [{ id: 'approval', kind: 'approval', prompt: 'Approve', yes: 'out' }, { id: 'out', kind: 'output' }] };
+    assert.equal((await f.send(f.list, { requestId: f.workflow, id: f.workflow, revision: 0, name: 'Scoped', graph })).status, 201);
+    const run = randomUUID(), runPath = `/api/projects/${f.project}/workflow-runs/${run}`;
+    assert.equal((await f.send(f.detail + '/run', { requestId: run, id: run, revision: 1, input: '' })).status, 201);
+    await until(async () => (await f.send(runPath)).body.data.status === 'approval');
+    const syncPath = '/api/sync?projectId=' + f.project;
+    const read = async (subject = 'user_collaborator') => (await f.send(syncPath, undefined, subject)).body.data;
+    const kinds = (data: any) => data.page.events.filter((event: any) => event.recordKind.startsWith('workflow')).map((event: any) => event.recordKind);
+    assert.deepEqual(kinds(await read()), []);
+    db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project, collaborator, f.agent);
+    db.prepare('INSERT INTO response_policies VALUES (?,?,?,0,1)').run(f.project, collaborator, f.agent);
+    const allowed = await read(); assert.deepEqual(kinds(allowed), ['workflow','workflow_run']);
+    assert.deepEqual(kinds((await f.send('/api/sync?projectId=' + f.other)).body.data), []);
+    for (const [table,key,expected] of [['workflows',[f.workflow],[]],['workflow_versions',[f.workflow,1],[]],['workflow_runs',[run],['workflow']]] as const) {
+      const before = await read();
+      db.prepare("UPDATE record_scopes SET visibility='owner' WHERE table_name=? AND key_json=?").run(table, canonicalJson(key));
+      const denied = await f.send(syncPath + '&cursor=' + encodeURIComponent(before.nextCursor), undefined, 'user_collaborator');
+      assert.equal(denied.status, 410); assert.equal(denied.body.error.code, 'resync_required');
+      assert.deepEqual(kinds(await read()), expected);
+      assert.equal((await f.send(table === 'workflow_runs' ? runPath : f.detail, undefined, 'user_collaborator')).status, 404);
+      db.prepare("UPDATE record_scopes SET visibility='project' WHERE table_name=? AND key_json=?").run(table, canonicalJson(key));
+    }
+    db.prepare("UPDATE record_scopes SET visibility='owner',account=? WHERE table_name='workflows' AND key_json=?").run(collaborator, canonicalJson([f.workflow]));
+    assert.deepEqual(kinds(await read('user_owner')), [], 'Project owner cannot read another human private root');
+    assert.deepEqual(kinds(await read()), ['workflow','workflow_run']);
+    db.prepare("UPDATE record_scopes SET visibility='project' WHERE table_name='workflows' AND key_json=?").run(canonicalJson([f.workflow]));
+    const beforeRevoke = await read();
+    db.prepare('UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE project=? AND account=? AND agent=?').run(f.project, collaborator, f.agent);
+    assert.equal((await f.send(syncPath + '&cursor=' + encodeURIComponent(beforeRevoke.nextCursor), undefined, 'user_collaborator')).status, 410);
+    assert.deepEqual(kinds(await read()), []);
+    assert.equal((await f.send(syncPath, undefined, 'user_stranger')).status, 403);
+  } finally { db.close(); await f.close(); }
 });
 
 test('signed human sync preserves delta cursors through canonical restart and rejects foreign or revoked reads', async () => {

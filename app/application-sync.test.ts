@@ -13,10 +13,12 @@ import { digestCommand, ProtocolError } from './protocol.ts';
 import { startCanonicalApp } from './server.ts';
 import { createServer } from 'node:http';
 import { createMailWorker } from './mail.ts';
+import { createProjectWorkflows, initializeWorkflowConfigurations, initializeWorkflowRuns } from './workflow-store.ts';
 
-function fixture() {
+function fixture(workflows = false) {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-sync-')), db = new DatabaseSync(join(dir, 'canonical.sqlite'));
   initializeCanonicalSchema(db);
+  if (workflows) { initializeWorkflowConfigurations(db); initializeWorkflowRuns(db); }
   const owner: HumanActor = { accountId: randomUUID(), issuer: 'https://fixture.example', subject: 'owner', sessionId: 'session_owner', expiresAt: Date.now() + 60000 };
   const auth = { requireCurrent(actor: HumanActor) { if (actor.expiresAt <= Date.now() || db.prepare('SELECT blocked FROM accounts WHERE id=?').get(actor.accountId)?.blocked !== 0) throw new ProtocolError(401, 'session_invalid', 'Denied'); return actor; }, async verifiedMailboxes() { return []; } };
   db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(owner.accountId, owner.issuer, owner.subject, Date.now());
@@ -286,6 +288,32 @@ test('task and home-device observations sync without task payload or device secr
     f.db.prepare("UPDATE record_scopes SET visibility='owner' WHERE table_name='turns' AND key_json=?").run(JSON.stringify([task]));
     assert.throws(() => f.sync.read(member, { projectId: f.project, cursor: visible.nextCursor! }), errorCode('resync_required'));
     assert(!f.sync.read(member, { projectId: f.project }).page.events.some(event => event.recordKind === 'task'));
+  } finally { f.close(); }
+});
+
+test('workflow maintenance rolls back failed observations and retries one transition atomically', () => {
+  const f = fixture(true);
+  try {
+    const installation = randomUUID(), device = randomUUID(), agent = randomUUID(), workflow = randomUUID(), run = randomUUID();
+    f.db.prepare('INSERT INTO installations VALUES (?,?,?,?,1,0,1,?)').run(installation, f.owner.accountId, 'fixture-public-key', 'fixture-thumbprint', Date.now());
+    f.db.prepare("INSERT INTO devices VALUES (?,?,?,?,?,?,?,'{}',1,0,'offline','Asia/Jakarta',1,NULL,'[\"execution\"]',1)").run(device, installation, f.owner.accountId, 'fixture-public-key', 'fixture-encryption-key', 'fixture-signing-thumbprint', 'fixture-encryption-thumbprint');
+    f.db.prepare('INSERT INTO agents(id,name,model,instructions) VALUES (?,?,?,?)').run(agent, 'Workflow', 'fixture', 'Private instructions');
+    f.db.prepare('INSERT INTO agent_authority VALUES (?,?,?,NULL,1)').run(agent, f.owner.accountId, device);
+    f.db.prepare('INSERT INTO agent_projects VALUES (?,?,?,?,1,0)').run(f.project, agent, '', '{"v":1,"tools":[],"resources":[]}');
+    f.db.prepare("INSERT INTO record_scopes VALUES ('agents',?,?,?,'owner','agent',?)").run(JSON.stringify([agent]), f.owner.accountId, f.project, agent);
+    const workflows = createProjectWorkflows(f.db, f.access, undefined, f.sync), detail = `/api/projects/${f.project}/workflows/${workflow}`;
+    workflows.command(f.owner,f.project,`/api/projects/${f.project}/agents/${agent}/workflows`,'create',agent,{requestId:workflow,id:workflow,revision:0,name:'Atomic',graph:{entry:'approve',maxSteps:2,nodes:[{id:'approve',kind:'approval',prompt:'Approve',yes:'out'},{id:'out',kind:'output'}]}});
+    workflows.runCommand(f.owner,f.project,detail+'/run','run',workflow,{requestId:run,id:run,revision:1,input:''});
+    const before = f.sync.read(f.owner,{projectId:f.project});
+    f.db.exec("CREATE TRIGGER fail_workflow_sync BEFORE INSERT ON sync_events WHEN NEW.record_kind='workflow_run' BEGIN SELECT RAISE(ABORT,'synthetic workflow observation failure'); END");
+    assert.throws(() => workflows.maintain(), /synthetic workflow observation failure/);
+    const unchanged = workflows.runRead(f.owner,f.project,{runId:run},new URLSearchParams()) as Record<string,unknown>;
+    assert.equal(unchanged.status,'ready'); assert.equal(unchanged.revision,1); assert.deepEqual(unchanged.steps,[]);
+    assert.deepEqual(f.sync.read(f.owner,{projectId:f.project,cursor:before.nextCursor!}).page.events,[]);
+    f.db.exec('DROP TRIGGER fail_workflow_sync');
+    workflows.maintain(); workflows.maintain();
+    const recovered = f.sync.read(f.owner,{projectId:f.project,cursor:before.nextCursor!});
+    assert.deepEqual(recovered.page.events.map(event => [event.recordId,event.revision,event.body.status]),[[run,2,'approval']]);
   } finally { f.close(); }
 });
 
