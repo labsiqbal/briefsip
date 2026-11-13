@@ -466,6 +466,52 @@ async function loopTask(f: Awaited<ReturnType<typeof fixture>>, runtime: ReturnT
   return { taskId, agent, project, binding };
 }
 
+test('signed task and device mutations publish atomic scoped observations across retry and restart', async () => {
+  const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'sync-home.sqlite'), server: f.origin(), development: true, entry: keys.entry });
+  try {
+    const project = randomUUID(); assert.equal((await f.send('/api/projects', { requestId: randomUUID(), id: project, name: 'Device sync' })).status, 201);
+    const path = '/api/sync?projectId=' + project, first = (await f.send(path)).body.data;
+    await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const home = (await f.send('/api/devices')).body.data[0];
+    const deviceDelta = (await f.send(path + '&cursor=' + encodeURIComponent(first.nextCursor))).body.data;
+    assert.deepEqual(deviceDelta.page.events.map((event: any) => [event.recordKind, event.body.status]), [['device','offline'],['device','connecting'],['device','ready']]);
+    assert(!JSON.stringify(deviceDelta).includes('signingPublicKey')); assert(!JSON.stringify(deviceDelta).includes('deviceSession'));
+    const agent = randomUUID();
+    assert.equal((await f.send('/api/agents', { requestId: agent, id: agent, name: 'Sync agent', model: 'fixture', backupModel: '', instructions: 'Private profile canary', threadLimit: 2, projectId: project, homeDeviceId: home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: home.revision, providerBinding: null })).status, 201);
+    const before = (await f.send(path)).body.data, taskId = randomUUID(), payload = { v: 1, kind: 'direct', message: { text: 'Private prompt canary', files: [] } }, expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 };
+    const command = { requestId: taskId, projectId: project, agentId: agent, homeDeviceId: home.id, payload, expectedRevisions, payloadDigest: digestCommand(['briefsip-task-payload-v1', taskId, project, agent, home.id, payload, expectedRevisions]) };
+    const accepted = await f.send('/api/tasks', command); assert.equal(accepted.status, 202); assert.deepEqual((await f.send('/api/tasks', command)).body.receipt, accepted.body.receipt);
+    assert.equal((await f.send(`/api/tasks/${taskId}/control`, { requestId: randomUUID(), expectedRevision: 1, operation: 'pause' })).status, 200);
+    const cancellation = { requestId: randomUUID(), expectedRevision: 2, operation: 'cancel' }, inspect = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+    try {
+      inspect.exec("CREATE TRIGGER fail_task_sync BEFORE INSERT ON sync_events WHEN NEW.record_kind='task' BEGIN SELECT RAISE(ABORT,'synthetic event failure'); END");
+      assert.equal((await f.send(`/api/tasks/${taskId}/control`, cancellation)).status, 500);
+      assert.equal((await f.send(`/api/tasks/${taskId}`)).body.data.state, 'paused');
+      inspect.exec('DROP TRIGGER fail_task_sync');
+    } finally { inspect.close(); }
+    const cancelled = await f.send(`/api/tasks/${taskId}/control`, cancellation); assert.equal(cancelled.status, 200);
+    assert.deepEqual((await f.send(`/api/tasks/${taskId}/control`, cancellation)).body.receipt, cancelled.body.receipt);
+    const deltaPath = path + '&cursor=' + encodeURIComponent(before.nextCursor), delta = (await f.send(deltaPath)).body.data;
+    assert.deepEqual(delta.page.events.map((event: any) => [event.recordId,event.revision,event.body.state]), [[taskId,1,'queued'],[taskId,2,'paused'],[taskId,3,'cancelled']]);
+    assert(!JSON.stringify(delta).includes('canary')); assert(!JSON.stringify(delta).includes(command.payloadDigest));
+    const completed = await loopTask(f, runtime), completedPath = '/api/sync?projectId=' + completed.project, queued = (await f.send(completedPath)).body.data;
+    await runtime.runTask(completed.taskId, () => ({ text: 'Private result canary' }));
+    const completionDelta = (await f.send(completedPath + '&cursor=' + encodeURIComponent(queued.nextCursor))).body.data;
+    assert.equal(completionDelta.page.events.at(-1).body.state, 'completed'); assert(completionDelta.page.events.some((event: any) => event.body.state === 'running')); assert(!JSON.stringify(completionDelta).includes('Private result canary'));
+    const failure = new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    try {
+      failure.exec("CREATE TRIGGER fail_device_sync BEFORE INSERT ON sync_events WHEN NEW.record_kind='device' BEGIN SELECT RAISE(ABORT,'synthetic offline event failure'); END");
+      await connection.stop(); assert.equal((await f.send('/api/session')).status,200);
+      failure.exec('DROP TRIGGER fail_device_sync');
+    } finally { failure.close(); }
+    await until(async () => (await f.send('/api/devices')).body.data[0].status === 'offline');
+    await f.restart();
+    await until(async () => { try { return (await f.send(deltaPath)).status === 200; } catch { return false; } });
+    assert.deepEqual((await f.send(deltaPath)).body.data.page.events.filter((event: any) => event.recordKind === 'task'), delta.page.events);
+    assert.equal((await f.send(deltaPath, undefined, 'user_stranger')).status, 403);
+  } finally { await runtime.close(); await f.close(); }
+});
+
 test('home execution loop publishes one provider answer through signed canonical HTTP', async () => {
   const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'loop.sqlite'), server: f.origin(), development: true, entry: keys.entry });
   try {

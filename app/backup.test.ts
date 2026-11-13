@@ -63,9 +63,11 @@ test('v4 backup retains sync floors, monotonic heads, tombstones and receipts wh
   let backup: Awaited<ReturnType<typeof workspaceSnapshot>> | undefined;
   try {
     access.createProject(owner, { requestId: randomUUID(), id: project, name: 'Retained tombstone' });
+    db.prepare("INSERT INTO record_scopes VALUES ('projects',?,?,?,'owner','project',?)").run(JSON.stringify([project]), owner.accountId, project, project);
+    db.prepare("UPDATE record_scopes SET visibility='project' WHERE project=?").run(project);
     access.editProject(owner, project, { requestId: randomUUID(), expectedRevision: 1, deleted: true });
     now += 90 * 86400_000 + 1; assert.equal(sync.prune().removed, 2);
-    const retained = Object.fromEntries(['sync_heads','retention_floors','receipts','projects'].map(table => [table, db.prepare('SELECT * FROM ' + table).all()]));
+    const retained = Object.fromEntries(['sync_heads','retention_floors','sync_scope_revisions','receipts','projects'].map(table => [table, db.prepare('SELECT * FROM ' + table).all()]));
     backup = await workspaceSnapshot(db, owner.accountId);
     const destination = join(dir, 'restored.sqlite'); restoreWorkspace(backup.file, destination, { canonicalOnly: true });
     const restored = new DatabaseSync(destination);

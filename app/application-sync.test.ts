@@ -11,6 +11,8 @@ import { createProjectAccess } from './project-access.ts';
 import { initializeCanonicalSchema } from './schema.ts';
 import { digestCommand, ProtocolError } from './protocol.ts';
 import { startCanonicalApp } from './server.ts';
+import { createServer } from 'node:http';
+import { createMailWorker } from './mail.ts';
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-sync-')), db = new DatabaseSync(join(dir, 'canonical.sqlite'));
@@ -251,6 +253,71 @@ test('same agent keeps project-specific rules while response policies and assign
     assert(reactivated.page.events.some(event => event.recordKind === 'assignment' && event.operation === 'revoke'));
     assert(reactivated.page.events.some(event => event.recordKind === 'response_policy' && event.body.respond === false));
   } finally { f.close(); }
+});
+
+test('task and home-device observations sync without task payload or device secrets', () => {
+  const f = fixture();
+  try {
+    const installation = randomUUID(), device = randomUUID(), agent = randomUUID(), task = randomUUID();
+    f.db.prepare('INSERT INTO installations VALUES (?,?,?,?,1,0,1,?)').run(installation, f.owner.accountId, 'fixture-public-key', 'fixture-thumbprint', Date.now());
+    f.db.prepare("INSERT INTO devices VALUES (?,?,?,?,?,?,?,'{}',1,0,'offline','Asia/Jakarta',1,NULL,'[\"execution\"]',1)").run(device, installation, f.owner.accountId, 'fixture-public-key', 'fixture-encryption-key', 'fixture-signing-thumbprint', 'fixture-encryption-thumbprint');
+    f.db.prepare('INSERT INTO agents(id,name,model,instructions) VALUES (?,?,?,?)').run(agent, 'Shared', 'fixture', 'private instructions');
+    f.db.prepare('INSERT INTO agent_authority VALUES (?,?,?,NULL,1)').run(agent, f.owner.accountId, device);
+    f.db.prepare('INSERT INTO agent_projects VALUES (?,?,?,?,1,0)').run(f.project, agent, 'project rules', '{"v":1,"tools":[],"resources":[]}');
+    f.db.prepare("INSERT INTO turns(id,agent,text,status,created) VALUES (?,?,?,'queued',?)").run(task, agent, 'private prompt', new Date().toISOString());
+    f.db.prepare("INSERT INTO record_scopes VALUES ('turns',?,?,?,'project','channel',?)").run(JSON.stringify([task]), f.owner.accountId, f.project, task);
+    const payload = { kind: 'direct', message: { text: 'do not sync this prompt', files: [] } };
+    f.db.prepare('INSERT INTO tasks(id,logical_turn,project,agent,initiator_account,home_device,assignment_revision,capability_revision,capability_digest,capability_snapshot_json,state,payload_digest,payload_json,revision,created) VALUES (?,?,?,?,?,?,1,1,?,?,\'queued\',?,?,1,?)').run(task, task, f.project, agent, f.owner.accountId, device, 'a'.repeat(64), '{"v":1}', 'b'.repeat(64), JSON.stringify(payload), Date.now());
+    f.db.exec('BEGIN'); f.sync.appendRecord(f.project, 'task', task); f.sync.appendRecord(f.project, 'device', device); f.db.exec('COMMIT');
+    const page = f.sync.read(f.owner, { projectId: f.project });
+    const taskEvent = page.page.events.find(event => event.recordKind === 'task'), deviceEvent = page.page.events.find(event => event.recordKind === 'device');
+    assert.equal(taskEvent?.body.state, 'queued'); assert.equal(taskEvent?.body.taskId, task); assert(!JSON.stringify(taskEvent).includes('do not sync'));
+    assert.equal(deviceEvent?.body.status, 'offline'); assert(!JSON.stringify(deviceEvent).includes('fixture-encryption-key'));
+    const member = { ...f.owner, accountId: randomUUID(), subject: 'member' }, unassigned = { ...f.owner, accountId: randomUUID(), subject: 'unassigned' };
+    for (const actor of [member,unassigned]) {
+      f.db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(actor.accountId, actor.issuer, actor.subject, Date.now());
+      f.db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project, actor.accountId);
+    }
+    f.db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project, member.accountId, agent);
+    f.db.exec('BEGIN'); f.sync.appendRecord(f.project, 'task', task); f.db.exec('COMMIT');
+    const visible = f.sync.read(member, { projectId: f.project });
+    assert.deepEqual(visible.page.events.filter(event => ['task','device'].includes(event.recordKind)).map(event => event.recordId).sort(), [device,task].sort());
+    assert(!f.sync.read(unassigned, { projectId: f.project }).page.events.some(event => ['task','device'].includes(event.recordKind)));
+    f.db.prepare("UPDATE record_scopes SET visibility='owner' WHERE table_name='turns' AND key_json=?").run(JSON.stringify([task]));
+    assert.throws(() => f.sync.read(member, { projectId: f.project, cursor: visible.nextCursor! }), errorCode('resync_required'));
+    assert(!f.sync.read(member, { projectId: f.project }).page.events.some(event => event.recordKind === 'task'));
+  } finally { f.close(); }
+});
+
+test('mail delivery observations commit with state and recover one provider effect after event failure', async () => {
+  const f = fixture(), mail = { from: 'owner@example.com', origin: 'https://briefsip.example', keyId: randomUUID(), key: randomBytes(32), lookupKey: randomBytes(32) };
+  const access = createProjectAccess(f.db, f.auth, () => mail, [], f.sync), effects = new Set<string>(); let calls = 0;
+  const provider = createServer(async (req,res) => {
+    for await (const _ of req) { /* drain exact delivery bytes */ }
+    calls++; effects.add(String(req.headers['idempotency-key']));
+    res.setHeader('Content-Type','application/json'); res.end('{"id":"fixture-delivery"}');
+  });
+  await new Promise<void>(resolve => provider.listen(0,'127.0.0.1',resolve)); const address = provider.address(); assert(address && typeof address !== 'string');
+  const worker = createMailWorker(f.db, { apiKey: 'fixture', key: () => mail.key, endpoint: `http://127.0.0.1:${address.port}/emails`, development: true, now: f.options.now, sync: f.sync });
+  try {
+    const invitation = randomUUID();
+    access.createInvitation(f.owner,f.project,{requestId:invitation,email:'member@example.com',expiresAt:Date.now()+86400000,expectedProjectRevision:1,agentAssignments:[]});
+    const first = f.sync.read(f.owner,{projectId:f.project});
+    f.db.exec("CREATE TRIGGER fail_mail_sync BEFORE INSERT ON sync_events WHEN NEW.record_kind='invitation' BEGIN SELECT RAISE(ABORT,'mail event failed'); END");
+    await assert.rejects(worker.deliver(invitation),/mail event failed/);
+    assert.equal(f.sync.read(f.owner,{projectId:f.project}).page.events.find(event=>event.recordId===invitation)!.body.state,'pending_delivery');
+    assert.equal(f.sync.read(f.owner,{projectId:f.project,cursor:first.nextCursor!}).page.events.length,0);
+    f.db.exec('DROP TRIGGER fail_mail_sync'); f.clock(f.options.now()+16000);
+    assert.deepEqual(await worker.deliver(invitation),{state:'sent'}); assert.deepEqual(await worker.deliver(invitation),{state:'deferred'});
+    const delta = f.sync.read(f.owner,{projectId:f.project,cursor:first.nextCursor!});
+    assert.equal(delta.page.events.length,1); assert.deepEqual(delta.page.events.map(event=>[event.recordKind,event.revision,event.body.state]),[['invitation',2,'sent']]);
+    assert.equal(calls,2); assert.equal(effects.size,1);
+    for (const secret of ['member@example.com','fixture-delivery','invitationUrl','ciphertext','token_digest']) assert(!JSON.stringify(delta).includes(secret));
+    const expired = randomUUID();
+    access.createInvitation(f.owner,f.project,{requestId:expired,email:'expired@example.com',expiresAt:Date.now()+60000,expectedProjectRevision:1,agentAssignments:[]});
+    const beforeExpiry = f.sync.read(f.owner,{projectId:f.project}); f.clock(Date.now()+61000); await worker.deliver(expired);
+    assert.deepEqual(f.sync.read(f.owner,{projectId:f.project,cursor:beforeExpiry.nextCursor!}).page.events.map(event=>event.body.state),['expired']); assert.equal(calls,2);
+  } finally { provider.closeAllConnections(); await new Promise<void>(resolve=>provider.close(()=>resolve())); f.close(); }
 });
 
 test('delta pagination keeps every event once within item and encoded response budgets', () => {

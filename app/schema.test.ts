@@ -15,7 +15,7 @@ test('canonical v1 schema initializes empty and current SQLite stores idempotent
   initializeCanonicalSchema(db, 3000);
   assert.equal(db.prepare('SELECT checksum FROM schema_migrations WHERE version=3').get()!.checksum, checksum);
   assert(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='task_successor_provenance'").get());
-  for (const table of ['accounts', 'projects', 'project_members', 'agent_projects', 'collaborator_agents', 'response_policies', 'invitations', 'mail_outbox', 'receipts', 'record_scopes', 'wait_provisions']) assert(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(table));
+  for (const table of ['accounts', 'projects', 'project_members', 'agent_projects', 'collaborator_agents', 'response_policies', 'invitations', 'mail_outbox', 'receipts', 'record_scopes', 'sync_scope_revisions', 'wait_provisions']) assert(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(table));
   db.close();
 });
 
