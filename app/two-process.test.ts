@@ -429,6 +429,142 @@ async function until(check: () => boolean | Promise<boolean>, timeout = 10000) {
   assert.fail('Device state did not settle');
 }
 
+async function workflowConfigurationFixture() {
+  const f = await fixture(), runtime = openDeviceRuntime({ database: join(f.dir, 'workflow-home.sqlite'), server: f.origin(), development: true, entry: memoryKeys().entry });
+  try {
+    await runtime.enroll(f.jwt());
+    const home = (await f.send('/api/devices')).body.data[0], project = randomUUID(), other = randomUUID(), agent = randomUUID(), workflow = randomUUID();
+    for (const id of [project, other]) assert.equal((await f.send('/api/projects', { requestId: randomUUID(), id, name: 'Workflows' })).status, 201);
+    assert.equal((await f.send('/api/agents', { requestId: agent, id: agent, name: 'Workflow agent', model: 'fixture', backupModel: '', instructions: 'Help', threadLimit: 2, projectId: project, homeDeviceId: home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: home.revision, providerBinding: null })).status, 201);
+    const graph = { entry: 'out', maxSteps: 1, nodes: [{ id: 'out', kind: 'output' }] }, list = `/api/projects/${project}/agents/${agent}/workflows`, detail = `/api/projects/${project}/workflows/${workflow}`;
+    return { ...f, runtime, home, project, other, agent, workflow, graph, list, detail, close: async () => { await runtime.close(); await f.close(); } };
+  } catch (error) { await runtime.close(); await f.close(); throw error; }
+}
+
+test('canonical workflow configuration stays project scoped with immutable versions and retry receipts', async () => {
+  const f = await workflowConfigurationFixture(), { home, project, other, workflow, graph, list, detail } = f;
+  try {
+    const command = { requestId: workflow, id: workflow, revision: 0, name: 'Original', graph };
+    const created = await f.send(list, command); assert.equal(created.status, 201, JSON.stringify(created.body));
+    assert.equal(created.body.data.projectId, project); assert.equal(created.body.data.homeDeviceId, home.id);
+    const replay = await f.send(list, command); assert.equal(replay.status, 200); assert.deepEqual(replay.body.receipt, created.body.receipt);
+    assert.deepEqual((await f.send(detail)).body.data.graph, graph);
+    assert.deepEqual((await f.send(`/api/projects/${other}/workflows`)).body.data.items, []);
+    assert.equal((await f.send(`/api/projects/${other}/workflows/${workflow}`)).status, 404);
+    assert.equal((await f.send(`/api/projects/${other}/agents/${f.agent}`, { requestId: randomUUID(), expectedProjectRevision: 1, expectedAgentRevision: 1, expectedAuthorityRevision: 1, expectedParticipationRevision: 0, rules: 'Separate', capabilities: { v: 1, tools: [], resources: [] } }, 'user_owner', 'PUT')).status, 201);
+    const otherWorkflow = randomUUID();
+    assert.equal((await f.send(`/api/projects/${other}/agents/${f.agent}/workflows`, { ...command, requestId: otherWorkflow, id: otherWorkflow, name: 'Other project' })).status, 201);
+    assert.deepEqual((await f.send(`/api/projects/${other}/workflows`)).body.data.items.map((row:{id:string}) => row.id), [otherWorkflow]);
+    assert.equal((await f.send(`/api/projects/${other}/workflows/${workflow}`)).status, 404, 'Same agent participation cannot transfer workflows');
+    assert.equal((await f.send(`/api/workflows/${workflow}`)).status, 404);
+    for (const path of ['/api/workflows?deleted=1', `/api/agents/${f.agent}/workflows?after=${workflow}`, `/api/workflows/${workflow}/versions?before=2`, detail + '/run?before=2']) assert.equal((await f.send(path)).status, 404, path);
+    const edited = { requestId: randomUUID(), revision: 1, name: 'Edited', graph: { ...graph, maxSteps: 2 } };
+    const saved = await f.send(detail + '/edit', { ...edited, id: edited.requestId }); assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    await f.restart();
+    assert.deepEqual((await f.send(detail + '/edit', { ...edited, id: edited.requestId })).body.receipt, saved.body.receipt);
+    const versions = (await f.send(detail + '/versions')).body.data.items;
+    assert.deepEqual(versions.map((row: {revision:number}) => row.revision), [2, 1]); assert.deepEqual(versions[1].graph, graph);
+    const restore = { requestId: randomUUID(), revision: 2, version: 1 };
+    assert.equal((await f.send(detail + '/restore', { ...restore, id: restore.requestId })).body.data.revision, 3);
+    const deletion = { requestId: randomUUID(), revision: 3 };
+    const deleted = await f.send(detail + '/delete', { ...deletion, id: deletion.requestId }); assert.equal(deleted.status, 200);
+    assert.deepEqual((await f.send(detail + '/delete', { ...deletion, id: deletion.requestId })).body.receipt, deleted.body.receipt);
+    assert.deepEqual((await f.send(`/api/projects/${project}/workflows`)).body.data.items, []);
+    assert.equal((await f.send(`/api/projects/${project}/workflows?deleted=1`)).body.data.items[0].id, workflow);
+    assert.equal((await f.send(detail + '/run', { requestId: randomUUID(), revision: 3, input: 'Must not execute' })).status, 404);
+  } finally { await f.close(); }
+});
+
+test('canonical workflows enforce current assignments private mappings selectors and atomic receipt storage', async () => {
+  const f = await workflowConfigurationFixture(), { project, other, agent, workflow, graph, list, detail } = f;
+  const command = { requestId: workflow, id: workflow, revision: 0, name: 'Shared', graph };
+  const db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  try {
+    const accepted = await f.send(list, command); assert.equal(accepted.status, 201);
+    const collaborator = (await f.send('/api/session', undefined, 'user_collaborator')).body.data.accountId;
+    db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(project, collaborator);
+    assert.equal((await f.send(detail, undefined, 'user_collaborator')).status, 404);
+    assert.deepEqual((await f.send(`/api/projects/${project}/workflows`, undefined, 'user_collaborator')).body.data.items, []);
+    db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(project, collaborator, agent);
+    db.prepare('INSERT INTO response_policies VALUES (?,?,?,0,1)').run(project, collaborator, agent);
+    assert.equal((await f.send(detail, undefined, 'user_collaborator')).status, 200, 'Response OFF does not remove workflow assignment');
+    const edit = { requestId: randomUUID(), revision: 1, name: 'Collaborator edit', graph };
+    const edited = await f.send(detail + '/edit', { ...edit, id: edit.requestId }, 'user_collaborator'); assert.equal(edited.status, 200);
+    db.prepare('UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE project=? AND account=? AND agent=?').run(project, collaborator, agent);
+    assert.equal((await f.send(detail + '/edit', { ...edit, id: edit.requestId }, 'user_collaborator')).status, 404, 'Revoked assignment cannot replay a receipt');
+    db.prepare('UPDATE collaborator_agents SET enabled=1,revision=revision+1 WHERE project=? AND account=? AND agent=?').run(project, collaborator, agent);
+    const owner = (await f.send('/api/session')).body.data.accountId;
+    db.prepare("UPDATE record_scopes SET visibility='owner' WHERE table_name='workflows' AND key_json=?").run(JSON.stringify([workflow]));
+    assert.equal((await f.send(detail, undefined, 'user_collaborator')).status, 404);
+    db.prepare("UPDATE record_scopes SET visibility='project' WHERE table_name='workflows' AND key_json=?").run(JSON.stringify([workflow]));
+    db.prepare("UPDATE record_scopes SET project=? WHERE table_name='workflow_versions' AND key_json=?").run(other, JSON.stringify([workflow, 2]));
+    assert.equal((await f.send(detail)).status, 404, 'Unmapped version does not return graph');
+    db.prepare("UPDATE record_scopes SET project=? WHERE table_name='workflow_versions' AND key_json=?").run(project, JSON.stringify([workflow, 2]));
+    db.prepare("UPDATE record_scopes SET project=? WHERE table_name='workflow_versions' AND key_json=?").run(other, JSON.stringify([workflow, 1]));
+    assert.equal((await f.send(list, command)).status, 404, 'Receipt cannot return a graph whose version scope was removed');
+    db.prepare("UPDATE record_scopes SET project=? WHERE table_name='workflow_versions' AND key_json=?").run(project, JSON.stringify([workflow, 1]));
+    for (const query of ['projectId=' + project, 'after=x', 'after=', 'deleted=x', 'deleted=0&deleted=0']) {
+      const path = query === 'after=' ? detail : `/api/projects/${project}/workflows`;
+      const denied = await f.send(path + '?' + query); assert.equal(denied.status, 404, JSON.stringify(denied.body));
+    }
+    const headerResponse = await fetch(f.origin() + detail, { headers: { Authorization: 'Bearer ' + f.jwt(), 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': randomUUID(), 'X-Briefsip-Project-Id': project } });
+    assert.equal(headerResponse.status, 404); await headerResponse.body?.cancel();
+    assert.equal((await f.send(detail + '/edit', { ...edit, id: edit.requestId, projectId: project })).status, 404);
+    assert.equal((await f.send(detail + '/edit', { ...edit, requestId: randomUUID(), id: randomUUID() })).status, 400);
+    assert.equal((await f.send(list, { ...command, name: 'Different' })).status, 409);
+    assert.equal((await f.send(list, { ...command, name: ' Shared ' })).status, 200, 'Digest uses normalized feature name');
+    const bad = randomUUID(), foreignGraph = { entry: 'work', maxSteps: 2, nodes: [{ id: 'work', kind: 'agent', agent: bad, prompt: 'foreign', next: 'out' }, ...graph.nodes] };
+    assert.equal((await f.send(list, { ...command, id: bad, requestId: bad, graph: foreignGraph })).status, 400);
+    const teammate = randomUUID();
+    assert.equal((await f.send('/api/agents', { requestId: teammate, id: teammate, name: 'Other agent', model: 'fixture', backupModel: '', instructions: 'Help', threadLimit: 2, projectId: project, homeDeviceId: f.home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: f.home.revision, providerBinding: null })).status, 201);
+    assert.equal((await f.send(list, { ...command, id: bad, requestId: bad, graph: { ...foreignGraph, nodes: [{ ...foreignGraph.nodes[0], agent: teammate }, ...graph.nodes] } }, 'user_collaborator')).status, 404, 'Every graph agent needs current assignment');
+    const channel = randomUUID();
+    db.prepare("INSERT INTO channels VALUES (?,?,'',?,1,0)").run(channel, 'Other project', agent); db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel, agent);
+    db.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(JSON.stringify([channel]), owner, other, channel);
+    assert.equal((await f.send(list, { ...command, id: bad, requestId: bad, graph: { ...graph, nodes: [{ id: 'out', kind: 'output', channel }] } })).status, 404);
+    const change = { requestId: randomUUID(), revision: 2, name: 'Atomic', graph };
+    db.exec("CREATE TRIGGER fail_workflow_receipt BEFORE INSERT ON receipts WHEN NEW.scope LIKE 'retained:%/workflows/%/edit' BEGIN SELECT RAISE(ABORT,'workflow receipt failure'); END;");
+    assert.equal((await f.send(detail + '/edit', { ...change, id: change.requestId })).status, 500);
+    assert.equal((await f.send(detail)).body.data.name, 'Collaborator edit');
+    assert.deepEqual((await f.send(detail + '/versions')).body.data.items.map((row: {revision:number}) => row.revision), [2,1]);
+    db.exec('DROP TRIGGER fail_workflow_receipt');
+    assert.equal((await f.send(detail + '/edit', { ...change, id: change.requestId })).status, 200);
+    assert.equal(db.prepare('SELECT count(*) n FROM receipts WHERE request_id=?').get(change.requestId)!.n, 1);
+    db.exec("CREATE TRIGGER fail_workflow_mapping BEFORE INSERT ON record_scopes WHEN NEW.table_name='workflow_versions' BEGIN SELECT RAISE(ABORT,'workflow mapping failure'); END;");
+    assert.equal((await f.send(list, { ...command, requestId: bad, id: bad })).status, 500);
+    assert.equal((await f.send(`/api/projects/${project}/workflows/${bad}`)).status, 404);
+    assert.equal((await f.send(`/api/projects/${project}/workflows`)).body.data.items.length, 1, 'Failed mapping leaves no partial workflow');
+    db.exec('DROP TRIGGER fail_workflow_mapping');
+    assert.equal((await f.send(list, { ...command, requestId: bad, id: bad })).status, 201);
+    assert.equal(db.prepare("SELECT count(*) n FROM sqlite_schema WHERE type='table' AND name IN('workflow_waits','workflow_runs','workflow_webhooks')").get()!.n, 0, 'Configuration startup never installs legacy dispatcher or secret tables');
+    db.prepare('UPDATE project_members SET deleted=1,grant_revision=grant_revision+1 WHERE project=? AND account=?').run(project, collaborator);
+    assert.equal((await f.send(detail, undefined, 'user_collaborator')).status, 404);
+    assert.equal((await f.send(detail, undefined, 'user_stranger')).status, 404);
+    assert.equal(db.prepare('SELECT account FROM projects WHERE id=?').get(project)!.account, owner);
+  } finally { db.close(); await f.close(); }
+});
+
+test('canonical workflow pages bound graph bytes and preserve list and version cursors', async () => {
+  const f = await workflowConfigurationFixture(), { project, agent, workflow, graph, list, detail } = f;
+  try {
+    for (const id of [workflow, ...Array.from({ length: 22 }, () => randomUUID())]) assert.equal((await f.send(list, { requestId: id, id, revision: 0, name: 'Paged', graph })).status, 201);
+    const first = (await f.send(`/api/projects/${project}/workflows`)).body.data; assert.equal(first.items.length, 20); assert(first.nextCursor);
+    const second = (await f.send(`/api/projects/${project}/workflows?after=${first.nextCursor}`)).body.data;
+    assert.equal(second.items.length, 3); assert.equal(second.nextCursor, null);
+    assert.equal(new Set([...first.items, ...second.items].map(row => row.id)).size, 23);
+    const large = { entry: 'work', maxSteps: 2, nodes: [{ id: 'work', kind: 'agent', agent, prompt: '🦉'.repeat(7000), next: 'out' }, ...graph.nodes] };
+    for (let revision = 1; revision <= 10; revision++) { const id = randomUUID(); assert.equal((await f.send(detail + '/edit', { requestId: id, id, revision, name: 'Large versions', graph: large })).status, 200); }
+    const versions: number[] = []; let before = '';
+    do {
+      const response = await f.send(detail + '/versions' + (before ? '?before=' + before : '')); assert.equal(response.status, 200);
+      assert(Buffer.byteLength(JSON.stringify(response.body)) <= 256 * 1024);
+      versions.push(...response.body.data.items.map((row: {revision:number}) => row.revision)); before = response.body.data.nextCursor ?? '';
+    } while (before);
+    assert.deepEqual(versions, [11,10,9,8,7,6,5,4,3,2,1]);
+    for (const query of ['before=0','before=-1','before=abc','before=1&before=2','projectId=' + project]) assert.equal((await f.send(detail + '/versions?' + query)).status, 404);
+  } finally { await f.close(); }
+});
+
 test('signed human sync preserves delta cursors through canonical restart and rejects foreign or revoked reads', async () => {
   const f = await fixture();
   try {
