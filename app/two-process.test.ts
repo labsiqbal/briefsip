@@ -441,6 +441,312 @@ async function workflowConfigurationFixture() {
   } catch (error) { await runtime.close(); await f.close(); throw error; }
 }
 
+test('canonical workflow executes conditions and approval once across restart', async () => {
+  const f = await workflowConfigurationFixture(), { workflow, project, list, detail } = f;
+  try {
+    const graph = { entry: 'check', maxSteps: 3, nodes: [
+      { id: 'check', kind: 'condition', operator: 'equals', value: 'Original input', yes: 'approve', no: 'out' },
+      { id: 'approve', kind: 'approval', prompt: 'Proceed?', yes: 'out' }, { id: 'out', kind: 'output' },
+    ] };
+    assert.equal((await f.send(list, { requestId: workflow, id: workflow, revision: 0, name: 'Execution', graph })).status, 201);
+    const run = randomUUID(), command = { requestId: run, id: run, revision: 1, input: 'Original input' }, path = `/api/projects/${project}/workflow-runs/${run}`;
+    const admission = await f.send(detail + '/run', command); assert.equal(admission.status, 201);
+    let current: any;
+    await until(async () => { current = (await f.send(path)).body.data; return current.status === 'approval'; });
+    assert.deepEqual(current.steps.map((step: { node: string; status: string }) => [step.node, step.status]), [['check', 'done'], ['approve', 'approval']]);
+    await f.restart();
+    assert.deepEqual((await f.send(path)).body.data.steps, current.steps);
+    const decision = randomUUID(), approval = { requestId: decision, id: decision, revision: current.revision, accepted: true };
+    const accepted = await f.send(path + '/approve', approval); assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+    await until(async () => { current = (await f.send(path)).body.data; return current.status === 'done'; });
+    assert.equal(current.last, 'Original input'); assert.equal(current.stepCount, 3);
+    assert.deepEqual((await f.send(path + '/approve', approval)).body, accepted.body);
+    assert.deepEqual((await f.send(detail + '/run', command)).body.receipt, admission.body.receipt);
+    await f.restart(); assert.equal((await f.send(path)).body.data.stepCount, 3);
+  } finally { await f.close(); }
+});
+
+test('canonical workflow admits isolated home tasks and keeps model nodes tool-free', async () => {
+  const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f;
+  try {
+    const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const graph = { entry: 'agent', maxSteps: 3, nodes: [
+      { id: 'agent', kind: 'agent', agent: f.agent, prompt: 'Agent work', next: 'model' },
+      { id: 'model', kind: 'model', model: 'workflow-model', prompt: 'Model work', next: 'out' }, { id: 'out', kind: 'output' },
+    ] };
+    assert.equal((await f.send(list, { requestId: workflow, id: workflow, revision: 0, name: 'Home tasks', graph })).status, 201);
+    const db = new DatabaseSync(join(f.dir, 'canonical.sqlite')), binding = randomUUID();
+    try {
+      db.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','workflow-fixture','Fixture','ready',1)").run(binding, f.home.id, (await f.send('/api/session')).body.data.accountId);
+      db.prepare('UPDATE agent_authority SET provider_binding=?,revision=revision+1 WHERE agent=?').run(binding, f.agent);
+    } finally { db.close(); }
+    const run = randomUUID(), path = `/api/projects/${project}/workflow-runs/${run}`;
+    assert.equal((await f.send(detail + '/run', { requestId: run, id: run, revision: 1, input: 'Synthetic input' })).status, 201);
+    let current: any;
+    await until(async () => { current = (await f.send(path)).body.data; return current.status === 'waiting'; });
+    const first = current.steps[0].turn, task = (await f.send(`/api/tasks/${first}`)).body.data;
+    assert.equal(task.homeDeviceId, f.home.id); assert.equal(task.agentId, f.agent);
+    const owned = await runtime.startTask(first), context = await runtime.taskContext(first, owned.ownership, owned.revision);
+    const agentSnapshot = context.snapshot as any;
+    assert(agentSnapshot.tools.length > 0); assert.equal(agentSnapshot.admission.initiatorAccountId, (await f.send('/api/session')).body.data.accountId);
+    assert.equal(agentSnapshot.conversation.history.length, 0); assert.match(agentSnapshot.conversation.message.text, /Agent work\n\nWorkflow input:\nSynthetic input/);
+    // Supply provider evidence through the real executor protocol, without external inference.
+    const cancel = randomUUID();
+    assert.equal((await f.send(path + '/cancel', { requestId: cancel, id: cancel, revision: current.revision })).status, 200);
+    assert.equal((await f.send(`/api/tasks/${first}`)).body.data.state, 'cancelled');
+    await assert.rejects(runtime.taskContext(first, owned.ownership, owned.revision));
+    const next = randomUUID(), nextPath = `/api/projects/${project}/workflow-runs/${next}`;
+    assert.equal((await f.send(detail + '/run', { requestId: next, id: next, revision: 1, input: 'Synthetic input' })).status, 201);
+    await until(async () => { current = (await f.send(nextPath)).body.data; return current.status === 'waiting'; });
+    assert.equal((await runtime.runTask(current.steps[0].turn, () => ({ text: 'Agent result' }))).state, 'completed');
+    await until(async () => { current = (await f.send(nextPath)).body.data; return current.steps.length === 2; });
+    const modelTask = current.steps[1].turn;
+    assert.equal((await runtime.runTask(modelTask, modelContext => {
+      const modelSnapshot = modelContext.snapshot as any;
+      assert.equal(modelSnapshot.profile.model, 'workflow-model'); assert.equal(modelSnapshot.profile.instructions, 'Help');
+      for (const field of ['tools','memories','skills','skillAssets']) assert.deepEqual(modelSnapshot[field], []);
+      assert.equal(modelSnapshot.conversation.history.length, 0);
+      assert.match(modelSnapshot.conversation.message.text, /Previous step result:\nAgent result$/);
+      return { text: 'Model result' };
+    })).state, 'completed');
+    await until(async () => { current = (await f.send(nextPath)).body.data; return current.status === 'done'; });
+    assert.equal(current.last, 'Model result'); assert.equal(current.stepCount, 3);
+  } finally { await f.close(); }
+});
+
+test('canonical workflow dispatch retains original collaborator and owner cancellation fences revoked work', async () => {
+  const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f, db = new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  try {
+    const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const owner = (await f.send('/api/session')).body.data.accountId, collaborator = (await f.send('/api/session',undefined,'user_collaborator')).body.data.accountId;
+    db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(project,collaborator);
+    db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(project,collaborator,f.agent);
+    db.prepare('INSERT INTO response_policies VALUES (?,?,?,0,1)').run(project,collaborator,f.agent);
+    const graph = { entry:'work', maxSteps:2, nodes:[{id:'work',kind:'agent',agent:f.agent,prompt:'Synthetic work',next:'out'},{id:'out',kind:'output'}] };
+    assert.equal((await f.send(list,{requestId:workflow,id:workflow,revision:0,name:'Collaborator',graph})).status,201);
+    const run = randomUUID(), path = `/api/projects/${project}/workflow-runs/${run}`;
+    assert.equal((await f.send(detail+'/run',{requestId:run,id:run,revision:1,input:'Input'},'user_collaborator')).status,201);
+    db.prepare("UPDATE record_scopes SET account=? WHERE table_name='workflow_runs' AND key_json=?").run(owner,canonicalJson([run]));
+    let current = (await f.send(path)).body.data;
+    await until(async()=>{current=(await f.send(path)).body.data;return current.status==='waiting';});
+    const child=current.steps[0].turn, owned=await runtime.startTask(child), context=await runtime.taskContext(child,owned.ownership,owned.revision);
+    assert.equal((context.snapshot.admission as {initiatorAccountId:string}).initiatorAccountId,collaborator);
+    assert.equal((await f.send(`/api/tasks/${child}`,undefined,'user_collaborator')).status,200,'Response OFF preserves execution and project visibility');
+    db.prepare('UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE project=? AND account=?').run(project,collaborator);
+    await assert.rejects(runtime.taskContext(child,owned.ownership,owned.revision),{code:'execution_denied'});
+    const cancel = randomUUID(), command={requestId:cancel,id:cancel,revision:current.revision};
+    db.exec("CREATE TRIGGER fail_workflow_cancel BEFORE INSERT ON receipts WHEN NEW.scope LIKE 'retained:%/workflow-runs/%/cancel' BEGIN SELECT RAISE(ABORT,'cancel receipt failure'); END");
+    assert.equal((await f.send(path+'/cancel',command)).status,500);
+    assert.equal((await f.send(`/api/tasks/${child}`)).body.data.state,'running','Failed parent receipt rolls back child fencing');
+    db.exec('DROP TRIGGER fail_workflow_cancel');
+    assert.equal((await f.send(path+'/cancel',command)).status,200);
+    assert.equal((await f.send(path)).body.data.status,'cancelled'); assert.equal((await f.send(`/api/tasks/${child}`)).body.data.state,'cancelled');
+    await assert.rejects(runtime.startTask(child));
+  } finally {db.close();await f.close();}
+});
+
+test('canonical workflow completion recovers a lost ACK after advancing to approval', async () => {
+  const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f, db = new DatabaseSync(join(f.dir, 'canonical.sqlite')), originalFetch = globalThis.fetch;
+  try {
+    const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const binding = randomUUID(), owner = (await f.send('/api/session')).body.data.accountId;
+    db.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','workflow-fixture','Fixture','ready',1)").run(binding, f.home.id, owner);
+    db.prepare('UPDATE agent_authority SET provider_binding=?,revision=revision+1 WHERE agent=?').run(binding, f.agent);
+    const graph = { entry: 'work', maxSteps: 3, nodes: [{ id: 'work', kind: 'agent', agent: f.agent, prompt: 'Answer once', next: 'approve' }, { id: 'approve', kind: 'approval', prompt: 'Proceed?', yes: 'out' }, { id: 'out', kind: 'output' }] };
+    assert.equal((await f.send(list, { requestId: workflow, id: workflow, revision: 0, name: 'Completion recovery', graph })).status, 201);
+    const run = randomUUID(), path = `/api/projects/${project}/workflow-runs/${run}`;
+    assert.equal((await f.send(detail + '/run', { requestId: run, id: run, revision: 1, input: 'Synthetic' })).status, 201);
+    let current: any, actionId = '', calls = 0, saved: any;
+    await until(async () => { current = (await f.send(path)).body.data; return current.status === 'waiting'; });
+    const taskId = current.steps[0].turn;
+    globalThis.fetch = async (url, init) => {
+      const response = await originalFetch(url, init);
+      if (String(url).endsWith('/complete')) {
+        assert.equal(response.status, 200, await response.clone().text()); saved = await response.clone().json();
+        actionId = JSON.parse(String(init!.body)).actionId; await response.body?.cancel(); throw new Error('Lost workflow completion ACK');
+      }
+      return response;
+    };
+    await assert.rejects(runtime.runTask(taskId, () => { calls++; return { text: 'Saved once' }; }), /Lost workflow completion ACK/);
+    globalThis.fetch = originalFetch;
+    await until(async () => { current = (await f.send(path)).body.data; return current.status === 'approval'; });
+    assert.deepEqual((await runtime.completeTask(taskId, actionId)).receipt, saved.receipt);
+    await f.restart(); await until(() => connection.state().phase === 'connected');
+    assert.deepEqual((await runtime.completeTask(taskId, actionId)).receipt, saved.receipt);
+    assert.equal(calls, 1); assert.equal(db.prepare('SELECT count(*) n FROM receipts WHERE scope=?').get(`tasks:complete:${taskId}`)!.n, 1);
+    db.prepare('UPDATE agent_projects SET deleted=1 WHERE project=? AND agent=?').run(project, f.agent);
+    await assert.rejects(runtime.completeTask(taskId, actionId), { code: 'execution_denied' });
+  } finally { globalThis.fetch = originalFetch; db.close(); await f.close(); }
+});
+
+test('canonical workflow cancellation fences no-reply descendants of completed steps', async () => {
+  const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f, db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  try {
+    const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const binding = randomUUID(), peer = randomUUID(), owner = (await f.send('/api/session')).body.data.accountId, home = (await f.send('/api/devices')).body.data[0];
+    db.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','workflow-fixture','Fixture','ready',1)").run(binding, f.home.id, owner);
+    db.prepare('UPDATE agent_authority SET provider_binding=?,revision=revision+1 WHERE agent=?').run(binding, f.agent);
+    assert.equal((await f.send('/api/agents', { requestId: peer, id: peer, name: 'Teammate', model: 'fixture', backupModel: '', instructions: 'Help', threadLimit: 2, projectId: project, homeDeviceId: home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: home.revision, providerBinding: null })).status, 201);
+    const graph = { entry: 'work', maxSteps: 3, nodes: [{ id: 'work', kind: 'agent', agent: f.agent, prompt: 'Delegate without waiting', next: 'approve' }, { id: 'approve', kind: 'approval', prompt: 'Proceed?', yes: 'out' }, { id: 'out', kind: 'output' }] };
+    assert.equal((await f.send(list, { requestId: workflow, id: workflow, revision: 0, name: 'Cancel descendants', graph })).status, 201);
+    const run = randomUUID(), path = `/api/projects/${project}/workflow-runs/${run}`;
+    assert.equal((await f.send(detail + '/run', { requestId: run, id: run, revision: 1, input: 'Synthetic' })).status, 201);
+    let current: any, calls = 0;
+    await until(async () => { current = (await f.send(path)).body.data; return current.status === 'waiting'; });
+    const parent = current.steps[0].turn;
+    assert.equal((await runtime.runTask(parent, () => ++calls === 1 ? { toolCall: { id: 'delegate', function: { name: 'send_message', arguments: JSON.stringify({ recipients: [peer], text: 'Background work', expects_reply: false }) } } } : { text: 'Parent done' })).state, 'completed');
+    await until(async () => { current = (await f.send(path)).body.data; return current.status === 'approval'; });
+    const child = String(db.prepare('SELECT id FROM turns WHERE parent=?').get(parent)!.id);
+    const childOwned = await runtime.startTask(child);
+    await runtime.taskContext(child, childOwned.ownership, childOwned.revision);
+    const cancel = randomUUID(); assert.equal((await f.send(path + '/cancel', { requestId: cancel, id: cancel, revision: current.revision })).status, 200);
+    assert.equal((await f.send(`/api/tasks/${child}`)).body.data.state, 'cancelled');
+    assert.equal((await f.send(`/api/tasks/${parent}`)).body.data.state, 'completed');
+    assert.equal(db.prepare('SELECT reply FROM turns WHERE id=?').get(parent)!.reply, 'Parent done');
+    assert.equal(db.prepare('SELECT stopped FROM execution_owners WHERE task=?').get(child)!.stopped, 1);
+    await assert.rejects(runtime.startTask(child));
+  } finally { db.close(); await f.close(); }
+});
+
+test('canonical workflow oversized handoff fails once without starving later runs', async () => {
+  const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f, db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  try {
+    const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const binding = randomUUID(), owner = (await f.send('/api/session')).body.data.accountId;
+    db.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','workflow-fixture','Fixture','ready',1)").run(binding, f.home.id, owner);
+    db.prepare('UPDATE agent_authority SET provider_binding=?,revision=revision+1 WHERE agent=?').run(binding, f.agent);
+    const graph = { entry: 'first', maxSteps: 3, nodes: [{ id: 'first', kind: 'agent', agent: f.agent, prompt: 'First', next: 'work' }, { id: 'work', kind: 'agent', agent: f.agent, prompt: 'x'.repeat(16000), next: 'out' }, { id: 'out', kind: 'output' }] };
+    assert.equal((await f.send(list, { requestId: workflow, id: workflow, revision: 0, name: 'Oversized', graph })).status, 201);
+    const run = randomUUID(), path = `/api/projects/${project}/workflow-runs/${run}`;
+    assert.equal((await f.send(detail + '/run', { requestId: run, id: run, revision: 1, input: '' })).status, 201);
+    let current: any; await until(async () => { current = (await f.send(path)).body.data; return current.status === 'waiting'; });
+    assert.equal((await runtime.runTask(current.steps[0].turn, () => ({ text: 'y'.repeat(250000) }))).state, 'completed');
+    const later = randomUUID(), laterPath = `/api/projects/${project}/workflow-runs/${later}`;
+    assert.equal((await f.send(detail + '/run', { requestId: later, id: later, revision: 1, input: 'Later' })).status, 201);
+    await until(async () => (await f.send(path)).body.data.status === 'failed');
+    assert.match((await f.send(path)).body.data.error, /Input langkah melebihi 256 KiB/);
+    await until(async () => (await f.send(laterPath)).body.data.status === 'waiting');
+    const revision = (await f.send(path)).body.data.revision; await f.restart();
+    assert.equal((await f.send(path)).body.data.revision, revision);
+  } finally { db.close(); await f.close(); }
+});
+
+test('canonical workflow capacity retries leave no empty threads before admission', async () => {
+  const f = await workflowConfigurationFixture(), { workflow, project, list, detail } = f, db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  try {
+    const expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 }, payload = { v: 1, kind: 'direct', message: { text: 'Fill queue', files: [] } };
+    for (let index = 0; index < 100; index++) {
+      const requestId = randomUUID();
+      assert.equal((await f.send('/api/tasks', { requestId, projectId: project, agentId: f.agent, homeDeviceId: f.home.id, payload, expectedRevisions, payloadDigest: digestCommand(['briefsip-task-payload-v1', requestId, project, f.agent, f.home.id, payload, expectedRevisions]) })).status, 202);
+    }
+    const graph = { entry: 'work', maxSteps: 2, nodes: [{ id: 'work', kind: 'agent', agent: f.agent, prompt: 'Wait for capacity', next: 'out' }, { id: 'out', kind: 'output' }] };
+    assert.equal((await f.send(list, { requestId: workflow, id: workflow, revision: 0, name: 'Capacity', graph })).status, 201);
+    const run = randomUUID(), path = `/api/projects/${project}/workflow-runs/${run}`;
+    assert.equal((await f.send(detail + '/run', { requestId: run, id: run, revision: 1, input: '' })).status, 201);
+    const edit = randomUUID(); assert.equal((await f.send(detail + '/edit', { requestId: edit, id: edit, revision: 1, name: 'Output', graph: f.graph })).status, 200);
+    const later = randomUUID(), laterPath = `/api/projects/${project}/workflow-runs/${later}`;
+    assert.equal((await f.send(detail + '/run', { requestId: later, id: later, revision: 2, input: 'Later' })).status, 201);
+    await until(async () => (await f.send(laterPath)).body.data.status === 'done');
+    assert.equal((await f.send(path)).body.data.status, 'ready');
+    assert.equal(db.prepare('SELECT count(*) n FROM threads').get()!.n, 0, 'Queue backpressure must not persist empty workflow threads');
+    const task = db.prepare('SELECT id,revision FROM tasks ORDER BY created LIMIT 1').get()!;
+    assert.equal((await f.send(`/api/tasks/${task.id}/control`, { requestId: randomUUID(), expectedRevision: task.revision, operation: 'cancel' })).status, 200);
+    await until(async () => (await f.send(path)).body.data.status === 'waiting');
+    assert.equal(db.prepare('SELECT count(*) n FROM threads').get()!.n, 1);
+  } finally { db.close(); await f.close(); }
+});
+
+test('canonical workflow revoked assignment before host ACK closes the original run', async () => {
+  const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f, db = new DatabaseSync(join(f.dir, 'canonical.sqlite')), originalFetch = globalThis.fetch;
+  try {
+    const collaborator = (await f.send('/api/session', undefined, 'user_collaborator')).body.data.accountId;
+    db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(project, collaborator);
+    db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(project, collaborator, f.agent);
+    const graph = { entry: 'event', maxSteps: 2, nodes: [{ id: 'event', kind: 'wait', event: 'ready', timeoutSeconds: 60, next: 'out' }, { id: 'out', kind: 'output' }] };
+    assert.equal((await f.send(list, { requestId: workflow, id: workflow, revision: 0, name: 'Revoked reservation', graph })).status, 201);
+    const run = randomUUID(), path = `/api/projects/${project}/workflow-runs/${run}`;
+    assert.equal((await f.send(detail + '/run', { requestId: run, id: run, revision: 1, input: '' }, 'user_collaborator')).status, 201);
+    await until(() => !!db.prepare('SELECT 1 FROM wait_provisions WHERE target_key=?').get(JSON.stringify(['workflow', run, 1])));
+    let revoked = false;
+    globalThis.fetch = async (url, init) => {
+      if (String(url).endsWith('/wait-secret-results') && !revoked) { revoked = true; db.prepare('UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE project=? AND account=?').run(project, collaborator); }
+      return originalFetch(url, init);
+    };
+    const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    await until(() => !!db.prepare("SELECT 1 FROM wait_provisions WHERE state='closed' AND result_request_id IS NOT NULL").get());
+    globalThis.fetch = originalFetch;
+    db.prepare('UPDATE collaborator_agents SET enabled=1,revision=revision+1 WHERE project=? AND account=?').run(project, collaborator);
+    assert.equal((await f.send(path)).body.data.status, 'failed');
+    assert.equal((await f.send(path)).body.data.error, 'wait_invalid');
+    assert.equal((await f.send(`/api/workflow-waits/${run}/1`)).status, 404);
+    await f.restart(); assert.equal((await f.send(path)).body.data.status, 'failed'); assert.equal(db.prepare('SELECT count(*) n FROM wait_provisions').get()!.n, 1);
+  } finally { globalThis.fetch = originalFetch; db.close(); await f.close(); }
+});
+
+test('canonical workflow wait reserves once offline and activates only after home keyring acknowledgement', async () => {
+  const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f, db = new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  try {
+    const graph={entry:'event',maxSteps:2,nodes:[{id:'event',kind:'wait',event:'ready',timeoutSeconds:60,next:'out'},{id:'out',kind:'output'}]};
+    assert.equal((await f.send(list,{requestId:workflow,id:workflow,revision:0,name:'Protected wait',graph})).status,201);
+    const run=randomUUID(),path=`/api/projects/${project}/workflow-runs/${run}`,waitPath=`/api/workflow-waits/${run}/1`;
+    assert.equal((await f.send(detail+'/run',{requestId:run,id:run,revision:1,input:'Synthetic'})).status,201);
+    await until(()=>!!db.prepare("SELECT 1 FROM wait_provisions WHERE target_key=?").get(JSON.stringify(['workflow',run,1])));
+    const reservation=db.prepare("SELECT * FROM wait_provisions WHERE target_key=?").get(JSON.stringify(['workflow',run,1]))!;
+    assert.equal((await f.send(path)).body.data.status,'ready'); assert.equal((await f.send(path)).body.data.stepCount,0);
+    await f.restart();
+    assert.deepEqual(db.prepare('SELECT * FROM wait_provisions WHERE id=?').get(reservation.id),reservation);
+    const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
+    await until(async()=> (await f.send(waitPath)).body.data?.status==='waiting');
+    const current=(await f.send(path)).body.data,wait=(await f.send(waitPath)).body.data;
+    assert.equal(current.status,'waiting');assert.equal(current.stepCount,1);assert.equal(current.steps[0].node,'event');
+    assert.equal(wait.deadline,reservation.deadline);assert.equal(wait.sourceDeviceId,f.home.id);assert.equal(wait.secretGeneration,1);
+    assert.equal(Object.hasOwn(wait,'secret'),false);assert.equal(Object.hasOwn(wait,'secretRef'),false);
+    assert(!db.prepare('PRAGMA table_info(workflow_waits)').all().some(row=>row.name==='secret'));
+    const generation=connection.state().generation;await f.restart();await until(()=>connection.state().phase==='connected'&&connection.state().generation>generation);
+    assert.equal((await f.send(path)).body.data.stepCount,1);assert.deepEqual((await f.send(waitPath)).body.data,wait);
+    const cancel=randomUUID();assert.equal((await f.send(path+'/cancel',{requestId:cancel,id:cancel,revision:current.revision})).status,200);
+    assert.equal((await f.send(waitPath)).body.data.status,'closed');
+  } finally {db.close();await f.close();}
+});
+
+test('canonical workflow timeout fails offline reservation without generating a second wait', async () => {
+  const f=await workflowConfigurationFixture(),{workflow,project,list,detail}=f,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  try{
+    const graph={entry:'event',maxSteps:2,nodes:[{id:'event',kind:'wait',event:'ready',timeoutSeconds:1,next:'out'},{id:'out',kind:'output'}]};
+    assert.equal((await f.send(list,{requestId:workflow,id:workflow,revision:0,name:'Timeout',graph})).status,201);
+    const run=randomUUID(),path=`/api/projects/${project}/workflow-runs/${run}`;
+    assert.equal((await f.send(detail+'/run',{requestId:run,id:run,revision:1,input:'Offline'})).status,201);
+    await until(async()=> (await f.send(path)).body.data.status==='failed');
+    const current=(await f.send(path)).body.data;
+    assert.equal(current.error,'wait_expired');assert.equal(current.stepCount,1);assert.equal(current.steps[0].status,'failed');
+    const before=db.prepare('SELECT * FROM wait_provisions').all();assert.equal(before.length,1);assert.equal(before[0].state,'closed');
+    const connection=f.runtime.connect();await until(()=>connection.state().phase==='connected');
+    assert.equal((await f.send(path)).body.data.status,'failed');assert.deepEqual(db.prepare('SELECT * FROM wait_provisions').all(),before);
+    assert.equal((await f.send(`/api/workflow-waits/${run}/1`)).status,404);
+  }finally{db.close();await f.close();}
+});
+
+test('canonical workflow channel output is atomic and does not duplicate after restart', async () => {
+  const f=await workflowConfigurationFixture(),{workflow,project,list,detail}=f,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  try{
+    const owner=(await f.send('/api/session')).body.data.accountId,channel=randomUUID();
+    db.prepare("INSERT INTO channels VALUES (?,?,'',?,1,0)").run(channel,'Workflow output',f.agent);db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel,f.agent);
+    db.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(canonicalJson([channel]),owner,project,channel);
+    const graph={entry:'out',maxSteps:1,nodes:[{id:'out',kind:'output',channel}]};
+    assert.equal((await f.send(list,{requestId:workflow,id:workflow,revision:0,name:'Output',graph})).status,201);
+    const run=randomUUID(),path=`/api/projects/${project}/workflow-runs/${run}`;
+    db.exec("CREATE TRIGGER fail_workflow_output BEFORE INSERT ON record_scopes WHEN NEW.table_name='workflow_steps' BEGIN SELECT RAISE(ABORT,'output mapping failure'); END");
+    assert.equal((await f.send(detail+'/run',{requestId:run,id:run,revision:1,input:'Exact result'})).status,201);
+    await new Promise(resolve=>setTimeout(resolve,1200));
+    assert.equal((await f.send(path)).body.data.status,'ready');assert.equal(db.prepare('SELECT count(*) n FROM turns WHERE channel=?').get(channel)!.n,0,'Failed step mapping rolls back channel output');
+    db.exec('DROP TRIGGER fail_workflow_output');
+    await until(async()=> (await f.send(path)).body.data.status==='done');
+    const result=(await f.send(path)).body.data;assert.equal(result.last,'Exact result');assert(result.steps[0].turn);
+    assert.equal(db.prepare('SELECT reply FROM turns WHERE id=?').get(result.steps[0].turn)!.reply,'Exact result');
+    await f.restart();assert.equal((await f.send(path)).body.data.stepCount,1);assert.equal(db.prepare('SELECT count(*) n FROM turns WHERE channel=?').get(channel)!.n,1);
+  }finally{db.close();await f.close();}
+});
+
 test('canonical workflow run admission keeps its graph and receipt across restart and revision changes', async () => {
   const f = await workflowConfigurationFixture(), { project, workflow, graph, list, detail } = f;
   try {
@@ -642,7 +948,8 @@ test('canonical workflows enforce current assignments private mappings selectors
     assert.equal((await f.send(`/api/projects/${project}/workflows`)).body.data.items.length, 1, 'Failed mapping leaves no partial workflow');
     db.exec('DROP TRIGGER fail_workflow_mapping');
     assert.equal((await f.send(list, { ...command, requestId: bad, id: bad })).status, 201);
-    assert.equal(db.prepare("SELECT count(*) n FROM sqlite_schema WHERE type='table' AND name IN('workflow_waits','workflow_webhooks','workflow_schedules')").get()!.n, 0, 'Canonical startup never installs legacy secret or schedule tables');
+    assert.equal(db.prepare("SELECT count(*) n FROM sqlite_schema WHERE type='table' AND name IN('workflow_webhooks','workflow_schedules')").get()!.n, 0, 'Canonical startup never installs legacy schedule tables');
+    assert(!db.prepare('PRAGMA table_info(workflow_waits)').all().some(row=>row.name==='secret'),'Canonical waits contain protected references only');
     db.prepare('UPDATE project_members SET deleted=1,grant_revision=grant_revision+1 WHERE project=? AND account=?').run(project, collaborator);
     assert.equal((await f.send(detail, undefined, 'user_collaborator')).status, 404);
     assert.equal((await f.send(detail, undefined, 'user_stranger')).status, 404);
