@@ -196,6 +196,108 @@ async function until(check: () => boolean | Promise<boolean>, timeout = 10000) {
   assert.fail('Device state did not settle');
 }
 
+test('canonical completion publishes saved provider answer once after lost reply and restart', async () => {
+  const f = await fixture(), keys = memoryKeys(), database = join(f.dir, 'completion-home.sqlite');
+  let runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: keys.entry });
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  try {
+    await runtime.enroll(f.jwt());
+    const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const home = (await f.send('/api/devices')).body.data[0], project = randomUUID(), agent = randomUUID(), binding = randomUUID();
+    assert.equal((await f.send('/api/projects', { requestId: randomUUID(), id: project, name: 'Completion' })).status, 201);
+    const seed = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+    try { seed.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','synthetic-completion','Synthetic','ready',1)").run(binding, home.id, seed.prepare('SELECT account FROM devices WHERE id=?').get(home.id)!.account); } finally { seed.close(); }
+    assert.equal((await f.send('/api/agents', { requestId: agent, id: agent, name: 'Writer', model: 'fixture', backupModel: '', instructions: 'Answer carefully', threadLimit: 2, projectId: project, homeDeviceId: home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: home.revision, providerBinding: { bindingId: binding, expectedRevision: 1 } })).status, 201);
+    const taskId = randomUUID(), payload = { v: 1, kind: 'direct', message: { text: 'Answer once', files: [] } }, expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 };
+    assert.equal((await f.send('/api/tasks', { requestId: taskId, projectId: project, agentId: agent, homeDeviceId: home.id, payload, expectedRevisions, payloadDigest: digestCommand(['briefsip-task-payload-v1', taskId, project, agent, home.id, payload, expectedRevisions]) })).status, 202);
+    const owned = await runtime.startTask(taskId), context = await runtime.taskContext(taskId, owned.ownership, owned.revision), actionId = randomUUID();
+    await runtime.executeAction({ taskId, actionId, sequence: 0, actionKind: 'provider', ownership: owned.ownership, payload: { purpose: 'answer' }, context, grantRevision: 1, bindingId: binding, bindingRevision: 1 }, () => { calls++; return { text: 'Saved final answer' }; });
+    globalThis.fetch = async (url, init) => {
+      const response = await originalFetch(url, init);
+      if (String(url).endsWith('/complete')) { assert.equal(response.status, 200, await response.clone().text()); await response.body?.cancel(); throw new Error('Lost completion reply'); }
+      return response;
+    };
+    await assert.rejects(runtime.completeTask(taskId, actionId), /Lost completion reply/);
+    globalThis.fetch = originalFetch;
+    await runtime.close(); await f.restart();
+    runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: keys.entry });
+    const reconnected = runtime.connect(); await until(() => reconnected.state().phase === 'connected');
+    const completed = await runtime.completeTask(taskId, actionId);
+    assert.equal(completed.data.state, 'completed');
+    assert.deepEqual((await runtime.completeTask(taskId, actionId)).receipt, completed.receipt);
+    const detail = (await f.send(`/api/tasks/${taskId}`)).body.data;
+    assert.equal(detail.state, 'completed'); assert.equal(detail.results.length, 1); assert.equal(calls, 1);
+    const inspect = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+    try {
+      const row = inspect.prepare('SELECT status,reply,paused FROM turns WHERE id=?').get(taskId)!;
+      assert.deepEqual({ ...row }, { status: 'done', reply: 'Saved final answer', paused: 0 });
+      assert.equal(inspect.prepare('SELECT count(*) n FROM receipts WHERE scope=?').get(`tasks:complete:${taskId}`)!.n, 1);
+    } finally { inspect.close(); }
+    assert.equal((await f.send(`/api/tasks/${taskId}/control`, { requestId: randomUUID(), expectedRevision: detail.revision, operation: 'resume' })).status, 409);
+  } finally { globalThis.fetch = originalFetch; await runtime.close(); await f.close(); }
+});
+
+for (const scenario of ['pause', 'cancel', 'latest', 'invalid', 'setup', 'revoked'] as const) test(`canonical completion enforces ${scenario} through signed HTTP`, async () => {
+  const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'completion-controls.sqlite'), server: f.origin(), development: true, entry: keys.entry });
+  const protocolCode = (expected: string) => (error: unknown) => error instanceof ProtocolError && error.code === expected;
+  try {
+    await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const home = (await f.send('/api/devices')).body.data[0], project = randomUUID(), binding = randomUUID(), agent = randomUUID(), taskId = scenario === 'setup' ? agent : randomUUID();
+    assert.equal((await f.send('/api/projects', { requestId: randomUUID(), id: project, name: 'Completion controls' })).status, 201);
+    const db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+    try {
+      db.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','completion-controls','Synthetic','ready',1)").run(binding, home.id, db.prepare('SELECT account FROM devices WHERE id=?').get(home.id)!.account);
+      assert.equal((await f.send('/api/agents', { requestId: agent, id: agent, name: 'Writer', model: 'fixture', backupModel: '', instructions: 'Answer carefully', threadLimit: 2, projectId: project, homeDeviceId: home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: home.revision, providerBinding: { bindingId: binding, expectedRevision: 1 }, setup: scenario === 'setup' })).status, 201);
+      if (scenario !== 'setup') {
+        const payload = { v: 1, kind: 'direct', message: { text: 'Answer once', files: [] } }, expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 };
+        assert.equal((await f.send('/api/tasks', { requestId: taskId, projectId: project, agentId: agent, homeDeviceId: home.id, payload, expectedRevisions, payloadDigest: digestCommand(['briefsip-task-payload-v1', taskId, project, agent, home.id, payload, expectedRevisions]) })).status, 202);
+      }
+      const owned = await runtime.startTask(taskId); let sequence = 0;
+      const run = async (content: unknown, canonical = false) => {
+        const detail = (await f.send(`/api/tasks/${taskId}`)).body.data, context = await runtime.taskContext(taskId, owned.ownership, detail.revision), actionId = randomUUID();
+        await runtime.executeAction({ taskId, actionId, sequence: sequence++, actionKind: canonical ? 'canonical' : 'provider', ownership: owned.ownership, payload: canonical ? { toolCall: { id: actionId, function: { name: 'edit_profile', arguments: JSON.stringify(content) } }, expectedRevision: context.snapshot.taskRevision + 1 } : { purpose: 'answer' }, context, grantRevision: 1, ...(!canonical ? { bindingId: binding, bindingRevision: 1 } : {}) }, () => { assert(!canonical); return content; });
+        return actionId;
+      };
+      const actionId = await run(scenario === 'invalid' ? { text: ' ', extra: true } : { text: 'Saved answer' });
+      if (scenario === 'pause' || scenario === 'cancel') {
+        const control = async (operation: string) => {
+          const detail = (await f.send(`/api/tasks/${taskId}`)).body.data;
+          assert.equal((await f.send(`/api/tasks/${taskId}/control`, { requestId: randomUUID(), expectedRevision: detail.revision, operation })).status, 200);
+        };
+        await control(scenario); await assert.rejects(runtime.completeTask(taskId, actionId), protocolCode(scenario === 'pause' ? 'task_not_runnable' : 'ownership_conflict'));
+        assert.equal(db.prepare('SELECT reply FROM turns WHERE id=?').get(taskId)!.reply, null);
+        if (scenario === 'pause') { await control('resume'); await runtime.completeTask(taskId, actionId); }
+      } else if (scenario === 'invalid') await assert.rejects(runtime.completeTask(taskId, actionId), protocolCode('result_invalid'));
+      else if (scenario === 'revoked') {
+        db.prepare('UPDATE agent_projects SET deleted=1 WHERE project=? AND agent=?').run(project, agent);
+        await assert.rejects(runtime.completeTask(taskId, actionId), protocolCode('execution_denied'));
+        db.prepare('UPDATE agent_projects SET deleted=0 WHERE project=? AND agent=?').run(project, agent);
+        const completed = await runtime.completeTask(taskId, actionId);
+        db.prepare('UPDATE agent_projects SET deleted=1 WHERE project=? AND agent=?').run(project, agent);
+        await assert.rejects(runtime.completeTask(taskId, actionId), protocolCode('execution_denied'));
+        assert.equal(db.prepare('SELECT state,revision FROM tasks WHERE id=?').get(taskId)!.revision, completed.data.revision);
+        assert.equal(db.prepare('SELECT reply FROM turns WHERE id=?').get(taskId)!.reply, 'Saved answer');
+      }
+      else if (scenario === 'setup') {
+        await assert.rejects(runtime.completeTask(taskId, actionId), protocolCode('setup_incomplete'));
+        await run({ revision: 1, name: 'Research partner', instructions: 'Cite evidence' }, true);
+        await assert.rejects(runtime.completeTask(taskId, actionId), protocolCode('outcome_unresolved'));
+        await runtime.completeTask(taskId, await run({ text: 'Profile saved' }));
+        assert.equal(db.prepare('SELECT status FROM turns WHERE id=?').get(taskId)!.status, 'done');
+      } else {
+        const latest = await run({ text: 'Latest answer' }); await assert.rejects(runtime.completeTask(taskId, actionId), protocolCode('outcome_unresolved'));
+        db.exec("CREATE TRIGGER fail_completion BEFORE UPDATE OF reply ON turns BEGIN SELECT RAISE(ABORT,'completion write failed'); END");
+        await assert.rejects(runtime.completeTask(taskId, latest));
+        assert.equal(db.prepare('SELECT count(*) n FROM receipts WHERE scope=?').get(`tasks:complete:${taskId}`)!.n, 0);
+        assert.equal(db.prepare('SELECT state FROM tasks WHERE id=?').get(taskId)!.state, 'running');
+        db.exec('DROP TRIGGER fail_completion'); await runtime.completeTask(taskId, latest);
+        assert.equal(db.prepare('SELECT reply FROM turns WHERE id=?').get(taskId)!.reply, 'Latest answer');
+      }
+    } finally { db.close(); }
+  } finally { await runtime.close(); await f.close(); }
+});
+
 test('canonical listener rejects a second server on the same database and releases lock on close', async () => {
   const f=await fixture();let duplicate:Awaited<ReturnType<typeof startCanonicalApp>>|undefined;
   try {
