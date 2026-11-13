@@ -17,6 +17,7 @@ import { prepareRestoreBootstrap, issueRestoreSession, restoreWorkspace, workspa
 import { canonicalJson, ProtocolError, digestCommand, sha256 } from './protocol.ts';
 import { parseOwnership } from './task-recovery.ts';
 import { createRoutineRuntime } from './routine-runtime.ts';
+import { routineWebhookKeyring } from './routine-webhook-keyring.ts';
 import sharp from 'sharp';
 import { saveSkill } from './skills.ts';
 import { initializeSites, saveSite } from './sites.ts';
@@ -403,8 +404,12 @@ async function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-device-http-')), keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const auth: AuthConfig = { secretKey: 'sk_test_fixture', publishableKey: `pk_test_${Buffer.from('fixture.clerk.accounts.dev$').toString('base64')}`, issuer: 'https://fixture.clerk.accounts.dev', origin: 'http://127.0.0.1', development: true };
   const clerk = createClerkClient({ secretKey: auth.secretKey, publishableKey: auth.publishableKey, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), telemetry: { disabled: true } });
-  const syncSecret = randomBytes(32);
-  const options = { database: join(dir, 'canonical.sqlite'), auth, clerk, syncKey: () => syncSecret };
+  const syncSecret = randomBytes(32), webhookKeys = memoryKeys(), webhookFault = { read: false, write: false };
+  const routineWebhookKeys = routineWebhookKeyring(randomUUID(), (service, name) => {
+    const entry = webhookKeys.entry(service, name);
+    return { getPassword: () => webhookFault.read ? null : entry.getPassword(), setPassword: value => { if (webhookFault.write) throw new Error('Key write failed'); entry.setPassword(value); } };
+  });
+  const options = { database: join(dir, 'canonical.sqlite'), auth, clerk, syncKey: () => syncSecret, routineWebhookKeys };
   let app = await startCanonicalApp(options); auth.origin = app.origin;
   const jwt = (subject = 'user_owner') => {
     const now = Math.floor(Date.now() / 1000), header = Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'fixture', typ: 'JWT' })).toString('base64url'), claims = Buffer.from(JSON.stringify({ iss: auth.issuer, sub: subject, sid: `sess_${subject}`, azp: auth.origin, exp: now + 300, nbf: now - 1, iat: now - 1 })).toString('base64url');
@@ -414,7 +419,7 @@ async function fixture() {
     const response = await fetch(app.origin + path, { method, headers: { Authorization: `Bearer ${jwt(subject)}`, Origin: auth.origin, Connection: 'close', 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': body?.requestId ?? randomUUID() }, ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
   };
-  return { dir, jwt, send, origin: () => app.origin, startAgain: (database=options.database,port=0) => startCanonicalApp({...options,database,port}), async restart() { const port = new URL(app.origin).port; await app.close(); app = await startCanonicalApp({ ...options, port: Number(port) }); }, async restoreFrom(backup:string){
+  return { dir, jwt, send, webhookKeys, webhookFault, origin: () => app.origin, startAgain: (database=options.database,port=0) => startCanonicalApp({...options,database,port}), async restart() { const port = new URL(app.origin).port; await app.close(); app = await startCanonicalApp({ ...options, port: Number(port) }); }, async restoreFrom(backup:string){
     const port=Number(new URL(app.origin).port);await app.close();renameSync(options.database,options.database+'.unavailable');
     restoreWorkspace(backup,options.database,{canonicalOnly:true});
     const restored=new DatabaseSync(options.database);
@@ -3482,4 +3487,159 @@ test('canonical routine reads and edits isolate project configuration and recove
     const edit=await run('set_routine_flow',{id:routine,revision:2,links:[]},true);assert.deepEqual(edit,{graph,revision:3});
     const final=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{assert.equal(final.prepare('SELECT revision FROM routine_flows WHERE routine=?').get(routine)!.revision,4);assert.equal(final.prepare('SELECT count(*) n FROM task_results WHERE task=?').get(taskId)!.n,4);}finally{final.close();}
   }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}
+});
+
+async function routineWebhookFixture() {
+  const f = await workflowConfigurationFixture(), routine = randomUUID(), path = `/api/projects/${f.project}/routines/${routine}`;
+  const configuration = { requestId: routine, id: routine, revision: 0, name: 'Webhook', prompt: 'PRIVATE_WEBHOOK_PROMPT', nextAt: Date.now() + 600000, intervalSeconds: 300, enabled: true, trigger: 'webhook' };
+  try {
+    assert.equal((await f.send(`/api/projects/${f.project}/agents/${f.agent}/routines`, configuration)).status, 201);
+    const create = { requestId: randomUUID(), revision: 0, rotate: true, filters: [{ pointer: '/count', equals: 4 }] };
+    const hook = await f.send(path + '/webhook', create); assert.equal(hook.status, 201, JSON.stringify(hook.body));
+    const event = async (secret = hook.body.data.secret, eventId = 'fixture.event', body: string | Uint8Array = '{"event":"ready","payload":{"count":4}}', time = String(Math.floor(Date.now() / 1000)), extra: Record<string,string> = {}, route = path + '/webhook-events') => {
+      const headers = { Connection: 'close', 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': eventId, 'X-Briefsip-Signature': createHmac('sha256', secret).update(`${time}\n${eventId}\n`).update(body).digest('hex'), ...extra };
+      const response = await fetch(f.origin() + route, { method: 'POST', headers, body: typeof body === 'string' ? body : new Uint8Array(body) });
+      return { status: response.status, body: await response.json() };
+    };
+    return { ...f, routine, path, configuration, create, hook: hook.body, event };
+  } catch (error) { await f.close(); throw error; }
+}
+
+test('canonical routine webhook admits once offline and recovers lost response restart edits and rotation', async () => {
+  const f = await routineWebhookFixture(), db = new DatabaseSync(join(f.dir, 'canonical.sqlite')), originalFetch = globalThis.fetch;
+  const other = openDeviceRuntime({ database: join(f.dir, 'webhook-other.sqlite'), server: f.origin(), development: true, entry: f.keys.entry });
+  let calls = 0;
+  try {
+    const secret = f.hook.data.secret, binding = randomUUID(), owner = (await f.send('/api/session')).body.data.accountId;
+    assert.equal(f.webhookKeys.values.size, 1); assert([...f.webhookKeys.values.keys()][0].includes('/routine-webhooks/'));
+    assert.equal(secret.length, 43); assert.deepEqual((await f.send(f.path + '/webhook', f.create)).body, f.hook);
+    db.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','webhook-fixture','Fixture','ready',1)").run(binding, f.home.id, owner);
+    db.prepare('UPDATE agent_authority SET provider_binding=?,revision=revision+1 WHERE agent=?').run(binding, f.agent);
+    await other.enroll(f.jwt()); const otherConnection = other.connect(); await until(() => otherConnection.state().phase === 'connected');
+    const before = (await f.send(f.path)).body.data, syncPath = '/api/sync?projectId=' + f.project, cursor = (await f.send(syncPath)).body.data.nextCursor;
+    globalThis.fetch = async (url, init) => {
+      const response = await originalFetch(url, init);
+      if (String(url).endsWith(f.path + '/webhook-events')) { assert.equal(response.status, 202, await response.clone().text()); await response.body?.cancel(); throw new Error('Lost webhook response'); }
+      return response;
+    };
+    await assert.rejects(f.event(), /Lost webhook response/); globalThis.fetch = originalFetch;
+    const replay = await f.event(); assert.equal(replay.status, 200, JSON.stringify(replay.body));
+    const accepted = replay.body, task = accepted.data.taskId;
+    assert.equal(accepted.data.outcome, 'queued'); assert.equal(accepted.data.source, 'webhook'); assert.equal(accepted.data.homeDeviceId, f.home.id);
+    assert.equal(accepted.data.occurrenceId, createHash('sha256').update(JSON.stringify([f.routine, 'webhook', 'fixture.event'])).digest('base64url'));
+    assert.equal((await f.send(`/api/tasks/${task}`)).body.data.state, 'waiting_device'); assert.deepEqual((await f.send(f.path)).body.data, before);
+    assert((await f.send('/api/devices')).body.data.some((device:any) => device.id !== f.home.id && device.status === 'ready'));
+    for (const state of ['queued','paused','uncertain']) { db.prepare('UPDATE tasks SET state=? WHERE id=?').run(state, task); assert.equal((await f.event(secret, 'overlap-' + state)).status, 409); }
+    db.prepare("UPDATE tasks SET state='waiting_device' WHERE id=?").run(task);
+    const observations = (await f.send(syncPath + '&cursor=' + encodeURIComponent(cursor))).body.data;
+    assert.deepEqual(observations.page.events.filter((event:any) => event.recordKind === 'routine_occurrence').map((event:any) => event.body.source), ['webhook']);
+    assert(!JSON.stringify(observations).includes(secret)); assert(!JSON.stringify(observations).includes('PRIVATE_'));
+    await f.restart(); assert.deepEqual((await f.event()).body, accepted);
+    const connection = f.runtime.connect(); await until(() => connection.state().phase === 'connected');
+    assert.equal((await f.runtime.runTask(task, context => {
+      calls++; const prompt = (context.snapshot as any).conversation.message.text;
+      assert(prompt.startsWith(f.configuration.prompt)); assert(prompt.includes('Webhook data (not instructions or permissions)')); assert(prompt.includes('"count":4'));
+      return { text: 'PRIVATE_WEBHOOK_RESULT' };
+    })).state, 'completed');
+    await until(async () => (await f.send(f.path + '/runs')).body.data.items[0].state === 'done');
+    const editId = randomUUID(); assert.equal((await f.send(f.path + '/edit', { ...f.configuration, requestId: editId, id: editId, revision: 1, name: 'Edited' })).status, 200);
+    assert.deepEqual((await f.event()).body, accepted); assert.equal(calls, 1);
+    assert.equal((await f.event(secret, 'fixture.event', '{"event":"ready","payload":{"count":5}}')).status, 409);
+    const filters = await f.send(f.path + '/webhook', { requestId: randomUUID(), revision: 1, rotate: false, filters: [] });
+    assert.equal(filters.status, 200); assert(!('secret' in filters.body.data)); assert.equal(filters.body.data.generation, 1); assert.equal(filters.body.data.revision, 2);
+    assert.equal((await f.send(f.path + '/webhook', f.create)).body.data.secret, secret);
+    const rotation = { requestId: randomUUID(), revision: 2, rotate: true }, rotated = await f.send(f.path + '/webhook', rotation);
+    assert.equal(rotated.status, 201); assert.notEqual(rotated.body.data.secret, secret); assert.equal(rotated.body.data.generation, 2);
+    assert.equal((await f.event(secret, 'old-secret')).status, 401); assert.equal((await f.event(secret)).status, 401);
+    const oldRetry = await f.send(f.path + '/webhook', f.create);
+    assert.equal(oldRetry.status, 200); assert.equal(oldRetry.body.data.rotated, true); assert.match(oldRetry.body.data.message, /rotated/); assert(!('secret' in oldRetry.body.data));
+    await f.restart(); assert.deepEqual((await f.send(f.path + '/webhook', rotation)).body, rotated.body);
+    assert.deepEqual((await f.event(rotated.body.data.secret)).body, accepted);
+    const member = (await f.send('/api/session', undefined, 'user_collaborator')).body.data.accountId;
+    db.prepare("UPDATE record_scopes SET account=?,visibility='owner' WHERE table_name='routine_occurrences'").run(member);
+    assert.equal((await f.send(f.path + '/webhook')).body.data.receipts.length, 0); assert.equal((await f.event(rotated.body.data.secret)).status, 403);
+    db.prepare("UPDATE record_scopes SET visibility='project' WHERE table_name='routine_occurrences'").run();
+    assert.equal(db.prepare('SELECT count(*) n FROM routine_occurrences').get()!.n, 1); assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+  } finally { globalThis.fetch = originalFetch; db.close(); await other.close(); await f.close(); }
+});
+
+test('canonical routine webhook rejects invalid deliveries and records ignored receipts across filter changes', async () => {
+  const f = await routineWebhookFixture(), db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  try {
+    const secret = f.hook.data.secret, body = '{"event":"ready","payload":{"count":4}}', time = String(Math.floor(Date.now() / 1000));
+    for (const header of ['X-Briefsip-Time','X-Briefsip-Id','X-Briefsip-Signature']) assert.equal((await f.event(secret, 'bad', body, time, { [header]: '' })).status, 401);
+    assert.equal((await f.event(secret, 'bad', body, time, { 'X-Briefsip-Signature': '0'.repeat(64) })).status, 401);
+    for (const offset of [-301,301]) assert.equal((await f.event(secret, 'expired', body, String(Number(time) + offset))).status, 401);
+    assert.equal((await f.event(secret, 'large', ' '.repeat(65537))).status, 413);
+    assert.equal((await f.event(secret, 'json', '{')).status, 400); assert.equal((await f.event(secret, 'utf8', Buffer.from([0xff]))).status, 400);
+    assert.equal((await f.event(secret, 'content', body, time, { 'Content-Type': 'text/plain' })).status, 415);
+    assert.equal((await f.event(secret, 'origin', body, time, { Origin: f.origin() })).status, 403);
+    assert.equal((await f.event(secret, 'selector', body, time, { 'X-Briefsip-Project': f.project })).status, 404);
+    const changed = '{"event":"ready","payload":{"count":5}}', ignored = await f.event(secret, 'ignored', changed);
+    assert.equal(ignored.status, 202); assert.equal(ignored.body.data.outcome, 'ignored'); assert.equal(db.prepare('SELECT count(*) n FROM routine_occurrences').get()!.n, 0);
+    assert.equal((await f.send(f.path + '/webhook')).body.data.receipts[0].outcome, 'ignored');
+    assert.equal((await f.send(f.path + '/webhook', { requestId: randomUUID(), revision: 1, rotate: false, filters: [] })).status, 200);
+    assert.deepEqual((await f.event(secret, 'ignored', changed)).body, ignored.body); assert.equal((await f.event(secret, 'ignored', body)).status, 409);
+    for (const [revision, enabled, trigger] of [[1, false, 'webhook'], [2, true, 'schedule']] as const) {
+      const requestId = randomUUID(); assert.equal((await f.send(f.path + '/edit', { ...f.configuration, requestId, id: requestId, revision, enabled, trigger })).status, 200);
+      assert.equal((await f.event(secret, 'inactive-' + revision)).status, 409); assert.equal((await f.send(f.path + '/webhook')).body.data.enabled, false);
+    }
+    assert.equal((await f.send(f.path + '/webhook', f.create)).body.data.secret, secret, 'Current-generation exact retry survives trigger edits');
+    assert.equal(db.prepare('SELECT count(*) n FROM routine_occurrences').get()!.n, 0); assert.equal(db.prepare('SELECT count(*) n FROM routine_webhook_receipts').get()!.n, 1);
+  } finally { db.close(); await f.close(); }
+});
+
+test('canonical routine webhook settings require current owner while assigned collaborator can edit', async () => {
+  const f = await routineWebhookFixture(), db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  try {
+    const member = (await f.send('/api/session', undefined, 'user_collaborator')).body.data.accountId, owner = (await f.send('/api/session')).body.data.accountId;
+    db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project, member); db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project, member, f.agent);
+    const editId = randomUUID(); assert.equal((await f.send(f.path + '/edit', { ...f.configuration, requestId: editId, id: editId, revision: 1 }, 'user_collaborator')).status, 200);
+    assert.equal((await f.send(f.path + '/webhook', undefined, 'user_collaborator')).status, 403);
+    for (const command of [f.create, { requestId: randomUUID(), revision: 1, rotate: true }]) assert.equal((await f.send(f.path + '/webhook', command, 'user_collaborator')).status, 403);
+    const foreign = f.path.replace(f.project, f.other);
+    assert.equal((await f.send(foreign + '/webhook')).status, 404); assert.equal((await f.send(foreign + '/webhook', { requestId: randomUUID(), revision: 1, rotate: true })).status, 404);
+    assert.equal((await f.event(f.hook.data.secret, 'foreign', undefined, undefined, {}, foreign + '/webhook-events')).status, 403);
+    for (const extra of [{ unexpected: true }, { rotate: 'yes' }, { revision: -1 }, { filters: [{}] }]) assert.equal((await f.send(f.path + '/webhook', { ...f.create, requestId: randomUUID(), ...extra })).status, 400);
+    const conflict = await f.send(f.path + '/webhook', { ...f.create, rotate: false }); assert.equal(conflict.status, 409); assert.equal(conflict.body.error.code, 'payload_conflict');
+    db.prepare('UPDATE project_members SET deleted=1,grant_revision=grant_revision+1 WHERE project=? AND account=?').run(f.project, owner);
+    assert.equal((await f.send(f.path + '/webhook')).status, 404); assert.equal((await f.send(f.path + '/webhook', f.create)).status, 404); assert.equal((await f.event()).status, 403);
+    db.prepare('UPDATE project_members SET deleted=0 WHERE project=? AND account=?').run(f.project, owner); db.prepare('UPDATE accounts SET blocked=1 WHERE id=?').run(owner);
+    assert.equal((await f.send(f.path + '/webhook')).status, 401); assert.equal((await f.event()).status, 403);
+    assert.equal(db.prepare('SELECT count(*) n FROM routine_occurrences').get()!.n, 0);
+  } finally { db.close(); await f.close(); }
+});
+
+test('canonical routine webhook keyring and DB failures leave no active reference or partial admission and exclude secrets', async () => {
+  const f = await routineWebhookFixture(), db = new DatabaseSync(join(f.dir, 'canonical.sqlite')), originalLog = console.log, logs: unknown[][] = [];
+  console.log = (...args: unknown[]) => { logs.push(args); };
+  try {
+    const row = db.prepare('SELECT * FROM routine_webhooks').get()!, rotate = { requestId: randomUUID(), revision: 1, rotate: true };
+    f.webhookFault.write = true; assert.equal((await f.send(f.path + '/webhook', rotate)).status, 503); f.webhookFault.write = false;
+    f.webhookFault.read = true; assert.equal((await f.send(f.path + '/webhook', rotate)).status, 503); f.webhookFault.read = false;
+    assert.deepEqual(db.prepare('SELECT * FROM routine_webhooks').get(), row); assert.equal(db.prepare('SELECT 1 FROM receipts WHERE request_id=?').get(rotate.requestId), undefined);
+    const newRoutine = randomUUID(), detail = `/api/projects/${f.project}/routines/${newRoutine}`;
+    assert.equal((await f.send(`/api/projects/${f.project}/agents/${f.agent}/routines`, { ...f.configuration, requestId: newRoutine, id: newRoutine })).status, 201);
+    const create = { requestId: randomUUID(), revision: 0, rotate: true };
+    f.webhookFault.read = true; assert.equal((await f.send(detail + '/webhook', create)).status, 503); f.webhookFault.read = false;
+    assert.equal(db.prepare('SELECT 1 FROM routine_webhooks WHERE routine=?').get(newRoutine), undefined); assert.equal((await f.send(detail + '/webhook')).body.data.generation, 0);
+    db.exec("CREATE TRIGGER fail_webhook_command BEFORE INSERT ON receipts WHEN NEW.scope LIKE 'retained:%/webhook' BEGIN SELECT RAISE(ABORT,'webhook DB failure'); END");
+    assert.equal((await f.send(detail + '/webhook', create)).status, 500); assert.equal(db.prepare('SELECT 1 FROM routine_webhooks WHERE routine=?').get(newRoutine), undefined);
+    assert.equal((await f.send(f.path + '/webhook', rotate)).status, 500); assert.deepEqual(db.prepare('SELECT * FROM routine_webhooks WHERE routine=?').get(f.routine), row);
+    db.exec('DROP TRIGGER fail_webhook_command');
+    for (const failure of ["CREATE TRIGGER fail_webhook_event BEFORE INSERT ON routine_webhook_receipts BEGIN SELECT RAISE(ABORT,'event failure'); END", "CREATE TRIGGER fail_webhook_event BEFORE INSERT ON sync_events WHEN NEW.record_kind='routine_occurrence' BEGIN SELECT RAISE(ABORT,'event failure'); END"]) {
+      const tables = ['receipts','tasks','turns','threads','record_scopes','sync_events','routine_occurrences','routine_steps'], counts = tables.map(table => db.prepare(`SELECT count(*) n FROM ${table}`).get()!.n);
+      db.exec(failure); assert.equal((await f.event()).status, 500); db.exec('DROP TRIGGER fail_webhook_event');
+      assert.deepEqual(tables.map(table => db.prepare(`SELECT count(*) n FROM ${table}`).get()!.n), counts); assert.equal(db.prepare('SELECT count(*) n FROM routine_webhook_receipts').get()!.n, 0);
+    }
+    assert.equal((await f.event()).status, 202);
+    const reads = [(await f.send(f.path)).body, (await f.send(f.path + '/webhook')).body, (await f.send(f.path + '/runs')).body, (await f.send('/api/sync?projectId=' + f.project)).body], snapshot = await workspaceSnapshot(db);
+    try { for (const value of f.webhookKeys.values.values()) assert(!readFileSync(snapshot.file).includes(Buffer.from(value))); } finally { snapshot.cleanup(); }
+    for (const value of f.webhookKeys.values.values()) {
+      assert(!JSON.stringify([reads, logs]).includes(value)); assert(!readFileSync(join(f.dir, 'canonical.sqlite')).includes(Buffer.from(value)));
+      for (const table of db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'").all()) assert(!JSON.stringify(db.prepare(`SELECT * FROM "${table.name}"`).all()).includes(value), String(table.name));
+    }
+    assert.equal((await f.send(f.path + '/webhook', f.create)).body.data.secret, f.hook.data.secret); assert.equal((await f.send(detail + '/webhook', create)).status, 201);
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+  } finally { console.log = originalLog; db.close(); await f.close(); }
 });
