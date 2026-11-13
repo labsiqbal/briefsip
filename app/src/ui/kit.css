@@ -198,7 +198,7 @@ button.k-row__main:disabled { cursor: default; }
 .k-link { padding: 0; font: inherit; color: var(--color-brand-text); text-decoration: underline; text-underline-offset: 2px; }
 .k-dialog__foot-start { margin-right: auto; }
 .k-legacy-block { display: flex; flex-direction: column; gap: 4px; padding-top: 6px; border-top: 0.5px solid var(--color-border-tertiary); }
-.k-collapsible__content[hidden] { display: none; }
+.k-collapsible__content[data-state='closed'] { display: none; }
 
 /* ---------- checkbox, tabs, table, code ---------- */
 .k-check { display: flex; align-items: flex-start; gap: 10px; }
