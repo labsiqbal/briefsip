@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight, Ellipsis, Plug, Plus, RefreshCw } from 'lucide-react';
+import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, useConfirm } from './ui/kit';
 type Connection = { id: string; name: string; url: string; hasToken: boolean; enabled: number; revision: number };
 type Tool = { name: string; title?: string; description?: string; inputSchema: unknown; _meta?: Record<string, unknown> };
 const label = (tool: Tool) => `${tool._meta?.['briefsip.kind'] === 'resource-template' ? 'Resource template: ' : tool._meta?.['briefsip.kind'] === 'resource' ? 'Resource: ' : tool._meta?.['briefsip.kind'] === 'prompt' ? 'Prompt: ' : 'Tool: '}${tool.title && tool.title !== tool.name && !tool._meta?.['briefsip.kind'] ? `${tool.title} (${tool.name})` : tool.title ?? tool.name}`;
@@ -12,7 +14,7 @@ function restore(raw: string | null): Command | null {
   if (!value || typeof value.path !== 'string' || !new RegExp(`^/api/(mcp(?:/${uuid})?|agents/${uuid}/mcp/${uuid})$`, 'i').test(value.path) || !value.body || typeof value.body !== 'object' || !new RegExp(`^${uuid}$`, 'i').test(value.body.id) || Object.keys(value.body).some(key => !['id', 'test', 'revision', 'enabled', 'connectionRevision', 'tools'].includes(key))) throw new Error('MCP recovery data is invalid.');
   return value;
 }
-export function McpPanel({ agents, request, onClose }: { agents: { id: string; name: string }[]; request: <T>(path: string, body?: unknown) => Promise<T>; onClose: () => void }) {
+export function McpPanel({ agents, request }: { agents: { id: string; name: string }[]; request: <T>(path: string, body?: unknown) => Promise<T>; onClose: () => void }) {
   const [recovery] = useState(() => { try { return { command: restore(sessionStorage.getItem(storage)), invalid: false }; } catch { return { command: null, invalid: true }; } });
   const [pending, setPending] = useState(recovery.command), [invalid, setInvalid] = useState(recovery.invalid);
   const [page, setPage] = useState<{ items: Connection[]; next_after: string | null } | null>(null), [cursors, setCursors] = useState(['']);
@@ -22,6 +24,8 @@ export function McpPanel({ agents, request, onClose }: { agents: { id: string; n
   const [tested, setTested] = useState<{ id: string; tools: Tool[]; expires: number } | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [refresh, setRefresh] = useState(0);
   const generation = useRef(0), reads = useRef(0), flight = useRef(false), heading = useRef<HTMLHeadingElement>(null);
+  const [showForm, setShowForm] = useState(false);
+  const confirm = useConfirm();
   const locked = busy || !!pending || invalid, after = cursors.at(-1)!;
   useEffect(() => { heading.current?.focus(); return () => { generation.current++; }; }, []);
   useEffect(() => { heading.current?.focus(); }, [after, selected]);
@@ -33,7 +37,7 @@ export function McpPanel({ agents, request, onClose }: { agents: { id: string; n
   async function reload() {
     if (busy || flight.current) return;
     if (!editing || pending || invalid) { setRefresh(value => value + 1); return; }
-    if (!window.confirm('Load the latest connection revision for this draft? The entered name and token stay saved, but old test results are discarded. Test again before saving.')) return;
+    if (!await confirm({ title: 'Load the latest connection revision for this draft?', description: 'The entered name and token stay saved, but old test results are discarded. Test again before saving.', confirm: 'Reload' })) return;
     const current = generation.current; flight.current = true; setBusy(true); setError(''); setTested(null);
     try { const latest = await request<Detail>(`/api/mcp/${editing.id}`); if (current === generation.current) { setEditing(latest); setRefresh(value => value + 1); } }
     catch (error) { if (current === generation.current) setError(error instanceof Error ? error.message : 'Connection could not reload.'); }
@@ -55,30 +59,81 @@ export function McpPanel({ agents, request, onClose }: { agents: { id: string; n
       if (current !== generation.current) return;
       if (sessionStorage.getItem(storage) === JSON.stringify(command)) sessionStorage.removeItem(storage);
       setPending(null);
-      if (command.body.test && (editing ? command.path === `/api/mcp/${editing.id}` : command.path === '/api/mcp')) { setTested(null); setEditing(null); setRotate(false); setToken(''); setName(''); setUrl(''); }
+      if (command.body.test && (editing ? command.path === `/api/mcp/${editing.id}` : command.path === '/api/mcp')) { setTested(null); setEditing(null); setRotate(false); setToken(''); setName(''); setUrl(''); setShowForm(false); }
       else if (editing && command.path === `/api/mcp/${editing.id}`) setTested(null);
       setRefresh(value => value + 1); heading.current?.focus();
     } catch (error) { if (current === generation.current) setError(error instanceof Error ? error.message : 'Changes are not confirmed yet. Try again.'); }
     finally { flight.current = false; if (current === generation.current) setBusy(false); }
   }
-  return <section className="setup workflow-panel"><h1 ref={heading} tabIndex={-1}>MCP connections</h1>
-    <p>Connect external services, then choose which tools, resources, and prompts each agent may use in private conversations. Tools can change data in the target service. Resources and prompts are read as reference data; binary content is not forwarded yet.</p>
-    <div className="form-actions"><button className="secondary" onClick={onClose}>Back to conversation</button><button className="secondary" disabled={busy} onClick={() => void reload()}>Reload connections</button></div>
-    {error && <p role="alert" className="error">{error}</p>}{invalid && <p role="alert">MCP recovery data could not be read.</p>}{pending && <p className="notice">Changes are not confirmed yet. <button disabled={busy} onClick={() => void execute(pending)}>Retry change</button></p>}
-    {(pending || invalid) && <button className="secondary" disabled={busy} onClick={() => { if (!window.confirm('Ignore the saved request? Changes may already have succeeded. Check the list after it reloads.')) return; try { sessionStorage.removeItem(storage); setPending(null); setInvalid(false); setRefresh(value => value + 1); } catch { setError('Browser storage could not be updated.'); } }}>Ignore recovery</button>}
-    <form onSubmit={event => { event.preventDefault(); void test(); }}><fieldset disabled={locked}><legend>{editing ? `Update ${editing.name}` : 'New connection'}</legend>
-      <label>Name<input required maxLength={80} value={name} onChange={event => { setName(event.target.value); setTested(null); }} /></label>
-      <label>Streamable HTTP URL<input required readOnly={!!editing} type="url" maxLength={2000} value={url} onChange={event => { setUrl(event.target.value); setTested(null); }} /></label>
-      {editing && <label className="member-option"><input type="checkbox" checked={rotate} onChange={event => { setRotate(event.target.checked); setToken(''); setTested(null); }} />Replace saved token</label>}
-      {(!editing || rotate) && <label>Bearer token, if required<input type="password" autoComplete="off" maxLength={4096} value={token} onChange={event => { setToken(event.target.value); setTested(null); }} /></label>}
-      <p className="muted">Tokens are stored encrypted on this host. Saved URLs cannot be changed. OAuth is not available yet.</p>
-      {editing && <p>Updating refreshes the catalog and revokes all access permissions for this connection. Select permissions again after saving. The old token is used unless Replace saved token is selected; an empty token removes authentication.</p>}<button>Test connection</button>
-      {editing && <button type="button" className="secondary" onClick={() => { setEditing(null); setRotate(false); setName(''); setUrl(''); setToken(''); setTested(null); }}>Cancel update</button>}
-      {tested && <><p role="status">Test passed. {tested.tools.length} items found. Test results are valid for 10 minutes.</p><ul className="routine-list">{tested.tools.map(tool => <li key={tool.name}><strong>{label(tool)}</strong><p>{tool.description}</p></li>)}</ul><button type="button" onClick={() => { if (editing && !window.confirm('Save the tested catalog and token, revoke all access permissions, and stop active MCP calls for this connection? External effects that have already occurred cannot be undone.')) return; void execute({ path: editing ? `/api/mcp/${editing.id}` : '/api/mcp', body: { id: crypto.randomUUID(), test: tested.id, ...(editing ? { revision: editing.revision } : {}) } }); }}>{editing ? 'Save tested update' : 'Save tested connection'}</button></>}
-    </fieldset></form>
-    <h2>Saved connections</h2>{!page ? !error && <p role="status">Loading connection...</p> : page.items.length ? <ul className="routine-list">{page.items.map(row => <li key={row.id}><strong>{row.name}</strong><p>{row.url}</p><p>{row.enabled ? 'Active' : 'Inactive'} · {row.hasToken ? 'Token saved' : 'No token'}</p><button className="secondary" disabled={locked} onClick={() => { if ((name || url || token) && !window.confirm('Discard the current connection draft and open this connection?')) return; generation.current++; setEditing(row); setName(row.name); setUrl(row.url); setToken(''); setRotate(false); setTested(null); heading.current?.focus(); }}>Update {row.name}</button><button className="secondary" disabled={locked || !agent} onClick={() => { generation.current++; reads.current++; setDetail(null); setSelected(row.id); setRefresh(value => value + 1); }}>Manage permissions for {row.name}</button><button className="secondary" disabled={locked} onClick={() => void execute({ path: `/api/mcp/${row.id}`, body: { id: crypto.randomUUID(), revision: row.revision, enabled: !row.enabled } })}>{row.enabled ? 'Disable' : 'Enable'} {row.name}</button></li>)}</ul> : <p>No connections on this page yet.</p>}
-    <div className="form-actions"><button className="secondary" disabled={locked || cursors.length < 2} onClick={() => { generation.current++; setCursors(value => value.slice(0, -1)); }}>Previous</button><button className="secondary" disabled={locked || !page?.next_after} onClick={() => { generation.current++; setCursors(value => [...value, page!.next_after!]); }}>Next</button></div>
-    <label>Agent<select value={agent} disabled={locked} onChange={event => { generation.current++; reads.current++; setDetail(null); setAgent(event.target.value); }}>{agents.map(item => <option key={item.id} value={item.id}>{item.name.length > 24 ? item.name.slice(0, 21) + '...' : item.name}</option>)}</select><span className="flow-selected-name muted">{agents.find(item => item.id === agent)?.name}</span></label>
-    {detail && <form onSubmit={event => { event.preventDefault(); if (!locked && window.confirm('Allow selected access for this agent? Effects in external services may still occur after the task is canceled.')) void execute({ path: `/api/agents/${agent}/mcp/${detail.id}`, body: { id: crypto.randomUUID(), revision: detail.grant.revision, connectionRevision: detail.revision, tools } }); }}><fieldset disabled={locked}><legend>Permissions for {detail.name}</legend><p>Catalog updates revoke all access permissions; select permissions again afterward. Inactive connections cannot be called.</p>{detail.tools.map(tool => <div key={tool.name}><label className="member-option"><input type="checkbox" aria-describedby={tool._meta?.['briefsip.kind'] === 'resource-template' ? `template-scope-${tool.name}` : undefined} checked={tools.includes(tool.name)} onChange={event => setTools(value => event.target.checked ? [...value, tool.name] : value.filter(name => name !== tool.name))} />{label(tool)}</label><p>{tool.description}</p>{tool._meta?.['briefsip.kind'] === 'resource-template' && <p id={`template-scope-${tool.name}`} className="notice">Permissions cover all URIs this template can form, including parameter values chosen by the agent. The target server still controls access to its data.</p>}{typeof tool._meta?.['briefsip.target'] === 'string' && <p className="flow-selected-name">{tool._meta['briefsip.target']}</p>}<details><summary>Parameter {label(tool)}</summary><pre className="skill-file-content" tabIndex={0} role="region" aria-label={`Parameter ${label(tool)}`}>{JSON.stringify(tool.inputSchema, null, 2)}</pre></details></div>)}<button>Save access permissions</button></fieldset></form>}
-  </section>;
+  const ignoreRecovery = <Button size="sm" disabled={busy} onClick={async () => { if (!await confirm({ title: 'Ignore the saved request?', description: 'Changes may already have succeeded. Check the list after it reloads.', confirm: 'Ignore' })) return; try { sessionStorage.removeItem(storage); setPending(null); setInvalid(false); setRefresh(value => value + 1); } catch { setError('Browser storage could not be updated.'); } }}>Ignore recovery</Button>;
+  const recoveryNotice = <>
+    {invalid && <Alert tone="error" title="MCP recovery data could not be read." actions={!pending && ignoreRecovery} />}
+    {pending && <Alert tone="warn" title="Changes are not confirmed yet" actions={<><Button size="sm" variant="primary" disabled={busy} onClick={() => void execute(pending)}>Retry change</Button>{ignoreRecovery}</>}>Retry sends the same saved request.</Alert>}
+  </>;
+  const host = (value: string) => { try { return new URL(value).host; } catch { return value; } };
+  return <div className="k-page bs-root">
+    <PageHeader headingRef={heading} title="MCP connections" description="Connect external services, then choose which tools, resources, and prompts each agent may use in private conversations."
+      actions={<><IconButton label="Reload" disabled={busy} onClick={() => void reload()}><RefreshCw size={15} aria-hidden /></IconButton><Button variant="primary" icon={<Plus size={14} aria-hidden />} disabled={locked} onClick={() => setShowForm(true)}>{editing ? 'Continue update' : 'Add connection'}</Button></>} />
+    <Alert>Tools can change data in the target service. Resources and prompts are read as reference data; binary content is not forwarded yet.</Alert>
+    {error && <Alert tone="error">{error}</Alert>}
+    {recoveryNotice}
+
+    <Section id="mcp-connections" title="Connections">
+      {!page ? !error && <><span className="sr-only" role="status">Loading connections...</span><SkeletonRows /></> : page.items.length ? <Card>{page.items.map(row => <Row key={row.id} title={row.name} leading={<Plug size={16} aria-hidden />}
+        meta={<><span title={row.url}>{host(row.url)}</span><Badge tone={row.enabled ? 'success' : 'neutral'}>{row.enabled ? 'Active' : 'Inactive'}</Badge><span>{row.hasToken ? 'Token saved' : 'No token'}</span></>}
+        trailing={<ActionMenu label={`Menu ${row.name}`} trigger={<button type="button" className="k-icon-btn" aria-label={`Menu ${row.name}`} disabled={locked}><Ellipsis size={16} aria-hidden /></button>} items={[
+          { label: `Update ${row.name}`, onSelect: async () => { if ((name || url || token) && !await confirm({ title: 'Discard the current connection draft and open this connection?', confirm: 'Discard draft', danger: true })) return; generation.current++; setEditing(row); setName(row.name); setUrl(row.url); setToken(''); setRotate(false); setTested(null); heading.current?.focus(); setShowForm(true); } },
+          { label: `Manage permissions for ${row.name}`, disabled: !agent, onSelect: () => { generation.current++; reads.current++; setDetail(null); setSelected(row.id); setRefresh(value => value + 1); } },
+          'separator',
+          { label: `${row.enabled ? 'Disable' : 'Enable'} ${row.name}`, onSelect: () => void execute({ path: `/api/mcp/${row.id}`, body: { id: crypto.randomUUID(), revision: row.revision, enabled: !row.enabled } }) },
+        ]} />} />)}</Card> : <EmptyState icon={<Plug size={18} />} title="No connections on this page yet." />}
+      {(cursors.length > 1 || page?.next_after) && <div className="k-pager">
+        <IconButton label="Previous connections" disabled={locked || cursors.length < 2} onClick={() => { generation.current++; setCursors(value => value.slice(0, -1)); }}><ChevronLeft size={16} aria-hidden /></IconButton>
+        <IconButton label="Next connections" disabled={locked || !page?.next_after} onClick={() => { generation.current++; setCursors(value => [...value, page!.next_after!]); }}><ChevronRight size={16} aria-hidden /></IconButton>
+      </div>}
+    </Section>
+
+    <Section id="mcp-agent-access" title="Agent access" actions={<Select size="sm" label="Agent" value={agent} disabled={locked} onChange={value => { generation.current++; reads.current++; setDetail(null); setAgent(value); }} options={agents.map(item => ({ value: item.id, label: item.name.length > 24 ? item.name.slice(0, 21) + '...' : item.name }))} />}>
+      <span className="k-field__hint" style={{ overflowWrap: 'anywhere' }}>{agents.find(item => item.id === agent)?.name}</span>
+      {detail ? <form onSubmit={async event => { event.preventDefault(); if (!locked && await confirm({ title: 'Allow selected access for this agent?', description: 'Effects in external services may still occur after the task is canceled.', confirm: 'Save access permissions' })) void execute({ path: `/api/agents/${agent}/mcp/${detail.id}`, body: { id: crypto.randomUUID(), revision: detail.grant.revision, connectionRevision: detail.revision, tools } }); }}>
+        <fieldset disabled={locked} className="k-fieldset" style={{ padding: 0, border: 0, background: 'none' }}><legend className="k-field__label">Permissions for {detail.name}</legend>
+          <Alert>Catalog updates revoke all access permissions; select permissions again afterward. Inactive connections cannot be called.</Alert>
+          <Card>{detail.tools.map(tool => <div key={tool.name}>
+            <Row title={tool._meta?.['briefsip.kind'] === 'resource-template' ? <label className="k-check__label"><input type="checkbox" aria-describedby={`template-scope-${tool.name}`} checked={tools.includes(tool.name)} onChange={event => setTools(value => event.target.checked ? [...value, tool.name] : value.filter(name => name !== tool.name))} />{label(tool)}</label> : label(tool)}
+              meta={tool.description} trailing={tool._meta?.['briefsip.kind'] !== 'resource-template' && <Switch checked={tools.includes(tool.name)} disabled={locked} label={label(tool)} onChange={checked => setTools(value => checked ? [...value, tool.name] : value.filter(name => name !== tool.name))} />} />
+            <div className="k-fieldset" style={{ padding: '0 10px 10px' }}>
+              {tool._meta?.['briefsip.kind'] === 'resource-template' && <div id={`template-scope-${tool.name}`}><Alert tone="warn">Permissions cover all URIs this template can form, including parameter values chosen by the agent. The target server still controls access to its data.</Alert></div>}
+              {typeof tool._meta?.['briefsip.target'] === 'string' && <span className="k-field__hint" style={{ overflowWrap: 'anywhere' }}>{tool._meta['briefsip.target']}</span>}
+              <details><summary className="k-field__hint">Parameter {label(tool)}</summary><CodeBlock label={`Parameter ${label(tool)}`}>{JSON.stringify(tool.inputSchema, null, 2)}</CodeBlock></details>
+            </div>
+          </div>)}</Card>
+          <Button type="submit" disabled={locked}>Save access permissions</Button>
+        </fieldset>
+      </form> : !selected || !agent ? <EmptyState icon={<Plug size={18} />} title={!agent ? 'No agents yet' : 'Select a connection'}>{!agent ? 'Create an agent to manage access.' : 'Choose Manage permissions from a connection menu.'}</EmptyState> : !error && <><span className="sr-only" role="status">Loading permissions...</span><SkeletonRows /></>}
+    </Section>
+
+    <Dialog open={showForm} size="lg" onOpenChange={setShowForm} title={editing ? `Update ${editing.name}` : 'New connection'}
+      footer={<>
+        {editing && <Button className="k-dialog__foot-start" disabled={locked} onClick={() => { setEditing(null); setRotate(false); setName(''); setUrl(''); setToken(''); setTested(null); }}>Cancel update</Button>}
+        <Button type="submit" form="mcp-connection" disabled={locked} busy={busy}>Test connection</Button>
+        {tested && <Button variant="primary" disabled={locked} onClick={async () => { if (editing && !await confirm({ title: 'Save the tested catalog and token, revoke all access permissions, and stop active MCP calls for this connection?', description: 'External effects that have already occurred cannot be undone.', confirm: 'Save tested update', danger: true })) return; void execute({ path: editing ? `/api/mcp/${editing.id}` : '/api/mcp', body: { id: crypto.randomUUID(), test: tested.id, ...(editing ? { revision: editing.revision } : {}) } }); }}>{editing ? 'Save tested update' : 'Save tested connection'}</Button>}
+      </>}>
+      {error && <Alert tone="error">{error}</Alert>}
+      <form id="mcp-connection" onSubmit={event => { event.preventDefault(); void test(); }}>
+        {recoveryNotice}
+        <fieldset disabled={locked} className="k-fieldset" style={{ padding: 0, border: 0, background: 'none' }}>
+          <Field label="Name"><Input required maxLength={80} value={name} onChange={event => { setName(event.target.value); setTested(null); }} /></Field>
+          <Field label="Streamable HTTP URL"><Input required readOnly={!!editing} type="url" maxLength={2000} value={url} onChange={event => { setUrl(event.target.value); setTested(null); }} /></Field>
+          {editing && <Checkbox checked={rotate} label="Replace saved token" onChange={checked => { setRotate(checked); setToken(''); setTested(null); }} />}
+          {(!editing || rotate) && <Field label="Bearer token" optional><Input type="password" autoComplete="off" maxLength={4096} value={token} onChange={event => { setToken(event.target.value); setTested(null); }} /></Field>}
+          <Alert>Tokens are stored encrypted on this host. Saved URLs cannot be changed. OAuth is not available yet. Testing makes a real request to the service.</Alert>
+          {editing && <Alert tone="warn">Updating refreshes the catalog and revokes all access permissions for this connection. Select permissions again after saving. The old token is used unless Replace saved token is selected; an empty token removes authentication.</Alert>}
+          {tested && <>
+            <Alert title="Test passed">{tested.tools.length} items found. Test results are valid for 10 minutes.</Alert>
+            <Card>{tested.tools.map(tool => <Row key={tool.name} title={label(tool)} meta={tool.description} />)}</Card>
+          </>}
+        </fieldset>
+      </form>
+    </Dialog>
+  </div>;
 }
