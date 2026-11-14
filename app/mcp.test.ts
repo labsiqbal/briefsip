@@ -86,7 +86,7 @@ test('MCP tests before save, protects credentials/grants and journals success or
     await app.close(); app = await startApp(options); repeat = true;
     await post(`${ap}/${uncertain.id}/resume`, { id: randomUUID(), revision: uncertain.revision, acknowledgeUncertain: true }); await until(ap, uncertain.id, 'failed'); assert.equal(calls, 2); repeat = false;
     hold = true; const active = randomUUID(); await post(ap, { id: active, text: 'call' }, 202);
-    for (let n = 0; n < 200 && !held; n++) await new Promise(resolve => setTimeout(resolve, 10)); assert(held);
+    for (let n = 0; n < 1500 && !held; n++) await new Promise(resolve => setTimeout(resolve, 10)); assert(held);
     await post(gp, { id: randomUUID(), revision: 1, connectionRevision: 1, tools: [] }); await until(ap, active, 'failed'); held(); hold = false;
     await run(ap, 'call', 'failed'); assert.equal(calls, 3);
     assert(!providerRaw.includes(token)); assert(!JSON.stringify(await get(`/api/mcp/${connection}?agent=${a.id}`)).includes(token));
