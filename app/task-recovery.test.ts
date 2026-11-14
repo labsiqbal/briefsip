@@ -121,6 +121,37 @@ async function canonicalTaskTools(tools=['ask_user']) {
   return {...f,start,stage};
 }
 
+test('canonical channel context names current visible members and lead across edits', async () => {
+  const f = await fixture(), peer = randomUUID(), channel = randomUUID();
+  try {
+    await f.access.createAgent(f.owner, { requestId: peer, id: peer, name: 'Right Hand', model: 'fixture', backupModel: '', instructions: 'Help.', threadLimit: 2, projectId: f.project, homeDeviceId: f.home, expectedProjectRevision: 1, expectedHomeDeviceRevision: 1, providerBinding: null });
+    f.db.prepare("INSERT INTO channels(id,name,instructions,lead) VALUES (?,'Owner team','Discuss channel work.',?)").run(channel, peer);
+    for (const agent of [f.agent, peer]) f.db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel, agent);
+    f.db.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(JSON.stringify([channel]), f.owner.accountId, f.project, channel);
+    function snapshot(routing: 'assigned' | 'automatic' = 'assigned') {
+      const agent = routing === 'automatic' ? peer : f.agent;
+      const command = f.command({ agentId: agent, payload: { v: 1, kind: 'channel', channelId: channel, routing, message: { text: 'Describe this channel.', files: [] } }, expectedRevisions: { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1, channel: Number(f.db.prepare('SELECT revision FROM channels WHERE id=?').get(channel)!.revision) } });
+      f.tasks.admit(f.owner, command);
+      const taskId = command.requestId, token = randomBytes(32).toString('base64url');
+      const acquired = f.tasks.acquire(f.principal, { requestId: randomUUID(), taskId, previousExecutorGeneration: 0, executorTokenHash: sha256(token), lockProof: { bootId: randomUUID(), processId: 1234, processStart: '999', lockId: randomUUID(), previousOwnerStopped: true, reconciledThrough: 0, journalDigest: sha256('journal') } }, token);
+      const context = f.tasks.context(f.principal, taskId, { requestId: randomUUID(), ownership: parseOwnership(acquired.data.ownership), expectedTaskRevision: acquired.receipt.recordRevision }, token);
+      return (context.data.snapshot as { conversation: { channel?: unknown } }).conversation.channel;
+    }
+    const expected = { name: 'Owner team', instructions: 'Discuss channel work.', members: ['Agent', 'Right Hand'], lead: 'Right Hand' };
+    assert.deepEqual(snapshot('automatic'), expected);
+    assert.deepEqual(snapshot(), expected);
+    f.db.prepare('UPDATE channels SET lead=?,revision=revision+1 WHERE id=?').run(f.agent, channel);
+    assert.deepEqual(snapshot(), { ...expected, lead: 'Agent' });
+    f.db.prepare('UPDATE channels SET lead=?,revision=revision+1 WHERE id=?').run(peer, channel);
+    f.db.exec('CREATE TABLE IF NOT EXISTS agent_visibility(agent TEXT PRIMARY KEY,hidden INTEGER,revision INTEGER)');
+    f.db.prepare('INSERT INTO agent_visibility VALUES (?,1,1)').run(peer);
+    assert.deepEqual(snapshot(), { ...expected, members: ['Agent'], lead: 'No lead' });
+    f.db.prepare('DELETE FROM channel_members WHERE channel=? AND agent=?').run(channel, peer);
+    f.db.prepare('UPDATE channels SET lead=NULL,revision=revision+1 WHERE id=?').run(channel);
+    assert.deepEqual(snapshot(), { ...expected, members: ['Agent'], lead: 'No lead' });
+  } finally { f.close(); }
+});
+
 async function routineTaskTools() {
   const f=await canonicalTaskTools(['no_update','report_failure']);
   initializeRoutineConfigurations(f.db);
