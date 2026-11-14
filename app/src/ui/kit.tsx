@@ -1,5 +1,5 @@
 // Briefsip component kit: Radix primitives for behavior, Bot HQ tokens for the look (see kit.css).
-import { createContext, forwardRef, useCallback, useContext, useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type Ref, type TextareaHTMLAttributes } from 'react';
+import { createContext, forwardRef, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type Ref, type TextareaHTMLAttributes } from 'react';
 import { AlertDialog, Checkbox as RadixCheckbox, Collapsible as RadixCollapsible, Dialog as RadixDialog, DropdownMenu, Popover, Select as RadixSelect, Switch as RadixSwitch, Tabs as RadixTabs, Tooltip as RadixTooltip } from 'radix-ui';
 import { AlertTriangle, Check, ChevronDown, ChevronRight, CircleAlert, Info, X } from 'lucide-react';
 import { getNonce } from 'get-nonce';
@@ -192,10 +192,13 @@ export function ActionMenu({ trigger, items, align = 'end', label }: { trigger: 
 
 // ---------- dialogs ----------
 export function Dialog({ open, onOpenChange, title, description, children, footer, size = 'md' }: { open: boolean; onOpenChange: (open: boolean) => void; title: ReactNode; description?: ReactNode; children: ReactNode; footer?: ReactNode; size?: 'md' | 'lg' }) {
+  // Dialogs open from code, not from a Radix trigger: remember the opener before focus moves in and return to it on close.
+  const opener = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => { if (open) opener.current = document.activeElement instanceof HTMLElement && !document.activeElement.closest('.k-dialog') ? document.activeElement : opener.current ?? null; }, [open]);
   return <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
     <RadixDialog.Portal>
       <RadixDialog.Overlay className="k-overlay" />
-      <RadixDialog.Content className={cx('k-dialog', `k-dialog--${size}`)} onOpenAutoFocus={event => {
+      <RadixDialog.Content className={cx('k-dialog', `k-dialog--${size}`)} onCloseAutoFocus={event => { const target = opener.current; opener.current = null; if (target?.isConnected) { event.preventDefault(); target.focus(); } }} onOpenAutoFocus={event => {
         const body = (event.currentTarget as HTMLElement).querySelector('.k-dialog__body');
         const first = body?.querySelector<HTMLElement>(':is(input:not([type=hidden]):not([type=number]), textarea):not([readonly]):not(:disabled)') ?? body?.querySelector<HTMLElement>('button:not(:disabled), [tabindex="0"]');
         if (first) { event.preventDefault(); first.focus(); }
@@ -216,18 +219,20 @@ const ConfirmCtx = createContext<((request: Omit<ConfirmRequest, 'resolve'>) => 
 /** Promise-based confirmation that replaces window.confirm with an accessible alert dialog. */
 export function ConfirmProvider({ children }: { children: ReactNode }) {
   const [request, setRequest] = useState<ConfirmRequest | null>(null);
-  const ask = useCallback((next: Omit<ConfirmRequest, 'resolve'>) => new Promise<boolean>(resolve => setRequest({ ...next, resolve })), []);
+  // Confirms open from code, not from a Radix trigger, so remember where focus was and return it on close.
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const ask = useCallback((next: Omit<ConfirmRequest, 'resolve'>) => new Promise<boolean>(resolve => { returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setRequest({ ...next, resolve }); }), []);
   const settle = (ok: boolean) => { request?.resolve(ok); setRequest(null); };
   return <ConfirmCtx.Provider value={ask}>
     {children}
     <AlertDialog.Root open={!!request} onOpenChange={open => { if (!open) settle(false); }}>
       <AlertDialog.Portal>
         <AlertDialog.Overlay className="k-overlay" />
-        <AlertDialog.Content className="k-dialog k-dialog--sm">
+        <AlertDialog.Content className="k-dialog k-dialog--sm" onCloseAutoFocus={event => { const target = returnFocus.current; returnFocus.current = null; if (target?.isConnected) { event.preventDefault(); target.focus(); } }}>
           <div className="k-dialog__head"><div><AlertDialog.Title className="k-dialog__title">{request?.title}</AlertDialog.Title>{request?.description ? <AlertDialog.Description className="k-dialog__desc">{request.description}</AlertDialog.Description> : <AlertDialog.Description className="sr-only">{request?.title}</AlertDialog.Description>}</div></div>
           <div className="k-dialog__foot">
             <AlertDialog.Cancel asChild><Button>Cancel</Button></AlertDialog.Cancel>
-            <AlertDialog.Action asChild><Button variant={request?.danger ? 'danger' : 'primary'} onClick={() => settle(true)}>{request?.confirm ?? 'Resume'}</Button></AlertDialog.Action>
+            <AlertDialog.Action asChild><Button variant={request?.danger ? 'danger' : 'primary'} onClick={() => settle(true)}>{request?.confirm ?? 'Continue'}</Button></AlertDialog.Action>
           </div>
         </AlertDialog.Content>
       </AlertDialog.Portal>
