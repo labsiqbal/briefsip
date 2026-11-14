@@ -94,7 +94,7 @@ test('live backup restores history while holding pending work and disabling auto
     const data = await response.json(); assert(response.ok, JSON.stringify(data)); return data;
   }
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Backup', model: 'fixture', instructions: 'Help.' });
+    const agent = await request('/api/agents', { id: randomUUID(), name: 'Backup', role: 'Personal agent', model: 'fixture', instructions: 'Help.' });
     await app.close();
     const seed = new DatabaseSync(options.database);
     seed.prepare('INSERT INTO routines(id,agent,name,prompt,next_at,enabled,revision) VALUES (?,?,?,?,?,1,1)').run(randomUUID(), agent.id, 'Future', 'Help', Date.now() + 3600000);
@@ -127,6 +127,7 @@ test('live backup restores history while holding pending work and disabling auto
     assert.equal(db.prepare('SELECT status FROM workflow_runs').get()!.status, 'failed');
     assert.equal(db.prepare('SELECT paused FROM turns WHERE id=?').get(turn)!.paused, 1); db.close();
     restored = await startApp({ ...options, database: destination });
+    assert.equal((await (await fetch(restored.origin + '/api/agents')).json()).agents[0].role, 'Personal agent');
     const turns = await (await fetch(restored.origin + `/api/agents/${agent.id}/turns`)).json();
     assert.equal(turns[0].text, 'Pending provider result'); assert.equal(turns[0].status, 'interrupted');
     await new Promise(resolve => setTimeout(resolve, 1100)); assert.equal(calls, 1);

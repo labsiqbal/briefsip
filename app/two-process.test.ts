@@ -2364,7 +2364,7 @@ test('home execution loop saves setup tools, pauses for answers and continues wi
       calls++;
       if (calls === 1) return { toolCall: { id: 'question', function: { name: 'ask_user', arguments: JSON.stringify({ question: 'Research or writing?', choices: ['Research', 'Writing'] }) } } };
       assert.match(JSON.stringify(context.snapshot.conversation), /Research/);
-      if (calls === 2) return { toolCall: { id: 'profile', function: { name: 'edit_profile', arguments: JSON.stringify({ revision: 1, name: 'Researcher', instructions: 'Research carefully' }) } } };
+      if (calls === 2) return { toolCall: { id: 'profile', function: { name: 'edit_profile', arguments: JSON.stringify({ revision: 1, name: 'Researcher', role: 'Research agent', instructions: 'Research carefully' }) } } };
       assert.equal((context.snapshot.profile as { name: string }).name, 'Loop agent');
       assert.match(JSON.stringify(context.snapshot.toolJournal), /Researcher/);
       return { text: 'Research profile saved' };
@@ -2374,7 +2374,7 @@ test('home execution loop saves setup tools, pauses for answers and continues wi
     assert.equal((await f.send(`/api/tasks/${taskId}/questions/${paused.questions[0].id}/answer`, { requestId: randomUUID(), expectedRevision: paused.revision, text: 'Research' })).status, 200);
     assert.equal((await runtime.runTask(taskId, provider)).state, 'completed'); assert.equal(calls, 3);
     const detail = (await f.send(`/api/tasks/${taskId}`)).body.data; assert.equal(detail.results.length, 5);
-    assert.deepEqual(detail.results[3].content, { name: 'Researcher', instructions: 'Research carefully', revision: 2 });
+    assert.deepEqual(detail.results[3].content, { name: 'Researcher', role: 'Research agent', instructions: 'Research carefully', revision: 2 });
   } finally { await runtime.close(); await f.close(); }
 });
 
@@ -2415,7 +2415,7 @@ test('home execution loop survives SIGKILL across provider and tool results with
   const provider = createServer(async (req, res) => {
     let body = ''; for await (const chunk of req) body += chunk;
     const { snapshot } = JSON.parse(body); calls.set(snapshot.taskId, (calls.get(snapshot.taskId) ?? 0) + 1);
-    res.end(JSON.stringify(snapshot.toolJournal.some((row: { kind: string; result: { name?: string } }) => row.result?.name === 'Saved by loop') ? { text: 'Saved profile once' } : { toolCall: { id: 'profile', function: { name: 'edit_profile', arguments: JSON.stringify({ revision: 1, name: 'Saved by loop', instructions: 'Retain saved changes' }) } } }));
+    res.end(JSON.stringify(snapshot.toolJournal.some((row: { kind: string; result: { name?: string } }) => row.result?.name === 'Saved by loop') ? { text: 'Saved profile once' } : { toolCall: { id: 'profile', function: { name: 'edit_profile', arguments: JSON.stringify({ revision: 1, name: 'Saved by loop', role: 'Personal agent', instructions: 'Retain saved changes' }) } } }));
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve)); const address = provider.address(); if (!address || typeof address === 'string') throw new Error('Missing provider fixture address'); const providerOrigin = `http://127.0.0.1:${address.port}`;
   let child: ReturnType<typeof spawn> | undefined;
@@ -2436,7 +2436,7 @@ test('home execution loop survives SIGKILL across provider and tool results with
       }
       const detail = (await f.send(`/api/tasks/${taskId}`)).body.data;
       assert.equal(detail.results.length, checkpoint === 'provider-in-flight' ? 0 : 3);
-      if (checkpoint !== 'provider-in-flight') assert.deepEqual(detail.results[1].content, { name: 'Saved by loop', instructions: 'Retain saved changes', revision: 2 });
+      if (checkpoint !== 'provider-in-flight') assert.deepEqual(detail.results[1].content, { name: 'Saved by loop', role: 'Personal agent', instructions: 'Retain saved changes', revision: 2 });
     }
   } finally {
     if (child && child.exitCode === null && child.signalCode === null) { const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited; }
@@ -3367,7 +3367,7 @@ test('canonical agent directory isolates projects and recovers exact roster afte
     const changed=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{changed.prepare("UPDATE agents SET name='Later teammate',revision=revision+1 WHERE id=?").run(peer);changed.prepare('UPDATE agent_projects SET deleted=1,revision=revision+1 WHERE project=? AND agent=?').run(project,peer);}finally{changed.close();}
     await f.restart();await until(()=>connection.state().phase==='connected');await until(()=>runtime.recoveryStatus().results.some(row=>row.actionId===actionId&&row.state==='acknowledged'),15000);
     const detail=(await f.send(`/api/tasks/${taskId}`)).body.data;
-    assert.equal(detail.results.length,2);assert.deepEqual(detail.results[1].content,{agents:[{id:peer,name:'Original teammate',description:'Project teammate',status:'idle',queuedMessages:0}],next_after:null});
+    assert.equal(detail.results.length,2);assert.deepEqual(detail.results[1].content,{agents:[{id:peer,name:'Original teammate',role:'',description:'Project teammate',status:'idle',queuedMessages:0}],next_after:null});
     const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{assert.equal(db.prepare('SELECT count(*) n FROM task_results WHERE action=?').get(actionId)!.n,1);assert.equal(db.prepare('SELECT count(*) n FROM task_reports WHERE action=?').get(actionId)!.n,1);}finally{db.close();}
   }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}
 });
@@ -3488,7 +3488,7 @@ test('canonical profile edits recover exact result without replacing later edits
     await assert.rejects(runtime.executeAction(input,()=>assert.fail('Host effect')),/Lost profile edit result/);globalThis.fetch=originalFetch;
     const changed=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{changed.prepare("UPDATE agents SET name='Later edit',instructions='Later instructions',revision=revision+1 WHERE id=?").run(agent);}finally{changed.close();}
     await f.restart();await until(()=>connection.state().phase==='connected');await until(()=>runtime.recoveryStatus().results.some(row=>row.actionId===actionId&&row.state==='acknowledged'),15000);
-    const detail=(await f.send(`/api/tasks/${taskId}`)).body.data;assert.equal(detail.results.length,1);assert.deepEqual(detail.results[0].content,{name:'Edited',instructions:'Saved instructions',revision:2});
+    const detail=(await f.send(`/api/tasks/${taskId}`)).body.data;assert.equal(detail.results.length,1);assert.deepEqual(detail.results[0].content,{name:'Edited',role:'',instructions:'Saved instructions',revision:2});
     const continued=await runtime.taskContext(taskId,owned.ownership,detail.revision),continuedSources=continued.snapshot.sourceRevisions as {kind:string;revision:number}[];assert.deepEqual(continued.snapshot.profile,context.snapshot.profile);assert.equal(continuedSources.find(row=>row.kind==='agent')!.revision,3);
     const nextId=await admit(3),next=await runtime.startTask(nextId),fresh=await runtime.taskContext(nextId,next.ownership,next.revision),freshProfile=fresh.snapshot.profile as {instructions:string;name:string;revision:number};assert.equal(freshProfile.instructions,'Later instructions');assert.equal(freshProfile.name,'Later edit');assert.equal(freshProfile.revision,3);
   }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}

@@ -60,3 +60,27 @@ test('v4 sync migration preserves v3 record identities and rolls back conflictin
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
   } finally { db.close(); }
 });
+
+
+test('additive role migration preserves existing local and canonical databases and defaults empty', async () => {
+  const dir = mkdtempSync(join(process.cwd(), 'node_modules/.role-migration-')), database = join(dir, 'legacy.sqlite');
+  const db = new DatabaseSync(database), agent = randomUUID();
+  db.exec('CREATE TABLE agents(id TEXT PRIMARY KEY,name TEXT NOT NULL,model TEXT NOT NULL,instructions TEXT NOT NULL) STRICT');
+  db.prepare('INSERT INTO agents VALUES (?,?,?,?)').run(agent, 'Legacy', 'fixture', 'Preserve'); db.close();
+  let app: Awaited<ReturnType<typeof startApp>> | undefined;
+  try {
+    app = await startApp({ database });
+    const directory = await (await fetch(app.origin + '/api/agents')).json(); assert.equal(directory.agents[0].role, ''); assert.equal(directory.agents[0].instructions, 'Preserve');
+    await app.close(); app = undefined;
+    const canonical = new DatabaseSync(':memory:');
+    try {
+      initializeCanonicalSchema(canonical);
+      canonical.exec('ALTER TABLE agents DROP COLUMN role');
+      canonical.prepare('INSERT INTO agents(id,name,model,instructions) VALUES (?,?,?,?)').run(agent, 'Legacy', 'fixture', 'Preserve');
+      initializeCanonicalSchema(canonical); initializeCanonicalSchema(canonical);
+      assert.equal(canonical.prepare('SELECT role FROM agents').get()!.role, '');
+      const column = canonical.prepare('PRAGMA table_info(agents)').all().find(row => row.name === 'role')!;
+      assert.equal(column.notnull, 1); assert.equal(column.dflt_value, "''");
+    } finally { canonical.close(); }
+  } finally { await app?.close(); rmSync(dir, { recursive: true, force: true }); }
+});

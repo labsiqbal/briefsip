@@ -10,6 +10,7 @@ import { startApp } from './server.ts';
 import { machineOrigin } from './machines.ts';
 import { fakePeerTokenIssuer } from './machines.fixture.ts';
 
+const appVersion = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
 type App = Awaited<ReturnType<typeof startApp>>;
 async function call(app: { origin: string }, path: string, body?: unknown, status = 200, bearer?: string, browser = true): Promise<any> {
   const response = await fetch(app.origin + path, { method: body === undefined ? 'GET' : 'POST', headers: { ...(browser ? { Origin: app.origin } : {}), 'Content-Type': 'application/json', Connection: 'close', ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -49,9 +50,9 @@ test('two real instances pair mutually, expose scoped cached agents, survive res
     const initialA = await environment(a), initialB = await environment(b);
     assert.notEqual(initialA.id, initialB.id);
     const rename = { ...command(), name: 'Machine B' }; await call(b, '/api/environment', rename); await call(b, '/api/environment', rename); await call(b, '/api/environment', { ...rename, name: 'Other' }, 409);
-    const agentA = { id: randomUUID(), name: 'Alpha', model: 'fixture', instructions: 'Help.' }, agentB = { ...agentA, id: randomUUID(), name: 'Beta' };
+    const agentA = { id: randomUUID(), name: 'Alpha', role: 'Personal agent', model: 'fixture', instructions: 'Help.' }, agentB = { ...agentA, id: randomUUID(), name: 'Beta' };
     await call(a, '/api/agents', agentA, 201); await call(b, '/api/agents', agentB, 201);
-    const { result, code, request } = await pair(a, b); assert.equal(result.id, initialB.id); assert.equal(result.pairingState, 'paired'); assert.equal(result.status, 'online'); assert.equal(result.agentCount, 1); assert.equal(result.agents[0].name, 'Beta');
+    const { result, code, request } = await pair(a, b); assert.equal(result.id, initialB.id); assert.equal(result.pairingState, 'paired'); assert.equal(result.status, 'online'); assert.equal(result.agentCount, 1); assert.equal(result.agents[0].name, 'Beta'); assert.equal(result.agents[0].role, 'Personal agent');
     await call(a, '/api/machines', request); assert.equal(issuerA.issued.length, 1); assert.equal(issuerB.issued.length, 1);
     const back = (await list(b))[0]; assert.equal(back.id, initialA.id); assert.equal(back.agents[0].name, 'Alpha');
     assert.deepEqual((await call(b, '/api/peer/agents', undefined, 200, issuerB.issued[0], false)).agents, result.agents);
@@ -78,7 +79,7 @@ test('two real instances pair mutually, expose scoped cached agents, survive res
 test('pairing uses uniform invalid-code errors, strict bodies, one-time expiry, persisted rate limits, and browser-only owner writes', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-pairing-')); let clock = Date.now(); const issuer = fakePeerTokenIssuer(), options = { database: join(dir, 'db.sqlite'), peerTokenIssuer: issuer, machines: { now: () => clock } }; let app = await startApp(options);
   try {
-    const remote = { id: randomUUID(), name: 'Remote', version: '0.1.0', origin: 'http://127.0.0.1:12345' };
+    const remote = { id: randomUUID(), name: 'Remote', version: appVersion, origin: 'http://127.0.0.1:12345' };
     const redeem = (body: unknown, status = 400) => call(app, '/api/pairing/redeem', body, status, undefined, false);
     const made = await call(app, '/api/pairing-codes', command()); clock += 10 * 60_000 + 1;
     const wrong = await redeem({ code: '23456789ABCD', returnPairing: remote }); assert.deepEqual(await redeem({ code: made.code, returnPairing: remote }), wrong);
@@ -119,7 +120,7 @@ test('unpair removes first while remote is offline; missing wrapping key fails c
 
 test('background health reports version mismatch and never sends bearer to a changed identity or redirected descriptor', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-peer-health-')), issuer = fakePeerTokenIssuer(); const app = await startApp({ database: join(dir, 'db.sqlite'), peerTokenIssuer: issuer, machines: { healthIntervalMs: 50 } });
-  const version = (await environment(app)).version, id = randomUUID(), remoteToken = 'remote-peer-canary-1234567890123456', agent = { id: randomUUID(), name: 'Remote agent', model: 'fixture', status: 'idle' }; let mode = 'normal', origin = '', authorizedCalls = 0, issuedBack = '';
+  const version = (await environment(app)).version, id = randomUUID(), remoteToken = 'remote-peer-canary-1234567890123456', agent = { id: randomUUID(), name: 'Remote agent', role: 'Personal agent', model: 'fixture', status: 'idle' }; let mode = 'normal', origin = '', authorizedCalls = 0, issuedBack = '';
   const server = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const data = raw ? JSON.parse(raw) : {};
@@ -152,7 +153,7 @@ test('lost reciprocal acknowledgement retries encrypted pending credentials afte
   const server = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk; const data = raw ? JSON.parse(raw) : {};
     res.setHeader('Content-Type', 'application/json'); const send = (body: unknown) => res.end(JSON.stringify(body));
-    const environment = { id: peerId, name: 'Retry workstation', version: '0.1.0', origin };
+    const environment = { id: peerId, name: 'Retry workstation', version: appVersion, origin };
     if (req.url === '/api/pairing/redeem') return send({ environment, token });
     if (req.url === '/api/machines/reciprocal') { attempts++; if (!saved) { saved = data.token; return req.socket.destroy(); } assert.equal(data.token, saved); return send({ ok: true }); }
     if (req.url === '/api/environment') return send(environment);
@@ -172,8 +173,8 @@ test('default wiring issues pairing tokens from the Briefsip MCP token registry 
   const a = await startApp({ database: join(dir, 'a.sqlite') }), b = await startApp({ database: join(dir, 'b.sqlite') });
   try {
     await call(b, '/api/environment', { ...command(), name: 'Machine B' }); await call(a, '/api/environment', { ...command(), name: 'Machine A' });
-    await call(b, '/api/agents', { id: randomUUID(), name: 'Beta', model: 'fixture', instructions: 'Help.' }, 201);
-    const { result } = await pair(a, b); assert.equal(result.pairingState, 'paired'); assert.equal(result.status, 'online'); assert.equal(result.agents[0].name, 'Beta');
+    await call(b, '/api/agents', { id: randomUUID(), name: 'Beta', role: 'Personal agent', model: 'fixture', instructions: 'Help.' }, 201);
+    const { result } = await pair(a, b); assert.equal(result.pairingState, 'paired'); assert.equal(result.status, 'online'); assert.equal(result.agents[0].name, 'Beta'); assert.equal(result.agents[0].role, 'Personal agent');
     const tokensOnB = (await call(b, '/api/mcp-server/peer-tokens')).items; assert.equal(tokensOnB.length, 1); assert.equal(tokensOnB[0].name, 'Briefsip: Machine A'); assert.equal(tokensOnB[0].revoked, null);
     assert.deepEqual([...tokensOnB[0].scopes].sort(), ['agents:message', 'agents:read', 'history:read']);
     assert.equal((await call(a, '/api/mcp-server/peer-tokens')).items[0].name, 'Briefsip: Machine B');

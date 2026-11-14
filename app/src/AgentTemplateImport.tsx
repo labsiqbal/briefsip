@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { parseAgentTemplate, restoreTemplateImport, templateCommand, type AgentTemplate } from '../agent-template';
 import { Alert, Button, Card, CodeBlock, Field, Input, PageHeader, Section, Textarea, useConfirm } from './ui/kit';
 
-type Agent = { id: string; name: string; model: string; instructions: string; thread_limit: number; revision: number };
+type Agent = { id: string; name: string; role: string; model: string; instructions: string; thread_limit: number; revision: number };
 const storage = 'briefsip:agent-template-import';
 export function AgentTemplateImport({ request, onCreated }: { request: <T>(path: string, data?: unknown) => Promise<T>; onCreated: (agent: Agent) => void; onClose: () => void }) {
   const [recovery] = useState(() => { try { return { pending: restoreTemplateImport(sessionStorage.getItem(storage)), invalid: false }; } catch { return { pending: null, invalid: true }; } });
@@ -43,7 +43,7 @@ export function AgentTemplateImport({ request, onCreated }: { request: <T>(path:
     catch { setError('Browser storage could not be updated. Try again.'); }
   }
   return <div className="k-page bs-root">
-    <PageHeader headingRef={heading} title="Import agent template" description="Check the name, model, and instructions before creating a new agent. Templates do not grant tool permissions, change provider credential settings, or replace existing agents." />
+    <PageHeader headingRef={heading} title="Import agent template" description="Check the name, role, model, and instructions before creating a new agent. Templates do not grant tool permissions, change provider credential settings, or replace existing agents." />
     {error && <Alert tone="error">{error}</Alert>}
     {invalid ? <Alert tone="error" title="Import recovery data could not be read." actions={<Button size="sm" disabled={busy} onClick={() => void discard()}>Ignore import recovery</Button>} /> : <>
       <Section title="Template file"><input ref={fileInput} hidden type="file" accept=".json,application/json" disabled={!!pending || busy} onChange={event => void choose(event.target.files?.[0])} /><div><Button disabled={!!pending || busy} onClick={() => fileInput.current?.click()}>Choose file</Button></div>{busy && <p className="k-field__hint" role="status">Processing template...</p>}{pending && <Alert tone="warn" title="Creation is not confirmed yet">Retry with the same request to avoid duplicates.</Alert>}</Section>
@@ -55,6 +55,7 @@ export function AgentTemplateImport({ request, onCreated }: { request: <T>(path:
               <Button type="button" size="sm" variant="ghost" disabled={!draft.avatar} onClick={() => { if (draft.avatar) { const { avatar, ...profile } = draft; setDraft(profile); } }}>Omit avatar</Button>
             </div>
             <Field label="Name"><Input required maxLength={80} value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} /></Field>
+            <Field label="Role" optional hint="Shown under the agent's name, e.g. Orchestration agent"><Input maxLength={60} value={draft.role ?? ''} onChange={event => setDraft({ ...draft, role: event.target.value })} /></Field>
             <Field label="Model"><Input required maxLength={160} value={draft.model} onChange={event => setDraft({ ...draft, model: event.target.value })} /></Field>
             <Field label="Fallback model" optional><Input maxLength={160} value={draft.backupModel ?? ''} onChange={event => setDraft({ ...draft, backupModel: event.target.value })} /></Field>
             <p className="k-field__hint">Models use the provider configured on this computer. Model IDs from another computer may be unavailable.</p>

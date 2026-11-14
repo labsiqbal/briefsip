@@ -226,7 +226,7 @@ test('same agent keeps project-specific rules while response policies and assign
     const installation = randomUUID(), device = randomUUID(), agent = randomUUID(), account = randomUUID(), other = randomUUID();
     f.db.prepare('INSERT INTO installations VALUES (?,?,?,?,1,0,1,?)').run(installation, f.owner.accountId, 'fixture-public-key', 'fixture-thumbprint', Date.now());
     f.db.prepare("INSERT INTO devices VALUES (?,?,?,?,?,?,?,'{}',1,0,'offline','Asia/Jakarta',1,NULL,'[]',1)").run(device, installation, f.owner.accountId, 'fixture-public-key', 'fixture-encryption-key', 'fixture-signing-thumbprint', 'fixture-encryption-thumbprint');
-    f.db.prepare('INSERT INTO agents(id,name,model,instructions) VALUES (?,?,?,?)').run(agent, 'Shared profile', 'fixture', 'Private profile instructions');
+    f.db.prepare('INSERT INTO agents(id,name,role,model,instructions) VALUES (?,?,?,?,?)').run(agent, 'Shared profile', 'Personal agent', 'fixture', 'Private profile instructions');
     f.db.prepare('INSERT INTO agent_authority VALUES (?,?,?,NULL,1)').run(agent, f.owner.accountId, device);
     f.db.prepare("INSERT INTO record_scopes VALUES ('agents',?,?,?,'owner','agent',?)").run(JSON.stringify([agent]), f.owner.accountId, f.project, agent);
     f.access.createProject(f.owner, { requestId: randomUUID(), id: other, name: 'Other context' });
@@ -240,6 +240,7 @@ test('same agent keeps project-specific rules while response policies and assign
     assert.throws(() => f.sync.read(member, { projectId: f.project, cursor: beforeAssignment.nextCursor! }), errorCode('resync_required'));
     const assigned = f.sync.read(member, { projectId: f.project });
     assert.equal(assigned.page.events.find(event => event.recordKind === 'agent')!.body.rules, 'Project A rules');
+    assert.equal(assigned.page.events.find(event => event.recordKind === 'agent')!.body.role, 'Personal agent');
     assert(!JSON.stringify(assigned).includes('Project B rules')); assert(!JSON.stringify(assigned).includes('Private profile instructions'));
     f.access.setResponsePolicy(f.owner, f.project, agent, { requestId: randomUUID(), accountId: account, expectedRevision: 1, respond: false });
     const policy = f.sync.read(member, { projectId: f.project, cursor: assigned.nextCursor! });

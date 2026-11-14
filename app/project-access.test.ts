@@ -18,7 +18,7 @@ function fixture() {
   db.prepare('INSERT INTO projects VALUES (?,?,?,0,0,1)').run(project, owner.accountId, 'Fixture');
   db.prepare("INSERT INTO project_members VALUES (?,?,'owner',1,0)").run(project, owner.accountId);
   for (const a of [agent, secondAgent]) {
-    db.prepare('INSERT INTO agents VALUES (?,1)').run(a);
+    db.prepare('INSERT INTO agents(id,revision) VALUES (?,1)').run(a);
     db.prepare("INSERT INTO agent_projects VALUES (?,?,'','{\"v\":1,\"tools\":[],\"resources\":[]}',1,0)").run(project, a);
     db.prepare("INSERT INTO record_scopes VALUES ('agents',?,?,?,'project','agent',?)").run(JSON.stringify([a]), owner.accountId, project, a);
   }

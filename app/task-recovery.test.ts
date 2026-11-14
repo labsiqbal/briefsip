@@ -124,7 +124,7 @@ async function canonicalTaskTools(tools=['ask_user']) {
 test('canonical channel context names current visible members and lead across edits', async () => {
   const f = await fixture(), peer = randomUUID(), channel = randomUUID();
   try {
-    await f.access.createAgent(f.owner, { requestId: peer, id: peer, name: 'Right Hand', model: 'fixture', backupModel: '', instructions: 'Help.', threadLimit: 2, projectId: f.project, homeDeviceId: f.home, expectedProjectRevision: 1, expectedHomeDeviceRevision: 1, providerBinding: null });
+    await f.access.createAgent(f.owner, { requestId: peer, id: peer, name: 'Right Hand', role: 'Personal agent', model: 'fixture', backupModel: '', instructions: 'Help.', threadLimit: 2, projectId: f.project, homeDeviceId: f.home, expectedProjectRevision: 1, expectedHomeDeviceRevision: 1, providerBinding: null });
     f.db.prepare("INSERT INTO channels(id,name,instructions,lead) VALUES (?,'Owner team','Discuss channel work.',?)").run(channel, peer);
     for (const agent of [f.agent, peer]) f.db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel, agent);
     f.db.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(JSON.stringify([channel]), f.owner.accountId, f.project, channel);
@@ -137,7 +137,7 @@ test('canonical channel context names current visible members and lead across ed
       const context = f.tasks.context(f.principal, taskId, { requestId: randomUUID(), ownership: parseOwnership(acquired.data.ownership), expectedTaskRevision: acquired.receipt.recordRevision }, token);
       return (context.data.snapshot as { conversation: { channel?: unknown } }).conversation.channel;
     }
-    const expected = { name: 'Owner team', instructions: 'Discuss channel work.', members: ['Agent', 'Right Hand'], lead: 'Right Hand' };
+    const expected = { name: 'Owner team', instructions: 'Discuss channel work.', members: ['Agent', 'Right Hand - Personal agent'], lead: 'Right Hand - Personal agent' };
     assert.deepEqual(snapshot('automatic'), expected);
     assert.deepEqual(snapshot(), expected);
     f.db.prepare('UPDATE channels SET lead=?,revision=revision+1 WHERE id=?').run(f.agent, channel);
@@ -1318,7 +1318,7 @@ test('canonical setup restricts host actions and forced tools, and requires a co
       return f.tasks.contextMutations(f.principal,agent,{requestId:randomUUID(),actionId,ownership,toolCall,payloadDigest,expectedRevision},token).data.resultContent as Record<string,unknown>;
     };
     assert.equal(edit({revision:1,name:'Incomplete'}).status,400);assert.equal(edit({revision:1,instructions:'Incomplete'}).status,400);
-    assert.deepEqual(edit({revision:1,name:'Research partner',instructions:'Cite evidence'}),{name:'Research partner',instructions:'Cite evidence',revision:2});
+    assert.deepEqual(edit({revision:1,name:'Research partner',instructions:'Cite evidence'}),{name:'Research partner',role:'',instructions:'Cite evidence',revision:2});
   }finally{f.close();}
 });
 
@@ -1338,12 +1338,12 @@ for(const kind of ['direct','side'] as const) test(`canonical profile edit in ${
       f.tasks.prepare(f.principal,task.requestId,actionId,{requestId:randomUUID(),sequence,ownership,payloadDigest,actionKind:'canonical',contextSnapshotId:ref.snapshotId,contextDigest:ref.digest,grantRevision:1,expectedTaskRevision,journalSequence:sequence+1,intentDigest},token);f.tasks.commit(f.principal,task.requestId,actionId,{requestId:randomUUID(),ownership,intentDigest,expectedTaskRevision,journalSequence:sequence+1},token);sequence++;
       pending={requestId:randomUUID(),actionId,ownership,toolCall,payloadDigest,expectedRevision};return f.tasks.contextMutations(f.principal,task.requestId,pending,token).data.resultContent as Record<string,unknown>;
     };
-    assert.deepEqual(run({revision:1,name:'Renamed'}),{name:'Renamed',instructions:'Research',revision:2});
+    assert.deepEqual(run({revision:1,name:'Renamed',role:' Orchestration agent '}),{name:'Renamed',role:'Orchestration agent',instructions:'Research',revision:2});
     assert.deepEqual(run({revision:1,instructions:'Stale'}),{error:'Profile changed. Ask the user for guidance before changing it again.',status:409});
-    for(const args of [{revision:2},{revision:2,name:''},{revision:2,name:null},{revision:2,name:'x'.repeat(81)},{revision:2,instructions:'\u0000'},{revision:2,instructions:' '},{revision:2,instructions:'x'.repeat(8001)},...[0,-1,1.5,Number.MAX_SAFE_INTEGER].map(revision=>({revision,name:'No'}))])assert.equal(run(args).status,400);
-    assert.deepEqual(run({revision:2,instructions:'  Updated instructions  '}),{name:'Renamed',instructions:'Updated instructions',revision:3});
+    for(const args of [{revision:2},{revision:2,name:''},{revision:2,name:null},...[null,42,'x'.repeat(61),'bad\nrole','bad\u0085role','bad\u2028role'].map(role=>({revision:2,role})),{revision:2,name:'x'.repeat(81)},{revision:2,instructions:'\u0000'},{revision:2,instructions:' '},{revision:2,instructions:'x'.repeat(8001)},...[0,-1,1.5,Number.MAX_SAFE_INTEGER].map(revision=>({revision,name:'No'}))])assert.equal(run(args).status,400);
+    assert.deepEqual(run({revision:2,role:'',instructions:'  Updated instructions  '}),{name:'Renamed',role:'',instructions:'Updated instructions',revision:3});
     f.db.exec("CREATE TRIGGER fail_profile_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'fixture_result_fail'); END;");assert.throws(()=>run({revision:3,name:'Rolled back'}),/fixture_result_fail/);assert.equal(f.db.prepare('SELECT revision FROM agents WHERE id=?').get(f.agent)!.revision,3);f.db.exec('DROP TRIGGER fail_profile_result');
-    const recovered=f.tasks.contextMutations(f.principal,task.requestId,pending,token);assert.deepEqual(recovered.data.resultContent,{name:'Rolled back',instructions:'Updated instructions',revision:4});assert.deepEqual(f.tasks.contextMutations(f.principal,task.requestId,pending,token),recovered);
+    const recovered=f.tasks.contextMutations(f.principal,task.requestId,pending,token);assert.deepEqual(recovered.data.resultContent,{name:'Rolled back',role:'',instructions:'Updated instructions',revision:4});assert.deepEqual(f.tasks.contextMutations(f.principal,task.requestId,pending,token),recovered);
     for(const field of ['agentId','model','providerAccount','permissions','homeDeviceId']){
       const toolCall={id:randomUUID(),function:{name:'edit_profile',arguments:JSON.stringify({revision:4,name:'No',[field]:randomUUID()})}},expectedRevision=Number(f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(task.requestId)!.revision);assert.throws(()=>f.tasks.contextMutations(f.principal,task.requestId,{requestId:randomUUID(),actionId:randomUUID(),ownership,toolCall,expectedRevision,payloadDigest:canonicalToolDigest({toolCall,expectedRevision})},token),code('unknown_field'));
     }
@@ -1360,7 +1360,7 @@ test('canonical agent directory pages authorized teammates and scopes activity t
   try {
     const other=randomUUID();f.access.createProject(f.owner,{requestId:randomUUID(),id:other,name:'Other'});
     const add=async(project=f.project)=>{
-      const agent=randomUUID();await f.access.createAgent(f.owner,{requestId:agent,id:agent,name:'Peer',model:'fixture',backupModel:'',instructions:'x'.repeat(400),threadLimit:2,projectId:project,homeDeviceId:f.home,expectedProjectRevision:1,expectedHomeDeviceRevision:1,providerBinding:null});return agent;
+      const agent=randomUUID();await f.access.createAgent(f.owner,{requestId:agent,id:agent,name:'Peer',role:'Research agent',model:'fixture',backupModel:'',instructions:'x'.repeat(400),threadLimit:2,projectId:project,homeDeviceId:f.home,expectedProjectRevision:1,expectedHomeDeviceRevision:1,providerBinding:null});return agent;
     };
     const visible=(await Promise.all(Array.from({length:11},()=>add()))).sort(),hidden=await add(),deleted=await add(),foreign=await add(other),unowned=randomUUID();
     f.db.exec('CREATE TABLE IF NOT EXISTS agent_visibility(agent TEXT PRIMARY KEY,hidden INTEGER,revision INTEGER);');
@@ -1387,7 +1387,7 @@ test('canonical agent directory pages authorized teammates and scopes activity t
       const token=randomBytes(32).toString('base64url'),acquired=f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId,previousExecutorGeneration:0,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token);
       return {taskId,token,ownership:parseOwnership(acquired.data.ownership),sequence:0};
     };
-    type AgentPage={agents:{id:string;description:string;status:string;queuedMessages:number}[];next_after:string|null;status?:number};
+    type AgentPage={agents:{id:string;role:string;description:string;status:string;queuedMessages:number}[];next_after:string|null;status?:number};
     const run=(task:ReturnType<typeof start>,args:unknown={})=>{
       const expectedTaskRevision=Number(f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(task.taskId)!.revision),context=f.tasks.context(f.principal,task.taskId,{requestId:randomUUID(),ownership:task.ownership,expectedTaskRevision},task.token),ref=context.data.snapshotRef as {snapshotId:string;digest:string},actionId=randomUUID(),toolCall={id:actionId,function:{name:'list_agents',arguments:JSON.stringify(args)}},expectedRevision=expectedTaskRevision+1,payloadDigest=canonicalToolDigest({toolCall,expectedRevision}),sequence=task.sequence++;
       const intentDigest=digestCommand([task.taskId,actionId,sequence,task.ownership,payloadDigest,'canonical',ref.snapshotId,ref.digest,null,null,1,null,null,null]);
@@ -1396,7 +1396,7 @@ test('canonical agent directory pages authorized teammates and scopes activity t
       return f.tasks.contextMutations(f.principal,task.taskId,{requestId:randomUUID(),actionId,ownership:task.ownership,toolCall,payloadDigest,expectedRevision},task.token).data.resultContent as AgentPage;
     };
     const main=start(admit()),first=run(main);
-    assert.deepEqual(first.agents.map(row=>row.id),visible.slice(0,10));assert.equal(first.next_after,visible[9]);assert(first.agents.every(row=>row.description.length===300&&row.status==='idle'&&row.queuedMessages===0));
+    assert.deepEqual(first.agents.map(row=>row.id),visible.slice(0,10));assert.equal(first.next_after,visible[9]);assert(first.agents.every(row=>row.role==='Research agent'&&row.description.length===300&&row.status==='idle'&&row.queuedMessages===0));
     const second=run(main,{after:first.next_after});assert.deepEqual(second.agents.map(row=>row.id),visible.slice(10));assert.equal(second.next_after,null);
     for(const after of ['',null,42,'bad'])assert.equal(run(main,{after}).status,400);
     const peer=visible[0],side=start(admit(f.agent,f.member,f.project,'side')),room=start(admit(f.agent,f.member,f.project,'channel'));

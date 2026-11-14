@@ -22,6 +22,8 @@ test('teammate messages correlate groups, isolate context, persist receipts and 
     else if (body.model === 'alpha' && !results.length) output = tool('list_agents', {});
     else if (body.model === 'alpha' && results.at(-1)?.agents) {
       assert(results.at(-1).agents.every((agent: any) => agent.id !== sender));
+      assert.equal(results.at(-1).agents.find((agent: any) => agent.name === 'Beta').role, 'Personal agent');
+      assert.equal(results.at(-1).agents.find((agent: any) => agent.name === 'Beta').description, 'Help.');
       output = tool('send_message', { recipients: mode === 'self' ? [sender] : mode === 'duplicate' ? [targets[0], targets[0]] : targets, text: mode === 'loop' ? 'loop' : 'shared task', expects_reply: mode !== 'notify' });
     } else if (body.model === 'alpha') {
       if (failContinuation) { failContinuation = false; res.writeHead(503); res.end(); return; }
@@ -60,8 +62,8 @@ test('teammate messages correlate groups, isolate context, persist receipts and 
   };
   try {
     const alpha = await post('/api/agents', { id: randomUUID(), name: 'Alpha', model: 'alpha', instructions: 'Coordinate.' }, 201); sender = alpha.id;
-    const beta = await post('/api/agents', { id: randomUUID(), name: 'Beta', model: 'beta', instructions: 'Help.' }, 201);
-    const gamma = await post('/api/agents', { id: randomUUID(), name: 'Gamma', model: 'gamma', instructions: 'Help.' }, 201); targets = [beta.id, gamma.id];
+    const beta = await post('/api/agents', { id: randomUUID(), name: 'Beta', role: 'Personal agent', model: 'beta', instructions: 'Help.' }, 201);
+    const gamma = await post('/api/agents', { id: randomUUID(), name: 'Gamma', role: 'Research agent', model: 'gamma', instructions: 'Help.' }, 201); targets = [beta.id, gamma.id];
     const path = `/api/agents/${alpha.id}/turns`;
     // Recipient's main history must never enter a new delivery conversation.
     const prior = { id: randomUUID(), text: 'PRIVATE_MAIN_HISTORY' };

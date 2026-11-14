@@ -12,7 +12,7 @@ import { restoreAgentCreation } from './agent-create.ts';
 test('creation recovery keeps exact command and rejects malformed authority', () => {
   const command = { id: randomUUID(), name: 'Agent baru', model: 'fixture', backupModel: '', instructions: 'Help with research', threadLimit: 2, providerAccount: '', setup: true };
   assert.deepEqual(restoreAgentCreation(JSON.stringify(command)), command); assert.equal(restoreAgentCreation(null), null);
-  for (const value of [{ ...command, role: 'admin' }, { ...command, setup: 1 }, { ...command, id: 'bad' }, { ...command, threadLimit: 0 }, { ...command, instructions: '' }, { ...command, providerAccount: null }, { ...command, backupModel: 'fixture' }]) assert.throws(() => restoreAgentCreation(JSON.stringify(value)));
+  for (const value of [{ ...command, permissions: 'admin' }, { ...command, setup: 1 }, { ...command, id: 'bad' }, { ...command, threadLimit: 0 }, { ...command, instructions: '' }, { ...command, providerAccount: null }, { ...command, backupModel: 'fixture' }]) assert.throws(() => restoreAgentCreation(JSON.stringify(value)));
   assert.throws(() => restoreAgentCreation('x'.repeat(64001)));
 });
 
@@ -29,7 +29,7 @@ test('prompt creation atomically queues one restricted setup and recovers withou
     if (!result && mode !== 'no-save') {
       if (mode === 'escape') tool = { id: 'escape', type: 'function', function: { name: 'create_text_file', arguments: JSON.stringify({ name: 'no.txt', text: 'Forbidden' }) } };
       else if (mode === 'ask' && !JSON.stringify(body.messages).includes('Research')) tool = { id: 'question', type: 'function', function: { name: 'ask_user', arguments: JSON.stringify({ question: 'Which role?', choices: ['Research', 'Writing'] }) } };
-      else { edits++; tool = { id: 'profile', type: 'function', function: { name: 'edit_profile', arguments: JSON.stringify({ revision, name: 'Research partner', ...(mode === 'name-only' ? {} : { instructions: 'Compare sources and cite evidence.' }) }) } }; }
+      else { edits++; tool = { id: 'profile', type: 'function', function: { name: 'edit_profile', arguments: JSON.stringify({ revision, name: 'Research partner', role: 'Research agent', ...(mode === 'name-only' ? {} : { instructions: 'Compare sources and cite evidence.' }) }) } }; }
     }
     if (result && mode === 'hold') { continued = true; return; }
     res.end(JSON.stringify({ choices: [{ finish_reason: tool ? 'tool_calls' : 'stop', message: tool ? { tool_calls: [tool] } : { content: 'Profile setup checked.' } }] }));
@@ -46,7 +46,7 @@ test('prompt creation atomically queues one restricted setup and recovers withou
   async function until(id: string, status: string) { for (let n = 0; n < 300; n++) { const rows = await request(`/api/agents/${id}/turns`); if (status === 'waiting' ? rows[0]?.paused === 1 && rows[0]?.questions?.length : rows[0]?.status === status) return rows[0]; await new Promise(resolve => setTimeout(resolve, 10)); } assert.fail(`Missing ${status}`); }
   try {
     const input = command(); await request('/api/agents', input, 201); await until(input.id, 'done'); const before = calls;
-    assert.equal((await request('/api/agents', input)).name, 'Research partner'); assert.equal(calls, before); assert.equal((await request(`/api/agents/${input.id}/turns`)).length, 1); assert((await request(`/api/agents/${input.id}/turns`))[0].text.includes(input.instructions));
+    assert.equal((await request('/api/agents', input)).name, 'Research partner'); assert.equal((await request('/api/agents', input)).role, 'Research agent'); assert.equal(calls, before); assert.equal((await request(`/api/agents/${input.id}/turns`)).length, 1); assert((await request(`/api/agents/${input.id}/turns`))[0].text.includes(input.instructions));
     await request('/api/agents', { ...input, setup: false }, 409); await request('/api/agents', { ...input, instructions: 'Different' }, 409);
     const manual = { ...command(), setup: false }; await request('/api/agents', manual, 201); assert.equal((await request(`/api/agents/${manual.id}/turns`)).length, 0);
     const malformed = { ...command(), setup: 'yes' }; await request('/api/agents', malformed, 400);
@@ -125,7 +125,10 @@ test('canonical creation is owner/home scoped, offline-safe, exact and fully ato
     db.prepare("UPDATE devices SET status='blocked' WHERE id=?").run(home);
     await assert.rejects(access.createAgent(owner, f.command()), code('resource_not_found'));
     db.prepare("UPDATE devices SET status='offline' WHERE id=?").run(home);
-    const command = f.command(), result = await access.createAgent(owner, command);
+    const command = f.command({ role: ' Orchestration agent ' }), result = await access.createAgent(owner, command);
+    assert.equal(db.prepare('SELECT role FROM agents WHERE id=?').get(command.id)!.role, 'Orchestration agent');
+    await assert.rejects(access.createAgent(owner, { ...command, role: 'Personal agent' }), code('payload_conflict'));
+    await assert.rejects(access.createAgent(owner, f.command({ role: 'x'.repeat(61) })), code('invalid_agent'));
     assert.equal(result.status, 201); assert.equal(result.data.homeDeviceId, home);
     assert.equal(db.prepare('SELECT count(*) AS n FROM turns').get()!.n, 0);
     assert.deepEqual(JSON.parse(String(db.prepare('SELECT capabilities_json FROM agent_projects WHERE agent=?').get(command.id)!.capabilities_json)), { v: 1, tools: retainedToolNames, resources: [] });
@@ -233,4 +236,36 @@ test('second project participation and shared CAS isolate rules/capabilities and
     assert.throws(() => access.requireAgentExecution(member, second, command.id), code('execution_denied'));
     assert.equal(db.prepare('SELECT count(*) AS n FROM agent_authority').get()!.n, 1);
   } finally { f.close(); }
+});
+
+
+test('local role create/edit receipts preserve normalized profile, omissions and revision conflicts across restart', async () => {
+  const dir = mkdtempSync(join(process.cwd(), 'node_modules/.agent-role-'));
+  const options = { database: join(dir, 'state.sqlite') };
+  let app = await startApp(options);
+  async function request(path: string, body?: unknown, status = 200) {
+    const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    const data = await response.json(); assert.equal(response.status, status, JSON.stringify(data)); return data;
+  }
+  try {
+    const input = { id: randomUUID(), name: 'Odd name', role: '  Orchestration agent  ', model: 'fixture', instructions: 'Coordinate.' };
+    const created = await request('/api/agents', input, 201);
+    assert.equal(created.role, 'Orchestration agent');
+    assert.deepEqual(await request('/api/agents', input), created);
+    await request('/api/agents', { ...input, role: 'Personal agent' }, 409);
+    for (const role of [null, 1, 'x'.repeat(61), 'bad\nrole', 'bad\u0085role', 'bad\u2028role']) await request('/api/agents', { ...input, id: randomUUID(), role }, 400);
+    const path = `/api/agents/${created.id}/edit`, edit = { id: randomUUID(), revision: 1, name: created.name, role: 'x'.repeat(60), model: created.model, instructions: created.instructions };
+    const updated = await request(path, edit); assert.equal(updated.role, edit.role); assert.equal(updated.revision, 2);
+    assert.deepEqual(await request(path, edit), updated);
+    await request(path, { ...edit, role: 'Different' }, 409);
+    await request(path, { ...edit, id: randomUUID() }, 409);
+    for (const role of [null, 1, 'x'.repeat(61), 'bad\rrole']) await request(path, { ...edit, id: randomUUID(), revision: 2, role }, 400);
+    const { role, ...withoutRole } = edit;
+    const preserved = await request(path, { ...withoutRole, id: randomUUID(), revision: 2 }); assert.equal(preserved.role, edit.role);
+    const cleared = await request(path, { ...edit, id: randomUUID(), revision: 3, role: '   ' }); assert.equal(cleared.role, '');
+    await app.close(); app = await startApp(options);
+    assert.deepEqual(await request(path, edit), updated);
+    assert.equal((await request('/api/agents')).agents[0].role, '');
+    assert.equal((await request('/api/agents', input)).role, '');
+  } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });

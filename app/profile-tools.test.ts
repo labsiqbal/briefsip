@@ -41,13 +41,13 @@ test('profile tool preserves authority, revision conflicts, execution snapshot a
     const profile = async () => (await request('/api/agents')).agents.find((item: any) => item.id === agent.id);
     const side = await request(path + '/threads', { id: randomUUID(), name: 'Side' });
     const room = await request('/api/channels', { id: randomUUID(), name: 'Room', instructions: 'Help', members: [agent.id], lead: agent.id });
-    args = { revision: 1, name: 'Renamed', instructions: 'Updated instructions.' }; await run(path);
-    assert(advertised); assert.equal(result.revision, 2); assert.equal(result.name, 'Renamed');
+    args = { revision: 1, name: 'Renamed', role: ' Orchestration agent ', instructions: 'Updated instructions.' }; await run(path);
+    assert(advertised); assert.equal(result.revision, 2); assert.equal(result.name, 'Renamed'); assert.equal(result.role, 'Orchestration agent');
     assert(systems.slice(-2).every(text => text.startsWith('Original instructions.')));
     assert.equal((await profile()).instructions, 'Updated instructions.');
     answerOnly = true; await run(path); answerOnly = false; assert(systems.at(-1)!.startsWith('Updated instructions.'));
-    args = { revision: 2, name: 'Side name' }; await run(`/api/threads/${side.id}`); assert.equal(result.revision, 3); assert.equal((await profile()).instructions, 'Updated instructions.');
-    for (const bad of [{ revision: 2, name: 'stale' }, { revision: 3 }, { revision: 3, name: '' }, { revision: 3, instructions: 'x'.repeat(8001) }, { revision: 3, name: 'x', model: 'elsewhere' }, { revision: 3, name: 'x', providerAccount: 'secret' }, { revision: 3, name: 'x', agent: other.id }]) {
+    args = { revision: 2, role: '' }; await run(`/api/threads/${side.id}`); assert.equal(result.revision, 3); assert.equal((await profile()).role, ''); assert.equal((await profile()).instructions, 'Updated instructions.');
+    for (const bad of [{ revision: 2, name: 'stale' }, { revision: 3 }, { revision: 3, name: '' }, ...[null, 1, 'x'.repeat(61), 'bad\nrole', 'bad\u0085role', 'bad\u2028role'].map(role => ({ revision: 3, role })), { revision: 3, instructions: 'x'.repeat(8001) }, { revision: 3, name: 'x', model: 'elsewhere' }, { revision: 3, name: 'x', providerAccount: 'secret' }, { revision: 3, name: 'x', agent: other.id }]) {
       args = bad; await run(path); assert([400,409].includes(result.status)); assert.equal((await profile()).revision, 3);
     }
     args = { revision: 3, instructions: 'Channel cannot edit' }; await run(`/api/channels/${room.id}`, 'failed'); assert.equal(advertised, false); assert.equal((await profile()).revision, 3);

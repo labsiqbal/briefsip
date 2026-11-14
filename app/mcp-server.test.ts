@@ -28,7 +28,7 @@ async function fixture() {
   async function peer(name = 'Laptop', scopes = allScopes) { return post('/api/mcp-server/peer-tokens', { id: randomUUID(), name, scopes }); }
   async function client(token: string) { const client = new Client({ name: 'briefsip-test', version: '1' }); clients.push(client); await client.connect(new StreamableHTTPClientTransport(new URL(app.origin + '/mcp'), { requestInit: { headers: { Authorization: `Bearer ${token}` } }, reconnectionOptions: { maxRetries: 0, initialReconnectionDelay: 1, maxReconnectionDelay: 1, reconnectionDelayGrowFactor: 1 } })); return client; }
   async function rpc(token: string | undefined, method = 'tools/list', params: unknown = {}, headers: Record<string,string> = {}) { return fetch(app.origin + '/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...headers }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) }); }
-  const agent = await post('/api/agents', { id: randomUUID(), name: 'Local agent', model: 'fixture', instructions: 'Help.' }, 201);
+  const agent = await post('/api/agents', { id: randomUUID(), name: 'Local agent', role: 'Personal agent', model: 'fixture', instructions: 'Help.' }, 201);
   return { get app() { return app; }, database, agent, post, peer, client, rpc, get calls() { return calls; }, hold() { hold = true; }, release() { hold = false; release?.(); }, async restart() { await Promise.all(clients.splice(0).map(client => client.close())); await app.close(); app = await startApp(options); }, async close() { hold = false; release?.(); await Promise.all(clients.map(client => client.close())); await app.close(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); } };
 }
 async function call(client: Client, name: string, args: Record<string, unknown> = {}) {
@@ -44,7 +44,7 @@ test('real MCP client calls all tools, isolated peer history, stable send receip
     const a = await f.peer('Laptop A'), b = await f.peer('Laptop B');
     const ca = await f.client(a.token), cb = await f.client(b.token);
     assert.deepEqual((await ca.listTools()).tools.map(tool => tool.name).sort(), ['cancel_message','get_message_status','list_agents','read_history','send_message']);
-    const list = await call(ca, 'list_agents'); assert.equal(list.agents[0].id, f.agent.id); assert.equal(list.agents[0].model, 'fixture'); assert(list.agents[0].description); assert(['idle','working'].includes(list.agents[0].status));
+    const list = await call(ca, 'list_agents'); assert.equal(list.agents[0].id, f.agent.id); assert.equal(list.agents[0].model, 'fixture'); assert(list.agents[0].description); assert.equal(list.agents[0].role, 'Personal agent'); assert(['idle','working'].includes(list.agents[0].status));
     const requestId = randomUUID(), args = { requestId, recipient: f.agent.id, text: 'PEER_A_CANARY' };
     const delivery = await call(ca, 'send_message', args); assert.equal(delivery.status, 'queued');
     await waitFor(async () => (await call(ca, 'get_message_status', { requestId })).status === 'done');

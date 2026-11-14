@@ -4,17 +4,17 @@ import { randomUUID, randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseAgentTemplate, restoreTemplateImport, templateCommand } from './agent-template.ts';
+import { parseAgentRole, parseAgentTemplate, restoreTemplateImport, templateCommand } from './agent-template.ts';
 import { startApp } from './server.ts';
 import sharp from 'sharp';
 
-const template = { format: 'briefsip-agent', version: 1, name: 'Template', model: 'fixture', instructions: '<script>Test text only</script>', threadLimit: 3 } as const;
+const template = { format: 'briefsip-agent', version: 1, name: 'Template', role: 'Personal agent', model: 'fixture', instructions: '<script>Test text only</script>', threadLimit: 3 } as const;
 test('agent template validation rejects extra authority and preserves exact recovery identity', () => {
   assert.deepEqual(parseAgentTemplate(template), template);
   for (const input of [null, [], {}, { ...template, version: 2 }, { ...template, token: 'secret' }, { ...template, permissions: 'full' }, { ...template, path: '/tmp/example' }, { ...template, instructions: '' }, { ...template, name: 'x'.repeat(81) }, { ...template, model: 2 }, { ...template, threadLimit: 33 }, { ...template, threadLimit: 1.5 }]) assert.throws(() => parseAgentTemplate(input));
   const pending = { id: randomUUID(), template };
   assert.deepEqual(restoreTemplateImport(JSON.stringify(pending)), pending);
-  assert.deepEqual(templateCommand(template, pending.id), { id: pending.id, name: template.name, model: template.model, instructions: template.instructions, threadLimit: 3 });
+  assert.deepEqual(templateCommand(template, pending.id), { id: pending.id, name: template.name, role: template.role, model: template.model, instructions: template.instructions, threadLimit: 3 });
   assert.equal(restoreTemplateImport(null), null);
   for (const raw of ['{', '{}', '[]', ' '.repeat(64001), JSON.stringify({ ...pending, id: 'bad' }), JSON.stringify({ ...pending, extra: true }), JSON.stringify({ ...pending, template: { ...template, version: 2 } })]) assert.throws(() => restoreTemplateImport(raw));
 });
@@ -82,4 +82,20 @@ test('profile export and reviewed import create a new agent once across restart 
     const directory = await request('/api/agents');
     assert.equal(directory.agents.length, 2);
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+
+test('role validation and old templates retain bounded optional single-line profiles', () => {
+  assert.equal(parseAgentRole(), '');
+  assert.equal(parseAgentRole('   '), '');
+  assert.equal(parseAgentRole('  Personal agent  '), 'Personal agent');
+  assert.equal(parseAgentRole(`  ${'x'.repeat(60)}  `), 'x'.repeat(60));
+  assert.equal(parseAgentRole('x'.repeat(60)), 'x'.repeat(60));
+  for (const role of [null, 0, {}, 'x'.repeat(61), 'bad\nrole', 'bad\rrole', 'bad\trole', 'bad\u0000role', 'bad\u007frole', 'bad\u0085role', 'bad\u2028role', 'bad\u2029role']) {
+    assert.throws(() => parseAgentRole(role));
+    assert.throws(() => parseAgentTemplate({ ...template, role }));
+  }
+  const { role, ...legacy } = template;
+  assert.equal(parseAgentTemplate(legacy).role, '');
+  assert.equal(templateCommand(legacy, randomUUID()).role, '');
 });

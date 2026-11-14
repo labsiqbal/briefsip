@@ -220,8 +220,10 @@ test('team awareness refreshes role and bounded roster on next provider request'
   try {
     const parent = await f.agent('Parent'), path = `/api/agents/${parent.id}/turns`; await f.api(path, { id: randomUUID(), text: 'Roster' });
     for (let i = 0; i < 300 && !first; i++) await new Promise(resolve => setTimeout(resolve, 10)); assert(first.includes('Messaging other agents'));
-    await f.agent('New teammate'); advance.release(); await f.until(path, rows => rows[0]?.status === 'done');
-    assert(!first.includes('New teammate')); assert(second.includes('New teammate')); assert.notEqual(first.match(/Capability epoch: ([a-f0-9]+)/)?.[1], second.match(/Capability epoch: ([a-f0-9]+)/)?.[1]);
+    const teammate = await f.agent('New teammate');
+    await f.api(`/api/agents/${teammate.id}/edit`, { id: randomUUID(), revision: teammate.revision, name: teammate.name, role: 'Research agent', model: teammate.model, instructions: teammate.instructions });
+    advance.release(); await f.until(path, rows => rows[0]?.status === 'done');
+    assert(!first.includes('New teammate')); assert(second.includes('New teammate - Research agent')); assert.notEqual(first.match(/Capability epoch: ([a-f0-9]+)/)?.[1], second.match(/Capability epoch: ([a-f0-9]+)/)?.[1]);
     assert(second.length < 5000);
   } finally { advance.release(); await f.close(); }
 });

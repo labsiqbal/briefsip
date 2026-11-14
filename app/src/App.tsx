@@ -64,7 +64,7 @@ const McpPanel = lazy(() => import('./McpPanel').then(module => ({ default: modu
 const ConnectedAppsPanel = lazy(() => import('./ConnectedAppsPanel').then(module => ({ default: module.ConnectedAppsPanel })).catch(panelLoadFailure));
 const SkillsPanel = lazy(() => import('./SkillsPanel').then(module => ({ default: module.SkillsPanel })).catch(panelLoadFailure));
 
-type Agent = { runtime?: 'api' | 'codex' | 'claude'; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; thread_limit: number; revision: number; id: string; name: string; model: string; instructions: string };
+type Agent = { runtime?: 'api' | 'codex' | 'claude'; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; thread_limit: number; revision: number; id: string; name: string; role: string; model: string; instructions: string };
 type Channel = { activity: number; read_position: number; revision: number; archived: number; id: string; name: string; instructions: string; members: string[]; lead: string | null };
 type Thread = { id: string; agent: string; name: string; revision: number; archived: number; deleted: number; fork?: { source_name: string; source_id: string; source_kind: 'agent' | 'channel' | 'thread'; source_agent: string; cutoff_turn: string; created: string } | null };
 type AgentMessage = { taskId?: string; task?: string; wait?: boolean; generatedFiles?: { id: string; name: string; size: number; thread: string }[]; paused: number; request: string; expects_reply: number; settled: number; id: string; agent: string; thread: string; name: string; status: string; error: string | null; reply: string | null; truncated: boolean };
@@ -999,7 +999,7 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (busy || invalid) return;
     const form = new FormData(event.currentTarget);
-    const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision } : setup ? { setup: true } : {}), providerAccount: account, name: String(form.get('name')).trim() || (setup ? 'New agent' : ''), model: String(form.get('model')).trim(), backupModel: String(form.get('backupModel')).trim(), instructions: String(form.get('instructions')).trim(), threadLimit: Number(form.get('threadLimit')) };
+    const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision } : setup ? { setup: true } : {}), providerAccount: account, name: String(form.get('name')).trim() || (setup ? 'New agent' : ''), role: String(form.get('role')).trim(), model: String(form.get('model')).trim(), backupModel: String(form.get('backupModel')).trim(), instructions: String(form.get('instructions')).trim(), threadLimit: Number(form.get('threadLimit')) };
     if (profile && runtime !== (profile.runtime ?? 'api') && !pending.current) {
       if (!await confirm({ title: 'Change agent runtime?', description: 'Future turns use the selected runtime and its host login. Existing history remains in Briefsip; the new runtime starts a fresh conversation. Workspace edits can persist after a turn stops.', confirm: 'Change runtime' })) return;
       Object.assign(data, { runtime, confirmRuntime: true });
@@ -1064,6 +1064,9 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
       ]} />}
       <Field label={!profile && setup ? 'Temporary name' : 'Name'} optional={!profile && setup}>
         <Input ref={nameInput} name="name" required={!setup} maxLength={80} readOnly={locked} defaultValue={profile?.name ?? recovery.command?.name} placeholder="For example: Research partner" />
+      </Field>
+      <Field label="Role" optional hint="Shown under the agent's name, e.g. Orchestration agent">
+        <Input name="role" maxLength={60} readOnly={locked} defaultValue={profile?.role ?? recovery.command?.role ?? ''} />
       </Field>
       <Field label="Runtime" hint={profile ? 'Coding runtimes use the host login and connected workspace. Steer restarts the running turn; image attachments are unavailable.' : 'Create the agent, then connect its host workspace to enable coding runtimes.'} error={runtimeError}>
         <Select label="Runtime" value={runtime} onChange={value => setRuntime(value as typeof runtime)} disabled={locked || busy} options={[{ value: 'api', label: 'API model' }, ...(['codex','claude'] as const).map(value => { const choice = runtimeChoices.find(item => item.runtime === value); return { value, label: value === 'codex' ? 'Codex' : 'Claude Code', disabled: !choice?.enabled, hint: choice?.reason ?? choice?.version ?? 'Connect a host workspace folder first.' }; })]} />
