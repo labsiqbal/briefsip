@@ -33,7 +33,7 @@ export function AgentComputerPanel({ agent, name, request, compact = false }: { 
           setError('');
         }
       } catch (error) { if (mounted && !locked.current) setError(error instanceof Error ? error.message : 'Computer status unavailable.'); }
-      finally { if (mounted) timer = setTimeout(() => void refresh(), 1000); }
+      finally { if (mounted) timer = setTimeout(() => void refresh(), 5000); }
     }
     void refresh();
     return () => { mounted = false; controller.abort(); clearTimeout(timer); observer.disconnect(); };

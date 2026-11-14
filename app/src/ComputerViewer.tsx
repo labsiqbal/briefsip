@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import RFB from '@novnc/novnc';
 import { ExternalLink, Monitor } from 'lucide-react';
 import { Alert, Badge, Button, Card, Field, Input, useConfirm } from './ui/kit';
 import type { ComputerWait } from '../agent-computer';
@@ -76,17 +77,39 @@ export function ComputerRequestCard({ agent, name, wait, request }: { agent: str
 export function ComputerViewer({ agent, name, request, popout = false }: { agent: string; name: string; request: ComputerRequest; popout?: boolean }) {
   const controls = useComputerControl(agent, request), { status } = controls;
   const [visible, setVisible] = useState(!document.hidden), [text, setText] = useState(''), [screenError, setScreenError] = useState(false), [starting, setStarting] = useState(false), [sendingText, setSendingText] = useState(false);
-  const [frame, setFrame] = useState(''), [connection, setConnection] = useState(0);
-  const screen = useRef<HTMLDivElement>(null), handBack = useRef<HTMLButtonElement>(null), inputFlight = useRef(0);
+  const [connected, setConnected] = useState(false), [connection, setConnection] = useState(0);
+  const screen = useRef<HTMLDivElement>(null), canvas = useRef<HTMLDivElement>(null), rfb = useRef<RFB | null>(null), handBack = useRef<HTMLButtonElement>(null), inputFlight = useRef(0);
   const user = status?.control.mode === 'user', running = !!status && ['running','idle'].includes(status.state);
   useEffect(() => {
-    if (!running || !visible) { setFrame(''); return; }
-    setScreenError(false);
-    const source = new EventSource(`/api/agents/${agent}/computer/stream`);
-    source.onmessage = event => setFrame(`data:image/jpeg;base64,${event.data}`);
-    source.onerror = () => { setScreenError(true); source.close(); };
-    return () => source.close();
-  }, [agent, running, visible, connection]);
+    if (!running || !visible || !canvas.current) return;
+    let stopped = false, disconnected = false, client: RFB | undefined;
+    let clipboard: EventListener | undefined;
+    setConnected(false); setScreenError(false);
+    const element = canvas.current;
+    void request<{ ticket: string }>(`/api/agents/${agent}/computer/vnc-ticket`, { mode: user && !controls.locked ? 'control' : 'watch', revision: status?.control.revision }).then(({ ticket }) => {
+      if (stopped) return;
+      const url = new URL(`/api/agents/${agent}/computer/vnc`, location.href); url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'; url.searchParams.set('ticket', ticket);
+      client = new RFB(element, url.href, { shared: true, wsProtocols: ['binary'] });
+      client.viewOnly = !user || controls.locked; client.scaleViewport = true; client.resizeSession = false; client.background = 'transparent'; client.focusOnClick = !!user;
+      client.addEventListener('connect', () => { if (!stopped) setConnected(true); });
+      client.addEventListener('disconnect', () => { disconnected = true; if (!stopped) { setConnected(false); setScreenError(true); } });
+      client.addEventListener('securityfailure', () => { if (!stopped) setScreenError(true); });
+      clipboard = (event: Event) => {
+        const value = (event as CustomEvent<{ text?: unknown }>).detail?.text;
+        if (stopped || !user || controls.locked || typeof value !== 'string') return;
+        if (value.length > 4000) { controls.setError('Clipboard text exceeds 4000 characters. Copy a smaller selection.'); return; }
+        setText(value);
+      };
+      client.addEventListener('clipboard', clipboard);
+      rfb.current = client;
+    }).catch(() => { if (!stopped) setScreenError(true); });
+    return () => {
+      stopped = true;
+      if (client && !disconnected) client.disconnect();
+      if (client && clipboard) client.removeEventListener('clipboard', clipboard);
+      rfb.current = null; element.replaceChildren();
+    };
+  }, [agent, running, visible, connection, user, controls.locked, status?.control.revision, request]);
   useEffect(() => {
     const change = () => setVisible(!document.hidden);
     document.addEventListener('visibilitychange', change);
@@ -101,45 +124,15 @@ export function ComputerViewer({ agent, name, request, popout = false }: { agent
     finally { inputFlight.current--; }
   }
   useEffect(() => {
-    // Radix observes Escape on document capture. Handle remote Escape earlier so it
-    // reaches the sandbox instead of dismissing the viewer underneath the user.
     const escape = (event: globalThis.KeyboardEvent) => {
       if (!user || controls.locked || event.key !== 'Escape' || !(event.target instanceof Node) || !screen.current?.contains(event.target)) return;
       event.preventDefault(); event.stopImmediatePropagation();
-      if (event.shiftKey) handBack.current?.focus();
-      else void input('computer_key', { keys: [...(event.ctrlKey ? ['Control_L'] : []), ...(event.altKey ? ['Alt_L'] : []), ...(event.metaKey ? ['Super_L'] : []), 'Escape'] });
+      if (event.shiftKey) { rfb.current?.blur(); handBack.current?.focus(); }
+      else rfb.current?.sendKey(0xff1b, 'Escape');
     };
     window.addEventListener('keydown', escape, true);
     return () => window.removeEventListener('keydown', escape, true);
-  }, [user, status?.control.revision, controls.locked]);
-  useEffect(() => {
-    const element = screen.current;
-    const wheel = (event: WheelEvent) => {
-      if (!user || controls.locked) return;
-      event.preventDefault();
-      void input('computer_scroll', { dx: Math.sign(event.deltaX) * Math.min(20, Math.ceil(Math.abs(event.deltaX) / 100)), dy: Math.sign(event.deltaY) * Math.min(20, Math.ceil(Math.abs(event.deltaY) / 100)) });
-    };
-    element?.addEventListener('wheel', wheel, { passive: false });
-    return () => element?.removeEventListener('wheel', wheel);
-  }, [user, status?.control.revision, controls.locked]);
-  function click(event: MouseEvent<HTMLImageElement>, button: number) {
-    if (!user) return;
-    screen.current?.focus();
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = Math.max(0, Math.min(1279, Math.floor((event.clientX - rect.left) * 1280 / rect.width))), y = Math.max(0, Math.min(799, Math.floor((event.clientY - rect.top) * 800 / rect.height)));
-    void input('computer_click', { x, y, button });
-  }
-  function key(event: KeyboardEvent<HTMLDivElement>) {
-    if (!user) return;
-    if (event.key === 'Escape' && event.shiftKey) { event.preventDefault(); event.stopPropagation(); handBack.current?.focus(); return; }
-    if (['Control','Alt','Shift','Meta','Dead','Process'].includes(event.key) || event.nativeEvent.isComposing) return;
-    const keys: Record<string, string> = { Enter: 'Return', Escape: 'Escape', Backspace: 'BackSpace', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right', PageUp: 'Page_Up', PageDown: 'Page_Down', ' ': 'space' };
-    const keyName = keys[event.key] ?? event.key;
-    if (!event.ctrlKey && !event.altKey && !event.metaKey && event.key.length === 1) { event.preventDefault(); event.stopPropagation(); void input('computer_type', { text: event.key }); return; }
-    if (!keys[event.key] && !/^(Tab|Delete|Home|End|F([1-9]|1[0-2])|[a-zA-Z0-9])$/.test(keyName)) return;
-    event.preventDefault(); event.stopPropagation();
-    void input('computer_key', { keys: [...(event.ctrlKey ? ['Control_L'] : []), ...(event.altKey ? ['Alt_L'] : []), ...(event.shiftKey ? ['Shift_L'] : []), ...(event.metaKey ? ['Super_L'] : []), keyName] });
-  }
+  }, [user, controls.locked]);
   async function start() {
     if (starting) return; setStarting(true);
     try { controls.setStatus(await request<ComputerStatus>(`/api/agents/${agent}/computer/start`, {})); }
@@ -162,14 +155,16 @@ export function ComputerViewer({ agent, name, request, popout = false }: { agent
       <p><strong>{name} needs you to take over: {wait.reason || 'Computer access is waiting for you.'}</strong></p>
       {!user && <div className="k-inline"><Button size="sm" disabled={controls.locked} onClick={() => void controls.control('take')}>Take control</Button><Button size="sm" disabled={controls.locked} onClick={() => void controls.control('dismiss', wait.turn)}>Dismiss</Button></div>}
     </div>)}</div>}
-    <div ref={screen} className={`computer-viewer__screen${user ? ' is-controlled' : ''}`} role="application" aria-label={`${name}'s computer. Click to send keys. Shift+Escape returns to controls.`} tabIndex={user && !controls.locked ? 0 : -1} onKeyDown={key} onPaste={event => { if (user) { event.preventDefault(); const text = event.clipboardData.getData('text').slice(0, 4000); if (text) void input('computer_type', { text }); } }}>
-      {running && visible && frame ? <img src={frame} width={960} height={600} alt={`${name}'s live computer screen`} draggable={false} onError={() => setScreenError(true)} onClick={event => click(event, 1)} onAuxClick={event => { if (event.button === 1) { event.preventDefault(); click(event, 2); } }} onContextMenu={event => { event.preventDefault(); click(event, 3); }} /> : <div className="computer-viewer__empty"><Monitor size={32} aria-hidden /><p>{!visible ? 'Viewer paused while window is hidden.' : running ? 'Connecting to computer...' : status?.state === 'starting' ? 'Starting computer...' : 'Start the computer to see its screen.'}</p></div>}
+    <div ref={screen} className={`computer-viewer__screen${user ? ' is-controlled' : ''}`} role="application" aria-label={`${name}'s computer. Click to send keys. Shift+Escape returns to controls.`}>
+      <div ref={canvas} className="computer-viewer__canvas" aria-label={`${name}'s live computer screen`} />
+      {(!running || !visible || !connected) && <div className="computer-viewer__empty"><Monitor size={32} aria-hidden /><p>{!visible ? 'Viewer paused while window is hidden.' : running ? 'Connecting to computer...' : status?.state === 'starting' ? 'Starting computer...' : 'Start the computer to see its screen.'}</p></div>}
     </div>
     {screenError && <Alert tone="error" actions={<Button size="sm" onClick={() => setConnection(value => value + 1)}>Reconnect</Button>}>Live screen unavailable. Close another viewer if three are already open, then reconnect.</Alert>}
     {user && <>
-      <p className="k-field__hint">Click the screen to send keys, clicks and scrolling. Press Shift+Escape to return to controls. Ctrl+C and Ctrl+V use the computer's clipboard.</p>
+      <p className="k-field__hint">Click the screen to send keys, clicks and scrolling. Press Shift+Escape to return to controls. Use Set clipboard before Ctrl+V; copied desktop text appears here.</p>
       <form className="computer-viewer__text" onSubmit={async event => { event.preventDefault(); if (!text || sendingText) return; setSendingText(true); const sent = text; try { if (await input('computer_type', { text: sent })) setText(current => current === sent ? '' : current); } finally { setSendingText(false); } }}>
-        <Field label="Type or paste text" hint="Text goes to the focused field on the computer."><Input value={text} maxLength={4000} onChange={event => setText(event.target.value)} disabled={controls.locked} /></Field>
+        <Field label="Type or paste text" hint="Send text types into the focused field. Set clipboard prepares Ctrl+V. Copied desktop text appears here."><Input value={text} maxLength={4000} onChange={event => setText(event.target.value)} disabled={controls.locked} /></Field>
+        <Button size="sm" disabled={!connected || controls.locked} onClick={() => rfb.current?.clipboardPasteFrom(text)}>Set clipboard</Button>
         <Button size="sm" type="submit" busy={sendingText} disabled={!text || controls.locked || sendingText}>Send text</Button>
       </form>
     </>}

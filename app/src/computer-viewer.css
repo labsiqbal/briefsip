@@ -5,15 +5,18 @@
 .computer-viewer__owner { font-size: 13px; font-weight: 600; }
 .computer-viewer__since { color: var(--color-text-tertiary); font-size: 12px; font-variant-numeric: tabular-nums; }
 .computer-viewer__actions { display: flex; gap: 8px; margin-left: auto; }
-.computer-viewer__screen { width: min(100%, calc((100dvh - 250px) * 1.6)); aspect-ratio: 16 / 10; flex: none; margin-inline: auto; background: #101116; border-radius: 12px; overflow: hidden; outline: 1px solid #ffffff26; }
-.computer-viewer:has(.is-controlled) .computer-viewer__screen { width: min(100%, calc((100dvh - 430px) * 1.6)); }
+.computer-viewer__screen { position: relative; width: min(100%, calc((100dvh - 250px) * 1.6)); aspect-ratio: 16 / 10; flex: none; margin-inline: auto; background: #101116; border-radius: 12px; overflow: hidden; outline: 1px solid #ffffff26; }
+.computer-viewer:has(.is-controlled) .computer-viewer__screen { position: relative; width: min(100%, calc((100dvh - 430px) * 1.6)); }
 .computer-viewer__screen:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 3px; }
 .computer-viewer__screen img { display: block; width: 100%; height: 100%; object-fit: contain; user-select: none; }
 .computer-viewer__screen.is-controlled img { cursor: crosshair; }
-.computer-viewer__empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #d8d9df; font-size: 13px; }
+.computer-viewer__empty { position: absolute; inset: 0; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #d8d9df; font-size: 13px; }
 .computer-viewer__text { display: flex; gap: 12px; align-items: center; }
 .computer-viewer__text .k-field { flex: 1; }
 .computer-viewer__requests { font-size: 13px; color: var(--color-text-primary); }
 .computer-request p { margin: 0 0 10px; font-size: 13px; overflow-wrap: anywhere; }
 .computer-window { max-width: 1500px; margin: auto; padding: 20px; }
 .computer-window h1 { font-size: 16px; margin: 0 0 16px; }
+
+.computer-viewer__canvas { width: 100%; height: 100%; }
+.computer-viewer__canvas canvas:focus-visible { outline: 2px solid var(--color-brand); outline-offset: -2px; }

@@ -133,17 +133,19 @@ test('background health reports version mismatch and never sends bearer to a cha
     if (req.url === '/api/peer/agents') { if (mode === 'unauthorized') { res.writeHead(401); return send({ error: 'no' }); } return send({ agents: [{ ...agent, name: mode === 'reflection' ? issuedBack : agent.name }], ...(mode === 'bad-policy' ? { messagingAllowed: 'false' } : {}) }); }
     return send({ ok: true });
   }); origin = (await listen(server)).origin;
+  // Finish any background probe before changing this fixture's remote state.
+  async function setMode(next: string) { await app.refreshMachines(); mode = next; await app.refreshMachines(); }
   try {
     const result = await call(app, '/api/machines', { ...command(), origin, code: '23456789ABCD' }); assert.equal(result.status, 'online');
     mode = 'version'; const deadline = Date.now() + 20_000;
     while ((await list(app))[0].status !== 'version-mismatch' && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
     assert.equal((await list(app))[0].status, 'version-mismatch');
-    mode = 'normal'; await app.refreshMachines(); assert.equal((await list(app))[0].status, 'online'); assert.equal((await list(app))[0].remoteAgentMessaging, undefined, 'Older peers omit availability hints');
-    mode = 'bad-policy'; await app.refreshMachines(); assert.equal((await list(app))[0].status, 'offline');
-    mode = 'unauthorized'; await app.refreshMachines(); assert.equal((await list(app))[0].status, 'unauthorized');
-    mode = 'identity'; await app.refreshMachines(); const before = authorizedCalls; await app.refreshMachines(); assert.equal((await list(app))[0].status, 'unauthorized'); assert.equal(authorizedCalls, before, 'Identity mismatch received bearer');
-    mode = 'redirect'; await app.refreshMachines(); assert.equal((await list(app))[0].status, 'offline'); assert.equal(authorizedCalls, before);
-    mode = 'reflection'; await app.refreshMachines(); assert.equal((await list(app))[0].status, 'offline'); assert.equal((await list(app))[0].agents[0].name, agent.name); assert(!JSON.stringify(await list(app)).includes(issuedBack));
+    await setMode('normal'); assert.equal((await list(app))[0].status, 'online'); assert.equal((await list(app))[0].remoteAgentMessaging, undefined, 'Older peers omit availability hints');
+    await setMode('bad-policy'); assert.equal((await list(app))[0].status, 'offline');
+    await setMode('unauthorized'); assert.equal((await list(app))[0].status, 'unauthorized');
+    await setMode('identity'); const before = authorizedCalls; await app.refreshMachines(); assert.equal((await list(app))[0].status, 'unauthorized'); assert.equal(authorizedCalls, before, 'Identity mismatch received bearer');
+    await setMode('redirect'); assert.equal((await list(app))[0].status, 'offline'); assert.equal(authorizedCalls, before);
+    await setMode('reflection'); assert.equal((await list(app))[0].status, 'offline'); assert.equal((await list(app))[0].agents[0].name, agent.name); assert(!JSON.stringify(await list(app)).includes(issuedBack));
   } finally { await app.close(); await close(server); rmSync(dir, { recursive: true, force: true }); }
 });
 
