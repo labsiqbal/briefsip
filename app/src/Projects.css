@@ -7,6 +7,9 @@
 .project-navigation__header:hover, .project-navigation__section:hover { background: var(--color-bg-hover); }
 .project-navigation__header.is-selected { background: var(--color-bg-active); }
 .project-navigation__header > .k-icon-btn, .project-navigation__section > .k-icon-btn { flex-shrink: 0; width: 40px; height: 40px; }
+/* Chevron and row menus stay quiet like the machine headers: no filled circle until hover or focus. */
+.project-navigation__header > .k-icon-btn, .project-navigation__section > .k-icon-btn { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; box-shadow: none; color: var(--color-text-tertiary); }
+.project-navigation__header > .k-icon-btn:hover, .project-navigation__section > .k-icon-btn:hover { background: var(--color-bg-hover); color: var(--color-text-secondary); }
 .project-navigation__name { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; min-height: 40px; font-size: 13px; font-weight: 600; text-align: left; }
 .project-navigation__name > svg { flex-shrink: 0; color: var(--color-text-secondary); }
 .project-navigation__name > span, .project-navigation__room > span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
