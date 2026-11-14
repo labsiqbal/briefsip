@@ -17,6 +17,7 @@ import { SpeechPlayback } from './SpeechPlayback';
 import { AudioRecorder } from './AudioRecorder';
 import { TranscriptionPanel } from './TranscriptionPanel';
 import { TurnActivity } from './ui/TurnActivity';
+import { AgentMessage, ChatComposer, ChatEmptyState, ChatHeader, ChatTranscript, HumanMessage, TurnStatus } from './ui/ChatPrimitives';
 import { livePartial, turnPollDelay, type TurnActivityData } from './ui/transcript';
 import { EventConnection } from './EventConnection';
 import { applyPresentation, readPresentation } from '../presentation';
@@ -26,8 +27,8 @@ import { HtmlPreview } from './HtmlPreview';
 import { QuestionCard, type Question } from './QuestionCard';
 import { ApprovalCard, type AppApproval } from './ApprovalCard';
 import { CompactionPanel } from './CompactionPanel';
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, useId, type FormEvent, type ReactNode } from 'react';
-import { ArrowUp, Bell, BellOff, Brain, CircleAlert, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Ellipsis, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Plus, RefreshCw, Route, Search, Server, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
+import { lazy, Suspense, useEffect, useRef, useState, useId, type FormEvent, type ReactNode } from 'react';
+import { Bell, BellOff, Brain, CircleAlert, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Ellipsis, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Plus, RefreshCw, Route, Search, Server, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
 import { PanelResizeHandle, detailsPanel, sidebarPanel, useResizablePanel } from './ui/resizable';
@@ -357,13 +358,6 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   const details = useResizablePanel(detailsPanel);
   const [filesOpen, setFilesOpen] = useState(false);
   const filesSection = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const element = composer.current;
-    if (!element) return;
-    element.style.height = '0px';
-    element.style.height = `${Math.min(element.scrollHeight, 200)}px`;
-    element.style.overflowY = element.scrollHeight > 200 ? 'auto' : 'hidden';
-  }, [draft, pending, showMemory]);
   if (showMemory) return <PageView><Suspense fallback={<p className="empty" role="status">Loading memory...</p>}><MemoryPanel key={scope} path={`/api/${channel ? 'channels' : 'agents'}/${agent.id}/memory`} channel={!!channel} archived={!!channel?.archived} request={api} onClose={() => { setShowMemory(false); requestAnimationFrame(() => memoryButton.current?.focus()); }} /></Suspense></PageView>;
   const active = turns?.filter(turn => turn.status === 'queued' || turn.status === 'running').length ?? 0;
   const title = thread?.name ?? agent.name;
@@ -382,9 +376,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   const openFocused = (id: string) => { focusedOnce.current = ''; setQuery(''); setFocusedTask(id); };
   return <div className="chat-row bs-root">
     <main className="chat" aria-label={`Conversation ${title}`}>
-      <div className="transcript-wrap">
-        <section className="transcript" aria-label="Conversation history" onScroll={event => { const el = event.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }}>
-          <div className="transcript__col">
+      <ChatTranscript onScroll={event => { const el = event.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }}>
             {(focusedTask || before || query) && <div className="history-banner" role="status"><span>{focusedTask ? channel ? 'Task family' : 'Selected message' : query ? `Search results: ${query}` : 'Older history'}</span><button type="button" className="link-btn" onClick={() => { focusHistory.current = true; setTurns(null); setFocusedTask(''); setHistoryPages([]); setQuery(''); focusedOnce.current = ''; nearBottom.current = true; }}>Back to latest messages</button></div>}
             {!focusedTask && <div ref={historyTop} tabIndex={-1} className="history-navigation" aria-label="History navigation">
               {!!turns && turns.length >= 100 && <button type="button" className="link-btn" onClick={() => { if (turns?.length) { focusHistory.current = true; setTurns(null); setHistoryPages([...historyPages, turns[0].seq]); } }}>Older messages</button>}
@@ -395,24 +387,18 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
             {turns === null ? <p className="empty-chat__sub" role="status">Loading conversation...</p>
               : turns.length === 0 && query ? <p className="empty-chat__sub" role="status">No results on this page. Change your search term or return to the previous page.</p>
               : turns.length === 0 && before ? <p className="empty-chat__sub" role="status">Start of history reached. Select Newer messages to return.</p>
-              : turns.length === 0 ? <div className="empty-chat"><AgentAvatar agent={agent} size={64} /><div className="empty-chat__title">{thread?.fork ? `Continue with ${agent.name}` : `Start with ${agent.name}`}</div><div className="empty-chat__sub">{thread?.fork ? 'Earlier context is included through the selected answer. New messages stay in this conversation.' : 'Send your first task or question. The conversation is saved on this computer.'}</div></div>
+              : turns.length === 0 ? <ChatEmptyState agent={agent} title={thread?.fork ? `Continue with ${agent.name}` : undefined}>{thread?.fork ? 'Earlier context is included through the selected answer. New messages stay in this conversation.' : 'Send your first task or question. The conversation is saved on this computer.'}</ChatEmptyState>
               : turns.map(turn => <article key={turn.id} id={`turn-${turn.id}`} tabIndex={-1} className="turn-block">
                 {query && <button type="button" className="link-btn" onClick={() => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(turn.id); }}>Open this message</button>}
-                <div className="human-message" tabIndex={0} aria-label={turn.messageOrigin?.kind === 'peer' ? `Message from ${turn.messageOrigin.name}` : 'Your message'}>
-                  <div className="human-bubble message-plain">{turn.text}</div>
-                  {!!turn.files?.length && <ul className="chip-list" aria-label="Message attachments">{turn.files.map(file => <li key={file.id}><a className="cite-chip" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}><Paperclip size={12} aria-hidden /> {file.name}</a></li>)}</ul>}
-                  <div className="turn-meta human-meta">
+                <HumanMessage text={turn.text} label={turn.messageOrigin?.kind === 'peer' ? `Message from ${turn.messageOrigin.name}` : 'Your message'} attachments={!!turn.files?.length && <ul className="chip-list" aria-label="Message attachments">{turn.files.map(file => <li key={file.id}><a className="cite-chip" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}><Paperclip size={12} aria-hidden /> {file.name}</a></li>)}</ul>}>
                     <time className="message-time" dateTime={turn.created} title={new Date(turn.created).toLocaleString('en-US')}>{time(turn.created)}</time>
                     {turn.messageOrigin?.kind === 'peer' ? <span className="message-origin">From {turn.messageOrigin.name}</span> : turn.workflow_run ? <span className="message-origin">Workflow</span> : turn.parent ? <span className="message-origin">Subtask</span> : null}
                     <button type="button" className="link-btn link-btn--small" onClick={async () => { try { await navigator.clipboard.writeText(turn.text); } catch { setError('Message could not be copied. Select the text to copy it.'); } }}>Copy</button>
                     <a className="link-btn link-btn--small" href={`#turn-${turn.id}`} onClick={event => { event.preventDefault(); openFocused(turn.id); }}>View task</a>
                     {turn.parent && !turn.messageOrigin && <a className="link-btn link-btn--small" href={`#turn-${turn.parent}`} onClick={event => { event.preventDefault(); openFocused(turn.parent!); }}>View parent task</a>}
                     {turn.messageOrigin && turn.messageOrigin.kind !== 'peer' && <button type="button" className="link-btn link-btn--small" onClick={() => turn.messageOrigin!.channel ? onOpenChannel?.(turn.messageOrigin!.channel) : onOpenAgent?.(turn.messageOrigin!.agent!, turn.messageOrigin!.thread ?? '')}>Open requester conversation</button>}
-                  </div>
-                </div>
-                <div className="agent-message">
-                  {channel && members.length > 1 && <div className="agent-identity"><AgentAvatar agent={members.find(member => member.id === turn.agent) ?? { id: turn.agent, name: turn.agent_name ?? agent.name }} size={24} /><strong className="message-name">{turn.agent_name ?? agent.name}</strong></div>}
-                  <div className="message-column">
+                </HumanMessage>
+                <AgentMessage identity={channel && members.length > 1 && <div className="agent-identity"><AgentAvatar agent={members.find(member => member.id === turn.agent) ?? { id: turn.agent, name: turn.agent_name ?? agent.name }} size={24} /><strong className="message-name">{turn.agent_name ?? agent.name}</strong></div>}>
                     <TurnActivity turn={turn} agentName={agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} />
                     {!channel && turn.checkpoint?.restorable && ['done', 'failed', 'cancelled', 'interrupted'].includes(turn.status) && <RestoreCheckpoint agent={turn.agent} turn={turn.id} request={api} />}
                     <div className="message-body">
@@ -422,10 +408,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
                         : <p className={turn.error ? 'message-error' : 'message-muted'}>{turn.error && <CircleAlert size={14} aria-hidden />}{turn.error ?? <span>{(turn.approvals?.some(approval => approval.state === 'approval') || turn.harnessApprovals?.some(approval => approval.state === 'approval')) ? 'Review the connected app action to continue.' : turn.questions?.some(question => question.answer === null) ? 'Answer the question to continue the task.' : turn.workflow_run ? 'Workflow finished without a text result.' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) ? 'Results will be combined after all recipients finish. New messages include results already available.' : turn.events?.some(event => event.status === 'waiting') ? 'Waiting for a signed event.' : turn.waiting_for ? 'Waiting for child task results.' : turn.status === 'queued' ? 'Waiting for turn.' : 'Waiting for provider response...'}</span>}</p>}
                       {!turn.reply && turn.partial?.text && !livePartial(turn) && <div className="message-partial"><p className="message-muted">Text from a previous attempt from {turn.partial.model}. Not a final result.</p><div className="legacy"><Markdown text={turn.partial.text} scope={path.slice(0, -6)} origin={window.location.origin} /></div></div>}
                     </div>
-                    <div className="turn-meta agent-meta">
-                      <span className={`turn-status is-${tone(turn)}`}><i aria-hidden />{statusLabel(turn)}</span>
-                      {(turn.answer_model || turn.partial?.model) && <span className="turn-model" title="Answering model">{turn.answer_model ?? turn.partial?.model}</span>}
-                    </div>
+                    <TurnStatus tone={tone(turn)} label={statusLabel(turn)} model={turn.answer_model ?? turn.partial?.model} />
                     <div className="turn-controls">
                       {turn.status === 'done' && turn.reply && <ForkAnswer path={path} turn={turn} onOpen={onOpenAgent} />}
                       {turn.dispatch_mode !== 'steer' && <TaskControls key={`${turn.id}:${turn.revision}`} turn={turn} path={path} members={channel ? members : []} archived={archived || !!turn.editing} />}
@@ -444,13 +427,10 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
                       {!!turn.coordination?.length && <Collapsible title={`Task coordination (${turn.coordination.length})`}>{turn.coordination.map((action, index) => <div className="k-stack" key={index}><div className="k-section__title">{action.owner_name} {action.kind === 'delegate_task' ? 'delegated to' : 'reassigned to'} {action.target_name}.</div><div className="message-plain">{action.prompt}</div>{action.child && <div className="k-row-actions"><Button size="sm" variant="ghost" onClick={() => openFocused(action.child!)}>View subtask</Button></div>}</div>)}</Collapsible>}
                       {turn.dispatch_mode !== 'steer' && !turn.approvals?.length && <QueueEditor turn={{ ...turn, files: turn.files ?? [] }} path={path} archived={archived} request={api} />}
                     </div>
-                  </div>
-                </div>
+                </AgentMessage>
               </article>)}
             <div ref={bottom} />
-          </div>
-        </section>
-      </div>
+      </ChatTranscript>
       <footer className="composer-area">
         {archived && <p className="composer__note">{!channel && (agent as Agent).hidden ? 'Agent is hidden. Restore it through Edit profile to resume the queue and receive new messages.' : 'Conversation is archived. History remains available. Restore it through settings to send new messages.'}</p>}
         {!configured && <p className="composer__note">{!channel && 'provider_account' in agent && !!agent.provider_account && agent.provider_available === false ? 'This agent provider account is unavailable. Select a connected account in the agent profile, or restore the account configuration on the server.' : 'Provider not connected. Check provider account configuration on the server, then restart the app.'} Agent and history remain saved.</p>}
@@ -465,34 +445,19 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
           ]} />
           <span className="composer-dispatch__hint" role="status">{canSteer ? 'API runtime supports steering' : 'Runtime cannot steer; Steer uses Restart'}</span>
         </div>}
-        <form className={`composer${draft.includes('\n') ? ' is-multiline' : ''}`} onSubmit={send}>
-          <div className="composer__left">
-            <span className="composer__plus-anchor"><button type="button" className="composer__btn" onClick={openFiles} aria-label="Attach conversation file" title="Attach file"><Paperclip size={14} aria-hidden /></button></span>
-            {channel && <span className="composer__recipient"><input type="hidden" id="recipient" value={pending?.automatic ? '@automatic' : pending?.recipient ?? recipient} disabled={!!pending || busy} /><Select size="sm" label="Reply from" value={pending?.automatic ? '@automatic' : pending?.recipient ?? recipient} disabled={!!pending || busy} onChange={value => { setRecipient(value); try { sessionStorage.setItem(recipientKey, value); } catch { setError('Recipient selection was not saved. Check again before sending.'); } }} options={[{ value: '', label: 'Select agent' }, ...(channel.lead ? [{ value: '@automatic', label: 'Automatic via lead' }] : []), ...members.map(member => ({ value: member.id, label: `${member.name}${member.id === channel.lead ? ' (lead)' : ''}` }))]} /></span>}
-            <label className="sr-only" htmlFor="message">Message {agent.name}</label>
-            <textarea ref={composer} id="message" className="composer__input" rows={1} placeholder={`Message ${agent.name}`} maxLength={16000} value={pending?.text ?? draft} readOnly={blocked || !!pending || busy} onChange={event => { setDraft(event.target.value); try { sessionStorage.setItem(draftKey, event.target.value); } catch { setError('Draft was not saved in the browser. Copy the message before switching agents.'); } }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(event, (event.ctrlKey || event.metaKey) && canSteer ? 'steer' : 'queue'); } }} />
-          </div>
-          <div className="composer__right">
-            {pending && !busy && <span className="composer__retry">Retry send</span>}
-            <button type="submit" className="composer__cta" disabled={blocked || archived || !configured || busy || (!pending && !draft.trim()) || (!!channel && !recipient && !pending)} aria-label={busy ? 'Sending...' : pending ? 'Retry send' : dispatchTarget ? dispatchMode === 'queue' ? 'Queue message' : dispatchMode === 'steer' ? canSteer ? 'Steer turn' : 'Steer by restarting turn' : 'Restart turn' : 'Send message'} title={pending ? 'Retry send' : dispatchTarget ? `${dispatchMode === 'queue' ? 'Queue' : dispatchMode === 'steer' ? 'Steer' : 'Restart'} message` : 'Send (Enter)'}>{busy ? <span className="step__spin" aria-hidden /> : <ArrowUp size={16} aria-hidden />}</button>
-          </div>
-        </form>
+        <ChatComposer label={`Message ${agent.name}`} inputRef={composer} multiline={draft.includes('\n')} onSubmit={send} onSendKey={event => { void send(event, (event.ctrlKey || event.metaKey) && canSteer ? 'steer' : 'queue'); }} onAttach={openFiles}
+          recipient={channel && <span className="composer__recipient"><input type="hidden" id="recipient" value={pending?.automatic ? '@automatic' : pending?.recipient ?? recipient} disabled={!!pending || busy} /><Select size="sm" label="Reply from" value={pending?.automatic ? '@automatic' : pending?.recipient ?? recipient} disabled={!!pending || busy} onChange={value => { setRecipient(value); try { sessionStorage.setItem(recipientKey, value); } catch { setError('Recipient selection was not saved. Check again before sending.'); } }} options={[{ value: '', label: 'Select agent' }, ...(channel.lead ? [{ value: '@automatic', label: 'Automatic via lead' }] : []), ...members.map(member => ({ value: member.id, label: `${member.name}${member.id === channel.lead ? ' (lead)' : ''}` }))]} /></span>}
+          input={{ id: 'message', value: pending?.text ?? draft, readOnly: blocked || !!pending || busy, onChange: event => { setDraft(event.target.value); try { sessionStorage.setItem(draftKey, event.target.value); } catch { setError('Draft was not saved in the browser. Copy the message before switching agents.'); } } }}
+          busy={busy} retry={!!pending}
+          sendDisabled={blocked || archived || !configured || busy || (!pending && !draft.trim()) || (!!channel && !recipient && !pending)}
+          sendLabel={busy ? 'Sending...' : pending ? 'Retry send' : dispatchTarget ? dispatchMode === 'queue' ? 'Queue message' : dispatchMode === 'steer' ? canSteer ? 'Steer turn' : 'Steer by restarting turn' : 'Restart turn' : 'Send message'}
+          sendTitle={pending ? 'Retry send' : dispatchTarget ? `${dispatchMode === 'queue' ? 'Queue' : dispatchMode === 'steer' ? 'Steer' : 'Restart'} message` : 'Send (Enter)'} />
         <p className="composer__foot" title="Provider receives up to 40 previous conversations.">{focusedTask ? channel ? 'Task family shown · ' : 'Selected message shown · ' : query ? 'Up to 100 results per page · ' : before ? 'Up to 100 older messages per page · ' : ''}{dispatchTarget ? `Enter to queue${canSteer ? ', Ctrl/Cmd+Enter to steer' : ''}` : 'Enter to send'}, Shift+Enter for a new line</p>
       </footer>
-      <header className="chat__header">
-        <span className="chat__pill-anchor">
-          <button type="button" className="chat__pill" onClick={() => setMenuOpen(!menuOpen)} aria-haspopup="menu" aria-expanded={menuOpen}>
-            <AgentAvatar agent={agent} size={24} />
-            <span className="chat__pill-name">{title}</span>
-            <ChevronDown size={14} aria-hidden className="chat__pill-chev" />
-          </button>
-          {menuOpen && <Menu align="center" label={`Menu ${title}`} onClose={() => setMenuOpen(false)} items={items} />}
-        </span>
-        <div className="chat__header-right">
-          <span className={`activity-chip${active ? ' is-working' : ''}`} role="status">{active ? `${active} ${active === 1 ? 'message' : 'messages'} processing` : channel ? 'Shared channel' : 'Direct conversation'}</span>
-          {!detailsOpen && <button type="button" className="icon-btn icon-btn--bordered" onClick={() => setDetailsOpen(true)} aria-label="Show details" title="Show details"><PanelRight size={16} aria-hidden /></button>}
-        </div>
-      </header>
+      <ChatHeader agent={agent} title={title} onToggle={() => setMenuOpen(!menuOpen)} expanded={menuOpen}
+        menu={menuOpen && <Menu align="center" label={`Menu ${title}`} onClose={() => setMenuOpen(false)} items={items} />}
+        right={<><span className={`activity-chip${active ? ' is-working' : ''}`} role="status">{active ? `${active} ${active === 1 ? 'message' : 'messages'} processing` : channel ? 'Shared channel' : 'Direct conversation'}</span>
+          {!detailsOpen && <button type="button" className="icon-btn icon-btn--bordered" onClick={() => setDetailsOpen(true)} aria-label="Show details" title="Show details"><PanelRight size={16} aria-hidden /></button>}</>} />
     </main>
     {detailsOpen && <aside className="details" style={{ width: `${details.width}px` }} aria-label="Conversation details">
       <PanelResizeHandle panel={details} />
@@ -1326,7 +1291,7 @@ function App() {
   let content: ReactNode;
   if (error) content = <PageView><div className="empty"><h1>Workspace is not open</h1><p role="alert">{error}</p><button onClick={() => void load()}>Try again</button></div></PageView>;
   else if (!directory) content = <main className="chat chat--empty bs-root"><p className="empty-chat__sub" role="status">Loading workspace...</p></main>;
-  else if (view === 'remote') { const machine = remoteMachinesState.machines.find(item => item.id === remoteSelection?.machine); content = <main className="chat bs-root remote-agent-page"><RemoteAgentDetail key={`${machine?.id}:${remoteSelection?.agent}`} request={api} machine={machine} agent={machine?.agents.find(item => item.id === remoteSelection?.agent)} onBack={() => setView('chat')} /></main>; }
+  else if (view === 'remote') { const machine = remoteMachinesState.machines.find(item => item.id === remoteSelection?.machine); content = <RemoteAgentDetail key={`${machine?.id}:${remoteSelection?.agent}`} request={api} machine={machine} agent={machine?.agents.find(item => item.id === remoteSelection?.agent)} />; }
   else if (view === 'workflows') content = <PageView wide><Suspense fallback={<p className="empty" role="status">Loading workflow directory...</p>}><WorkflowDirectory agents={directory.agents} request={api} onClose={() => setView('chat')} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={directory.agents.find(item => item.id === owner)} threadId={id} configured={directory.configured} onOpenAgent={openThread} onOpenChannel={openChannel} />} /></Suspense></PageView>;
   else if (view === 'flows') content = <PageView wide><FlowDirectory agents={directory.agents} onClose={() => setView('chat')} onOpen={openThread} /></PageView>;
   else if (channel) content = <Chat onOpenAgent={openThread} key={`channel:${channel.id}`} agent={channel} channel={{ ...channel, lead: directory.agents.find(agent => agent.id === channel.lead)?.hidden ? null : channel.lead }} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id) && !agent.hidden)} onEdit={() => setDialog('edit')} configured={directory.configured} />;

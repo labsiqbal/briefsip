@@ -14,11 +14,12 @@ type Props = {
     generatedFiles?: { id: string; name: string }[];
   };
   agentName: string;
+  remote?: boolean;
   onOpenTask: (id: string) => void;
   onOpenAgent?: (agent: string, thread: string) => void;
 };
 
-export function TurnActivity({ turn, agentName, onOpenTask, onOpenAgent }: Props) {
+export function TurnActivity({ turn, agentName, onOpenTask, onOpenAgent, remote }: Props) {
   const [now, setNow] = useState(Date.now);
   const live = liveTurn(turn);
   useEffect(() => {
@@ -48,7 +49,7 @@ export function TurnActivity({ turn, agentName, onOpenTask, onOpenAgent }: Props
   return <div className="turn-activity">
     <Collapsible title={<span>{activityLabel(turn, now)}</span>}>
       {!!turn.activity?.calls.length && <p className="activity-timing">Elapsed time spans the first provider request to the latest response (or now while working), including waits between requests.</p>}
-      {steps.length ? <ol className="activity-list" aria-label="Turn activity">{steps.map(step => { const item = (turn.agentMessages ?? []).find(row => row.taskId === step.task); return <li key={step.id}><span>{step.text}</span>{item?.taskId && <Badge tone={['done'].includes(item.status) ? 'success' : ['failed','cancelled','uncertain'].includes(item.status) ? 'warn' : 'brand'}>{item.status === 'queued' && item.wait ? 'Waiting' : item.status.charAt(0).toUpperCase() + item.status.slice(1)}</Badge>}{step.task && <button type="button" className="link-btn link-btn--small" onClick={() => item?.agent && item.thread ? onOpenAgent?.(item.agent, item.thread) : onOpenTask(step.task!)}>{item ? 'Open conversation' : 'View subtask'}</button>}</li>; })}</ol> : <p className="activity-timing">{live ? 'Waiting for provider response.' : 'No additional steps recorded.'}</p>}
+      {steps.length ? <ol className="activity-list" aria-label="Turn activity">{steps.map(step => { const item = (turn.agentMessages ?? []).find(row => row.taskId === step.task); return <li key={step.id}><span>{step.text}</span>{item?.taskId && <Badge tone={['done'].includes(item.status) ? 'success' : ['failed','cancelled','uncertain'].includes(item.status) ? 'warn' : 'brand'}>{item.status === 'queued' && item.wait ? 'Waiting' : item.status.charAt(0).toUpperCase() + item.status.slice(1)}</Badge>}{step.task && <button type="button" className="link-btn link-btn--small" onClick={() => item?.agent && item.thread ? onOpenAgent?.(item.agent, item.thread) : onOpenTask(step.task!)}>{item ? 'Open conversation' : 'View subtask'}</button>}</li>; })}</ol> : <p className="activity-timing">{remote ? `Execution stays on the remote machine. Step details and elapsed time are not shared.` : live ? 'Waiting for provider response.' : 'No additional steps recorded.'}</p>}
     </Collapsible>
   </div>;
 }

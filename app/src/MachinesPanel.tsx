@@ -4,6 +4,8 @@ import type { Environment, PairedMachine, PeerAgentSummary } from '../machines';
 import { ActionMenu, Alert, Badge, Button, Card, Checkbox, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, SkeletonRows, Textarea, useConfirm } from './ui/kit';
 import { Markdown } from './Markdown';
 import { restoreRemoteMessage } from '../remote-message-command';
+import { TurnActivity } from './ui/TurnActivity';
+import { ChatComposer, ChatEmptyState, ChatHeader, ChatTranscript, HumanMessage, AgentMessage, TurnStatus } from './ui/ChatPrimitives';
 import './ui/machines.css';
 
 type Request = <T>(path: string, data?: unknown) => Promise<T>;
@@ -84,7 +86,9 @@ export function MachinesPanel({ request, onChanged }: { request: Request; onChan
   </div>;
 }
 type RemoteMessage = {id:string;text:string;status:string;state:string;reply:string|null;error:string|null;created:number};
-export function RemoteAgentDetail({ machine, agent, onBack, request }: { machine?: PairedMachine; agent?: PeerAgentSummary; onBack: () => void; request: Request }) {
+function remoteStatus(item: RemoteMessage) { return item.state === 'uncertain' || item.status === 'interrupted' ? 'Uncertain' : item.status === 'done' ? 'Done' : item.status === 'running' ? 'Replying' : item.status === 'failed' ? 'Failed' : item.status === 'cancelled' ? 'Cancelled' : item.status === 'waiting' ? 'Waiting' : 'Queued'; }
+function remoteTone(item: RemoteMessage) { return item.state === 'uncertain' || ['failed', 'interrupted'].includes(item.status) ? 'error' : item.status === 'waiting' ? 'attention' : ['queued', 'running'].includes(item.status) ? 'working' : 'done'; }
+export function RemoteAgentDetail({ machine, agent, request }: { machine?: PairedMachine; agent?: PeerAgentSummary; request: Request }) {
   const storage=`briefsip:remote-message:${machine?.id}:${agent?.id}`;
   const [recovery]=useState(()=>{try{return {pending:restoreRemoteMessage(sessionStorage.getItem(storage),machine?.id ?? '',agent?.id ?? ''),draft:sessionStorage.getItem(storage+':draft') ?? '',invalid:false};}catch{return {pending:null,draft:'',invalid:true};}});
   const [pending,setPending]=useState(recovery.pending),[invalid,setInvalid]=useState(recovery.invalid);
@@ -99,7 +103,7 @@ export function RemoteAgentDetail({ machine, agent, onBack, request }: { machine
   },[path]);
   useEffect(()=>{end.current?.scrollIntoView({block:'nearest'});},[messages?.length,messages?.at(-1)?.reply]);
   async function send(){
-    if(!machine||!agent||flight.current||invalid||!text.trim())return;
+    if(!machine||!agent||flight.current||invalid||disabledReason||!text.trim())return;
     const command=pending ?? {id:crypto.randomUUID(),machine:machine.id,agent:agent.id,text:text.trim()};
     flight.current=true;readEpoch.current++;setBusy(true);setError('');
     try{
@@ -111,17 +115,26 @@ export function RemoteAgentDetail({ machine, agent, onBack, request }: { machine
     }catch(e){if(mounted.current)setError(message(e));}finally{flight.current=false;if(mounted.current)setBusy(false);}
   }
   async function discard(){if(!await confirm({title:'Discard saved message?',description:'Delivery may already have succeeded. Check this conversation and the receiving machine before sending a replacement.',confirm:'Discard message',danger:true}))return;try{sessionStorage.removeItem(storage);setPending(null);setInvalid(false);}catch{setError('Browser storage could not be updated.');}}
-  const heading = useRef<HTMLHeadingElement>(null); useEffect(() => { heading.current?.focus(); }, [machine?.id, agent?.id]);
-  return <div className="k-page bs-root remote-conversation"><PageHeader headingRef={heading} title={machine && agent ? `${agent.name} on ${machine.name}` : 'Remote agent unavailable'} description={machine ? `${machine.origin} · ${statusLabel[machine.status]}` : 'This machine has been unpaired.'} actions={<Button variant="ghost" onClick={onBack}>Back to workspace</Button>} />
-    {(error||loadError)&&<Alert tone="error">{error||loadError}</Alert>}
-    {(pending||invalid)&&<Alert tone="warn" title={invalid?'Saved message could not be read':'Message submission is not confirmed'} actions={<Button size="sm" disabled={busy} onClick={()=>void discard()}>Discard saved message</Button>}>Check conversation history. Retry keeps the same request ID and text.</Alert>}
-    {machine&&machine.status!=='online'&&<Alert title={statusLabel[machine.status]}>{machine.status==='unauthorized'?'Peer access was revoked. Pair this machine again in Settings > Machines.':'This agent is unavailable. Existing messages remain saved; reconnect the machine before sending.'}</Alert>}
-    <section className="remote-conversation__messages" aria-label="Remote messages" aria-busy={messages===null}>
-      {messages===null?<SkeletonRows />:!messages.length?<EmptyState title={`Message ${agent?.name ?? 'remote agent'}`}>Only your message is shared. The agent runs on {machine?.name ?? 'its own machine'} and keeps its local approval rules.</EmptyState>:messages.map(item=><article className="remote-conversation__turn" key={item.id}>
-        <div className="message-user"><div className="msg-meta"><strong>You</strong><time dateTime={new Date(item.created).toISOString()}>{new Date(item.created).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</time></div><div className="msg-bubble msg-bubble--user message-plain">{item.text}</div></div>
-        <div className="message-assistant"><div className="msg-meta"><strong>{agent?.name} on {machine?.name}</strong><Badge tone={item.status==='done'?'success':['failed','interrupted','cancelled'].includes(item.status)?'warn':'brand'}>{item.state==='uncertain'||item.status==='interrupted'?'Uncertain':item.status==='done'?'Done':item.status==='running'?'Replying':item.status==='failed'?'Failed':item.status==='cancelled'?'Cancelled':item.status==='waiting'?'Waiting':'Queued'}</Badge></div>{item.error&&<Alert tone="error">{item.error}</Alert>}{item.reply?<Markdown text={item.reply} scope="" origin={window.location.origin}/>:!['failed','interrupted','cancelled'].includes(item.status)&&<p className="k-field__hint" role="status">Waiting for {agent?.name}...</p>}</div>
-      </article>)}<div ref={end}/>
-    </section>
-    {machine&&agent&&<form className="remote-conversation__composer" onSubmit={event=>{event.preventDefault();void send();}}><Field label={`Message ${agent.name} on ${machine.name}`}><Textarea value={text} maxLength={16000} required disabled={busy||!!pending||invalid||machine.status!=='online'} onChange={event=>{setText(event.target.value);try{sessionStorage.setItem(storage+':draft',event.target.value);}catch{setError('Draft could not be saved in browser storage.');}}} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing){event.preventDefault();void send();}}}/></Field><div className="machines-form-actions"><span className="k-field__hint">Enter to send, Shift+Enter for a new line</span><Button type="submit" variant="primary" busy={busy} disabled={busy||invalid||!text.trim()||machine.status!=='online'}>{pending?'Retry message':'Send message'}</Button></div></form>}
-  </div>;
+  const heading = useRef<HTMLDivElement>(null); useEffect(() => { heading.current?.focus(); }, [machine?.id, agent?.id]);
+  const disabledReason = invalid ? 'Saved message could not be read. Discard it after checking conversation history.' : machine?.status !== 'online' ? `${machine ? statusLabel[machine.status] : 'Remote machine unavailable'}. Reconnect the machine before sending.` : machine?.remoteAgentMessaging === false ? `Messaging is turned off on ${machine.name}. Enable it in Settings > Machines on that machine.` : undefined;
+  return <main className="chat bs-root remote-conversation" aria-label={machine && agent ? `Conversation ${agent.name} on ${machine.name}` : 'Remote agent unavailable'}>
+    <ChatHeader agent={agent ?? { id: '', name: 'Remote agent' }} title={agent?.name ?? 'Remote agent unavailable'} pillRef={heading} tooltip={machine?.origin} right={<><span className="chat__remote-context">on {machine?.name ?? 'unknown machine'}</span><span className={`activity-chip${machine?.status === 'online' ? ' is-working' : ''}`} role="status">{machine ? statusLabel[machine.status] : 'Unavailable'}</span></>} />
+    <ChatTranscript aria-busy={messages === null}>
+      {loadError && <p className="chat-notice is-error" role="alert">{loadError} History will be retried.</p>}
+      {machine && machine.status !== 'online' && <p className="chat-notice is-warn" role="status">{machine.status === 'unauthorized' ? 'Peer access was revoked. Pair this machine again in Settings > Machines.' : 'This agent is unavailable. Existing messages remain saved; reconnect the machine before sending.'}</p>}
+      {!machine || !agent ? <ChatEmptyState agent={{ id: '', name: 'Remote agent' }} title="Remote agent unavailable">{!machine ? 'This machine has been unpaired.' : 'This agent is no longer in the remote directory.'}</ChatEmptyState> : messages === null ? <p className="empty-chat__sub" role="status">Loading conversation...</p> : !messages.length ? <ChatEmptyState agent={agent ?? { id: '', name: 'remote agent' }} title={`Message ${agent?.name ?? 'remote agent'}`}>Only your message is shared. The agent runs on {machine?.name ?? 'its own machine'} and keeps its local approval rules.</ChatEmptyState> : messages.map(item => <article className="turn-block" id={`turn-${item.id}`} tabIndex={-1} key={item.id}>
+        <HumanMessage text={item.text} label="Your message"><time className="message-time" dateTime={new Date(item.created).toISOString()}>{new Date(item.created).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</time></HumanMessage>
+        <AgentMessage><TurnActivity remote turn={{ status: item.state === 'uncertain' ? 'interrupted' : item.status, paused: item.status === 'waiting' ? 1 : 0, created: new Date(item.created).toISOString() }} agentName={agent?.name ?? 'remote agent'} onOpenTask={id => document.getElementById(`turn-${id}`)?.focus()} /><div className="message-body">{item.error && <p className="message-error" role="alert">{item.error}</p>}{item.reply ? <div className="legacy"><Markdown text={item.reply} scope="" origin={window.location.origin} /></div> : !['failed', 'interrupted', 'cancelled'].includes(item.status) && <p className="message-muted" role="status">Waiting for {agent?.name}...</p>}</div><TurnStatus tone={remoteTone(item)} label={remoteStatus(item)} /></AgentMessage>
+      </article>)}<div ref={end} />
+    </ChatTranscript>
+    <footer className="composer-area">
+      {disabledReason && <p id="remote-send-reason" className="composer__note" role="status">{disabledReason}</p>}
+      {error && <div className="composer__error" role="alert">{error}</div>}
+      {(pending || invalid) && <div className="composer__error" role="status"><span><strong>{invalid ? 'Saved message could not be read' : 'Message submission is not confirmed'}</strong>. Check conversation history. Retry keeps the same request ID and text.</span><Button size="sm" variant="ghost" disabled={busy} onClick={() => void discard()}>Discard saved message</Button></div>}
+      {machine && agent && <ChatComposer label={`Message ${agent.name} on ${machine.name}`} input={{ id: 'remote-message', value: text, required: true, disabled: busy || !!pending || !!disabledReason, 'aria-describedby': disabledReason ? 'remote-send-reason' : undefined, onChange: event => { setText(event.target.value); try { sessionStorage.setItem(storage + ':draft', event.target.value); } catch { setError('Draft could not be saved in browser storage.'); } } }}
+        onSubmit={event => { event.preventDefault(); void send(); }} onSendKey={() => void send()} attachmentDisabledReason="Remote conversations support text only."
+        busy={busy} retry={!!pending} sendDisabled={busy || !!disabledReason || !text.trim()} sendLabel={busy ? 'Sending...' : pending ? 'Retry send' : 'Send message'} sendTitle={disabledReason ?? (pending ? 'Retry send' : 'Send (Enter)')} />}
+      <p className="composer__foot">Enter to send, Shift+Enter for a new line</p>
+    </footer>
+  </main>;
 }

@@ -130,7 +130,7 @@ test('background health reports version mismatch and never sends bearer to a cha
     if (req.url === '/api/pairing/redeem') return send({ environment: descriptor, token: remoteToken });
     if (req.url === '/api/machines/reciprocal') { issuedBack = data.token; return send({ ok: true }); }
     if (req.url === '/api/environment') { if (mode === 'redirect') { res.writeHead(302, { Location: app.origin + '/api/environment' }); return res.end(); } return send(descriptor); }
-    if (req.url === '/api/peer/agents') { if (mode === 'unauthorized') { res.writeHead(401); return send({ error: 'no' }); } return send({ agents: [{ ...agent, name: mode === 'reflection' ? issuedBack : agent.name }] }); }
+    if (req.url === '/api/peer/agents') { if (mode === 'unauthorized') { res.writeHead(401); return send({ error: 'no' }); } return send({ agents: [{ ...agent, name: mode === 'reflection' ? issuedBack : agent.name }], ...(mode === 'bad-policy' ? { messagingAllowed: 'false' } : {}) }); }
     return send({ ok: true });
   }); origin = (await listen(server)).origin;
   try {
@@ -138,7 +138,8 @@ test('background health reports version mismatch and never sends bearer to a cha
     mode = 'version'; const deadline = Date.now() + 20_000;
     while ((await list(app))[0].status !== 'version-mismatch' && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
     assert.equal((await list(app))[0].status, 'version-mismatch');
-    mode = 'normal'; await app.refreshMachines(); assert.equal((await list(app))[0].status, 'online');
+    mode = 'normal'; await app.refreshMachines(); assert.equal((await list(app))[0].status, 'online'); assert.equal((await list(app))[0].remoteAgentMessaging, undefined, 'Older peers omit availability hints');
+    mode = 'bad-policy'; await app.refreshMachines(); assert.equal((await list(app))[0].status, 'offline');
     mode = 'unauthorized'; await app.refreshMachines(); assert.equal((await list(app))[0].status, 'unauthorized');
     mode = 'identity'; await app.refreshMachines(); const before = authorizedCalls; await app.refreshMachines(); assert.equal((await list(app))[0].status, 'unauthorized'); assert.equal(authorizedCalls, before, 'Identity mismatch received bearer');
     mode = 'redirect'; await app.refreshMachines(); assert.equal((await list(app))[0].status, 'offline'); assert.equal(authorizedCalls, before);
