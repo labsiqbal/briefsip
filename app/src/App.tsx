@@ -22,7 +22,7 @@ import { AgentMessage, ChatComposer, ChatEmptyState, ChatHeader, ChatTranscript,
 import { livePartial, turnPollDelay, type TurnActivityData } from './ui/transcript';
 import { EventConnection } from './EventConnection';
 import { applyPresentation, readPresentation } from '../presentation';
-import { CreateProject, HelpPage, HowBriefsipWorks, ProjectHome, ProjectSourceControl, useProjects } from './Projects';
+import { CreateProject, HelpPage, HowBriefsipWorks, ProjectHome, ProjectSidebar, ProjectSourceControl, useProjects } from './Projects';
 import { AgentSidebar } from './AgentSidebar';
 import { MachinesPanel, RemoteAgentDetail, useMachines } from './MachinesPanel';
 import { HtmlPreview } from './HtmlPreview';
@@ -361,7 +361,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   if (showMemory) return <PageView><Suspense fallback={<p className="empty" role="status">Loading memory...</p>}><MemoryPanel key={scope} path={`/api/${channel ? 'channels' : 'agents'}/${agent.id}/memory`} channel={!!channel} archived={!!channel?.archived} request={api} onClose={() => { setShowMemory(false); requestAnimationFrame(() => memoryButton.current?.focus()); }} /></Suspense></PageView>;
   const active = turns?.filter(turn => turn.status === 'queued' || turn.status === 'running').length ?? 0;
   const title = thread?.name ?? agent.name;
-  const editLabel = channel ? 'Channel settings' : thread ? 'Conversation settings' : 'Edit profile';
+  const editLabel = channel ? 'Section settings' : thread ? 'Conversation settings' : 'Edit profile';
   const openFiles = () => { setDetailsOpen(true); selectDetailsTab('library'); setFilesOpen(true); requestAnimationFrame(() => filesSection.current?.querySelector<HTMLButtonElement>('.k-collapsible__trigger')?.focus()); };
   const items: MenuItem[] = [
     ...menuItems,
@@ -454,7 +454,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
       </footer>
       <ChatHeader agent={agent} title={title} onToggle={() => setMenuOpen(!menuOpen)} expanded={menuOpen}
         menu={menuOpen && <Menu align="center" label={`Menu ${title}`} onClose={() => setMenuOpen(false)} items={items} />}
-        right={<><span className={`activity-chip${active ? ' is-working' : ''}`} role="status">{active ? `${active} ${active === 1 ? 'message' : 'messages'} processing` : channel ? 'Shared channel' : 'Direct conversation'}</span>
+        right={<><span className={`activity-chip${active ? ' is-working' : ''}`} role="status">{active ? `${active} ${active === 1 ? 'message' : 'messages'} processing` : channel ? 'Shared section' : 'Direct conversation'}</span>
           {!detailsOpen && <button type="button" className="icon-btn icon-btn--bordered" onClick={() => setDetailsOpen(true)} aria-label="Show details" title="Show details"><PanelRight size={16} aria-hidden /></button>}</>} />
     </main>
     {detailsOpen && <aside className="details" style={{ width: `${details.width}px` }} aria-label="Conversation details">
@@ -467,7 +467,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
         <div className="details__identity">
           <AgentAvatar agent={agent} size={56} />
           <div className="details__name" title={agent.name}>{agent.name}</div>
-          <div className="details__who-sub" title={!channel ? (agent as Agent).role || 'Agent' : undefined}>{channel ? `Chatroom${channel.archived ? ' · Archived' : ''}` : (agent as Agent).role || 'Agent'}</div>
+          <div className="details__who-sub" title={!channel ? (agent as Agent).role || 'Agent' : undefined}>{channel ? `Section${channel.archived ? ' · Archived' : ''}` : (agent as Agent).role || 'Agent'}</div>
           {!channel && <span className="details__model" title={(agent as Agent).runtime && (agent as Agent).runtime !== 'api' ? `${(agent as Agent).runtime} runtime` : (agent as Agent).model}>{(agent as Agent).runtime && (agent as Agent).runtime !== 'api' ? `${(agent as Agent).runtime} runtime` : (agent as Agent).model}</span>}
         </div>
         {!channel && <div className="details__computer"><AgentComputerPanel key={agent.id} agent={agent.id} name={agent.name} request={api} compact /></div>}
@@ -1174,7 +1174,7 @@ function FlowDirectory({ agents, onClose, onOpen }: { agents: Agent[]; onClose: 
   </div>;
 }
 
-type SettingsSection = 'updates' | 'machines' | 'connected-apps' | 'skills' | 'mcp' | 'mcp-server' | 'data' | 'usage' | 'backup' | 'import' | 'sections' | 'help' | 'appearance';
+type SettingsSection = 'updates' | 'machines' | 'connected-apps' | 'skills' | 'mcp' | 'mcp-server' | 'data' | 'usage' | 'backup' | 'import' | 'help' | 'appearance';
 const settingsSections: { id: SettingsSection; label: string }[] = [
   { id: 'skills', label: 'Skills' },
   { id: 'connected-apps', label: 'Connected apps' },
@@ -1186,11 +1186,10 @@ const settingsSections: { id: SettingsSection; label: string }[] = [
   { id: 'usage', label: 'Usage' },
   { id: 'import', label: 'Import agent' },
   { id: 'backup', label: 'Backup' },
-  { id: 'sections', label: 'Agent sections' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'help', label: 'Help' },
 ];
-type Dialog = 'agent' | 'channel' | 'project' | 'edit' | null;
+type Dialog = 'agent' | 'project' | 'edit' | null;
 const collapsedKey = 'briefsip:sidebar-collapsed';
 const machineGroupsKey = 'briefsip:sidebar-machine-groups';
 const machineStatus = { online: 'Online', offline: 'Offline', unauthorized: 'Unauthorized', 'version-mismatch': 'Version mismatch' };
@@ -1254,10 +1253,7 @@ function App() {
         const version = directoryRequest.current;
         const [rooms, agents, summary] = await Promise.all([api<Channel[]>('/api/channels'), api<Directory>('/api/agents'), api<{ summaries: SidebarSummary[] }>('/api/sidebar/summary')]);
         if (!stopped && version === directoryRequest.current) setDirectory(current => current && ({ ...current, agents: current.agents.map(agent => { const fresh = agents.agents.find(item => item.id === agent.id); return fresh && fresh.revision >= agent.revision ? fresh : agent; }) }));
-        if (!stopped) { setActivityError(false); setChannels(current => current.map(room => {
-          const fresh = rooms.find(item => item.id === room.id);
-          return fresh ? { ...room, activity: Math.max(room.activity, fresh.activity), read_position: Math.max(room.read_position, fresh.read_position) } : room;
-        })); }
+        if (!stopped) { setActivityError(false); setChannels(current => rooms.map(fresh => { const old=current.find(room=>room.id===fresh.id); return {...fresh, activity:Math.max(old?.activity??0,fresh.activity), read_position:Math.max(old?.read_position??0,fresh.read_position)}; })); }
         if (!stopped) { setSummaries(summary.summaries); void projectState.reload().catch(() => {}); }
       } catch { if (!stopped) setActivityError(true); }
       if (!stopped) timer = setTimeout(refreshActivity, 2400);
@@ -1278,20 +1274,24 @@ function App() {
   async function markRead(room: Channel) {
     const updated = await api<Channel>(`/api/channels/${room.id}/read`, { id: crypto.randomUUID(), position: room.activity });
     setChannels(current => current.map(item => item.id === room.id ? { ...item, activity: Math.max(item.activity, updated.activity), read_position: Math.max(item.read_position, updated.read_position) } : item));
+    await projectState.reload();
   }
   const agent = directory?.agents.find(agent => agent.id === selected);
-  const channel = channels.find(channel => channel.id === selectedChannel);
+  const storedChannel = channels.find(channel => channel.id === selectedChannel);
+  const sectionProject = projectState.projects.find(project => project.id === storedChannel?.project);
+  const section = sectionProject?.sections.find(section => section.id === selectedChannel);
+  const channel = storedChannel && section && sectionProject ? {...storedChannel, name: `${sectionProject.name} / # ${section.name}`} : storedChannel;
   const project = projectState.projects.find(item => item.id === selectedProject);
   const openProject = (id: string) => { setSelectedProject(id); setProjectThread(null); setView('chat'); setDialog(null); setSelectedChannel(''); };
   const openAgent = (id: string) => { setSelectedProject(''); setProjectThread(null); setView('chat'); setOpenedThread(null); setSelected(id); setSelectedChannel(''); setDialog(null); };
   const openChannel = (id: string) => { setSelectedProject(''); setProjectThread(null); setView('chat'); setSelectedChannel(id); setDialog(null); };
+  const openSection = (id: string) => { openChannel(id); void load(); };
   const openThread = (owner: string, thread: string) => { setSelectedProject(''); setProjectThread(null); if(owner.includes('@')){const [agent,machine]=owner.split('@');setRemoteSelection({machine,agent});setView('remote');setDialog(null);setSettings(null);return;} setOpenedThread({ agent: owner, thread }); setSelected(owner); setSelectedChannel(''); setView('chat'); setDialog(null); setSettings(null); };
   const relativeTime = (value: string | null | undefined) => { if (!value) return ''; const age = Math.max(0, Date.now() - Date.parse(value)); if (!Number.isFinite(age)) return ''; const minutes = Math.floor(age / 60000); if (minutes < 60) return `${Math.max(1, minutes)}m`; const hours = Math.floor(minutes / 60); if (hours < 24) return `${hours}h`; return `${Math.floor(hours / 24)}d`; };
   const summaryByAgent = new Map(summaries.map(item => [item.agent, item]));
   const summaryFor = (id: string) => summaryByAgent.get(id);
   const matches = (name: string, preview = '', role = '') => !query || `${name} ${role} ${preview}`.toLocaleLowerCase().includes(query);
   const localAgents = (directory?.agents ?? []).filter(item => showHidden || !item.hidden).filter(item => matches(item.name, summaryFor(item.id)?.preview, item.role));
-  const localChannels = channels.filter(room => !room.project).filter(room => matches(room.name, room.archived ? 'Archived' : `${room.members.length} members`));
   const agentRow = (id: string) => {
     const item = directory?.agents.find(agent => agent.id === id);
     if (!item) return null;
@@ -1311,7 +1311,7 @@ function App() {
   else if (view === 'workflows') content = <PageView wide><Suspense fallback={<p className="empty" role="status">Loading workflow directory...</p>}><WorkflowDirectory agents={directory.agents} request={api} onClose={() => setView('chat')} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={directory.agents.find(item => item.id === owner)} threadId={id} configured={directory.configured} onOpenAgent={openThread} onOpenChannel={openChannel} />} /></Suspense></PageView>;
   else if (view === 'flows') content = <PageView wide><FlowDirectory agents={directory.agents} onClose={() => setView('chat')} onOpen={openThread} /></PageView>;
   else if (project) content = <PageView wide><ProjectHome project={project} agents={directory.agents} state={projectState} request={api} onChat={id => { void load(true).then(() => openChannel(id)); }} onThread={(agent,thread) => { setProjectThread({project:project.id,agent,thread}); setSelectedProject(''); }} onDeleted={() => { setSelectedProject(''); void load(); }} /></PageView>;
-  else if (projectThread && directory.agents.find(agent => agent.id === projectThread.agent)) { const owner = directory.agents.find(agent => agent.id === projectThread.agent)!; const thread = projectState.projects.find(project => project.id === projectThread.project)?.threads.find(thread => thread.id === projectThread.thread); content = thread ? <Chat key={thread.id} sourceControl={<ProjectSourceControl project={projectThread.project} folder={thread.folder} request={api}/>} agent={owner} thread={{...thread,revision:1,archived:0,deleted:0}} configured={directory.configured} menuItems={[{label:'Back to project',onSelect:()=>openProject(projectThread.project)}]} /> : <PageView><EmptyState title="Project thread unavailable" /></PageView>; }
+  else if (projectThread && directory.agents.find(agent => agent.id === projectThread.agent)) { const owner = directory.agents.find(agent => agent.id === projectThread.agent)!; const thread = projectState.projects.find(project => project.id === projectThread.project)?.threads.find(thread => thread.id === projectThread.thread); content = thread ? <Chat key={thread.id} sourceControl={thread.folder ? <ProjectSourceControl project={projectThread.project} folder={thread.folder} request={api}/> : undefined} agent={owner} thread={{...thread,revision:1,archived:0,deleted:0}} configured={directory.configured} menuItems={[{label:'Back to project',onSelect:()=>openProject(projectThread.project)}]} /> : <PageView><EmptyState title="Project thread unavailable" /></PageView>; }
   else if (channel) content = <Chat onOpenAgent={openThread} key={`channel:${channel.id}`} agent={channel} channel={{ ...channel, lead: directory.agents.find(agent => agent.id === channel.lead)?.hidden ? null : channel.lead }} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id) && !agent.hidden)} onEdit={channel.project ? undefined : () => setDialog('edit')} menuItems={channel.project ? [{label:'Back to project',onSelect:()=>openProject(channel.project!)}] : []} configured={directory.configured} />;
   else if (agent) content = <AgentConversations onOpenChannel={openChannel} key={agent.id} agent={agent} workflowAgents={directory.agents} configured={directory.configured} initialThread={openedThread?.agent === agent.id ? openedThread.thread : undefined} onThreadOpened={() => setOpenedThread(null)} onOpenAgent={openThread} onEdit={() => setDialog('edit')} />;
   else content = <main className="chat chat--empty bs-root"><div className="empty-chat"><div className="empty-chat__title">Create your first agent</div><div className="empty-chat__sub">Name it, choose a model, then explain how it should work. The agent and its history are saved on this computer.</div><button type="button" className="btn btn--primary" onClick={() => setDialog('agent')}><Plus size={16} aria-hidden /> New agent</button><HowBriefsipWorks action={<Button variant="ghost" onClick={() => setSettings('help')}>Read quick guide</Button>} /></div></main>;
@@ -1328,7 +1328,6 @@ function App() {
             <button type="button" className="icon-btn" onClick={() => setNewMenu(!newMenu)} aria-label="Create new" aria-haspopup="menu" aria-expanded={newMenu} title="Create new"><Plus size={16} aria-hidden /></button>
             {newMenu && <Menu align="right" label="Create new" onClose={() => setNewMenu(false)} items={[
               { label: 'New agent', onSelect: () => setDialog('agent') },
-              { label: 'New channel', onSelect: () => setDialog('channel'), disabled: !directory?.agents.length },
               { label: 'New project', onSelect: () => setDialog('project'), disabled: !directory },
               { label: 'Import agent', onSelect: () => setSettings('import'), disabled: !directory },
             ]} />}
@@ -1336,7 +1335,7 @@ function App() {
         </div>
       </div>
       <div className="sidebar__search">
-        <Search size={15} aria-hidden /><Input aria-label="Search agents and chatrooms" placeholder="Search agents and chatrooms..." value={search} onChange={event => setSearch(event.target.value)} />
+        <Search size={15} aria-hidden /><Input aria-label="Search agents, projects and sections" placeholder="Search agents, projects and sections..." value={search} onChange={event => setSearch(event.target.value)} />
         <DropdownMenu.Root open={filterMenu} onOpenChange={setFilterMenu}>
           <DropdownMenu.Trigger asChild><IconButton label="Filter sidebar" aria-pressed={onlyOnline || showHidden}><Filter size={15} aria-hidden /></IconButton></DropdownMenu.Trigger>
           <DropdownMenu.Portal><DropdownMenu.Content className="k-pop k-menu" align="end" sideOffset={6}>
@@ -1353,43 +1352,25 @@ function App() {
         <nav className="machine-groups" aria-label="Machines">
         <MachineGroup name="This device" subtitle={environment?.name} count={(directory?.agents ?? []).filter(item => showHidden || !item.hidden).length} expanded={query ? searchMachineGroups.local !== false : machineGroups.local !== false} onExpandedChange={expanded => setMachineExpanded('local', expanded)} local>
           <div className="bot-list sidebar-agents">
-            <AgentSidebar mode="list" agents={localAgents} showHidden={showHidden} searching={!!query} request={api} renderAgent={agentRow} />
+            <AgentSidebar agents={localAgents} searching={!!query} renderAgent={agentRow}>
             {!!directory?.agents.length && !localAgents.length && <p className="machine-group__note">No matching agents.</p>}
             {directory && !directory.agents.length && <button type="button" className="bot-list__empty" onClick={() => setDialog('agent')}><span className="bot-list__empty-plus"><Plus size={14} aria-hidden /></span><span><span className="bot-row__name">New agent</span><span className="bot-row__preview">Assign a task, such as research or a summary</span></span></button>}
+            </AgentSidebar>
           </div>
-          <div className="sidebar-section-heading"><span>Projects</span><IconButton label="New project" disabled={!directory} onClick={() => setDialog('project')}><Plus size={14} aria-hidden /></IconButton></div>
-          <nav className="bot-list" aria-label="Projects">
-            {projectState.projects.filter(item => matches(item.name,item.description)).map(item => <button key={item.id} type="button" className={`bot-row${selectedProject === item.id ? ' is-selected' : ''}`} aria-current={selectedProject === item.id ? 'page' : undefined} onClick={() => openProject(item.id)}><span className="bot-row__avatar"><FolderOpen size={20} aria-hidden /></span><span className="bot-row__text"><span className="bot-row__name">{item.name}</span><span className="bot-row__preview project-members">{item.members.slice(0,3).map(member => { const agent = directory?.agents.find(agent=>agent.id===member.agent); return agent ? <AgentAvatar key={agent.id} agent={agent} size={18} /> : null; })}<span>{item.members.length} {item.members.length === 1 ? 'member' : 'members'}</span></span></span><time className="bot-row__time" dateTime={new Date(item.updated).toISOString()}>{relativeTime(new Date(item.updated).toISOString())}</time></button>)}
-            <button type="button" className="bot-list__empty" disabled={!directory} onClick={() => setDialog('project')}><Plus size={14} aria-hidden /><span>New project</span></button>
-          </nav>
-          {projectState.recovery}
-          <div className="sidebar__label">Chatrooms</div>
-          <nav className="bot-list" aria-label="Select channel">
-            {localChannels.map(room => {
-              const current = view === 'chat' && room.id === selectedChannel, unread = room.activity > room.read_position;
-              return <button key={room.id} type="button" className={`bot-row${current ? ' is-selected' : ''}`} aria-label={`${room.name} ${room.archived ? 'Archived' : `${room.members.length} members`}${unread ? ' - Unread' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openChannel(room.id)}>
-                <span className="bot-row__avatar"><AgentAvatar agent={room} size={36} />{unread && <span className="status-dot is-unread" aria-label="Unread" />}</span>
-                <span className="bot-row__text"><span className="bot-row__name">{room.name}</span><span className="bot-row__preview">{room.archived ? 'Archived' : `${room.members.length} members`}{unread ? ' · Unread' : ''}</span></span>
-              </button>;
-            })}
-            {!!channels.filter(room=>!room.project).length && !localChannels.length && <p className="machine-group__note">No matching chatrooms.</p>}
-            {!channels.filter(room=>!room.project).length && <button type="button" className="bot-list__empty" disabled={!directory?.agents.length} onClick={() => setDialog('channel')}><span className="bot-list__empty-plus"><Hash size={14} aria-hidden /></span><span><span className="bot-row__name">New channel</span><span className="bot-row__preview">Bring several agents into one space</span></span></button>}
-          </nav>
+          <ProjectSidebar state={projectState} selectedProject={selectedProject} selectedSection={view === 'chat' ? selectedChannel : ''} search={query} onProject={openProject} onSection={openSection} onNew={() => setDialog('project')} onArchived={id => { if (selectedProject === id || channel?.project === id || projectThread?.project === id) openAgent(selected); void load(); }} />
         </MachineGroup>
         {remoteMachines.map(machine => <MachineGroup key={machine.id} name={machine.name} subtitle={`${machine.name} · ${machineStatus[machine.status]}`} count={machine.agentCount} status={machine.status} expanded={query ? searchMachineGroups[machine.id] !== false : machineGroups[machine.id] !== false} onExpandedChange={expanded => setMachineExpanded(machine.id, expanded)}>
           {machine.status !== 'online' && <p className="machine-group__note">{machineStatus[machine.status]} · Last known agents</p>}
-          <div className="sidebar__label">Agents</div>
-          <nav className="bot-list" aria-label={`Agents on ${machine.name}`}>
-            {machine.agents.filter(item => matches(item.name, summaryFor(`${item.id}@${machine.id}`)?.preview, item.role)).map(item => {
+          <AgentSidebar machine={machine.id} label={`Agents on ${machine.name}`} agents={machine.agents.filter(item => matches(item.name, summaryFor(`${item.id}@${machine.id}`)?.preview, item.role))} searching={!!query} renderAgent={id => { const item = machine.agents.find(item => item.id === id)!;
               const current = view === 'remote' && remoteSelection?.machine === machine.id && remoteSelection.agent === item.id, summary = summaryFor(`${item.id}@${machine.id}`);
               return <button key={item.id} type="button" className={`bot-row${current ? ' is-selected' : ''}`} aria-label={`${item.name} on ${machine.name}`} aria-current={current ? 'page' : undefined} onClick={() => { setRemoteSelection({ machine: machine.id, agent: item.id }); setView('remote'); setDialog(null); }}>
                 <span className="bot-row__avatar"><AgentAvatar agent={item} size={36} /><span className={`status-dot${machine.status === 'online' ? ' is-online' : ' is-offline'}`} role="img" aria-label={machineStatus[machine.status]} /></span>
                 <span className="bot-row__text"><span className="bot-row__name">{item.name}</span><span className="bot-row__preview" title={plainPreview(summary?.preview) || undefined}>{item.role || plainPreview(summary?.preview) || 'No role yet'}</span></span>{summary?.time && <time className="bot-row__time" dateTime={summary.time}>{relativeTime(summary.time)}</time>}
               </button>;
-            })}
+            }}>
             {!machine.agents.length && <p className="machine-group__note">No agents cached yet.</p>}
-            {!!machine.agents.length && !machine.agents.some(item => matches(item.name, summaryFor(`${item.id}@${machine.id}`)?.preview)) && <p className="machine-group__note">No matching agents.</p>}
-          </nav>
+            {!!machine.agents.length && !machine.agents.some(item => matches(item.name, summaryFor(`${item.id}@${machine.id}`)?.preview, item.role)) && <p className="machine-group__note">No matching agents.</p>}
+          </AgentSidebar>
         </MachineGroup>)}
         {remoteMachinesState.error && <p className="machine-group__note" role="status">Machines could not be refreshed.</p>}
         {!remoteMachinesState.machines.length && <button type="button" className="bot-list__empty" onClick={() => setSettings('machines')}><Monitor size={16} aria-hidden /><span><span className="bot-row__name">Pair a machine</span><span className="bot-row__preview">See agents on your other computers</span></span></button>}
@@ -1406,7 +1387,6 @@ function App() {
     </aside>}
     {content}
     {dialog === 'agent' && directory && <AgentForm model={directory.defaultModel} onCancel={() => setDialog(null)} onCreated={item => { created(item); setDialog(null); }} />}
-    {dialog === 'channel' && directory && <ChannelForm agents={directory.agents} onCancel={() => setDialog(null)} onCreated={item => { setChannels(current => [...current.filter(room => room.id !== item.id), item]); openChannel(item.id); }} />}
     {dialog === 'project' && directory && <CreateProject state={projectState} agents={directory.agents} request={api} onClose={() => setDialog(null)} onCreated={item => { openProject(item.id); void load(); }} />}
     {dialog === 'edit' && directory && channel && <ChannelForm key={`${channel.id}:${channel.revision}:${editReload}`} agents={directory.agents} channel={channel} onCancel={() => setDialog(null)} onReload={() => { void load().then(() => setEditReload(value => value + 1)); }} onCreated={() => { void load(); setDialog(null); }} />}
     {dialog === 'edit' && directory && !channel && agent && <AgentForm key={`${agent.id}:${editReload}`} model={directory.defaultModel} profile={agent} onCancel={() => setDialog(null)} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} onCreated={() => { void load(); setDialog(null); }} />}
@@ -1435,7 +1415,6 @@ function App() {
             : settings === 'backup' ? <Suspense fallback={<p className="empty" role="status">Loading backup...</p>}><BackupPanel onClose={() => setSettings(null)} /></Suspense>
             : settings === 'import' ? <Suspense fallback={<p className="empty" role="status">Loading agent import...</p>}><AgentTemplateImport request={api} onClose={() => setSettings(null)} onCreated={item => { created(item); setSettings(null); }} /></Suspense>
             : settings === 'help' ? <HelpPage />
-            : settings === 'sections' ? <AgentSidebar mode="editor" agents={directory.agents} request={api} renderAgent={() => null} />
             : <Suspense fallback={<p className="empty" role="status">Loading appearance settings...</p>}><PresentationSettings /></Suspense>}
         </div>
       </div>

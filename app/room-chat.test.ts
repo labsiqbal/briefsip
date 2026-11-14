@@ -147,3 +147,20 @@ test('direct delegation exposes inline transcript request, named reply, machine 
   for(let n=0;n<300;n++){turn=(await request(path))[0];if(turn.status==='done')break;await new Promise(resolve=>setTimeout(resolve,10));}
   assert.equal(turn.reply,'Final answer.');assert.equal(turn.agentMessages[0].task,'Research request.');assert.equal(turn.agentMessages[0].name,'Right Hand');assert.equal(turn.agentMessages[0].reply,'Research result.');assert(turn.agentMessages[0].activity.calls.length);
 }));
+
+test('new project section fans out with H2 silence and agent mentions, then follows project membership edits', async () => fixture(async ({members,calls,request,wait,setRespond}:any) => {
+  setRespond((body:any)=>latest(body)==='Plan section work' ? body.model==='Assistant'?'@Right Hand, inspect the plan.':'NO_REPLY':'Plan checked.');
+  const project=await request('/api/projects',{id:randomUUID(),name:'Section team',members:members.slice(0,3).map((a:any)=>({agent:a.id,write:false}))},200);
+  const withSection=await request(`/api/projects/${project.id}/sections`,{id:randomUUID(),revision:1,name:'design'},201);
+  const section=withSection.sections.find((s:any)=>s.name==='design'),path=`/api/channels/${section.id}/turns`,id=randomUUID();
+  await request(path,{id,text:'Plan section work'},202);const rows=await wait(path,id);
+  assert.deepEqual(calls.slice(0,3).map((body:any)=>body.model).sort(),['Assistant','Reviewer','Right Hand']);
+  assert.equal(calls.length,4);
+  const root=rows.find((row:any)=>row.id===id);
+  assert.deepEqual(root.room.messages.map((message:any)=>message.text),['@Right Hand, inspect the plan.','Plan checked.']);assert.equal(root.room.quiet.length,2);
+  const changed=await request(`/api/projects/${project.id}/edit`,{id:randomUUID(),revision:2,members:[members[0],members[3]].map((a:any)=>({agent:a.id,write:false}))},200);
+  const channels=await request('/api/channels',undefined,200);
+  for(const section of changed.sections)assert.deepEqual(channels.find((c:any)=>c.id===section.id).members,[members[0].id,members[3].id].sort());
+  const next=randomUUID();await request(path,{id:next,text:'@Four, inspect.'},202);await wait(path,next);
+  assert.deepEqual(calls.slice(4).map((body:any)=>body.model),['Four']);
+}));
