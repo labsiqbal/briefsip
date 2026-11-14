@@ -39,12 +39,19 @@ for(const runtime of ['codex','claude'] as const) {
     const f=await fixture(runtime);try {
       async function approval(decision:string){const id=await f.send('APPROVE'),row=await f.until(id,row=>row.harnessApprovals?.length||row.status==='failed');assert.equal(row.status,'running',row.error);const card=row.harnessApprovals[0];assert.equal(card.prefix,'echo hello');const body={id:randomUUID(),revision:card.revision,decision};await f.request(`${f.path}/turns/${id}/harness-approvals/${card.id}`,body);await f.request(`${f.path}/turns/${id}/harness-approvals/${card.id}`,body);const done=await f.until(id,row=>['done','failed'].includes(row.status));assert.equal(done.status,'done',done.error);assert.equal(done.reply,decision==='deny'?'Harness denied':'Harness finished');return id;}
       await approval('deny');await approval('allow');await approval('always');const fourth=await f.send('APPROVE');const fourthDone=await f.until(fourth,row=>['done','failed'].includes(row.status));assert.equal(fourthDone.status,'done',fourthDone.error);assert.equal(fourthDone.harnessApprovals.length,0);
+      const peer=await f.request('/api/mcp-server/peer-tokens',{id:randomUUID(),name:'Peer',scopes:['agents:message']});
+      const receipt=await fetch(f.app.origin+'/mcp',{method:'POST',headers:{Authorization:`Bearer ${peer.token}`,'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'send_message',arguments:{requestId:randomUUID(),recipient:f.agent,text:'APPROVE peer work'}}})}).then(response=>response.json());
+      const delivery=receipt.result.structuredContent,thread=`/api/threads/${delivery.thread}/turns`;
+      let peerTurn:any;for(let n=0;n<600;n++){peerTurn=(await f.request(thread))[0];if(peerTurn?.harnessApprovals?.length)break;assert(!['done','failed'].includes(peerTurn?.status),'Peer bypassed saved command approval');await delay(15);}
+      assert.equal(peerTurn.harnessApprovals[0].state,'approval');const peerCard=peerTurn.harnessApprovals[0];
+      await f.request(`${thread}/${delivery.turn}/harness-approvals/${peerCard.id}`,{id:randomUUID(),revision:peerCard.revision,decision:'deny'});
+      for(let n=0;n<600;n++){peerTurn=(await f.request(thread))[0];if(peerTurn.status==='done')break;await delay(15);}assert.equal(peerTurn.reply,'Harness denied');
       const secret=await f.send('APPROVE_SECRET'),row=await f.until(secret,row=>row.harnessApprovals?.length),card=row.harnessApprovals[0];
       assert.equal(card.prefix,null);assert(!JSON.stringify(card).includes('test-mcp-session-token'));assert.match(card.command,/\[redacted\]/);
       await f.request(`${f.path}/turns/${secret}/harness-approvals/${card.id}`,{id:randomUUID(),revision:card.revision,decision:'always'},400);
       await f.request(`${f.path}/turns/${secret}/harness-approvals/${card.id}`,{id:randomUUID(),revision:card.revision,decision:'deny'});
       assert.equal((await f.until(secret,row=>['done','failed'].includes(row.status))).reply,'Harness denied');
-      assert.equal(f.minted.length,5);assert.equal(f.revoked.length,5);
+      assert.equal(f.minted.length,6);assert.equal(f.revoked.length,6);
     } finally {await f.close();}
   });
   test(`${runtime}: workspace write policy, outside-file and network consent`,async()=>{

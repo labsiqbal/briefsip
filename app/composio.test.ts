@@ -81,6 +81,11 @@ test('connected apps end to end: catalog, accounts, grants, tools, approvals, re
     const second=await send('always'),always=second.waiting.approvals[0];await request(`${turns}/${second.id}/app-approvals/${always.id}`,{id:randomUUID(),revision:always.revision,decision:'always'});await wait(turns,second.id,row=>row.status==='done');
     await app.close();app=await startApp(options);origin=app.origin;
     const auto=randomUUID();await request(turns,{id:auto,text:'always persisted'},202);const automated=await wait(turns,auto,row=>row.status==='done');assert.equal(automated.approvals.length,0);assert.equal(effects.filter(row=>row==='GMAIL_SEND_EMAIL').length,3);
+    const peer=await request('/api/mcp-server/peer-tokens',{id:randomUUID(),name:'Peer',scopes:['agents:message']});
+    const receipt=await fetch(origin+'/mcp',{method:'POST',headers:{Authorization:`Bearer ${peer.token}`,'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'send_message',arguments:{requestId:randomUUID(),recipient:agent.id,text:'Peer write with saved policy'}}})}).then(response=>response.json());
+    const delivery=receipt.result.structuredContent,peerTurns=`/api/threads/${delivery.thread}/turns`,peerTurn=await wait(peerTurns,delivery.turn,row=>row.approvals?.some((a:any)=>a.state==='approval'));
+    assert.equal(effects.filter(row=>row==='GMAIL_SEND_EMAIL').length,3);const peerApproval=peerTurn.approvals[0];
+    await request(`${peerTurns}/${delivery.turn}/app-approvals/${peerApproval.id}`,{id:randomUUID(),revision:peerApproval.revision,decision:'deny'});await wait(peerTurns,delivery.turn,row=>row.status==='done');
     const policyPath=`/api/agents/${agent.id}/connected-app-policies`,policies=(await request(policyPath)).items;assert.equal(policies.length,1);await request(policyPath,{id:randomUUID(),fingerprint:policies[0].fingerprint});
     const preflight=await send('account lookup temporarily fails'),preflightApproval=preflight.waiting.approvals[0];fail=1;
     await request(`${turns}/${preflight.id}/app-approvals/${preflightApproval.id}`,{id:randomUUID(),revision:preflightApproval.revision,decision:'allow'});

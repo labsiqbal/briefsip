@@ -43,7 +43,7 @@ test('real MCP client calls all tools, isolated peer history, stable send receip
     const ownerId = randomUUID(); await f.post(`/api/agents/${f.agent.id}/turns`, { id: ownerId, text: 'OWNER_PRIVATE_CANARY' }, 202);
     const a = await f.peer('Laptop A'), b = await f.peer('Laptop B');
     const ca = await f.client(a.token), cb = await f.client(b.token);
-    assert.deepEqual((await ca.listTools()).tools.map(tool => tool.name).sort(), ['get_message_status','list_agents','read_history','send_message']);
+    assert.deepEqual((await ca.listTools()).tools.map(tool => tool.name).sort(), ['cancel_message','get_message_status','list_agents','read_history','send_message']);
     const list = await call(ca, 'list_agents'); assert.equal(list.agents[0].id, f.agent.id); assert.equal(list.agents[0].model, 'fixture'); assert(list.agents[0].description); assert(['idle','working'].includes(list.agents[0].status));
     const requestId = randomUUID(), args = { requestId, recipient: f.agent.id, text: 'PEER_A_CANARY' };
     const delivery = await call(ca, 'send_message', args); assert.equal(delivery.status, 'queued');
@@ -94,6 +94,24 @@ test('MCP scope, credential failures, schema checks and browser boundaries', asy
     assert.equal((await fetch(f.app.origin + '/mcp', { headers: { Authorization:`Bearer ${full.token}` } })).status, 405);
     assert.equal((await f.rpc(full.token,'tools/list',{}, { 'Content-Type':'text/plain' })).status, 415);
   } finally { await f.close(); }
+});
+
+test('cancel_message cannot cancel another peer or owner work', async () => {
+  const f = await fixture();
+  try {
+    f.hold();
+    const a = await f.peer('A'), b = await f.peer('B'), ca = await f.client(a.token), cb = await f.client(b.token);
+    const requestId = randomUUID(), delivery = await call(ca, 'send_message', { requestId, recipient: f.agent.id, text: 'Peer work' });
+    await waitFor(async () => f.calls === 1);
+    assert((await cb.callTool({ name: 'cancel_message', arguments: { requestId } })).isError);
+    assert.equal((await call(ca, 'get_message_status', { requestId })).status, 'running');
+    const owner = randomUUID(); await f.post(`/api/agents/${f.agent.id}/turns`, { id: owner, text: 'Owner work' }, 202);
+    assert((await ca.callTool({ name: 'cancel_message', arguments: { requestId: owner } })).isError);
+    assert.equal((await call(ca, 'cancel_message', { requestId })).status, 'cancelled');
+    assert.equal((await call(ca, 'cancel_message', { requestId })).status, 'cancelled');
+    const turns = await (await fetch(f.app.origin + `/api/threads/${delivery.thread}/turns`)).json(); assert.equal(turns[0].status, 'cancelled');
+    const ownerTurns = await (await fetch(f.app.origin + `/api/agents/${f.agent.id}/turns`)).json(); assert.notEqual(ownerTurns.find((row: any) => row.id === owner).status, 'cancelled');
+  } finally { f.release(); await f.close(); }
 });
 
 test('owner peer token routes are idempotent, reveal once, validate boundaries and never persist bearer canaries', async () => {

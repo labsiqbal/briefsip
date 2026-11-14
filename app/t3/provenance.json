@@ -105,13 +105,15 @@
   "localFiles": {
     "app/t3/connection-registry.ts": "a7bfb8ae826cd788584b6ac66ebc66bd79ff46bb492abfd5983ec2944a9ab2cd",
     "app/t3/environment-contract.ts": "9cf05fc15e5f8e66448e96abf312445f22761cc8d8b6d23ba23031510f9f9717",
-    "app/t3/environment-link.ts": "eb842ebe6ea6403fd4adaef5016d1b2da277666051f63284f827a31ec5f9a19d",
+    "app/t3/environment-link.ts": "37474dea53c058fb41dbbd1abd6e68159a012b1143c8a8c5380e130ea70be73b",
     "app/t3/mcp-session-registry.ts": "6a16d9d250b10dd01556180e31dc2efb38f3580aad47cbfaa8eefb7ad3357967",
     "app/t3/mcp-tool-access.ts": "b9b209f536312658cd9c962a99a874945ac7915a95f959fa092a671cf55c3c50",
-    "app/mcp-server.ts": "c707cfbcd40a63cbd5df425c763f22a2d50da591c5d7590a6729224fdcbcf718",
+    "app/mcp-server.ts": "3c1155a6f508891353a9cc95f68a0a12243e83ef5249ec49686e360685b51585",
     "app/workspace-git.ts": "1a1f70315f5fb397981e0c3ceb61b3adc89281329dcae252179754eaab2aa4ff",
     "app/src/SourceControl.tsx": "e57ee243489ac4811838ee2a9ca8e85fa0aed73b34346d20fd49d7323b00f4b8",
-    "app/src/ui/source-control.css": "8b85c9f079aec8cb46ec8136a154baeb43dfe89efe08735bb476bc1553936053"
+    "app/src/ui/source-control.css": "8b85c9f079aec8cb46ec8136a154baeb43dfe89efe08735bb476bc1553936053",
+    "app/machines.ts": "85f9b1584f8fa641c3e9d8c079e3c9b23097722e49e61179a3bcc9c8cc1d5cc9",
+    "app/remote-agents.ts": "9fde5d74d0d91c5d8f0b7f7c129e311eadd7d59d3ba1494405d60f9d1ef6d288"
   },
   "typeSubstitutions": {
     "HttpServerRequest.HttpServerRequest": "LinkRequest with originalUrl and lowercase scalar headers",
@@ -587,6 +589,38 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "adaptation": "Translated tool contracts to local function tools."
+    },
+    {
+      "sourcePath": "apps/server/src/peer/PeerMcpClient.ts",
+      "symbols": [
+        "call",
+        "openSession"
+      ],
+      "adaptation": "SDK Streamable HTTP client with stored pairing bearer, descriptor identity checks and bounded JSON fetch; Effect and OAuth sign-in omitted.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "5995c55e43c05aa12edcf8afb313e772ca6aa6ac4fd7974b42be185d225ae01f",
+      "localPath": "app/machines.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [
+        "@modelcontextprotocol/sdk"
+      ],
+      "compatibilityCheck": "app/remote-agents.test.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/peer/RemoteDelegation.ts",
+      "symbols": [
+        "delegate",
+        "start"
+      ],
+      "adaptation": "Durable peer reference with restart followers, bounded polling and existing Briefsip task completion receipts; uncertain sends are not replayed.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "716d81b9598bfeb4206bf834d93246c5830a6589e0b64e5a2f385016e56c7515",
+      "localPath": "app/remote-agents.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/remote-agents.test.ts"
     }
   ]
 }

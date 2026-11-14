@@ -1229,7 +1229,7 @@ function App() {
   const channel = channels.find(channel => channel.id === selectedChannel);
   const openAgent = (id: string) => { setView('chat'); setOpenedThread(null); setSelected(id); setSelectedChannel(''); setDialog(null); };
   const openChannel = (id: string) => { setView('chat'); setSelectedChannel(id); setDialog(null); };
-  const openThread = (owner: string, thread: string) => { setOpenedThread({ agent: owner, thread }); setSelected(owner); setSelectedChannel(''); setView('chat'); setDialog(null); setSettings(null); };
+  const openThread = (owner: string, thread: string) => { if(owner.includes('@')){const [agent,machine]=owner.split('@');setRemoteSelection({machine,agent});setView('remote');setDialog(null);setSettings(null);return;} setOpenedThread({ agent: owner, thread }); setSelected(owner); setSelectedChannel(''); setView('chat'); setDialog(null); setSettings(null); };
   const agentRow = (id: string) => {
     const item = directory?.agents.find(agent => agent.id === id);
     if (!item) return null;
@@ -1244,7 +1244,7 @@ function App() {
   let content: ReactNode;
   if (error) content = <PageView><div className="empty"><h1>Workspace is not open</h1><p role="alert">{error}</p><button onClick={() => void load()}>Try again</button></div></PageView>;
   else if (!directory) content = <main className="chat chat--empty bs-root"><p className="empty-chat__sub" role="status">Loading workspace...</p></main>;
-  else if (view === 'remote') { const machine = remoteMachines.machines.find(item => item.id === remoteSelection?.machine); content = <PageView><RemoteAgentDetail machine={machine} agent={machine?.agents.find(item => item.id === remoteSelection?.agent)} onBack={() => setView('chat')} /></PageView>; }
+  else if (view === 'remote') { const machine = remoteMachines.machines.find(item => item.id === remoteSelection?.machine); content = <main className="chat bs-root remote-agent-page"><RemoteAgentDetail key={`${machine?.id}:${remoteSelection?.agent}`} request={api} machine={machine} agent={machine?.agents.find(item => item.id === remoteSelection?.agent)} onBack={() => setView('chat')} /></main>; }
   else if (view === 'workflows') content = <PageView wide><Suspense fallback={<p className="empty" role="status">Loading workflow directory...</p>}><WorkflowDirectory agents={directory.agents} request={api} onClose={() => setView('chat')} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={directory.agents.find(item => item.id === owner)} threadId={id} configured={directory.configured} onOpenAgent={openThread} onOpenChannel={openChannel} />} /></Suspense></PageView>;
   else if (view === 'flows') content = <PageView wide><FlowDirectory agents={directory.agents} onClose={() => setView('chat')} onOpen={openThread} /></PageView>;
   else if (channel) content = <Chat onOpenAgent={openThread} key={`channel:${channel.id}`} agent={channel} channel={{ ...channel, lead: directory.agents.find(agent => agent.id === channel.lead)?.hidden ? null : channel.lead }} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id) && !agent.hidden)} onEdit={() => setDialog('edit')} configured={directory.configured} />;
