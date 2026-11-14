@@ -19,7 +19,7 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
   const [baseline, setBaseline] = useState('');
   const [cursors, setCursors] = useState(['']), [refresh, setRefresh] = useState(0), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [editor, setEditor] = useState<Skill | null>(null), [version, setVersion] = useState(1);
-  const [importBusy, setImportBusy] = useState(false);
+  const [importBusy, setImportBusy] = useState(false), [loadError, setLoadError] = useState('');
   const navigation = useRef(0), inFlight = useRef(false), heading = useRef<HTMLHeadingElement>(null);
   const dirty = !!editor && JSON.stringify(editor) !== baseline;
   const confirm = useConfirm();
@@ -28,8 +28,8 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
   useEffect(() => { heading.current?.focus(); return () => { navigation.current++; }; }, []);
   useEffect(() => { heading.current?.focus(); }, [after, showPacks]);
   useEffect(() => {
-    let stopped = false; setPage(null); setInstalled(null); setError('');
-    void Promise.all([request<NonNullable<typeof page>>(`/api/skills${after ? `?after=${after}` : ''}`), owner ? request<{ items: Installed[]; next_after: string | null }>(`/api/agents/${owner}/skills${installAfter ? `?after=${installAfter}` : ''}`) : Promise.resolve({ items: [], next_after: null })]).then(([library, rows]) => { if (!stopped) { setPage(library); setInstalled(rows.items); setInstallNext(rows.next_after); } }).catch(error => { if (!stopped) setError(error.message); });
+    let stopped = false; setPage(null); setInstalled(null); setError(''); setLoadError('');
+    void Promise.all([request<NonNullable<typeof page>>(`/api/skills${after ? `?after=${after}` : ''}`), owner ? request<{ items: Installed[]; next_after: string | null }>(`/api/agents/${owner}/skills${installAfter ? `?after=${installAfter}` : ''}`) : Promise.resolve({ items: [], next_after: null })]).then(([library, rows]) => { if (!stopped) { setPage(library); setInstalled(rows.items); setInstallNext(rows.next_after); } }).catch(error => { if (!stopped) setLoadError(error.message || 'Skills could not load.'); });
     return () => { stopped = true; };
   }, [owner, after, installAfter, refresh]);
   useEffect(() => {
@@ -87,6 +87,7 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
 
     <Section id="skills-installed" title="Installed on agent" actions={agents.length > 0 && <Select size="sm" label="Agent" value={owner} disabled={locked} onChange={value => { navigation.current++; setOwner(value); setInstallCursors(['']); }} options={agents.map(agent => ({ value: agent.id, label: agent.name }))} />}>
       {!owner ? <EmptyState icon={<BookOpen size={18} />} title="No agents yet">Create an agent first, then install skills on it.</EmptyState>
+        : loadError ? <Alert tone="error" actions={<Button size="sm" disabled={busy} onClick={() => setRefresh(value => value + 1)}>Try again</Button>}>{loadError}</Alert>
         : installed === null ? <SkeletonRows count={2} />
         : installed.length === 0 ? <EmptyState icon={<BookOpen size={18} />} title={`${ownerName} has no skills yet`}>Open a skill in the library, then install its version on this agent.</EmptyState>
         : <Card>{installed.map(row => <Row key={row.skill} title={row.name} leading={<BookOpen size={16} aria-hidden />}
@@ -103,7 +104,8 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
     </Section>
 
     <Section id="skills-library" title="Library" actions={<SkillFolderImport compact disabled={locked} onBusy={setImportBusy} onError={setError} onImport={files => void importFiles(files)} />}>
-      {!page ? !error && <SkeletonRows count={3} />
+      {loadError ? <Alert tone="error" actions={<Button size="sm" disabled={busy} onClick={() => setRefresh(value => value + 1)}>Try again</Button>}>{loadError}</Alert>
+        : !page ? <SkeletonRows count={3} />
         : page.skills.length === 0 ? <EmptyState icon={<FileText size={18} />} title="Library is empty" action={<Button variant="primary" size="sm" icon={<Plus size={14} aria-hidden />} disabled={locked} onClick={() => void startNew()}>Create skill</Button>}>Write a new skill, or import a folder containing SKILL.md.</EmptyState>
         : <Card>{page.skills.map(skill => <Row key={skill.id} title={skill.name} meta={`Revision ${skill.revision}`} leading={<FileText size={16} aria-hidden />} disabled={locked} onClick={() => void open(skill.id)} />)}</Card>}
       {pager(cursors.length > 1, !!page?.next_after, () => setCursors(value => value.slice(0, -1)), () => setCursors(value => [...value, page!.next_after!]), 'Skill')}

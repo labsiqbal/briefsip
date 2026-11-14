@@ -52,7 +52,7 @@ export function AgentTemplateImport({ request, onCreated }: { request: <T>(path:
           <Card><fieldset disabled={busy || !!pending} className="k-fieldset" style={{ padding: 12 }}>
             <div className="k-inline">
               {draft.avatar && <img src={`data:image/png;base64,${draft.avatar}`} alt="Avatar to import" width={64} height={64} style={{ borderRadius: 12, objectFit: 'cover' }} />}
-              <Button type="button" size="sm" variant="ghost" aria-disabled={!draft.avatar} onClick={() => { if (draft.avatar) { const { avatar, ...profile } = draft; setDraft(profile); } }}>Omit avatar</Button>
+              <Button type="button" size="sm" variant="ghost" disabled={!draft.avatar} onClick={() => { if (draft.avatar) { const { avatar, ...profile } = draft; setDraft(profile); } }}>Omit avatar</Button>
             </div>
             <Field label="Name"><Input required maxLength={80} value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} /></Field>
             <Field label="Model"><Input required maxLength={160} value={draft.model} onChange={event => setDraft({ ...draft, model: event.target.value })} /></Field>
@@ -78,7 +78,7 @@ export function AgentTemplateExport({ id, request }: { id: string; request: <T>(
     catch (error) { if (current === version.current) setError(error instanceof Error ? error.message : 'Template could not load.'); }
     finally { if (current === version.current) setBusy(false); }
   }
-  return <div className="k-page bs-root"><Section title="Export template"><p>Export includes the saved profile and avatar, without history, conversation files, or provider credential settings. Instructions are included in the download: check for sensitive information before sharing the file.</p>
+  return <div className="k-page bs-root"><Section title="Export template"><p className="k-field__hint">Export includes the saved profile and avatar, without history, conversation files, or provider credential settings. Instructions are included in the download: check for sensitive information before sharing the file.</p>
     <div className="k-row-actions"><Button size="sm" disabled={busy} onClick={() => void preview()}>{busy ? 'Loading saved profile...' : 'Preview export template'}</Button></div>
     {error && <Alert tone="error">{error}</Alert>}
     {template && <>{template.avatar && <img src={`data:image/png;base64,${template.avatar}`} alt="Template avatar" width={64} height={64} style={{ borderRadius: 12, objectFit: 'cover' }} />}<CodeBlock label="File contents to download">{JSON.stringify(template, null, 2)}</CodeBlock><div className="k-row-actions"><Button size="sm" variant="secondary" onClick={() => {

@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
-import { cpuPercent, processCpuPercent, diskMetrics, memoryAvailable, createHostMetrics } from './host-metrics.ts';
+import { cpuPercent, processCpuPercent, diskMetrics, memoryAvailable, memoryLimit, createHostMetrics } from './host-metrics.ts';
 import { startApp } from './server.ts';
 
 test('CPU units, disk reservations/thresholds and available memory retain honest semantics', () => {
@@ -25,6 +25,11 @@ test('CPU units, disk reservations/thresholds and available memory retain honest
   assert.equal(diskMetrics({ blocks: 0n, bfree: 0n, bavail: 0n, bsize: 1n }), null);
   assert.equal(diskMetrics({ blocks: 100n, bfree: 1n, bavail: 2n, bsize: 1n }), null);
   assert.equal(diskMetrics({ blocks: 9007199254740993n, bfree: 2n, bavail: 1n, bsize: 4096n })?.total, (9007199254740993n * 4096n).toString());
+});
+
+test('OS memory limits preserve finite constraints and normalize unbounded sentinels', () => {
+  for (const value of [0, -1, NaN, Infinity, 2 ** 60, 2 ** 63 - 4096, 2 ** 64 - 1]) assert.equal(memoryLimit(value), null);
+  for (const value of [1, 512 * 1024 ** 2, 32 * 1024 ** 3, 2 ** 60 - 128]) assert.equal(memoryLimit(value), value);
 });
 
 test('local metrics share collection, distinguish missing/symlink files and do not follow supplied paths', async () => {
