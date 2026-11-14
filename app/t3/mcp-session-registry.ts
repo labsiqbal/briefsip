@@ -2,7 +2,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 
-export const mcpScopes = ['agents:read', 'agents:message', 'history:read'] as const;
+export const mcpScopes = ['agents:read', 'agents:message', 'history:read', 'machine:update'] as const;
 export type McpScope = typeof mcpScopes[number];
 export type McpCaller = { id: string; kind: 'session' | 'peer'; agent?: string; turn?: string; peer?: string; scopes: McpScope[] };
 export type AgentSessionInput = { agent: string; turn?: string; scopes: McpScope[]; ttlMs: number };
@@ -61,6 +61,7 @@ export function revokePeerToken(db: DatabaseSync, peerId: string, request: { id:
 export function mintAgentSession(db: DatabaseSync, input: AgentSessionInput, now = Date.now()) {
   if (!input || Object.keys(input).some(key => !['agent','turn','scopes','ttlMs'].includes(key)) || typeof input.agent !== 'string' || !uuid.test(input.agent) || !Number.isSafeInteger(input.ttlMs) || input.ttlMs < 1 || input.ttlMs > 86_400_000 || !db.prepare('SELECT 1 FROM agents WHERE id=?').get(input.agent)) throw new McpServerError(400, 'Invalid agent session.');
   const scopes = parseScopes(input.scopes);
+  if (scopes.includes('machine:update')) throw new McpServerError(403, 'Machine updates require an owner-authorized paired peer.');
   if (input.turn !== undefined && (typeof input.turn !== 'string' || !uuid.test(input.turn) || !db.prepare("SELECT 1 FROM turns WHERE id=? AND agent=? AND status='running'").get(input.turn, input.agent))) throw new McpServerError(400, 'Agent session requires its running turn.');
   const id = randomUUID(), token = randomBytes(32).toString('base64url'), expires = now + input.ttlMs;
   db.prepare("INSERT INTO mcp_server_tokens(id,token_hash,kind,name,agent,turn,scopes,created,expires,request_digest) VALUES (?,?,'session','',?,?,?,?,?,'')").run(id, hashToken(token), input.agent, input.turn ?? null, JSON.stringify(scopes), now, expires);

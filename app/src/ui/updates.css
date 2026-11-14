@@ -1,0 +1,15 @@
+.updates-release { padding: 0 18px 18px; }
+.updates-notes { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 20px; line-height: 1.6; max-width: 72ch; }
+.updates-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.updates-page .k-badge, .updates-table { font-variant-numeric: tabular-nums; }
+.updates-steps { display: flex; flex-wrap: wrap; gap: 16px; padding: 0; margin: 16px 0 0; list-style: none; font-size: 12px; color: var(--muted); }
+.updates-steps li { display: flex; align-items: center; gap: 7px; }
+.updates-steps li[aria-current] { color: var(--text); font-weight: 600; }
+.updates-steps li > span { display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--line); border-radius: 50%; }
+.updates-table-scroll { overflow-x: auto; }
+.updates-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
+.updates-table th, .updates-table td { padding: 12px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.updates-table thead th { color: var(--muted); font-size: 12px; font-weight: 500; white-space: nowrap; }
+.updates-table tbody th { max-width: 180px; overflow-wrap: anywhere; font-weight: 500; }
+.updates-table td:last-child { max-width: 230px; overflow-wrap: anywhere; }
+.update-available-badge { font-size: 10px; color: var(--text); background: var(--color-bg-hover); border-radius: 8px; padding: 4px 7px; white-space: nowrap; }

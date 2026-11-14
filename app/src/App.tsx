@@ -1,3 +1,4 @@
+import { UpdatesPanel, useUpdateBadge } from './UpdatesPanel';
 import { HarnessApprovalCard, type HarnessApproval } from './HarnessApprovalCard';
 import './ui/csp-nonce';
 import { SourceControl, RestoreCheckpoint } from './SourceControl';
@@ -1153,12 +1154,13 @@ function FlowDirectory({ agents, onClose, onOpen }: { agents: Agent[]; onClose: 
   </div>;
 }
 
-type SettingsSection = 'machines' | 'connected-apps' | 'skills' | 'mcp' | 'mcp-server' | 'data' | 'usage' | 'backup' | 'import' | 'sections' | 'appearance';
+type SettingsSection = 'updates' | 'machines' | 'connected-apps' | 'skills' | 'mcp' | 'mcp-server' | 'data' | 'usage' | 'backup' | 'import' | 'sections' | 'appearance';
 const settingsSections: { id: SettingsSection; label: string }[] = [
   { id: 'skills', label: 'Skills' },
   { id: 'connected-apps', label: 'Connected apps' },
   { id: 'mcp', label: 'MCP connections' },
   { id: 'machines', label: 'Machines' },
+  { id: 'updates', label: 'Updates' },
   { id: 'mcp-server', label: 'MCP server' },
   { id: 'data', label: 'Shared data' },
   { id: 'usage', label: 'Usage' },
@@ -1175,6 +1177,7 @@ function App() {
   const [channels, setChannels] = useState<Channel[]>([]), [selectedChannel, setSelectedChannel] = useState('');
   const [view, setView] = useState<'chat' | 'flows' | 'workflows' | 'remote'>('chat');
   const remoteMachines = useMachines(api);
+  const updateAvailable = useUpdateBadge(api);
   const [remoteSelection, setRemoteSelection] = useState<{ machine: string; agent: string } | null>(null);
   const [settings, setSettings] = useState<SettingsSection | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
@@ -1297,6 +1300,7 @@ function App() {
       <div className="sidebar__footer">
         <div className="sidebar__fade" />
         {!collapsed && <div className="provider-status" role="status"><i className={directory?.configured ? 'is-on' : ''} aria-hidden /><span>{activityError ? 'Status not updated. Trying again.' : directory?.configured ? 'Provider configured' : 'Provider not connected'}</span></div>}
+        {updateAvailable && <button type="button" className="update-available-badge" onClick={() => setSettings('updates')}>Update available</button>}
         <RadixDialog.Trigger asChild><button type="button" className="icon-btn icon-btn--bordered" aria-label="Settings" title="Settings (Ctrl/Cmd+,)"><Settings size={16} aria-hidden /></button></RadixDialog.Trigger>
       </div>
       <PanelResizeHandle panel={sidebar} />
@@ -1321,6 +1325,7 @@ function App() {
         <div className="app-settings__page legacy" tabIndex={-1}>
           {!directory ? <p className="empty" role="status">Loading workspace...</p>
             : settings === 'skills' ? <Suspense fallback={<p className="empty" role="status">Loading skill library...</p>}><SkillsPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
+            : settings === 'updates' ? <UpdatesPanel request={api} />
             : settings === 'machines' ? <MachinesPanel request={api} onChanged={() => { void remoteMachines.reload(); }} />
             : settings === 'connected-apps' ? <Suspense fallback={<p className="empty" role="status">Loading connected apps...</p>}><ConnectedAppsPanel agents={directory.agents} request={api} /></Suspense>
             : settings === 'mcp-server' ? <Suspense fallback={<p className="empty" role="status">Loading MCP server...</p>}><McpServerPanel request={api} /></Suspense>

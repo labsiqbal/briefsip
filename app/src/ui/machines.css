@@ -28,3 +28,9 @@
 .remote-conversation__turn .message-assistant { max-width: 75ch; }
 .remote-conversation__composer { position: sticky; bottom: 0; background: var(--color-bg-chrome); padding-block: 16px; border-top: 1px solid var(--color-border-secondary); display: grid; gap: 12px; }
 .remote-conversation__composer textarea { min-height: 88px; resize: vertical; }
+/* Keep machine identity readable beside the two owner permission controls. */
+.machines-page .k-card > .k-row { align-items: flex-start; flex-wrap: wrap; padding: 8px 0; }
+.machines-page .k-card > .k-row > .k-row__main { flex-basis: 100%; }
+.machines-page .k-row__trailing { width: 100%; padding: 0 12px 10px 54px; box-sizing: border-box; }
+.machines-page .k-row__trailing > .k-stack { width: 100%; }
+.machines-page .k-check__desc { max-width: 64ch; }

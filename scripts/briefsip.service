@@ -1,0 +1,12 @@
+[Unit]
+Description=Briefsip server launcher
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/node %h/.local/share/briefsip/scripts/briefsip-launcher.mjs --config %h/.config/briefsip/launcher.json
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

@@ -622,5 +622,69 @@
       "dependencies": [],
       "compatibilityCheck": "app/remote-agents.test.ts"
     }
+  ],
+  "serverUpdateSourceEntries": [
+    {
+      "sourcePath": "apps/server/src/serviceLauncher.ts",
+      "symbols": [
+        "ServiceLauncher",
+        "backupDatabaseOnce",
+        "startTrial",
+        "returnToPrevious"
+      ],
+      "adaptation": "Translate durable request acceptance, immutable snapshot retention, trial selection, health deadline, rollback and restart recovery to a standalone Node launcher and private Unix socket. Briefsip uses workspaceSnapshot through a fenced offline worker, SHA-256 local releases, and an IPC activation gate; no Effect/runtime installer dependency.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "44878720ffcc5141bbe8584a8cac96d4cfd673fea2f6ac0a01c785876a69ed54",
+      "localPath": "scripts/briefsip-launcher.mjs",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/updates.test.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/cloud/selfUpdate.ts",
+      "symbols": [
+        "requestServerUpdate"
+      ],
+      "adaptation": "Adapt server-to-launcher update requests and accepted-versus-committed correlation. Briefsip adds owner-only HTTP admission, bilateral scoped peer release transport, bounded fan-out and durable request IDs.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "66f2a045c5697a01016af0f57896b3268e9ce904b34248668d480ad9657f4cfd",
+      "localPath": "app/updates.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/updates.test.ts"
+    },
+    {
+      "sourcePath": "apps/web/src/components/sidebar/UpdateEverythingDialog.tsx",
+      "symbols": [
+        "UpdateEverythingDialog",
+        "UpdateEverythingDialogContent"
+      ],
+      "adaptation": "Adapt machine/version/running-work summary, restart warning, explicit confirmation and per-machine outcome tracking into Briefsip Radix kit and Bot HQ tokens. No T3 stylesheet or assets copied.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "f5248da6ebc68ed769981f67355099511422deeefd926e8cb3a1b423cf560fcc",
+      "localPath": "app/src/UpdatesPanel.tsx",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/updates.test.ts"
+    },
+    {
+      "sourcePath": "docs/internals/server-updates.md",
+      "symbols": [
+        "commit boundary",
+        "database rollback",
+        "client acknowledgement"
+      ],
+      "adaptation": "Adapt same-host rollback and durable restore marker behavior, keeping disaster recovery restoreWorkspace and endpoint fences separate. Snapshot uses existing workspaceSnapshot; no external effects/files rollback promised.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "2c8414697cd9eaa072ba94979eaf73ada255db3201a4a85f541229c7b06583be",
+      "localPath": "app/update-backup.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/updates.test.ts"
+    }
   ]
 }
