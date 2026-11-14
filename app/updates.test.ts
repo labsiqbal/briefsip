@@ -17,7 +17,7 @@ import { receiveRelease, releaseArchive } from './update-archive.ts';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const { buildRelease } = await import(new URL('../scripts/release.mjs', import.meta.url).href);
 const delay = (ms: number) => new Promise(r=>setTimeout(r,ms));
-const temp = () => mkdtempSync(join(tmpdir(),'briefsip-updates-'));
+const temp = () => mkdtempSync(join(tmpdir(),'updates-'));
 async function until<T>(read:()=>Promise<T|undefined|false>, timeout=15000):Promise<T> { const deadline=Date.now()+timeout; while(Date.now()<deadline){const result=await read();if(result)return result;await delay(80);}throw new Error('Update test timed out.'); }
 async function freePort() { const s=httpServer(); await new Promise<void>(r=>s.listen(0,'127.0.0.1',r)); const addr=s.address();assert(addr&&typeof addr!=='string');const p=addr.port;await new Promise<void>(r=>s.close(()=>r()));return p; }
 function fixture(source:string, version:string, mode='healthy') {

@@ -15,6 +15,9 @@ test('workspace browser API pages text and directories while enforcing host bind
   const path=`/api/agents/${agent}/workspace`;
   try {
     for(const id of [agent,other]){const response=await fetch(app.origin+'/api/agents',{method:'POST',headers:{Origin:app.origin,'Content-Type':'application/json'},body:JSON.stringify({id,name:'Browser',model:'fixture',instructions:'Help'})});assert(response.ok);}
+    const directory = await get('/api/agents');
+    assert.equal(directory.agents.find((row: any) => row.id === agent).workspace_connected, true);
+    assert.equal(directory.agents.find((row: any) => row.id === other).workspace_connected, false);
     mkdirSync(join(root,'pages'));for(let i=0;i<101;i++)writeFileSync(join(root,'pages',String(i).padStart(3,'0')),'');
     writeFileSync(join(root,'text.html'),'<script>alert(1)</script>'+'x'.repeat(8000));
     writeFileSync(join(dir,'outside'),'PRIVATE');symlinkSync('../outside',join(root,'link'));linkSync(join(dir,'outside'),join(root,'hard'));symlinkSync(dir,join(root,'directory-link'));
@@ -41,6 +44,7 @@ test('workspace browser API pages text and directories while enforcing host bind
     await get(path+'/entries',403,{Origin:'https://external.invalid'});await get(path+'/entries',403,{'sec-fetch-site':'cross-site'});
     await get(`/api/agents/${other}/workspace/entries`,403);await get(`/api/agents/${randomUUID()}/workspace/entries`,404);
     await app.close();app=await startApp({database:join(dir,'db.sqlite'),workspaces:[]});await get(path+'/file?path=text.html',403);
+    assert.equal((await get('/api/agents')).agents.find((row: any) => row.id === agent).workspace_connected, false);
   } finally {await app.close();rmSync(dir,{recursive:true,force:true});}
 });
 

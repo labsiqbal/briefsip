@@ -32,7 +32,7 @@ import { Bell, BellOff, Brain, CircleAlert, Check, ChevronDown, ChevronLeft, Che
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
 import { PanelResizeHandle, detailsPanel, sidebarPanel, useResizablePanel } from './ui/resizable';
-import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Collapsible, Combobox, ConfirmProvider, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Segmented, Select, SkeletonRows, Textarea, useConfirm, type SelectOption } from './ui/kit';
+import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Collapsible, Combobox, ConfirmProvider, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Segmented, Select, SkeletonRows, TabPanel, Tabs, Textarea, useConfirm, type SelectOption } from './ui/kit';
 import { createRoot } from 'react-dom/client';
 import { Collapsible as Disclosure, Dialog as RadixDialog, DropdownMenu } from 'radix-ui';
 import { validateFlow, type FlowGraph, type FlowLink } from '../flows.ts';
@@ -65,7 +65,7 @@ const McpPanel = lazy(() => import('./McpPanel').then(module => ({ default: modu
 const ConnectedAppsPanel = lazy(() => import('./ConnectedAppsPanel').then(module => ({ default: module.ConnectedAppsPanel })).catch(panelLoadFailure));
 const SkillsPanel = lazy(() => import('./SkillsPanel').then(module => ({ default: module.SkillsPanel })).catch(panelLoadFailure));
 
-type Agent = { runtime?: 'api' | 'codex' | 'claude'; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; thread_limit: number; revision: number; id: string; name: string; role: string; model: string; instructions: string };
+type Agent = { workspace_connected?: boolean; runtime?: 'api' | 'codex' | 'claude'; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; thread_limit: number; revision: number; id: string; name: string; role: string; model: string; instructions: string };
 type Channel = { activity: number; read_position: number; revision: number; archived: number; id: string; name: string; instructions: string; members: string[]; lead: string | null };
 type Thread = { id: string; agent: string; name: string; revision: number; archived: number; deleted: number; fork?: { source_name: string; source_id: string; source_kind: 'agent' | 'channel' | 'thread'; source_agent: string; cutoff_turn: string; created: string } | null };
 type AgentMessage = { taskId?: string; task?: string; wait?: boolean; generatedFiles?: { id: string; name: string; size: number; thread: string }[]; paused: number; request: string; expects_reply: number; settled: number; id: string; agent: string; thread: string; name: string; status: string; error: string | null; reply: string | null; truncated: boolean };
@@ -241,7 +241,8 @@ function ForkAnswer({ path, turn, onOpen }: { path: string; turn: Turn; onOpen?:
   return <><Button size="sm" variant="ghost" disabled={busy || !onOpen} busy={busy} onClick={() => void fork()}>Fork from here</Button>{error && <span className="message-error" role="alert">{error} Retry uses the same fork request.</span>}</>;
 }
 
-function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit, onOpenAgent, onOpenChannel, menuItems = [], detailsExtra }: { menuItems?: MenuItem[]; detailsExtra?: ReactNode; onOpenChannel?: (channel: string) => void; onOpenAgent?: (agent: string, thread: string) => void; onRead?: () => Promise<void>; onEdit?: () => void; agent: Agent | Channel; configured: boolean; channel?: Channel; thread?: Thread; members?: Agent[] }) {
+type DetailsContent = { chats: ReactNode; activity?: ReactNode; library?: ReactNode };
+function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit, onOpenAgent, onOpenChannel, menuItems = [], detailsExtra }: { menuItems?: MenuItem[]; detailsExtra?: DetailsContent; onOpenChannel?: (channel: string) => void; onOpenAgent?: (agent: string, thread: string) => void; onRead?: () => Promise<void>; onEdit?: () => void; agent: Agent | Channel; configured: boolean; channel?: Channel; thread?: Thread; members?: Agent[] }) {
   const confirm = useConfirm();
   const archived = !!(channel?.archived || thread?.archived || (!channel && (agent as Agent).hidden));
   const scope = thread ? `thread:${thread.id}` : channel ? `channel:${agent.id}` : agent.id;
@@ -355,15 +356,19 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   }
   const [menuOpen, setMenuOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useDetailsOpen();
+  const tabStorageKey = `briefsip:details-tab:${scope}`;
+  const [detailsTab, setDetailsTab] = useState<'chats' | 'activity' | 'library'>(() => {
+    try { const value = localStorage.getItem(tabStorageKey); return value === 'activity' || value === 'library' ? value : 'chats'; } catch { return 'chats'; }
+  });
+  function selectDetailsTab(value: 'chats' | 'activity' | 'library') { setDetailsTab(value); try { localStorage.setItem(tabStorageKey, value); } catch { /* Keep tab selection in memory. */ } }
   const details = useResizablePanel(detailsPanel);
   const [filesOpen, setFilesOpen] = useState(false);
   const filesSection = useRef<HTMLDivElement>(null);
   if (showMemory) return <PageView><Suspense fallback={<p className="empty" role="status">Loading memory...</p>}><MemoryPanel key={scope} path={`/api/${channel ? 'channels' : 'agents'}/${agent.id}/memory`} channel={!!channel} archived={!!channel?.archived} request={api} onClose={() => { setShowMemory(false); requestAnimationFrame(() => memoryButton.current?.focus()); }} /></Suspense></PageView>;
   const active = turns?.filter(turn => turn.status === 'queued' || turn.status === 'running').length ?? 0;
   const title = thread?.name ?? agent.name;
-  const subtitle = channel ? `${members.length} members${channel.archived ? ' · Archived' : ''}` : thread ? `Side thread · ${agent.name}` : (agent as Agent).runtime && (agent as Agent).runtime !== 'api' ? `${(agent as Agent).runtime === 'codex' ? 'Codex' : 'Claude Code'} runtime` : (agent as Agent).model;
   const editLabel = channel ? 'Channel settings' : thread ? 'Conversation settings' : 'Edit profile';
-  const openFiles = () => { setDetailsOpen(true); setFilesOpen(true); requestAnimationFrame(() => filesSection.current?.querySelector<HTMLButtonElement>('.k-collapsible__trigger')?.focus()); };
+  const openFiles = () => { setDetailsOpen(true); selectDetailsTab('library'); setFilesOpen(true); requestAnimationFrame(() => filesSection.current?.querySelector<HTMLButtonElement>('.k-collapsible__trigger')?.focus()); };
   const items: MenuItem[] = [
     ...menuItems,
     ...(onEdit ? [{ label: editLabel, onSelect: onEdit }] : []),
@@ -467,31 +472,32 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
       </div>
       <div className="details__scroll">
         <div className="details__identity">
-          <AgentAvatar agent={agent} size={64} />
-          <div className="details__name" title={title}>{title}</div>
-          <div className="details__who-sub">{subtitle}</div>
+          <AgentAvatar agent={agent} size={56} />
+          <div className="details__name" title={agent.name}>{agent.name}</div>
+          <div className="details__who-sub" title={!channel ? (agent as Agent).role || 'Agent' : undefined}>{channel ? `Chatroom${channel.archived ? ' · Archived' : ''}` : (agent as Agent).role || 'Agent'}</div>
+          {!channel && <span className="details__model" title={(agent as Agent).runtime && (agent as Agent).runtime !== 'api' ? `${(agent as Agent).runtime} runtime` : (agent as Agent).model}>{(agent as Agent).runtime && (agent as Agent).runtime !== 'api' ? `${(agent as Agent).runtime} runtime` : (agent as Agent).model}</span>}
         </div>
-        <div className="details__sections">
-          {detailsExtra}
-          {!channel && <SourceControl key={agent.id} agent={agent.id} request={api} />}
-          {!channel && <AgentComputerPanel key={agent.id} agent={agent.id} name={agent.name} request={api} />}
-          {channel && <section><div className="section-label">Read status</div><div className="panel-card"><div className="panel-row panel-row--setting"><span>{channel.activity > channel.read_position ? 'Unread activity' : 'All activity read'}</span><button type="button" className="cfg-btn cfg-btn--secondary" disabled={markingRead || channel.activity <= channel.read_position} onClick={() => { setMarkingRead(true); void onRead?.().catch(error => setError(message(error))).finally(() => setMarkingRead(false)); }}>Mark as read</button></div></div></section>}
-          <section>
-            <div className="section-label">Search conversation</div>
-            <form className="details-search" role="search" onSubmit={event => { event.preventDefault(); if (!searchText.trim()) return; focusHistory.current = true; nearBottom.current = false; setQuery(searchText); setFocusedTask(''); setHistoryPages([]); focusedOnce.current = ''; }}>
-              <label className="sr-only" htmlFor="history-search">Search this conversation</label>
-              <input id="history-search" className="text-input" type="search" maxLength={200} value={searchText} onChange={event => setSearchText(event.target.value)} aria-describedby="history-search-help" placeholder="Message or reply" />
-              <button type="submit" className="cfg-btn cfg-btn--secondary" disabled={!searchText.trim()}>Search</button>
-            </form>
-            <p id="history-search-help" className="details-hint">Case-sensitive.</p>
-          </section>
-          <section>
-            <div className="section-label">Memory and context</div>
-            <div className="panel-card"><button ref={memoryButton} type="button" className="panel-row panel-row--action" onClick={() => setShowMemory(true)}><Brain size={16} aria-hidden /> {channel ? 'Channel' : 'Agent'} memory</button></div>
-            <CompactionPanel path={path.replace(/\/turns$/, '/compaction')} request={api} />
-          </section>
-          <section ref={filesSection}><ConversationFiles path={path.replace(/\/turns$/, '/files')} archived={archived} attached={pending?.files ?? attached} onAttach={attach} locked={blocked || !!pending || busy} open={filesOpen} onOpenChange={setFilesOpen} /></section>
-          <section><QueuePanel path={path} request={api} onOpen={id => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(id); }} /></section>
+        {!channel && <div className="details__computer"><AgentComputerPanel key={agent.id} agent={agent.id} name={agent.name} request={api} compact /></div>}
+        {channel && <div className="details__channel-meta">
+          <div className="section-label">{members.length} members</div>
+          <div className="details__members" aria-label={`${members.length} channel members`}>{members.map(member => <span key={member.id} role="img" aria-label={`${member.name}${member.id === channel.lead ? ", lead" : ""}`} title={member.name}><AgentAvatar agent={member} size={24} /></span>)}</div>
+          <div className="details__read"><span>{channel.activity > channel.read_position ? 'Unread activity' : 'All activity read'}</span><button type="button" className="link-btn link-btn--small" disabled={markingRead || channel.activity <= channel.read_position} onClick={() => { setMarkingRead(true); void onRead?.().catch(error => setError(message(error))).finally(() => setMarkingRead(false)); }}>Mark as read</button></div>
+        </div>}
+        <div className="details__tabs">
+          <Tabs value={detailsTab} onChange={selectDetailsTab} label="Details sections" tabs={[{ value: 'chats', label: 'Chats' }, { value: 'activity', label: 'Activity' }, { value: 'library', label: 'Library' }]}>
+            <TabPanel value="chats"><div className="details__sections">
+              {detailsExtra?.chats}
+              <section><div className="section-label">Search conversation</div><form className="details-search" role="search" onSubmit={event => { event.preventDefault(); if (!searchText.trim()) return; focusHistory.current = true; nearBottom.current = false; setQuery(searchText); setFocusedTask(''); setHistoryPages([]); focusedOnce.current = ''; }}><label className="sr-only" htmlFor="history-search">Search this conversation</label><input id="history-search" className="text-input" type="search" maxLength={200} value={searchText} onChange={event => setSearchText(event.target.value)} aria-describedby="history-search-help" placeholder="Message or reply" /><button type="submit" className="cfg-btn cfg-btn--secondary" disabled={!searchText.trim()}>Search</button></form><p id="history-search-help" className="details-hint">Case-sensitive.</p></section>
+            </div></TabPanel>
+            <TabPanel value="activity"><div className="details__sections">
+              <section aria-label="Running messages"><div className="section-label">Running messages</div><div className="panel-card">{activeTurns.length ? activeTurns.map(turn => <button key={turn.id} type="button" className="panel-row panel-row--link" onClick={() => openFocused(turn.id)}><span className="panel-row__title">{turns?.find(item => item.id === turn.id)?.text ?? 'Open running message'}</span></button>) : <p className="panel-empty">No messages running.</p>}</div></section>
+              <section><QueuePanel path={path} request={api} onOpen={id => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(id); }} /></section>
+              <Collapsible title="Delegated tasks"><div className="panel-card">{turns?.some(turn => turn.coordination?.length || turn.agentMessages?.length || turn.parent) ? turns.filter(turn => turn.coordination?.length || turn.agentMessages?.length || turn.parent).map(turn => <button key={turn.id} type="button" className="panel-row panel-row--link" onClick={() => openFocused(turn.id)}><span className="panel-row__text"><span className="panel-row__title">{turn.text}</span><span className="panel-row__meta">{statusLabel(turn)}</span></span></button>) : <p className="panel-empty">No delegated tasks in this view.</p>}</div></Collapsible>
+              {detailsExtra?.activity}
+              <Collapsible title="Event waits"><div className="k-stack">{turns?.some(turn => turn.events?.some(event => event.status === 'waiting')) ? turns.flatMap(turn => turn.events?.filter(event => event.status === 'waiting').map(event => <div key={event.id} className="k-stack"><button type="button" className="panel-row panel-row--link" onClick={() => openFocused(turn.id)}><span className="panel-row__text"><span className="panel-row__title">{event.event}</span><time className="panel-row__meta" dateTime={new Date(event.deadline).toISOString()}>{new Date(event.deadline).toLocaleString('en-US')}</time></span></button>{!archived && <EventConnection path={`/api/turn-waits/${event.id}`} request={api} />}</div>)) : <p className="panel-empty">No event waits in this view.</p>}</div></Collapsible>
+            </div></TabPanel>
+            <TabPanel value="library"><div className="details__sections"><section><div className="section-label">Memory and context</div><div className="panel-card"><button ref={memoryButton} type="button" className="panel-row panel-row--action" onClick={() => setShowMemory(true)}><Brain size={16} aria-hidden /> {channel ? 'Channel' : 'Agent'} memory</button></div><CompactionPanel path={path.replace(/\/turns$/, '/compaction')} request={api} /></section><section ref={filesSection}><ConversationFiles path={path.replace(/\/turns$/, '/files')} archived={archived} attached={pending?.files ?? attached} onAttach={attach} locked={blocked || !!pending || busy} open={filesOpen} onOpenChange={setFilesOpen} /></section>{!channel && (agent as Agent).workspace_connected && <SourceControl key={agent.id} agent={agent.id} request={api} />}{detailsExtra?.library}</div></TabPanel>
+          </Tabs>
         </div>
       </div>
     </aside>}
@@ -519,6 +525,23 @@ function WorkflowConversation({ agent, threadId, configured, onOpenAgent, onOpen
 type Routine = { trigger: 'schedule' | 'webhook'; id: string; agent: string; name: string; prompt: string; next_at: number; interval_ms: number | null; enabled: number; revision: number };
 type RoutineRun = { paused: number; source: string; no_update: number; turn: string; thread: string; scheduled_at: number | null; created: string; missed: number; status: string; reply: string | null; error: string | null };
 type RoutineCommand = { routineId: string | null; data: { id: string; revision?: number; trigger?: 'schedule' | 'webhook'; name: string; prompt: string; nextAt: number; intervalSeconds: number | null; enabled: boolean } };
+function UpcomingRoutines({ agent, onManage }: { agent: string; onManage: () => void }) {
+  const [rows, setRows] = useState<Routine[] | null>(null), [error, setError] = useState('');
+  useEffect(() => {
+    let stopped = false, timer: ReturnType<typeof setTimeout>;
+    async function refresh() {
+      try { const next = await api<Routine[]>(`/api/agents/${agent}/routines`); if (!stopped) { setRows(next); setError(''); } }
+      catch (error) { if (!stopped) setError(message(error)); }
+      if (!stopped) timer = setTimeout(refresh, 1200);
+    }
+    void refresh(); return () => { stopped = true; clearTimeout(timer); };
+  }, [agent]);
+  // ponytail: preview the next three schedules; Manage opens the full routine list.
+  const upcoming = rows?.filter(row => row.enabled && row.trigger === 'schedule').sort((a, b) => a.next_at - b.next_at).slice(0, 3);
+  return <section aria-label="Upcoming routines"><div className="section-label section-label--row"><span>Upcoming</span><button type="button" className="link-btn link-btn--small" onClick={onManage}>Manage</button></div>
+    {error ? <Alert tone="error">{error}</Alert> : <div className="panel-card">{rows === null ? <p className="panel-empty" role="status">Loading routines...</p> : upcoming?.length ? upcoming.map(row => <button type="button" key={row.id} className="panel-row panel-row--routine panel-row--link" onClick={onManage}><Clock size={16} aria-hidden /><span className="panel-row__text"><span className="panel-row__title">{row.name}</span><time className="panel-row__meta" dateTime={new Date(row.next_at).toISOString()}>{new Date(row.next_at).toLocaleString('en-US')}</time></span></button>) : <p className="panel-empty">Nothing scheduled.</p>}</div>}
+  </section>;
+}
 function pendingRoutine(agent: string): RoutineCommand | null {
   try { const value = JSON.parse(sessionStorage.getItem(`briefsip:routine-command:${agent}`) ?? 'null'); return value && typeof value.data?.id === 'string' && typeof value.data.name === 'string' && typeof value.data.prompt === 'string' && Number.isSafeInteger(value.data.nextAt) && value.data.nextAt > 0 && value.data.nextAt <= 253370764799999 && typeof value.data.enabled === 'boolean' && (value.data.intervalSeconds === null || Number.isSafeInteger(value.data.intervalSeconds)) && (value.routineId === null || typeof value.routineId === 'string') ? value : null; } catch { return null; }
 }
@@ -870,24 +893,18 @@ function AgentConversations({ agent, configured, onEdit, workflowAgents, initial
     {error && <p className="cfg-error" role="alert">{error} <button type="button" className="link-btn" onClick={() => void load().catch(() => {})}>Reload conversation</button></p>}
     <section aria-label="Agent conversations">
       <div className="section-label section-label--row"><span>Conversation</span><button type="button" className="link-btn link-btn--small" onClick={openForm}>New conversation</button></div>
-      <div className="panel-card" role="list">
-        <button type="button" role="listitem" className={`panel-row panel-row--link${!thread ? ' is-current' : ''}`} aria-current={!thread || undefined} onClick={() => select('')}><MessageSquare size={16} aria-hidden /><span className="panel-row__title">Main chat</span></button>
-        {threads.map(item => <button key={item.id} type="button" role="listitem" className={`panel-row panel-row--link${thread?.id === item.id ? ' is-current' : ''}`} aria-current={thread?.id === item.id || undefined} onClick={() => select(item.id)}><MessageSquare size={16} aria-hidden /><span className="panel-row__text"><span className="panel-row__title">{item.name}</span>{!!item.archived && <span className="panel-row__meta">Archived</span>}</span></button>)}
-      </div>
-    </section>
-    <section aria-label="Agent tools">
-      <div className="section-label">Agent</div>
       <div className="panel-card">
-        <button type="button" className="panel-row panel-row--action" onClick={openRoutines}><Clock size={16} aria-hidden /> Routines</button>
-        <button type="button" className="panel-row panel-row--action" onClick={openWorkflows}><WorkflowIcon size={16} aria-hidden /> Workflows</button>
-        <button ref={workspaceButton} type="button" className="panel-row panel-row--action" onClick={openWorkspace}><FolderOpen size={16} aria-hidden /> Workspace files</button>
+        <button type="button" className={`panel-row panel-row--link${!thread ? ' is-current' : ''}`} aria-current={!thread || undefined} onClick={() => select('')}><MessageSquare size={16} aria-hidden /><span className="panel-row__title">Main chat</span></button>
+        {threads.map(item => <button key={item.id} type="button" className={`panel-row panel-row--link${thread?.id === item.id ? ' is-current' : ''}`} aria-current={thread?.id === item.id || undefined} onClick={() => select(item.id)}><MessageSquare size={16} aria-hidden /><span className="panel-row__text"><span className="panel-row__title">{item.name}</span>{!!item.archived && <span className="panel-row__meta">Archived</span>}</span></button>)}
       </div>
     </section>
   </>;
+  const activity = <><UpcomingRoutines agent={agent.id} onManage={openRoutines} /><Collapsible title="Automation"><div className="panel-card"><button type="button" className="panel-row panel-row--action" onClick={openWorkflows}><WorkflowIcon size={16} aria-hidden /> Workflows</button></div></Collapsible></>;
+  const library = agent.workspace_connected && <section aria-label="Workspace library"><div className="section-label">Workspace</div><div className="panel-card"><button ref={workspaceButton} type="button" className="panel-row panel-row--action" onClick={openWorkspace}><FolderOpen size={16} aria-hidden /> Workspace files</button></div></section>;
   return <Chat onOpenChannel={onOpenChannel} onOpenAgent={onOpenAgent} key={thread?.id ?? agent.id} agent={agent} thread={thread} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)}
     onEdit={thread ? () => { leave(); setEditing(true); setForm(true); } : onEdit}
     menuItems={[{ label: 'New conversation', onSelect: openForm }, { label: 'Routines', onSelect: openRoutines }, { label: 'Workflows', onSelect: openWorkflows }, { label: 'Workspace files', onSelect: openWorkspace }]}
-    detailsExtra={conversations} />;
+    detailsExtra={{ chats: conversations, activity, library }} />;
 }
 
 function ThreadForm({ agent, thread, onCancel, onSaved, onReload }: { agent: Agent; thread?: Thread; onCancel: () => void; onSaved: (thread: Thread) => Promise<void>; onReload: () => void }) {
