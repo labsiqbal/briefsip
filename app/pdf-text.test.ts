@@ -18,7 +18,11 @@ test('PDF sandbox extracts compressed text, refuses malformed/blank/oversize inp
   for (const bytes of [Buffer.from('not pdf'), Buffer.from('%PDF-1.4 broken'), document(''), Buffer.concat([document('x'), Buffer.alloc(pdfInputLimit)])]) await assert.rejects(extractPdf(bytes));
   await assert.rejects(extractPdf(document('X'.repeat(500), 600)), error => (error as { status: number }).status === 413);
   const controller = new AbortController(); controller.abort();
-  await assert.rejects(extractPdf(document('aborted'), controller.signal), /cancelled/);
+  const originalSpawn = childProcess.spawn; let spawned = false;
+  childProcess.spawn = ((...args: Parameters<typeof childProcess.spawn>) => { spawned = true; return originalSpawn(...args); }) as typeof childProcess.spawn;
+  syncBuiltinESMExports();
+  try { await assert.rejects(extractPdf(document('aborted'), controller.signal), /cancelled/); assert.equal(spawned, false, 'Pre-aborted reads must not spawn a parser'); }
+  finally { childProcess.spawn = originalSpawn; syncBuiltinESMExports(); }
 });
 
 test('PDF HTTP preview and messages preserve source, scope, retry, routing, tools and restart', async () => {
@@ -108,9 +112,10 @@ test('PDF HTTP preview and messages preserve source, scope, retry, routing, tool
       }) as typeof childProcess.spawn; syncBuiltinESMExports();
       try {
         generated = 1; const id = randomUUID(); await request(`${scopes[0]}/turns`, { id, text: 'Cancel generated PDF read' }); await spawned;
+        const parserClosed = new Promise<void>(resolve => frozen!.once('close', () => resolve()));
         const count = payloads.length; await request(`${scopes[0]}/turns/${id}/cancel`, { id: randomUUID() });
         frozen!.kill('SIGCONT');
-        await new Promise<void>(resolve => frozen!.once('close', () => resolve()));
+        await parserClosed;
         const turn = (await request(`${scopes[0]}/turns`)).find((row: any) => row.id === id); assert.equal(turn.status, 'cancelled');
         // A subsequent turn must run after the cancelled reader yields, without its text continuation.
         const next = randomUUID(); await request(`${scopes[0]}/turns`, { id: next, text: 'After cancellation' }); await done(scopes[0], next);

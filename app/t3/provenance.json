@@ -559,5 +559,34 @@
       "dependencies": [],
       "compatibilityCheck": "app/harness.test.ts"
     }
+  ],
+  "adaptedEntries": [
+    {
+      "sourcePath": "apps/server/src/orchestration-v2/Orchestrator.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "symbols": [
+        "planDelegatedCompletionDelivery",
+        "cancelDelegatedTask"
+      ],
+      "sourceSha256": "1953abfb22164a93b918b3c4f55b71533416f0c9f5cfad81a7c837fea8fe4930",
+      "localPath": "app/agent-delegation.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "adaptation": "Translated durable completion wake and descendant cancellation to SQLite/Node."
+    },
+    {
+      "sourcePath": "apps/server/src/mcp/toolkits/orchestrator/handlers.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "symbols": [
+        "delegate_task",
+        "task_status",
+        "task_cancel"
+      ],
+      "sourceSha256": "ce9941d24795e63718c13e7c33dce637ac7af8914490173ab78dd4e04b8ca70b",
+      "localPath": "app/agent-delegation.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "adaptation": "Translated tool contracts to local function tools."
+    }
   ]
 }

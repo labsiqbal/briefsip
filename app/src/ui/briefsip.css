@@ -78,7 +78,7 @@
 .activity-timing { margin: 0; color: var(--color-text-tertiary); font-size: 12px; line-height: 18px; }
 .activity-list { margin: 0; padding-left: 22px; font-size: 13px; line-height: 21px; color: var(--color-text-secondary); }
 .activity-list li { padding: 3px 0 3px 2px; overflow-wrap: anywhere; }
-.activity-list .link-btn { margin-left: 8px; }
+.activity-list .link-btn, .activity-list .k-badge { margin-left: 8px; }
 .stream-caret { display: inline-block; width: 6px; height: 15px; margin-top: 6px; border-radius: 2px; background: var(--color-text-tertiary); animation: stream-caret 1s steps(2, start) infinite; }
 @keyframes stream-caret { 50% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .stream-caret { animation: none; } .human-meta { transition: none; } }

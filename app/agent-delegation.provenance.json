@@ -1,0 +1,24 @@
+{
+  "adapted": "T3 durable child-task delivery and Hermes BotLoopGuard/delegation policy, translated to Briefsip plain TypeScript and SQLite.",
+  "t3": {
+    "repository": "https://github.com/pingdotgg/t3code",
+    "revision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+    "license": "MIT",
+    "sources": [
+      { "path": "apps/server/src/orchestration-v2/Orchestrator.ts", "sourceSha256": "1953abfb22164a93b918b3c4f55b71533416f0c9f5cfad81a7c837fea8fe4930", "symbols": ["planDelegatedCompletionDelivery", "cancelDelegatedTask"] },
+      { "path": "apps/server/src/mcp/toolkits/orchestrator/handlers.ts", "sourceSha256": "ce9941d24795e63718c13e7c33dce637ac7af8914490173ab78dd4e04b8ca70b", "symbols": ["delegate_task", "task_status", "task_cancel"] }
+    ],
+    "localPath": "app/agent-delegation.ts"
+  },
+  "hermes": {
+    "repository": "https://github.com/NousResearch/hermes-agent",
+    "revision": "d923a5eb487a17c0a68801bba9ef0f56c81040a8",
+    "license": "MIT; notice in agent-delegation.LICENSE",
+    "sources": [
+      { "path": "gateway/bot_loop_guard.py", "sourceSha256": "271c1bb3846cbb2fa4a89efe482b9cc8a2d3bbee0faa2a1f3501298965953614", "symbols": ["BotLoopGuard", "BotLoopGuardSettings"] },
+      { "path": "tools/delegate_tool_config.py", "sourceSha256": "a0360af946ad929fac017d5299438c400f48ebe5e82edb0c8cd2e38d8d170dcb", "symbols": ["MAX_DEPTH", "_get_max_concurrent_children"] },
+      { "path": "tools/bot_mode_probe.py", "sourceSha256": "a0a51bbaa62340ffd5861fe87443362c0358dbb2a6c795a43b3353e9cd50057b", "symbols": ["Messaging other agents", "Capability epoch"] }
+    ],
+    "localPath": "app/agent-delegation.ts"
+  }
+}
