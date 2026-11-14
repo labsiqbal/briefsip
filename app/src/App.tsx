@@ -993,6 +993,7 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
     </>}>
     {invalid && <Alert tone="error" title="Recovery data could not be read" actions={<Button size="sm" onClick={() => void discardInvalid()}>Discard recovery data</Button>}>Check the agent list before discarding it.</Alert>}
     {!profile && pending.current && <Alert tone="warn" title="Creation is not confirmed yet">Try again with the same request to avoid creating a duplicate agent.</Alert>}
+    {profile && onVisibilityChanged && <div className="legacy k-legacy-block agent-form__avatar"><AvatarEditor agent={profile.id} request={api} onChanged={onVisibilityChanged} /></div>}
     <form id="agent-form" className="k-fieldset" onSubmit={create}>
       {!profile && <Suspense fallback={<p role="status">Loading avatar picker...</p>}><LookPicker value={look} onChange={setLook} disabled={busy || locked || invalid} /></Suspense>}
       {!profile && <Segmented label="How to create an agent" value={setup ? 'describe' : 'manual'} disabled={busy || locked || invalid} onChange={value => setSetup(value === 'describe')} options={[
@@ -1027,7 +1028,6 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
     </form>
     {profile && <div className="legacy k-legacy-block">
       <AgentComputerSettings agent={profile.id} request={api} />
-      {onVisibilityChanged && <AvatarEditor agent={profile.id} request={api} onChanged={onVisibilityChanged} />}
       {onVisibilityChanged && <AgentVisibility agent={liveProfile!} request={api} onChanged={onVisibilityChanged} />}
       <Suspense fallback={<p role="status">Loading local sites...</p>}><SitesPanel key={`sites:${profile.id}`} agent={profile.id} request={api} /></Suspense>
       <Suspense fallback={<p className="empty" role="status">Loading agent export...</p>}><AgentTemplateExport key={profile.id} id={profile.id} request={api} /></Suspense>
