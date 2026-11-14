@@ -39,7 +39,8 @@ test('MCP tests before save, protects credentials/grants and journals success or
     let raw = ''; for await (const chunk of req) raw += chunk; providerRaw += raw;
     const data = JSON.parse(raw), result = data.messages.filter((message: any) => message.role === 'tool').at(-1), prompt = data.messages.filter((message: any) => message.role === 'user').at(-1).content;
     const offered = data.tools?.some((tool: any) => tool.function.name === 'call_mcp_tool');
-    assert.equal(offered, prompt !== 'channel');
+    // Legacy channels are project sections: discovery is offered, but installation grants stay inaccessible.
+    assert.equal(offered, true);
     if (result && failProvider) { failProvider = false; res.writeHead(503); res.end(); return; }
     const call = !result || repeat;
     res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ choices: [{ finish_reason: call ? 'tool_calls' : 'stop', message: call ? { tool_calls: [{ id: randomUUID(), type: 'function', function: { name: prompt === 'list' ? 'list_mcp_tools' : 'call_mcp_tool', arguments: JSON.stringify(prompt === 'list' ? {} : { connection, name: 'change', arguments: { value: 'one' } }) } }] } : { content: result.content } }] }));
