@@ -22,6 +22,7 @@ import { AgentMessage, ChatComposer, ChatEmptyState, ChatHeader, ChatTranscript,
 import { livePartial, turnPollDelay, type TurnActivityData } from './ui/transcript';
 import { EventConnection } from './EventConnection';
 import { applyPresentation, readPresentation } from '../presentation';
+import { CreateProject, HelpPage, HowBriefsipWorks, ProjectHome, ProjectSourceControl, useProjects } from './Projects';
 import { AgentSidebar } from './AgentSidebar';
 import { MachinesPanel, RemoteAgentDetail, useMachines } from './MachinesPanel';
 import { HtmlPreview } from './HtmlPreview';
@@ -67,7 +68,7 @@ const ConnectedAppsPanel = lazy(() => import('./ConnectedAppsPanel').then(module
 const SkillsPanel = lazy(() => import('./SkillsPanel').then(module => ({ default: module.SkillsPanel })).catch(panelLoadFailure));
 
 type Agent = { workspace_connected?: boolean; runtime?: 'api' | 'codex' | 'claude'; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; thread_limit: number; revision: number; id: string; name: string; role: string; model: string; instructions: string };
-type Channel = { activity: number; read_position: number; revision: number; archived: number; id: string; name: string; instructions: string; members: string[]; lead: string | null };
+type Channel = { project?: string | null; activity: number; read_position: number; revision: number; archived: number; id: string; name: string; instructions: string; members: string[]; lead: string | null };
 type Thread = { id: string; agent: string; name: string; revision: number; archived: number; deleted: number; fork?: { source_name: string; source_id: string; source_kind: 'agent' | 'channel' | 'thread'; source_agent: string; cutoff_turn: string; created: string } | null };
 type AgentMessage = Exchange & { taskId?: string; task?: string; wait?: boolean; generatedFiles?: { id: string; name: string; size: number; thread: string }[]; paused: number; request: string; expects_reply: number; settled: number; id: string; agent: string; thread: string; name: string; status: string; error: string | null; reply: string | null; truncated: boolean };
 
@@ -244,7 +245,7 @@ function ForkAnswer({ path, turn, onOpen }: { path: string; turn: Turn; onOpen?:
 }
 
 type DetailsContent = { chats: ReactNode; activity?: ReactNode; library?: ReactNode };
-function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit, onOpenAgent, onOpenChannel, menuItems = [], detailsExtra }: { menuItems?: MenuItem[]; detailsExtra?: DetailsContent; onOpenChannel?: (channel: string) => void; onOpenAgent?: (agent: string, thread: string) => void; onRead?: () => Promise<void>; onEdit?: () => void; agent: Agent | Channel; configured: boolean; channel?: Channel; thread?: Thread; members?: Agent[] }) {
+function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit, onOpenAgent, onOpenChannel, menuItems = [], detailsExtra, sourceControl }: { sourceControl?: ReactNode; menuItems?: MenuItem[]; detailsExtra?: DetailsContent; onOpenChannel?: (channel: string) => void; onOpenAgent?: (agent: string, thread: string) => void; onRead?: () => Promise<void>; onEdit?: () => void; agent: Agent | Channel; configured: boolean; channel?: Channel; thread?: Thread; members?: Agent[] }) {
   const confirm = useConfirm();
   const archived = !!(channel?.archived || thread?.archived || (!channel && (agent as Agent).hidden));
   const scope = thread ? `thread:${thread.id}` : channel ? `channel:${agent.id}` : agent.id;
@@ -488,7 +489,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
               {detailsExtra?.activity}
               <Collapsible title="Event waits"><div className="k-stack">{turns?.some(turn => turn.events?.some(event => event.status === 'waiting')) ? turns.flatMap(turn => turn.events?.filter(event => event.status === 'waiting').map(event => <div key={event.id} className="k-stack"><button type="button" className="panel-row panel-row--link" onClick={() => openFocused(turn.id)}><span className="panel-row__text"><span className="panel-row__title">{event.event}</span><time className="panel-row__meta" dateTime={new Date(event.deadline).toISOString()}>{new Date(event.deadline).toLocaleString('en-US')}</time></span></button>{!archived && <EventConnection path={`/api/turn-waits/${event.id}`} request={api} />}</div>)) : <p className="panel-empty">No event waits in this view.</p>}</div></Collapsible>
             </div></TabPanel>
-            <TabPanel value="library"><div className="details__sections"><section><div className="section-label">Memory and context</div><div className="panel-card"><button ref={memoryButton} type="button" className="panel-row panel-row--action" onClick={() => setShowMemory(true)}><Brain size={16} aria-hidden /> {channel ? 'Channel' : 'Agent'} memory</button></div><CompactionPanel path={path.replace(/\/turns$/, '/compaction')} request={api} /></section><section ref={filesSection}><ConversationFiles path={path.replace(/\/turns$/, '/files')} archived={archived} attached={pending?.files ?? attached} onAttach={attach} locked={blocked || !!pending || busy} open={filesOpen} onOpenChange={setFilesOpen} /></section>{!channel && (agent as Agent).workspace_connected && <SourceControl key={agent.id} agent={agent.id} request={api} />}{detailsExtra?.library}</div></TabPanel>
+            <TabPanel value="library"><div className="details__sections"><section><div className="section-label">Memory and context</div><div className="panel-card"><button ref={memoryButton} type="button" className="panel-row panel-row--action" onClick={() => setShowMemory(true)}><Brain size={16} aria-hidden /> {channel ? 'Channel' : 'Agent'} memory</button></div><CompactionPanel path={path.replace(/\/turns$/, '/compaction')} request={api} /></section><section ref={filesSection}><ConversationFiles path={path.replace(/\/turns$/, '/files')} archived={archived} attached={pending?.files ?? attached} onAttach={attach} locked={blocked || !!pending || busy} open={filesOpen} onOpenChange={setFilesOpen} /></section>{sourceControl ?? (!channel && (agent as Agent).workspace_connected && <SourceControl key={agent.id} agent={agent.id} request={api} />)}{detailsExtra?.library}</div></TabPanel>
           </Tabs>
         </div>
       </div>
@@ -1047,8 +1048,8 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
       <Field label="Role" optional hint="Shown under the agent's name, e.g. Orchestration agent">
         <Input name="role" maxLength={60} readOnly={locked} defaultValue={profile?.role ?? recovery.command?.role ?? ''} />
       </Field>
-      <Field label="Runtime" hint={profile ? 'Coding runtimes use the host login and connected workspace. Steer restarts the running turn; image attachments are unavailable.' : 'Create the agent, then connect its host workspace to enable coding runtimes.'} error={runtimeError}>
-        <Select label="Runtime" value={runtime} onChange={value => setRuntime(value as typeof runtime)} disabled={locked || busy} options={[{ value: 'api', label: 'API model' }, ...(['codex','claude'] as const).map(value => { const choice = runtimeChoices.find(item => item.runtime === value); return { value, label: value === 'codex' ? 'Codex' : 'Claude Code', disabled: !choice?.enabled, hint: choice?.reason ?? choice?.version ?? 'Connect a host workspace folder first.' }; })]} />
+      <Field label="Runtime" hint={profile ? 'Coding runtimes use the host login and the current project folder. Direct chats need a host workspace binding. Steer restarts the running turn; image attachments are unavailable.' : 'Create the agent, add it to a project, then choose a coding runtime.'} error={runtimeError}>
+        <Select label="Runtime" value={runtime} onChange={value => setRuntime(value as typeof runtime)} disabled={locked || busy} options={[{ value: 'api', label: 'API model' }, ...(['codex','claude'] as const).map(value => { const choice = runtimeChoices.find(item => item.runtime === value); return { value, label: value === 'codex' ? 'Codex' : 'Claude Code', disabled: !choice?.enabled, hint: choice?.reason ?? choice?.version ?? 'Add this agent to a project first.' }; })]} />
       </Field>
       <div className="k-grid-2">
         <Field label="Provider account" hint={accountError ? undefined : 'API keys stay on the server.'} error={accountError && <>{accountError} <button type="button" className="k-link" onClick={() => setAccountReload(value => value + 1)}>Reload</button></>}>
@@ -1173,7 +1174,7 @@ function FlowDirectory({ agents, onClose, onOpen }: { agents: Agent[]; onClose: 
   </div>;
 }
 
-type SettingsSection = 'updates' | 'machines' | 'connected-apps' | 'skills' | 'mcp' | 'mcp-server' | 'data' | 'usage' | 'backup' | 'import' | 'sections' | 'appearance';
+type SettingsSection = 'updates' | 'machines' | 'connected-apps' | 'skills' | 'mcp' | 'mcp-server' | 'data' | 'usage' | 'backup' | 'import' | 'sections' | 'help' | 'appearance';
 const settingsSections: { id: SettingsSection; label: string }[] = [
   { id: 'skills', label: 'Skills' },
   { id: 'connected-apps', label: 'Connected apps' },
@@ -1187,8 +1188,9 @@ const settingsSections: { id: SettingsSection; label: string }[] = [
   { id: 'backup', label: 'Backup' },
   { id: 'sections', label: 'Agent sections' },
   { id: 'appearance', label: 'Appearance' },
+  { id: 'help', label: 'Help' },
 ];
-type Dialog = 'agent' | 'channel' | 'edit' | null;
+type Dialog = 'agent' | 'channel' | 'project' | 'edit' | null;
 const collapsedKey = 'briefsip:sidebar-collapsed';
 const machineGroupsKey = 'briefsip:sidebar-machine-groups';
 const machineStatus = { online: 'Online', offline: 'Offline', unauthorized: 'Unauthorized', 'version-mismatch': 'Version mismatch' };
@@ -1217,6 +1219,9 @@ function App() {
   const updateAvailable = useUpdateBadge(api);
   const [remoteSelection, setRemoteSelection] = useState<{ machine: string; agent: string } | null>(null);
   const [settings, setSettings] = useState<SettingsSection | null>(null);
+  const projectState = useProjects(api);
+  const [selectedProject, setSelectedProject] = useState('');
+  const [projectThread, setProjectThread] = useState<{project:string;thread:string;agent:string} | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [newMenu, setNewMenu] = useState(false);
   const [notificationsMuted, setNotificationsMuted] = useState(() => { try { return localStorage.getItem('briefsip:workflow-notifications-muted') === '1'; } catch { return false; } });
@@ -1253,7 +1258,7 @@ function App() {
           const fresh = rooms.find(item => item.id === room.id);
           return fresh ? { ...room, activity: Math.max(room.activity, fresh.activity), read_position: Math.max(room.read_position, fresh.read_position) } : room;
         })); }
-        if (!stopped) setSummaries(summary.summaries);
+        if (!stopped) { setSummaries(summary.summaries); void projectState.reload().catch(() => {}); }
       } catch { if (!stopped) setActivityError(true); }
       if (!stopped) timer = setTimeout(refreshActivity, 2400);
     }
@@ -1276,19 +1281,21 @@ function App() {
   }
   const agent = directory?.agents.find(agent => agent.id === selected);
   const channel = channels.find(channel => channel.id === selectedChannel);
-  const openAgent = (id: string) => { setView('chat'); setOpenedThread(null); setSelected(id); setSelectedChannel(''); setDialog(null); };
-  const openChannel = (id: string) => { setView('chat'); setSelectedChannel(id); setDialog(null); };
-  const openThread = (owner: string, thread: string) => { if(owner.includes('@')){const [agent,machine]=owner.split('@');setRemoteSelection({machine,agent});setView('remote');setDialog(null);setSettings(null);return;} setOpenedThread({ agent: owner, thread }); setSelected(owner); setSelectedChannel(''); setView('chat'); setDialog(null); setSettings(null); };
+  const project = projectState.projects.find(item => item.id === selectedProject);
+  const openProject = (id: string) => { setSelectedProject(id); setProjectThread(null); setView('chat'); setDialog(null); setSelectedChannel(''); };
+  const openAgent = (id: string) => { setSelectedProject(''); setProjectThread(null); setView('chat'); setOpenedThread(null); setSelected(id); setSelectedChannel(''); setDialog(null); };
+  const openChannel = (id: string) => { setSelectedProject(''); setProjectThread(null); setView('chat'); setSelectedChannel(id); setDialog(null); };
+  const openThread = (owner: string, thread: string) => { setSelectedProject(''); setProjectThread(null); if(owner.includes('@')){const [agent,machine]=owner.split('@');setRemoteSelection({machine,agent});setView('remote');setDialog(null);setSettings(null);return;} setOpenedThread({ agent: owner, thread }); setSelected(owner); setSelectedChannel(''); setView('chat'); setDialog(null); setSettings(null); };
   const relativeTime = (value: string | null | undefined) => { if (!value) return ''; const age = Math.max(0, Date.now() - Date.parse(value)); if (!Number.isFinite(age)) return ''; const minutes = Math.floor(age / 60000); if (minutes < 60) return `${Math.max(1, minutes)}m`; const hours = Math.floor(minutes / 60); if (hours < 24) return `${hours}h`; return `${Math.floor(hours / 24)}d`; };
   const summaryByAgent = new Map(summaries.map(item => [item.agent, item]));
   const summaryFor = (id: string) => summaryByAgent.get(id);
   const matches = (name: string, preview = '', role = '') => !query || `${name} ${role} ${preview}`.toLocaleLowerCase().includes(query);
   const localAgents = (directory?.agents ?? []).filter(item => showHidden || !item.hidden).filter(item => matches(item.name, summaryFor(item.id)?.preview, item.role));
-  const localChannels = channels.filter(room => matches(room.name, room.archived ? 'Archived' : `${room.members.length} members`));
+  const localChannels = channels.filter(room => !room.project).filter(room => matches(room.name, room.archived ? 'Archived' : `${room.members.length} members`));
   const agentRow = (id: string) => {
     const item = directory?.agents.find(agent => agent.id === id);
     if (!item) return null;
-    const current = view === 'chat' && !selectedChannel && item.id === selected, summary = summaryFor(item.id);
+    const current = view === 'chat' && !selectedProject && !projectThread && !selectedChannel && item.id === selected, summary = summaryFor(item.id);
     return collapsed
       ? <button key={item.id} type="button" className={`bot-rail-item${current ? ' is-selected' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgent(item.id)} title={item.name} aria-label={item.name}><AgentAvatar agent={item} size={36} /></button>
       : <button key={item.id} type="button" className={`bot-row${current ? ' is-selected' : ''}`} aria-label={`${item.name} ${summary?.status === 'running' ? 'Working' : 'Idle'}${item.computer_waiting ? ' - Waiting for you' : ''}${item.provider_available === false ? ' - Provider account unavailable' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgent(item.id)}>
@@ -1303,9 +1310,11 @@ function App() {
   else if (view === 'remote') { const machine = remoteMachinesState.machines.find(item => item.id === remoteSelection?.machine); content = <RemoteAgentDetail key={`${machine?.id}:${remoteSelection?.agent}`} request={api} machine={machine} agent={machine?.agents.find(item => item.id === remoteSelection?.agent)} />; }
   else if (view === 'workflows') content = <PageView wide><Suspense fallback={<p className="empty" role="status">Loading workflow directory...</p>}><WorkflowDirectory agents={directory.agents} request={api} onClose={() => setView('chat')} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={directory.agents.find(item => item.id === owner)} threadId={id} configured={directory.configured} onOpenAgent={openThread} onOpenChannel={openChannel} />} /></Suspense></PageView>;
   else if (view === 'flows') content = <PageView wide><FlowDirectory agents={directory.agents} onClose={() => setView('chat')} onOpen={openThread} /></PageView>;
-  else if (channel) content = <Chat onOpenAgent={openThread} key={`channel:${channel.id}`} agent={channel} channel={{ ...channel, lead: directory.agents.find(agent => agent.id === channel.lead)?.hidden ? null : channel.lead }} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id) && !agent.hidden)} onEdit={() => setDialog('edit')} configured={directory.configured} />;
+  else if (project) content = <PageView wide><ProjectHome project={project} agents={directory.agents} state={projectState} request={api} onChat={id => { void load(true).then(() => openChannel(id)); }} onThread={(agent,thread) => { setProjectThread({project:project.id,agent,thread}); setSelectedProject(''); }} onDeleted={() => { setSelectedProject(''); void load(); }} /></PageView>;
+  else if (projectThread && directory.agents.find(agent => agent.id === projectThread.agent)) { const owner = directory.agents.find(agent => agent.id === projectThread.agent)!; const thread = projectState.projects.find(project => project.id === projectThread.project)?.threads.find(thread => thread.id === projectThread.thread); content = thread ? <Chat key={thread.id} sourceControl={<ProjectSourceControl project={projectThread.project} folder={thread.folder} request={api}/>} agent={owner} thread={{...thread,revision:1,archived:0,deleted:0}} configured={directory.configured} menuItems={[{label:'Back to project',onSelect:()=>openProject(projectThread.project)}]} /> : <PageView><EmptyState title="Project thread unavailable" /></PageView>; }
+  else if (channel) content = <Chat onOpenAgent={openThread} key={`channel:${channel.id}`} agent={channel} channel={{ ...channel, lead: directory.agents.find(agent => agent.id === channel.lead)?.hidden ? null : channel.lead }} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id) && !agent.hidden)} onEdit={channel.project ? undefined : () => setDialog('edit')} menuItems={channel.project ? [{label:'Back to project',onSelect:()=>openProject(channel.project!)}] : []} configured={directory.configured} />;
   else if (agent) content = <AgentConversations onOpenChannel={openChannel} key={agent.id} agent={agent} workflowAgents={directory.agents} configured={directory.configured} initialThread={openedThread?.agent === agent.id ? openedThread.thread : undefined} onThreadOpened={() => setOpenedThread(null)} onOpenAgent={openThread} onEdit={() => setDialog('edit')} />;
-  else content = <main className="chat chat--empty bs-root"><div className="empty-chat"><div className="empty-chat__title">Create your first agent</div><div className="empty-chat__sub">Name it, choose a model, then explain how it should work. The agent and its history are saved on this computer.</div><button type="button" className="btn btn--primary" onClick={() => setDialog('agent')}><Plus size={16} aria-hidden /> New agent</button></div></main>;
+  else content = <main className="chat chat--empty bs-root"><div className="empty-chat"><div className="empty-chat__title">Create your first agent</div><div className="empty-chat__sub">Name it, choose a model, then explain how it should work. The agent and its history are saved on this computer.</div><button type="button" className="btn btn--primary" onClick={() => setDialog('agent')}><Plus size={16} aria-hidden /> New agent</button><HowBriefsipWorks action={<Button variant="ghost" onClick={() => setSettings('help')}>Read quick guide</Button>} /></div></main>;
   const created = (item: Agent) => { setDirectory(current => current && { ...current, agents: [...current.agents.filter(agent => agent.id !== item.id), item] }); openAgent(item.id); };
   return <RadixDialog.Root modal open={!!settings} onOpenChange={open => setSettings(current => open ? current ?? 'skills' : null)}><div className={`app bs-root${collapsed ? ' is-sidebar-collapsed' : ''}`}>
     {collapsed && <button type="button" className="icon-btn icon-btn--bordered sidebar-reveal" onClick={() => setCollapsed(false)} aria-label="Expand sidebar" title="Sidebar (Ctrl/Cmd+B)"><PanelLeft size={16} aria-hidden /></button>}
@@ -1320,6 +1329,7 @@ function App() {
             {newMenu && <Menu align="right" label="Create new" onClose={() => setNewMenu(false)} items={[
               { label: 'New agent', onSelect: () => setDialog('agent') },
               { label: 'New channel', onSelect: () => setDialog('channel'), disabled: !directory?.agents.length },
+              { label: 'New project', onSelect: () => setDialog('project'), disabled: !directory },
               { label: 'Import agent', onSelect: () => setSettings('import'), disabled: !directory },
             ]} />}
           </span>}
@@ -1342,12 +1352,17 @@ function App() {
         </nav>
         <nav className="machine-groups" aria-label="Machines">
         <MachineGroup name="This device" subtitle={environment?.name} count={(directory?.agents ?? []).filter(item => showHidden || !item.hidden).length} expanded={query ? searchMachineGroups.local !== false : machineGroups.local !== false} onExpandedChange={expanded => setMachineExpanded('local', expanded)} local>
-          <div className="sidebar__label">Agents</div>
           <div className="bot-list sidebar-agents">
             <AgentSidebar mode="list" agents={localAgents} showHidden={showHidden} searching={!!query} request={api} renderAgent={agentRow} />
             {!!directory?.agents.length && !localAgents.length && <p className="machine-group__note">No matching agents.</p>}
             {directory && !directory.agents.length && <button type="button" className="bot-list__empty" onClick={() => setDialog('agent')}><span className="bot-list__empty-plus"><Plus size={14} aria-hidden /></span><span><span className="bot-row__name">New agent</span><span className="bot-row__preview">Assign a task, such as research or a summary</span></span></button>}
           </div>
+          <div className="sidebar-section-heading"><span>Projects</span><IconButton label="New project" disabled={!directory} onClick={() => setDialog('project')}><Plus size={14} aria-hidden /></IconButton></div>
+          <nav className="bot-list" aria-label="Projects">
+            {projectState.projects.filter(item => matches(item.name,item.description)).map(item => <button key={item.id} type="button" className={`bot-row${selectedProject === item.id ? ' is-selected' : ''}`} aria-current={selectedProject === item.id ? 'page' : undefined} onClick={() => openProject(item.id)}><span className="bot-row__avatar"><FolderOpen size={20} aria-hidden /></span><span className="bot-row__text"><span className="bot-row__name">{item.name}</span><span className="bot-row__preview project-members">{item.members.slice(0,3).map(member => { const agent = directory?.agents.find(agent=>agent.id===member.agent); return agent ? <AgentAvatar key={agent.id} agent={agent} size={18} /> : null; })}<span>{item.members.length} {item.members.length === 1 ? 'member' : 'members'}</span></span></span><time className="bot-row__time" dateTime={new Date(item.updated).toISOString()}>{relativeTime(new Date(item.updated).toISOString())}</time></button>)}
+            <button type="button" className="bot-list__empty" disabled={!directory} onClick={() => setDialog('project')}><Plus size={14} aria-hidden /><span>New project</span></button>
+          </nav>
+          {projectState.recovery}
           <div className="sidebar__label">Chatrooms</div>
           <nav className="bot-list" aria-label="Select channel">
             {localChannels.map(room => {
@@ -1357,8 +1372,8 @@ function App() {
                 <span className="bot-row__text"><span className="bot-row__name">{room.name}</span><span className="bot-row__preview">{room.archived ? 'Archived' : `${room.members.length} members`}{unread ? ' · Unread' : ''}</span></span>
               </button>;
             })}
-            {!!channels.length && !localChannels.length && <p className="machine-group__note">No matching chatrooms.</p>}
-            {!channels.length && <button type="button" className="bot-list__empty" disabled={!directory?.agents.length} onClick={() => setDialog('channel')}><span className="bot-list__empty-plus"><Hash size={14} aria-hidden /></span><span><span className="bot-row__name">New channel</span><span className="bot-row__preview">Bring several agents into one space</span></span></button>}
+            {!!channels.filter(room=>!room.project).length && !localChannels.length && <p className="machine-group__note">No matching chatrooms.</p>}
+            {!channels.filter(room=>!room.project).length && <button type="button" className="bot-list__empty" disabled={!directory?.agents.length} onClick={() => setDialog('channel')}><span className="bot-list__empty-plus"><Hash size={14} aria-hidden /></span><span><span className="bot-row__name">New channel</span><span className="bot-row__preview">Bring several agents into one space</span></span></button>}
           </nav>
         </MachineGroup>
         {remoteMachines.map(machine => <MachineGroup key={machine.id} name={machine.name} subtitle={`${machine.name} · ${machineStatus[machine.status]}`} count={machine.agentCount} status={machine.status} expanded={query ? searchMachineGroups[machine.id] !== false : machineGroups[machine.id] !== false} onExpandedChange={expanded => setMachineExpanded(machine.id, expanded)}>
@@ -1392,6 +1407,7 @@ function App() {
     {content}
     {dialog === 'agent' && directory && <AgentForm model={directory.defaultModel} onCancel={() => setDialog(null)} onCreated={item => { created(item); setDialog(null); }} />}
     {dialog === 'channel' && directory && <ChannelForm agents={directory.agents} onCancel={() => setDialog(null)} onCreated={item => { setChannels(current => [...current.filter(room => room.id !== item.id), item]); openChannel(item.id); }} />}
+    {dialog === 'project' && directory && <CreateProject state={projectState} agents={directory.agents} request={api} onClose={() => setDialog(null)} onCreated={item => { openProject(item.id); void load(); }} />}
     {dialog === 'edit' && directory && channel && <ChannelForm key={`${channel.id}:${channel.revision}:${editReload}`} agents={directory.agents} channel={channel} onCancel={() => setDialog(null)} onReload={() => { void load().then(() => setEditReload(value => value + 1)); }} onCreated={() => { void load(); setDialog(null); }} />}
     {dialog === 'edit' && directory && !channel && agent && <AgentForm key={`${agent.id}:${editReload}`} model={directory.defaultModel} profile={agent} onCancel={() => setDialog(null)} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} onCreated={() => { void load(); setDialog(null); }} />}
     <RadixDialog.Portal><RadixDialog.Content className="app-settings bs-root" aria-describedby={undefined} onOpenAutoFocus={event => {
@@ -1418,6 +1434,7 @@ function App() {
             : settings === 'usage' ? <Suspense fallback={<p className="empty" role="status">Loading usage...</p>}><UsagePanel request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'backup' ? <Suspense fallback={<p className="empty" role="status">Loading backup...</p>}><BackupPanel onClose={() => setSettings(null)} /></Suspense>
             : settings === 'import' ? <Suspense fallback={<p className="empty" role="status">Loading agent import...</p>}><AgentTemplateImport request={api} onClose={() => setSettings(null)} onCreated={item => { created(item); setSettings(null); }} /></Suspense>
+            : settings === 'help' ? <HelpPage />
             : settings === 'sections' ? <AgentSidebar mode="editor" agents={directory.agents} request={api} renderAgent={() => null} />
             : <Suspense fallback={<p className="empty" role="status">Loading appearance settings...</p>}><PresentationSettings /></Suspense>}
         </div>

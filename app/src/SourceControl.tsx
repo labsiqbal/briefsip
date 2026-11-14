@@ -9,7 +9,7 @@ type Status = { isRepo: boolean; branch?: string | null; dirtyCount?: number; ch
 type Diff = { text: string; truncated: boolean; binaryFiles: string[] };
 const message = (error: unknown) => error instanceof Error ? error.message : 'Source control could not load. Try again.';
 
-export function SourceControl({ agent, request }: { agent: string; request: Request }) {
+export function SourceControl({ agent, request, showEmpty = false }: { agent: string; request: Request; showEmpty?: boolean }) {
   const [status, setStatus] = useState<Status | null>(null), [error, setError] = useState(''), [reload, setReload] = useState(0), [loading, setLoading] = useState(false);
   const [file, setFile] = useState<string | null>(null), [diff, setDiff] = useState<Diff | null>(null), [diffError, setDiffError] = useState('');
   const generation = useRef(0);
@@ -30,7 +30,7 @@ export function SourceControl({ agent, request }: { agent: string; request: Requ
     void request<Diff>(`/api/agents/${agent}/git/diff?${new URLSearchParams({ path: file })}`).then(value => { if (version === generation.current) setDiff(value); }).catch(error => { if (version === generation.current) setDiffError(message(error)); });
     return () => { generation.current++; };
   }, [agent, file, request, reload]);
-  if (!status?.isRepo && !error) return null;
+  if (!status?.isRepo && !error) return showEmpty ? <Section title="Source control"><EmptyState title={status ? "No Git repository in this folder" : "Loading source control..."} /></Section> : null;
   return <div className="bs-root source-control"><Section id={`source-control-${agent}`} title="Source control" actions={<IconButton label="Refresh source control" disabled={loading} onClick={() => setReload(value => value + 1)}><RefreshCw size={14} aria-hidden /></IconButton>}>
     {error && <Alert tone="error">{error}</Alert>}
     {status?.isRepo && <>
