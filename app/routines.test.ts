@@ -217,3 +217,85 @@ test('calendar escapes text and folds UTF-8 without introducing properties', () 
   assert.equal(unfolded.split('\r\nBEGIN:VEVENT').length, 2);
   assert(unfolded.includes('SUMMARY:' + '長'.repeat(60) + '\\,\\;\\\\\\nBEGIN:VEVENT'));
 });
+
+test('routine hub pages visible local owners, filters safely and never returns secrets', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-routine-hub-'));
+  const database = join(dir, 'state.sqlite');
+  const app = await startApp({ database });
+  async function post(path: string, body: unknown, status = 200) {
+    const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const value = await response.json(); assert.equal(response.status, status, JSON.stringify(value)); return value;
+  }
+  async function get(path: string, status = 200) { const response = await fetch(app.origin + path); const value = await response.json(); assert.equal(response.status, status, JSON.stringify(value)); return value; }
+  try {
+    const a = await post('/api/agents', { id: randomUUID(), name: 'Ada', model: 'fixture', instructions: 'Help.' }, 201);
+    const b = await post('/api/agents', { id: randomUUID(), name: 'Grace', model: 'fixture', instructions: 'Help.' }, 201);
+    const hidden = await post('/api/agents', { id: randomUUID(), name: 'Hidden', model: 'fixture', instructions: 'Help.' }, 201);
+    const base = { name: 'Review', prompt: 'Saved instructions', nextAt: Date.now() + 3600000, intervalSeconds: null, enabled: true };
+    const first = await post(`/api/agents/${a.id}/routines`, { ...base, id: randomUUID(), trigger: 'webhook' });
+    const hook = await post(`/api/routines/${first.id}/webhook`, { id: randomUUID(), revision: 0, rotate: true, eventName: '', filters: [] });
+    await post(`/api/routines/${first.id}/flow`, { id: randomUUID(), revision: 0, links: [{ from: a.id, to: b.id }] });
+    for (let i = 0; i < 22; i++) await post(`/api/agents/${i % 2 ? a.id : b.id}/routines`, { ...base, id: randomUUID(), name: `Review ${i}`, intervalSeconds: i % 2 ? 600 : null, enabled: i % 3 === 0, trigger: i === 21 ? 'manual' : i === 20 ? 'script' : 'schedule' });
+    await post(`/api/agents/${hidden.id}/routines`, { ...base, id: randomUUID(), name: 'Hidden routine' });
+    await post(`/api/agents/${hidden.id}/visibility`, { id: randomUUID(), revision: 0, hidden: true });
+    const page = await get('/api/routines'); assert.equal(page.routines.length, 20); assert(page.next_after);
+    const next = await get(`/api/routines?after=${page.next_after}`); assert.equal(next.routines.length, 3); assert.equal(next.next_after, null);
+    const all: { id: string; agent: string; owner_name: string; flow_agents: number; last_created: string | null; last_thread: string | null }[] = [...page.routines, ...next.routines]; assert.equal(new Set(all.map(row => row.id)).size, 23);
+    assert.deepEqual(new Set(all.map(row => row.agent)), new Set([a.id,b.id]));
+    assert(all.every(row => ['Ada','Grace'].includes(row.owner_name)));
+    assert.equal(all.find(row => row.id === first.id)!.flow_agents, 2);
+    assert(!JSON.stringify(all).includes(hook.secret));
+    assert(all.every(row => row.last_created === null && row.last_thread === null));
+    const own = await get(`/api/routines?agent=${b.id}`); assert(own.routines.length); assert(own.routines.every((row: { agent: string }) => row.agent === b.id));
+    assert.equal((await get(`/api/routines?agent=${hidden.id}`)).routines.length, 0);
+    for (const enabled of [0,1]) assert((await get(`/api/routines?enabled=${enabled}`)).routines.every((row: { enabled: number }) => row.enabled === enabled));
+    assert.equal((await get('/api/routines?trigger=webhook')).routines[0].id, first.id);
+    for (const trigger of ['manual','script']) assert.equal((await get(`/api/routines?trigger=${trigger}`)).routines[0].trigger, trigger);
+    assert((await get('/api/routines?trigger=recurring')).routines.every((row: { trigger: string; interval_ms: number | null }) => row.trigger === 'schedule' && row.interval_ms));
+    assert((await get('/api/routines?trigger=once')).routines.every((row: { trigger: string; interval_ms: number | null }) => row.trigger === 'schedule' && row.interval_ms === null));
+    assert.equal((await get('/api/routines?search=REVIEW%2021')).routines.length, 1);
+    assert.equal((await get('/api/routines?search=%25')).routines.length, 0);
+    for (const query of ['after=bad','agent=bad','enabled=true','trigger=schedule','foo=x','enabled=0&enabled=1',`search=${'x'.repeat(81)}`]) await get(`/api/routines?${query}`,400);
+  } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('routine hub delete is revisioned and recoverable, retains runs, revokes webhook and prevents resurrection', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-routine-delete-'));
+  const provider = createServer((_req,res) => res.end(JSON.stringify({ choices: [{ message: { content: 'Done' }, finish_reason: 'stop' }] })));
+  await new Promise<void>(resolve => provider.listen(0,'127.0.0.1',resolve));
+  const address = provider.address(); assert(address && typeof address !== 'string');
+  const options = { database: join(dir,'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` };
+  let app = await startApp(options);
+  async function post(path: string, body: unknown, status = 200) {
+    const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const value = await response.json(); assert.equal(response.status, status, JSON.stringify(value)); return value;
+  }
+  async function get(path: string) { return (await fetch(app.origin + path)).json(); }
+  try {
+    const agent = await post('/api/agents', { id: randomUUID(), name: 'Runner', model: 'fixture', instructions: 'Help.' },201);
+    const input = { id: randomUUID(), name: 'Webhook', prompt: 'Run', trigger: 'webhook', nextAt: Date.now() + 3600000, intervalSeconds: null, enabled: true };
+    const routine = await post(`/api/agents/${agent.id}/routines`,input);
+    const hook = await post(`/api/routines/${routine.id}/webhook`,{ id: randomUUID(),revision:0,rotate:true,eventName:'',filters:[] });
+    const runRequest = { id:randomUUID(),revision:routine.revision }, run = await post(`/api/routines/${routine.id}/test`,runRequest);
+    const request = { id:randomUUID(),revision:routine.revision };
+    await post(`/api/routines/${routine.id}/delete`,request,409);
+    for(let n=0;n<100;n++){const rows=await get(`/api/routines/${routine.id}/runs`);if(rows[0]?.status==='done')break;await new Promise(resolve=>setTimeout(resolve,20));}
+    const summary=(await get('/api/routines')).routines[0];assert.equal(summary.last_thread,run.thread);assert.equal(summary.last_status,'done');
+    await post(`/api/routines/${routine.id}/delete`,{...request,revision:99},409);
+    await post(`/api/routines/${routine.id}/delete`,{...request,revision:0},400);
+    const deleted=await post(`/api/routines/${routine.id}/delete`,request);assert.equal(deleted.deleted,true);
+    assert.deepEqual(await post(`/api/routines/${routine.id}/delete`,request),deleted);
+    assert.equal((await get('/api/routines')).routines.length,0);
+    assert.equal((await get(`/api/agents/${agent.id}/routines`)).length,0);
+    assert.equal((await get(`/api/routines/${routine.id}/runs`)).length,1);
+    assert.equal((await get(`/api/threads/${run.thread}/turns`))[0].reply,'Done');
+    await post(`/api/routines/${routine.id}/test`,{id:randomUUID(),revision:routine.revision},404);
+    await post(`/api/routines/${routine.id}/edit`,{...input,id:randomUUID(),revision:routine.revision},404);
+    assert.equal((await fetch(app.origin+`/api/routines/${routine.id}/flow`)).status,404);
+    assert.equal((await fetch(hook.url,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).status,404);
+    await app.close();app=await startApp(options);
+    assert.deepEqual(await post(`/api/routines/${routine.id}/delete`,request),deleted);
+    assert.deepEqual(await post(`/api/routines/${routine.id}/test`,runRequest),run);
+    assert.equal((await get('/api/routines')).routines.length,0);
+  } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(()=>resolve())); rmSync(dir,{recursive:true,force:true}); }
+});

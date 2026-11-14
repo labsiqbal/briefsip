@@ -30,11 +30,11 @@ import { QuestionCard, type Question } from './QuestionCard';
 import { ApprovalCard, type AppApproval } from './ApprovalCard';
 import { CompactionPanel } from './CompactionPanel';
 import { lazy, Suspense, useEffect, useRef, useState, useId, type FormEvent, type ReactNode } from 'react';
-import { Bell, BellOff, Brain, CircleAlert, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Ellipsis, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Plus, RefreshCw, Route, Search, Server, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
+import { Bell, BellOff, Brain, CalendarClock, CircleAlert, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Ellipsis, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
 import { PanelResizeHandle, detailsPanel, sidebarPanel, useResizablePanel } from './ui/resizable';
-import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Collapsible, Combobox, ConfirmProvider, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Segmented, Select, SkeletonRows, TabPanel, Tabs, Textarea, useConfirm, type SelectOption } from './ui/kit';
+import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Collapsible, Combobox, ConfirmProvider, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Segmented, Select, SkeletonRows, Switch, TabPanel, Tabs, Textarea, useConfirm, type SelectOption } from './ui/kit';
 import { createRoot } from 'react-dom/client';
 import { Collapsible as Disclosure, Dialog as RadixDialog, DropdownMenu } from 'radix-ui';
 import { validateFlow, type FlowGraph, type FlowLink } from '../flows.ts';
@@ -48,6 +48,7 @@ import './ui/config.css';
 import './ui/legacy.css';
 import './ui/briefsip.css';
 import './ui/kit.css';
+import './Routines.css';
 import '@fontsource-variable/inter';
 
 const panelLoadFailure = () => ({ default: () => <section className="empty"><h1>Panel could not be loaded</h1><p role="alert">Check your connection, then reload the app.</p><button onClick={() => window.location.reload()}>Reload app</button></section> });
@@ -515,9 +516,9 @@ function WorkflowConversation({ agent, threadId, configured, onOpenAgent, onOpen
   return <Chat key={thread.id} agent={agent} thread={thread} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />;
 }
 
-type Routine = { trigger: 'schedule' | 'webhook'; id: string; agent: string; name: string; prompt: string; next_at: number; interval_ms: number | null; enabled: number; revision: number };
+type Routine = { trigger: 'schedule' | 'webhook' | 'manual' | 'script'; id: string; agent: string; name: string; prompt: string; next_at: number; interval_ms: number | null; enabled: number; revision: number; owner_name?: string; flow_agents?: number; last_source?: string | null; last_scheduled_at?: number | null; last_status?: string | null; last_paused?: number | null; last_no_update?: number | null; last_created?: string | null; last_thread?: string | null };
 type RoutineRun = { paused: number; source: string; no_update: number; turn: string; thread: string; scheduled_at: number | null; created: string; missed: number; status: string; reply: string | null; error: string | null };
-type RoutineCommand = { routineId: string | null; data: { id: string; revision?: number; trigger?: 'schedule' | 'webhook'; name: string; prompt: string; nextAt: number; intervalSeconds: number | null; enabled: boolean } };
+type RoutineCommand = { routineId: string | null; data: { id: string; revision?: number; trigger?: 'schedule' | 'webhook' | 'manual' | 'script'; name: string; prompt: string; nextAt: number; intervalSeconds: number | null; enabled: boolean } };
 function UpcomingRoutines({ agent, onManage }: { agent: string; onManage: () => void }) {
   const [rows, setRows] = useState<Routine[] | null>(null), [error, setError] = useState('');
   useEffect(() => {
@@ -537,36 +538,6 @@ function UpcomingRoutines({ agent, onManage }: { agent: string; onManage: () => 
 }
 function pendingRoutine(agent: string): RoutineCommand | null {
   try { const value = JSON.parse(sessionStorage.getItem(`briefsip:routine-command:${agent}`) ?? 'null'); return value && typeof value.data?.id === 'string' && typeof value.data.name === 'string' && typeof value.data.prompt === 'string' && Number.isSafeInteger(value.data.nextAt) && value.data.nextAt > 0 && value.data.nextAt <= 253370764799999 && typeof value.data.enabled === 'boolean' && (value.data.intervalSeconds === null || Number.isSafeInteger(value.data.intervalSeconds)) && (value.routineId === null || typeof value.routineId === 'string') ? value : null; } catch { return null; }
-}
-function TestRoutine({ routine, actions }: { routine: Routine; actions: { label: string; onSelect: () => void }[] }) {
-  const key = `briefsip:routine-test:${routine.id}`;
-  const [pending, setPending] = useState<{ id: string; revision: number } | null>(() => {
-    try { const value = JSON.parse(sessionStorage.getItem(key) ?? 'null'); return value && typeof value.id === 'string' && Number.isSafeInteger(value.revision) ? value : null; } catch { return null; }
-  });
-  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [accepted, setAccepted] = useState(false);
-  const mounted = useRef(true);
-  useEffect(() => () => { mounted.current = false; }, []);
-  async function run() {
-    if (busy) return;
-    const request = pending ?? { id: crypto.randomUUID(), revision: routine.revision };
-    try { sessionStorage.setItem(key, JSON.stringify(request)); } catch { setError('Test status was not saved in the browser. Check site storage.'); return; }
-    setPending(request); setBusy(true); setError(''); setAccepted(false);
-    try {
-      await api(`/api/routines/${routine.id}/test`, request);
-      if (!mounted.current) return;
-      sessionStorage.removeItem(key); setPending(null); setAccepted(true);
-    } catch (error) {
-      if (!mounted.current) return;
-      if (error instanceof HttpError && error.status < 500) { sessionStorage.removeItem(key); setPending(null); }
-      setError(message(error));
-    } finally { if (mounted.current) setBusy(false); }
-  }
-  const label = busy ? 'Sending test...' : pending ? `Retry test ${routine.name}` : `Test now ${routine.name}`;
-  return <Row title={routine.name} meta={<>{routine.trigger === 'webhook' && <Badge>Webhook</Badge>}<span>{routine.trigger === 'webhook' ? routine.enabled ? 'Waiting for webhook event' : 'Webhook inactive' : routine.enabled ? `Next: ${new Date(routine.next_at).toLocaleString('en-US')}` : 'Schedule inactive'}{routine.trigger === 'webhook' ? '' : routine.interval_ms ? ` · Every ${routine.interval_ms / 60000} minutes` : ' · One time'}</span></>} trailing={<ActionMenu label={`Menu ${routine.name}`} trigger={<button type="button" className="k-icon-btn" aria-label={`Menu ${routine.name}`}><Ellipsis size={16} aria-hidden /></button>} items={[...actions, { label, disabled: busy, onSelect: () => void run() }]} />}>
-    {error && <Alert tone="error">{error}</Alert>}
-    {pending && !busy && <Alert tone="warn" title="Test is not confirmed yet">Try again to check the same request without creating a duplicate run.</Alert>}
-    {accepted && <Alert>Test accepted. View progress in Runs.</Alert>}
-  </Row>;
 }
 function ScriptAccess({ agent }: { agent: string }) {
   const key = `briefsip:script-access:${agent}`;
@@ -677,10 +648,8 @@ function FlowDiagram({ graph, agents }: { graph: FlowGraph; agents: Agent[] }) {
   const name = (id: string) => agents.find(agent => agent.id === id)?.name ?? id;
   return <div className="bs-root" style={{ overflowX: 'auto', border: '0.5px solid var(--color-border-tertiary)', borderRadius: 14, padding: 8, background: 'var(--color-bg-chrome)' }} tabIndex={0} role="region" aria-label="Flow diagram, scroll to view the full graph"><svg width={Math.max(360, (Math.max(...depth.values()) + 1) * 200)} height={Math.max(...counts.values()) * 84} role="img" aria-label="Agent relationships in flow"><defs><marker id={marker} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-brand)" /></marker></defs>{graph.links.map(link => { const start = positions.get(link.from)!, end = positions.get(link.to)!; return <path key={`${link.from}:${link.to}`} d={`M ${start.x + 160} ${start.y + 26} L ${end.x - 4} ${end.y + 26}`} fill="none" stroke="var(--color-brand)" strokeWidth="2" markerEnd={`url(#${marker})`} />; })}{graph.nodes.map(node => { const pos = positions.get(node)!; return <g key={node} transform={`translate(${pos.x},${pos.y})`}><title>{name(node)}</title><rect width="160" height="52" rx="7" fill="var(--color-bg-pane)" stroke="var(--color-border-primary)" /><text x="12" y="31" fill="var(--color-text-primary)" fontSize="13">{name(node).length > 20 ? `${name(node).slice(0, 18)}...` : name(node)}</text></g>; })}</svg></div>;
 }
-function FlowEditor({ routine, onBack, onOpen }: { routine: Routine; onBack: () => void; onOpen: (thread: string, owner: string) => Promise<void> }) {
-  const heading = useRef<HTMLHeadingElement>(null);
+function FlowEditor({ routine, onOpen }: { routine: Routine; onOpen: (thread: string, owner: string) => Promise<void> }) {
   const optionName = (name: string) => name.length > 24 ? name.slice(0, 21) + '...' : name;
-  useEffect(() => { heading.current?.focus(); }, []);
   type Command = { id: string; revision: number; links: FlowLink[] };
   const key = `briefsip:flow:${routine.id}`, path = `/api/routines/${routine.id}/flow`;
   const [pending, setPending] = useState<Command | null>(() => {
@@ -731,9 +700,9 @@ function FlowEditor({ routine, onBack, onOpen }: { routine: Routine; onBack: () 
     } finally { if (mounted.current) setBusy(false); }
   }
   const name = (id: string) => agents.find(agent => agent.id === id)?.name ?? id;
-  return <div className="k-page bs-root">
-    <PageHeader headingRef={heading} title={`Flow ${routine.name}`} description="Connect routine results to the next agent. Agents with multiple inputs wait for all of them; branches without successful results are skipped. Changes apply only to new runs."
-      actions={<><Button variant="ghost" onClick={onBack}>Back</Button><IconButton label="Reload flow" disabled={busy} onClick={() => setReload(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton><Button variant="primary" busy={busy} disabled={!loaded || busy || conflict} onClick={() => void save()}>{busy ? 'Saving...' : pending ? 'Retry saving flow' : 'Save flow'}</Button></>} />
+  return <div className="k-stack bs-root routine-flow">
+    <Section title="Agent flow"
+      actions={<><IconButton label="Reload flow" disabled={busy} onClick={() => setReload(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton><Button variant="primary" busy={busy} disabled={!loaded || busy || conflict} onClick={() => void save()}>{busy ? 'Saving...' : pending ? 'Retry saving flow' : 'Save flow'}</Button></>}><p className="k-field__hint">Connect routine results to the next agent. Multiple inputs wait for all results; branches without a successful result are skipped. Changes apply only to new runs.</p></Section>
     {!loaded ? <p role="status">Loading flow...</p> : <><FlowDiagram graph={graph} agents={agents} />
       <div className="k-grid-2"><Field label="From agent" hint={name(from)}><Select value={from} disabled={locked} onChange={value => { setFrom(value); if (to === value) setTo(''); }} options={graph.nodes.map(id => ({ value: id, label: optionName(name(id)) }))} /></Field><Field label="To agent" hint={to ? name(to) : 'Not selected'}><Select value={to} disabled={locked} onChange={setTo} options={[{ value: '', label: 'Select agent' }, ...agents.filter(agent => agent.id !== routine.agent && agent.id !== from).map(agent => ({ value: agent.id, label: optionName(agent.name) }))]} /></Field></div>
       <div><Button disabled={locked || !to || to === from} onClick={() => change([...links, { from, to }])}>Connect</Button></div>
@@ -746,75 +715,170 @@ function FlowEditor({ routine, onBack, onOpen }: { routine: Routine; onBack: () 
     </Row>)}</Card></Section>)}</Section>
   </div>;
 }
-function Routines({ agent, onClose, onOpen }: { agent: Agent; onClose: () => void; onOpen: (thread: string, owner: string) => Promise<void> }) {
-  const [rows, setRows] = useState<Routine[] | null>(null), [error, setError] = useState('');
-  const [webhook, setWebhook] = useState<Routine | null>(null);
-  const [flow, setFlow] = useState<Routine | null>(null);
-  const [editing, setEditing] = useState<Routine | null | undefined>(() => pendingRoutine(agent.id) ? null : undefined);
-  const [selected, setSelected] = useState(''), [runs, setRuns] = useState<RoutineRun[] | null>(null), [runError, setRunError] = useState('');
-  const [reload, setReload] = useState(0);
+
+function routineTriggerLabel(routine: Routine) {
+  if (routine.trigger !== 'schedule') return routine.trigger === 'webhook' ? 'Webhook' : routine.trigger === 'script' ? 'Local script' : 'Manual';
+  const date = new Date(routine.next_at), zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const clock = date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  if (!routine.interval_ms) return `Once on ${date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} at ${clock} (${zone})`;
+  if (routine.interval_ms === 86400000) return `Every day at ${clock} (${zone})`;
+  if (routine.interval_ms === 604800000) return `Every ${date.toLocaleDateString('en-US', { weekday: 'long' })} at ${clock} (${zone})`;
+  const minutes = routine.interval_ms / 60000;
+  return `Every ${minutes % 1440 === 0 ? `${minutes / 1440} days` : minutes % 60 === 0 ? `${minutes / 60} hours` : `${minutes} minutes`} (${zone})`;
+}
+function relativeRun(value: string | number) {
+  const time = typeof value === 'number' ? value : Date.parse(value), seconds = Math.round((time - Date.now()) / 1000), absolute = Math.abs(seconds);
+  const unit = absolute < 60 ? 'second' : absolute < 3600 ? 'minute' : absolute < 86400 ? 'hour' : 'day';
+  return new Intl.RelativeTimeFormat('en', { numeric: 'auto' }).format(Math.round(seconds / (unit === 'day' ? 86400 : unit === 'hour' ? 3600 : unit === 'minute' ? 60 : 1)), unit);
+}
+const runStatus = (run: { paused?: number | null; no_update?: number | null; status?: string | null }) => run.paused ? 'Paused' : run.no_update ? 'No updates' : statusNames[run.status ?? ''] ?? run.status ?? 'Never run';
+function RoutinesHub({ agents, initialAgent, onClose, onOpen }: { agents: Agent[]; initialAgent?: string; onClose: () => void; onOpen: (owner: string, thread: string) => void }) {
+  type Command = { routine: string; action: 'test' | 'edit' | 'delete'; data: { id: string; revision: number } & Record<string, unknown> };
+  const key = 'briefsip:routine-hub-command';
+  const [recovered] = useState(() => {
+    try {
+      const raw = sessionStorage.getItem(key); if (!raw) return { command: null, blocked: false };
+      const value = JSON.parse(raw);
+      if (!value || !['test','edit','delete'].includes(value.action) || !/^[a-f0-9-]{36}$/i.test(value.routine) || !/^[a-f0-9-]{36}$/i.test(value.data?.id) || !Number.isSafeInteger(value.data?.revision)) throw new Error('Invalid command');
+      return { command: value as Command, blocked: false };
+    } catch { return { command: null, blocked: true }; }
+  });
+  const [pending, setPending] = useState<Command | null>(recovered.command), [blocked, setBlocked] = useState(recovered.blocked), [busy, setBusy] = useState(false);
+  const [page, setPage] = useState<{ routines: Routine[]; next_after: string | null } | null>(null), [error, setError] = useState(''), [notice, setNotice] = useState(''), [reload, setReload] = useState(0);
+  const [filters, setFilters] = useState({ search: '', agent: initialAgent ?? '', enabled: '', trigger: '' }), [cursors, setCursors] = useState(['']);
+  const [editing, setEditing] = useState<Routine | null | undefined>(undefined), [detail, setDetail] = useState<Routine | null>(null), [webhook, setWebhook] = useState<Routine | null>(null);
+  const heading = useRef<HTMLHeadingElement>(null), confirm = useConfirm(), flight = useRef(false), mounted = useRef(true), loadVersion = useRef(0);
+  const after = cursors.at(-1)!;
+  useEffect(() => { setPage(null); }, [filters, after]);
+  useEffect(() => () => { mounted.current = false; }, []);
   useEffect(() => {
-    let stopped = false; let timer: ReturnType<typeof setTimeout>;
+    let stopped = false, timer: ReturnType<typeof setTimeout>;
     async function refresh() {
-      try { const data = await api<Routine[]>(`/api/agents/${agent.id}/routines`); if (!stopped) { setRows(data); setError(''); } } catch (error) { if (!stopped) setError(message(error)); }
+      const version = loadVersion.current;
+      try {
+        const data = await api<{ routines: Routine[]; next_after: string | null }>(`/api/routines?${new URLSearchParams({ ...filters, after })}`);
+        if (!stopped && version === loadVersion.current) { setPage(data); setDetail(current => current ? data.routines.find(row => row.id === current.id) ?? current : null); }
+      } catch (error) { if (!stopped) setError(message(error)); }
       if (!stopped) timer = setTimeout(refresh, 1200);
     }
     void refresh(); return () => { stopped = true; clearTimeout(timer); };
-  }, [agent.id, reload]);
+  }, [filters, after, reload]);
+  useEffect(() => { if (!detail) heading.current?.focus(); }, [!!detail, after]);
+  const locked = busy || !!pending || blocked;
+  function filter(name: keyof typeof filters, value: string) { setCursors(['']); setFilters(current => ({ ...current, [name]: value })); }
+  const owner = (id: string) => agents.find(agent => agent.id === id);
+  async function command(request: Command) {
+    if (flight.current || blocked) return;
+    flight.current = true; loadVersion.current++; setBusy(true); setError(''); setNotice('');
+    try {
+      // Retain the original request before sending; retries never regenerate an ID or payload.
+      sessionStorage.setItem(key, JSON.stringify(request)); setPending(request);
+      const result = await api<Routine>(`/api/routines/${request.routine}/${request.action}`, request.data);
+      sessionStorage.removeItem(key);
+      if (request.action === 'test') sessionStorage.removeItem(`briefsip:routine-test:${request.routine}`);
+      if (!mounted.current) return;
+      loadVersion.current++; setPending(null);
+      if (request.action === 'edit') { setDetail(current => current?.id === request.routine ? { ...current, ...result } : current); setPage(current => current && ({ ...current, routines: current.routines.map(row => row.id === request.routine ? { ...row, ...result } : row) })); }
+      setReload(value => value + 1);
+      setNotice(request.action === 'test' ? 'Run accepted. Open Overview to follow its progress.' : request.action === 'delete' ? 'Routine deleted. Existing run conversations are retained.' : 'Routine updated.');
+      if (request.action === 'delete') setDetail(null);
+    } catch (error) {
+      if (!mounted.current) return;
+      if (error instanceof HttpError && error.status < 500) { sessionStorage.removeItem(key); if (request.action === 'test') sessionStorage.removeItem(`briefsip:routine-test:${request.routine}`); setPending(null); setReload(value => value + 1); }
+      setError(message(error));
+    } finally { flight.current = false; if (mounted.current) setBusy(false); }
+  }
+  function toggle(routine: Routine) {
+    if (locked) return;
+    void command({ routine: routine.id, action: 'edit', data: { id: crypto.randomUUID(), revision: routine.revision, name: routine.name, prompt: routine.prompt, nextAt: routine.next_at, intervalSeconds: routine.interval_ms === null ? null : routine.interval_ms / 1000, enabled: !routine.enabled, trigger: routine.trigger } });
+  }
+  function run(routine: Routine) {
+    if (locked) return;
+    try {
+      const saved = sessionStorage.getItem(`briefsip:routine-test:${routine.id}`), data = saved ? JSON.parse(saved) : { id: crypto.randomUUID(), revision: routine.revision };
+      if (!data || typeof data.id !== 'string' || !Number.isSafeInteger(data.revision)) throw new Error('Previous run request could not be read. Check browser storage and run history before retrying.');
+      void command({ routine: routine.id, action: 'test', data });
+    } catch (error) { setError(message(error)); }
+  }
+  async function remove(routine: Routine) {
+    if (locked || !await confirm({ title: `Delete ${routine.name}?`, description: 'Future triggers stop. Existing conversations and run records are retained. Complete or cancel an active run before deleting.', confirm: 'Delete routine', danger: true })) return;
+    void command({ routine: routine.id, action: 'delete', data: { id: crypto.randomUUID(), revision: routine.revision } });
+  }
+  async function discard() {
+    if (!await confirm({ title: 'Discard routine recovery?', description: 'Check routines and run history first. The previous request may already have succeeded.', confirm: 'Discard recovery', danger: true })) return;
+    try { sessionStorage.removeItem(key); setPending(null); setBlocked(false); setReload(value => value + 1); } catch (error) { setError(message(error)); }
+  }
+  const recovery = <>{blocked && <Alert tone="error" title="Routine recovery could not be read" actions={<Button disabled={busy} onClick={() => void discard()}>Discard recovery</Button>}>Check routine settings and run history before discarding.</Alert>}{pending && <Alert tone="warn" title="Request is not confirmed yet" actions={<><Button disabled={busy} busy={busy} onClick={() => void command(pending)}>Retry request</Button><Button disabled={busy} onClick={() => void discard()}>Discard recovery</Button></>}>Retry the original request to check its result without duplicating work.</Alert>}{error && <Alert tone="error" actions={<Button size="sm" onClick={() => { setError(''); setReload(value => value + 1); }}>Reload routines</Button>}>{error}</Alert>}{notice && <p role="status" className="k-field__hint">{notice}</p>}</>;
+  const editingOwner = editing ? owner(editing.agent) : agents.find(agent => pendingRoutine(agent.id)) ?? owner(filters.agent) ?? agents[0];
+  return <>
+    {webhook ? <WebhookSettings key={webhook.id} routine={webhook} onBack={() => setWebhook(null)} /> : detail ? <RoutineDetail routine={detail} locked={locked} recovery={recovery} onBack={() => { setDetail(null); setReload(value => value + 1); }} onEdit={() => setEditing(detail)} onRun={() => run(detail)} onToggle={() => toggle(detail)} onDelete={() => void remove(detail)} onWebhook={() => setWebhook(detail)} onOpen={onOpen} /> : <div className="k-page bs-root routines-hub">
+      <PageHeader headingRef={heading} title="Routines" description="Scheduled work and event triggers across your local agents." actions={<><Button variant="ghost" onClick={onClose}>Back</Button><IconButton label="Reload routines" onClick={() => { setError(''); setReload(value => value + 1); }}><RefreshCw size={15} aria-hidden /></IconButton><Button disabled={locked || !agents.length} variant="primary" icon={<Plus size={14} aria-hidden />} onClick={() => setEditing(null)}>{agents.some(agent => pendingRoutine(agent.id)) ? 'Resume saving' : 'New routine'}</Button></>} />
+      <div className="routine-filters"><Field label="Search routines"><Input type="search" maxLength={80} value={filters.search} onChange={event => filter('search', event.target.value)} placeholder="Search by name" /></Field><Field label="Agent"><Select value={filters.agent} onChange={value => filter('agent', value)} options={[{ value: '', label: 'All agents' }, ...agents.map(agent => ({ value: agent.id, label: agent.name }))]} /></Field><Field label="Status"><Select value={filters.enabled} onChange={value => filter('enabled', value)} options={[{ value: '', label: 'All statuses' }, { value: '1', label: 'Enabled' }, { value: '0', label: 'Disabled' }]} /></Field><Field label="Trigger"><Select value={filters.trigger} onChange={value => filter('trigger', value)} options={[{ value: '', label: 'All triggers' }, { value: 'once', label: 'Once' }, { value: 'recurring', label: 'Recurring schedule' }, { value: 'webhook', label: 'Webhook' }, { value: 'manual', label: 'Manual' }, { value: 'script', label: 'Local script' }]} /></Field></div>
+      {recovery}
+      {!page ? <><span className="sr-only" role="status">Loading routines...</span><SkeletonRows /></> : !page.routines.length ? <EmptyState icon={<CalendarClock size={20} aria-hidden />} title={Object.values(filters).some(Boolean) || after ? 'No matching routines' : 'No routines yet'}>{Object.values(filters).some(Boolean) || after ? <Button onClick={() => { setFilters({ search: '', agent: '', enabled: '', trigger: '' }); setCursors(['']); }}>Clear filters</Button> : <><p>Create a routine for work you want an agent to repeat.</p><Button disabled={locked || !agents.length} onClick={() => setEditing(null)}>New routine</Button>{!agents.length && <p>Create a local agent first.</p>}</>}</EmptyState> : <div className="k-table-wrap"><table className="k-table routine-table"><thead><tr><th>Routine</th><th>Owner</th><th>Trigger</th><th>Last run</th><th>Next run</th><th>Enabled</th></tr></thead><tbody>{page.routines.map(row => <tr key={row.id}><td><button type="button" className="routine-name k-link" onClick={() => { setNotice(''); setDetail(row); }}>{row.name}</button>{Number(row.flow_agents) > 1 && <Badge>{row.flow_agents} agents</Badge>}</td><td><span className="routine-owner">{owner(row.agent) && <AgentAvatar agent={owner(row.agent)!} size={24} />}<span>{row.owner_name}</span></span></td><td>{routineTriggerLabel(row)}</td><td>{row.last_status && row.last_thread ? <button type="button" className="routine-run k-link" onClick={() => onOpen(row.agent, row.last_thread!)}><span>{runStatus({ status: row.last_status, paused: row.last_paused, no_update: row.last_no_update })}</span><time dateTime={row.last_created!}>{relativeRun(row.last_created!)}</time></button> : <span className="k-field__hint">Never run</span>}</td><td>{row.enabled && row.trigger === 'schedule' ? <time title={new Date(row.next_at).toLocaleString('en-US')} dateTime={new Date(row.next_at).toISOString()}>{relativeRun(row.next_at)}</time> : <span className="k-field__hint">{row.enabled ? 'On demand' : 'Paused'}</span>}</td><td><Switch checked={!!row.enabled} disabled={locked} label={`Enable ${row.name}`} onChange={() => toggle(row)} /></td></tr>)}</tbody></table></div>}
+      {(cursors.length > 1 || !!page?.next_after) && <div className="k-pager"><IconButton label="Previous routines" disabled={cursors.length < 2} onClick={() => setCursors(values => values.slice(0, -1))}><ChevronLeft size={16} aria-hidden /></IconButton><IconButton label="Next routines" disabled={!page?.next_after} onClick={() => { if (page?.next_after) setCursors(values => [...values, page.next_after!]); }}><ChevronRight size={16} aria-hidden /></IconButton></div>}
+    </div>}
+    {editing !== undefined && editingOwner && <RoutineForm key={editing?.id ?? editingOwner.id} owner={editingOwner} agents={agents} routine={editing} onSaved={updated => { setDetail(current => current?.id === updated.id ? { ...current, ...updated } : current); setEditing(undefined); setReload(value => value + 1); }} onBack={() => { setEditing(undefined); setReload(value => value + 1); }} />}
+  </>;
+}
+function RoutineDetail({ routine, locked, recovery, onBack, onEdit, onRun, onToggle, onDelete, onWebhook, onOpen }: { routine: Routine; locked: boolean; recovery: ReactNode; onBack: () => void; onEdit: () => void; onRun: () => void; onToggle: () => void; onDelete: () => void; onWebhook: () => void; onOpen: (owner: string, thread: string) => void }) {
+  const [tab, setTab] = useState('overview'), [runs, setRuns] = useState<RoutineRun[] | null>(null), [error, setError] = useState('');
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => { heading.current?.focus(); }, []);
   useEffect(() => {
-    let stopped = false; let timer: ReturnType<typeof setTimeout>; setRuns(null); setRunError('');
+    let stopped = false, timer: ReturnType<typeof setTimeout>;
     async function refresh() {
-      try { const data = await api<RoutineRun[]>(`/api/routines/${selected}/runs`); if (!stopped) { setRuns(data); setRunError(''); } } catch (error) { if (!stopped) setRunError(message(error)); }
+      try { const data = await api<RoutineRun[]>(`/api/routines/${routine.id}/runs`); if (!stopped) { setRuns(data); setError(''); } } catch (error) { if (!stopped) setError(message(error)); }
       if (!stopped) timer = setTimeout(refresh, 1200);
     }
-    if (selected) void refresh(); return () => { stopped = true; clearTimeout(timer); };
-  }, [selected]);
-  if (flow) return <FlowEditor key={flow.id} routine={flow} onBack={() => setFlow(null)} onOpen={onOpen} />;
-  if (webhook) return <WebhookSettings key={webhook.id} routine={webhook} onBack={() => setWebhook(null)} />;
-  if (editing !== undefined) return <RoutineForm key={`${editing?.id ?? 'new'}:${reload}`} agent={agent} routine={editing} onBack={() => { setEditing(undefined); setReload(value => value + 1); }} />;
-  return <div className="k-page bs-root">
-    <PageHeader title={`Routines ${agent.name}`} description="Each run has a separate conversation. Briefsip must be running for schedules to be processed."
-      actions={<><Button variant="ghost" onClick={onClose}>Back</Button><Button variant="primary" icon={<Plus size={14} aria-hidden />} onClick={() => setEditing(null)}>{pendingRoutine(agent.id) ? 'Resume saving' : 'New routine'}</Button></>} />
-    <p className="k-field__hint">Test now runs the saved work through the provider, even when the schedule is inactive. The schedule does not change; provider usage is still counted.</p>
-    <ScriptAccess key={agent.id} agent={agent.id} />
-    <Section title="Routines" actions={<a className="k-link" href={`/api/agents/${agent.id}/routines/calendar.ics`} download="briefsip-routines.ics">Download calendar</a>}>
-      {error && <Alert tone="error">{error} The list will be retried.</Alert>}
-      {rows === null ? <><span className="sr-only" role="status">Loading routines...</span><SkeletonRows /></> : !rows.length ? <EmptyState title="No routines yet">Create a schedule for recurring or one-time work.</EmptyState> : <Card>{rows.map(row => <TestRoutine key={row.id} routine={row} actions={[
-        { label: `Edit ${row.name}`, onSelect: () => setEditing(row) },
-        { label: `Runs: ${row.name}`, onSelect: () => setSelected(row.id) },
-        { label: `Flow ${row.name}`, onSelect: () => setFlow(row) },
-        ...(row.trigger === 'webhook' ? [{ label: `Webhook settings: ${row.name}`, onSelect: () => setWebhook(row) }] : []),
-      ]} />)}</Card>}
-    </Section>
-    {selected && <Section title="Run history">{runError && <Alert tone="error">{runError}</Alert>}{runs === null ? <><span className="sr-only" role="status">Loading runs...</span><SkeletonRows /></> : !runs.length ? <EmptyState title="No saved runs" /> : <Card>{runs.map(run => <Row key={run.turn} title={<>{run.source === 'webhook' ? 'Webhook · ' : run.source === 'script' ? 'Local script · ' : run.scheduled_at === null ? 'Manual test · ' : ''}{new Date(run.scheduled_at ?? run.created).toLocaleString('en-US')}</>} meta={<Badge>{run.paused ? 'Paused' : run.no_update ? 'No updates' : statusNames[run.status] ?? run.status}</Badge>} trailing={<Button size="sm" onClick={() => void onOpen(run.thread, agent.id).catch(error => setRunError(message(error)))}>Open result</Button>}>{run.missed > 0 && <span className="k-field__hint">{run.missed} missed schedules were combined into this run.</span>}{run.error && <Alert tone="error">{run.error}</Alert>}</Row>)}</Card>}</Section>}
+    void refresh(); return () => { stopped = true; clearTimeout(timer); };
+  }, [routine.id]);
+  return <div className="k-page bs-root routine-detail"><PageHeader headingRef={heading} title={routine.name} description={`Owned by ${routine.owner_name ?? 'local agent'}`} actions={<><Button variant="ghost" onClick={onBack}>All routines</Button><Button disabled={locked} icon={<Pencil size={14} aria-hidden />} onClick={onEdit}>Edit routine</Button><Button disabled={locked} icon={routine.enabled ? <Pause size={14} aria-hidden /> : <Play size={14} aria-hidden />} onClick={onToggle}>{routine.enabled ? 'Pause' : 'Resume'}</Button><Button disabled={locked} variant="primary" icon={<Play size={14} aria-hidden />} onClick={onRun}>Run now</Button><ActionMenu label="Routine actions" trigger={<button type="button" className="k-icon-btn" aria-label="Routine actions" disabled={locked}><Ellipsis size={16} aria-hidden /></button>} items={[{ label: 'Delete routine', danger: true, onSelect: onDelete }]} /></>} />
+    {recovery}
+    <Tabs value={tab} onChange={setTab} label="Routine sections" tabs={[{ value: 'overview', label: 'Overview' }, { value: 'flow', label: 'Flow' }]}>
+      <TabPanel value="overview"><div className="k-stack"><Card><Row title="Trigger" meta={routineTriggerLabel(routine)} trailing={<Badge>{routine.enabled ? 'Enabled' : 'Paused'}</Badge>} /><Row title="Next run" meta={routine.enabled && routine.trigger === 'schedule' ? new Date(routine.next_at).toLocaleString('en-US') : routine.enabled ? 'On demand' : 'Paused'} /><Row title="Last run" meta={routine.last_created ? <>{runStatus({ status: routine.last_status, paused: routine.last_paused, no_update: routine.last_no_update })} · {relativeRun(routine.last_created)}</> : 'Never run'} trailing={routine.last_thread && <Button size="sm" onClick={() => onOpen(routine.agent, routine.last_thread!)}>Open last run</Button>} /><Row title="Flow" meta={Number(routine.flow_agents ?? 1) > 1 ? `${routine.flow_agents} agents` : 'Single agent'} /></Card>
+      <Section title="Instructions"><p className="routine-instructions">{routine.prompt}</p></Section>
+      <div className="k-row-actions">{routine.trigger === 'webhook' && <Button onClick={onWebhook}>Webhook settings</Button>}<a className="k-link" href={`/api/agents/${routine.agent}/routines/calendar.ics`} download="briefsip-routines.ics">Download agent calendar</a></div>
+      <p className="k-field__hint">Run now uses the saved instructions even while paused. Provider usage still counts; the schedule stays unchanged.</p>
+      <Section title="Run history">{error && <Alert tone="error">{error}</Alert>}{runs === null ? <SkeletonRows /> : !runs.length ? <EmptyState title="No runs yet">Run this routine to create its first conversation.</EmptyState> : <Card>{runs.map(run => <Row key={run.turn} title={new Date(run.scheduled_at ?? run.created).toLocaleString('en-US')} meta={<><Badge>{runStatus(run)}</Badge><span>{run.source === 'webhook' ? 'Webhook' : run.source === 'script' ? 'Local script' : run.scheduled_at === null ? 'Manual' : 'Schedule'} · {relativeRun(run.created)}</span></>} trailing={<Button size="sm" onClick={() => onOpen(routine.agent, run.thread)}>Open run</Button>}>{run.missed > 0 && <p className="k-field__hint">{run.missed} missed schedules were combined into this run.</p>}{run.error && <Alert tone="error">{run.error}</Alert>}</Row>)}</Card>}</Section>
+      <Collapsible title="Local script access"><ScriptAccess key={routine.agent} agent={routine.agent} /></Collapsible>
+      </div></TabPanel>
+      <TabPanel value="flow"><FlowEditor key={routine.id} routine={routine} onOpen={async (thread, owner) => onOpen(owner, thread)} /></TabPanel>
+    </Tabs>
   </div>;
 }
-function RoutineForm({ agent, routine, onBack }: { agent: Agent; routine: Routine | null; onBack: () => void }) {
+function RoutineForm({ owner, agents, routine, onBack, onSaved }: { owner: Agent; agents: Agent[]; routine: Routine | null; onBack: () => void; onSaved: (routine: Routine) => void }) {
+  const [agent, setAgent] = useState(owner);
   const key = `briefsip:routine-command:${agent.id}`;
-  const pending = useRef<RoutineCommand | null>(pendingRoutine(agent.id));
+  const pending = useRef<RoutineCommand | null>(pendingRoutine(owner.id));
   const [initial] = useState(() => pending.current);
+  const [blocked, setBlocked] = useState(() => { try { return sessionStorage.getItem(key) !== null && !pending.current; } catch { return true; } });
+  const confirm = useConfirm();
   const routineId = initial?.routineId ?? routine?.id ?? null;
   const revision = initial?.data.revision ?? routine?.revision;
   const [conflict, setConflict] = useState(false);
   const snapshot = initial?.data;
+  const savedTrigger = snapshot?.trigger ?? routine?.trigger ?? 'schedule';
+  const savedInterval = snapshot ? snapshot.intervalSeconds : routine?.interval_ms;
+  const [kind, setKind] = useState(savedTrigger === 'schedule' ? savedInterval ? 'recurring' : 'once' : savedTrigger);
+  const trigger: Routine['trigger'] = kind === 'once' || kind === 'recurring' ? 'schedule' : kind as Routine['trigger'];
   const [enabled, setEnabled] = useState(snapshot?.enabled ?? (routine ? !!routine.enabled : true));
-  const [trigger, setTrigger] = useState<'schedule' | 'webhook'>(snapshot?.trigger ?? routine?.trigger ?? 'schedule');
   const [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const mounted = useRef(true);
   useEffect(() => () => { mounted.current = false; }, []);
-  const date = new Date(snapshot?.nextAt ?? routine?.next_at ?? Date.now() + 60000);
+  const date = new Date(snapshot?.nextAt ?? routine?.next_at ?? Date.now() + 3600000);
   const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (busy || conflict) return;
+    event.preventDefault(); if (busy || conflict || blocked) return;
     const fields = new FormData(event.currentTarget);
-    const request = pending.current ?? { routineId, data: { id: crypto.randomUUID(), ...(routineId ? { revision } : {}), name: String(fields.get('name')).trim(), prompt: String(fields.get('prompt')).trim(), trigger, nextAt: trigger === 'webhook' ? routine?.next_at ?? Date.now() + 60000 : new Date(String(fields.get('nextAt'))).getTime(), intervalSeconds: fields.get('interval') ? Number(fields.get('interval')) * 60 : null, enabled: fields.get('enabled') === 'on' } };
+    const request = pending.current ?? { routineId, data: { id: crypto.randomUUID(), ...(routineId ? { revision } : {}), name: String(fields.get('name')).trim(), prompt: String(fields.get('prompt')).trim(), trigger, nextAt: trigger === 'schedule' ? new Date(String(fields.get('nextAt'))).getTime() : routine?.next_at ?? Date.now() + 60000, intervalSeconds: kind === 'recurring' ? Number(fields.get('interval')) * 60 : null, enabled } };
     try { sessionStorage.setItem(key, JSON.stringify(request)); } catch { setError('Save status was not saved in the browser. Check site storage.'); return; }
     pending.current = request; setBusy(true); setError('');
     try {
-      await api(request.routineId ? `/api/routines/${request.routineId}/edit` : `/api/agents/${agent.id}/routines`, request.data);
+      const updated = await api<Routine>(request.routineId ? `/api/routines/${request.routineId}/edit` : `/api/agents/${agent.id}/routines`, request.data);
       if (!mounted.current) return;
       if (pendingRoutine(agent.id)?.data.id === request.data.id) sessionStorage.removeItem(key);
-      pending.current = null; onBack();
+      pending.current = null; onSaved(updated);
     } catch (error) {
       if (!mounted.current) return;
       if (error instanceof HttpError && error.status < 500) { if (pendingRoutine(agent.id)?.data.id === request.data.id) sessionStorage.removeItem(key); pending.current = null; }
@@ -822,24 +886,31 @@ function RoutineForm({ agent, routine, onBack }: { agent: Agent; routine: Routin
       setError(message(error));
     } finally { if (mounted.current) setBusy(false); }
   }
-  return <div className="k-page bs-root">
-    <PageHeader title={initial?.routineId || routine ? 'Edit routine' : 'New routine'} description="Time follows the browser time zone. Disabling or changing a schedule cancels queued runs; runs already in progress continue." actions={<Button variant="ghost" disabled={busy} onClick={onBack}>{error && !pending.current ? 'Discard changes and reload' : 'Back'}</Button>} />
-    <form className="k-fieldset" onSubmit={save}>
-      <Field label="Name"><Input name="name" required maxLength={80} autoFocus readOnly={!!pending.current} defaultValue={snapshot?.name ?? routine?.name} /></Field>
-      <Field label="Work"><Textarea name="prompt" required maxLength={16000} readOnly={!!pending.current} defaultValue={snapshot?.prompt ?? routine?.prompt} rows={5} /></Field>
-      <Segmented label="Trigger" value={trigger} disabled={!!pending.current} onChange={setTrigger} options={[{ value: 'schedule', label: 'Schedule' }, { value: 'webhook', label: 'Webhook' }]} />
-      {trigger === 'webhook' && <Alert>After saving, open Webhook settings to create a URL and secret. Switching to a schedule removes the old URL and secret.</Alert>}
-      <div hidden={trigger === 'webhook'}><Field label="Start time"><Input disabled={trigger === 'webhook'} name="nextAt" type="datetime-local" required readOnly={!!pending.current} defaultValue={localDate} /></Field></div>
-      <div hidden={trigger === 'webhook'}><Field label="Repeat every (minutes)" hint="Leave empty for a one-time run."><Input disabled={trigger === 'webhook'} name="interval" type="number" min={1} max={525600} step={1} readOnly={!!pending.current} defaultValue={snapshot ? snapshot.intervalSeconds === null ? '' : snapshot.intervalSeconds / 60 : routine?.interval_ms ? routine.interval_ms / 60000 : ''} /></Field></div>
-      <Checkbox checked={enabled} onChange={setEnabled} disabled={!!pending.current} label={trigger === 'webhook' ? 'Webhook active' : 'Schedule active'} />
-      <input type="hidden" name="enabled" value="on" disabled={!enabled || !!pending.current} />
+  return <Dialog open size="lg" onOpenChange={open => { if (!open && !busy) onBack(); }} title={initial?.routineId || routine ? 'Edit routine' : 'New routine'}
+    description="Each run opens a separate conversation. Briefsip must be running to process schedules."
+    footer={<><Button disabled={busy} onClick={onBack}>{conflict ? 'Discard changes and reload' : 'Cancel'}</Button><Button type="submit" form="routine-form" variant="primary" busy={busy} disabled={busy || conflict || blocked}>{busy ? 'Saving...' : pending.current ? 'Retry save' : 'Save routine'}</Button></>}>
+    <form id="routine-form" className="k-fieldset bs-root" onSubmit={save}>
+      {blocked && <Alert tone="error" title="Routine recovery could not be read" actions={<Button onClick={async () => {
+        if (!await confirm({ title: 'Discard routine save recovery?', description: 'Check routines and run history first. The previous save may already have succeeded.', confirm: 'Discard recovery', danger: true })) return;
+        try { sessionStorage.removeItem(key); setBlocked(false); } catch { setError('Browser storage is unavailable. Check site storage before saving.'); }
+      }}>Discard recovery</Button>}>Check saved routines before discarding this request.</Alert>}
+      <Field label="Owner agent" hint={routineId ? 'The owner cannot change after creation.' : undefined}><Select value={agent.id} disabled={!!routineId || !!pending.current || busy || blocked} onChange={id => { const next = agents.find(item => item.id === id); if (next) setAgent(next); }} options={agents.map(item => ({ value: item.id, label: item.name, disabled: item.id !== agent.id && !!pendingRoutine(item.id) }))} /></Field>
+      <Field label="Name"><Input name="name" required maxLength={80} readOnly={!!pending.current} defaultValue={snapshot?.name ?? routine?.name} placeholder="Morning briefing" /></Field>
+      <Field label="Instructions"><Textarea name="prompt" required maxLength={16000} readOnly={!!pending.current} defaultValue={snapshot?.prompt ?? routine?.prompt} rows={4} placeholder="What should this routine do?" /></Field>
+      <Field label="Trigger"><Select value={kind} disabled={!!pending.current} onChange={setKind} options={[{ value: 'manual', label: 'Manual' }, { value: 'once', label: 'Once' }, { value: 'recurring', label: 'Recurring schedule' }, { value: 'webhook', label: 'Webhook' }, { value: 'script', label: 'Local script' }]} /></Field>
+      {trigger === 'webhook' && <Alert>After saving, open Webhook settings to create a URL and secret. Changing this trigger removes the old URL and secret.</Alert>}
+      {trigger === 'script' && <Alert>After saving, allow Local script access in the routine overview. Scripts use the existing server token and this routine's ID.</Alert>}
+      <div hidden={trigger !== 'schedule'} className="k-grid-2"><Field label="Start time" hint={`Time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`}><Input disabled={trigger !== 'schedule'} name="nextAt" type="datetime-local" required readOnly={!!pending.current} defaultValue={localDate} /></Field>
+      {kind === 'recurring' && <Field label="Repeat every (minutes)" hint="Fixed interval, 1 minute to 365 days."><Input name="interval" type="number" min={1} max={525600} step={1} required readOnly={!!pending.current} defaultValue={snapshot?.intervalSeconds ? snapshot.intervalSeconds / 60 : routine?.interval_ms ? routine.interval_ms / 60000 : 1440} /></Field>}</div>
+      <Checkbox checked={enabled} onChange={setEnabled} disabled={!!pending.current} label="Enabled" />
+      {routine && <p className="k-field__hint">Disabling or changing a schedule cancels queued runs; runs already in progress continue.</p>}
+      {pending.current && <Alert tone="warn" title="Save is not confirmed yet">Retry the same request to check its result without creating a duplicate routine.</Alert>}
       {error && <Alert tone="error">{error}</Alert>}
-      <div><Button type="submit" variant="primary" busy={busy} disabled={busy || conflict}>{busy ? 'Saving...' : pending.current ? 'Retry save' : 'Save routine'}</Button></div>
     </form>
-  </div>;
+  </Dialog>;
 }
 
-function AgentConversations({ agent, configured, onEdit, workflowAgents, initialThread, onOpenAgent, onOpenChannel, onThreadOpened }: { onOpenChannel: (channel: string) => void; agent: Agent; workflowAgents: Agent[]; configured: boolean; onEdit: () => void; initialThread?: string; onThreadOpened: () => void; onOpenAgent: (owner: string, thread: string) => void }) {
+function AgentConversations({ agent, configured, onEdit, workflowAgents, initialThread, onOpenAgent, onOpenChannel, onThreadOpened, onManageRoutines }: { onManageRoutines: (agent: string) => void; onOpenChannel: (channel: string) => void; agent: Agent; workflowAgents: Agent[]; configured: boolean; onEdit: () => void; initialThread?: string; onThreadOpened: () => void; onOpenAgent: (owner: string, thread: string) => void }) {
   const [threads, setThreads] = useState<Thread[]>([]), [error, setError] = useState('');
   const storageKey = `briefsip:thread:${agent.id}`;
   const [selected, setSelected] = useState(() => { if (initialThread) return initialThread; try { return sessionStorage.getItem(storageKey) ?? ''; } catch { return ''; } });
@@ -847,12 +918,11 @@ function AgentConversations({ agent, configured, onEdit, workflowAgents, initial
   const [reload, setReload] = useState(0);
   const [showWorkspace, setShowWorkspace] = useState(false);
   const workspaceButton = useRef<HTMLButtonElement>(null);
-  const [showRoutines, setShowRoutines] = useState(false);
   const [showWorkflows, setShowWorkflows] = useState(false);
   const loadVersion = useRef(0);
   const navigation = useRef(0);
   const thread = threads.find(item => item.id === selected);
-  function select(id: string) { setShowWorkspace(false); setShowRoutines(false); setShowWorkflows(false); navigation.current++; loadVersion.current++; setSelected(id); setForm(false); setEditing(false); try { sessionStorage.setItem(storageKey, id); } catch { /* Selection remains usable in memory. */ } }
+  function select(id: string) { setShowWorkspace(false); setShowWorkflows(false); navigation.current++; loadVersion.current++; setSelected(id); setForm(false); setEditing(false); try { sessionStorage.setItem(storageKey, id); } catch { /* Selection remains usable in memory. */ } }
   async function load(preferred = selected, afterSave = false) {
     const version = ++loadVersion.current;
     try {
@@ -872,14 +942,14 @@ function AgentConversations({ agent, configured, onEdit, workflowAgents, initial
   useEffect(() => { if (initialThread !== undefined) { onThreadOpened(); void load(initialThread, true).catch(() => {}); } }, [initialThread]);
   const navigationVersion = navigation.current;
   const leave = () => { navigation.current++; loadVersion.current++; };
-  const openForm = () => { leave(); setShowWorkspace(false); setShowRoutines(false); setShowWorkflows(false); setForm(true); setEditing(false); };
-  const openRoutines = () => { leave(); setShowWorkspace(false); setShowRoutines(true); setShowWorkflows(false); };
-  const openWorkflows = () => { leave(); setShowWorkspace(false); setShowRoutines(false); setShowWorkflows(true); };
-  const openWorkspace = () => { leave(); setShowRoutines(false); setShowWorkflows(false); setForm(false); setEditing(false); setShowWorkspace(true); };
+  const openForm = () => { leave(); setShowWorkspace(false); setShowWorkflows(false); setForm(true); setEditing(false); };
+  const openRoutines = () => { leave(); onManageRoutines(agent.id); };
+  const openWorkflows = () => { leave(); setShowWorkspace(false); setShowWorkflows(true); };
+  const openWorkspace = () => { leave(); setShowWorkflows(false); setForm(false); setEditing(false); setShowWorkspace(true); };
   const errorBanner = error && <p className="error" role="alert">{error} <button className="secondary" onClick={() => void load().catch(() => {})}>Reload conversation</button></p>;
   if (showWorkspace) return <PageView>{errorBanner}<Suspense fallback={<p className="empty" role="status">Loading workspace files...</p>}><WorkspacePanel key={agent.id} agent={agent} request={api} onClose={() => { setShowWorkspace(false); requestAnimationFrame(() => workspaceButton.current?.focus()); }} /></Suspense></PageView>;
   if (showWorkflows) return <PageView wide>{errorBanner}<Suspense fallback={<p className="empty" role="status">Loading workflows...</p>}><WorkflowPanel owner={agent} agents={workflowAgents} request={api} onNavigate={leave} onBack={() => { leave(); setShowWorkflows(false); }} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={workflowAgents.find(item => item.id === owner)} threadId={id} configured={configured} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />} /></Suspense></PageView>;
-  if (showRoutines) return <PageView>{errorBanner}<Routines agent={agent} onClose={() => { leave(); setShowWorkspace(false); setShowRoutines(false); setShowWorkflows(false); }} onOpen={async (id, owner) => { if (owner === agent.id) await load(id, true); else onOpenAgent(owner, id); }} /></PageView>;
+
   if (!loaded) return <PageView>{errorBanner}<p className="empty" role="status">Loading conversation...</p></PageView>;
   if (form) return <PageView>{errorBanner}<ThreadForm key={editing ? `${thread?.id}:${thread?.revision}:${reload}` : 'new'} agent={agent} thread={editing ? thread : undefined} onCancel={() => { leave(); setForm(false); }} onReload={() => { void load().catch(() => {}); }} onSaved={item => navigationVersion === navigation.current ? load(item.deleted ? '' : item.id, true) : Promise.resolve()} /></PageView>;
   const conversations = <>
@@ -1147,32 +1217,6 @@ function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agent
   </Dialog>;
 }
 
-function FlowDirectory({ agents, onClose, onOpen }: { agents: Agent[]; onClose: () => void; onOpen: (owner: string, thread: string) => void }) {
-  type Entry = Routine & { owner_name: string; graph: FlowGraph; flow_revision: number };
-  const [page, setPage] = useState<{ flows: Entry[]; next_after: string | null } | null>(null);
-  const [cursors, setCursors] = useState(['']), [refresh, setRefresh] = useState(0), [error, setError] = useState('');
-  const [editing, setEditing] = useState<Entry | null>(null);
-  const heading = useRef<HTMLHeadingElement>(null);
-  const after = cursors[cursors.length - 1];
-  useEffect(() => {
-    let stopped = false; setPage(null); setError('');
-    void api<{ flows: Entry[]; next_after: string | null }>(`/api/flows${after ? `?after=${after}` : ''}`).then(data => {
-      if (!stopped) { setPage(data); heading.current?.focus(); }
-    }).catch(error => { if (!stopped) setError(message(error)); });
-    return () => { stopped = true; };
-  }, [after, refresh]);
-  if (editing) return <FlowEditor routine={editing} onBack={() => { setEditing(null); setRefresh(value => value + 1); }} onOpen={async (thread, owner) => onOpen(owner, thread)} />;
-  const name = (id: string) => agents.find(agent => agent.id === id)?.name ?? id;
-  return <div className="k-page bs-root">
-    <PageHeader headingRef={heading} title="Agent flows" description="Relationships saved from all routines. Each diagram runs independently; relationships from different routines are not combined during execution." actions={<><Button variant="ghost" onClick={onClose}>Back</Button><IconButton label="Reload flow list" onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton></>} />
-    {error ? <Alert tone="error">{error}</Alert> : !page ? <><span className="sr-only" role="status">Loading flow list...</span><SkeletonRows /></> : !page.flows.length ? <EmptyState title="No flows on this page">Open Routines for an agent, then save its flow.</EmptyState> : page.flows.map(row => <Card key={row.id}><div className="k-stack" style={{ padding: 14 }}>
-      <Row title={row.name} meta={<><span>{row.owner_name}</span><Badge>{row.trigger === 'webhook' ? 'Webhook' : 'Schedule'}</Badge><Badge>{row.enabled ? 'Active' : 'Inactive'}</Badge></>} trailing={<Button size="sm" onClick={() => setEditing(row)}>Edit flow {row.name}</Button>} />
-      <FlowDiagram graph={row.graph} agents={agents} />
-      {row.graph.links.length ? <ul className="k-field__hint">{row.graph.links.map(link => <li key={`${link.from}:${link.to}`}>{name(link.from)} to {name(link.to)}</li>)}</ul> : <p className="k-field__hint">No relationships to other agents.</p>}
-    </div></Card>)}
-    {(cursors.length > 1 || !!page?.next_after) && <div className="k-pager"><IconButton label="Previous flows" disabled={cursors.length < 2} onClick={() => setCursors(values => values.slice(0, -1))}><ChevronLeft size={16} aria-hidden /></IconButton><IconButton label="Next flows" disabled={!page?.next_after} onClick={() => { if (page?.next_after) setCursors(values => [...values, page.next_after!]); }}><ChevronRight size={16} aria-hidden /></IconButton></div>}
-  </div>;
-}
 
 type SettingsSection = 'updates' | 'machines' | 'connected-apps' | 'skills' | 'mcp' | 'mcp-server' | 'data' | 'usage' | 'backup' | 'import' | 'help' | 'appearance';
 const settingsSections: { id: SettingsSection; label: string }[] = [
@@ -1213,7 +1257,8 @@ function App() {
   const [directory, setDirectory] = useState<Directory | null>(null); const [selected, setSelected] = useState('');
   const [channels, setChannels] = useState<Channel[]>([]), [selectedChannel, setSelectedChannel] = useState('');
   const [environment, setEnvironment] = useState<Environment | null>(null), [summaries, setSummaries] = useState<SidebarSummary[]>([]);
-  const [view, setView] = useState<'chat' | 'flows' | 'workflows' | 'remote'>('chat');
+  const [routineAgent, setRoutineAgent] = useState('');
+  const [view, setView] = useState<'chat' | 'routines' | 'workflows' | 'remote'>('chat');
   const remoteMachinesState = useMachines(api);
   const updateAvailable = useUpdateBadge(api);
   const [remoteSelection, setRemoteSelection] = useState<{ machine: string; agent: string } | null>(null);
@@ -1309,11 +1354,11 @@ function App() {
   else if (!directory) content = <main className="chat chat--empty bs-root"><p className="empty-chat__sub" role="status">Loading workspace...</p></main>;
   else if (view === 'remote') { const machine = remoteMachinesState.machines.find(item => item.id === remoteSelection?.machine); content = <RemoteAgentDetail key={`${machine?.id}:${remoteSelection?.agent}`} request={api} machine={machine} agent={machine?.agents.find(item => item.id === remoteSelection?.agent)} />; }
   else if (view === 'workflows') content = <PageView wide><Suspense fallback={<p className="empty" role="status">Loading workflow directory...</p>}><WorkflowDirectory agents={directory.agents} request={api} onClose={() => setView('chat')} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={directory.agents.find(item => item.id === owner)} threadId={id} configured={directory.configured} onOpenAgent={openThread} onOpenChannel={openChannel} />} /></Suspense></PageView>;
-  else if (view === 'flows') content = <PageView wide><FlowDirectory agents={directory.agents} onClose={() => setView('chat')} onOpen={openThread} /></PageView>;
+  else if (view === 'routines') content = <PageView wide><RoutinesHub key={routineAgent} initialAgent={routineAgent} agents={directory.agents.filter(agent => !agent.hidden)} onClose={() => setView('chat')} onOpen={openThread} /></PageView>;
   else if (project) content = <PageView wide><ProjectHome project={project} agents={directory.agents} state={projectState} request={api} onChat={id => { void load(true).then(() => openChannel(id)); }} onThread={(agent,thread) => { setProjectThread({project:project.id,agent,thread}); setSelectedProject(''); }} onDeleted={() => { setSelectedProject(''); void load(); }} /></PageView>;
   else if (projectThread && directory.agents.find(agent => agent.id === projectThread.agent)) { const owner = directory.agents.find(agent => agent.id === projectThread.agent)!; const thread = projectState.projects.find(project => project.id === projectThread.project)?.threads.find(thread => thread.id === projectThread.thread); content = thread ? <Chat key={thread.id} sourceControl={thread.folder ? <ProjectSourceControl project={projectThread.project} folder={thread.folder} request={api}/> : undefined} agent={owner} thread={{...thread,revision:1,archived:0,deleted:0}} configured={directory.configured} menuItems={[{label:'Back to project',onSelect:()=>openProject(projectThread.project)}]} /> : <PageView><EmptyState title="Project thread unavailable" /></PageView>; }
   else if (channel) content = <Chat onOpenAgent={openThread} key={`channel:${channel.id}`} agent={channel} channel={{ ...channel, lead: directory.agents.find(agent => agent.id === channel.lead)?.hidden ? null : channel.lead }} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id) && !agent.hidden)} onEdit={channel.project ? undefined : () => setDialog('edit')} menuItems={channel.project ? [{label:'Back to project',onSelect:()=>openProject(channel.project!)}] : []} configured={directory.configured} />;
-  else if (agent) content = <AgentConversations onOpenChannel={openChannel} key={agent.id} agent={agent} workflowAgents={directory.agents} configured={directory.configured} initialThread={openedThread?.agent === agent.id ? openedThread.thread : undefined} onThreadOpened={() => setOpenedThread(null)} onOpenAgent={openThread} onEdit={() => setDialog('edit')} />;
+  else if (agent) content = <AgentConversations onManageRoutines={id => { setRoutineAgent(id); setView('routines'); }} onOpenChannel={openChannel} key={agent.id} agent={agent} workflowAgents={directory.agents} configured={directory.configured} initialThread={openedThread?.agent === agent.id ? openedThread.thread : undefined} onThreadOpened={() => setOpenedThread(null)} onOpenAgent={openThread} onEdit={() => setDialog('edit')} />;
   else content = <main className="chat chat--empty bs-root"><div className="empty-chat"><div className="empty-chat__title">Create your first agent</div><div className="empty-chat__sub">Name it, choose a model, then explain how it should work. The agent and its history are saved on this computer.</div><button type="button" className="btn btn--primary" onClick={() => setDialog('agent')}><Plus size={16} aria-hidden /> New agent</button><HowBriefsipWorks action={<Button variant="ghost" onClick={() => setSettings('help')}>Read quick guide</Button>} /></div></main>;
   const created = (item: Agent) => { setDirectory(current => current && { ...current, agents: [...current.agents.filter(agent => agent.id !== item.id), item] }); openAgent(item.id); };
   return <RadixDialog.Root modal open={!!settings} onOpenChange={open => setSettings(current => open ? current ?? 'skills' : null)}><div className={`app bs-root${collapsed ? ' is-sidebar-collapsed' : ''}`}>
@@ -1346,7 +1391,7 @@ function App() {
       </div>
       <div className="sidebar__scroll">
         <nav className="islands" aria-label="Automation">
-          <button type="button" className={`island${view === 'flows' ? ' is-selected' : ''}`} aria-current={view === 'flows' ? 'page' : undefined} disabled={!directory} onClick={() => { setView('flows'); setDialog(null); }} title="Agent flows"><Route size={16} aria-hidden />{!collapsed && <span>Agent flows</span>}</button>
+          <button type="button" className={`island${view === 'routines' ? ' is-selected' : ''}`} aria-current={view === 'routines' ? 'page' : undefined} disabled={!directory} onClick={() => { setRoutineAgent(''); setView('routines'); setDialog(null); }} title="Routines"><CalendarClock size={16} aria-hidden />{!collapsed && <span>Routines</span>}</button>
           <button type="button" className={`island${view === 'workflows' ? ' is-selected' : ''}`} aria-current={view === 'workflows' ? 'page' : undefined} disabled={!directory} onClick={() => { setView('workflows'); setDialog(null); }} title="Workflows"><WorkflowIcon size={16} aria-hidden />{!collapsed && <span>Workflows</span>}</button>
         </nav>
         <nav className="machine-groups" aria-label="Machines">

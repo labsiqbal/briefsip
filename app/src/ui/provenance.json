@@ -4,6 +4,7 @@
   "license": "MIT",
   "notice": "app/src/ui/NOTICE",
   "entries": [
+    { "sourcePath": "web/src/components/config/BotSettingsModal.tsx", "localPath": "app/src/App.tsx", "adaptation": "Routine list hierarchy, enabled switch, run-now and delete affordances adapted into the Routines hub using Briefsip APIs, revision recovery and owner visibility rules." },
     { "sourcePath": "web/src/styles/tokens.css", "localPath": "app/src/ui/tokens.css", "adaptation": "Briefsip brand colors replace per-bot pink; data-theme dark/light/system selectors; legacy panel variables mapped onto tokens." },
     { "sourcePath": "web/src/styles/base.css", "localPath": "app/src/ui/base.css", "adaptation": "Focus ring uses Briefsip token." },
     { "sourcePath": "web/src/styles/shell.css", "localPath": "app/src/ui/shell.css", "adaptation": "Unchanged layout; Briefsip additions live in app/src/ui/briefsip.css." },
