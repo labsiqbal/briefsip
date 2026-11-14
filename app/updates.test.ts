@@ -56,7 +56,7 @@ test('release builder publishes verified immutable files before feed metadata an
 test('desktop release sync follows dirty guard and publishes matching version through desktop helper',()=>{
  const dir=temp();try{
  for(const folder of ['app','scripts','desktop/scripts'])mkdirSync(join(dir,folder),{recursive:true});
- cpSync(join(root,'scripts/release.mjs'),join(dir,'scripts/release.mjs'));cpSync(join(root,'app/update-release.mjs'),join(dir,'app/update-release.mjs'));
+ cpSync(join(root,'scripts/release.mjs'),join(dir,'scripts/release.mjs'));for(const name of ['install-machine.sh','uninstall-machine.sh','briefsip-launcher.mjs'])cpSync(join(root,'scripts',name),join(dir,'scripts',name));cpSync(join(root,'app/update-release.mjs'),join(dir,'app/update-release.mjs'));
  const app={name:'release-fixture',version:'1.0.1',type:'module',scripts:{build:'node -e "0"'}};
  writeFileSync(join(dir,'app/package.json'),JSON.stringify(app));writeFileSync(join(dir,'app/package-lock.json'),JSON.stringify({name:app.name,version:app.version,lockfileVersion:3,packages:{'':app}}));
  writeFileSync(join(dir,'app/server.ts'),'// Fixture runtime');mkdirSync(join(dir,'app/dist'));writeFileSync(join(dir,'app/dist/index.html'),'fixture');

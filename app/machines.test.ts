@@ -119,12 +119,12 @@ test('unpair removes first while remote is offline; missing wrapping key fails c
 
 test('background health reports version mismatch and never sends bearer to a changed identity or redirected descriptor', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-peer-health-')), issuer = fakePeerTokenIssuer(); const app = await startApp({ database: join(dir, 'db.sqlite'), peerTokenIssuer: issuer, machines: { healthIntervalMs: 50 } });
-  const id = randomUUID(), remoteToken = 'remote-peer-canary-1234567890123456', agent = { id: randomUUID(), name: 'Remote agent', model: 'fixture', status: 'idle' }; let mode = 'normal', origin = '', authorizedCalls = 0, issuedBack = '';
+  const version = (await environment(app)).version, id = randomUUID(), remoteToken = 'remote-peer-canary-1234567890123456', agent = { id: randomUUID(), name: 'Remote agent', model: 'fixture', status: 'idle' }; let mode = 'normal', origin = '', authorizedCalls = 0, issuedBack = '';
   const server = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const data = raw ? JSON.parse(raw) : {};
     res.setHeader('Content-Type', 'application/json'); const send = (body: unknown) => res.end(JSON.stringify(body));
-    const descriptor = { id: mode === 'identity' ? randomUUID() : id, name: 'Synthetic workstation', origin, version: mode === 'version' ? '99.0.0' : '0.1.0' };
+    const descriptor = { id: mode === 'identity' ? randomUUID() : id, name: 'Synthetic workstation', origin, version: mode === 'version' ? '99.0.0' : version };
     if (req.headers.authorization) authorizedCalls++;
     if (req.url === '/api/pairing/redeem') return send({ environment: descriptor, token: remoteToken });
     if (req.url === '/api/machines/reciprocal') { issuedBack = data.token; return send({ ok: true }); }

@@ -19,7 +19,9 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
   const stage = mkdtempSync(join(releases, '.staging-'));
   try {
     // Runtime source only. Never include workspace data, .env, test fixtures or development bundles.
-    for (const name of readdirSync(source)) if (/\.(ts|mjs)$/.test(name) && !/\.(test\.ts|d\.ts)$/.test(name) || ['package.json', 'package-lock.json', 'dist', 't3'].includes(name)) cpSync(join(source, name), join(stage, name), { recursive: true, filter: p => !p.endsWith('.test.ts') && !p.endsWith('.d.ts') });
+    for (const name of readdirSync(source)) if (/\.(ts|mjs)$/.test(name) && !/(?:\.test\.ts|-it\.ts|\.d\.ts)$/.test(name) || ['package.json', 'package-lock.json', 'dist', 't3'].includes(name)) cpSync(join(source, name), join(stage, name), { recursive: true, filter: p => !p.endsWith('.test.ts') && !p.endsWith('-it.ts') && !p.endsWith('.d.ts') });
+    mkdirSync(join(stage, 'machine'), { mode: 0o700 });
+    for (const name of ['install-machine.sh', 'uninstall-machine.sh', 'briefsip-launcher.mjs']) cpSync(join(root, 'scripts', name), join(stage, 'machine', name));
     if (install) execFileSync('npm', ['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: stage, stdio: 'inherit' });
     // No executable .bin links needed: server runs Node source. Remaining links are rejected by manifest.
     rmSync(join(stage, 'node_modules/.bin'), { recursive: true, force: true });
