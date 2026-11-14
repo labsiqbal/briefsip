@@ -2,8 +2,14 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 
-export const mcpScopes = ['agents:read', 'agents:message', 'history:read', 'machine:update', 'orchestration'] as const;
-export type McpScope = typeof mcpScopes[number];
+import { mcpScopes, type McpScope } from '../mcp-scopes.ts';
+export { mcpScopes, type McpScope } from '../mcp-scopes.ts';
+export const defaultSessionScopes: McpScope[] = [
+  'agents:read', 'agents:profile', 'agents:message', 'history:read', 'conversations:read', 'conversations:write',
+  'projects:read', 'projects:write', 'routines:read', 'routines:write', 'workflows:read',
+  'workflows:run', 'machines:read', 'settings:read', 'usage:read', 'skills:read',
+  'computer:read', 'computer:run', 'orchestration',
+];
 export type McpCaller = { id: string; kind: 'session' | 'peer'; agent?: string; turn?: string; peer?: string; scopes: McpScope[] };
 export type AgentSessionInput = { agent: string; turn?: string; scopes: McpScope[]; ttlMs: number };
 export class McpServerError extends Error {

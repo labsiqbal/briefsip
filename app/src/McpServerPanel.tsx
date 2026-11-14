@@ -1,15 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Copy, Ellipsis, KeyRound, Plus, RefreshCw } from 'lucide-react';
 import { ActionMenu, Alert, Badge, Button, Card, Checkbox, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, SkeletonRows, useConfirm } from './ui/kit';
-type Scope = 'agents:read' | 'agents:message' | 'history:read';
+import { mcpScopeCatalog as scopes, type McpScope as Scope } from '../mcp-scopes';
 type PeerToken = { id: string; name: string; scopes: Scope[]; created: number; lastUsed: number | null; revoked: number | null };
 type Command = { path: string; body: { id: string; name?: string; scopes?: Scope[] } };
 const path = '/api/mcp-server/peer-tokens', storage = 'briefsip:mcp-server-command';
-const scopes: { id: Scope; label: string; hint: string }[] = [
-  { id: 'agents:read', label: 'List agents', hint: 'Read names, descriptions, models, and availability.' },
-  { id: 'agents:message', label: 'Send messages', hint: 'Start local agent work and read replies to its own messages.' },
-  { id: 'history:read', label: 'Read message history', hint: 'Read only conversations started with this token.' },
-];
 function restore(raw: string | null): Command | null {
   if (!raw) return null;
   const value = JSON.parse(raw), uuid = '[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}';
@@ -79,7 +74,7 @@ export function McpServerPanel({ request }: { request: <T>(path: string, body?: 
       <form id="create-peer-token" onSubmit={event => { event.preventDefault(); if (!locked) void execute({ path, body: { id: crypto.randomUUID(), name, scopes: selected } }); }}>
         <fieldset disabled={locked} className="k-fieldset">
           <Field label="Device name" hint="Shown as the sender of messages from this token."><Input required maxLength={80} value={name} onChange={event => setName(event.target.value)} placeholder="Work laptop" /></Field>
-          <div role="group" aria-label="Token scopes">{scopes.map(scope => <Checkbox key={scope.id} label={scope.label} description={scope.hint} checked={selected.includes(scope.id)} onChange={checked => setSelected(value => checked ? [...value, scope.id] : value.filter(item => item !== scope.id))} />)}</div>
+          <div role="group" aria-label="Token scopes">{(['Read', 'Write', 'Run'] as const).map(group => <fieldset className="mcp-scope-group" key={group}><legend>{group}</legend><div className="k-stack">{scopes.filter(scope => scope.group === group).map(scope => <Checkbox key={scope.id} label={scope.label} description={scope.hint} checked={selected.includes(scope.id)} onChange={checked => setSelected(value => checked ? [...value, scope.id] : value.filter(item => item !== scope.id))} />)}</div></fieldset>)}</div>
         </fieldset>
       </form>
     </Dialog>

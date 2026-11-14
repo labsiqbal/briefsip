@@ -228,3 +228,6 @@ button.k-row__main:disabled { cursor: default; }
 .k-code { margin: 0; overflow: auto; padding: 10px 12px; border-radius: 10px; background: var(--color-code-bg); border: 0.5px solid var(--color-border-tertiary); font-family: var(--font-mono-stack); font-size: 12px; line-height: 18px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--color-code-fg); }
 .k-stack { display: flex; flex-direction: column; gap: 12px; }
 .k-row-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.mcp-scope-group { border: 0; padding: 0; margin: 24px 0 0; min-width: 0; }
+.mcp-scope-group legend { padding: 0; margin-bottom: 12px; font-size: 13px; font-weight: 600; color: var(--color-text-primary); }

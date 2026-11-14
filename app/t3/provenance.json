@@ -346,6 +346,38 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "compatibilityCheck": "app/mcp-server.test.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/mcp/threadAccess.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "ab252a9aaed7035e17ef0d5ec52cf7a34b240ebafbc53085e9ab9b096553839a",
+      "symbols": [
+        "loadCaller",
+        "assertLiveCaller",
+        "resolveProjectId"
+      ],
+      "localPath": "app/mcp-feature-tools.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt caller liveness and resource-boundary checks to Briefsip agents, current conversations and member projects; native Node/SQLite guards recheck access before writes and receipt replay.",
+      "compatibilityCheck": "app/mcp-feature-tools.test.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/mcp/ThreadMetadataMcpService.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "2dbcfe8edc8f5232b724c69ff5a1d84cccc0325211df9b1a366905417ad887a4",
+      "symbols": [
+        "commandId",
+        "metadataCommand",
+        "resultFromThread"
+      ],
+      "localPath": "app/mcp-feature-tools.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt caller-namespaced metadata commands and stable results to durable request digests/plans/receipts; reuse Briefsip UI routes for validation, revisions and side effects.",
+      "compatibilityCheck": "app/mcp-feature-tools.test.ts"
     }
   ],
   "workspaceSourceControlEntries": [
