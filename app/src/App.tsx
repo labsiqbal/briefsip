@@ -15,6 +15,7 @@ import { applyPresentation, readPresentation } from '../presentation';
 import { AgentSidebar } from './AgentSidebar';
 import { HtmlPreview } from './HtmlPreview';
 import { QuestionCard, type Question } from './QuestionCard';
+import { ApprovalCard, type AppApproval } from './ApprovalCard';
 import { CompactionPanel } from './CompactionPanel';
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, useId, type FormEvent, type ReactNode } from 'react';
 import { ArrowUp, Brain, CircleAlert, ChevronDown, ChevronLeft, ChevronRight, Clock, Ellipsis, FolderOpen, Hash, MessageSquare, PanelLeft, PanelRight, Paperclip, Plus, RefreshCw, Route, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
@@ -50,13 +51,14 @@ const AgentTemplateImport = lazy(() => import('./AgentTemplateImport').then(modu
 const AgentTemplateExport = lazy(() => import('./AgentTemplateImport').then(module => ({ default: module.AgentTemplateExport })).catch(panelLoadFailure));
 const SitesPanel = lazy(() => import('./SitesPanel').then(module => ({ default: module.SitesPanel })).catch(panelLoadFailure));
 const McpPanel = lazy(() => import('./McpPanel').then(module => ({ default: module.McpPanel })).catch(panelLoadFailure));
+const ConnectedAppsPanel = lazy(() => import('./ConnectedAppsPanel').then(module => ({ default: module.ConnectedAppsPanel })).catch(panelLoadFailure));
 const SkillsPanel = lazy(() => import('./SkillsPanel').then(module => ({ default: module.SkillsPanel })).catch(panelLoadFailure));
 
 type Agent = { avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; thread_limit: number; revision: number; id: string; name: string; model: string; instructions: string };
 type Channel = { activity: number; read_position: number; revision: number; archived: number; id: string; name: string; instructions: string; members: string[]; lead: string | null };
 type Thread = { id: string; agent: string; name: string; revision: number; archived: number; deleted: number };
 type AgentMessage = { paused: number; request: string; expects_reply: number; settled: number; id: string; agent: string; thread: string; name: string; status: string; error: string | null; reply: string | null; truncated: boolean };
-type Turn = { recipient?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { name: string; agent: string; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
+type Turn = { approvals?: AppApproval[]; recipient?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { name: string; agent: string; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
 type Directory = { agents: Agent[]; configured: boolean; defaultModel: string };
 type Pending = ChatCommand;
 const statusNames: Record<string, string> = { queued: 'Queued', running: 'Replying', done: 'Done', failed: 'Failed', interrupted: 'Interrupted', cancelled: 'Cancelled' };
@@ -177,7 +179,7 @@ function TaskControls({ turn, path, members, archived }: { turn: Turn; path: str
   const [recipient, setRecipient] = useState(''), [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const pending = useRef<{ action: string; data: { id: string; revision: number; recipient?: string; acknowledgeUncertain?: boolean } } | null>(null);
-  if (['done','cancelled'].includes(turn.status) || turn.questions?.some(question => question.answer === null)) return null;
+  if (turn.approvals?.some(approval => approval.state === 'approval' || approval.state === 'ready' && !['failed','interrupted'].includes(turn.status)) || ['done','cancelled'].includes(turn.status) || turn.questions?.some(question => question.answer === null)) return null;
   const resumable = !!turn.paused || ['failed','interrupted'].includes(turn.status);
   async function control(action: string) {
     if (busy) return;
@@ -193,7 +195,7 @@ function TaskControls({ turn, path, members, archived }: { turn: Turn; path: str
         <p className="k-field__hint">Check previous results and effects in the provider. Resuming may resend steps that are not confirmed yet.</p>
         <Checkbox checked={confirmed} onChange={setConfirmed} label="I have checked previous results and effects" />
         <div><Button size="sm" variant="ghost" disabled={busy || archived || !confirmed} onClick={() => void control('resume')}>Resume task</Button></div>
-        {members.length > 0 && <><Field label="New owner"><Select value={recipient} onChange={setRecipient} options={[{ value: '', label: 'Select agent' }, ...members.map(member => ({ value: member.id, label: member.name }))]} /></Field><div><Button size="sm" variant="ghost" disabled={busy || archived || !confirmed || !recipient} onClick={() => void control('reassign')}>Reassign task</Button></div></>}
+        {members.length > 0 && !turn.approvals?.some(approval => approval.state === 'ready') && <><Field label="New owner"><Select value={recipient} onChange={setRecipient} options={[{ value: '', label: 'Select agent' }, ...members.map(member => ({ value: member.id, label: member.name }))]} /></Field><div><Button size="sm" variant="ghost" disabled={busy || archived || !confirmed || !recipient} onClick={() => void control('reassign')}>Reassign task</Button></div></>}
       </div>
     </Collapsible> : <div><Button size="sm" variant="ghost" disabled={busy || archived} onClick={() => void control('pause')}>Pause task</Button></div>}
     {error && <Alert tone="error">{error}</Alert>}
@@ -329,7 +331,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     { label: `${channel ? 'Channel' : 'Agent'} memory`, onSelect: () => setShowMemory(true) },
     { label: detailsOpen ? 'Hide details' : 'Show details', onSelect: () => setDetailsOpen(!detailsOpen) },
   ];
-  const statusLabel = (turn: Turn) => turn.editing ? 'Editing' : turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) ? 'Waiting for your answer' : turn.no_update ? 'No updates' : turn.paused && !['done','cancelled'].includes(turn.status) ? 'Paused' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) && turn.status === 'queued' ? 'Waiting for agent reply' : turn.waiting_for && turn.status === 'queued' ? 'Waiting for delegation' : turn.routing === 'pending' && turn.status === 'running' ? 'Selecting recipient' : turn.routing === 'clarify' ? 'Needs clarification' : turn.routing === 'none' ? 'No task needed' : turn.status === 'running' ? 'Running' : statusNames[turn.status] ?? turn.status;
+  const statusLabel = (turn: Turn) => turn.approvals?.some(approval => approval.state === 'approval') && !['done','cancelled'].includes(turn.status) ? 'Waiting for approval' : turn.editing ? 'Editing' : turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) ? 'Waiting for your answer' : turn.no_update ? 'No updates' : turn.paused && !['done','cancelled'].includes(turn.status) ? 'Paused' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) && turn.status === 'queued' ? 'Waiting for agent reply' : turn.waiting_for && turn.status === 'queued' ? 'Waiting for delegation' : turn.routing === 'pending' && turn.status === 'running' ? 'Selecting recipient' : turn.routing === 'clarify' ? 'Needs clarification' : turn.routing === 'none' ? 'No task needed' : turn.status === 'running' ? 'Running' : statusNames[turn.status] ?? turn.status;
   const tone = (turn: Turn) => turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) || turn.paused && !['done','cancelled'].includes(turn.status) ? 'attention' : ['failed','interrupted'].includes(turn.status) ? 'error' : ['queued','running'].includes(turn.status) ? 'working' : 'done';
   const time = (value: string) => new Date(value).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
   const openFocused = (id: string) => { focusedOnce.current = ''; setQuery(''); setFocusedTask(id); };
@@ -369,7 +371,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
                     <div className="message-body">
                       {turn.reply ? <div className="legacy"><Markdown text={turn.reply} scope={path.slice(0, -6)} origin={window.location.origin} /></div>
                         : livePartial(turn) ? <div className="live-answer" aria-label="Streaming answer"><div className="legacy"><Markdown text={turn.partial!.text} scope={path.slice(0, -6)} origin={window.location.origin} /></div><span className="stream-caret" aria-hidden /></div>
-                        : <p className={turn.error ? 'message-error' : 'message-muted'}>{turn.error && <CircleAlert size={14} aria-hidden />}{turn.error ?? <span>{turn.questions?.some(question => question.answer === null) ? 'Answer the question to continue the task.' : turn.workflow_run ? 'Workflow finished without a text result.' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) ? 'Results will be combined after all recipients finish. New messages include results already available.' : turn.events?.some(event => event.status === 'waiting') ? 'Waiting for a signed event.' : turn.waiting_for ? 'Waiting for child task results.' : turn.status === 'queued' ? 'Waiting for turn.' : 'Waiting for provider response...'}</span>}</p>}
+                        : <p className={turn.error ? 'message-error' : 'message-muted'}>{turn.error && <CircleAlert size={14} aria-hidden />}{turn.error ?? <span>{turn.approvals?.some(approval => approval.state === 'approval') ? 'Review the connected app action to continue.' : turn.questions?.some(question => question.answer === null) ? 'Answer the question to continue the task.' : turn.workflow_run ? 'Workflow finished without a text result.' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) ? 'Results will be combined after all recipients finish. New messages include results already available.' : turn.events?.some(event => event.status === 'waiting') ? 'Waiting for a signed event.' : turn.waiting_for ? 'Waiting for child task results.' : turn.status === 'queued' ? 'Waiting for turn.' : 'Waiting for provider response...'}</span>}</p>}
                       {!turn.reply && turn.partial?.text && !livePartial(turn) && <div className="message-partial"><p className="message-muted">Text from a previous attempt from {turn.partial.model}. Not a final result.</p><div className="legacy"><Markdown text={turn.partial.text} scope={path.slice(0, -6)} origin={window.location.origin} /></div></div>}
                     </div>
                     <div className="turn-meta agent-meta">
@@ -382,12 +384,13 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
                     </div>
                     <div className="turn-extras k-stack">
                       {turn.events?.map(event => <section className="k-stack" key={event.id}><Row title={`Event ${event.event}: ${event.status === 'waiting' ? 'Waiting' : event.status === 'received' ? 'Received' : event.status === 'expired' ? 'Expired' : 'Closed'}`} meta={new Date(event.deadline).toLocaleString('en-US')} />{event.status === 'waiting' && !archived && <EventConnection path={`/api/turn-waits/${event.id}`} request={api} />}</section>)}
+                      {turn.approvals?.map(approval => <ApprovalCard key={approval.id} approval={approval} path={`${path}/${turn.id}`} status={turn.status} archived={archived} request={api} />)}
                       {turn.questions?.map(question => <QuestionCard key={question.id} question={question} path={`${path}/${turn.id}`} status={turn.status} archived={archived} request={api} />)}
                       {!!turn.generatedFiles?.length && <section aria-label="Agent output files"><Card>{turn.generatedFiles.map(file => <Row key={file.id} title={<a className="k-link" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}>{file.name}</a>} meta={`${file.size} byte`}><HtmlPreview path={`${path.replace(/\/turns$/, '/files')}/${file.id}`} name={file.name} request={api} /></Row>)}</Card></section>}
                       {!!turn.receivedAgentReplies?.length && <Collapsible title={`Agent results received with this message (${turn.receivedAgentReplies.length})`}>{turn.receivedAgentReplies.map(item => <div className="k-stack" key={item.id}><div className="k-section__title message-plain"><strong>{item.name}</strong>: {statusNames[item.status] ?? item.status}</div>{item.error && <div className="k-field__error">{item.error}</div>}{item.reply && <div className="message-plain">{item.reply}</div>}{item.truncated && <div className="k-field__hint">Result excerpt. Open the conversation for the full text.</div>}{onOpenAgent && <div className="k-row-actions"><Button size="sm" variant="ghost" onClick={() => onOpenAgent(item.agent, item.thread)}>Open conversation {item.name}</Button></div>}</div>)}</Collapsible>}
                       {!!turn.agentMessages?.length && <Collapsible title={`Inter-agent messages (${turn.agentMessages.length})`}>{turn.agentMessages.map(item => <div className="k-stack" key={item.id}><div className="k-section__title message-plain"><strong>{item.name}</strong>: {item.paused && !['done','cancelled'].includes(item.status) ? 'Paused' : statusNames[item.status] ?? item.status}{!item.expects_reply && ' (no reply)'}</div>{item.error && <div className="k-field__error">{item.error}</div>}{item.reply && <div className="message-plain">{item.reply.slice(0, 1000)}</div>}{(item.truncated || (item.reply?.length ?? 0) > 1000) && <div className="k-field__hint">Result excerpt. Open the conversation for the full text.</div>}{onOpenAgent && <div className="k-row-actions"><Button size="sm" variant="ghost" onClick={() => onOpenAgent(item.agent, item.thread)}>Open conversation {item.name}</Button></div>}</div>)}</Collapsible>}
                       {!!turn.coordination?.length && <Collapsible title={`Task coordination (${turn.coordination.length})`}>{turn.coordination.map((action, index) => <div className="k-stack" key={index}><div className="k-section__title">{action.owner_name} {action.kind === 'delegate_task' ? 'delegated to' : 'reassigned to'} {action.target_name}.</div><div className="message-plain">{action.prompt}</div>{action.child && <div className="k-row-actions"><Button size="sm" variant="ghost" onClick={() => openFocused(action.child!)}>View subtask</Button></div>}</div>)}</Collapsible>}
-                      <QueueEditor turn={{ ...turn, files: turn.files ?? [] }} path={path} archived={archived} request={api} />
+                      {!turn.approvals?.length && <QueueEditor turn={{ ...turn, files: turn.files ?? [] }} path={path} archived={archived} request={api} />}
                     </div>
                   </div>
                 </div>
@@ -1118,9 +1121,10 @@ function FlowDirectory({ agents, onClose, onOpen }: { agents: Agent[]; onClose: 
   </div>;
 }
 
-type SettingsSection = 'skills' | 'mcp' | 'data' | 'usage' | 'backup' | 'import' | 'sections' | 'appearance';
+type SettingsSection = 'connected-apps' | 'skills' | 'mcp' | 'data' | 'usage' | 'backup' | 'import' | 'sections' | 'appearance';
 const settingsSections: { id: SettingsSection; label: string }[] = [
   { id: 'skills', label: 'Skills' },
+  { id: 'connected-apps', label: 'Connected apps' },
   { id: 'mcp', label: 'MCP connections' },
   { id: 'data', label: 'Shared data' },
   { id: 'usage', label: 'Usage' },
@@ -1279,6 +1283,7 @@ function App() {
         <div className="app-settings__page legacy" tabIndex={-1}>
           {!directory ? <p className="empty" role="status">Loading workspace...</p>
             : settings === 'skills' ? <Suspense fallback={<p className="empty" role="status">Loading skill library...</p>}><SkillsPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
+            : settings === 'connected-apps' ? <Suspense fallback={<p className="empty" role="status">Loading connected apps...</p>}><ConnectedAppsPanel agents={directory.agents} request={api} /></Suspense>
             : settings === 'mcp' ? <Suspense fallback={<p className="empty" role="status">Loading MCP connections...</p>}><McpPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'data' ? <Suspense fallback={<p className="empty" role="status">Loading shared data...</p>}><SharedDataPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'usage' ? <Suspense fallback={<p className="empty" role="status">Loading usage...</p>}><UsagePanel request={api} onClose={() => setSettings(null)} /></Suspense>

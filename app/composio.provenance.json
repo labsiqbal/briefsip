@@ -1,0 +1,28 @@
+{
+  "repository": "https://github.com/nickvasilescu/bot-hq",
+  "revision": "decf9a215cddd8792a5f20f4a11a87d4dffa6d15",
+  "license": "MIT",
+  "notice": "app/src/ui/NOTICE",
+  "entries": [
+    { "sourcePath": "server/src/composio.ts", "localPath": "app/composio.ts", "adaptation": "Catalog normalization, managed connect links, connection overlay and server execution adapted to bounded native fetch. Installation identity, per-agent grants, metadata-based approval, version/account binding and durable effect journal are Briefsip-owned." },
+    { "sourcePath": "server/src/agent/tools.ts", "localPath": "app/composio.ts", "adaptation": "Allow once/always/deny semantics adapted to per-agent, account and metadata-bound policy. Slug-based read guessing deliberately replaced with Composio hints." },
+    { "sourcePath": "server/src/mcp.ts", "localPath": "app/server.ts", "adaptation": "Approval before app dispatch and denied-action tool result adapted to Briefsip's persistent local turn loop." },
+    { "sourcePath": "web/src/components/modals/ConnectAppsModal.tsx", "localPath": "app/src/ConnectedAppsPanel.tsx", "adaptation": "Search, category pills, connection rows and popup flow rebuilt with existing Briefsip kit. Added per-agent grant selector and policy revocation." },
+    { "sourcePath": "web/src/components/cards/Cards.tsx", "localPath": "app/src/ApprovalCard.tsx", "adaptation": "Three approval decisions and outcome display rebuilt with kit Card, full arguments disclosure and exact retry recovery." }
+  ],
+  "api": {
+    "version": "v3.1",
+    "baseURL": "https://backend.composio.dev/api/v3.1",
+    "checked": "2026-11-14",
+    "documentation": [
+      "https://docs.composio.dev/reference/api-reference/toolkits/getToolkits",
+      "https://docs.composio.dev/reference/api-reference/toolkits/getToolkitsCategories",
+      "https://docs.composio.dev/reference/api-reference/auth-configs/postAuthConfigs",
+      "https://docs.composio.dev/reference/api-reference/connected-accounts/postConnectedAccountsLink",
+      "https://docs.composio.dev/reference/api-reference/connected-accounts/getConnectedAccounts",
+      "https://docs.composio.dev/reference/api-reference/tools/getTools",
+      "https://docs.composio.dev/reference/api-reference/tools/postToolsExecuteByToolSlug"
+    ]
+  },
+  "notUsed": "Bot HQ assets, logos, avatars, runtime, session meta-tools and provider SDK. No new dependency."
+}
