@@ -1,12 +1,14 @@
-.k-dialog:has(.computer-viewer) { max-width: min(1500px, calc(100vw - 40px)); }
+.k-dialog:has(.computer-viewer) { max-width: min(1800px, calc(100vw - 24px)); }
 .k-overlay:has(+ .k-dialog .computer-viewer) { background: #000b; }
 .computer-viewer { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .computer-viewer__toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .computer-viewer__owner { font-size: 13px; font-weight: 600; }
 .computer-viewer__since { color: var(--color-text-tertiary); font-size: 12px; font-variant-numeric: tabular-nums; }
 .computer-viewer__actions { display: flex; gap: 8px; margin-left: auto; }
-.computer-viewer__screen { position: relative; width: min(100%, calc((100dvh - 250px) * 1.6)); aspect-ratio: 16 / 10; flex: none; margin-inline: auto; background: #101116; border-radius: 12px; overflow: hidden; outline: 1px solid #ffffff26; }
-.computer-viewer:has(.is-controlled) .computer-viewer__screen { position: relative; width: min(100%, calc((100dvh - 430px) * 1.6)); }
+.computer-viewer__screen { position: relative; width: min(100%, calc((100dvh - 190px) * 1.6)); aspect-ratio: 16 / 10; flex: none; margin-inline: auto; background: #101116; border-radius: 12px; overflow: hidden; outline: 1px solid #ffffff26; }
+.computer-viewer:has(.is-controlled) .computer-viewer__screen { position: relative; width: min(100%, calc((100dvh - 230px) * 1.6)); }
+.computer-viewer:has(.computer-viewer__text) .computer-viewer__screen { width: min(100%, calc((100dvh - 330px) * 1.6)); }
+.computer-viewer__hint { margin: -4px 0 0; }
 .computer-viewer__screen:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 3px; }
 .computer-viewer__screen img { display: block; width: 100%; height: 100%; object-fit: contain; user-select: none; }
 .computer-viewer__screen.is-controlled img { cursor: crosshair; }

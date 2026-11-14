@@ -61,6 +61,11 @@ test('project CRUD, new and multiple folders, write confirmation, revisions, rep
     const p = f.projects.create(body) as any;
     assert.equal(p.folders.length, 2);
     assert(existsSync(p.folders[0]));
+    // New project folders start as their own Git repository with one empty commit and no sample hooks.
+    assert.equal(execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: p.folders[0], encoding: 'utf8' }).trim(), p.folders[0]);
+    assert.equal(execFileSync('git', ['log', '--format=%s'], { cwd: p.folders[0], encoding: 'utf8' }).trim(), 'Start project');
+    assert(!existsSync(join(p.folders[0], '.git', 'hooks', 'pre-commit.sample')));
+    assert(!existsSync(join(p.folders[1], '.git')), 'existing folders are never initialized');
     writeFileSync(join(p.folders[0], 'keep.txt'), 'keep');
     assert.deepEqual(f.projects.create(body), p);
     assert.throws(() => f.projects.create({ ...body, name: 'Other' }), /already used/);

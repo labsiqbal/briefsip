@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import RFB from '@novnc/novnc';
-import { ExternalLink, Monitor } from 'lucide-react';
+import { ClipboardType, ExternalLink, Monitor } from 'lucide-react';
 import { Alert, Badge, Button, Card, Field, Input, useConfirm } from './ui/kit';
 import type { ComputerWait } from '../agent-computer';
 import type { ComputerRequest, ComputerStatus } from './AgentComputerPanel';
@@ -77,7 +77,7 @@ export function ComputerRequestCard({ agent, name, wait, request }: { agent: str
 export function ComputerViewer({ agent, name, request, popout = false }: { agent: string; name: string; request: ComputerRequest; popout?: boolean }) {
   const controls = useComputerControl(agent, request), { status } = controls;
   const [visible, setVisible] = useState(!document.hidden), [text, setText] = useState(''), [screenError, setScreenError] = useState(false), [starting, setStarting] = useState(false), [sendingText, setSendingText] = useState(false);
-  const [connected, setConnected] = useState(false), [connection, setConnection] = useState(0);
+  const [connected, setConnected] = useState(false), [connection, setConnection] = useState(0), [showText, setShowText] = useState(false);
   const screen = useRef<HTMLDivElement>(null), canvas = useRef<HTMLDivElement>(null), rfb = useRef<RFB | null>(null), handBack = useRef<HTMLButtonElement>(null), inputFlight = useRef(0);
   const user = status?.control.mode === 'user', running = !!status && ['running','idle'].includes(status.state);
   useEffect(() => {
@@ -146,11 +146,11 @@ export function ComputerViewer({ agent, name, request, popout = false }: { agent
       {status && <span className="computer-viewer__since">Since {new Date(status.control.since).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
       <div className="computer-viewer__actions">
         {!running && <Button size="sm" busy={starting} disabled={!status?.enabled || !status.available || controls.locked} onClick={() => void start()}>Start computer</Button>}
+        {user && <Button size="sm" icon={<ClipboardType size={14} aria-hidden />} aria-expanded={showText} onClick={() => setShowText(value => !value)}>Paste text</Button>}
         {user ? <Button ref={handBack} size="sm" variant="primary" disabled={controls.locked} onClick={() => void controls.control('hand-back')}>Hand back to agent</Button> : <Button size="sm" variant="primary" disabled={!status?.enabled || controls.locked} onClick={() => void controls.control('take')}>Take control</Button>}
         {!popout && <Button size="sm" icon={<ExternalLink size={14} aria-hidden />} onClick={() => window.open(`/?computer=${encodeURIComponent(agent)}`, '_blank', 'popup,width=1280,height=960,noopener')}>Pop out</Button>}
       </div>
     </div>
-    {user && <Alert tone="warn" title="You are in control">Computer tools are paused until you hand control back. Closing this viewer keeps you in control.</Alert>}
     {!!status?.requests.length && <div className="computer-viewer__requests">{status.requests.map(wait => <div key={wait.turn}>
       <p><strong>{name} needs you to take over: {wait.reason || 'Computer access is waiting for you.'}</strong></p>
       {!user && <div className="k-inline"><Button size="sm" disabled={controls.locked} onClick={() => void controls.control('take')}>Take control</Button><Button size="sm" disabled={controls.locked} onClick={() => void controls.control('dismiss', wait.turn)}>Dismiss</Button></div>}
@@ -160,8 +160,8 @@ export function ComputerViewer({ agent, name, request, popout = false }: { agent
       {(!running || !visible || !connected) && <div className="computer-viewer__empty"><Monitor size={32} aria-hidden /><p>{!visible ? 'Viewer paused while window is hidden.' : running ? 'Connecting to computer...' : status?.state === 'starting' ? 'Starting computer...' : 'Start the computer to see its screen.'}</p></div>}
     </div>
     {screenError && <Alert tone="error" actions={<Button size="sm" onClick={() => setConnection(value => value + 1)}>Reconnect</Button>}>Live screen unavailable. Close another viewer if three are already open, then reconnect.</Alert>}
-    {user && <>
-      <p className="k-field__hint">Click the screen to send keys, clicks and scrolling. Press Shift+Escape to return to controls. Use Set clipboard before Ctrl+V; copied desktop text appears here.</p>
+    {user && <p className="k-field__hint computer-viewer__hint">Agent tools are paused while you control. Click the screen to type and click; Shift+Escape returns to these controls.</p>}
+    {user && showText && <>
       <form className="computer-viewer__text" onSubmit={async event => { event.preventDefault(); if (!text || sendingText) return; setSendingText(true); const sent = text; try { if (await input('computer_type', { text: sent })) setText(current => current === sent ? '' : current); } finally { setSendingText(false); } }}>
         <Field label="Type or paste text" hint="Send text types into the focused field. Set clipboard prepares Ctrl+V. Copied desktop text appears here."><Input value={text} maxLength={4000} onChange={event => setText(event.target.value)} disabled={controls.locked} /></Field>
         <Button size="sm" disabled={!connected || controls.locked} onClick={() => rfb.current?.clipboardPasteFrom(text)}>Set clipboard</Button>
