@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Card, Field, IconButton, Input, Row, Section, useConfirm } from './ui/kit';
 import { RefreshCw } from 'lucide-react';
+import { AvatarPicker, avatarPng, type AvatarLook } from './ui/avatar-shapes';
 
 type State = { revision: number; present: boolean };
 type Command = { id: string; revision: number; image: string | null };
@@ -13,6 +14,7 @@ export function AvatarEditor({ agent, request, onChanged }: { agent: string; req
   const [state, setState] = useState<State | null>(null), [pending, setPending] = useState<Command | null>(null), [invalid, setInvalid] = useState(false);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [selected, setSelected] = useState<File | null>(null);
+  const [look, setLook] = useState<AvatarLook | null>(null);
   const validFile = !!selected && selected.size > 0 && selected.size <= 512 * 1024 && ['image/png', 'image/jpeg', 'image/webp'].includes(selected.type);
   const version = useRef(0), flight = useRef(false), file = useRef<HTMLInputElement>(null);
   async function load(syncDirectory = false) {
@@ -45,12 +47,15 @@ export function AvatarEditor({ agent, request, onChanged }: { agent: string; req
       if (!command) {
         let image: string | null = null;
         if (!remove) {
-          const selected = file.current?.files?.[0];
-          if (!selected || selected.size > 512 * 1024) throw new Error('Choose a PNG, JPEG, or WebP image up to 512 KiB.');
-          const bytes = new Uint8Array(await selected.arrayBuffer());
+          if (look) image = await avatarPng(look);
+          else {
+            const selected = file.current?.files?.[0];
+            if (!selected || selected.size > 512 * 1024) throw new Error('Choose a PNG, JPEG, or WebP image up to 512 KiB.');
+            const bytes = new Uint8Array(await selected.arrayBuffer());
+            let binary = ''; for (const byte of bytes) binary += String.fromCharCode(byte);
+            image = btoa(binary);
+          }
           if (current !== version.current) return;
-          let binary = ''; for (const byte of bytes) binary += String.fromCharCode(byte);
-          image = btoa(binary);
         }
         command = { id: crypto.randomUUID(), revision: state.revision, image };
         sessionStorage.setItem(key, JSON.stringify(command)); setPending(command);
@@ -60,7 +65,7 @@ export function AvatarEditor({ agent, request, onChanged }: { agent: string; req
       if (current !== version.current) return;
       await onChanged();
       if (current !== version.current) return;
-      sessionStorage.removeItem(key); setPending(null); setState(latest); setSelected(null); if (file.current) file.current.value = '';
+      sessionStorage.removeItem(key); setPending(null); setState(latest); setSelected(null); setLook(null); if (file.current) file.current.value = '';
       setNotice('Avatar updated.');
     } catch (error) { if (current === version.current) setError(error instanceof Error ? error.message : 'Avatar has not been saved. Try again.'); }
     finally { flight.current = false; if (current === version.current) setBusy(false); }
@@ -75,15 +80,16 @@ export function AvatarEditor({ agent, request, onChanged }: { agent: string; req
     <Section title="Avatar" actions={<IconButton label="Reload avatar" disabled={busy} onClick={() => void reload()}><RefreshCw size={15} aria-hidden /></IconButton>}>
       <Card><Row title="Agent image" meta="Static PNG, JPEG, or WebP, up to 512 KiB and 16 megapixels. Images are cropped to a square; metadata is removed."
         trailing={state?.present && <img src={`${path}/image?v=${state.revision}`} alt="Current agent avatar" width={64} height={64} style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8 }} />} /></Card>
-      <Field label="Avatar image"><Input ref={file} hidden style={{ display: 'none' }} type="file" accept="image/png,image/jpeg,image/webp" disabled={busy || !!pending || invalid || !state} onChange={event => {
-        const chosen = event.target.files?.[0] ?? null; setSelected(chosen); setError('');
+      <AvatarPicker value={look} disabled={busy || !!pending || invalid || !state} onChange={next => { setLook(next); setSelected(null); setError(''); if (file.current) file.current.value = ''; }} />
+      <Field label="Upload an image instead"><Input ref={file} hidden style={{ display: 'none' }} type="file" accept="image/png,image/jpeg,image/webp" disabled={busy || !!pending || invalid || !state} onChange={event => {
+        const chosen = event.target.files?.[0] ?? null; setSelected(chosen); if (chosen) setLook(null); setError('');
         if (chosen && (!chosen.size || chosen.size > 512 * 1024 || !['image/png', 'image/jpeg', 'image/webp'].includes(chosen.type))) setError('Choose a PNG, JPEG, or WebP image up to 512 KiB.');
       }} /><div className="k-row-actions"><Button size="sm" aria-label="Choose avatar image" disabled={busy || !!pending || invalid || !state} onClick={() => file.current?.click()}>Choose image</Button><span className="k-field__hint" role="status" style={{ alignSelf: 'center', overflowWrap: 'anywhere' }}>{selected?.name ?? 'No image chosen'}</span></div></Field>
       {invalid && <Alert tone="error">Saved request is invalid. Reload the avatar to continue.</Alert>}
       {error && <Alert tone="error">{error}</Alert>}{notice && <Alert>{notice}</Alert>}
       {pending && <Alert tone="warn" title="Changes are not confirmed yet">Retry sends the same avatar request and ID.</Alert>}
       <div className="k-inline">
-        <Button size="sm" variant="secondary" busy={busy} disabled={busy || invalid || !state || !pending && !validFile} onClick={() => void save(false)}>{busy ? 'Processing avatar...' : pending ? 'Retry avatar change' : 'Save avatar'}</Button>
+        <Button size="sm" variant="secondary" busy={busy} disabled={busy || invalid || !state || !pending && !validFile && !look} onClick={() => void save(false)}>{busy ? 'Processing avatar...' : pending ? 'Retry avatar change' : 'Save avatar'}</Button>
         <Button size="sm" disabled={busy || !!pending || invalid || !state?.present} onClick={() => { if (!busy && !pending && !invalid && state?.present) void save(true); }}>Delete avatar</Button>
       </div>
     </Section>

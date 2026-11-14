@@ -41,7 +41,7 @@
 }
 .cite-chip:hover { color: var(--color-text-primary); background: var(--color-bg-elevated-hover); }
 
-/* ---------- markdown (agent bubbles) ---------- */
+/* ---------- markdown (agent answers) ---------- */
 .md > * { margin: 0; }
 .md > * + * { margin-top: 10px; }
 .md ul, .md ol { padding-left: 22px; }

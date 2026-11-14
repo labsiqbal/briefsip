@@ -11,6 +11,23 @@
   transition: width 0.2s var(--ease-out);
 }
 .sidebar.is-collapsed { width: 88px; }
+.sidebar:not(.is-collapsed) { max-width: 45vw; }
+.panel-resize-handle {
+  position: absolute; z-index: 3; top: 0; width: 9px; height: 100%; padding: 0;
+  border: 0; background: transparent; cursor: col-resize; touch-action: none;
+}
+.panel-resize-handle--right { right: -5px; }
+.panel-resize-handle--left { left: -5px; }
+/* A 1px line appears only while hovering, dragging or keyboard-focused; a mouse click leaves no lasting line. */
+.panel-resize-handle::after {
+  content: ''; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px;
+  background: var(--color-border-primary); opacity: 0; transition: opacity 0.15s var(--ease-out);
+}
+.panel-resize-handle:hover::after, .panel-resize-handle[data-dragging]::after { opacity: 1; }
+.panel-resize-handle:focus { outline: none; }
+.panel-resize-handle:focus-visible::after { opacity: 1; background: var(--color-border-focus); }
+:root.is-panel-resizing, :root.is-panel-resizing * { user-select: none; cursor: col-resize !important; }
+:root.is-panel-resizing *, :root.is-panel-resizing *::before, :root.is-panel-resizing *::after { transition: none !important; }
 .sidebar__titlebar { position: relative; display: flex; align-items: center; justify-content: flex-end; height: 60px; flex-shrink: 0; padding: 12px 16px 12px 10px; }
 .sidebar__controls { display: flex; align-items: center; gap: 10px; }
 .sidebar.is-collapsed .sidebar__titlebar { justify-content: center; padding: 34px 0 0; height: 66px; }

@@ -115,5 +115,64 @@
     "ConnectionFailureFields": "ConnectionDiagnostics alias, retaining hop/via/failureCause/httpStatus/traceId",
     "ExecutionEnvironmentCapabilities": "only optional boolean threadRestartContinuation retained; native decoder drops unknown names",
     "desktop-bootstrap": "briefsip-local-bootstrap; current caller authentication still required"
-  }
+  },
+  "uiSourceEntries": [
+    {
+      "sourcePath": "apps/web/src/components/chat/TimelineUserMessageRow.tsx",
+      "symbols": [
+        "UserMessageRow",
+        "ACTIONS_REVEAL_CLASS_NAME"
+      ],
+      "adaptation": "Right-aligned rounded human message and hover/focus metadata patterns, expressed with Briefsip CSS and existing task links; no T3 runtime dependencies.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "9866b29c13e1850eb7112e69ba2933dcefe04be9b79d2bddba8a0668ba463357",
+      "localPath": "app/src/App.tsx",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/transcript.test.ts"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/TimelineAssistantRows.tsx",
+      "symbols": [
+        "AssistantTimelineRow"
+      ],
+      "adaptation": "Full-width unboxed answer and live-text presentation pattern using Briefsip safe Markdown renderer; provider/state logic stays native.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "5b00daeafabfee1ae64965b71dd553b41d253afbb64ac5fb3579ed40e07e0793",
+      "localPath": "app/src/App.tsx",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/transcript.test.ts"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/MessagesTimeline.tsx",
+      "symbols": [
+        "TurnFoldTimelineRow"
+      ],
+      "adaptation": "Single muted activity disclosure above answer, using existing Radix Collapsible and Briefsip ordered activity list.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "424113972c3053173506fc4d069e05b75e5f8ecde2c5bc283af2e4e154c902f4",
+      "localPath": "app/src/ui/TurnActivity.tsx",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/transcript.test.ts"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/MessagesTimeline.logic.ts",
+      "symbols": [
+        "Worked for"
+      ],
+      "adaptation": "Worked-for duration label pattern; Briefsip computes elapsed provider-ledger bounds and preserves interrupted/not-final semantics.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "cf587ba8da847283d1aaf54d5a56d21090367f04ee02a971b06f8b4749d2e1a3",
+      "localPath": "app/src/ui/transcript.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/transcript.test.ts"
+    }
+  ]
 }

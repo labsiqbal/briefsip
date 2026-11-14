@@ -1,4 +1,6 @@
 import './ui/csp-nonce';
+import { AgentComputerPanel } from './AgentComputerPanel';
+import { AgentComputerSettings } from './AgentComputerSettings';
 import { restoreChatCommand, restoreChannelCommand, type ChatCommand, type ChannelCommand } from '../conversation-command';
 import { restoreAgentCreation, type AgentCreation } from '../agent-create';
 import { AgentAvatar, AvatarEditor } from './AgentAvatar';
@@ -9,6 +11,8 @@ import { Markdown } from './Markdown';
 import { SpeechPlayback } from './SpeechPlayback';
 import { AudioRecorder } from './AudioRecorder';
 import { TranscriptionPanel } from './TranscriptionPanel';
+import { TurnActivity } from './ui/TurnActivity';
+import { livePartial, turnPollDelay, type TurnActivityData } from './ui/transcript';
 import { EventConnection } from './EventConnection';
 import { applyPresentation, readPresentation } from '../presentation';
 import { AgentSidebar } from './AgentSidebar';
@@ -19,6 +23,7 @@ import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, useId, ty
 import { ArrowUp, Brain, CircleAlert, ChevronDown, ChevronLeft, ChevronRight, Clock, Ellipsis, FolderOpen, Hash, MessageSquare, PanelLeft, PanelRight, Paperclip, Plus, RefreshCw, Route, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
+import { PanelResizeHandle, detailsPanel, sidebarPanel, useResizablePanel } from './ui/resizable';
 import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Collapsible, Combobox, ConfirmProvider, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Segmented, Select, SkeletonRows, Textarea, useConfirm, type SelectOption } from './ui/kit';
 import { createRoot } from 'react-dom/client';
 import { Dialog as RadixDialog } from 'radix-ui';
@@ -54,7 +59,7 @@ type Agent = { avatar_revision?: number; hidden?: boolean; visibility_revision?:
 type Channel = { activity: number; read_position: number; revision: number; archived: number; id: string; name: string; instructions: string; members: string[]; lead: string | null };
 type Thread = { id: string; agent: string; name: string; revision: number; archived: number; deleted: number };
 type AgentMessage = { generatedFiles?: { id: string; name: string; size: number; thread: string }[]; paused: number; request: string; expects_reply: number; settled: number; id: string; agent: string; thread: string; name: string; status: string; error: string | null; reply: string | null; truncated: boolean };
-type Turn = { editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { name: string; agent: string; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
+type Turn = { recipient?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { name: string; agent: string; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
 type Directory = { agents: Agent[]; configured: boolean; defaultModel: string };
 type Pending = ChatCommand;
 const statusNames: Record<string, string> = { queued: 'Queued', running: 'Replying', done: 'Done', failed: 'Failed', interrupted: 'Interrupted', cancelled: 'Cancelled' };
@@ -248,9 +253,10 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     setTurns(null);
     let timer: ReturnType<typeof setTimeout>;
     async function refresh() {
-      try { const data = await api<Turn[]>(focusedTask ? `${path}?focus=${focusedTask}` : `${path}?${new URLSearchParams({ ...(before ? { before: String(before) } : {}), ...(query ? { q: query } : {}) })}`); if (!stopped) { loadedTask.current = focusedTask; setTurns(data); setReadError(''); } }
+      let delay = 1200;
+      try { const data = await api<Turn[]>(focusedTask ? `${path}?focus=${focusedTask}` : `${path}?${new URLSearchParams({ ...(before ? { before: String(before) } : {}), ...(query ? { q: query } : {}) })}`); if (!stopped) { loadedTask.current = focusedTask; setTurns(data); setReadError(''); delay = turnPollDelay(data); } }
       catch (error) { if (!stopped) setReadError(message(error)); }
-      if (!stopped) timer = setTimeout(refresh, 1200);
+      if (!stopped) timer = setTimeout(refresh, delay);
     }
     void refresh();
     return () => { stopped = true; clearTimeout(timer); };
@@ -305,6 +311,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   }
   const [menuOpen, setMenuOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useDetailsOpen();
+  const details = useResizablePanel(detailsPanel);
   const [filesOpen, setFilesOpen] = useState(false);
   const filesSection = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -347,33 +354,31 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
               : turns.length === 0 ? <div className="empty-chat"><AgentAvatar agent={agent} size={64} /><div className="empty-chat__title">Start with {agent.name}</div><div className="empty-chat__sub">Send your first task or question. The conversation is saved on this computer.</div></div>
               : turns.map(turn => <article key={turn.id} id={`turn-${turn.id}`} tabIndex={-1} className="turn-block">
                 {query && <button type="button" className="link-btn" onClick={() => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(turn.id); }}>Open this message</button>}
-                <div className="message-row">
-                  <span className="avatar bs-avatar message-avatar" aria-hidden>Y</span>
-                  <div className="message-column">
-                    <div className="turn-meta">
-                      <strong className="message-name">You</strong>
-                      <time className="message-time" dateTime={turn.created} title={new Date(turn.created).toLocaleString('en-US')}>{time(turn.created)}</time>
-                      {turn.workflow_run ? <span className="message-origin">Workflow</span> : turn.parent ? <span className="message-origin">Subtask</span> : null}
-                      {turn.parent && !turn.messageOrigin && <a className="link-btn link-btn--small" href={`#turn-${turn.parent}`} onClick={event => { event.preventDefault(); openFocused(turn.parent!); }}>View parent task</a>}
-                      {turn.messageOrigin && <button type="button" className="link-btn link-btn--small" onClick={() => turn.messageOrigin!.channel ? onOpenChannel?.(turn.messageOrigin!.channel) : onOpenAgent?.(turn.messageOrigin!.agent, turn.messageOrigin!.thread ?? '')}>Open requester conversation</button>}
-                    </div>
-                    <div className="message-body message-plain">{turn.text}</div>
-                    {!!turn.files?.length && <ul className="chip-list" aria-label="Message attachments">{turn.files.map(file => <li key={file.id}><a className="cite-chip" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}><Paperclip size={12} aria-hidden /> {file.name}</a></li>)}</ul>}
+                <div className="human-message" tabIndex={0} aria-label="Your message">
+                  <div className="human-bubble message-plain">{turn.text}</div>
+                  {!!turn.files?.length && <ul className="chip-list" aria-label="Message attachments">{turn.files.map(file => <li key={file.id}><a className="cite-chip" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}><Paperclip size={12} aria-hidden /> {file.name}</a></li>)}</ul>}
+                  <div className="turn-meta human-meta">
+                    <time className="message-time" dateTime={turn.created} title={new Date(turn.created).toLocaleString('en-US')}>{time(turn.created)}</time>
+                    {turn.workflow_run ? <span className="message-origin">Workflow</span> : turn.parent ? <span className="message-origin">Subtask</span> : null}
+                    <button type="button" className="link-btn link-btn--small" onClick={async () => { try { await navigator.clipboard.writeText(turn.text); } catch { setError('Message could not be copied. Select the text to copy it.'); } }}>Copy</button>
+                    <a className="link-btn link-btn--small" href={`#turn-${turn.id}`} onClick={event => { event.preventDefault(); openFocused(turn.id); }}>View task</a>
+                    {turn.parent && !turn.messageOrigin && <a className="link-btn link-btn--small" href={`#turn-${turn.parent}`} onClick={event => { event.preventDefault(); openFocused(turn.parent!); }}>View parent task</a>}
+                    {turn.messageOrigin && <button type="button" className="link-btn link-btn--small" onClick={() => turn.messageOrigin!.channel ? onOpenChannel?.(turn.messageOrigin!.channel) : onOpenAgent?.(turn.messageOrigin!.agent, turn.messageOrigin!.thread ?? '')}>Open requester conversation</button>}
                   </div>
                 </div>
-                <div className="message-row">
-                  <AgentAvatar agent={channel ? members.find(member => member.id === turn.agent) ?? { id: turn.agent, name: turn.agent_name ?? agent.name } : agent} size={32} />
+                <div className="agent-message">
+                  {channel && members.length > 1 && <div className="agent-identity"><AgentAvatar agent={members.find(member => member.id === turn.agent) ?? { id: turn.agent, name: turn.agent_name ?? agent.name }} size={24} /><strong className="message-name">{turn.agent_name ?? agent.name}</strong></div>}
                   <div className="message-column">
-                    <div className="turn-meta">
-                      <strong className="message-name">{turn.agent_name ?? agent.name}</strong>
-                      <span className={`turn-status is-${tone(turn)}`}><i aria-hidden />{statusLabel(turn)}</span>
-                      {turn.answer_model && <span className="turn-model" title="Answering model">{turn.answer_model}</span>}
-                      <time className="message-time" dateTime={turn.created} title={new Date(turn.created).toLocaleString('en-US')}>{time(turn.created)}</time>
-                    </div>
+                    <TurnActivity turn={turn} agentName={agent.name} onOpenTask={openFocused} />
                     <div className="message-body">
                       {turn.reply ? <div className="legacy"><Markdown text={turn.reply} scope={path.slice(0, -6)} origin={window.location.origin} /></div>
-                        : <p className={turn.error ? 'message-error' : `message-muted${turn.status === 'running' ? ' message-pending' : ''}`}>{turn.error && <CircleAlert size={14} aria-hidden />}{turn.error ?? <span className={turn.status === 'running' ? 'shimmer' : undefined}>{turn.questions?.some(question => question.answer === null) ? 'Answer the question to continue the task.' : turn.workflow_run ? 'Workflow finished without a text result.' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) ? 'Results will be combined after all recipients finish. New messages include results already available.' : turn.events?.some(event => event.status === 'waiting') ? 'Waiting for a signed event.' : turn.waiting_for ? 'Waiting for child task results.' : turn.status === 'queued' ? 'Waiting for turn.' : 'Waiting for provider response...'}</span>}</p>}
-                      {!turn.reply && turn.partial?.text && <div className="message-partial"><p className="message-muted">{turn.partial.status === 'pending' ? 'Temporary text' : 'Text from a previous attempt'} from {turn.partial.model}. Not a final result.</p><p className="message-plain">{turn.partial.text}</p></div>}
+                        : livePartial(turn) ? <div className="live-answer" aria-label="Streaming answer"><div className="legacy"><Markdown text={turn.partial!.text} scope={path.slice(0, -6)} origin={window.location.origin} /></div><span className="stream-caret" aria-hidden /></div>
+                        : <p className={turn.error ? 'message-error' : 'message-muted'}>{turn.error && <CircleAlert size={14} aria-hidden />}{turn.error ?? <span>{turn.questions?.some(question => question.answer === null) ? 'Answer the question to continue the task.' : turn.workflow_run ? 'Workflow finished without a text result.' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) ? 'Results will be combined after all recipients finish. New messages include results already available.' : turn.events?.some(event => event.status === 'waiting') ? 'Waiting for a signed event.' : turn.waiting_for ? 'Waiting for child task results.' : turn.status === 'queued' ? 'Waiting for turn.' : 'Waiting for provider response...'}</span>}</p>}
+                      {!turn.reply && turn.partial?.text && !livePartial(turn) && <div className="message-partial"><p className="message-muted">Text from a previous attempt from {turn.partial.model}. Not a final result.</p><div className="legacy"><Markdown text={turn.partial.text} scope={path.slice(0, -6)} origin={window.location.origin} /></div></div>}
+                    </div>
+                    <div className="turn-meta agent-meta">
+                      <span className={`turn-status is-${tone(turn)}`}><i aria-hidden />{statusLabel(turn)}</span>
+                      {(turn.answer_model || turn.partial?.model) && <span className="turn-model" title="Answering model">{turn.answer_model ?? turn.partial?.model}</span>}
                     </div>
                     <div className="turn-controls">
                       <TaskControls key={`${turn.id}:${turn.revision}`} turn={turn} path={path} members={channel ? members : []} archived={archived || !!turn.editing} />
@@ -431,7 +436,8 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
         </div>
       </header>
     </main>
-    {detailsOpen && <aside className="details" aria-label="Conversation details">
+    {detailsOpen && <aside className="details" style={{ width: `${details.width}px` }} aria-label="Conversation details">
+      <PanelResizeHandle panel={details} />
       <div className="details__top">
         {onEdit && <button type="button" className="icon-btn icon-btn--bordered details__gear" onClick={onEdit} aria-label={editLabel} title={editLabel}><Settings size={16} aria-hidden /></button>}
         <button type="button" className="icon-btn icon-btn--bordered" onClick={() => setDetailsOpen(false)} aria-label="Close details"><X size={16} aria-hidden /></button>
@@ -444,6 +450,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
         </div>
         <div className="details__sections">
           {detailsExtra}
+          {!channel && <AgentComputerPanel key={agent.id} agent={agent.id} request={api} />}
           {channel && <section><div className="section-label">Read status</div><div className="panel-card"><div className="panel-row panel-row--setting"><span>{channel.activity > channel.read_position ? 'Unread activity' : 'All activity read'}</span><button type="button" className="cfg-btn cfg-btn--secondary" disabled={markingRead || channel.activity <= channel.read_position} onClick={() => { setMarkingRead(true); void onRead?.().catch(error => setError(message(error))).finally(() => setMarkingRead(false)); }}>Mark as read</button></div></div></section>}
           <section>
             <div className="section-label">Search conversation</div>
@@ -894,6 +901,8 @@ function ThreadForm({ agent, thread, onCancel, onSaved, onReload }: { agent: Age
 
 function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload, onVisibilityChanged }: { model: string; profile?: Agent; onCreated: (agent: Agent) => void; onCancel: () => void; onReload?: () => Promise<void>; onVisibilityChanged?: () => Promise<void> }) {
   const confirm = useConfirm();
+  const [look, setLook] = useState<import('./ui/avatar-shapes').AvatarLook | null>(null);
+  const [LookPicker] = useState(() => lazy(() => import('./ui/avatar-shapes').then(module => ({ default: module.AvatarPicker }))));
   const [profile] = useState(liveProfile);
   const creationKey = 'briefsip-agent-creation';
   const nameInput = useRef<HTMLInputElement>(null);
@@ -936,7 +945,19 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
       if (!profile) { restoreAgentCreation(JSON.stringify(data)); sessionStorage.setItem(creationKey, JSON.stringify(data)); }
       pending.current = data;
       const created = await api<Agent>(profile ? `/api/agents/${profile.id}/edit` : '/api/agents', data);
-      clearRecovery(); if (active.current) onCreated(created);
+      clearRecovery();
+      if (!profile && look) {
+        const { avatarPng, notifyAvatarFailure } = await import('./ui/avatar-shapes');
+        try {
+          const key = `briefsip-avatar:${created.id}`;
+          const command = { id: crypto.randomUUID(), revision: created.avatar_revision ?? 0, image: await avatarPng(look) };
+          sessionStorage.setItem(key, JSON.stringify(command));
+          const result = await api<{ revision: number }>(`/api/agents/${created.id}/avatar`, command);
+          created.avatar_revision = result.revision;
+          sessionStorage.removeItem(key);
+        } catch { notifyAvatarFailure(); }
+      }
+      if (active.current) onCreated(created);
     } catch (error) {
       if (error instanceof HttpError && error.status < 500) { try { clearRecovery(); pending.current = null; } catch { /* Keep exact retry if recovery storage cannot be cleared. */ } }
       if (active.current) setError(message(error));
@@ -970,6 +991,7 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
     {invalid && <Alert tone="error" title="Recovery data could not be read" actions={<Button size="sm" onClick={() => void discardInvalid()}>Discard recovery data</Button>}>Check the agent list before discarding it.</Alert>}
     {!profile && pending.current && <Alert tone="warn" title="Creation is not confirmed yet">Try again with the same request to avoid creating a duplicate agent.</Alert>}
     <form id="agent-form" className="k-fieldset" onSubmit={create}>
+      {!profile && <Suspense fallback={<p role="status">Loading avatar picker...</p>}><LookPicker value={look} onChange={setLook} disabled={busy || locked || invalid} /></Suspense>}
       {!profile && <Segmented label="How to create an agent" value={setup ? 'describe' : 'manual'} disabled={busy || locked || invalid} onChange={value => setSetup(value === 'describe')} options={[
         { value: 'manual', label: 'Fill in yourself', description: 'Enter the name and instructions.' },
         { value: 'describe', label: 'Draft from a description', description: 'The agent drafts its profile through chat.' },
@@ -1001,6 +1023,7 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
       {error && <Alert tone="error">{error}</Alert>}
     </form>
     {profile && <div className="legacy k-legacy-block">
+      <AgentComputerSettings agent={profile.id} request={api} />
       {onVisibilityChanged && <AvatarEditor agent={profile.id} request={api} onChanged={onVisibilityChanged} />}
       {onVisibilityChanged && <AgentVisibility agent={liveProfile!} request={api} onChanged={onVisibilityChanged} />}
       <Suspense fallback={<p role="status">Loading local sites...</p>}><SitesPanel key={`sites:${profile.id}`} agent={profile.id} request={api} /></Suspense>
@@ -1122,6 +1145,7 @@ function App() {
   const [dialog, setDialog] = useState<Dialog>(null);
   const [newMenu, setNewMenu] = useState(false);
   const [collapsed, setCollapsedState] = useState(() => { try { return localStorage.getItem(collapsedKey) === '1'; } catch { return false; } });
+  const sidebar = useResizablePanel(sidebarPanel);
   const [openedThread, setOpenedThread] = useState<{ agent: string; thread: string } | null>(null);
   const [activityError, setActivityError] = useState(false);
   const [editReload, setEditReload] = useState(0);
@@ -1192,7 +1216,8 @@ function App() {
   else content = <main className="chat chat--empty bs-root"><div className="empty-chat"><div className="empty-chat__title">Create your first agent</div><div className="empty-chat__sub">Name it, choose a model, then explain how it should work. The agent and its history are saved on this computer.</div><button type="button" className="btn btn--primary" onClick={() => setDialog('agent')}><Plus size={16} aria-hidden /> New agent</button></div></main>;
   const created = (item: Agent) => { setDirectory(current => current && { ...current, agents: [...current.agents.filter(agent => agent.id !== item.id), item] }); openAgent(item.id); };
   return <RadixDialog.Root modal open={!!settings} onOpenChange={open => setSettings(current => open ? current ?? 'skills' : null)}><div className={`app bs-root${collapsed ? ' is-sidebar-collapsed' : ''}`}>
-    <aside className={`sidebar${collapsed ? ' is-collapsed' : ''}`} aria-label="Workspace navigation">
+    {collapsed && <button type="button" className="icon-btn icon-btn--bordered sidebar-reveal" onClick={() => setCollapsed(false)} aria-label="Expand sidebar" title="Sidebar (Ctrl/Cmd+B)"><PanelLeft size={16} aria-hidden /></button>}
+    {!collapsed && <aside className="sidebar" style={{ width: `${sidebar.width}px` }} aria-label="Workspace navigation">
       <div className="sidebar__titlebar">
         {!collapsed && <a className="sidebar__brand" href="/">Briefsip</a>}
         <div className="sidebar__controls">
@@ -1237,7 +1262,8 @@ function App() {
         {!collapsed && <div className="provider-status" role="status"><i className={directory?.configured ? 'is-on' : ''} aria-hidden /><span>{activityError ? 'Status not updated. Trying again.' : directory?.configured ? 'Provider configured' : 'Provider not connected'}</span></div>}
         <RadixDialog.Trigger asChild><button type="button" className="icon-btn icon-btn--bordered" aria-label="Settings" title="Settings (Ctrl/Cmd+,)"><Settings size={16} aria-hidden /></button></RadixDialog.Trigger>
       </div>
-    </aside>
+      <PanelResizeHandle panel={sidebar} />
+    </aside>}
     {content}
     {dialog === 'agent' && directory && <AgentForm model={directory.defaultModel} onCancel={() => setDialog(null)} onCreated={item => { created(item); setDialog(null); }} />}
     {dialog === 'channel' && directory && <ChannelForm agents={directory.agents} onCancel={() => setDialog(null)} onCreated={item => { setChannels(current => [...current.filter(room => room.id !== item.id), item]); openChannel(item.id); }} />}
