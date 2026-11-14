@@ -890,6 +890,8 @@ function ThreadForm({ agent, thread, onCancel, onSaved, onReload }: { agent: Age
 
 function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload, onVisibilityChanged }: { model: string; profile?: Agent; onCreated: (agent: Agent) => void; onCancel: () => void; onReload?: () => Promise<void>; onVisibilityChanged?: () => Promise<void> }) {
   const confirm = useConfirm();
+  const [look, setLook] = useState<import('./ui/avatar-shapes').AvatarLook | null>(null);
+  const [LookPicker] = useState(() => lazy(() => import('./ui/avatar-shapes').then(module => ({ default: module.AvatarPicker }))));
   const [profile] = useState(liveProfile);
   const creationKey = 'briefsip-agent-creation';
   const nameInput = useRef<HTMLInputElement>(null);
@@ -932,7 +934,19 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
       if (!profile) { restoreAgentCreation(JSON.stringify(data)); sessionStorage.setItem(creationKey, JSON.stringify(data)); }
       pending.current = data;
       const created = await api<Agent>(profile ? `/api/agents/${profile.id}/edit` : '/api/agents', data);
-      clearRecovery(); if (active.current) onCreated(created);
+      clearRecovery();
+      if (!profile && look) {
+        const { avatarPng, notifyAvatarFailure } = await import('./ui/avatar-shapes');
+        try {
+          const key = `briefsip-avatar:${created.id}`;
+          const command = { id: crypto.randomUUID(), revision: created.avatar_revision ?? 0, image: await avatarPng(look) };
+          sessionStorage.setItem(key, JSON.stringify(command));
+          const result = await api<{ revision: number }>(`/api/agents/${created.id}/avatar`, command);
+          created.avatar_revision = result.revision;
+          sessionStorage.removeItem(key);
+        } catch { notifyAvatarFailure(); }
+      }
+      if (active.current) onCreated(created);
     } catch (error) {
       if (error instanceof HttpError && error.status < 500) { try { clearRecovery(); pending.current = null; } catch { /* Keep exact retry if recovery storage cannot be cleared. */ } }
       if (active.current) setError(message(error));
@@ -966,6 +980,7 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
     {invalid && <Alert tone="error" title="Recovery data could not be read" actions={<Button size="sm" onClick={() => void discardInvalid()}>Discard recovery data</Button>}>Check the agent list before discarding it.</Alert>}
     {!profile && pending.current && <Alert tone="warn" title="Creation is not confirmed yet">Try again with the same request to avoid creating a duplicate agent.</Alert>}
     <form id="agent-form" className="k-fieldset" onSubmit={create}>
+      {!profile && <Suspense fallback={<p role="status">Loading avatar picker...</p>}><LookPicker value={look} onChange={setLook} disabled={busy || locked || invalid} /></Suspense>}
       {!profile && <Segmented label="How to create an agent" value={setup ? 'describe' : 'manual'} disabled={busy || locked || invalid} onChange={value => setSetup(value === 'describe')} options={[
         { value: 'manual', label: 'Fill in yourself', description: 'Enter the name and instructions.' },
         { value: 'describe', label: 'Draft from a description', description: 'The agent drafts its profile through chat.' },
