@@ -4,7 +4,7 @@ import { workflowLayout } from '../workflow-editor-state';
 import { Collapsible } from './ui/kit';
 import './ui/workflow.css';
 
-const kinds = { agent: 'Agent', model: 'Model', condition: 'Condition', approval: 'Approval', wait: 'Wait for event', output: 'Output' };
+const kinds = { parallel: 'Parallel', agent: 'Agent', model: 'Model', condition: 'Condition', approval: 'Approval', wait: 'Wait for event', output: 'Output' };
 export function WorkflowGraph({ graph, selected, locked, onSelect, onMove, buttonRefs, labels, loops }: {
   graph: Graph; selected: string; locked: boolean; onSelect: (id: string) => void;
   buttonRefs: Map<string, HTMLButtonElement>;

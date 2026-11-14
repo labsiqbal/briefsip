@@ -6,8 +6,70 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {startApp} from './server.ts';
-import {initializeTelegram,bindTelegram,recordTelegramUpdates} from './telegram.ts';
-import {telegramLocal,telegramAgentStep} from './telegram-bridge.ts';
+import {initializeTelegram,bindTelegram,recordTelegramUpdates,queueTelegramReply,deliverTelegramReply} from './telegram.ts';
+import {telegramLocal,telegramAgentStep,pollTelegram} from './telegram-bridge.ts';
+
+test('Telegram retains early button clicks until multipart delivery is confirmed',async()=>{
+  const db=new DatabaseSync(':memory:'),agent=randomUUID(),run=randomUUID(),notice=randomUUID(),users=new Set([4]);
+  const update={update_id:1,callback_query:{id:'early',data:`a:${notice}:y`,from:{id:4,is_bot:false},message:{message_id:99,chat:{id:4,type:'private'},from:{id:123,is_bot:true}}}};
+  const acks:any[]=[];let release!:()=>void,exposed!:()=>void;
+  const response=new Promise<void>(resolve=>release=resolve),visible=new Promise<void>(resolve=>exposed=resolve);
+  try{
+    initializeTelegram(db);bindTelegram(db,123,agent);db.prepare('INSERT INTO telegram_workflows VALUES (?,?,?,?)').run(run,4,randomUUID(),1);db.prepare('INSERT INTO telegram_approvals VALUES (?,?,?)').run(run,1,notice);
+    queueTelegramReply(db,notice,4,2,'a'.repeat(4096)+'Approve?');let part=0;
+    const sending=deliverTelegramReply(db,notice,async(_method,body)=>{part++;if(part===1){assert.equal(body.reply_markup,undefined);return {message_id:98,chat:{id:4}};}assert(body.reply_markup);exposed();await response;return {message_id:99,chat:{id:4}};});
+    await visible;
+    const remote=async(method:string,body:Record<string,unknown>)=>{if(method==='getUpdates')return [update];acks.push(body);return true;};
+    assert.equal(await pollTelegram(db,users,remote),0);assert.equal(acks.length,0);assert.equal(db.prepare('SELECT count(*) AS n FROM telegram_callbacks').get()!.n,0);
+    release();await sending;
+    assert.equal(await pollTelegram(db,users,remote),2);assert.equal(acks.length,1);assert.equal(db.prepare('SELECT count(*) AS n FROM telegram_callbacks').get()!.n,1);
+    assert.equal(await pollTelegram(db,users,remote),2);assert.equal(db.prepare('SELECT count(*) AS n FROM telegram_callbacks').get()!.n,1);
+  }finally{release();db.close();}
+});
+
+test('Telegram inline approvals validate message ownership and persist the first decision before acknowledgement',async()=>{
+  const dir=mkdtempSync(join(tmpdir(),'briefsip-telegram-buttons-')),agent=randomUUID(),users=new Set([4,5]);
+  const app=await startApp({database:join(dir,'app.sqlite'),scriptDirectory:join(dir,'scripts')});
+  let db=new DatabaseSync(join(dir,'journal.sqlite')),sequence=0,updates:any[]=[],lost=false,ackLost=false;
+  const sent:any[]=[],decisions:any[]=[],acks:any[]=[];
+  async function ui(path:string,body?:unknown):Promise<any>{const response=await fetch(app.origin+path,{method:body?'POST':'GET',headers:{Origin:app.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const result=await response.json();assert(response.ok,JSON.stringify(result));return result;}
+  const real=telegramLocal(join(dir,'scripts'));
+  const local=async(path:string,body?:unknown,signal?:AbortSignal)=>{const result=await real(path,body,signal);if(path.endsWith('/approve')){decisions.push({path,body});if(lost){lost=false;throw new Error('Lost decision');}}return result;};
+  const remote=async(method:string,body:Record<string,unknown>)=>{
+    if(method==='getUpdates'){assert.deepEqual(body.allowed_updates,['message','callback_query']);const batch=updates;updates=[];return batch;}
+    if(method==='answerCallbackQuery'){assert.equal(db.prepare('SELECT offset FROM telegram_binding').get()!.offset,sequence+1);acks.push(body);if(ackLost){ackLost=false;throw new Error('Lost ack');}return true;}
+    const message_id=sent.length+100;sent.push({...body,message_id});return {message_id,chat:{id:body.chat_id}};
+  };
+  function click(notice:any,accepted:boolean,change:Record<string,any>={}){sequence++;const query={id:`click-${sequence}`,data:`a:${notice.id}:${accepted?'y':'n'}`,from:{id:4,is_bot:false},message:{message_id:notice.message_id,chat:{id:4,type:'private'},from:{id:123,is_bot:true}},...change};updates.push({update_id:sequence,callback_query:query});}
+  async function start(){sequence++;recordTelegramUpdates(db,[{update_id:sequence,message:{message_id:sequence,chat:{id:4,type:'private'},from:{id:4,is_bot:false},text:`/workflow ${workflow.id} 1 Button result`}}],users);const row=db.prepare('SELECT * FROM telegram_inbox WHERE update_id=?').get(sequence)!;await telegramAgentStep(db,users,local,remote);const notice=db.prepare('SELECT notice FROM telegram_approvals WHERE run=?').get(row.turn)!;const delivered=sent.find(item=>item.reply_markup?.inline_keyboard[0][0].callback_data===`a:${notice.notice}:y`);assert(delivered);return {id:notice.notice,message_id:delivered.message_id,run:row.turn};}
+  let workflow:any;
+  try{
+    await ui('/api/agents',{id:agent,name:'Buttons',model:'fixture',instructions:'Help'});await ui(`/api/agents/${agent}/scripts`,{id:randomUUID(),revision:0,enabled:true});
+    workflow=await ui(`/api/agents/${agent}/workflows`,{id:randomUUID(),revision:0,name:'Buttons',graph:{entry:'approve',maxSteps:2,nodes:[{id:'approve',kind:'approval',prompt:'Proceed?',yes:'out'},{id:'out',kind:'output'}]}});
+    initializeTelegram(db);bindTelegram(db,123,agent);const notice=await start();
+    for(const change of [
+      {from:{id:5,is_bot:false}},
+      {from:{id:5,is_bot:false},message:{message_id:notice.message_id,chat:{id:5,type:'private'},from:{id:123,is_bot:true}}},
+      {message:{message_id:notice.message_id+1,chat:{id:4,type:'private'},from:{id:123,is_bot:true}}},
+      {message:{message_id:notice.message_id,chat:{id:4,type:'group'},from:{id:123,is_bot:true}}},
+      {message:{message_id:notice.message_id,chat:{id:4,type:'private'},from:{id:999,is_bot:true}}},
+      {data:`a:${randomUUID()}:y`},{from:{id:4,is_bot:true}},
+    ])click(notice,true,change);
+    await pollTelegram(db,users,remote);await telegramAgentStep(db,users,local,remote);assert.equal(decisions.length,0);assert.equal(db.prepare('SELECT count(*) AS n FROM telegram_callbacks').get()!.n,0);
+    click(notice,true);click(notice,false);ackLost=true;await pollTelegram(db,users,remote);
+    assert.equal(db.prepare('SELECT count(*) AS n FROM telegram_callbacks').get()!.n,1);assert.equal(db.prepare('SELECT selection FROM telegram_callbacks').get()!.selection,1);
+    const command=db.prepare('SELECT id FROM telegram_callbacks').get()!.id;
+    db.close();db=new DatabaseSync(join(dir,'journal.sqlite'));initializeTelegram(db);
+    lost=true;await assert.rejects(telegramAgentStep(db,users,local,remote),/Lost decision/);
+    db.close();db=new DatabaseSync(join(dir,'journal.sqlite'));initializeTelegram(db);await telegramAgentStep(db,users,local,remote);await telegramAgentStep(db,users,local,remote);
+    assert.equal(decisions.length,2);assert.deepEqual(decisions[0],decisions[1]);assert.equal(decisions[0].body.id,command);assert.equal((await ui(`/api/workflow-runs/${notice.run}`)).status,'done');
+    const total=sent.length;click(notice,true);await pollTelegram(db,users,remote);await telegramAgentStep(db,users,local,remote);assert.equal(decisions.length,2);assert.equal(sent.length,total);
+    const rejected=await start();click(rejected,false);await pollTelegram(db,users,remote);await telegramAgentStep(db,users,local,remote);assert.equal((await ui(`/api/workflow-runs/${rejected.run}`)).status,'failed');
+    const stale=await start();await ui(`/api/workflow-runs/${stale.run}/approve`,{id:randomUUID(),revision:(await ui(`/api/workflow-runs/${stale.run}`)).revision,accepted:false});click(stale,true);await pollTelegram(db,users,remote);await telegramAgentStep(db,users,local,remote);assert.equal((await ui(`/api/workflow-runs/${stale.run}`)).status,'failed');assert(sent.some(item=>item.text.includes('Approval could not be applied')));
+    const revoked=await start();click(revoked,true);await pollTelegram(db,users,remote);await telegramAgentStep(db,new Set([5]),local,remote);assert.equal(db.prepare('SELECT status FROM telegram_callbacks WHERE notice=?').get(revoked.id)!.status,'revoked');assert.equal((await ui(`/api/workflow-runs/${revoked.run}`)).status,'approval');
+    assert(acks.some(item=>item.text.includes('choice was already')));
+  }finally{db.close();await app.close();rmSync(dir,{recursive:true,force:true});}
+});
 
 test('Telegram workflow approval binds requester and recovers lost run and decision responses',async()=>{
   const dir=mkdtempSync(join(tmpdir(),'briefsip-telegram-flow-')),agent=randomUUID(),users=new Set([4,5]);

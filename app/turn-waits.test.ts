@@ -182,7 +182,7 @@ test('routine waits preserve artifacts and reject events cancelled before upload
     await app.close(); const db = new DatabaseSync(options.database); db.prepare('UPDATE turn_waits SET deadline=0 WHERE turn=?').run(scheduledWait.id); db.close();
     app = await startApp(options);
     const [expiredRun] = await until(scheduledRuns, rows => rows[0]?.status === 'failed');
-    assert.match(expiredRun.error, /Waktu tunggu event habis/); assert.equal(completed, 1);
+    assert.match(expiredRun.error, /Event wait timed out/); assert.equal(completed, 1);
     assert.equal((await request(scheduledTurns))[0].generatedFiles.length, 1);
 
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }

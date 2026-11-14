@@ -12,7 +12,13 @@ import { ActionMenu, Alert, Badge, Button, Card, CodeBlock, Collapsible, EmptySt
 import { ChevronLeft, ChevronRight, Ellipsis, RefreshCw } from 'lucide-react';
 
 type Agent = { id: string; name: string; model: string };
-type Run = { id: string; version: number; revision: number; status: string; cursor: string; error: string | null; last: string; graph: WorkflowGraph; steps: { seq: number; node: string; status: string; detail: string | null; task_status: string | null; paused: number | null; thread: string | null; agent: string | null }[] };
+type Run = { id: string; version: number; revision: number; status: string; cursor: string; error: string | null; last: string; graph: WorkflowGraph; steps: { parallel_group: number | null; parallel_branch: number | null; seq: number; node: string; status: string; detail: string | null; task_status: string | null; paused: number | null; thread: string | null; agent: string | null }[] };
+
+function stepTitle(run: Run, step: Run['steps'][number]) {
+  const node = run.graph.nodes.find(node => node.id === step.node);
+  if (node?.kind !== 'parallel') return step.node;
+  return step.parallel_group === null ? `${step.node} · Merge` : `${step.node} · Branch ${step.parallel_branch ?? step.seq - step.parallel_group + node.branches.length + 1}`;
+}
 
 function WorkflowText({ text, run }: { text: string; run: string }) {
   return <div className="legacy" style={{ minWidth: 0, maxWidth: '100%', overflowX: 'auto' }}><Markdown text={text} scope={`/api/workflow-runs/${run}`} origin={window.location.origin} /></div>;

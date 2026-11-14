@@ -9,6 +9,235 @@ import { spawn } from 'node:child_process';
 import { cli } from './cli.ts';
 import { startApp } from './server.ts';
 
+test('CLI routine lists and histories stay within the selected granted agent', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-cli-routines-')), directory = join(dir, 'scripts');
+  let catalogFails = false;
+  const prompts: string[] = []; let answer = 'Routine result';
+  const provider = createServer(async (req, res) => { if (req.method === 'GET') { res.statusCode = catalogFails ? 502 : 200; res.end(JSON.stringify({ data: [{ id: 'fixture' }, { id: 'fixture-alt' }] })); return; } let raw=''; for await (const chunk of req) raw+=chunk; prompts.push(JSON.parse(raw).messages.at(-1).content); res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: answer } }] })); });
+  await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+  const address = provider.address(); assert(address && typeof address !== 'string');
+  const options = { database: join(dir, 'db.sqlite'), scriptDirectory: directory, baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: randomUUID() };
+  let app = await startApp(options), drop = true;
+  const requests: string[] = [];
+  const proxy = createServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    const response = await fetch(app.origin + req.url, { method: req.method, headers: { Authorization: req.headers.authorization!, 'Content-Type': 'application/json' }, body: body || undefined });
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if ((req.url?.endsWith('/run') || req.url?.endsWith('/retry') || req.url?.endsWith('/provider')) && req.method === 'POST') { requests.push(body); if (drop && response.ok) { drop = false; res.destroy(); return; } }
+    res.writeHead(response.status, { 'Content-Type': 'application/json' }); res.end(bytes);
+  });
+  await new Promise<void>(resolve => proxy.listen(0, '127.0.0.1', resolve));
+  const proxyAddress = proxy.address(); assert(proxyAddress && typeof proxyAddress !== 'string');
+  const useProxy = () => { const file = join(directory, 'connection.json'), saved = JSON.parse(readFileSync(file, 'utf8')); writeFileSync(file, JSON.stringify({ ...saved, url: `http://127.0.0.1:${proxyAddress.port}` })); };
+  t.after(async () => { await app.close(); proxy.closeAllConnections(); await new Promise<void>(resolve => proxy.close(() => resolve())); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); });
+  const ui = async (path: string, body: unknown) => { const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const value = await response.json(); assert(response.ok, JSON.stringify(value)); return value; };
+  const terminal = (args: string[]) => new Promise<any>((resolve, reject) => {
+    const child = spawn(process.execPath, ['--experimental-strip-types', 'cli.ts', ...args], { cwd: import.meta.dirname, env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = ''; child.stdout.on('data', chunk => { output += chunk; }); child.stderr.resume(); child.on('error', reject);
+    child.on('close', code => { try { const value = JSON.parse(output); assert.equal(value.exitCode, code); resolve(value); } catch (error) { reject(error); } });
+  });
+  const a = await ui('/api/agents', { id: randomUUID(), name: 'Routine owner', model: 'fixture', instructions: 'Help' });
+  const b = await ui('/api/agents', { id: randomUUID(), name: 'Other', model: 'fixture', instructions: 'Help' });
+  for (const agent of [a,b]) await ui(`/api/agents/${agent.id}/scripts`, { id: randomUUID(), revision: 0, enabled: true });
+  const settings = await terminal(['provider', a.id]);
+  assert.equal(settings.exitCode, 0); assert.equal(settings.provider.model, 'fixture'); assert.equal(settings.provider.providerAccount, '');
+  assert.equal(settings.provider.accounts[0].configured, true); assert(!JSON.stringify(settings).includes(options.baseURL)); assert(!JSON.stringify(settings).includes(options.apiKey));
+  assert.equal((await terminal(['provider', a.id, '--wait'])).exitCode, 2);
+  assert.deepEqual((await terminal(['models', a.id])).models, ['fixture', 'fixture-alt']);
+  assert.equal((await terminal(['models', a.id, '--wait'])).exitCode, 2);
+  catalogFails = true; assert.equal((await terminal(['models', a.id])).exitCode, 1); catalogFails = false;
+  const routine = await ui(`/api/agents/${a.id}/routines`, { id: randomUUID(), name: 'Routine', prompt: 'Task', nextAt: Date.now() + 3600000, intervalSeconds: null, enabled: false });
+  const list = await terminal(['routines', a.id]); assert.equal(list.exitCode, 0); assert.deepEqual(list.routines.map((row: any) => row.id), [routine.id]);
+  assert.deepEqual((await terminal(['routines', b.id])).routines, []);
+  assert.deepEqual((await terminal(['routine-runs', a.id, routine.id])).runs, []);
+  assert.equal((await terminal(['routine-runs', b.id, routine.id])).exitCode, 1);
+  const command = ['routine-run', a.id, routine.id, String(routine.revision), 'CLI input', '--id', randomUUID(), '--wait', '--timeout', '5'];
+  assert.equal((await terminal(['routine-run', b.id, ...command.slice(2)])).exitCode, 1);
+  useProxy();
+  const uncertain = await terminal(command);
+  assert.equal(uncertain.exitCode, 5); assert.equal(uncertain.requestId, command[6]); assert.equal(uncertain.routine, routine.id); assert.equal(requests.length, 1);
+  const run = await terminal(command); assert.equal(run.exitCode, 0); assert.equal(run.routine, routine.id); assert(run.thread); assert.equal(run.turn.reply, 'Routine result');
+  assert.equal(requests.length, 2); assert.equal(requests[0], requests[1]);
+  assert.equal((await terminal(command)).id, run.id); assert.deepEqual(prompts, ['Task\n\nScript input:\nCLI input']);
+  let history: any;
+  for (let n = 0; n < 30; n++) { history = await terminal(['routine-runs', a.id, routine.id]); if (history.runs?.[0]?.status === 'done') break; await new Promise(resolve => setTimeout(resolve, 20)); }
+  assert.equal(history.exitCode, 0); assert.equal(history.runs.length, 1); assert.equal(history.runs[0].turn, run.id); assert.equal(history.runs[0].reply, 'Routine result');
+  await app.close(); app = await startApp(options);
+  useProxy();
+  assert.deepEqual((await terminal(['routine-runs', a.id, routine.id])).runs, history.runs);
+  assert.equal((await terminal(command)).id, run.id); assert.equal(prompts.length, 1);
+  const accepted = await terminal(command.slice(0, 7)); assert.equal(accepted.exitCode, 0); assert.equal(accepted.id, run.id); assert.equal(accepted.thread, run.thread); assert.equal(accepted.turn, undefined);
+  assert.equal((await terminal(command.map(value=>value==='CLI input'?'Changed':value))).exitCode, 1);
+  for (const bad of [['routines', a.id, '--wait'], ['routine-runs', a.id], ['routine-runs', a.id, '../bad'], ['routine-runs', a.id, routine.id, '--thread', randomUUID()], ['routine-run', a.id, routine.id, '0', 'CLI input', '--id', randomUUID()], ['routine-run', a.id, routine.id, String(routine.revision), 'CLI input']]) assert.equal((await terminal(bad)).exitCode, 2);
+  const workflow = await ui(`/api/agents/${a.id}/workflows`, { id: randomUUID(), revision: 0, name: 'Retry condition', graph: { entry: 'check', maxSteps: 4, nodes: [{ id: 'check', kind: 'condition', operator: 'model', model: 'fixture', value: 'Yes?', yes: 'out', no: 'out' }, { id: 'out', kind: 'output' }] } });
+  const failed = await terminal(['workflow-run', a.id, workflow.id, '1', 'Input', '--id', randomUUID(), '--wait', '--timeout', '5']);
+  assert.equal(failed.exitCode, 1); assert.equal(failed.turn.status, 'failed');
+  const retry = ['workflow-retry', a.id, failed.id, String(failed.turn.revision), '--id', randomUUID()];
+  assert.equal((await terminal(['workflow-retry', b.id, ...retry.slice(2)])).exitCode, 1);
+  answer = 'yes'; drop = true;
+  const lostRetry = await terminal(retry); assert.equal(lostRetry.exitCode, 5); assert.equal(lostRetry.requestId, retry[5]);
+  let recovered: any;
+  for (let n = 0; n < 30; n++) { recovered = await terminal(['workflow-status', a.id, failed.id]); if (recovered.turn?.status === 'done') break; await new Promise(resolve => setTimeout(resolve, 20)); }
+  assert.equal(recovered.turn.status, 'done'); const calls = prompts.length; assert.equal(calls, 3);
+  await app.close(); app = await startApp(options); useProxy();
+  assert.equal((await terminal(retry)).exitCode, 0); assert.equal(requests.at(-1), requests.at(-2)); assert.equal(prompts.length, calls);
+  const profileBefore = (await terminal(['provider', a.id])).provider;
+  const providerPayload = JSON.stringify({ revision: profileBefore.revision, model: 'fixture-alt', backupModel: '', providerAccount: '' });
+  const saveProvider = ['provider-save', a.id, providerPayload, '--id', randomUUID()];
+  drop = true;
+  const lostProvider = await terminal(saveProvider); assert.equal(lostProvider.exitCode, 5); assert.equal(lostProvider.requestId, saveProvider[4]);
+  await app.close(); app = await startApp(options); useProxy();
+  const updatedProvider = await terminal(saveProvider); assert.equal(updatedProvider.exitCode, 0); assert.equal(updatedProvider.id, a.id); assert.equal(updatedProvider.provider.model, 'fixture-alt'); assert.equal(updatedProvider.provider.name, a.name); assert.equal(updatedProvider.provider.instructions, a.instructions);
+  assert.equal(requests.at(-1), requests.at(-2));
+  assert.equal((await terminal(['provider-save', a.id, providerPayload, '--id', randomUUID()])).exitCode, 1);
+  assert.equal((await terminal(['provider-save', a.id, '{"apiKey":"forbidden"}', '--id', randomUUID()])).exitCode, 2);
+  await ui(`/api/agents/${a.id}/scripts`, { id: randomUUID(), revision: 1, enabled: false });
+  assert.equal((await terminal(['routine-runs', a.id, routine.id])).exitCode, 5);
+  assert.equal((await terminal(command)).exitCode, 5);
+  assert.equal((await terminal(retry)).exitCode, 5);
+  assert.equal((await terminal(['models', a.id])).exitCode, 5);
+  assert.equal((await terminal(['provider', a.id])).exitCode, 5);
+  assert.equal((await terminal(saveProvider)).exitCode, 5);
+});
+
+test('CLI workflow discovery paginates and explicit approvals retain identity after lost responses', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-cli-approvals-')), directory = join(dir, 'scripts');
+  const options = { database: join(dir, 'db.sqlite'), scriptDirectory: directory };
+  let app = await startApp(options), drop = false;
+  const decisions: string[] = [];
+  let dropAction = '';
+  const actions: { path: string; body: string }[] = [];
+  const proxy = createServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    const response = await fetch(app.origin + req.url, { method: req.method, headers: { Authorization: req.headers.authorization!, 'Content-Type': 'application/json' }, body: body || undefined });
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (req.url?.endsWith('/approve')) { decisions.push(body); if (drop) { drop = false; res.destroy(); return; } }
+    if (req.method === 'POST' && /\/(run|cancel|schedule|webhook)$/.test(req.url ?? '')) {
+      actions.push({ path: req.url!, body });
+      if (dropAction && req.url!.endsWith(dropAction) && response.ok) { dropAction = ''; res.destroy(); return; }
+    }
+    res.writeHead(response.status, { 'Content-Type': 'application/json' }); res.end(bytes);
+  });
+  t.after(async () => { await app.close(); proxy.closeAllConnections(); await new Promise<void>(resolve => proxy.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); });
+  await new Promise<void>(resolve => proxy.listen(0, '127.0.0.1', resolve));
+  const address = proxy.address(); assert(address && typeof address !== 'string');
+  const ui = async (path: string, body?: unknown) => {
+    const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    const result = await response.json(); assert(response.ok, JSON.stringify(result)); return result;
+  };
+  const terminal = (args: string[]) => new Promise<any>((resolve, reject) => {
+    const child = spawn(process.execPath, ['--experimental-strip-types', 'cli.ts', ...args], { cwd: import.meta.dirname, env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = ''; child.stdout.on('data', chunk => { output += chunk; }); child.stderr.resume(); child.on('error', reject);
+    child.on('close', code => { try { const result = JSON.parse(output); assert.equal(code, result.exitCode); resolve(result); } catch (error) { reject(error); } });
+  });
+  const useProxy = () => { const file = join(directory, 'connection.json'), saved = JSON.parse(readFileSync(file, 'utf8')); writeFileSync(file, JSON.stringify({ ...saved, url: `http://127.0.0.1:${address.port}` })); };
+  const owner = await ui('/api/agents', { id: randomUUID(), name: 'Approver', model: 'fixture', instructions: 'Help' });
+  const other = await ui('/api/agents', { id: randomUUID(), name: 'Other', model: 'fixture', instructions: 'Help' });
+  for (const agent of [owner, other]) await ui(`/api/agents/${agent.id}/scripts`, { id: randomUUID(), revision: 0, enabled: true });
+  const workflows: string[] = [], runs: string[] = [];
+  for (let n = 0; n < 51; n++) {
+    const workflow = await ui(`/api/agents/${owner.id}/workflows`, { id: randomUUID(), revision: 0, name: `Approval ${n}`, graph: { entry: 'ask', maxSteps: 2, nodes: [{ id: 'ask', kind: 'approval', prompt: `Approve ${n}?`, yes: 'out' }, { id: 'out', kind: 'output' }] } });
+    workflows.push(workflow.id);
+    runs.push((await ui(`/api/workflows/${workflow.id}/run`, { id: randomUUID(), revision: 1, input: `Input ${n}` })).id);
+  }
+  useProxy();
+  const list = await terminal(['workflows', owner.id]); assert.equal(list.exitCode, 0); assert.deepEqual(list.workflows.map((row: any) => row.id).sort(), workflows.sort());
+  const readHook = ['workflow-webhook', owner.id, workflows[0]];
+  assert.equal((await terminal(readHook)).webhook, null);
+  const hookCommand = ['workflow-webhook-save', owner.id, workflows[0], JSON.stringify({ revision: 0, rotate: true, enabled: true }), '--id', randomUUID()];
+  dropAction = '/webhook';
+  const lostHook = await terminal(hookCommand); assert.equal(lostHook.exitCode, 5); assert.equal(lostHook.requestId, hookCommand[5]);
+  await app.close(); app = await startApp(options); useProxy();
+  const hookResult = await terminal(hookCommand); assert.equal(hookResult.exitCode, 0); const hook = hookResult.webhook; assert.equal(typeof hook.secret, 'string');
+  assert.deepEqual(actions.at(-1), actions.at(-2)); assert.equal((await terminal(hookCommand)).webhook.secret, hook.secret);
+  assert.equal((await terminal(['workflow-webhook-save', other.id, ...hookCommand.slice(2)])).exitCode, 1);
+  actions.length = 0;
+
+  const inspected = await terminal(readHook);
+  assert.equal(inspected.exitCode, 0); assert.deepEqual(inspected.webhook, { route: hook.route, revision: 1, enabled: 1 }); assert(!JSON.stringify(inspected).includes(hook.secret));
+  assert.equal((await terminal(['workflow-webhook', other.id, workflows[0]])).exitCode, 1);
+  assert.equal((await terminal([...readHook, '--wait'])).exitCode, 2);
+  const disabledHook = await terminal(['workflow-webhook-save', owner.id, workflows[0], JSON.stringify({ revision: 1, enabled: false, rotate: false }), '--id', randomUUID()]);
+  assert.equal(disabledHook.exitCode, 0); assert.equal(disabledHook.webhook.secret, undefined); assert(!JSON.stringify(disabledHook).includes(hook.secret));
+  assert.equal((await terminal(hookCommand)).exitCode, 1);
+  const rotated = await terminal(['workflow-webhook-save', owner.id, workflows[0], JSON.stringify({ revision: 2, enabled: true, rotate: true }), '--id', randomUUID()]);
+  assert.equal(rotated.exitCode, 0); assert.equal(typeof rotated.webhook.secret, 'string'); assert(rotated.webhook.secret.length > 0); assert.notEqual(rotated.webhook.secret, hook.secret);
+  assert.equal((await terminal(hookCommand)).exitCode, 1);
+  assert.equal((await terminal(['workflow-webhook-save', owner.id, workflows[0], JSON.stringify({ secret: 'forbidden' }), '--id', randomUUID()])).exitCode, 2);
+  const removeHook = ['workflow-webhook-save', owner.id, workflows[0], JSON.stringify({ revision: 3, remove: true, route: hook.route }), '--id', randomUUID()];
+  assert.equal((await terminal(removeHook)).exitCode, 0); assert.equal((await terminal(removeHook)).exitCode, 0);
+  assert.deepEqual((await terminal(readHook)).webhook, { route: null, revision: 4, enabled: 0 });
+  const recreated = await terminal(['workflow-webhook-save', owner.id, workflows[0], JSON.stringify({ revision: 4, enabled: true, rotate: true }), '--id', randomUUID()]);
+  assert.equal(recreated.exitCode, 0); assert.notEqual(recreated.webhook.route, hook.route);
+  assert.equal((await terminal(removeHook)).exitCode, 0);
+  assert.deepEqual((await terminal(readHook)).webhook, { route: recreated.webhook.route, revision: 5, enabled: 1 });
+  actions.length = 0;
+  let pending: any;
+  for (let n = 0; n < 50; n++) { pending = await terminal(['approvals', owner.id]); if (pending.approvals?.length === 51) break; await new Promise(resolve => setTimeout(resolve, 20)); }
+  assert.equal(pending.exitCode, 0); assert.deepEqual(pending.approvals.map((row: any) => row.run).sort(), runs.sort());
+  assert.deepEqual((await terminal(['approvals', other.id])).approvals, []);
+  const first = pending.approvals[0], requestId = randomUUID(), command = ['approve', owner.id, first.run, String(first.revision), 'yes', '--id', requestId];
+  assert.equal((await terminal(['approve', other.id, ...command.slice(2)])).exitCode, 1);
+  assert.equal((await terminal(['approve', owner.id, first.run, String(first.revision + 1), 'yes', '--id', randomUUID()])).exitCode, 1);
+  drop = true;
+  const lost = await terminal(command); assert.equal(lost.exitCode, 5); assert.equal(lost.id, first.run); assert.equal(lost.requestId, requestId);
+  await app.close(); app = await startApp(options); useProxy();
+  assert.equal((await terminal(command)).exitCode, 0); assert.equal(decisions.at(-1), decisions.at(-2));
+  assert.equal((await ui(`/api/workflow-runs/${first.run}`)).status, 'done');
+  assert.equal((await terminal(command.map(value => value === 'yes' ? 'no' : value))).exitCode, 1);
+  const second = pending.approvals[1];
+  assert.equal((await terminal(['approve', owner.id, second.run, String(second.revision), 'no', '--id', randomUUID()])).exitCode, 0);
+  assert.equal((await ui(`/api/workflow-runs/${second.run}`)).status, 'failed');
+  const start = ['workflow-run', owner.id, workflows[0], '1', 'CLI workflow', '--id', randomUUID(), '--wait', '--timeout', '5'];
+  const uppercase = [...start]; uppercase[6] = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA'; assert.equal((await terminal(uppercase)).exitCode, 2);
+  dropAction = '/run';
+  const lostStart = await terminal(start); assert.equal(lostStart.exitCode, 5); assert.equal(lostStart.requestId, start[6]); assert.equal(actions.length, 1);
+  await app.close(); app = await startApp(options); useProxy();
+  const started = await terminal(start); assert.equal(started.exitCode, 3); assert.equal(started.id, start[6]); assert.equal(started.turn.status, 'approval');
+  assert.equal(actions.length, 2); assert.deepEqual(actions[0], actions[1]);
+  const savedRuns = await ui(`/api/workflows/${workflows[0]}/runs`);
+  assert.equal(savedRuns.length, 2); assert.equal(savedRuns.filter((run: { id: string }) => run.id === started.id).length, 1);
+  assert.equal((await terminal(start)).id, started.id);
+  assert.equal((await terminal(['workflow-status', owner.id, started.id])).turn.status, 'approval');
+  assert.equal((await terminal(['workflow-status', other.id, started.id])).exitCode, 1);
+  assert.equal((await terminal(['approve', owner.id, started.id, String(started.turn.revision), 'yes', '--id', randomUUID()])).exitCode, 0);
+  assert.equal((await terminal(start)).turn.status, 'done');
+  assert.equal((await terminal(start.map(value => value === 'CLI workflow' ? 'Changed' : value))).exitCode, 1);
+  const next = [...start]; next[6] = randomUUID();
+  const waiting = await terminal(next); assert.equal(waiting.exitCode, 3);
+  const cancel = ['workflow-cancel', owner.id, waiting.id, String(waiting.turn.revision), '--id', randomUUID()];
+  dropAction = '/cancel';
+  const lostCancel = await terminal(cancel); assert.equal(lostCancel.exitCode, 5); assert.equal(lostCancel.id, waiting.id); assert.equal(lostCancel.requestId, cancel[5]);
+  const actionCount = actions.length;
+  await app.close(); app = await startApp(options); useProxy();
+  assert.equal((await terminal(cancel)).exitCode, 0); assert.equal(actions.length, actionCount + 1); assert.deepEqual(actions.at(-1), actions.at(-2));
+  assert.equal((await terminal(cancel)).exitCode, 0); assert.equal((await terminal(cancel)).exitCode, 0);
+  const cancelled = await terminal(['workflow-status', owner.id, waiting.id]); assert.equal(cancelled.exitCode, 1); assert.equal(cancelled.turn.status, 'cancelled');
+  assert.equal((await terminal(['workflow-schedule', owner.id, workflows[0]])).schedule.schedule, null);
+  const schedule = { revision: 0, nextAt: Date.now() + 3600000, intervalSeconds: 60, input: 'Scheduled', enabled: true };
+  const saveSchedule = ['workflow-schedule-save', owner.id, workflows[0], JSON.stringify(schedule), '--id', randomUUID()];
+  assert.equal((await terminal(['workflow-schedule-save', other.id, ...saveSchedule.slice(2)])).exitCode, 1);
+  dropAction = '/schedule';
+  const lostSchedule = await terminal(saveSchedule); assert.equal(lostSchedule.exitCode, 5); assert.equal(lostSchedule.requestId, saveSchedule[5]);
+  await app.close(); app = await startApp(options); useProxy();
+  assert.equal((await terminal(saveSchedule)).exitCode, 0); assert.deepEqual(actions.at(-1), actions.at(-2));
+  const savedSchedule = await terminal(['workflow-schedule', owner.id, workflows[0]]);
+  assert.equal(savedSchedule.schedule.schedule.revision, 1); assert.equal(savedSchedule.schedule.schedule.enabled, 1); assert.deepEqual(savedSchedule.schedule.occurrences, []);
+  assert.equal((await terminal(['workflow-schedule-save', owner.id, workflows[0], JSON.stringify({ ...schedule, revision: 1, enabled: false }), '--id', randomUUID()])).exitCode, 0);
+  assert.equal((await terminal(['workflow-schedule-save', owner.id, workflows[0], JSON.stringify(schedule), '--id', randomUUID()])).exitCode, 1);
+  assert.equal((await terminal(['workflow-schedule', owner.id, workflows[0]])).schedule.schedule.enabled, 0);
+  const boundary = { ...schedule, revision: 2, enabled: false, input: '"'.repeat(16000) };
+  assert.equal((await terminal(['workflow-schedule-save', owner.id, workflows[0], JSON.stringify(boundary), '--id', randomUUID()])).exitCode, 0);
+  assert.equal((await terminal(['workflow-schedule', owner.id, workflows[0]])).schedule.schedule.input, boundary.input);
+  assert.equal((await terminal(['workflow-schedule-save', owner.id, workflows[0], JSON.stringify({ ...boundary, revision: 3, input: boundary.input + 'x' }), '--id', randomUUID()])).exitCode, 1);
+  for (const bad of [['workflows', owner.id, '--wait'], ['approvals', owner.id, '--thread', randomUUID()], command.slice(0, 5), ['approve', owner.id, first.run, '1', 'maybe', '--id', randomUUID()], ['workflow-retry', owner.id, first.run, '0', '--id', randomUUID()]]) assert.equal((await terminal(bad)).exitCode, 2);
+  await ui(`/api/agents/${owner.id}/scripts`, { id: randomUUID(), revision: 1, enabled: false });
+  assert.equal((await terminal(command)).exitCode, 5);
+  assert.equal((await terminal(saveSchedule)).exitCode, 5);
+  assert.equal((await terminal(readHook)).exitCode, 5);
+  assert.equal((await terminal(hookCommand)).exitCode, 5);
+});
+
 test('script CLI discovers only grants, sends once, waits, preserves retry ID and reports attention/timeouts', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-cli-')); let calls = 0;
   const provider = createServer(async (req, res) => {
@@ -122,6 +351,10 @@ test('script CLI discovers only grants, sends once, waits, preserves retry ID an
     }
     const denied = await fetch(app.origin + '/api/scripts/agents', { headers: { ...headers, Origin: app.origin } }); assert.equal(denied.status, 403); await denied.arrayBuffer();
     const side = await request(`/api/agents/${b.id}/threads`, { id: randomUUID(), name: 'Cancellation scope' });
+    const listedSides = await cli(['threads', b.id], directory); assert.equal(listedSides.exitCode, 0); assert(listedSides.threads?.some(row => row.id === side.id));
+    const createdSide = await cli(['thread', b.id, 'CLI side'], directory); assert.equal(createdSide.exitCode, 0); assert.equal(createdSide.conversation?.name, 'CLI side');
+    const sideReply = await cli(['run', b.id, 'Hello side', '--thread', side.id, '--wait', '--timeout', '3'], directory);
+    assert.equal(sideReply.exitCode, 0); assert.equal(sideReply.turn.thread, side.id); assert.equal(sideReply.turn.reply, 'Answer');
     const sideTurn = await request(`/api/threads/${side.id}/turns`, { id: randomUUID(), text: 'HOLD' });
     assert.equal((await cli(['cancel',b.id,sideTurn.id], directory)).exitCode, 1);
     await request(`/api/threads/${side.id}/turns/${sideTurn.id}/cancel`, { id: randomUUID() });
@@ -157,7 +390,7 @@ test('script CLI discovers only grants, sends once, waits, preserves retry ID an
 });
 
 test('CLI answers retain receipt identity across lost replies and restart', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-cli-answer-')); let calls = 0, drop = false, dropStatus = false;
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-cli-answer-')); let calls = 0, drop = false, dropStatus = false, dropThread = false, dropSide = false;
   const posts: string[] = [], answers: string[] = [];
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk; calls++;
@@ -173,6 +406,8 @@ test('CLI answers retain receipt identity across lost replies and restart', asyn
     let body = ''; for await (const chunk of req) body += chunk;
     const response = await fetch(app.origin + req.url, { method: req.method, headers: { Authorization: req.headers.authorization!, 'Content-Type': 'application/json' }, body: body || undefined });
     const bytes = Buffer.from(await response.arrayBuffer());
+    if (req.method === 'POST' && dropThread && req.url?.endsWith('/threads')) { dropThread = false; res.destroy(); return; }
+    if (req.method === 'POST' && dropSide && req.url?.includes('/threads/') && req.url.endsWith('/turns')) { dropSide = false; res.destroy(); return; }
     if (req.url?.endsWith('/answer')) { posts.push(body); if (drop) { drop = false; res.destroy(); return; } }
     if (dropStatus && req.url?.includes('?focus=')) { dropStatus = false; res.destroy(); return; }
     res.writeHead(response.status, { 'Content-Type': 'application/json' }); res.end(bytes);
@@ -232,5 +467,30 @@ test('CLI answers retain receipt identity across lost replies and restart', asyn
     assert.equal((await terminal(['cancel',a.id,lowerId])).exitCode, 0);
     await ui(`/api/agents/${a.id}/scripts`, { id: randomUUID(), revision: 1, enabled: false });
     assert.equal((await terminal(args)).exitCode, 5); assert.equal(calls, before + 3);
+    const sideId = randomUUID(), create = ['thread', b.id, 'Terminal side', '--id', sideId];
+    dropThread = true;
+    const lostCreate = await terminal(create); assert.equal(lostCreate.exitCode, 5); assert.equal(lostCreate.id, sideId);
+    const side = await terminal(create); assert.equal(side.exitCode, 0); assert.equal(side.conversation.id, sideId);
+    assert.equal((await terminal(create)).conversation.id, sideId);
+    assert.equal((await terminal(['threads', b.id])).threads.filter((row: { id: string }) => row.id === sideId).length, 1);
+    const sideArgs = ['run', b.id, 'ASK', '--thread', sideId, '--id', randomUUID().toUpperCase(), '--wait', '--timeout', '5'];
+    dropSide = true; const beforeSide = calls;
+    const lostSend = await terminal(sideArgs); assert.equal(lostSend.exitCode, 5); assert.equal(lostSend.thread, sideId); assert.equal(lostSend.id, sideArgs[6]);
+    const sideAsk = await terminal(sideArgs); assert.equal(sideAsk.exitCode, 3); assert.equal(sideAsk.thread, sideId);
+    const sideCalls = calls; assert.equal(sideCalls, beforeSide + 1);
+    assert.equal((await terminal(sideArgs)).id, sideAsk.id); assert.equal(calls, sideCalls);
+    assert.equal((await terminal(['status', b.id, sideAsk.id])).exitCode, 1);
+    assert.equal((await terminal(['cancel', b.id, sideAsk.id])).exitCode, 1);
+    assert.equal((await terminal(['status', b.id, sideAsk.id, '--thread', sideId])).exitCode, 3);
+    const sideAnswer = ['answer', b.id, sideAsk.id, sideAsk.turn.questions[0].id, 'Yes', '--thread', sideId, '--id', randomUUID()];
+    drop = true;
+    const sideLost = await terminal(sideAnswer); assert.equal(sideLost.exitCode, 5); assert.equal(sideLost.thread, sideId);
+    const sideDone = await terminal([...sideAnswer, '--wait', '--timeout', '5']); assert.equal(sideDone.exitCode, 0); assert.equal(sideDone.turn.thread, sideId); assert.equal(calls, sideCalls + 1);
+    await app.close(); app = await startApp(options); useProxy();
+    assert.equal((await terminal(sideAnswer)).exitCode, 0); assert.equal(calls, sideCalls + 1);
+    const sideNext = await terminal(['run', b.id, 'ASK', '--thread', sideId, '--wait', '--timeout', '5']); assert.equal(sideNext.exitCode, 3);
+    assert.equal((await terminal(['cancel', b.id, sideNext.id, '--thread', sideId])).exitCode, 0);
+    assert.equal((await terminal(['status', b.id, sideNext.id, '--thread', sideId])).turn.status, 'cancelled');
+    for (const bad of [['threads', b.id, 'extra'], ['thread', b.id, 'name', '--wait'], ['run', b.id, 'ASK', '--thread', 'bad'], ['run', b.id, 'ASK', '--thread', sideId, '--thread', sideId]]) assert.equal((await terminal(bad)).exitCode, 2);
   } finally { await app.close(); proxy.closeAllConnections(); provider.closeAllConnections(); await Promise.all([new Promise<void>(resolve => proxy.close(() => resolve())), new Promise<void>(resolve => provider.close(() => resolve()))]); rmSync(dir, { recursive: true, force: true }); }
 });
