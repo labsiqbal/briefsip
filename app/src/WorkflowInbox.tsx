@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Badge, Button, Card, EmptyState, IconButton, PageHeader, Row, Section, SkeletonRows } from './ui/kit';
+import { Markdown } from './Markdown';
 import { ChevronLeft, ChevronRight, Inbox, RefreshCw } from 'lucide-react';
 
 type Notice = { seq: number; run: string; name: string; created: string; read: number };
@@ -9,7 +10,7 @@ export function WorkflowInbox({ request, onBack }: {
 }) {
   const [page, setPage] = useState<Page | null>(null), [cursors, setCursors] = useState<number[]>([]);
   const [error, setError] = useState(''), [refresh, setRefresh] = useState(0);
-  const [result, setResult] = useState<{ name: string; last: string } | null>(null);
+  const [result, setResult] = useState<{ name: string; last: string; run: string } | null>(null);
   const [busy, setBusy] = useState(false), [enabled, setEnabled] = useState(false);
   const [permission, setPermission] = useState('Notification' in window ? Notification.permission : 'unsupported');
   const heading = useRef<HTMLHeadingElement>(null), version = useRef(0), seen = useRef<number | null>(null);
@@ -53,14 +54,14 @@ export function WorkflowInbox({ request, onBack }: {
       if (current !== version.current) return;
       await request(`/api/workflow-notifications/${item.run}/read`, { id: crypto.randomUUID() });
       if (current !== version.current) return;
-      setResult({ name: item.name, last: run.last }); setRefresh(value => value + 1);
+      setResult({ name: item.name, last: run.last, run: item.run }); setRefresh(value => value + 1);
     } catch (error) { if (current === version.current) setError(error instanceof Error ? error.message : 'Result could not open. Try again.'); }
     finally { if (current === version.current) setBusy(false); }
   }
   return <div className="k-page bs-root">
     <PageHeader headingRef={heading} title={result ? result.name : 'Workflow inbox'} actions={<><Button variant="ghost" onClick={onBack}>Back to workflows</Button>{result ? <Button variant="ghost" onClick={() => setResult(null)}>Back to inbox</Button> : <IconButton label="Reload inbox" onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton>}</>} />
     {error && <Alert tone="error">{error}</Alert>}
-    {result ? <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{result.last || 'Workflow completed without result text.'}</p> : <>
+    {result ? <div className="legacy" style={{ minWidth: 0, maxWidth: '100%', overflowX: 'auto' }}><Markdown text={result.last || 'Workflow completed without result text.'} scope={`/api/workflow-runs/${result.run}`} origin={window.location.origin} /></div> : <>
       <Alert actions={<Button disabled={permission === 'unsupported' || permission === 'denied'} onClick={async () => {
         if (enabled) { setEnabled(false); return; }
         try { const value = await Notification.requestPermission(); setPermission(value); setEnabled(value === 'granted'); }

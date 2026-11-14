@@ -1,10 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import type { WorkflowCommand } from '../workflow-command';
-import { ActionMenu, Alert, Badge, Button, Card, EmptyState, Field, IconButton, Input, Row, Section, SkeletonRows, useConfirm } from './ui/kit';
+import { ActionMenu, Alert, Badge, Button, Card, Checkbox, EmptyState, Field, IconButton, Input, Row, Section, SkeletonRows, useConfirm } from './ui/kit';
 import { Ellipsis, RefreshCw } from 'lucide-react';
 
 export type WorkflowHook = { route: string | null; url?: string; revision: number; enabled: number; secret?: string };
 type Receipt = { route: string; delivery: string; received: number; result: { outcome: string; reason?: string; id?: string } };
+// ponytail: kit Checkbox has no form name; mirror checked state until it supports native submission.
+function FormCheckbox({ name, label, defaultChecked, disabled }: { name: string; label: string; defaultChecked: boolean; disabled: boolean }) {
+  const [checked, setChecked] = useState(defaultChecked);
+  return <><Checkbox checked={checked} onChange={setChecked} label={label} disabled={disabled} />{checked && <input type="hidden" name={name} value="on" disabled={disabled} />}</>;
+}
+
 export function WorkflowWebhook({ workflow, request, pending, locked, busy, refresh, secret, conflict, onLoaded, onSave, onRun }: {
   workflow: string; request: <T>(path: string, data?: unknown) => Promise<T>; pending?: WorkflowCommand;
   locked: boolean; busy: boolean; refresh: number; secret?: string; conflict: boolean; onLoaded: () => void;
@@ -33,8 +39,8 @@ export function WorkflowWebhook({ workflow, request, pending, locked, busy, refr
     }}>
       {hook?.route && <Field label="Workflow webhook URL"><Input readOnly value={hook.url} onFocus={event => event.currentTarget.select()} /></Field>}
       {secret && <Field label="Workflow webhook secret" hint="Save this secret. It will not be shown again after you leave or reload the page."><Input readOnly type="password" value={secret} onFocus={event => event.currentTarget.select()} /></Field>}
-      <label className="k-check k-check__label"><input style={{ accentColor: 'var(--color-brand)' }} name="enabled" type="checkbox" disabled={locked || conflict} defaultChecked={snapshot ? Boolean(snapshot.enabled) : !!hook?.enabled} /> Workflow webhook active</label>
-      {hook?.route && <label className="k-check k-check__label"><input style={{ accentColor: 'var(--color-brand)' }} name="rotate" type="checkbox" disabled={locked || conflict} defaultChecked={Boolean(snapshot?.rotate)} /> Replace secret. Senders must use the new secret.</label>}
+      <FormCheckbox name="enabled" label="Workflow webhook active" disabled={locked || conflict} defaultChecked={snapshot ? Boolean(snapshot.enabled) : !!hook?.enabled} />
+      {hook?.route && <FormCheckbox name="rotate" label="Replace secret. Senders must use the new secret." disabled={locked || conflict} defaultChecked={Boolean(snapshot?.rotate)} />}
       {conflict && <Alert tone="warn">Webhook has changed. Reload settings before saving again.</Alert>}
       <div className="k-inline"><Button type="submit" disabled={locked || conflict}>Save workflow webhook</Button>
       {hook?.route && <ActionMenu label="Webhook actions" trigger={<IconButton label="Webhook actions"><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: 'Delete webhook trigger', danger: true, disabled: locked || conflict, onSelect: async () => {

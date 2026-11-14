@@ -1,10 +1,16 @@
 import { useEffect, useState } from 'react';
 import type { WorkflowCommand } from '../workflow-command';
-import { Alert, Badge, Button, Card, EmptyState, Field, IconButton, Input, Row, Section, SkeletonRows, Textarea, useConfirm } from './ui/kit';
+import { Alert, Badge, Button, Card, Checkbox, EmptyState, Field, IconButton, Input, Row, Section, SkeletonRows, Textarea, useConfirm } from './ui/kit';
 import { RefreshCw } from 'lucide-react';
 
 type Schedule = { revision: number; next_at: number; interval_ms: number | null; input: string; enabled: number };
 type State = { schedule: Schedule | null; occurrences: { scheduled_at: number; run: string | null; missed: number; reason: string | null }[] };
+// ponytail: kit Checkbox has no form name; mirror checked state until it supports native submission.
+function FormCheckbox({ name, label, defaultChecked, disabled }: { name: string; label: string; defaultChecked: boolean; disabled: boolean }) {
+  const [checked, setChecked] = useState(defaultChecked);
+  return <><Checkbox checked={checked} onChange={setChecked} label={label} disabled={disabled} />{checked && <input type="hidden" name={name} value="on" disabled={disabled} />}</>;
+}
+
 export function WorkflowSchedule({ workflow, request, pending, locked, refresh, onSave, onRun, conflict, onLoaded }: {
   workflow: string; request: <T>(path: string, data?: unknown) => Promise<T>; pending?: WorkflowCommand;
   locked: boolean; refresh: number; onSave: (body: Record<string, unknown>) => Promise<void>; onRun: (id: string) => void; conflict: boolean; onLoaded: () => void;
@@ -30,7 +36,7 @@ export function WorkflowSchedule({ workflow, request, pending, locked, refresh, 
       <Field label="Workflow start time"><Input name="nextAt" type="datetime-local" step={1} required defaultValue={localDate} readOnly={locked || conflict} /></Field>
       <Field label="Repeat workflow every (minutes)" hint="Leave empty to run once."><Input name="interval" type="number" min={1} max={525600} step={1} defaultValue={snapshot ? snapshot.intervalSeconds === null ? '' : Number(snapshot.intervalSeconds) / 60 : saved?.interval_ms ? saved.interval_ms / 60000 : ''} readOnly={locked || conflict} /></Field>
       <Field label="Scheduled input"><Textarea name="input" maxLength={16000} defaultValue={String(snapshot?.input ?? saved?.input ?? '')} readOnly={locked || conflict} /></Field>
-      <label className="k-check k-check__label"><input style={{ accentColor: 'var(--color-brand)' }} name="enabled" type="checkbox" defaultChecked={snapshot ? Boolean(snapshot.enabled) : !!saved?.enabled} disabled={locked || conflict} /> Workflow schedule active</label>
+      <FormCheckbox name="enabled" label="Workflow schedule active" defaultChecked={snapshot ? Boolean(snapshot.enabled) : !!saved?.enabled} disabled={locked || conflict} />
       {conflict && <Alert tone="warn">Schedule has changed. The draft remains visible; reload the schedule before saving again.</Alert>}
       <div className="k-inline"><Button type="submit" disabled={locked || conflict}>Save workflow schedule</Button></div>
     </form>}

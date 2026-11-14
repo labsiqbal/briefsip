@@ -1,3 +1,4 @@
+import { Markdown } from './Markdown';
 import { EventConnection } from './EventConnection';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { WorkflowEditor, type Workflow, type WorkflowDraft } from './WorkflowEditor';
@@ -12,6 +13,10 @@ import { ChevronLeft, ChevronRight, Ellipsis, RefreshCw } from 'lucide-react';
 
 type Agent = { id: string; name: string; model: string };
 type Run = { id: string; version: number; revision: number; status: string; cursor: string; error: string | null; last: string; graph: WorkflowGraph; steps: { seq: number; node: string; status: string; detail: string | null; task_status: string | null; paused: number | null; thread: string | null; agent: string | null }[] };
+
+function WorkflowText({ text, run }: { text: string; run: string }) {
+  return <div className="legacy" style={{ minWidth: 0, maxWidth: '100%', overflowX: 'auto' }}><Markdown text={text} scope={`/api/workflow-runs/${run}`} origin={window.location.origin} /></div>;
+}
 
 function WorkflowVersions({ workflow, request, locked, refresh, onRestore }: {
   workflow: Workflow; request: <T>(path: string, data?: unknown) => Promise<T>; locked: boolean; refresh: number; onRestore: (version: number) => void;
@@ -41,7 +46,7 @@ function RunGraph({ run }: { run: Run }) {
   const steps = run.steps.filter(step => step.node === node), selected = run.graph.nodes.find(item => item.id === node);
   useEffect(() => { if (node) detail.current?.focus(); }, [node]);
   return <section><GraphView graph={run.graph} selected={node || run.cursor} locked={false} labels={workflowNodeLabels(run.steps)} buttonRefs={buttons.current} onSelect={id => { setNode(id); if (id === node) detail.current?.focus(); }} />
-    {selected && <div className="workflow-step-detail" tabIndex={-1} ref={detail}><h3>Step {node}</h3>{steps.length ? <ol>{steps.map((step, index) => <li key={step.seq}>Attempt {index + 1}: {workflowStepLabel(step)}{step.detail && <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{step.detail}</p>}</li>)}</ol> : <p>Step has not run in this execution yet.</p>}<Button onClick={() => { buttons.current.get(node)?.focus(); buttons.current.get(node)?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }}>Back to run graph</Button></div>}
+    {selected && <div className="workflow-step-detail" tabIndex={-1} ref={detail}><h3>Step {node}</h3>{steps.length ? <ol>{steps.map((step, index) => <li key={step.seq}>Attempt {index + 1}: {workflowStepLabel(step)}{step.detail && <WorkflowText text={step.detail} run={run.id} />}</li>)}</ol> : <p>Step has not run in this execution yet.</p>}<Button onClick={() => { buttons.current.get(node)?.focus(); buttons.current.get(node)?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }}>Back to run graph</Button></div>}
   </section>;
 }
 
@@ -184,9 +189,9 @@ export function WorkflowPanel({ owner, agents, request, onBack, renderConversati
         <RunGraph key={run.id} run={run} />
         {run.status === 'failed' && ['agent', 'model', 'condition'].includes(run.graph.nodes.find(node => node.id === run.cursor)?.kind ?? '') && run.steps.length < run.graph.maxSteps && <Button disabled={locked} onClick={async () => { if (await confirm({ title: 'Retry the failed step?', description: 'Previous effects may already have occurred. The latest node settings of the same type will be used; previous results remain saved.', confirm: 'Retry step' })) void execute({ kind: 'retry', workflow: selected, path: `/api/workflow-runs/${run.id}/retry`, body: { id: crypto.randomUUID(), revision: run.revision } }); }}>Retry failed step</Button>}
         {run.status === 'waiting' && run.graph.nodes.find(node => node.id === run.cursor)?.kind === 'wait' && <div className="legacy"><EventConnection key={`${run.id}:${run.steps.at(-1)?.seq}`} path={`/api/workflow-waits/${run.id}/${run.steps.at(-1)!.seq}`} request={request} /></div>}
-        {run.status === 'approval' && <><p>{run.graph.nodes.find(node => node.id === run.cursor)?.kind === 'approval' ? (run.graph.nodes.find(node => node.id === run.cursor) as { prompt: string }).prompt : ''}</p><div className="k-inline">{[true, false].map(accepted => <Button key={String(accepted)} disabled={locked} onClick={() => void execute({ kind: 'approve', workflow: selected, path: `/api/workflow-runs/${run.id}/approve`, body: { id: crypto.randomUUID(), revision: run.revision, accepted } })}>{accepted ? 'Approve step' : 'Reject step'}</Button>)}</div></>}
+        {run.status === 'approval' && <><WorkflowText text={run.graph.nodes.find(node => node.id === run.cursor)?.kind === 'approval' ? (run.graph.nodes.find(node => node.id === run.cursor) as { prompt: string }).prompt : ''} run={run.id} /><div className="k-inline">{[true, false].map(accepted => <Button key={String(accepted)} disabled={locked} onClick={() => void execute({ kind: 'approve', workflow: selected, path: `/api/workflow-runs/${run.id}/approve`, body: { id: crypto.randomUUID(), revision: run.revision, accepted } })}>{accepted ? 'Approve step' : 'Reject step'}</Button>)}</div></>}
         {!['done', 'failed', 'cancelled'].includes(run.status) && <ActionMenu label="Run actions" trigger={<IconButton label="Run actions"><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: 'Cancel workflow', danger: true, disabled: locked, onSelect: async () => { if (await confirm({ title: 'Cancel the workflow and its active step?', description: 'Saved results remain available.', confirm: 'Cancel workflow', danger: true })) void execute({ kind: 'cancel', workflow: selected, path: `/api/workflow-runs/${run.id}/cancel`, body: { id: crypto.randomUUID(), revision: run.revision } }); } }]} />}
-        <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{run.last}</p><Card>{run.steps.map(step => <Row key={step.seq} title={step.node} meta={<Badge>{workflowStepLabel(step)}</Badge>} trailing={step.thread && step.agent && <Button ref={element => { if (element) stepButtons.current.set(step.seq, element); else stepButtons.current.delete(step.seq); }} size="sm" onClick={() => { navigate(); returnStep.current = step.seq; setConversation({ thread: step.thread!, agent: step.agent!, node: step.node }); }}>Open step {step.node}</Button>}>{step.detail && <span style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{step.detail}</span>}</Row>)}</Card>
+        <WorkflowText text={run.last} run={run.id} /><Card>{run.steps.map(step => <Row key={step.seq} title={step.node} meta={<Badge>{workflowStepLabel(step)}</Badge>} trailing={step.thread && step.agent && <Button ref={element => { if (element) stepButtons.current.set(step.seq, element); else stepButtons.current.delete(step.seq); }} size="sm" onClick={() => { navigate(); returnStep.current = step.seq; setConversation({ thread: step.thread!, agent: step.agent!, node: step.node }); }}>Open step {step.node}</Button>}>{step.detail && <WorkflowText text={step.detail} run={run.id} />}</Row>)}</Card>
       </Section>}
     </>}
   </div>;
