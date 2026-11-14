@@ -2,22 +2,27 @@
 .agents-dropdown:hover { background: var(--color-bg-hover); color: var(--color-ink); }
 .agents-dropdown > svg, .project-navigation__chevron { flex-shrink: 0; transition: transform 120ms var(--ease-out); }
 .agents-dropdown[data-state="open"] > svg, [data-state="open"] > .project-navigation__chevron { transform: rotate(90deg); }
-.project-navigation { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; }
+.project-navigation { display: flex; flex-direction: column; gap: 4px; }
 .project-navigation__header { display: flex; align-items: center; min-width: 0; border-radius: 10px; }
 .project-navigation__header:hover, .project-navigation__section:hover { background: var(--color-bg-hover); }
 .project-navigation__header.is-selected { background: var(--color-bg-active); }
-.project-navigation__header > .k-icon-btn, .project-navigation__section > .k-icon-btn { flex-shrink: 0; width: 40px; height: 40px; }
-/* Chevron and row menus stay quiet like the machine headers: no filled circle until hover or focus. */
+/* Disclosure state is not a menu-open state: keep expanded chevrons unfilled. */
 .project-navigation__header > .k-icon-btn, .project-navigation__section > .k-icon-btn { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; box-shadow: none; color: var(--color-text-tertiary); }
+.project-navigation__header > .k-icon-btn[data-state="open"] { background: transparent; }
 .project-navigation__header > .k-icon-btn:hover, .project-navigation__section > .k-icon-btn:hover { background: var(--color-bg-hover); color: var(--color-text-secondary); }
 .project-navigation__name { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; min-height: 40px; font-size: 13px; font-weight: 600; text-align: left; }
 .project-navigation__name > svg { flex-shrink: 0; color: var(--color-text-secondary); }
 .project-navigation__name > span, .project-navigation__room > span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-navigation__sections { margin-left: 22px; }
 .project-navigation__section { display: flex; min-width: 0; border-radius: 8px; }
-.project-navigation__room { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; min-height: 40px; padding: 4px 8px; border-radius: 8px; color: var(--color-text-secondary); text-align: left; font-size: 13px; }
+.project-navigation__room { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; min-height: 32px; padding: 4px 8px; border-radius: 8px; color: var(--color-text-secondary); text-align: left; font-size: 13px; }
 .project-navigation__room > svg { flex-shrink: 0; }
 .project-navigation__room.is-selected { background: var(--color-bg-active); color: var(--color-ink); font-weight: 600; }
 .project-navigation__unread { width: 6px; height: 6px; border-radius: 50%; background: var(--color-brand); flex-shrink: 0; margin-left: auto; }
-.project-navigation > .bot-list__empty { margin-top: 6px; min-height: 40px; font-size: 13px; }
+.project-navigation__new { display: flex; align-items: center; gap: 8px; min-height: 32px; margin-top: 8px; padding: 4px 8px; border-radius: 8px; color: var(--color-text-secondary); font-size: 13px; text-align: left; }
+.project-navigation__new:hover { background: var(--color-bg-hover); color: var(--color-ink); }
+.project-navigation__header > .k-icon-btn[aria-haspopup="menu"], .project-navigation__section > .k-icon-btn { opacity: 0; }
+.project-navigation__header:hover > .k-icon-btn, .project-navigation__header:focus-within > .k-icon-btn, .project-navigation__section:hover > .k-icon-btn, .project-navigation__section:focus-within > .k-icon-btn, .project-navigation .k-icon-btn[data-state="open"] { opacity: 1; }
+.project-navigation__section:has(.is-selected) { background: var(--color-bg-active); }
+@media (hover: none) { .project-navigation .k-icon-btn { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .agents-dropdown > svg, .project-navigation__chevron { transition: none; } }

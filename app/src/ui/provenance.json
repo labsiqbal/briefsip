@@ -5,9 +5,10 @@
   "notice": "app/src/ui/NOTICE",
   "entries": [
     { "sourcePath": "web/src/components/config/BotSettingsModal.tsx", "localPath": "app/src/App.tsx", "adaptation": "Routine list hierarchy, enabled switch, run-now and delete affordances adapted into the Routines hub using Briefsip APIs, revision recovery and owner visibility rules." },
+    { "sourcePath": "web/src/components/Sidebar.tsx", "localPath": "app/src/App.tsx", "adaptation": "Bot HQ header actions, search, agent rows and compact footer composed with the Briefsip Radix kit; Owner-selected Agents / Projects tabs separate machine-grouped direct chats from local projects and sections. Routines and Workflows remain header actions; original Briefsip avatars and request paths retained." },
     { "sourcePath": "web/src/styles/tokens.css", "localPath": "app/src/ui/tokens.css", "adaptation": "Briefsip brand colors replace per-bot pink; data-theme dark/light/system selectors; legacy panel variables mapped onto tokens." },
     { "sourcePath": "web/src/styles/base.css", "localPath": "app/src/ui/base.css", "adaptation": "Focus ring uses Briefsip token." },
-    { "sourcePath": "web/src/styles/shell.css", "localPath": "app/src/ui/shell.css", "adaptation": "Unchanged layout; Briefsip additions live in app/src/ui/briefsip.css." },
+    { "sourcePath": "web/src/styles/shell.css", "localPath": "app/src/ui/shell.css", "adaptation": "Bot HQ 60px header, rows and footer adapted for the Owner-selected Agents / Projects sidebar tabs, 44px agent rows, compact header controls and styled scrollbar. Briefsip additions live in app/src/ui/briefsip.css." },
     { "sourcePath": "web/src/styles/chat.css", "localPath": "app/src/ui/chat.css", "adaptation": "Notice class renamed to chat-notice; system-theme dark variant; dead bubble/group/sender-label rules removed for Owner-selected message rows." },
     { "sourcePath": "web/src/styles/details.css", "localPath": "app/src/ui/details.css", "adaptation": "Briefsip focus token; compact identity and Computer row, Radix tab pills, channel member avatars and inline read action. Existing resizable right edge retained." },
     { "sourcePath": "web/src/styles/modals.css", "localPath": "app/src/ui/modals.css", "adaptation": "Focus ring uses Briefsip token." },

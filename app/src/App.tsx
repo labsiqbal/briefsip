@@ -23,14 +23,13 @@ import { livePartial, turnPollDelay, type TurnActivityData } from './ui/transcri
 import { EventConnection } from './EventConnection';
 import { applyPresentation, readPresentation } from '../presentation';
 import { CreateProject, HelpPage, HowBriefsipWorks, ProjectHome, ProjectSidebar, ProjectSourceControl, useProjects } from './Projects';
-import { AgentSidebar } from './AgentSidebar';
 import { MachinesPanel, RemoteAgentDetail, useMachines } from './MachinesPanel';
 import { HtmlPreview } from './HtmlPreview';
 import { QuestionCard, type Question } from './QuestionCard';
 import { ApprovalCard, type AppApproval } from './ApprovalCard';
 import { CompactionPanel } from './CompactionPanel';
 import { lazy, Suspense, useEffect, useRef, useState, useId, type FormEvent, type ReactNode } from 'react';
-import { Bell, BellOff, Brain, CalendarClock, CircleAlert, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Ellipsis, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
+import { Bell, BellOff, Brain, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
 import { PanelResizeHandle, detailsPanel, sidebarPanel, useResizablePanel } from './ui/resizable';
@@ -1236,6 +1235,8 @@ const settingsSections: { id: SettingsSection; label: string }[] = [
 type Dialog = 'agent' | 'project' | 'edit' | null;
 const collapsedKey = 'briefsip:sidebar-collapsed';
 const machineGroupsKey = 'briefsip:sidebar-machine-groups';
+const sidebarTabKey = 'briefsip:sidebar-tab';
+type SidebarTab = 'agents' | 'projects';
 const machineStatus = { online: 'Online', offline: 'Offline', unauthorized: 'Unauthorized', 'version-mismatch': 'Version mismatch' };
 
 function MachineGroup({ name, subtitle, count, status, expanded, onExpandedChange, local, children }: {
@@ -1267,10 +1268,11 @@ function App() {
   const [selectedProject, setSelectedProject] = useState('');
   const [projectThread, setProjectThread] = useState<{project:string;thread:string;agent:string} | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
-  const [newMenu, setNewMenu] = useState(false);
   const [notificationsMuted, setNotificationsMuted] = useState(() => { try { return localStorage.getItem('briefsip:workflow-notifications-muted') === '1'; } catch { return false; } });
   const [notificationError, setNotificationError] = useState('');
-  const [search, setSearch] = useState(''), [query, setQuery] = useState('');
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() => { try { return localStorage.getItem(sidebarTabKey) === 'projects' ? 'projects' : 'agents'; } catch { return 'agents'; } });
+  const [searches, setSearches] = useState({ agents: '', projects: '' });
+  const search = searches[sidebarTab], query = search.trim().toLocaleLowerCase();
   const [searchMachineGroups, setSearchMachineGroups] = useState<Record<string, boolean>>({});
   const [onlyOnline, setOnlyOnline] = useState(false), [showHidden, setShowHidden] = useState(false), [filterMenu, setFilterMenu] = useState(false);
   const [machineGroups, setMachineGroups] = useState<Record<string, boolean>>(() => { try { const value: unknown = JSON.parse(localStorage.getItem(machineGroupsKey) ?? '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).filter(([, expanded]) => typeof expanded === 'boolean')) as Record<string, boolean> : {}; } catch { return {}; } });
@@ -1283,7 +1285,8 @@ function App() {
   const directoryRequest = useRef(0);
   function setCollapsed(value: boolean) { setCollapsedState(value); try { localStorage.setItem(collapsedKey, value ? '1' : '0'); } catch { /* Applies to this page only. */ } }
   function setMachineExpanded(key: string, expanded: boolean) { if (query) { setSearchMachineGroups(current => ({ ...current, [key]: expanded })); return; } setMachineGroups(current => { const next = { ...current, [key]: expanded }; try { localStorage.setItem(machineGroupsKey, JSON.stringify(next)); } catch { /* Applies to this page only. */ } return next; }); }
-  useEffect(() => { const timer = setTimeout(() => { setQuery(search.trim().toLocaleLowerCase()); setSearchMachineGroups({}); }, 140); return () => clearTimeout(timer); }, [search]);
+  useEffect(() => { setSearchMachineGroups({}); }, [search, sidebarTab]);
+  useEffect(() => { try { localStorage.setItem(sidebarTabKey, sidebarTab); } catch { /* Keep tabs usable without storage. */ } }, [sidebarTab]);
   async function load(propagate = false) {
     const version = ++directoryRequest.current;
     try { const [data, rooms, local, summary] = await Promise.all([api<Directory>('/api/agents'), api<Channel[]>('/api/channels'), api<Environment>('/api/environment'), api<{ summaries: SidebarSummary[] }>('/api/sidebar/summary')]); if (version !== directoryRequest.current) return; directoryRequest.current++; setDirectory(data); setChannels(rooms); setEnvironment(local); setSummaries(summary.summaries); setSelected(id => id || data.agents[0]?.id || ''); setError(''); }
@@ -1311,6 +1314,7 @@ function App() {
       if (!(event.metaKey || event.ctrlKey)) return;
       const name = event.key.toLowerCase();
       if (name === 'b') { event.preventDefault(); setCollapsedState(value => { try { localStorage.setItem(collapsedKey, value ? '0' : '1'); } catch { /* Applies to this page only. */ } return !value; }); }
+      else if (name === '1' || name === '2') { if (document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')) return; event.preventDefault(); setSidebarTab(name === '1' ? 'agents' : 'projects'); }
       else if (name === ',') { event.preventDefault(); setSettings(current => current ?? 'skills'); }
     };
     window.addEventListener('keydown', key);
@@ -1327,10 +1331,10 @@ function App() {
   const section = sectionProject?.sections.find(section => section.id === selectedChannel);
   const channel = storedChannel && section && sectionProject ? {...storedChannel, name: `${sectionProject.name} / # ${section.name}`} : storedChannel;
   const project = projectState.projects.find(item => item.id === selectedProject);
-  const openProject = (id: string) => { setSelectedProject(id); setProjectThread(null); setView('chat'); setDialog(null); setSelectedChannel(''); };
-  const openAgent = (id: string) => { setSelectedProject(''); setProjectThread(null); setView('chat'); setOpenedThread(null); setSelected(id); setSelectedChannel(''); setDialog(null); };
+  const openProject = (id: string) => { setSidebarTab('projects'); setSelectedProject(id); setProjectThread(null); setView('chat'); setDialog(null); setSelectedChannel(''); };
+  const openAgent = (id: string) => { setSidebarTab('agents'); setSelectedProject(''); setProjectThread(null); setView('chat'); setOpenedThread(null); setSelected(id); setSelectedChannel(''); setDialog(null); };
   const openChannel = (id: string) => { setSelectedProject(''); setProjectThread(null); setView('chat'); setSelectedChannel(id); setDialog(null); };
-  const openSection = (id: string) => { openChannel(id); void load(); };
+  const openSection = (id: string) => { setSidebarTab('projects'); openChannel(id); void load(); };
   const openThread = (owner: string, thread: string) => { setSelectedProject(''); setProjectThread(null); if(owner.includes('@')){const [agent,machine]=owner.split('@');setRemoteSelection({machine,agent});setView('remote');setDialog(null);setSettings(null);return;} setOpenedThread({ agent: owner, thread }); setSelected(owner); setSelectedChannel(''); setView('chat'); setDialog(null); setSettings(null); };
   const relativeTime = (value: string | null | undefined) => { if (!value) return ''; const age = Math.max(0, Date.now() - Date.parse(value)); if (!Number.isFinite(age)) return ''; const minutes = Math.floor(age / 60000); if (minutes < 60) return `${Math.max(1, minutes)}m`; const hours = Math.floor(minutes / 60); if (hours < 24) return `${hours}h`; return `${Math.floor(hours / 24)}d`; };
   const summaryByAgent = new Map(summaries.map(item => [item.agent, item]));
@@ -1365,63 +1369,68 @@ function App() {
     {collapsed && <button type="button" className="icon-btn icon-btn--bordered sidebar-reveal" onClick={() => setCollapsed(false)} aria-label="Expand sidebar" title="Sidebar (Ctrl/Cmd+B)"><PanelLeft size={16} aria-hidden /></button>}
     {!collapsed && <aside className="sidebar" style={{ width: `${sidebar.width}px` }} aria-label="Workspace navigation">
       <div className="sidebar__titlebar">
-        {!collapsed && <span className="sidebar__bots-label">BOTS</span>}
-        <div className="sidebar__controls">
-          <IconButton label={notificationsMuted ? 'Unmute workflow notifications' : 'Mute workflow notifications'} aria-pressed={notificationsMuted} title="Workflow inbox notifications only" onClick={() => { try { localStorage.setItem('briefsip:workflow-notifications-muted', notificationsMuted ? '0' : '1'); setNotificationsMuted(!notificationsMuted); setNotificationError(''); } catch { setNotificationError('Notification preference could not be saved. Check browser storage.'); } }}>{notificationsMuted ? <BellOff size={16} aria-hidden /> : <Bell size={16} aria-hidden />}</IconButton>
-          <button type="button" className="icon-btn icon-btn--plain" onClick={() => setCollapsed(!collapsed)} aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} title="Sidebar (Ctrl/Cmd+B)"><PanelLeft size={16} aria-hidden /></button>
-          {!collapsed && <span className="sidebar__new">
-            <button type="button" className="icon-btn" onClick={() => setNewMenu(!newMenu)} aria-label="Create new" aria-haspopup="menu" aria-expanded={newMenu} title="Create new"><Plus size={16} aria-hidden /></button>
-            {newMenu && <Menu align="right" label="Create new" onClose={() => setNewMenu(false)} items={[
-              { label: 'New agent', onSelect: () => setDialog('agent') },
-              { label: 'New project', onSelect: () => setDialog('project'), disabled: !directory },
-              { label: 'Import agent', onSelect: () => setSettings('import'), disabled: !directory },
-            ]} />}
-          </span>}
-        </div>
+        <span className="sidebar__bots-label">Bots</span>
+        <nav className="sidebar__controls" aria-label="Automation">
+          <IconButton label="Routines" aria-current={view === 'routines' ? 'page' : undefined} disabled={!directory} onClick={() => { setRoutineAgent(''); setView('routines'); setDialog(null); }}><CalendarClock size={16} aria-hidden /></IconButton>
+          <IconButton label="Workflows" aria-current={view === 'workflows' ? 'page' : undefined} disabled={!directory} onClick={() => { setView('workflows'); setDialog(null); }}><WorkflowIcon size={16} aria-hidden /></IconButton>
+          <ActionMenu label="Create new" trigger={<IconButton label="Create new"><Plus size={16} aria-hidden /></IconButton>} items={[
+            { label: 'New agent', onSelect: () => setDialog('agent'), disabled: !directory },
+            { label: 'New project', onSelect: () => setDialog('project'), disabled: !directory },
+            { label: 'Add a machine', onSelect: () => setSettings('machines') },
+          ]} />
+          <IconButton label="Collapse sidebar" aria-keyshortcuts="Control+b Meta+b" onClick={() => setCollapsed(true)}><PanelLeft size={16} aria-hidden /></IconButton>
+        </nav>
       </div>
+      <div className="sidebar__tabs">
+      <Tabs<SidebarTab> label="Sidebar" value={sidebarTab} onChange={setSidebarTab} tabs={[
+        { value: 'agents', label: 'Agents', count: (directory?.agents ?? []).filter(item => showHidden || !item.hidden).length + remoteMachinesState.machines.reduce((count, machine) => count + machine.agents.length, 0) },
+        { value: 'projects', label: 'Projects', count: projectState.projects.length },
+      ]}>
       <div className="sidebar__search">
-        <Search size={15} aria-hidden /><Input aria-label="Search agents, projects and sections" placeholder="Search agents, projects and sections..." value={search} onChange={event => setSearch(event.target.value)} />
-        <DropdownMenu.Root open={filterMenu} onOpenChange={setFilterMenu}>
+        <Search size={15} aria-hidden /><Input aria-label={sidebarTab === 'agents' ? 'Search agents' : 'Search projects'} placeholder={sidebarTab === 'agents' ? 'Search agents' : 'Search projects'} value={search} onChange={event => setSearches(current => ({ ...current, [sidebarTab]: event.target.value }))} />
+        {sidebarTab === 'agents' && <DropdownMenu.Root open={filterMenu} onOpenChange={setFilterMenu}>
           <DropdownMenu.Trigger asChild><IconButton label="Filter sidebar" aria-pressed={onlyOnline || showHidden}><Filter size={15} aria-hidden /></IconButton></DropdownMenu.Trigger>
           <DropdownMenu.Portal><DropdownMenu.Content className="k-pop k-menu" align="end" sideOffset={6}>
             <DropdownMenu.CheckboxItem className="k-menu__item" checked={onlyOnline} onCheckedChange={setOnlyOnline}><DropdownMenu.ItemIndicator><Check size={14} aria-hidden /></DropdownMenu.ItemIndicator>Only online</DropdownMenu.CheckboxItem>
             <DropdownMenu.CheckboxItem className="k-menu__item" checked={showHidden} onCheckedChange={setShowHidden}><DropdownMenu.ItemIndicator><Check size={14} aria-hidden /></DropdownMenu.ItemIndicator>Show hidden</DropdownMenu.CheckboxItem>
           </DropdownMenu.Content></DropdownMenu.Portal>
-        </DropdownMenu.Root>
+        </DropdownMenu.Root>}
       </div>
       <div className="sidebar__scroll">
-        <nav className="islands" aria-label="Automation">
-          <button type="button" className={`island${view === 'routines' ? ' is-selected' : ''}`} aria-current={view === 'routines' ? 'page' : undefined} disabled={!directory} onClick={() => { setRoutineAgent(''); setView('routines'); setDialog(null); }} title="Routines"><CalendarClock size={16} aria-hidden />{!collapsed && <span>Routines</span>}</button>
-          <button type="button" className={`island${view === 'workflows' ? ' is-selected' : ''}`} aria-current={view === 'workflows' ? 'page' : undefined} disabled={!directory} onClick={() => { setView('workflows'); setDialog(null); }} title="Workflows"><WorkflowIcon size={16} aria-hidden />{!collapsed && <span>Workflows</span>}</button>
-        </nav>
+        <TabPanel value="agents">
         <nav className="machine-groups" aria-label="Machines">
         <MachineGroup name="This device" subtitle={environment?.name} count={(directory?.agents ?? []).filter(item => showHidden || !item.hidden).length} expanded={query ? searchMachineGroups.local !== false : machineGroups.local !== false} onExpandedChange={expanded => setMachineExpanded('local', expanded)} local>
           <div className="bot-list sidebar-agents">
-            <AgentSidebar agents={localAgents} searching={!!query} renderAgent={agentRow}>
+            <nav className="bot-list" aria-label="Choose agent">{localAgents.map(item => agentRow(item.id))}
             {!!directory?.agents.length && !localAgents.length && <p className="machine-group__note">No matching agents.</p>}
             {directory && !directory.agents.length && <button type="button" className="bot-list__empty" onClick={() => setDialog('agent')}><span className="bot-list__empty-plus"><Plus size={14} aria-hidden /></span><span><span className="bot-row__name">New agent</span><span className="bot-row__preview">Assign a task, such as research or a summary</span></span></button>}
-            </AgentSidebar>
+            </nav>
           </div>
-          <ProjectSidebar state={projectState} selectedProject={selectedProject} selectedSection={view === 'chat' ? selectedChannel : ''} search={query} onProject={openProject} onSection={openSection} onNew={() => setDialog('project')} onArchived={id => { if (selectedProject === id || channel?.project === id || projectThread?.project === id) openAgent(selected); void load(); }} />
+
         </MachineGroup>
         {remoteMachines.map(machine => <MachineGroup key={machine.id} name={machine.name} subtitle={`${machine.name} · ${machineStatus[machine.status]}`} count={machine.agentCount} status={machine.status} expanded={query ? searchMachineGroups[machine.id] !== false : machineGroups[machine.id] !== false} onExpandedChange={expanded => setMachineExpanded(machine.id, expanded)}>
           {machine.status !== 'online' && <p className="machine-group__note">{machineStatus[machine.status]} · Last known agents</p>}
-          <AgentSidebar machine={machine.id} label={`Agents on ${machine.name}`} agents={machine.agents.filter(item => matches(item.name, summaryFor(`${item.id}@${machine.id}`)?.preview, item.role))} searching={!!query} renderAgent={id => { const item = machine.agents.find(item => item.id === id)!;
+          <nav className="bot-list" aria-label={`Agents on ${machine.name}`}>{machine.agents.filter(item => matches(item.name, summaryFor(`${item.id}@${machine.id}`)?.preview, item.role)).map(item => {
               const current = view === 'remote' && remoteSelection?.machine === machine.id && remoteSelection.agent === item.id, summary = summaryFor(`${item.id}@${machine.id}`);
               return <button key={item.id} type="button" className={`bot-row${current ? ' is-selected' : ''}`} aria-label={`${item.name} on ${machine.name}`} aria-current={current ? 'page' : undefined} onClick={() => { setRemoteSelection({ machine: machine.id, agent: item.id }); setView('remote'); setDialog(null); }}>
                 <span className="bot-row__avatar"><AgentAvatar agent={item} size={36} /><span className={`status-dot${machine.status === 'online' ? ' is-online' : ' is-offline'}`} role="img" aria-label={machineStatus[machine.status]} /></span>
                 <span className="bot-row__text"><span className="bot-row__name">{item.name}</span><span className="bot-row__preview" title={plainPreview(summary?.preview) || undefined}>{item.role || plainPreview(summary?.preview) || 'No role yet'}</span></span>{summary?.time && <time className="bot-row__time" dateTime={summary.time}>{relativeTime(summary.time)}</time>}
               </button>;
-            }}>
+            })}
             {!machine.agents.length && <p className="machine-group__note">No agents cached yet.</p>}
             {!!machine.agents.length && !machine.agents.some(item => matches(item.name, summaryFor(`${item.id}@${machine.id}`)?.preview, item.role)) && <p className="machine-group__note">No matching agents.</p>}
-          </AgentSidebar>
+          </nav>
         </MachineGroup>)}
         {remoteMachinesState.error && <p className="machine-group__note" role="status">Machines could not be refreshed.</p>}
         {!remoteMachinesState.machines.length && <button type="button" className="bot-list__empty" onClick={() => setSettings('machines')}><Monitor size={16} aria-hidden /><span><span className="bot-row__name">Pair a machine</span><span className="bot-row__preview">See agents on your other computers</span></span></button>}
         </nav>
+        </TabPanel>
+        <TabPanel value="projects">
+          <ProjectSidebar state={projectState} selectedProject={selectedProject} selectedSection={view === 'chat' ? selectedChannel : ''} search={query} onProject={openProject} onSection={openSection} onNew={() => setDialog('project')} onArchived={id => { if (selectedProject === id || channel?.project === id || projectThread?.project === id) openAgent(selected); void load(); }} />
+        </TabPanel>
       </div>
-      {notificationError && <p className="machine-group__note" role="status">{notificationError}</p>}
+      </Tabs>
+      </div>
       <div className="sidebar__footer">
         <div className="sidebar__fade" />
         {!collapsed && <div className="provider-status" role="status"><i className={directory?.configured ? 'is-on' : ''} aria-hidden /><span>{activityError ? 'Status not updated. Trying again.' : directory?.configured ? 'Provider configured' : 'Provider not connected'}</span></div>}
@@ -1460,7 +1469,7 @@ function App() {
             : settings === 'backup' ? <Suspense fallback={<p className="empty" role="status">Loading backup...</p>}><BackupPanel onClose={() => setSettings(null)} /></Suspense>
             : settings === 'import' ? <Suspense fallback={<p className="empty" role="status">Loading agent import...</p>}><AgentTemplateImport request={api} onClose={() => setSettings(null)} onCreated={item => { created(item); setSettings(null); }} /></Suspense>
             : settings === 'help' ? <HelpPage />
-            : <Suspense fallback={<p className="empty" role="status">Loading appearance settings...</p>}><PresentationSettings /></Suspense>}
+            : <Suspense fallback={<p className="empty" role="status">Loading appearance settings...</p>}><PresentationSettings /><div className="k-page bs-root"><Section title="Notifications"><Row title="Workflow inbox notifications" meta="Applies in this browser." trailing={<Switch label="Workflow inbox notifications" checked={!notificationsMuted} onChange={enabled => { try { localStorage.setItem('briefsip:workflow-notifications-muted', enabled ? '0' : '1'); setNotificationsMuted(!enabled); setNotificationError(''); } catch { setNotificationError('Notification preference could not be saved. Check browser storage.'); } }} />}/>{notificationError && <Alert tone="error">{notificationError}</Alert>}</Section></div></Suspense>}
         </div>
       </div>
     </RadixDialog.Content></RadixDialog.Portal>
