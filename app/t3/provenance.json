@@ -621,6 +621,79 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "compatibilityCheck": "app/remote-agents.test.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/orchestration-v2/Orchestrator.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "1953abfb22164a93b918b3c4f55b71533416f0c9f5cfad81a7c837fea8fe4930",
+      "symbols": [
+        "dispatchThreadFork",
+        "dispatchSteer"
+      ],
+      "localPath": "app/server.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Translate message dispatch admission, stable target selection, journal-before-effect ordering, late-steer queue fallback and restart links to SQLite/Node.",
+      "compatibilityCheck": "app/dispatch.test.ts; app/harness.test.ts; work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/server/src/orchestration-v2/CommandPolicy.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "1c8edf8a27a6f5472219c18c51d2d29debaa90cf8a830f720fa9ac556bb166b1",
+      "symbols": [
+        "decideSteeringExecution"
+      ],
+      "localPath": "app/dispatch.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Translate capability-driven active steering versus interrupt_restart policy into plain TypeScript; API tool-loop safe points and conservative fresh harness sessions.",
+      "compatibilityCheck": "app/dispatch.test.ts; app/harness.test.ts; work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/server/src/orchestration-v2/ThreadForkService.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "0e54be560d9f8df9c44607c7e182106309e0a272231d6b5943f1cb708c1e9c5f",
+      "symbols": [
+        "ThreadForkPlanV2",
+        "isForkableSourceRunStatus",
+        "ThreadForkServiceV2"
+      ],
+      "localPath": "app/dispatch.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt same-agent fork lineage and ContextTransfer source cutoff to an immutable bounded portable transcript, native SQLite transaction and idempotent request receipt. Briefsip requires a completed text answer.",
+      "compatibilityCheck": "app/dispatch.test.ts; app/harness.test.ts; work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/TimelineAssistantRows.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "5b00daeafabfee1ae64965b71dd553b41d253afbb64ac5fb3579ed40e07e0793",
+      "symbols": [
+        "AssistantForkButton"
+      ],
+      "localPath": "app/src/App.tsx",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt response-level fork action and in-flight guard to Briefsip Radix Button, durable browser request identity and same-agent side-thread navigation.",
+      "compatibilityCheck": "app/dispatch.test.ts; app/harness.test.ts; work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/composerCommandKey.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "eca4cace98adccce8712fbdcf2e2956dc41630a7747b395e3baec810641e085b",
+      "symbols": [
+        "composerCommandKeyHandler"
+      ],
+      "localPath": "app/src/App.tsx",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt per-submission keyboard intent and capability-aware steer shortcut to existing textarea: Enter queues, Ctrl/Cmd+Enter steers when supported; button follows visible dispatch mode.",
+      "compatibilityCheck": "app/dispatch.test.ts; app/harness.test.ts; work/rebuild/ui-smoke/smoke.mjs"
     }
   ],
   "serverUpdateSourceEntries": [

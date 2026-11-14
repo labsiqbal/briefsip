@@ -35,6 +35,28 @@ for(const runtime of ['codex','claude'] as const) {
       const usage=await f.request('/api/usage');assert(usage.calls.some((call:any)=>call.input_tokens===11&&call.output_tokens===7));
     } finally {await f.close();}
   });
+  test(`${runtime}: Steer degrades to linked Restart with partial context and fresh native session`, async () => {
+    const f = await fixture(runtime); try {
+      const first = await f.send('HOLD'); await f.until(first, row => !!row.partial?.text);
+      const active = await f.request(f.path + '/dispatch'); assert.equal(active[0].capabilities.steer, false);
+      const command = { id: randomUUID(), text: 'RESTART_FINISH', dispatchMode: 'steer', targetTurn: first };
+      const receipt = await f.request(f.path + '/turns', command); assert.equal(receipt.dispatch_mode, 'restart'); assert.match(receipt.dispatch_label, /cannot steer/);
+      const done = await f.until(command.id, row => ['done','failed'].includes(row.status)); assert.equal(done.status, 'done', done.error);
+      assert.equal((await f.until(first, row => row.status === 'cancelled')).status, 'cancelled');
+      assert.equal(done.activity.dispatch[0].source_turn, first);
+      const log = readFileSync(join(f.workspace, 'fake-log.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      const prompt = log.filter(row => row.type === 'turn').at(-1).prompt;
+      assert.match(prompt, /Harness /); assert.match(prompt, /Never replay uncertain operations/);
+      assert.equal(log.filter(row => runtime === 'codex' ? row.method === 'thread/resume' : row.type === 'init' && row.resume).length, 0);
+      const count = f.minted.length; await f.restart(); assert.deepEqual(await f.request(f.path + '/turns', command), receipt); assert.equal(f.minted.length, count);
+      const follow = await f.send('FOLLOW_RESTART_FINISH'); assert.equal((await f.until(follow, row => ['done','failed'].includes(row.status))).status, 'done');
+      const later = readFileSync(join(f.workspace, 'fake-log.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      const turns = later.filter(row => row.type === 'turn');
+      assert.equal(turns.at(-1).session, turns.at(-2).session);
+      assert.notEqual(turns.at(-1).session, turns[0].session);
+      assert.equal(later.filter(row => runtime === 'codex' ? row.method === 'thread/resume' : row.type === 'init' && row.resume).length, 1);
+    } finally { await f.close(); }
+  });
   test(`${runtime}: durable approval allow, deny, prefix grant and scoped receipt`,async()=>{
     const f=await fixture(runtime);try {
       async function approval(decision:string){const id=await f.send('APPROVE'),row=await f.until(id,row=>row.harnessApprovals?.length||row.status==='failed');assert.equal(row.status,'running',row.error);const card=row.harnessApprovals[0];assert.equal(card.prefix,'echo hello');const body={id:randomUUID(),revision:card.revision,decision};await f.request(`${f.path}/turns/${id}/harness-approvals/${card.id}`,body);await f.request(`${f.path}/turns/${id}/harness-approvals/${card.id}`,body);const done=await f.until(id,row=>['done','failed'].includes(row.status));assert.equal(done.status,'done',done.error);assert.equal(done.reply,decision==='deny'?'Harness denied':'Harness finished');return id;}

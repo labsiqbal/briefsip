@@ -12,7 +12,7 @@ const arg = flag => { const at = process.argv.indexOf(flag); return at >= 0 ? pr
 const log = value => appendFileSync('fake-log.jsonl', JSON.stringify(value) + '\n');
 const send = value => process.stdout.write(JSON.stringify(value) + '\n');
 const hasResume = process.argv.some(value => value === '--resume' || value.startsWith('--resume='));
-let session = codex ? 'fake-codex-session' : (hasResume ? (arg('--resume') ?? process.argv.find(value => value.startsWith('--resume='))?.slice(9)) : undefined) ?? arg('--session-id') ?? randomUUID(), prompt = '', callback = '', approvalId = '';
+let session = (hasResume ? (arg('--resume') ?? process.argv.find(value => value.startsWith('--resume='))?.slice(9)) : undefined) ?? arg('--session-id') ?? randomUUID(), prompt = '', callback = '', approvalId = '';
 const notify = (method, params) => send({ method, params: { threadId: session, ...params } });
 function delta(text) { if (codex) notify('item/agentMessage/delta', { delta: text }); else send({ type: 'stream_event', session_id: session, uuid: randomUUID(), parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } } }); }
 function finish(allowed = true) {
@@ -32,7 +32,7 @@ function run(text) {
   prompt = text; log({ type: 'turn', session, prompt }); delta('Harness ');
   if (text.includes('CRASH')) { setTimeout(() => process.exit(19), 20); return; }
   if (text.includes('OVERSIZE')) { process.stdout.write('x'.repeat(1024 * 1024 + 1)); return; }
-  if (text.includes('HOLD')) {
+  if (text.includes('HOLD') && !text.includes('RESTART_FINISH')) {
     const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' }); log({ type: 'descendant', pid: child.pid }); return;
   }
   if (codex) {
