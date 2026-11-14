@@ -16,6 +16,7 @@ import { livePartial, turnPollDelay, type TurnActivityData } from './ui/transcri
 import { EventConnection } from './EventConnection';
 import { applyPresentation, readPresentation } from '../presentation';
 import { AgentSidebar } from './AgentSidebar';
+import { MachinesPanel, MachinesSidebar, RemoteAgentDetail, useMachines } from './MachinesPanel';
 import { HtmlPreview } from './HtmlPreview';
 import { QuestionCard, type Question } from './QuestionCard';
 import { ApprovalCard, type AppApproval } from './ApprovalCard';
@@ -1126,11 +1127,12 @@ function FlowDirectory({ agents, onClose, onOpen }: { agents: Agent[]; onClose: 
   </div>;
 }
 
-type SettingsSection = 'connected-apps' | 'skills' | 'mcp' | 'data' | 'usage' | 'backup' | 'import' | 'sections' | 'appearance';
+type SettingsSection = 'machines' | 'connected-apps' | 'skills' | 'mcp' | 'data' | 'usage' | 'backup' | 'import' | 'sections' | 'appearance';
 const settingsSections: { id: SettingsSection; label: string }[] = [
   { id: 'skills', label: 'Skills' },
   { id: 'connected-apps', label: 'Connected apps' },
   { id: 'mcp', label: 'MCP connections' },
+  { id: 'machines', label: 'Machines' },
   { id: 'data', label: 'Shared data' },
   { id: 'usage', label: 'Usage' },
   { id: 'import', label: 'Import agent' },
@@ -1144,7 +1146,9 @@ const collapsedKey = 'briefsip:sidebar-collapsed';
 function App() {
   const [directory, setDirectory] = useState<Directory | null>(null); const [selected, setSelected] = useState('');
   const [channels, setChannels] = useState<Channel[]>([]), [selectedChannel, setSelectedChannel] = useState('');
-  const [view, setView] = useState<'chat' | 'flows' | 'workflows'>('chat');
+  const [view, setView] = useState<'chat' | 'flows' | 'workflows' | 'remote'>('chat');
+  const remoteMachines = useMachines(api);
+  const [remoteSelection, setRemoteSelection] = useState<{ machine: string; agent: string } | null>(null);
   const [settings, setSettings] = useState<SettingsSection | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [newMenu, setNewMenu] = useState(false);
@@ -1213,6 +1217,7 @@ function App() {
   let content: ReactNode;
   if (error) content = <PageView><div className="empty"><h1>Workspace is not open</h1><p role="alert">{error}</p><button onClick={() => void load()}>Try again</button></div></PageView>;
   else if (!directory) content = <main className="chat chat--empty bs-root"><p className="empty-chat__sub" role="status">Loading workspace...</p></main>;
+  else if (view === 'remote') { const machine = remoteMachines.machines.find(item => item.id === remoteSelection?.machine); content = <PageView><RemoteAgentDetail machine={machine} agent={machine?.agents.find(item => item.id === remoteSelection?.agent)} onBack={() => setView('chat')} /></PageView>; }
   else if (view === 'workflows') content = <PageView wide><Suspense fallback={<p className="empty" role="status">Loading workflow directory...</p>}><WorkflowDirectory agents={directory.agents} request={api} onClose={() => setView('chat')} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={directory.agents.find(item => item.id === owner)} threadId={id} configured={directory.configured} onOpenAgent={openThread} onOpenChannel={openChannel} />} /></Suspense></PageView>;
   else if (view === 'flows') content = <PageView wide><FlowDirectory agents={directory.agents} onClose={() => setView('chat')} onOpen={openThread} /></PageView>;
   else if (channel) content = <Chat onOpenAgent={openThread} key={`channel:${channel.id}`} agent={channel} channel={{ ...channel, lead: directory.agents.find(agent => agent.id === channel.lead)?.hidden ? null : channel.lead }} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id) && !agent.hidden)} onEdit={() => setDialog('edit')} configured={directory.configured} />;
@@ -1260,6 +1265,7 @@ function App() {
           <AgentSidebar mode="list" agents={directory?.agents ?? []} request={api} renderAgent={agentRow} />
           {!collapsed && directory && !directory.agents.length && <button type="button" className="bot-list__empty" onClick={() => setDialog('agent')}><span className="bot-list__empty-plus"><Plus size={14} aria-hidden /></span><span><span className="bot-row__name">New agent</span><span className="bot-row__preview">Assign a task, such as research or a summary</span></span></button>}
         </div>
+        <MachinesSidebar machines={remoteMachines.machines} error={remoteMachines.error} selected={view === 'remote' ? remoteSelection : null} onSettings={() => setSettings('machines')} onOpen={(machine, agent) => { setRemoteSelection({ machine: machine.id, agent: agent.id }); setView('remote'); setDialog(null); }} />
       </div>
       <div className="sidebar__footer">
         <div className="sidebar__fade" />
@@ -1288,6 +1294,7 @@ function App() {
         <div className="app-settings__page legacy" tabIndex={-1}>
           {!directory ? <p className="empty" role="status">Loading workspace...</p>
             : settings === 'skills' ? <Suspense fallback={<p className="empty" role="status">Loading skill library...</p>}><SkillsPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
+            : settings === 'machines' ? <MachinesPanel request={api} onChanged={() => { void remoteMachines.reload(); }} />
             : settings === 'connected-apps' ? <Suspense fallback={<p className="empty" role="status">Loading connected apps...</p>}><ConnectedAppsPanel agents={directory.agents} request={api} /></Suspense>
             : settings === 'mcp' ? <Suspense fallback={<p className="empty" role="status">Loading MCP connections...</p>}><McpPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'data' ? <Suspense fallback={<p className="empty" role="status">Loading shared data...</p>}><SharedDataPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>

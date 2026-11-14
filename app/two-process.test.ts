@@ -1304,7 +1304,8 @@ test('canonical workflow runs deny revoked private and unmapped state and roll b
 });
 
 test('canonical workflow run and step pages preserve old approvals and admission rolls back failed receipts', async () => {
-  const f = await workflowConfigurationFixture(), { project, workflow, graph, detail, list } = f, db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  const f = await workflowConfigurationFixture(), { project, workflow, detail, list } = f, db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  const graph = { entry: 'approval', maxSteps: 22, nodes: [{ id: 'approval', kind: 'approval', prompt: 'Proceed?', yes: 'out' }, { id: 'out', kind: 'output' }] };
   try {
     assert.equal((await f.send(list, { requestId: workflow, id: workflow, revision: 0, name: 'Pages', graph })).status, 201);
     const runs: string[] = [];
@@ -1316,12 +1317,14 @@ test('canonical workflow run and step pages preserve old approvals and admission
     assert.equal(first.items.length, 20); assert.equal(second.items.length, 3); assert.equal(second.nextCursor, null);
     assert.deepEqual([...first.items, ...second.items].map((row:{id:string}) => row.id), runs.toReversed());
     const run = runs[0], path = `/api/projects/${project}/workflow-runs/${run}`, owner = (await f.send('/api/session')).body.data.accountId;
-    for (let seq = 1; seq <= 21; seq++) {
+    await until(async () => (await f.send(path)).body.data.status === 'approval');
+    for (let seq = 2; seq <= 21; seq++) {
       db.prepare("INSERT INTO workflow_steps(run,seq,node,status) VALUES (?,?,?,'approval')").run(run, seq, 'out');
       db.prepare("INSERT INTO record_scopes VALUES ('workflow_steps',?,?,?,'project','workflow',?)").run(JSON.stringify([run, seq]), owner, project, workflow);
     }
     const steps = (await f.send(path)).body.data, tail = (await f.send(path + '?after=' + steps.nextCursor)).body.data;
     assert.equal(steps.steps.length, 20); assert.equal(tail.steps.length, 1); assert.equal(tail.nextCursor, null); assert.equal(tail.steps[0].seq, 21);
+    assert.deepEqual([...steps.steps, ...tail.steps].map((step: { status: string }) => step.status), Array(21).fill('approval'));
     const requestId = randomUUID(), command = { requestId, id: requestId, revision: 1, input: 'Atomic' };
     db.exec("CREATE TRIGGER fail_run_receipt BEFORE INSERT ON receipts WHEN NEW.scope LIKE 'retained:%/workflows/%/run' BEGIN SELECT RAISE(ABORT,'run receipt failure'); END");
     assert.equal((await f.send(detail + '/run', command)).status, 500);

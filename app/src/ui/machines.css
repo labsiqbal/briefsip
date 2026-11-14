@@ -1,0 +1,20 @@
+.machines-page { max-width: 760px; }
+.machines-form-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.machines-origin { overflow-wrap: anywhere; }
+.machines-code { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; padding: 18px; border: .5px solid var(--color-border-secondary); border-radius: 14px; background: var(--color-bg-secondary); }
+.machines-code__value { font-family: monospace; font-size: 22px; font-weight: 600; letter-spacing: .08em; color: var(--color-text-primary); }
+.machines-countdown { font-variant-numeric: tabular-nums; }
+.machines-sidebar { margin-top: 8px; }
+.machines-sidebar__trigger { display: flex; width: 100%; align-items: center; gap: 8px; padding: 10px 12px; min-height: 48px; border: 0; border-radius: 10px; background: transparent; color: var(--color-text-secondary); text-align: left; cursor: pointer; }
+.machines-sidebar__trigger:hover, .machines-sidebar__agent:hover { background: var(--color-bg-hover); }
+.machines-sidebar__identity { display: grid; min-width: 0; flex: 1; }
+.machines-sidebar__identity .bot-row__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.machines-sidebar__chevron { flex-shrink: 0; }
+.machines-sidebar__trigger[data-state="open"] .machines-sidebar__chevron { transform: rotate(90deg); }
+.machine-dot { width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: var(--color-text-tertiary); }
+.machine-dot.is-online { background: var(--color-success); }
+.machine-dot.is-unauthorized, .machine-dot.is-version-mismatch { background: var(--color-warning-text); }
+.machines-sidebar__agents { margin: 0 8px 6px 34px; }
+.machines-sidebar__agent { display: block; min-height: 40px; width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--color-text-secondary); font: inherit; font-size: 12px; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.machines-sidebar__agent.is-selected { background: var(--color-bg-hover); color: var(--color-text-primary); }
+.machines-sidebar__note { padding: 4px 10px; color: var(--color-text-tertiary); font-size: 12px; }

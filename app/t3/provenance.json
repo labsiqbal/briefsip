@@ -174,5 +174,114 @@
       "dependencies": [],
       "compatibilityCheck": "app/transcript.test.ts"
     }
+  ],
+  "machineSourceEntries": [
+    {
+      "sourcePath": "packages/contracts/src/auth.ts",
+      "symbols": [
+        "PAIRING_CODE_ALPHABET",
+        "PAIRING_CODE_LENGTH"
+      ],
+      "adaptation": "Copy pairing alphabet and length; retain case-insensitive code format.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "74dd4788634fe08096fdae921c0367b6d04ea7378a39b54ca4e13b528c5244ca",
+      "localPath": "app/t3/pairing.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [
+        "node:crypto"
+      ],
+      "compatibilityCheck": "app/machines.test.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/auth/PairingGrantStore.ts",
+      "symbols": [
+        "generatePairingToken",
+        "PAIRING_TOKEN_REJECTION_LIMIT"
+      ],
+      "adaptation": "Translate Effect SecureRandom generator to node:crypto rejection sampling; retain unbiased 12-character codes and one-time TTL semantics.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "89f0e9dc63afe6d32369cb563eb54816a01504118aa10a398c84b975821825df",
+      "localPath": "app/t3/pairing.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [
+        "node:crypto"
+      ],
+      "compatibilityCheck": "app/machines.test.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/persistence/AuthPairingLinks.ts",
+      "symbols": [
+        "consumeAvailablePairingLinkRow"
+      ],
+      "adaptation": "Adapt atomic conditional UPDATE with unused/unexpired predicates to plain node:sqlite; Briefsip stores SHA-256 code hashes rather than raw credentials.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "cb24cab1f180ce92450629c730619bb854fbd23684b20c765597c4d9a909363f",
+      "localPath": "app/machines.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/machines.test.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/environment/ServerEnvironment.ts",
+      "symbols": [
+        "makeIdentity",
+        "getDescriptor"
+      ],
+      "adaptation": "Adapt stable random environment identity and public descriptor to one SQLite singleton row, preserving identity across restarts.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "2646e1b1ed970ed3a8bcabe0d2f66771d6702bad7519994fc43ff2f2a6216cf6",
+      "localPath": "app/machines.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/machines.test.ts"
+    },
+    {
+      "sourcePath": "packages/client-runtime/src/connection/driver.ts",
+      "symbols": [
+        "checkDescriptor",
+        "checkHost"
+      ],
+      "adaptation": "Adapt credential-free descriptor preflight to same-origin bounded HTTP reads; mismatch sends no bearer credential.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "bec8c2de9524a191fd555bf3032f1e0b8d824f128bb44a788528988d545c3cfc",
+      "localPath": "app/machines.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/machines.test.ts"
+    },
+    {
+      "sourcePath": "apps/web/src/components/settings/EnvironmentRow.tsx",
+      "symbols": [
+        "EnvironmentRow"
+      ],
+      "adaptation": "Adapt machine icon, truncated identity, route subtitle, status and action-column composition with existing Briefsip kit and Bot HQ tokens.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "8738f089abb8ae2d6e18624e39b0c95783a4c1f92d4e0f5d69428a73697d70d3",
+      "localPath": "app/src/MachinesPanel.tsx",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/machines.test.ts"
+    },
+    {
+      "sourcePath": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
+      "symbols": [
+        "subtitleText",
+        "EnvironmentRow"
+      ],
+      "adaptation": "Adapt per-environment status labels and origin-based rows; sidebar expands cached remote agents and opens read-only detail in Briefsip.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "8783437ae080c0dcb05c10cf54eef4d78113740a567fbe68f7cfa5532e7860f1",
+      "localPath": "app/src/MachinesPanel.tsx",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/machines.test.ts"
+    }
   ]
 }
