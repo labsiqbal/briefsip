@@ -118,7 +118,7 @@ test('unpair removes first while remote is offline; missing wrapping key fails c
   } finally { await a.close(); await b.close().catch(() => {}); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('background health reports version mismatch and never sends bearer to a changed identity or redirected descriptor', async () => {
+test('background health records a different peer version as online and never sends bearer to a changed identity or redirected descriptor', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-peer-health-')), issuer = fakePeerTokenIssuer(); const app = await startApp({ database: join(dir, 'db.sqlite'), peerTokenIssuer: issuer, machines: { healthIntervalMs: 50 } });
   const version = (await environment(app)).version, id = randomUUID(), remoteToken = 'remote-peer-canary-1234567890123456', agent = { id: randomUUID(), name: 'Remote agent', role: 'Personal agent', model: 'fixture', status: 'idle' }; let mode = 'normal', origin = '', authorizedCalls = 0, issuedBack = '';
   const server = createServer(async (req, res) => {
@@ -138,8 +138,10 @@ test('background health reports version mismatch and never sends bearer to a cha
   try {
     const result = await call(app, '/api/machines', { ...command(), origin, code: '23456789ABCD' }); assert.equal(result.status, 'online');
     mode = 'version'; const deadline = Date.now() + 20_000;
-    while ((await list(app))[0].status !== 'version-mismatch' && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
-    assert.equal((await list(app))[0].status, 'version-mismatch');
+    // A different app version is recorded but stays online: rolling updates must not cut paired machines off.
+    while ((await list(app))[0].version !== '99.0.0' && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal((await list(app))[0].version, '99.0.0');
+    assert.equal((await list(app))[0].status, 'online');
     await setMode('normal'); assert.equal((await list(app))[0].status, 'online'); assert.equal((await list(app))[0].remoteAgentMessaging, undefined, 'Older peers omit availability hints');
     await setMode('bad-policy'); assert.equal((await list(app))[0].status, 'offline');
     await setMode('unauthorized'); assert.equal((await list(app))[0].status, 'unauthorized');
