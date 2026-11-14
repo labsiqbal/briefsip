@@ -54,6 +54,7 @@ const BackupPanel = lazy(() => import('./BackupPanel').then(module => ({ default
 const AgentTemplateImport = lazy(() => import('./AgentTemplateImport').then(module => ({ default: module.AgentTemplateImport })).catch(panelLoadFailure));
 const AgentTemplateExport = lazy(() => import('./AgentTemplateImport').then(module => ({ default: module.AgentTemplateExport })).catch(panelLoadFailure));
 const SitesPanel = lazy(() => import('./SitesPanel').then(module => ({ default: module.SitesPanel })).catch(panelLoadFailure));
+const McpServerPanel = lazy(() => import('./McpServerPanel').then(module => ({ default: module.McpServerPanel })).catch(panelLoadFailure));
 const McpPanel = lazy(() => import('./McpPanel').then(module => ({ default: module.McpPanel })).catch(panelLoadFailure));
 const ConnectedAppsPanel = lazy(() => import('./ConnectedAppsPanel').then(module => ({ default: module.ConnectedAppsPanel })).catch(panelLoadFailure));
 const SkillsPanel = lazy(() => import('./SkillsPanel').then(module => ({ default: module.SkillsPanel })).catch(panelLoadFailure));
@@ -62,7 +63,7 @@ type Agent = { avatar_revision?: number; hidden?: boolean; visibility_revision?:
 type Channel = { activity: number; read_position: number; revision: number; archived: number; id: string; name: string; instructions: string; members: string[]; lead: string | null };
 type Thread = { id: string; agent: string; name: string; revision: number; archived: number; deleted: number };
 type AgentMessage = { generatedFiles?: { id: string; name: string; size: number; thread: string }[]; paused: number; request: string; expects_reply: number; settled: number; id: string; agent: string; thread: string; name: string; status: string; error: string | null; reply: string | null; truncated: boolean };
-type Turn = { approvals?: AppApproval[]; recipient?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { name: string; agent: string; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
+type Turn = { approvals?: AppApproval[]; recipient?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { kind?: 'peer'; name: string; agent: string | null; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
 type Directory = { agents: Agent[]; configured: boolean; defaultModel: string };
 type Pending = ChatCommand;
 const statusNames: Record<string, string> = { queued: 'Queued', running: 'Replying', done: 'Done', failed: 'Failed', interrupted: 'Interrupted', cancelled: 'Cancelled' };
@@ -357,16 +358,16 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
               : turns.length === 0 ? <div className="empty-chat"><AgentAvatar agent={agent} size={64} /><div className="empty-chat__title">Start with {agent.name}</div><div className="empty-chat__sub">Send your first task or question. The conversation is saved on this computer.</div></div>
               : turns.map(turn => <article key={turn.id} id={`turn-${turn.id}`} tabIndex={-1} className="turn-block">
                 {query && <button type="button" className="link-btn" onClick={() => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(turn.id); }}>Open this message</button>}
-                <div className="human-message" tabIndex={0} aria-label="Your message">
+                <div className="human-message" tabIndex={0} aria-label={turn.messageOrigin?.kind === 'peer' ? `Message from ${turn.messageOrigin.name}` : 'Your message'}>
                   <div className="human-bubble message-plain">{turn.text}</div>
                   {!!turn.files?.length && <ul className="chip-list" aria-label="Message attachments">{turn.files.map(file => <li key={file.id}><a className="cite-chip" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}><Paperclip size={12} aria-hidden /> {file.name}</a></li>)}</ul>}
                   <div className="turn-meta human-meta">
                     <time className="message-time" dateTime={turn.created} title={new Date(turn.created).toLocaleString('en-US')}>{time(turn.created)}</time>
-                    {turn.workflow_run ? <span className="message-origin">Workflow</span> : turn.parent ? <span className="message-origin">Subtask</span> : null}
+                    {turn.messageOrigin?.kind === 'peer' ? <span className="message-origin">From {turn.messageOrigin.name}</span> : turn.workflow_run ? <span className="message-origin">Workflow</span> : turn.parent ? <span className="message-origin">Subtask</span> : null}
                     <button type="button" className="link-btn link-btn--small" onClick={async () => { try { await navigator.clipboard.writeText(turn.text); } catch { setError('Message could not be copied. Select the text to copy it.'); } }}>Copy</button>
                     <a className="link-btn link-btn--small" href={`#turn-${turn.id}`} onClick={event => { event.preventDefault(); openFocused(turn.id); }}>View task</a>
                     {turn.parent && !turn.messageOrigin && <a className="link-btn link-btn--small" href={`#turn-${turn.parent}`} onClick={event => { event.preventDefault(); openFocused(turn.parent!); }}>View parent task</a>}
-                    {turn.messageOrigin && <button type="button" className="link-btn link-btn--small" onClick={() => turn.messageOrigin!.channel ? onOpenChannel?.(turn.messageOrigin!.channel) : onOpenAgent?.(turn.messageOrigin!.agent, turn.messageOrigin!.thread ?? '')}>Open requester conversation</button>}
+                    {turn.messageOrigin && turn.messageOrigin.kind !== 'peer' && <button type="button" className="link-btn link-btn--small" onClick={() => turn.messageOrigin!.channel ? onOpenChannel?.(turn.messageOrigin!.channel) : onOpenAgent?.(turn.messageOrigin!.agent!, turn.messageOrigin!.thread ?? '')}>Open requester conversation</button>}
                   </div>
                 </div>
                 <div className="agent-message">
@@ -1127,12 +1128,13 @@ function FlowDirectory({ agents, onClose, onOpen }: { agents: Agent[]; onClose: 
   </div>;
 }
 
-type SettingsSection = 'machines' | 'connected-apps' | 'skills' | 'mcp' | 'data' | 'usage' | 'backup' | 'import' | 'sections' | 'appearance';
+type SettingsSection = 'machines' | 'connected-apps' | 'skills' | 'mcp' | 'mcp-server' | 'data' | 'usage' | 'backup' | 'import' | 'sections' | 'appearance';
 const settingsSections: { id: SettingsSection; label: string }[] = [
   { id: 'skills', label: 'Skills' },
   { id: 'connected-apps', label: 'Connected apps' },
   { id: 'mcp', label: 'MCP connections' },
   { id: 'machines', label: 'Machines' },
+  { id: 'mcp-server', label: 'MCP server' },
   { id: 'data', label: 'Shared data' },
   { id: 'usage', label: 'Usage' },
   { id: 'import', label: 'Import agent' },
@@ -1296,6 +1298,7 @@ function App() {
             : settings === 'skills' ? <Suspense fallback={<p className="empty" role="status">Loading skill library...</p>}><SkillsPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'machines' ? <MachinesPanel request={api} onChanged={() => { void remoteMachines.reload(); }} />
             : settings === 'connected-apps' ? <Suspense fallback={<p className="empty" role="status">Loading connected apps...</p>}><ConnectedAppsPanel agents={directory.agents} request={api} /></Suspense>
+            : settings === 'mcp-server' ? <Suspense fallback={<p className="empty" role="status">Loading MCP server...</p>}><McpServerPanel request={api} /></Suspense>
             : settings === 'mcp' ? <Suspense fallback={<p className="empty" role="status">Loading MCP connections...</p>}><McpPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'data' ? <Suspense fallback={<p className="empty" role="status">Loading shared data...</p>}><SharedDataPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'usage' ? <Suspense fallback={<p className="empty" role="status">Loading usage...</p>}><UsagePanel request={api} onClose={() => setSettings(null)} /></Suspense>

@@ -105,7 +105,10 @@
   "localFiles": {
     "app/t3/connection-registry.ts": "a7bfb8ae826cd788584b6ac66ebc66bd79ff46bb492abfd5983ec2944a9ab2cd",
     "app/t3/environment-contract.ts": "9cf05fc15e5f8e66448e96abf312445f22761cc8d8b6d23ba23031510f9f9717",
-    "app/t3/environment-link.ts": "eb842ebe6ea6403fd4adaef5016d1b2da277666051f63284f827a31ec5f9a19d"
+    "app/t3/environment-link.ts": "eb842ebe6ea6403fd4adaef5016d1b2da277666051f63284f827a31ec5f9a19d",
+    "app/t3/mcp-session-registry.ts": "6a16d9d250b10dd01556180e31dc2efb38f3580aad47cbfaa8eefb7ad3357967",
+    "app/t3/mcp-tool-access.ts": "b9b209f536312658cd9c962a99a874945ac7915a95f959fa092a671cf55c3c50",
+    "app/mcp-server.ts": "c707cfbcd40a63cbd5df425c763f22a2d50da591c5d7590a6729224fdcbcf718"
   },
   "typeSubstitutions": {
     "HttpServerRequest.HttpServerRequest": "LinkRequest with originalUrl and lowercase scalar headers",
@@ -282,6 +285,61 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "compatibilityCheck": "app/machines.test.ts"
+    }
+  ],
+  "mcpSourceEntries": [
+    {
+      "sourcePath": "apps/server/src/mcp/McpSessionRegistry.ts",
+      "symbols": [
+        "McpSessionRegistry",
+        "CredentialRecord",
+        "hashToken",
+        "issue",
+        "resolve",
+        "revokeProviderSession",
+        "revokeAll"
+      ],
+      "adaptation": "Translated secure-random 32-byte bearer issuance, SHA-256 lookup, caller binding and session revocation to native node:crypto/node:sqlite. Briefsip adds peer credentials, absolute TTL, run-end revocation and startup invalidation; no Effect or T3 runtime dependency.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "324094b7befdfc2cf488d95a7393948ccec55ae63fafe8c281ccd27ee89c8345",
+      "localPath": "app/t3/mcp-session-registry.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/mcp-server.test.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/mcp/McpToolAccess.ts",
+      "symbols": [
+        "Declaration",
+        "checkedHandler",
+        "reads",
+        "writes",
+        "actsAsCaller"
+      ],
+      "adaptation": "Translated mandatory access declaration and checked-handler boundary into a scoped registry with SDK JSON-schema validation and authenticated caller arguments. Briefsip scopes and receipt preflight replace Effect layers and runtime-mode ceilings.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "17a5a70ffa74153911e3092c4358a6e6d3dd3703d78512914434850df1250df1",
+      "localPath": "app/t3/mcp-tool-access.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/mcp-server.test.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/mcp/McpHttpServer.ts",
+      "symbols": [
+        "makeMcpAuthMiddleware",
+        "authenticateRequest"
+      ],
+      "adaptation": "Translated bearer-per-request authentication before MCP tool dispatch, separate from browser authentication, and scoped invocation context. Briefsip uses the installed MCP SDK Streamable HTTP server with request-local transports, uniform denials, failed-auth throttling and its existing durable queue/history functions.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "bf29b7cbc2cfadfcf8e419873959c39bd50b4c59737dfab63dcd85006072feaf",
+      "localPath": "app/mcp-server.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/mcp-server.test.ts"
     }
   ]
 }

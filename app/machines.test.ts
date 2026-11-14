@@ -166,3 +166,19 @@ test('lost reciprocal acknowledgement retries encrypted pending credentials afte
     await app.close(); const db = new DatabaseSync(options.database); try { const row = db.prepare('SELECT token,return_token FROM paired_machines').get()!; assert(!String(row.token).includes(token)); assert(!String(row.return_token).includes(saved)); } finally { db.close(); }
   } finally { await app.close().catch(() => {}); await close(server); rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('default wiring issues pairing tokens from the Briefsip MCP token registry and revokes them on unpair', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-machines-mcp-'));
+  const a = await startApp({ database: join(dir, 'a.sqlite') }), b = await startApp({ database: join(dir, 'b.sqlite') });
+  try {
+    await call(b, '/api/environment', { ...command(), name: 'Machine B' }); await call(a, '/api/environment', { ...command(), name: 'Machine A' });
+    await call(b, '/api/agents', { id: randomUUID(), name: 'Beta', model: 'fixture', instructions: 'Help.' }, 201);
+    const { result } = await pair(a, b); assert.equal(result.pairingState, 'paired'); assert.equal(result.status, 'online'); assert.equal(result.agents[0].name, 'Beta');
+    const tokensOnB = (await call(b, '/api/mcp-server/peer-tokens')).items; assert.equal(tokensOnB.length, 1); assert.equal(tokensOnB[0].name, 'Briefsip: Machine A'); assert.equal(tokensOnB[0].revoked, null);
+    assert.deepEqual([...tokensOnB[0].scopes].sort(), ['agents:message', 'agents:read', 'history:read']);
+    assert.equal((await call(a, '/api/mcp-server/peer-tokens')).items[0].name, 'Briefsip: Machine B');
+    await call(a, '/api/machines/remove', { ...command(), environmentId: result.id });
+    assert.deepEqual(await list(a), []); assert.deepEqual(await list(b), []);
+    assert((await call(b, '/api/mcp-server/peer-tokens')).items[0].revoked, 'B revoked the token it issued to A');
+  } finally { await a.close().catch(() => {}); await b.close().catch(() => {}); rmSync(dir, { recursive: true, force: true }); }
+});
