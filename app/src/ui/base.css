@@ -51,7 +51,7 @@ a { color: inherit; }
 .btn--secondary:disabled { opacity: 0.5; }
 .btn--light { background: var(--color-bg-elevated); color: var(--color-ink); height: 32px; padding: 6px 14px; }
 .btn--light:hover { background: var(--color-bg-elevated-hover); }
-.btn--bot { background: var(--bot-action, var(--color-primary)); color: var(--bot-on-action, #FFFFFF); height: 32px; padding: 6px 14px; }
+.btn--bot { background: var(--bot-action, var(--color-primary)); color: var(--bot-on-action); height: 32px; padding: 6px 14px; }
 .btn--bot:hover { background: var(--bot-action-hover, var(--color-bg-primary-hover)); }
 
 .link-btn { color: var(--color-text-secondary); font-size: 13px; line-height: 18px; padding: 4px 6px; border-radius: 6px; }
@@ -85,7 +85,7 @@ a { color: inherit; }
 
 .toolkit-logo {
   position: relative; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden;
-  background: #FFFFFF; box-shadow: #1C1C1C14 0 0 0 0.5px inset;
+  background: var(--color-artwork-paper); box-shadow: var(--color-border-tertiary) 0 0 0 0.5px inset;
 }
 .toolkit-logo img { object-fit: contain; }
 .toolkit-logo__letter { font-weight: 600; color: var(--color-text-secondary); line-height: 1; }

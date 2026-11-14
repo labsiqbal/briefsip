@@ -53,10 +53,10 @@
 .md h1, .md h2, .md h3, .md h4 { font-size: 15px; line-height: 22px; font-weight: 600; }
 .md h1 { font-size: 17px; line-height: 24px; }
 .md blockquote { padding-left: 10px; border-left: 2px solid var(--color-border-primary); color: var(--color-text-secondary); }
-.md code { font-family: var(--font-mono-stack); font-size: 13px; background: var(--color-bg-tertiary); padding: 1px 4px; border-radius: 4px; }
+.md code { font-family: var(--font-mono-stack); font-size: 13px; background: var(--color-code-bg); color: var(--color-code-fg); padding: 1px 4px; border-radius: 4px; }
 .md pre {
-  background: var(--color-bg-subtle); border-radius: var(--radius-sm); padding: 8px 12px; overflow-x: auto;
-  font-family: var(--font-mono-stack); font-size: 13px; line-height: 20px; letter-spacing: 0.15px; color: var(--color-text-secondary);
+  background: var(--color-code-bg); border-radius: var(--radius-sm); padding: 8px 12px; overflow-x: auto;
+  font-family: var(--font-mono-stack); font-size: 13px; line-height: 20px; letter-spacing: 0.15px; color: var(--color-code-fg);
   white-space: pre; scrollbar-width: thin;
 }
 .md pre code { background: none; padding: 0; border-radius: 0; font-size: inherit; }
@@ -123,25 +123,23 @@
 
 /* ---------- live thinking block: mascot on a dark pill, caption, timer ---------- */
 .thinking {
-  --thinking-pill: #1C1C1C; --thinking-name: #FFFFFF; --thinking-status: #FFFFFF99;
+  --thinking-pill: var(--color-bg-elevated); --thinking-name: var(--color-text-primary); --thinking-status: var(--color-text-secondary);
   display: flex; align-items: flex-end; gap: 12px; max-width: 100%; padding: 2px 4px 0; animation: rise 200ms var(--ease-out);
 }
-:root[data-theme='dark'] .thinking { --thinking-pill: #262626; }
-@media (prefers-color-scheme: dark) { :root[data-theme='system'] .thinking { --thinking-pill: #262626; } }
 .thinking__badge { position: relative; display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
 .thinking__mascot { position: relative; z-index: 1; display: inline-flex; margin-bottom: -15px; animation: bob 2.4s ease-in-out infinite; }
 .thinking__pill {
   display: flex; flex-direction: column; align-items: center; min-width: 88px; max-width: 260px; padding: 19px 16px 9px;
-  border-radius: 20px; background: var(--thinking-pill); box-shadow: 0 6px 18px #0000001F, 0 0 0 0.5px #FFFFFF14 inset;
+  border-radius: 20px; background: var(--thinking-pill); box-shadow: 0 6px 18px var(--color-shadow-soft), 0 0 0 0.5px var(--color-border-tertiary) inset;
 }
 .thinking__name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 500; line-height: 18px; letter-spacing: 0.14px; color: var(--thinking-name); }
 .thinking__status { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 16px; letter-spacing: 0.12px; color: var(--thinking-status); animation: thinking-pulse 1.6s ease-in-out infinite; }
-.thinking__idea { position: absolute; z-index: 2; left: calc(50% + 15px); top: -5px; filter: drop-shadow(0 0 5px #FFC94699); animation: breathe 1.6s ease-in-out infinite; }
-.thinking__idea-glass { fill: #F7B92E; }
+.thinking__idea { position: absolute; z-index: 2; left: calc(50% + 15px); top: -5px; filter: drop-shadow(0 0 5px var(--color-warn-bg)); animation: breathe 1.6s ease-in-out infinite; }
+.thinking__idea-glass { fill: var(--color-warn); }
 .thinking__idea-base { fill: var(--color-text-tertiary); }
 .thinking__alert { position: absolute; z-index: 2; left: calc(50% + 12px); top: 1px; width: 10px; height: 10px; border-radius: 50%; background: var(--color-warn); box-shadow: 0 0 0 2px var(--color-bg-chrome); }
 .thinking.is-waiting .thinking__mascot { animation: none; }
-.thinking.is-waiting .thinking__status { animation: none; color: #FFB648; }
+.thinking.is-waiting .thinking__status { animation: none; color: var(--color-warn-text); }
 .thinking__side { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding-bottom: 7px; }
 .thinking__caption { display: grid; min-width: 0; font-size: 14px; line-height: 20px; letter-spacing: 0.14px; color: var(--color-text-secondary); }
 .thinking__caption-line { grid-area: 1 / 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -206,7 +204,7 @@
 .composer__input::placeholder { color: var(--color-text-tertiary); opacity: 1; }
 .composer__cta {
   display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%;
-  background: var(--bot-action, var(--color-primary)); color: var(--bot-on-action, #FFFFFF); flex-shrink: 0; transition: background-color 120ms, transform 120ms;
+  background: var(--bot-action, var(--color-primary)); color: var(--bot-on-action); flex-shrink: 0; transition: background-color 120ms, transform 120ms;
 }
 .composer__cta:hover:not(:disabled) { background: var(--bot-action-hover, var(--color-bg-primary-hover)); }
 .composer__cta:active:not(:disabled) { transform: scale(0.94); }
@@ -224,7 +222,7 @@
 
 /* Room and teammate exchanges keep the transcript's unboxed agent style. */
 .composer { position: relative; }
-.mention-list { position: absolute; bottom: calc(100% + 8px); left: 0; width: min(360px, 100%); max-height: 264px; overflow: auto; padding: 6px; border: 1px solid var(--color-border-secondary); border-radius: 12px; background: var(--color-bg-elevated); box-shadow: 0 8px 24px rgb(0 0 0 / .16); z-index: 4; }
+.mention-list { position: absolute; bottom: calc(100% + 8px); left: 0; width: min(360px, 100%); max-height: 264px; overflow: auto; padding: 6px; border: 1px solid var(--color-border-secondary); border-radius: 12px; background: var(--color-bg-elevated); box-shadow: 0 8px 24px var(--color-shadow); z-index: 4; }
 .mention-list button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 6px 10px; border: 0; border-radius: 8px; color: var(--color-text-primary); background: transparent; text-align: left; cursor: pointer; }
 .mention-list button[aria-selected="true"], .mention-list button:hover { background: var(--color-bg-tertiary); }
 .mention-list button span { display: flex; flex-direction: column; min-width: 0; }

@@ -63,7 +63,7 @@
 .apps-modal__connected { display: flex; align-items: center; gap: 8px; padding: 4px 8px 4px 4px; border-radius: 8px; font-size: 12px; line-height: 16px; color: var(--color-text-secondary); }
 .apps-modal__connected:hover, .apps-modal__connected.is-active { background: var(--color-bg-hover); }
 .apps-modal__connected-logos { display: flex; align-items: center; padding-left: 3px; }
-.apps-modal__connected-logos img { width: 14px; height: 14px; margin-left: -3px; border-radius: 3px; background: #FFFFFF; box-shadow: 0 0 0 1px #FFFFFF; object-fit: contain; }
+.apps-modal__connected-logos img { width: 14px; height: 14px; margin-left: -3px; border-radius: 3px; background: var(--color-artwork-paper); box-shadow: 0 0 0 1px var(--color-artwork-paper); object-fit: contain; }
 .apps-modal__controls { display: flex; flex-direction: column; gap: 12px; padding-top: 18px; padding-bottom: 8px; }
 .apps-modal__searchrow { display: flex; align-items: center; gap: 8px; }
 .pill-input { display: flex; align-items: center; gap: 6px; flex: 1 1 0; height: 32px; padding: 0 8px 0 12px; border-radius: var(--radius-full); background: var(--color-bg-elevated); border: 0.5px solid var(--color-border-tertiary); cursor: text; }
@@ -109,7 +109,7 @@
 .signin__title { margin: 0; font-size: 22px; font-weight: 600; line-height: 28px; letter-spacing: -0.2px; }
 .signin__sub { margin: 6px 0 24px; text-align: center; font-size: 14px; line-height: 20px; color: var(--color-text-secondary); }
 .signin__google { width: 100%; gap: 10px; }
-.signin__google svg { background: #FFFFFF; border-radius: 50%; padding: 1px; width: 18px; height: 18px; }
+.signin__google svg { background: var(--color-artwork-paper); border-radius: 50%; padding: 1px; width: 18px; height: 18px; }
 .signin__dev { display: flex; flex-direction: column; gap: 8px; width: 100%; margin-top: 20px; }
 .signin__divider { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; font-size: 12px; line-height: 16px; color: var(--color-text-tertiary); }
 .signin__divider::before, .signin__divider::after { content: ''; flex: 1; height: 0.5px; background: var(--color-border-secondary); }

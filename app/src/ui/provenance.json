@@ -12,11 +12,49 @@
     { "sourcePath": "web/src/styles/chat.css", "localPath": "app/src/ui/chat.css", "adaptation": "Notice class renamed to chat-notice; system-theme dark variant; dead bubble/group/sender-label rules removed for Owner-selected message rows." },
     { "sourcePath": "web/src/styles/details.css", "localPath": "app/src/ui/details.css", "adaptation": "Briefsip focus token; compact identity and Computer row, Radix tab pills, channel member avatars and inline read action. Existing resizable right edge retained." },
     { "sourcePath": "web/src/styles/modals.css", "localPath": "app/src/ui/modals.css", "adaptation": "Focus ring uses Briefsip token." },
-    { "sourcePath": "web/src/styles/config.css", "localPath": "app/src/ui/config.css", "adaptation": "Unchanged." },
+    { "sourcePath": "web/src/styles/config.css", "localPath": "app/src/ui/config.css", "adaptation": "Palette picker replaces unused tiles; component colors use semantic tokens." },
     { "sourcePath": "web/src/components/Menu.tsx", "localPath": "app/src/ui/Menu.tsx", "adaptation": "Disabled items, labelled menu, focus first item." },
     { "sourcePath": "web/src/components/modals/Modal.tsx", "localPath": "app/src/ui/Modal.tsx", "adaptation": "Built-in header/close button with Lucide icon; stable close callback." },
     { "sourcePath": "web/src/components/DetailsPanel.tsx", "localPath": "app/src/App.tsx", "adaptation": "Identity, compact Computer hero, three-tab structure and Upcoming routines with Manage adapted to Briefsip Chats / Activity / Library using the existing Radix kit; channel identity, member avatars and inline read status. Briefsip request paths, command recovery and resizable panel retained." },
     { "sourcePath": "web/src/components/ComputerViewer.tsx", "localPath": "app/src/ComputerViewer.tsx", "adaptation": "noVNC RFB lifecycle, watch viewOnly and scaleViewport pattern. Briefsip keeps Radix Dialog, persistent C1 control/waits and same-origin single-use ticket routing; original clipboard field and keyboard escape." }
   ],
-  "notUsed": "Bot HQ icon SVGs, avatar shapes and Grok Bot-derived visuals are not copied; icons come from lucide-react (ISC)."
+  "notUsed": "Bot HQ icon SVGs, avatar shapes and Grok Bot-derived visuals are not copied; icons come from lucide-react (ISC).",
+  "additionalSources": [
+    {
+      "repository": "https://github.com/NousResearch/hermes-agent",
+      "revision": "d923a5eb487a17c0a68801bba9ef0f56c81040a8",
+      "license": "MIT",
+      "notice": "app/src/ui/NOTICE.hermes",
+      "entries": [
+        {
+          "sourcePath": "apps/shared/src/theme-presets.ts",
+          "localPath": "app/src/ui/themes.ts",
+          "adaptation": "Five preset pairs mapped to Briefsip semantic roles. Midnight ships only dark upstream; light is an original purple-neutral derivation. Weak muted text, borders and destructive values are adjusted; source action/accent values remain intact. Midnight uses its source ring as its accent."
+        },
+        {
+          "sourcePath": "apps/shared/src/color.ts",
+          "localPath": "app/src/ui/themes.ts",
+          "adaptation": "Adapted sRGB mix, relative luminance, contrast measurement, readable foreground and ensureContrast ladder. Internal hex-only palette inputs and 0.05 rungs; targets chosen by worst contrast across all token backgrounds."
+        }
+      ]
+    },
+    {
+      "repository": "https://github.com/pingdotgg/t3code",
+      "revision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "license": "MIT",
+      "notice": "app/src/ui/NOTICE.t3",
+      "entries": [
+        {
+          "sourcePath": "apps/web/src/hooks/useTheme.ts",
+          "localPath": "app/presentation.ts; app/src/ui/themes.ts",
+          "adaptation": "Independent palette and appearance preferences, guarded browser storage, native system appearance and CSS application. Existing Briefsip version-1 preferences migrate to the Briefsip palette without overwriting storage."
+        },
+        {
+          "sourcePath": "apps/web/src/themePalette.ts; apps/web/src/vscodeThemeImport.ts",
+          "localPath": "app/src/ui/themes.ts",
+          "adaptation": "Semantic role projection and minimum contrast across role surfaces adapted to Briefsip's existing tokens. Uses Hermes sRGB mixing rather than copying T3's OKLCH solver or importing VS Code theme files."
+        }
+      ]
+    }
+  ]
 }

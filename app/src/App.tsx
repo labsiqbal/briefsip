@@ -23,7 +23,7 @@ import { TurnActivity } from './ui/TurnActivity';
 import { AgentMessage, ChatComposer, ChatEmptyState, ChatHeader, ChatTranscript, HumanMessage, TurnStatus } from './ui/ChatPrimitives';
 import { livePartial, turnPollDelay, type TurnActivityData } from './ui/transcript';
 import { EventConnection } from './EventConnection';
-import { applyPresentation, readPresentation } from '../presentation';
+import { applyPresentation, presentationKey, readPresentation } from '../presentation';
 import { CreateProject, HelpPage, HowBriefsipWorks, ProjectHome, ProjectSidebar, ProjectSourceControl, useProjects } from './Projects';
 import { MachinesPanel, RemoteAgentDetail, useMachines } from './MachinesPanel';
 import { HtmlPreview } from './HtmlPreview';
@@ -1513,7 +1513,7 @@ function App() {
             : settings === 'backup' ? <Suspense fallback={<p className="empty" role="status">Loading backup...</p>}><BackupPanel onClose={() => setSettings(null)} /></Suspense>
             : settings === 'import' ? <Suspense fallback={<p className="empty" role="status">Loading agent import...</p>}><AgentTemplateImport request={api} onClose={() => setSettings(null)} onCreated={item => { created(item); setSettings(null); }} /></Suspense>
             : settings === 'help' ? <HelpPage />
-            : <Suspense fallback={<p className="empty" role="status">Loading appearance settings...</p>}><PresentationSettings /><div className="k-page bs-root"><Section title="Notifications"><Row title="Workflow inbox notifications" meta="Applies in this browser." trailing={<Switch label="Workflow inbox notifications" checked={!notificationsMuted} onChange={enabled => { try { localStorage.setItem('briefsip:workflow-notifications-muted', enabled ? '0' : '1'); setNotificationsMuted(!enabled); setNotificationError(''); } catch { setNotificationError('Notification preference could not be saved. Check browser storage.'); } }} />}/>{notificationError && <Alert tone="error">{notificationError}</Alert>}</Section></div></Suspense>}
+            : <Suspense fallback={<p className="empty" role="status">Loading appearance settings...</p>}><PresentationSettings><Section title="Notifications"><Row title="Workflow inbox notifications" meta="Applies in this browser." trailing={<Switch label="Workflow inbox notifications" checked={!notificationsMuted} onChange={enabled => { try { localStorage.setItem('briefsip:workflow-notifications-muted', enabled ? '0' : '1'); setNotificationsMuted(!enabled); setNotificationError(''); } catch { setNotificationError('Notification preference could not be saved. Check browser storage.'); } }} />}/>{notificationError && <Alert tone="error">{notificationError}</Alert>}</Section></PresentationSettings></Suspense>}
         </div>
       </div>
     </RadixDialog.Content></RadixDialog.Portal>
@@ -1531,4 +1531,9 @@ function ComputerWindow() {
   return <main className="computer-window bs-root"><h1>{name}'s computer</h1>{error ? <Alert tone="error">{error}</Alert> : <ComputerViewer agent={agent} name={name} request={api} popout />}</main>;
 }
 applyPresentation(document.documentElement, readPresentation().value);
+window.addEventListener('storage', event => {
+  if (event.key !== presentationKey && event.key !== null) return;
+  try { if (event.storageArea !== localStorage) return; } catch { return; }
+  applyPresentation(document.documentElement, readPresentation().value);
+});
 createRoot(document.getElementById('root')!).render(<ConfirmProvider>{new URLSearchParams(location.search).has('computer') ? <ComputerWindow /> : <App />}</ConfirmProvider>);

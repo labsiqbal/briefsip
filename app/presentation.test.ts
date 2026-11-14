@@ -1,26 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { colorThemes, themeTokenValues } from './src/ui/themes.ts';
 import { defaultPresentation, parsePresentation, presentationKey, readPresentation } from './presentation.ts';
 
 test('presentation settings validate persisted values and fail safely without overwriting storage', () => {
   assert.deepEqual(parsePresentation(null), defaultPresentation);
-  for (const theme of ['dark', 'light', 'system']) for (const textSize of ['standard', 'large', 'larger']) {
-    const value = { version: 1, theme, textSize }, raw = JSON.stringify(value);
+  for (const { id: colorTheme } of colorThemes) for (const theme of ['dark', 'light', 'system']) for (const textSize of ['standard', 'large', 'larger']) {
+    const value = { version: 1, colorTheme, theme, textSize }, raw = JSON.stringify(value);
     assert.deepEqual(parsePresentation(raw), value);
     assert.deepEqual(readPresentation({ getItem(key) { assert.equal(key, presentationKey); return raw; } }), { value, error: '' });
   }
-  for (const raw of ['{', 'null', '[]', 'true', '{}', JSON.stringify({ ...defaultPresentation, version: 2 }), JSON.stringify({ ...defaultPresentation, theme: 'url(secret)' }), JSON.stringify({ ...defaultPresentation, textSize: 100 }), JSON.stringify({ ...defaultPresentation, extra: true })]) {
+  for (const raw of ['{', 'null', '[]', 'true', '{}', JSON.stringify({ ...defaultPresentation, version: 2 }), JSON.stringify({ ...defaultPresentation, theme: 'url(secret)' }), JSON.stringify({ ...defaultPresentation, textSize: 100 }), JSON.stringify({ ...defaultPresentation, extra: true }), JSON.stringify({ ...defaultPresentation, colorTheme: 'nous' }), JSON.stringify({ ...defaultPresentation, colorTheme: 'url(secret)' }), JSON.stringify({ ...defaultPresentation, colorTheme: null })]) {
     assert.throws(() => parsePresentation(raw));
     const result = readPresentation({ getItem: () => raw });
     assert.deepEqual(result.value, defaultPresentation); assert(result.error);
   }
   const blocked = readPresentation({ getItem() { throw new Error('Storage blocked'); } });
   assert.deepEqual(blocked.value, defaultPresentation); assert(blocked.error);
+  assert.deepEqual(parsePresentation(JSON.stringify({ version: 1, theme: 'light', textSize: 'large' })), { version: 1, colorTheme: 'briefsip', theme: 'light', textSize: 'large' });
   const copy = parsePresentation(null); copy.theme = 'light'; assert.equal(defaultPresentation.theme, 'dark');
 });
 
-test('both appearance palettes keep text and control contrast', () => {
+test('all six color themes in light and dark keep text, status, code, viewer and control contrast', () => {
   const css = readFileSync(new URL('./src/ui/tokens.css', import.meta.url), 'utf8');
   const tokens = (selector: string) => {
     const block = css.slice(css.indexOf(selector));
@@ -34,12 +36,14 @@ test('both appearance palettes keep text and control contrast', () => {
     const base = over(background, [255, 255, 255]), a = luminance(over(foreground, base)), b = luminance(base);
     return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
   };
-  const surfaces = ['color-bg-chrome', 'color-bg-pane', 'color-bg-sidebar', 'color-bg-elevated'];
-  for (const [name, palette] of [['light', light], ['dark', dark]] as const) {
-    for (const text of ['color-text-primary', 'color-text-secondary', 'color-text-tertiary', 'color-danger-text', 'color-warn-text', 'color-success-text', 'color-brand-text'])
-      for (const surface of surfaces) assert(ratio(palette[text], palette[surface]) >= 4.5, `${name}: ${text} on ${surface}`);
-    assert(ratio(palette['color-on-primary'], palette['color-primary']) >= 4.5, `${name}: on-primary on primary`);
-    assert(ratio('#FFFFFF', palette['bot-bubble'] ?? palette['color-brand']) >= 4.5, `${name}: user bubble text`);
-    for (const surface of surfaces) assert(ratio(palette['color-border-focus'], palette[surface]) >= 3, `${name}: focus ring on ${surface}`);
+  const surfaces = ['color-bg-chrome', 'color-bg-pane', 'color-bg-sidebar', 'color-bg-elevated', 'color-bg-tertiary', 'color-bg-active', 'color-bg-hover', 'color-bg-secondary-hover', 'color-bubble-user', 'color-code-bg'];
+  for (const { id } of colorThemes) for (const mode of ['light', 'dark'] as const) {
+    const palette = { ...(mode === 'light' ? light : dark), ...Object.fromEntries(Object.entries(themeTokenValues(id, mode)).map(([name, value]) => [name.slice(2), value])) };
+    const name = `${id}/${mode}`;
+    for (const text of ['color-text-primary', 'color-text-secondary', 'color-text-tertiary', 'color-text-quaternary', 'color-icon-secondary', 'color-danger-text', 'color-warn-text', 'color-success-text', 'color-brand-text'])
+      for (const surface of surfaces) assert(ratio(palette[text], palette[surface]) >= 4.5, `${name}: ${text} on ${surface}: ${ratio(palette[text], palette[surface])}`);
+    for (const [text, surface] of [['color-on-primary', 'color-primary'], ['color-on-primary', 'color-bg-primary-hover'], ['bot-on-action', 'color-brand'], ['bot-on-action', 'color-brand-hover'], ['color-on-danger', 'color-danger'], ['color-on-warn', 'color-warn'], ['color-code-fg', 'color-code-bg'], ['color-danger-text', 'color-danger-bg'], ['color-warn-text', 'color-warn-bg'], ['color-success-text', 'color-success-bg'], ['color-text-secondary', 'color-danger-bg'], ['color-text-secondary', 'color-success-bg'], ['color-viewer-text', 'color-viewer-bg']])
+      assert(ratio(palette[text], palette[surface]) >= 4.5, `${name}: ${text} on ${surface}: ${ratio(palette[text], palette[surface])}`);
+    for (const surface of surfaces) for (const indicator of ['color-border-focus', 'color-border-primary']) assert(ratio(palette[indicator], palette[surface]) >= 3, `${name}: ${indicator} on ${surface}`);
   }
 });

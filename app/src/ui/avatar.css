@@ -9,7 +9,7 @@
 .k-avatar-picker__shape { position: relative; display: flex; align-items: center; justify-content: center; min-width: 40px; height: 48px; border-radius: 10px; border: 1px solid var(--color-border-tertiary); background: var(--color-bg-chrome); }
 .k-avatar-picker__shape:hover:not(:disabled) { background: var(--color-bg-hover); }
 .k-avatar-picker__shape[data-state='checked'] { border-color: var(--color-brand); background: var(--color-brand-soft); }
-.k-avatar-picker__check { position: absolute; right: 2px; bottom: 2px; display: flex; align-items: center; justify-content: center; width: 13px; height: 13px; border-radius: 50%; background: var(--color-brand); color: #FFFFFF; }
+.k-avatar-picker__check { position: absolute; right: 2px; bottom: 2px; display: flex; align-items: center; justify-content: center; width: 13px; height: 13px; border-radius: 50%; background: var(--color-brand); color: var(--bot-on-action); }
 .k-avatar-picker__colors { display: flex; flex-wrap: wrap; gap: 4px; }
 .k-avatar-picker__swatch { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 50%; border: 1px solid transparent; }
 .k-avatar-picker__swatch > span { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; }

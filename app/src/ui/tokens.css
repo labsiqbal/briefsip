@@ -63,6 +63,7 @@
   --ease-out: cubic-bezier(0.2, 0, 0, 1);
 
   /* --- semantic extras used for theming (light values; dark below) --- */
+  --color-bg-secondary: var(--color-bg-tertiary);
   --color-bg-elevated: #FFFFFF;
   --color-bg-subtle: #1C1C1C08;
   --color-bg-primary-disabled: #1C1C1C26;
@@ -80,6 +81,17 @@
   --color-success-text: #007541;
   --shadow-popover: #1C1C1C1A 0 10px 20px -3px, #1C1C1C14 0 4px 6px -4px;
   --bot-on-action: #FFFFFF;
+  --color-on-danger: #FFFFFF;
+  --color-on-warn: #FFFFFF;
+  --color-code-bg: #F1F1F1;
+  --color-code-fg: #1C1C1C;
+  --color-artwork-paper: #FFFFFF;
+  --color-shadow: #00000033;
+  --color-shadow-deep: #00000066;
+  --color-shadow-soft: #00000026;
+  --color-viewer-outline: #FFFFFF26;
+  --color-viewer-bg: #101116;
+  --color-viewer-text: #D8D9DF;
 
   /* --- Briefsip brand (replaces Bot HQ's per-bot pink) --- */
   --color-brand: #4F55D9;
