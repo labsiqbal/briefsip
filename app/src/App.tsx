@@ -18,7 +18,7 @@ import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
 import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Collapsible, Combobox, ConfirmProvider, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Segmented, Select, SkeletonRows, Textarea, useConfirm, type SelectOption } from './ui/kit';
 import { createRoot } from 'react-dom/client';
-import { createPortal } from 'react-dom';
+import { Dialog as RadixDialog } from 'radix-ui';
 import { validateFlow, type FlowGraph, type FlowLink } from '../flows.ts';
 import './ui/tokens.css';
 import './ui/base.css';
@@ -421,7 +421,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
           {menuOpen && <Menu align="center" label={`Menu ${title}`} onClose={() => setMenuOpen(false)} items={items} />}
         </span>
         <div className="chat__header-right">
-          <span className={`activity-chip${active ? ' is-working' : ''}`} role="status">{active ? `${active} messages processing` : channel ? 'Shared channel' : 'Direct conversation'}</span>
+          <span className={`activity-chip${active ? ' is-working' : ''}`} role="status">{active ? `${active} ${active === 1 ? 'message' : 'messages'} processing` : channel ? 'Shared channel' : 'Direct conversation'}</span>
           {!detailsOpen && <button type="button" className="icon-btn icon-btn--bordered" onClick={() => setDetailsOpen(true)} aria-label="Show details" title="Show details"><PanelRight size={16} aria-hidden /></button>}
         </div>
       </header>
@@ -745,6 +745,7 @@ function RoutineForm({ agent, routine, onBack }: { agent: Agent; routine: Routin
   const revision = initial?.data.revision ?? routine?.revision;
   const [conflict, setConflict] = useState(false);
   const snapshot = initial?.data;
+  const [enabled, setEnabled] = useState(snapshot?.enabled ?? (routine ? !!routine.enabled : true));
   const [trigger, setTrigger] = useState<'schedule' | 'webhook'>(snapshot?.trigger ?? routine?.trigger ?? 'schedule');
   const [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const mounted = useRef(true);
@@ -778,7 +779,8 @@ function RoutineForm({ agent, routine, onBack }: { agent: Agent; routine: Routin
       {trigger === 'webhook' && <Alert>After saving, open Webhook settings to create a URL and secret. Switching to a schedule removes the old URL and secret.</Alert>}
       <div hidden={trigger === 'webhook'}><Field label="Start time"><Input disabled={trigger === 'webhook'} name="nextAt" type="datetime-local" required readOnly={!!pending.current} defaultValue={localDate} /></Field></div>
       <div hidden={trigger === 'webhook'}><Field label="Repeat every (minutes)" hint="Leave empty for a one-time run."><Input disabled={trigger === 'webhook'} name="interval" type="number" min={1} max={525600} step={1} readOnly={!!pending.current} defaultValue={snapshot ? snapshot.intervalSeconds === null ? '' : snapshot.intervalSeconds / 60 : routine?.interval_ms ? routine.interval_ms / 60000 : ''} /></Field></div>
-      <label className="k-check"><input type="checkbox" name="enabled" disabled={!!pending.current} defaultChecked={snapshot?.enabled ?? (routine ? !!routine.enabled : true)} />{trigger === 'webhook' ? 'Webhook active' : 'Schedule active'}</label>
+      <Checkbox checked={enabled} onChange={setEnabled} disabled={!!pending.current} label={trigger === 'webhook' ? 'Webhook active' : 'Schedule active'} />
+      <input type="hidden" name="enabled" value="on" disabled={!enabled || !!pending.current} />
       {error && <Alert tone="error">{error}</Alert>}
       <div><Button type="submit" variant="primary" busy={busy} disabled={busy || conflict}>{busy ? 'Saving...' : pending.current ? 'Retry save' : 'Save routine'}</Button></div>
     </form>
@@ -1155,12 +1157,6 @@ function App() {
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
   }, []);
-  useEffect(() => {
-    if (!settings) return;
-    const key = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented && !document.querySelector('.modal-root')) { event.preventDefault(); setSettings(null); } };
-    window.addEventListener('keydown', key);
-    return () => window.removeEventListener('keydown', key);
-  }, [settings]);
   async function markRead(room: Channel) {
     const updated = await api<Channel>(`/api/channels/${room.id}/read`, { id: crypto.randomUUID(), position: room.activity });
     setChannels(current => current.map(item => item.id === room.id ? { ...item, activity: Math.max(item.activity, updated.activity), read_position: Math.max(item.read_position, updated.read_position) } : item));
@@ -1190,7 +1186,7 @@ function App() {
   else if (agent) content = <AgentConversations onOpenChannel={openChannel} key={agent.id} agent={agent} workflowAgents={directory.agents} configured={directory.configured} initialThread={openedThread?.agent === agent.id ? openedThread.thread : undefined} onThreadOpened={() => setOpenedThread(null)} onOpenAgent={openThread} onEdit={() => setDialog('edit')} />;
   else content = <main className="chat chat--empty bs-root"><div className="empty-chat"><div className="empty-chat__title">Create your first agent</div><div className="empty-chat__sub">Name it, choose a model, then explain how it should work. The agent and its history are saved on this computer.</div><button type="button" className="btn btn--primary" onClick={() => setDialog('agent')}><Plus size={16} aria-hidden /> New agent</button></div></main>;
   const created = (item: Agent) => { setDirectory(current => current && { ...current, agents: [...current.agents.filter(agent => agent.id !== item.id), item] }); openAgent(item.id); };
-  return <div className={`app bs-root${collapsed ? ' is-sidebar-collapsed' : ''}`}>
+  return <RadixDialog.Root modal open={!!settings} onOpenChange={open => setSettings(current => open ? current ?? 'skills' : null)}><div className={`app bs-root${collapsed ? ' is-sidebar-collapsed' : ''}`}>
     <aside className={`sidebar${collapsed ? ' is-collapsed' : ''}`} aria-label="Workspace navigation">
       <div className="sidebar__titlebar">
         {!collapsed && <a className="sidebar__brand" href="/">Briefsip</a>}
@@ -1234,7 +1230,7 @@ function App() {
       <div className="sidebar__footer">
         <div className="sidebar__fade" />
         {!collapsed && <div className="provider-status" role="status"><i className={directory?.configured ? 'is-on' : ''} aria-hidden /><span>{activityError ? 'Status not updated. Trying again.' : directory?.configured ? 'Provider configured' : 'Provider not connected'}</span></div>}
-        <button type="button" className="icon-btn icon-btn--bordered" onClick={() => setSettings('skills')} aria-label="Settings" title="Settings (Ctrl/Cmd+,)"><Settings size={16} aria-hidden /></button>
+        <RadixDialog.Trigger asChild><button type="button" className="icon-btn icon-btn--bordered" aria-label="Settings" title="Settings (Ctrl/Cmd+,)"><Settings size={16} aria-hidden /></button></RadixDialog.Trigger>
       </div>
     </aside>
     {content}
@@ -1242,15 +1238,19 @@ function App() {
     {dialog === 'channel' && directory && <ChannelForm agents={directory.agents} onCancel={() => setDialog(null)} onCreated={item => { setChannels(current => [...current.filter(room => room.id !== item.id), item]); openChannel(item.id); }} />}
     {dialog === 'edit' && directory && channel && <ChannelForm key={`${channel.id}:${channel.revision}:${editReload}`} agents={directory.agents} channel={channel} onCancel={() => setDialog(null)} onReload={() => { void load().then(() => setEditReload(value => value + 1)); }} onCreated={() => { void load(); setDialog(null); }} />}
     {dialog === 'edit' && directory && !channel && agent && <AgentForm key={`${agent.id}:${editReload}`} model={directory.defaultModel} profile={agent} onCancel={() => setDialog(null)} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} onCreated={() => { void load(); setDialog(null); }} />}
-    {settings && createPortal(<div className="app-settings bs-root" role="dialog" aria-modal="true" aria-label="Settings">
+    <RadixDialog.Portal><RadixDialog.Content className="app-settings bs-root" aria-describedby={undefined} onOpenAutoFocus={event => {
+      event.preventDefault();
+      const page = (event.currentTarget as HTMLElement).querySelector<HTMLElement>('.app-settings__page');
+      (page?.querySelector<HTMLElement>('h1[tabindex], button:not(:disabled), input:not([type="hidden"]):not(:disabled), [tabindex="0"]') ?? page)?.focus();
+    }}>
       <aside className="app-settings__nav">
         <button type="button" className="app-settings__back" onClick={() => setSettings(null)}><ChevronDown size={14} aria-hidden style={{ transform: 'rotate(90deg)' }} /> Back to workspace</button>
-        <div className="app-settings__heading">Settings</div>
+        <RadixDialog.Title asChild><div className="app-settings__heading">Settings</div></RadixDialog.Title>
         {settingsSections.map(section => <button key={section.id} type="button" className={`cfg-nav__item${settings === section.id ? ' is-active' : ''}`} aria-current={settings === section.id || undefined} onClick={() => setSettings(section.id)}>{section.label}</button>)}
       </aside>
       <div className="app-settings__main">
         <button type="button" className="app-settings__close icon-btn" onClick={() => setSettings(null)} aria-label="Close settings" title="Close (Esc)"><X size={16} aria-hidden /></button>
-        <div className="app-settings__page legacy">
+        <div className="app-settings__page legacy" tabIndex={-1}>
           {!directory ? <p className="empty" role="status">Loading workspace...</p>
             : settings === 'skills' ? <Suspense fallback={<p className="empty" role="status">Loading skill library...</p>}><SkillsPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'mcp' ? <Suspense fallback={<p className="empty" role="status">Loading MCP connections...</p>}><McpPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
@@ -1262,8 +1262,8 @@ function App() {
             : <Suspense fallback={<p className="empty" role="status">Loading appearance settings...</p>}><PresentationSettings /></Suspense>}
         </div>
       </div>
-    </div>, document.body)}
-  </div>;
+    </RadixDialog.Content></RadixDialog.Portal>
+  </div></RadixDialog.Root>;
 }
 
 applyPresentation(document.documentElement, readPresentation().value);
