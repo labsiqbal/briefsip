@@ -1,4 +1,6 @@
 import './ui/csp-nonce';
+import { AgentComputerPanel } from './AgentComputerPanel';
+import { AgentComputerSettings } from './AgentComputerSettings';
 import { restoreChatCommand, restoreChannelCommand, type ChatCommand, type ChannelCommand } from '../conversation-command';
 import { restoreAgentCreation, type AgentCreation } from '../agent-create';
 import { AgentAvatar, AvatarEditor } from './AgentAvatar';
@@ -443,6 +445,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
         </div>
         <div className="details__sections">
           {detailsExtra}
+          {!channel && <AgentComputerPanel key={agent.id} agent={agent.id} request={api} />}
           {channel && <section><div className="section-label">Read status</div><div className="panel-card"><div className="panel-row panel-row--setting"><span>{channel.activity > channel.read_position ? 'Unread activity' : 'All activity read'}</span><button type="button" className="cfg-btn cfg-btn--secondary" disabled={markingRead || channel.activity <= channel.read_position} onClick={() => { setMarkingRead(true); void onRead?.().catch(error => setError(message(error))).finally(() => setMarkingRead(false)); }}>Mark as read</button></div></div></section>}
           <section>
             <div className="section-label">Search conversation</div>
@@ -1015,6 +1018,7 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
       {error && <Alert tone="error">{error}</Alert>}
     </form>
     {profile && <div className="legacy k-legacy-block">
+      <AgentComputerSettings agent={profile.id} request={api} />
       {onVisibilityChanged && <AvatarEditor agent={profile.id} request={api} onChanged={onVisibilityChanged} />}
       {onVisibilityChanged && <AgentVisibility agent={liveProfile!} request={api} onChanged={onVisibilityChanged} />}
       <Suspense fallback={<p role="status">Loading local sites...</p>}><SitesPanel key={`sites:${profile.id}`} agent={profile.id} request={api} /></Suspense>
