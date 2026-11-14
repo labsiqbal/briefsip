@@ -7,7 +7,7 @@
     { "sourcePath": "web/src/styles/tokens.css", "localPath": "app/src/ui/tokens.css", "adaptation": "Briefsip brand colors replace per-bot pink; data-theme dark/light/system selectors; legacy panel variables mapped onto tokens." },
     { "sourcePath": "web/src/styles/base.css", "localPath": "app/src/ui/base.css", "adaptation": "Focus ring uses Briefsip token." },
     { "sourcePath": "web/src/styles/shell.css", "localPath": "app/src/ui/shell.css", "adaptation": "Unchanged layout; Briefsip additions live in app/src/ui/briefsip.css." },
-    { "sourcePath": "web/src/styles/chat.css", "localPath": "app/src/ui/chat.css", "adaptation": "Notice class renamed to chat-notice; system-theme dark variant." },
+    { "sourcePath": "web/src/styles/chat.css", "localPath": "app/src/ui/chat.css", "adaptation": "Notice class renamed to chat-notice; system-theme dark variant; dead bubble/group/sender-label rules removed for Owner-selected message rows." },
     { "sourcePath": "web/src/styles/details.css", "localPath": "app/src/ui/details.css", "adaptation": "Focus ring uses Briefsip token." },
     { "sourcePath": "web/src/styles/modals.css", "localPath": "app/src/ui/modals.css", "adaptation": "Focus ring uses Briefsip token." },
     { "sourcePath": "web/src/styles/config.css", "localPath": "app/src/ui/config.css", "adaptation": "Unchanged." },
