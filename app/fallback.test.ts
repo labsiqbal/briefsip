@@ -8,10 +8,12 @@ import { join } from 'node:path';
 import { startApp } from './server.ts';
 import { parseAgentTemplate, templateCommand } from './agent-template.ts';
 
-test('backup model is opt-in, bounded, durable and never replays after activity or uncertainty', async () => {
+test('backup model is opt-in, bounded, durable and never replays after activity or uncertainty', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-fallback-'));
   const calls: { model: string; mode: string }[] = [];
   let mode = 'success', resumed = false;
+  const timeout = new AbortController(), realTimeout = AbortSignal.timeout.bind(AbortSignal);
+  t.mock.method(AbortSignal, 'timeout', (ms: number) => mode === 'timeout' ? timeout.signal : realTimeout(ms));
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const part of req) raw += part;
     const body = JSON.parse(raw); calls.push({ model: body.model, mode });
@@ -25,7 +27,9 @@ test('backup model is opt-in, bounded, durable and never replays after activity 
     if (mode === 'truncated') { res.end(JSON.stringify({ choices: [{ finish_reason: 'length', message: { content: 'Partial' } }] })); return; }
     if (mode === 'malformed') { res.end('{'); return; }
     if (mode === 'disconnect') { req.socket.destroy(); return; }
-    if (mode === 'timeout') return;
+    // Expire only the timeout scenario, after dispatch is observed.
+    if (mode === 'timeout') { timeout.abort(new DOMException('Fixture deadline elapsed', 'TimeoutError')); return; }
+    if (mode === 'hold') return;
     if (mode === 'forbidden') return reject(403);
     if (mode === 'double-failure') return reject(503);
     if (body.model === 'primary') return reject(mode === 'rate-limit' ? 429 : 503);
@@ -36,19 +40,20 @@ test('backup model is opt-in, bounded, durable and never replays after activity 
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
-  const options = { database: join(directory, 'db.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, timeout: 300 };
+  const options = { database: join(directory, 'db.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, timeout: 30000 };
   let app = await startApp(options);
   async function request(path: string, body?: unknown, status?: number) {
     const response = await fetch(app.origin + path, { method: body === undefined ? 'GET' : 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
     const result = await response.json(); if (status) assert.equal(response.status, status, JSON.stringify(result)); else assert(response.ok, JSON.stringify(result)); return result;
   }
   async function until(path: string, id: string, paused = false) {
-    for (let n = 0; n < 150; n++) {
+    const deadline = performance.now() + 30000;
+    while (performance.now() < deadline) {
       const row = (await request(path)).find((row: any) => row.id === id);
       if (row && (paused ? row.paused : ['done', 'failed', 'cancelled'].includes(row.status))) return row;
-      await new Promise(resolve => setTimeout(resolve, 15));
+      await new Promise(resolve => setTimeout(resolve, 25));
     }
-    assert.fail('Task did not settle');
+    assert.fail(`Task ${id} did not settle within 30s`);
   }
   try {
     const create = { id: randomUUID(), name: 'Fallback', model: 'primary', backupModel: 'backup', instructions: 'Test' };
@@ -91,12 +96,14 @@ test('backup model is opt-in, bounded, durable and never replays after activity 
     const workflow = await request(`/api/agents/${agent.id}/workflows`, { id: randomUUID(), revision: 0, name: 'Explicit model', graph });
     const wfStart = calls.length;
     const run = await request(`/api/workflows/${workflow.id}/run`, { id: randomUUID(), revision: 1, input: 'Test' });
-    let current;
-    for (let n = 0; n < 100; n++) { current = await request(`/api/workflow-runs/${run.id}`); if (current.status === 'failed') break; await new Promise(resolve => setTimeout(resolve, 15)); }
+    let current: any;
+    const workflowDeadline = performance.now() + 30000;
+    while (performance.now() < workflowDeadline) { current = await request(`/api/workflow-runs/${run.id}`); if (current.status === 'failed') break; await new Promise(resolve => setTimeout(resolve, 25)); }
     assert.equal(current.status, 'failed'); assert.deepEqual(calls.slice(wfStart).map(call => call.model), ['primary']);
-    mode = 'timeout'; const cancelled = randomUUID(), cancelStart = calls.length;
+    mode = 'hold'; const cancelled = randomUUID(), cancelStart = calls.length;
     await request(path, { id: cancelled, text: 'Cancel active' });
-    for (let n = 0; n < 100 && calls.length === cancelStart; n++) await new Promise(resolve => setTimeout(resolve, 5));
+    const dispatchDeadline = performance.now() + 30000;
+    while (performance.now() < dispatchDeadline && calls.length === cancelStart) await new Promise(resolve => setTimeout(resolve, 25));
     await request(`${path}/${cancelled}/cancel`, { id: randomUUID() });
     assert.equal((await until(path, cancelled)).status, 'cancelled'); assert.equal(calls.length, cancelStart + 1);
     mode = 'disconnect'; const uncertain = randomUUID(); await request(path, { id: uncertain, text: 'Uncertain' });
@@ -106,7 +113,8 @@ test('backup model is opt-in, bounded, durable and never replays after activity 
     assert.equal((await until(path, uncertain)).status, 'failed'); assert.deepEqual(calls.slice(retryStart).map(call => call.model), ['primary']);
     mode = 'backup-hold'; const held = randomUUID(), heldStart = calls.length;
     await request(path, { id: held, text: 'Restart during backup' });
-    for (let n = 0; n < 100 && calls.length < heldStart + 2; n++) await new Promise(resolve => setTimeout(resolve, 5));
+    const backupDeadline = performance.now() + 30000;
+    while (performance.now() < backupDeadline && calls.length < heldStart + 2) await new Promise(resolve => setTimeout(resolve, 25));
     assert.deepEqual(calls.slice(heldStart).map(call => call.model), ['primary', 'backup']);
     await app.close(); app = await startApp(options); mode = 'success';
     const stopped = (await request(path)).find((row: any) => row.id === held), heldResume = calls.length;

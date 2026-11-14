@@ -7,10 +7,17 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import childProcess from 'node:child_process';
+import { once } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
 import { extractPdf, isPdf, pdfInputLimit } from './pdf-text.ts';
 import { startApp } from './server.ts';
 
+async function parserStarted(ready: Promise<void>) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([ready, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('PDF fixture parser did not start within 30s')), 30000); })]);
+  } finally { clearTimeout(timer); }
+}
 
 test('PDF sandbox extracts compressed text, refuses malformed/blank/oversize input and bounds output', async () => {
   const bytes = document('LOCAL_PDF_CONTENT'); assert(isPdf(bytes));
@@ -23,6 +30,36 @@ test('PDF sandbox extracts compressed text, refuses malformed/blank/oversize inp
   syncBuiltinESMExports();
   try { await assert.rejects(extractPdf(document('aborted'), controller.signal), /cancelled/); assert.equal(spawned, false, 'Pre-aborted reads must not spawn a parser'); }
   finally { childProcess.spawn = originalSpawn; syncBuiltinESMExports(); }
+});
+
+test('PDF cancellation avoids pre-aborted spawns and closes pipes held by launcher descendants', async t => {
+  const original = childProcess.spawn, controller = new AbortController();
+  let launcher: ReturnType<typeof childProcess.spawn> | undefined;
+  let started!: () => void; const ready = new Promise<void>(resolve => { started = resolve; });
+  const mock = t.mock.method(childProcess, 'spawn', (...args: Parameters<typeof childProcess.spawn>) => {
+    assert.equal(args[0], '/usr/bin/bwrap');
+    launcher = original(process.execPath, ['--input-type=module', '-e', `
+      import { spawn } from 'node:child_process';
+      const child = spawn(process.execPath, ['-e', 'process.send("ready"); setInterval(() => {}, 1000)'], { stdio: ['ignore', 1, 2, 'ipc'] });
+      child.once('message', () => process.send('ready'));
+      process.stdin.resume();
+    `], { ...args[2], stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
+    launcher.once('message', started); return launcher;
+  });
+  syncBuiltinESMExports();
+  try {
+    controller.abort(); await assert.rejects(extractPdf(document('aborted'), controller.signal), /cancelled/);
+    assert.equal(mock.mock.callCount(), 0, 'Pre-aborted input must not start a parser');
+    const active = new AbortController(), pending = extractPdf(document('startup'), active.signal);
+    // Register rejection handling before the cancellation event.
+    const rejected = assert.rejects(pending, /cancelled/);
+    await parserStarted(ready);
+    const closed = once(launcher!, 'close', { signal: AbortSignal.timeout(30000) });
+    active.abort(); await closed; await rejected;
+  } finally {
+    if (launcher?.pid) try { process.kill(-launcher.pid, 'SIGKILL'); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
+    mock.mock.restore(); syncBuiltinESMExports();
+  }
 });
 
 test('PDF HTTP preview and messages preserve source, scope, retry, routing, tools and restart', async () => {
@@ -111,11 +148,11 @@ test('PDF HTTP preview and messages preserve source, scope, retry, routing, tool
         const child = originalSpawn(...args); if (args[0] === '/usr/bin/bwrap') { frozen = child; child.kill('SIGSTOP'); started(); } return child;
       }) as typeof childProcess.spawn; syncBuiltinESMExports();
       try {
-        generated = 1; const id = randomUUID(); await request(`${scopes[0]}/turns`, { id, text: 'Cancel generated PDF read' }); await spawned;
-        const parserClosed = new Promise<void>(resolve => frozen!.once('close', () => resolve()));
+        generated = 1; const id = randomUUID(); await request(`${scopes[0]}/turns`, { id, text: 'Cancel generated PDF read' }); await parserStarted(spawned);
+        const closed = once(frozen!, 'close', { signal: AbortSignal.timeout(30000) });
         const count = payloads.length; await request(`${scopes[0]}/turns/${id}/cancel`, { id: randomUUID() });
         frozen!.kill('SIGCONT');
-        await parserClosed;
+        await closed;
         const turn = (await request(`${scopes[0]}/turns`)).find((row: any) => row.id === id); assert.equal(turn.status, 'cancelled');
         // A subsequent turn must run after the cancelled reader yields, without its text continuation.
         const next = randomUUID(); await request(`${scopes[0]}/turns`, { id: next, text: 'After cancellation' }); await done(scopes[0], next);
@@ -143,7 +180,7 @@ test('PDF HTTP preview and messages preserve source, scope, retry, routing, tool
           ? request(`${scope}/turns`, { id: randomUUID(), text: 'Never dispatch', files: [file] }, 409)
           : operation === 'preview-delete' ? request(`${scope}/files/${file}?preview=text`, undefined, 404)
           : fetch(`${app.origin}/api/scripts/agents/${a.id}/threads/${side.id}/files/${file}?preview=text`, { headers: { Authorization: `Bearer ${token}` } });
-        await spawned;
+        await parserStarted(spawned);
         if (operation === 'script-revoke') await request(`/api/agents/${a.id}/scripts`, { id: randomUUID(), revision: 1, enabled: false });
         else {
           await request(`${scope}/edit`, { id: randomUUID(), revision: 1, name: operation, archived: true });
@@ -166,7 +203,7 @@ test('PDF HTTP preview and messages preserve source, scope, retry, routing, tool
     const controller = new AbortController();
     try {
       const response = fetch(`${app.origin}${scopes[0]}/files/${pendingFile}?preview=text`, { signal: controller.signal }).catch(() => null);
-      await spawned; controller.abort(); await response;
+      await parserStarted(spawned); controller.abort(); await response;
       await app.close(); appClosed = true;
       assert(frozen); assert.throws(() => process.kill(frozen!.pid!, 0), 'App close must terminate its parser before returning');
     } finally { childProcess.spawn = originalSpawn; syncBuiltinESMExports(); frozen?.kill('SIGKILL'); }

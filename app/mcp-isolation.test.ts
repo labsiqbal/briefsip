@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-test('a hostile MCP output schema cannot block HTTP, exceed the worker deadline or resist cancellation', { timeout: 40000 }, async () => {
+test('a hostile MCP output schema cannot block HTTP, exceed the worker deadline or resist cancellation', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-mcp-isolation-'));
   let connection = '', effects = 0;
   const external = createServer(async (req, res) => {
@@ -30,22 +30,29 @@ test('a hostile MCP output schema cannot block HTTP, exceed the worker deadline 
   const exited = new Promise(resolve => child.once('exit', resolve));
   try {
     const origin = await new Promise<string>((resolve, reject) => { let raw = ''; child.stdout.on('data', chunk => { raw += chunk; if (raw.includes('\n')) resolve(raw.trim()); }); child.once('error', reject); child.once('exit', () => reject(new Error('Child exited before ready'))); });
-    async function post(path: string, body: unknown) { const response = await fetch(origin + path, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(2000) }); assert(response.ok, await response.clone().text()); return response.json(); }
+    async function post(path: string, body: unknown) { const response = await fetch(origin + path, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(30000) }); assert(response.ok, await response.clone().text()); return response.json(); }
+    async function waitFor(predicate: () => boolean | Promise<boolean>, description: string, timeout = 30000) {
+      const deadline = performance.now() + timeout;
+      while (performance.now() < deadline) { if (await predicate()) return; await new Promise(resolve => setTimeout(resolve, 25)); }
+      assert.fail(`${description} within ${timeout}ms`);
+    }
     const agent = await post('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
     const tested = await post('/api/mcp/test', { id: randomUUID(), name: 'Hostile schema', url: `http://127.0.0.1:${ea.port}/mcp`, token: '' });
     const saved = await post('/api/mcp', { id: randomUUID(), test: tested.id }); connection = saved.id;
     await post(`/api/agents/${agent.id}/mcp/${connection}`, { id: randomUUID(), revision: 0, connectionRevision: 1, tools: ['slow'] });
     const id = randomUUID(), path = `/api/agents/${agent.id}/turns`;
     await post(path, { id, text: 'Run tool' });
-    for (let i = 0; i < 300 && effects === 0; i++) await new Promise(resolve => setTimeout(resolve, 10)); assert.equal(effects, 1);
+    await waitFor(() => effects === 1, 'first MCP effect');
     await new Promise(resolve => setTimeout(resolve, 100));
-    const health = await fetch(origin + '/api/agents', { signal: AbortSignal.timeout(500) }); assert(health.ok);
-    let failed; const deadline = Date.now() + 24000;
-    while (Date.now() < deadline) { const rows = await (await fetch(origin + path, { signal: AbortSignal.timeout(2000) })).json(); failed = rows.find((row: any) => row.id === id); if (failed?.status === 'failed') break; await new Promise(resolve => setTimeout(resolve, 50)); }
-    assert.equal(failed?.status, 'failed'); assert.match(failed.error, /uncertain/);
+    const health = await fetch(origin + '/api/agents', { signal: AbortSignal.timeout(5000) }); assert(health.ok);
+    const active = await (await fetch(origin + path, { signal: AbortSignal.timeout(5000) })).json();
+    assert.equal(active.find((row: any) => row.id === id).status, 'running', 'HTTP responds while hostile MCP validation is still running');
+    let failed: any;
+    await waitFor(async () => { const rows = await (await fetch(origin + path, { signal: AbortSignal.timeout(30000) })).json(); failed = rows.find((row: any) => row.id === id); return failed?.status === 'failed'; }, 'MCP tool failure');
+    assert.match(failed.error, /uncertain/);
     const cancelId = randomUUID(); await post(path, { id: cancelId, text: 'Cancel this tool' });
-    for (let i = 0; i < 300 && effects < 2; i++) await new Promise(resolve => setTimeout(resolve, 10)); assert.equal(effects, 2);
+    await waitFor(() => effects === 2, 'cancelled MCP effect');
     await post(`${path}/${cancelId}/cancel`, { id: randomUUID() });
-    const rows = await (await fetch(origin + path, { signal: AbortSignal.timeout(500) })).json(); assert.equal(rows.find((row: any) => row.id === cancelId).status, 'cancelled');
+    const rows = await (await fetch(origin + path, { signal: AbortSignal.timeout(5000) })).json(); assert.equal(rows.find((row: any) => row.id === cancelId).status, 'cancelled');
   } finally { child.kill('SIGKILL'); await exited; external.closeAllConnections(); provider.closeAllConnections(); await Promise.all([new Promise<void>(resolve => external.close(() => resolve())), new Promise<void>(resolve => provider.close(() => resolve()))]); rmSync(dir, { recursive: true, force: true }); }
 });

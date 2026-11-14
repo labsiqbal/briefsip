@@ -6,6 +6,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { format } from 'node:util';
+import { once } from 'node:events';
 import { startApp } from './server.ts';
 
 const key = 'provider-matrix-secret-canary-87362';
@@ -18,18 +19,22 @@ const cutStream = 'The provider stream ended before completion. Check the provid
 const failedRequest = (status: number) => `The provider failed while processing the request (HTTP ${status}). Check provider status and retry later.`;
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-test('local provider discovery and execution matrix preserves errors, bounded dispatch and secret isolation', { timeout: 45000 }, async t => {
+test('local provider discovery and execution matrix preserves errors, bounded dispatch and secret isolation', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-provider-matrix-'));
   const logs: string[] = [], responses: string[] = [];
   for (const method of ['log', 'info', 'warn', 'error', 'debug'] as const) t.mock.method(console, method, (...args: unknown[]) => { logs.push(format(...args)); });
   let mode = 'catalog', requests = 0, redirected = 0, held: ServerResponse | undefined;
+  let deadline = new AbortController();
+  const realTimeout = AbortSignal.timeout.bind(AbortSignal);
+  t.mock.method(AbortSignal, 'timeout', (ms: number) => ['timeout', 'catalog-timeout'].includes(mode) ? deadline.signal : realTimeout(ms));
   const calls: { model: string; toolResults: number }[] = [];
   const provider = createServer(async (req, res) => {
     requests++;
     assert.equal(req.headers.authorization, `Bearer ${key}`);
     if (req.url === '/stolen') { redirected++; res.end(key); return; }
     if (req.url === '/v1/models') {
-      if (mode === 'loading' || mode === 'catalog-timeout') { held = res; return; }
+      if (mode === 'loading') { held = res; provider.emit('held'); return; }
+      if (mode === 'catalog-timeout') { deadline.abort(new DOMException('Fixture deadline elapsed', 'TimeoutError')); return; }
       if (mode === 'redirect') { res.writeHead(302, { Location: '/stolen' }); res.end(key); return; }
       if (mode === 'non-json') { res.end(`${key}<html>not JSON</html>`); return; }
       if (mode === 'oversize') { res.end(key + 'x'.repeat(2 * 1024 * 1024)); return; }
@@ -45,7 +50,8 @@ test('local provider discovery and execution matrix preserves errors, bounded di
     calls.push({ model: body.model, toolResults });
     assert(Array.isArray(body.tools) && body.tools.length > 0);
     const reject = (status: number) => { res.writeHead(status); res.end(JSON.stringify({ error: { message: key } })); };
-    if (mode === 'timeout') return;
+    // Timeout mapping is exercised after the provider observes dispatch.
+    if (mode === 'timeout') { deadline.abort(new DOMException('Fixture deadline elapsed', 'TimeoutError')); return; }
     if (mode === 'text-secret') { res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: key } }] })); return; }
     if (mode === 'malformed') { res.end(`{"error":"${key}",`); return; }
     if (mode === 'tools' || mode === 'other-400') { res.writeHead(400); res.end(JSON.stringify({ error: { message: key, param: mode === 'tools' ? 'tools' : 'temperature' } })); return; }
@@ -67,7 +73,7 @@ test('local provider discovery and execution matrix preserves errors, bounded di
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
-  const options = { database: join(directory, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: key, timeout: 400 };
+  const options = { database: join(directory, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: key, timeout: 30000 };
   let app = await startApp({ ...options, accounts: [{ id: 'work', name: 'Work', baseURL: options.baseURL, apiKey: key }] });
   async function request(path: string, body?: unknown, status = 200) {
     const res = await fetch(app.origin + path, { method: body === undefined ? 'GET' : 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -75,8 +81,9 @@ test('local provider discovery and execution matrix preserves errors, bounded di
     assert.equal(res.status, status, raw); return JSON.parse(raw);
   }
   async function until(path: string, id: string) {
-    for (let n = 0; n < 250; n++) { const row = (await request(path)).find((row: any) => row.id === id); if (row && ['done', 'failed'].includes(row.status)) return row; await sleep(10); }
-    assert.fail('Turn did not settle');
+    const deadline = performance.now() + 30000;
+    while (performance.now() < deadline) { const row = (await request(path)).find((row: any) => row.id === id); if (row && ['done', 'failed'].includes(row.status)) return row; await sleep(25); }
+    assert.fail(`Turn ${id} did not settle within 30s`);
   }
   function scan() {
     assert(!responses.join('\n').includes(key), 'Response history leaked key');
@@ -86,9 +93,10 @@ test('local provider discovery and execution matrix preserves errors, bounded di
   try {
     await t.test('loading remains pending; empty catalog succeeds without inventing models', async () => {
       mode = 'loading'; const before = requests; let done = false;
+      const ready = once(provider, 'held', { signal: AbortSignal.timeout(30000) });
       const pending = request('/api/models').then(value => { done = true; return value; });
-      for (let n = 0; n < 100 && !held; n++) await sleep(5);
-      assert(held); await sleep(30); assert.equal(done, false); assert.equal(requests - before, 1);
+      await ready;
+      assert(held); assert.equal(done, false); assert.equal(requests - before, 1);
       held.end('{"data":[]}'); held = undefined; assert.deepEqual(await pending, { models: [] });
       mode = 'empty'; assert.deepEqual(await request('/api/models'), { models: [] }); scan();
     });
@@ -103,7 +111,7 @@ test('local provider discovery and execution matrix preserves errors, bounded di
       ['catalog-timeout', 'Model discovery timed out. Check the provider and try again.'],
     ];
     for (const [scenario, expected] of discovery) await t.test(`discovery ${scenario}`, async () => {
-      mode = scenario; const before = requests;
+      mode = scenario; deadline = new AbortController(); const before = requests;
       assert.deepEqual(await request('/api/models?account=work', undefined, 502), { error: expected });
       assert.equal(requests - before, 1); assert.equal(redirected, 0); scan();
     });
@@ -126,7 +134,7 @@ test('local provider discovery and execution matrix preserves errors, bounded di
       ['other-400', 'The provider rejected the request (HTTP 400). Check model and provider compatibility.'],
     ];
     for (const [scenario, expected] of failures) await t.test(`turn ${scenario} does not fall back or replay`, async () => {
-      mode = scenario; const before = calls.length, command = { id: randomUUID(), text: scenario };
+      mode = scenario; deadline = new AbortController(); const before = calls.length, command = { id: randomUUID(), text: scenario };
       await request(path, command, 202); const row = await until(path, command.id);
       assert.equal(row.status, 'failed'); assert.equal(row.error, expected); assert.equal(row.reply, null);
       assert.deepEqual(calls.slice(before).map(call => call.model), ['primary']);

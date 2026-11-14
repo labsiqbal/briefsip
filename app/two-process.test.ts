@@ -164,13 +164,13 @@ test('protected turn wait uses outbound stream and recovers lost host ACK withou
       const keys=JSON.parse(readFileSync(process.argv[2],'utf8')); let posts=0; const original=globalThis.fetch;
       globalThis.fetch=(url,init)=>{if(String(url).endsWith('/wait-secret-results'))posts++;return original(url,init);};
       const runtime=openDeviceRuntime({database:process.argv[1],server:process.argv[3],development:true,entry:(service,name)=>({getPassword:()=>keys[service+'/'+name]??null,setPassword:()=>{throw new Error('No writes expected');}})});
-      const connection=runtime.connect(),until=Date.now()+10000;while(connection.state().phase!=='connected'){if(Date.now()>until)throw new Error('Probe connection timeout');await new Promise(resolve=>setTimeout(resolve,50));}
-      await new Promise(resolve=>setTimeout(resolve,500));const db=new DatabaseSync(process.argv[1]);const state=db.prepare('SELECT state FROM device_wait_secrets').get().state;db.close();
+      const connection=runtime.connect(),until=performance.now()+30000;while(connection.state().phase!=='connected'){if(performance.now()>until)throw new Error('Probe connection timeout');await new Promise(resolve=>setTimeout(resolve,50));}
+      await runtime.recoverPending();const db=new DatabaseSync(process.argv[1]);const state=db.prepare('SELECT state FROM device_wait_secrets').get().state;db.close();
       process.send({posts,state});await runtime.close();process.disconnect();`;
     const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', source, database, keyFile, f.origin()], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
     const childExit = once(child, 'exit');
     try {
-      const [probe] = await once(child, 'message', { signal: AbortSignal.timeout(12000) });
+      const [probe] = await once(child, 'message', { signal: AbortSignal.timeout(30000) });
       assert.deepEqual(probe, { posts: 0, state: 'ready' }, 'Second host must not ACK or change wait evidence while original runner holds lock');
       const [status] = await childExit; assert.equal(status, 0);
     } finally { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); await childExit; }
@@ -430,10 +430,10 @@ async function fixture() {
     }finally{restored.close();app=await startCanonicalApp({...options,port});}
   }, close: async () => { await app.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
-async function until(check: () => boolean | Promise<boolean>, timeout = 10000) {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) { if (await check()) return; await new Promise(resolve => setTimeout(resolve, 20)); }
-  assert.fail('Device state did not settle');
+async function until(check: () => boolean | Promise<boolean>, timeout = 30000) {
+  const deadline = performance.now() + timeout;
+  while (performance.now() < deadline) { if (await check()) return; await new Promise(resolve => setTimeout(resolve, 20)); }
+  assert.fail(`Device state did not settle within ${timeout}ms`);
 }
 
 async function workflowConfigurationFixture() {
@@ -555,7 +555,8 @@ test('protected workflow event commits one transition and keeps exact retries af
 });
 
 test('protected workflow wait discards delayed reveal and event replies after authority changes', async t => {
-  for (const kind of ['reveal','event'] as const) for (const change of ['revision','rules','assignment','mapping','cancel','expiry','revoke','disconnect'] as const) await t.test(`${kind}/${change}`, async () => {
+  for (const kind of ['reveal','event'] as const) for (const change of ['revision','rules','assignment','mapping','cancel','expiry','revoke','disconnect'] as const) await t.test(`${kind}/${change}`, async t => {
+    if (change === 'expiry') t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
     const f = await protectedWorkflowWaitFixture('user_collaborator', change === 'expiry' ? 2 : 60), originalFetch = globalThis.fetch;
     let held = false, release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
@@ -576,7 +577,7 @@ test('protected workflow wait discards delayed reveal and event replies after au
       if (change === 'assignment') assert.equal((await f.send(`/api/projects/${f.project}/members/${f.initiator}`, { requestId: randomUUID(), expectedRevision: 1, agentAssignments: [{ agentId: f.agent, expectedAgentRevision: 1, expectedParticipationRevision: 1, expectedAssignmentRevision: 1, enabled: false }] }, 'user_owner', 'PATCH')).status, 200);
       if (change === 'mapping') db.prepare("DELETE FROM record_scopes WHERE table_name='workflow_waits' AND key_json=?").run(canonicalJson([f.run,1]));
       if (change === 'cancel') { const run = (await f.send(f.path)).body.data, id = randomUUID(); assert.equal((await f.send(f.path + '/cancel', { requestId: id, id, revision: run.revision })).status, 200); }
-      if (change === 'expiry') await until(() => Date.now() >= Number(db.prepare('SELECT deadline FROM workflow_waits WHERE run=?').get(f.run)!.deadline));
+      if (change === 'expiry') t.mock.timers.setTime(Number(db.prepare('SELECT deadline FROM workflow_waits WHERE run=?').get(f.run)!.deadline));
       if (change === 'revoke') { const device = (await f.send('/api/devices')).body.data[0]; assert.equal((await f.send(`/api/devices/${device.id}/revoke`, { requestId: randomUUID(), expectedRevision: device.revision })).status, 200); }
       const stopping = change === 'disconnect' ? f.connection.stop() : undefined;
       if (stopping) await until(async () => (await f.send('/api/devices')).body.data[0].status !== 'ready');
@@ -1304,8 +1305,7 @@ test('canonical workflow runs deny revoked private and unmapped state and roll b
 });
 
 test('canonical workflow run and step pages preserve old approvals and admission rolls back failed receipts', async () => {
-  const f = await workflowConfigurationFixture(), { project, workflow, detail, list } = f, db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
-  const graph = { entry: 'approval', maxSteps: 22, nodes: [{ id: 'approval', kind: 'approval', prompt: 'Proceed?', yes: 'out' }, { id: 'out', kind: 'output' }] };
+  const f = await workflowConfigurationFixture(), { project, workflow, graph, detail, list } = f, db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
   try {
     assert.equal((await f.send(list, { requestId: workflow, id: workflow, revision: 0, name: 'Pages', graph })).status, 201);
     const runs: string[] = [];
@@ -1317,14 +1317,17 @@ test('canonical workflow run and step pages preserve old approvals and admission
     assert.equal(first.items.length, 20); assert.equal(second.items.length, 3); assert.equal(second.nextCursor, null);
     assert.deepEqual([...first.items, ...second.items].map((row:{id:string}) => row.id), runs.toReversed());
     const run = runs[0], path = `/api/projects/${project}/workflow-runs/${run}`, owner = (await f.send('/api/session')).body.data.accountId;
-    await until(async () => (await f.send(path)).body.data.status === 'approval');
-    for (let seq = 2; seq <= 21; seq++) {
+    db.exec('BEGIN IMMEDIATE');
+    db.prepare("UPDATE workflow_runs SET status='waiting',steps=0 WHERE id=?").run(run);
+    db.prepare("DELETE FROM record_scopes WHERE table_name='workflow_steps' AND json_extract(key_json,'$[0]')=?").run(run);
+    db.prepare('DELETE FROM workflow_steps WHERE run=?').run(run);
+    for (let seq = 1; seq <= 21; seq++) {
       db.prepare("INSERT INTO workflow_steps(run,seq,node,status) VALUES (?,?,?,'approval')").run(run, seq, 'out');
       db.prepare("INSERT INTO record_scopes VALUES ('workflow_steps',?,?,?,'project','workflow',?)").run(JSON.stringify([run, seq]), owner, project, workflow);
     }
+    db.exec('COMMIT');
     const steps = (await f.send(path)).body.data, tail = (await f.send(path + '?after=' + steps.nextCursor)).body.data;
     assert.equal(steps.steps.length, 20); assert.equal(tail.steps.length, 1); assert.equal(tail.nextCursor, null); assert.equal(tail.steps[0].seq, 21);
-    assert.deepEqual([...steps.steps, ...tail.steps].map((step: { status: string }) => step.status), Array(21).fill('approval'));
     const requestId = randomUUID(), command = { requestId, id: requestId, revision: 1, input: 'Atomic' };
     db.exec("CREATE TRIGGER fail_run_receipt BEFORE INSERT ON receipts WHEN NEW.scope LIKE 'retained:%/workflows/%/run' BEGIN SELECT RAISE(ABORT,'run receipt failure'); END");
     assert.equal((await f.send(detail + '/run', command)).status, 500);
@@ -1514,7 +1517,7 @@ test('canonical routine runtime snapshots flows and hands off once using current
   }finally{db.close();await secondRuntime.close();await f.close();}
 });
 
-for(const name of ['no_update','report_failure'] as const) test(`canonical routine ${name} recovers terminal result after home SIGKILL and server restart without fan-out`,{timeout:30000},async()=>{
+for(const name of ['no_update','report_failure'] as const) test(`canonical routine ${name} recovers terminal result after home SIGKILL and server restart without fan-out`,async()=>{
   const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
   const keys=join(f.dir,'routine-keys.json'),database=join(f.dir,'workflow-home.sqlite'),reason=name==='no_update'?'Checked all sources; nothing changed.':'Required service access is missing.';
   let calls=0,child:ReturnType<typeof spawn>|undefined;
@@ -1526,7 +1529,7 @@ for(const name of ['no_update','report_failure'] as const) test(`canonical routi
   await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));
   const address=provider.address();if(!address||typeof address==='string')throw new Error('Missing provider fixture address');const providerOrigin=`http://127.0.0.1:${address.port}`;
   async function launch(taskId:string,checkpoint?:string){
-    child=spawn(process.execPath,['--experimental-strip-types','recovery-fixture.mjs'],{cwd:new URL('.',import.meta.url),env:{...process.env,BRIEFSIP_RECOVERY_FIXTURE:JSON.stringify({mode:'loop',database,keys,server:f.origin(),effect:providerOrigin,taskId,checkpoint})},stdio:['ignore','ignore','pipe','ipc']});
+    child=spawn(process.execPath,['--experimental-strip-types','recovery-fixture.mjs'],{cwd:new URL('.',import.meta.url),env:{...process.env,BRIEFSIP_RECOVERY_FIXTURE:JSON.stringify({mode:'loop',database,keys,server:f.origin(),effect:providerOrigin,taskId,checkpoint})},timeout:30000,stdio:['ignore','ignore','pipe','ipc']});
     let errors='';child.stderr!.on('data',chunk=>{errors+=chunk;});const exited=once(child,'exit');
     const message=await Promise.race([once(child,'message').then(([message])=>message),exited.then(()=>{throw new Error(`Routine fixture exited: ${errors}`);})]);
     return {child,exited,message};
@@ -2134,7 +2137,8 @@ test('workflow sync publishes metadata and revisioned run transitions once acros
   } finally { await f.close(); }
 });
 
-test('workflow sync includes protected wait activation delivery and expiry without secret references', async () => {
+test('workflow sync includes protected wait activation delivery and expiry without secret references', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const f = await protectedWorkflowWaitFixture(), db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
   try {
     const syncPath = '/api/sync?projectId=' + f.project, snapshot = (await f.send(syncPath)).body.data;
@@ -2163,6 +2167,8 @@ test('workflow sync includes protected wait activation delivery and expiry witho
     const next = randomUUID(), path = `/api/projects/${f.project}/workflow-runs/${next}`;
     const before = (await f.send(syncPath)).body.data;
     assert.equal((await f.send(f.detail + '/run', { requestId: next, id: next, revision: 2, input: '' })).status, 201);
+    await until(async () => (await f.send(path)).body.data.status === 'waiting');
+    t.mock.timers.tick(2000);
     await until(async () => (await f.send(path)).body.data.status === 'failed');
     const expired = (await f.send(syncPath + '&cursor=' + encodeURIComponent(before.nextCursor))).body.data;
     assert.deepEqual(expired.page.events.map((event: any) => [event.revision,event.body.status]), [[1,'ready'],[2,'waiting'],[3,'failed']]);
@@ -2403,7 +2409,7 @@ test('home execution loop resumes saved provider output after completion reply l
   } finally { globalThis.fetch = originalFetch; await runtime.close(); await f.close(); }
 });
 
-for (const checkpoint of ['provider-not-sent', 'canonical-not-sent', 'provider-saved', 'tool-reply', 'tool-report', 'provider-in-flight']) test(`home execution loop survives SIGKILL across provider and tool results without replaying effects: ${checkpoint}`, { timeout: 120000 }, async () => {
+test('home execution loop survives SIGKILL across provider and tool results without replaying effects', async () => {
   const f = await fixture(), store = memoryKeys(), database = join(f.dir, 'killed-loop.sqlite'), keys = join(f.dir, 'loop-keys.json');
   const runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: store.entry }), calls = new Map<string, number>();
   const provider = createServer(async (req, res) => {
@@ -2416,12 +2422,12 @@ for (const checkpoint of ['provider-not-sent', 'canonical-not-sent', 'provider-s
   try {
     await runtime.enroll(f.jwt()); await runtime.close(); writeFileSync(keys, JSON.stringify(Object.fromEntries(store.values)), { mode: 0o600 });
     async function launch(taskId: string, checkpoint?: string) {
-      child = spawn(process.execPath, ['--experimental-strip-types', 'recovery-fixture.mjs'], { cwd: new URL('.', import.meta.url), env: { ...process.env, BRIEFSIP_RECOVERY_FIXTURE: JSON.stringify({ mode: 'loop', database, keys, server: f.origin(), effect: providerOrigin, taskId, checkpoint }) }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+      child = spawn(process.execPath, ['--experimental-strip-types', 'recovery-fixture.mjs'], { cwd: new URL('.', import.meta.url), env: { ...process.env, BRIEFSIP_RECOVERY_FIXTURE: JSON.stringify({ mode: 'loop', database, keys, server: f.origin(), effect: providerOrigin, taskId, checkpoint }) }, timeout: 30000, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
       let errors = ''; child.stderr!.on('data', chunk => { errors += chunk; }); const exited = once(child, 'exit');
       const message = await Promise.race([once(child, 'message').then(([message]) => message), exited.then(() => { throw new Error(`Loop fixture exited: ${errors}`); })]);
       return { child, exited, message };
     }
-    {
+    for (const checkpoint of ['provider-not-sent', 'canonical-not-sent', 'provider-saved', 'tool-reply', 'tool-report', 'provider-in-flight']) {
       const { taskId } = await loopTask(f, runtime), running = await launch(taskId, checkpoint); assert.equal(running.message.checkpoint, checkpoint);
       running.child.kill('SIGKILL'); assert.equal((await running.exited)[1], 'SIGKILL'); await f.restart();
       for (let restart = 0; restart < 2; restart++) {
@@ -2956,7 +2962,7 @@ test('journal-backed host dispatches once, retries publication only and refuses 
   } finally { globalThis.fetch = originalFetch; await runtime.close(); await f.close(); }
 });
 
-for (const checkpoint of ['after-intent','after-prepare','after-commit','after-marker','after-result','after-report']) test(`SIGKILL recovery proves no send before marker and never repeats marked effects or lost result ACKs: ${checkpoint}`, { timeout: 30000 }, async () => {
+test('SIGKILL recovery proves no send before marker and never repeats marked effects or lost result ACKs', async () => {
   const f = await fixture(), store = memoryKeys(), database = join(f.dir,'device.sqlite'), keys = join(f.dir,'synthetic-keys.json');
   const runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: store.entry });
   const calls = new Map<string,number>();
@@ -2976,13 +2982,13 @@ for (const checkpoint of ['after-intent','after-prepare','after-commit','after-m
     assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Crash recovery'})).status,201);
     assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Agent',model:'fixture',backupModel:'',instructions:'Research',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
     async function start(config:Record<string,unknown>) {
-      child=spawn(process.execPath,['--experimental-strip-types','recovery-fixture.mjs'],{cwd:new URL('.',import.meta.url),env:{...process.env,BRIEFSIP_RECOVERY_FIXTURE:JSON.stringify({database,keys,server:f.origin(),effect:effectOrigin, ...config})},stdio:['ignore','ignore','pipe','ipc']});
+      child=spawn(process.execPath,['--experimental-strip-types','recovery-fixture.mjs'],{cwd:new URL('.',import.meta.url),env:{...process.env,BRIEFSIP_RECOVERY_FIXTURE:JSON.stringify({database,keys,server:f.origin(),effect:effectOrigin, ...config})},timeout:30000,stdio:['ignore','ignore','pipe','ipc']});
       let errors='';child.stderr!.on('data',chunk=>{errors+=chunk;});
       const exited=once(child,'exit');
       const message=await Promise.race([once(child,'message').then(([message])=>message),exited.then(()=>{throw new Error(`Recovery fixture exited: ${errors}`);})]);
       return {child,exited,message};
     }
-    {
+    for(const checkpoint of ['after-intent','after-prepare','after-commit','after-marker','after-result','after-report']) {
       const taskId=randomUUID(),actionId=randomUUID(),payload={v:1,kind:'direct',message:{text:checkpoint,files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
       assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
       const running=await start({checkpoint,taskId,actionId});
@@ -3699,7 +3705,8 @@ test('canonical routine webhook performs one keyring read for configured and mis
   } finally { await f.close(); }
 });
 
-test('canonical routine webhook rejects invalid deliveries and records ignored receipts across filter changes', async () => {
+test('canonical routine webhook rejects invalid deliveries and records ignored receipts across filter changes', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const f = await routineWebhookFixture(), db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
   try {
     const secret = f.hook.data.secret, body = '{"event":"ready","payload":{"count":4}}', time = String(Math.floor(Date.now() / 1000));

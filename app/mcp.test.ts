@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './server.ts';
 import { restoreWorkspace } from './backup.ts';
+import { once } from 'node:events';
 
 test('MCP tests before save, protects credentials/grants and journals success or uncertainty without replay', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-mcp-')), token = 'test-secret-credential';
@@ -27,7 +28,7 @@ test('MCP tests before save, protects credentials/grants and journals success or
       calls++; assert.equal(request.params.name, 'change');
       if (lost) { lost = false; res.destroy(); return; }
       result = { content: [{ type: 'text', text: `Saved ${request.params.arguments.value} ${token}` }], structuredContent: { [token]: 'masked key' } };
-      if (hold) { await new Promise<void>(resolve => { held = resolve; }); held = undefined; }
+      if (hold) { await new Promise<void>(resolve => { held = resolve; external.emit('held'); }); held = undefined; }
     } else assert.fail(request.method);
     if (paged && request.method === 'tools/list') result = request.params?.cursor ? { tools: [{ name: 'second', inputSchema: { type: 'object' } }] } : { tools: [{ name: 'change', inputSchema: { type: 'object' }, outputSchema: { type: 'object', properties: { count: { type: 'number' } }, required: ['count'] } }], nextCursor: 'next' };
     if (paged && request.method === 'tools/call') result = { content: [{ type: 'text', text: 'Invalid structured output' }], structuredContent: { count: 'invalid' } };
@@ -52,7 +53,9 @@ test('MCP tests before save, protects credentials/grants and journals success or
     const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const value = await response.json(); assert.equal(response.status, status, JSON.stringify(value)); assert(!JSON.stringify(value).includes(token)); return value;
   };
   async function until(path: string, id: string, status: string) {
-    for (let n = 0; n < 400; n++) { const row = (await get(path)).find((row: any) => row.id === id); if (row?.status === status) return row; await new Promise(resolve => setTimeout(resolve, 10)); } assert.fail(`Task did not become ${status}`);
+    const deadline = performance.now() + 30000;
+    while (performance.now() < deadline) { const row = (await get(path)).find((row: any) => row.id === id); if (row?.status === status) return row; await new Promise(resolve => setTimeout(resolve, 25)); }
+    assert.fail(`Task ${id} did not become ${status} within 30s`);
   }
   async function run(path: string, text: string, status = 'done') { const id = randomUUID(); await post(path, { id, text }, 202); return until(path, id, status); }
   try {
@@ -85,8 +88,9 @@ test('MCP tests before save, protects credentials/grants and journals success or
     lost = true; const uncertain = await run(ap, 'call', 'failed'); assert.equal(calls, 2); assert.match(uncertain.error, /uncertain/);
     await app.close(); app = await startApp(options); repeat = true;
     await post(`${ap}/${uncertain.id}/resume`, { id: randomUUID(), revision: uncertain.revision, acknowledgeUncertain: true }); await until(ap, uncertain.id, 'failed'); assert.equal(calls, 2); repeat = false;
+    const heldReady = once(external, 'held', { signal: AbortSignal.timeout(30000) });
     hold = true; const active = randomUUID(); await post(ap, { id: active, text: 'call' }, 202);
-    for (let n = 0; n < 1500 && !held; n++) await new Promise(resolve => setTimeout(resolve, 10)); assert(held);
+    await assert.doesNotReject(heldReady, 'MCP fixture did not receive held call within 30s'); assert(held);
     await post(gp, { id: randomUUID(), revision: 1, connectionRevision: 1, tools: [] }); await until(ap, active, 'failed'); held(); hold = false;
     await run(ap, 'call', 'failed'); assert.equal(calls, 3);
     assert(!providerRaw.includes(token)); assert(!JSON.stringify(await get(`/api/mcp/${connection}?agent=${a.id}`)).includes(token));
