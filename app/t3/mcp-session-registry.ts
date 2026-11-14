@@ -2,7 +2,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 
-export const mcpScopes = ['agents:read', 'agents:message', 'history:read', 'machine:update'] as const;
+export const mcpScopes = ['agents:read', 'agents:message', 'history:read', 'machine:update', 'orchestration'] as const;
 export type McpScope = typeof mcpScopes[number];
 export type McpCaller = { id: string; kind: 'session' | 'peer'; agent?: string; turn?: string; peer?: string; scopes: McpScope[] };
 export type AgentSessionInput = { agent: string; turn?: string; scopes: McpScope[]; ttlMs: number };

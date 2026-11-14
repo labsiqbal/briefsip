@@ -6,15 +6,15 @@ type Tool = { name: string; title?: string; description?: string; inputSchema: u
 const label = (tool: Tool) => `${tool._meta?.['briefsip.kind'] === 'resource-template' ? 'Resource template: ' : tool._meta?.['briefsip.kind'] === 'resource' ? 'Resource: ' : tool._meta?.['briefsip.kind'] === 'prompt' ? 'Prompt: ' : 'Tool: '}${tool.title && tool.title !== tool.name && !tool._meta?.['briefsip.kind'] ? `${tool.title} (${tool.name})` : tool.title ?? tool.name}`;
 type Detail = Connection & { tools: Tool[]; grant: { revision: number; tools: string[] } };
 type Command = { path: string; body: Record<string, unknown> & { id: string } };
-const storage = 'briefsip:mcp-command';
 function restore(raw: string | null): Command | null {
   if (raw === null) return null;
   if (raw.length > 16000) throw new Error('MCP recovery data is too large.');
   const value = JSON.parse(raw), uuid = '[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}';
-  if (!value || typeof value.path !== 'string' || !new RegExp(`^/api/(mcp(?:/${uuid})?|agents/${uuid}/mcp/${uuid})$`, 'i').test(value.path) || !value.body || typeof value.body !== 'object' || !new RegExp(`^${uuid}$`, 'i').test(value.body.id) || Object.keys(value.body).some(key => !['id', 'test', 'revision', 'enabled', 'connectionRevision', 'tools'].includes(key))) throw new Error('MCP recovery data is invalid.');
+  if (!value || typeof value.path !== 'string' || !new RegExp(`^/api/(mcp(?:/${uuid}(?:/remove)?)?|agents/${uuid}/mcp/${uuid})$`, 'i').test(value.path) || !value.body || typeof value.body !== 'object' || !new RegExp(`^${uuid}$`, 'i').test(value.body.id) || Object.keys(value.body).some(key => !['id', 'test', 'revision', 'enabled', 'connectionRevision', 'tools', 'confirmed'].includes(key))) throw new Error('MCP recovery data is invalid.');
   return value;
 }
-export function McpPanel({ agents, request }: { agents: { id: string; name: string }[]; request: <T>(path: string, body?: unknown) => Promise<T>; onClose: () => void }) {
+export function McpPanel({ agents, request, project }: { project?: string; agents: { id: string; name: string }[]; request: <T>(path: string, body?: unknown) => Promise<T>; onClose: () => void }) {
+  const storage = 'briefsip:mcp-command'+(project?`:${project}`:'');
   const [recovery] = useState(() => { try { return { command: restore(sessionStorage.getItem(storage)), invalid: false }; } catch { return { command: null, invalid: true }; } });
   const [pending, setPending] = useState(recovery.command), [invalid, setInvalid] = useState(recovery.invalid);
   const [page, setPage] = useState<{ items: Connection[]; next_after: string | null } | null>(null), [cursors, setCursors] = useState(['']);
@@ -61,6 +61,7 @@ export function McpPanel({ agents, request }: { agents: { id: string; name: stri
       setPending(null);
       if (command.body.test && (editing ? command.path === `/api/mcp/${editing.id}` : command.path === '/api/mcp')) { setTested(null); setEditing(null); setRotate(false); setToken(''); setName(''); setUrl(''); setShowForm(false); }
       else if (editing && command.path === `/api/mcp/${editing.id}`) setTested(null);
+      if(command.path.endsWith('/remove')){setSelected('');setDetail(null);}
       setRefresh(value => value + 1); heading.current?.focus();
     } catch (error) { if (current === generation.current) setError(error instanceof Error ? error.message : 'Changes are not confirmed yet. Try again.'); }
     finally { flight.current = false; if (current === generation.current) setBusy(false); }
@@ -72,9 +73,9 @@ export function McpPanel({ agents, request }: { agents: { id: string; name: stri
   </>;
   const host = (value: string) => { try { return new URL(value).host; } catch { return value; } };
   return <div className="k-page bs-root">
-    <PageHeader headingRef={heading} title="MCP connections" description="Connect external services, then choose which tools, resources, and prompts each agent may use in private conversations."
+    <PageHeader headingRef={heading} title="MCP connections" description={project?'Connect services for this project, then grant catalog access to its member agents.':'Connect external services, then choose which tools, resources, and prompts each agent may use in private conversations.'}
       actions={<><IconButton label="Reload" disabled={busy} onClick={() => void reload()}><RefreshCw size={15} aria-hidden /></IconButton><Button variant="primary" icon={<Plus size={14} aria-hidden />} disabled={locked} onClick={() => setShowForm(true)}>{editing ? 'Continue update' : 'Add connection'}</Button></>} />
-    <Alert>Tools can change data in the target service. Resources and prompts are read as reference data; binary content is not forwarded yet.</Alert>
+    <Alert>Tools can change data in the target service. Resources and prompts are untrusted reference data. Binary results become conversation files.</Alert>
     {error && <Alert tone="error">{error}</Alert>}
     {recoveryNotice}
 
@@ -84,6 +85,7 @@ export function McpPanel({ agents, request }: { agents: { id: string; name: stri
         trailing={<ActionMenu label={`Menu ${row.name}`} trigger={<button type="button" className="k-icon-btn" aria-label={`Menu ${row.name}`} disabled={locked}><Ellipsis size={16} aria-hidden /></button>} items={[
           { label: `Update ${row.name}`, onSelect: async () => { if ((name || url || token) && !await confirm({ title: 'Discard the current connection draft and open this connection?', confirm: 'Discard draft', danger: true })) return; generation.current++; setEditing(row); setName(row.name); setUrl(row.url); setToken(''); setRotate(false); setTested(null); heading.current?.focus(); setShowForm(true); } },
           { label: `Manage permissions for ${row.name}`, disabled: !agent, onSelect: () => { generation.current++; reads.current++; setDetail(null); setSelected(row.id); setRefresh(value => value + 1); } },
+          {label:`Remove ${row.name}`,danger:true,onSelect:async()=>{if(await confirm({title:`Remove ${row.name}?`,description:'This removes the saved connection and revokes agent access. External effects already completed remain.',confirm:'Remove connection',danger:true}))void execute({path:`/api/mcp/${row.id}/remove`,body:{id:crypto.randomUUID(),confirmed:true}});}},
           'separator',
           { label: `${row.enabled ? 'Disable' : 'Enable'} ${row.name}`, onSelect: () => void execute({ path: `/api/mcp/${row.id}`, body: { id: crypto.randomUUID(), revision: row.revision, enabled: !row.enabled } }) },
         ]} />} />)}</Card> : <EmptyState icon={<Plug size={18} />} title="No connections on this page yet." />}
