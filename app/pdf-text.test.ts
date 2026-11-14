@@ -103,11 +103,11 @@ test('PDF HTTP preview and messages preserve source, scope, retry, routing, tool
       const previews = await Promise.all([request(`${scope}/files/${file}?preview=text`), request(`${scope}/files/${file}?preview=text`)]);
       assert.equal(previews[0].source, 'pdf-text'); assert.equal(previews[0].text, previews[1].text); assert.match(previews[0].text, new RegExp(`PDF_SCOPE_${index}`));
       assert.deepEqual(Buffer.from(await (await fetch(`${app.origin}${scope}/files/${file}`)).arrayBuffer()), bytes);
-      const id = randomUUID(), command = { id, text: 'Read PDF', files: [file], ...(index === 2 ? { automatic: true } : {}) }, before = payloads.length;
+      const id = randomUUID(), command = { id, text: 'Read PDF', files: [file], ...(index === 2 ? { recipient: a.id } : {}) }, before = payloads.length;
       await request(`${scope}/turns`, command); await done(scope, id);
       for (const payload of payloads.slice(before)) { assert(JSON.stringify(payload).includes(`PDF_SCOPE_${index}`)); assert(JSON.stringify(payload).includes('Extracted text only')); }
       const count = payloads.length; await request(`${scope}/turns`, command); assert.equal(payloads.length, count);
-      target = file; tool = true; const read = randomUUID(); await request(`${scope}/turns`, { id: read, text: 'Reread PDF' }); await done(scope, read);
+      target = file; tool = true; const read = randomUUID(); await request(`${scope}/turns`, { id: read, text: 'Reread PDF', ...(index === 2 ? { recipient: a.id } : {}) }); await done(scope, read);
       assert(JSON.stringify(payloads.at(-1)).includes(`PDF_SCOPE_${index}`));
     }
     await request(`${scopes[0]}/files/${files[1]}?preview=text`, undefined, 404);
@@ -137,7 +137,7 @@ test('PDF HTTP preview and messages preserve source, scope, retry, routing, tool
     await done(scopes[0], queued.id); assert(JSON.stringify(payloads.at(-1)).includes('QUEUED_PDF_TEXT'));
     const bad = await upload(scopes[0], Buffer.from('%PDF-malformed')); await request(`${scopes[0]}/turns`, { id: randomUUID(), text: 'Bad PDF', files: [bad] }, 415);
     for (const scope of scopes) {
-      generated = 1; const id = randomUUID(); await request(`${scope}/turns`, { id, text: 'Make a PDF and read it' }); await done(scope, id);
+      generated = 1; const id = randomUUID(); await request(`${scope}/turns`, { id, text: 'Make a PDF and read it', ...(scope === scopes[2] ? { recipient: a.id } : {}) }); await done(scope, id);
       const content = JSON.parse(payloads.at(-1).messages.at(-1).content);
       assert.equal(content.source, 'pdf-text'); assert.equal(content.text.trim(), 'GENERATED_PDF_TEXT');
     }

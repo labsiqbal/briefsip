@@ -103,7 +103,7 @@ test('HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupt
     assert.equal((await request('/api/channels', { ...channel, members: [...channel.members].reverse() })).status, 200);
     assert.equal((await request('/api/channels', { ...channel, name: 'changed' })).status, 409);
     const channelPath = `/api/channels/${channel.id}/turns`;
-    const channelMessage = { id: randomUUID(), text: 'channel-first' };
+    const channelMessage = { id: randomUUID(), text: 'channel-first', recipient: profile.id };
     assert.equal((await request(channelPath, channelMessage)).status, 202);
     assert.equal((await request(channelPath, channelMessage)).status, 202);
     const channelTurns = await until(channelPath, 'done');
@@ -120,14 +120,14 @@ test('HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupt
     assert.deepEqual((await request(`/api/agents/${other.id}/turns`)).body, []);
     const noLead = { ...channel, id: randomUUID(), lead: null };
     await request('/api/channels', noLead);
-    assert.equal((await request(`/api/channels/${noLead.id}/turns`, { id: randomUUID(), text: 'ambiguous' })).status, 409);
+    assert.equal((await request(`/api/channels/${noLead.id}/turns`, { id: randomUUID(), text: 'ambiguous', automatic: true })).status, 409);
     assert.deepEqual((await request(`/api/channels/${noLead.id}/turns`)).body, []);
     const single = { ...channel, id: randomUUID(), lead: null, members: [other.id] };
     await request('/api/channels', single);
     const singlePath = `/api/channels/${single.id}/turns`;
     await request(singlePath, { id: randomUUID(), text: 'single' });
     assert.equal((await until(singlePath, 'done'))[0].agent, other.id);
-    const hanging = { id: randomUUID(), text: 'hang' }, queued = { id: randomUUID(), text: 'never-sent' };
+    const hanging = { id: randomUUID(), text: 'hang', recipient: profile.id }, queued = { id: randomUUID(), text: 'never-sent', recipient: profile.id };
     await request(channelPath, hanging);
     await until(channelPath, 'running');
     await request(channelPath, queued);
@@ -136,7 +136,7 @@ test('HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupt
     assert.equal((await request(`${channelPath}/${hanging.id}/cancel`, { id: randomUUID() })).body.status, 'cancelled');
     assert.equal((await request(`${channelPath}/${hanging.id}/cancel`, { id: randomUUID() })).body.status, 'cancelled');
     assert.equal((await request(`${channelPath}/${channelMessage.id}/cancel`, { id: randomUUID() })).status, 409);
-    await request(channelPath, { id: randomUUID(), text: 'after-cancel' });
+    await request(channelPath, { id: randomUUID(), text: 'after-cancel', recipient: profile.id });
     assert.equal((await until(channelPath, 'done')).at(-1).reply, 'reply:after-cancel;history:6');
     assert(!calls.includes('never-sent'));
     const channelEditPath = `/api/channels/${channel.id}/edit`;

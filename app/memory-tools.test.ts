@@ -36,8 +36,8 @@ test('agent memory writes preserve scope, user selection, atomic errors and resu
     for (let n = 0; n < 150; n++) { const value = await read(); if (predicate(value)) return value; await new Promise(resolve => setTimeout(resolve, 10)); }
     assert.fail('Memory task did not settle');
   }
-  async function run(path: string) {
-    const id = randomUUID(); await request(path, { id, text: 'Remember this' });
+  async function run(path: string, extra: Record<string, unknown> = {}) {
+    const id = randomUUID(); await request(path, { id, text: 'Remember this', ...extra });
     const rows = await until(() => request(path), rows => ['done', 'failed'].includes(rows.find((r: any) => r.id === id)?.status));
     assert.equal(rows.find((r: any) => r.id === id).status, 'done'); return id;
   }
@@ -68,10 +68,10 @@ test('agent memory writes preserve scope, user selection, atomic errors and resu
     assert.equal(lastResult.status, 409); assert.equal((await request(memory)).items[0].text, 'New user choice');
     args = { id: first.id, revision: 4, text: 'Side update' }; await run(`/api/threads/${side.id}/turns`); assert.equal(lastResult.essential, 0);
     for (const invalid of [{ id: first.id, revision: 5, text: 'Wrong scope' }, { text: 'Forbidden selection', essential: true }, { text: 'Forbidden owner', owner: a.id }, { id: first.id, text: 'Missing revision' }, { text: 'x'.repeat(2001) }]) {
-      args = invalid; await run(`/api/channels/${channel.id}/turns`); assert([400, 404].includes(lastResult.status)); assert.equal((await request(shared)).items.length, 0);
+      args = invalid; await run(`/api/channels/${channel.id}/turns`, { recipient: a.id }); assert([400, 404].includes(lastResult.status)); assert.equal((await request(shared)).items.length, 0);
     }
-    args = { text: 'Channel note' }; await run(`/api/channels/${channel.id}/turns`); assert.equal(lastResult.essential, 0); assert.equal((await request(shared)).items[0].text, 'Channel note');
-    await run(`/api/channels/${channel.id}/turns`); assert.equal(lastResult.status, 409); assert.equal((await request(shared)).items.length, 1);
+    args = { text: 'Channel note' }; await run(`/api/channels/${channel.id}/turns`, { recipient: a.id }); assert.equal(lastResult.essential, 0); assert.equal((await request(shared)).items[0].text, 'Channel note');
+    await run(`/api/channels/${channel.id}/turns`, { recipient: a.id }); assert.equal(lastResult.status, 409); assert.equal((await request(shared)).items.length, 1);
     await request(memory, userEdit(first.id, 5, '界'.repeat(2000), true));
     const second = randomUUID(); await request(memory, userEdit(second, 0, 'short', true));
     args = { id: second, revision: 1, text: '文'.repeat(2000) }; await run(path); assert.equal(lastResult.status, 413);
@@ -125,7 +125,7 @@ test('memory and artifact order survives repeated delegation when parent continu
     const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
     const b = await request('/api/agents', { id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' }); peer = b.id;
     const c = await request('/api/channels', { id: randomUUID(), name: 'Room', instructions: 'Help', lead: a.id, members: [a.id, b.id] });
-    const path = `/api/channels/${c.id}/turns`, id = randomUUID(); await request(path, { id, text: 'root' });
+    const path = `/api/channels/${c.id}/turns`, id = randomUUID(); await request(path, { id, text: 'root', recipient: a.id });
     let done = false;
     for (let n = 0; n < 200; n++) { if ((await request(path)).find((r: any) => r.id === id)?.status === 'done') { done = true; break; } await new Promise(resolve => setTimeout(resolve, 10)); }
     assert(done); assert.deepEqual(observed, ['remember_memory', 'create_text_file', 'delegate_task', 'remember_memory', 'create_text_file', 'delegate_task', 'remember_memory']);

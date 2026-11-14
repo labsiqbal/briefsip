@@ -4,7 +4,7 @@ import { activityLabel, liveTurn, type TurnActivityData } from './transcript';
 
 type Props = {
   turn: {
-    status: string; paused: number; created: string; routing?: string | null; recipient?: string | null; agent_name?: string;
+    room?: { quiet: { name: string; silent: string }[] } | null; status: string; paused: number; created: string; routing?: string | null; recipient?: string | null; agent_name?: string;
     coordination?: { kind: string; child: string | null; owner_name: string; target_name: string }[];
     agentMessages?: { id: string; name: string; status: string; settled: number; expects_reply: number; taskId?: string; task?: string; wait?: boolean; agent?: string; thread?: string }[];
     receivedAgentReplies?: { id: string; name: string; status: string }[];
@@ -29,7 +29,8 @@ export function TurnActivity({ turn, agentName, onOpenTask, onOpenAgent, remote 
     return () => clearInterval(timer);
   }, [live]);
   const steps: { id: string; text: string; task?: string | null }[] = [];
-  if (turn.routing || turn.recipient) steps.push({ id: 'routing', text: turn.routing === 'pending' ? 'Selecting recipient' : turn.routing === 'clarify' ? 'Requested routing clarification' : turn.routing === 'none' ? 'No task needed' : turn.routing === 'released' ? 'Waiting for an available recipient' : `Recipient selected: ${turn.agent_name ?? agentName}` });
+  for (const item of turn.room?.quiet ?? []) steps.push({ id: `quiet-${item.name}`, text: `${item.name} stayed quiet${item.silent === 'not_mentioned' ? ' (not mentioned)' : ''}` });
+  if (!turn.room && (turn.routing || turn.recipient)) steps.push({ id: 'routing', text: turn.routing === 'pending' ? 'Selecting recipient' : turn.routing === 'clarify' ? 'Requested routing clarification' : turn.routing === 'none' ? 'No task needed' : turn.routing === 'released' ? 'Waiting for an available recipient' : `Recipient selected: ${turn.agent_name ?? agentName}` });
   for (const step of turn.activity?.harness ?? []) steps.push({ id: `harness-${step.id}`, text: `${step.name} · ${step.state}` });
   for (const link of turn.activity?.dispatch ?? []) steps.push({ id: `dispatch-${link.target_turn}`, text: link.mode === 'steer' ? 'Guidance linked to running turn' : 'Restart linked to interrupted turn', task: link.source_turn });
   const actions = turn.coordination ?? [];

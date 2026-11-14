@@ -98,7 +98,7 @@ test('SIGKILL after delegated provider acceptance does not replay parent or chil
     const beta = await post('/api/agents', { id: randomUUID(), name: 'Beta', model: 'fixture', instructions: 'Execute.' });
     const channel = await post('/api/channels', { id: randomUUID(), name: 'Crash check', instructions: 'Coordinate.', members: [alpha.id, beta.id], lead: alpha.id });
     const path = `/api/channels/${channel.id}/turns`, id = randomUUID();
-    await post(path, { id, text: 'root' }); await childAccepted;
+    await post(path, { id, text: 'root', recipient: alpha.id }); await childAccepted;
     child.kill('SIGKILL');
     assert.equal((await exited)[1], 'SIGKILL');
     app = await startApp(options);

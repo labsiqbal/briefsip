@@ -154,7 +154,7 @@ test('coordination: durable delegation, transfer, cancellation, rejection and re
       const room = await post('/api/channels', { id: randomUUID(), name: `Parallel ${i}`, instructions: 'Work.', members: [lead.id, beta.id], lead: lead.id });
       const target = `/api/channels/${room.id}/turns`, id = randomUUID();
       parallel.push({ path: target, id });
-      await post(target, { id, text: 'parallel-delegate' });
+      await post(target, { id, text: 'parallel-delegate', recipient: lead.id });
     }
     for (const item of parallel) assert.equal((await waitTurn(item.path, item.id, 'done')).reply, 'parent:child-result');
     assert.equal(parallelCount, 4);

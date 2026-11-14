@@ -11,7 +11,7 @@ test('chat recovery preserves exact retry identity and refuses corrupt or misrou
   assert.deepEqual(restoreChatCommand(JSON.stringify(routed), true), routed);
   assert.deepEqual(restoreChatCommand(JSON.stringify({ ...command, automatic: true }), true), { ...command, automatic: true });
   for (const raw of ['{broken', 'null', '[]', JSON.stringify({ ...command, id: 'bad' }), JSON.stringify({ ...command, text: '' }), JSON.stringify({ ...command, files: ['bad'] }), JSON.stringify({ ...command, files: Array(5).fill(randomUUID()) }), JSON.stringify({ ...command, automatic: true, recipient: randomUUID() })]) assert.throws(() => restoreChatCommand(raw, false));
-  assert.throws(() => restoreChatCommand(JSON.stringify(command), true));
+  assert.deepEqual(restoreChatCommand(JSON.stringify(command), true), command);
   assert.throws(() => restoreChatCommand(JSON.stringify(routed), false));
 });
 

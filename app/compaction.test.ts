@@ -10,7 +10,7 @@ import { startApp } from './server.ts';
 
 test('incremental compaction keeps source scopes, originals, provenance and failure fallback', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-compaction-'));
-  let fail = false, hold = false, held = false;
+  let fail = false, hold = false, held = false, channelRecipient = '';
   const summaries: any[] = [], prompts: string[] = [];
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -37,12 +37,13 @@ test('incremental compaction keeps source scopes, originals, provenance and fail
     assert.fail('Compaction task did not settle');
   }
   async function run(path: string) {
-    const id = randomUUID(); await request(path + '/turns', { id, text: 'Continue' });
+    const id = randomUUID(); await request(path + '/turns', { id, text: 'Continue', ...(path.includes('/channels/') ? { recipient: channelRecipient } : {}) });
     const rows = await until(() => request(path + '/turns'), rows => ['done', 'failed'].includes(rows.find((r: any) => r.id === id)?.status));
     assert.equal(rows.find((r: any) => r.id === id).status, 'done'); return id;
   }
   try {
     const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
+    channelRecipient = a.id;
     const b = await request('/api/agents', { id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' });
     const c = await request('/api/channels', { id: randomUUID(), name: 'Room', instructions: 'Help', lead: a.id, members: [a.id, b.id] });
     const thread = await request(`/api/agents/${a.id}/threads`, { id: randomUUID(), name: 'Side' });

@@ -221,3 +221,24 @@
 .dispatch-receipt { margin: 0 0 8px; }
 .fork-origin { padding: 10px 0; margin-bottom: 16px; border-bottom: 0.5px solid var(--color-border-secondary); color: var(--color-text-secondary); font-size: 12px; line-height: 20px; overflow-wrap: anywhere; }
 .fork-origin .link-btn { display: inline; font-size: inherit; }
+
+/* Room and teammate exchanges keep the transcript's unboxed agent style. */
+.composer { position: relative; }
+.mention-list { position: absolute; bottom: calc(100% + 8px); left: 0; width: min(360px, 100%); max-height: 264px; overflow: auto; padding: 6px; border: 1px solid var(--color-border-secondary); border-radius: 12px; background: var(--color-bg-elevated); box-shadow: 0 8px 24px rgb(0 0 0 / .16); z-index: 4; }
+.mention-list button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 6px 10px; border: 0; border-radius: 8px; color: var(--color-text-primary); background: transparent; text-align: left; cursor: pointer; }
+.mention-list button[aria-selected="true"], .mention-list button:hover { background: var(--color-bg-tertiary); }
+.mention-list button span { display: flex; flex-direction: column; min-width: 0; }
+.mention-list strong { font-size: 13px; overflow-wrap: anywhere; }
+.mention-list small, .message-role { color: var(--color-text-secondary); font-size: 12px; }
+.inline-delegation { display: grid; gap: 16px; margin: 12px 0 24px; }
+.inline-delegation__exchange { display: grid; gap: 12px; }
+.inline-delegation__request { justify-self: start; max-width: min(100%, 65ch); padding: 10px 14px; background: var(--color-bg-tertiary); border-radius: 12px; }
+.exchange-label { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--color-text-secondary); }
+.inline-delegation__request p { margin: 6px 0 0; font-size: 13px; }
+.inline-delegation__reply { display: flex; align-items: flex-start; gap: 10px; }
+.inline-delegation__reply .agent-identity { margin-bottom: 6px; }
+.room-conversation { display: grid; gap: 24px; }
+.room-conversation .agent-message { margin: 0; }
+.room-message-request { padding: 8px 12px; background: var(--color-bg-tertiary); border-radius: 12px; }
+.room-pending { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; color: var(--color-text-secondary); font-size: 12px; }
+.room-system-note { color: var(--color-text-secondary); font-size: 12px; text-align: center; margin: 4px 0; }

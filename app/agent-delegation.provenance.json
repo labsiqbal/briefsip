@@ -1,5 +1,5 @@
 {
-  "adapted": "T3 durable child-task delivery and Hermes BotLoopGuard/delegation policy, translated to Briefsip plain TypeScript and SQLite.",
+  "adapted": "T3 durable child-task delivery and Hermes delegation, group discussion, silence filtering and relay policy, translated to Briefsip TypeScript and SQLite.",
   "t3": {
     "repository": "https://github.com/pingdotgg/t3code",
     "revision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
@@ -53,9 +53,50 @@
           "Messaging other agents",
           "Capability epoch"
         ]
+      },
+      {
+        "path": "gateway/response_filters.py",
+        "sourceSha256": "d0bf3ee88a8d21db7b793553173c491d66dd0c099606717f87e34f95d0ff309e",
+        "symbols": [
+          "LIVE_GATEWAY_SILENT_MARKERS",
+          "is_intentional_silence_response"
+        ],
+        "adaptation": "Exact normalized silence marker filtering for room member results."
+      },
+      {
+        "path": "gateway/hosted_room_discussion.py",
+        "sourceSha256": "058e2ee9fe054b6d160c95b39675f683428bf1b97e9fa467b7915d80b3df95a3",
+        "symbols": [
+          "MAX_DISCUSSION_MEMBERS",
+          "MAX_DISCUSSION_ROUNDS",
+          "MAX_DISCUSSION_MESSAGES",
+          "plan_next_task"
+        ],
+        "adaptation": "SQLite room discussion ledger with six-member, three-round and ten-message bounds."
+      },
+      {
+        "path": "agent/prompt_builder.py",
+        "sourceSha256": "660e7a2c311adf1b794c7b81c83090ea1b6f07619bd79be152c2f3c099ec0f05",
+        "symbols": [
+          "group-chat prompt"
+        ],
+        "adaptation": "Role and speaker-aware room system prompt translated to Briefsip."
+      },
+      {
+        "path": "tools/bot_relay.py",
+        "sourceSha256": "1f2408a68df3aec034b07dc862eef9dd41ac2a7c19729cd2e8cb33847fdb3bdb",
+        "symbols": [
+          "delivery_id",
+          "first reply wins"
+        ],
+        "adaptation": "Durable room delivery identity and restart-safe first-result handling."
       }
     ],
-    "localPath": "app/agent-delegation.ts"
+    "localPath": "app/agent-delegation.ts",
+    "localPaths": [
+      "app/agent-delegation.ts",
+      "app/room-chat.ts"
+    ]
   },
   "remote": {
     "sources": [

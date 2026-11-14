@@ -61,7 +61,7 @@ test('hidden agents finish active work, hold queue across restart, reject new wo
     await request(visibility, { ...hide, hidden: false }, 409);
     await request(visibility, { ...hide, id: randomUUID() }, 409);
     for (const path of [direct, `/api/threads/${side.id}/turns`, `/api/channels/${channel.id}/turns`]) await request(path, { id: randomUUID(), text: 'Denied', ...(path.includes('channels') ? { recipient: a.id } : {}) }, 409);
-    await request(`/api/channels/${channel.id}/turns`, { id: randomUUID(), text: 'Hidden lead' }, 409);
+    await request(`/api/channels/${channel.id}/turns`, { id: randomUUID(), text: 'Hidden lead' }, 202);
     await request(`/api/routines/${routine.id}/test`, { id: randomUUID(), revision: routine.revision }, 409);
     const workflow = await request(`/api/agents/${a.id}/workflows`, { id: randomUUID(), revision: 0, name: 'Workflow', graph: { entry: 'out', maxSteps: 1, nodes: [{ id: 'out', kind: 'output' }] } });
     await request(`/api/workflows/${workflow.id}/run`, { id: randomUUID(), revision: 1, input: 'Denied' }, 409);
@@ -88,7 +88,7 @@ test('hidden agents finish active work, hold queue across restart, reject new wo
     await until(async () => (await request(`/api/channels/${channel.id}/turns`)).find((turn: any) => turn.id === channelQueued)?.status === 'done');
     assert.equal(calls.filter(text => text === 'CHANNEL QUEUED').length, 1);
     assert.equal(calls.filter(text => text === 'QUEUED').length, 1);
-    assert.equal(calls.length, 5);
+    assert.equal(calls.length, 6);
     await app.close();
     const check = new DatabaseSync(options.database);
     try {
