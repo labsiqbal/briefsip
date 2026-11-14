@@ -6,6 +6,8 @@ import { QueuePanel } from './QueuePanel';
 import { QueueEditor } from './QueueEditor';
 import { AgentVisibility } from './AgentVisibility';
 import { Markdown } from './Markdown';
+import { TurnActivity } from './ui/TurnActivity';
+import { livePartial, turnPollDelay, type TurnActivityData } from './ui/transcript';
 import { EventConnection } from './EventConnection';
 import { applyPresentation, readPresentation } from '../presentation';
 import { AgentSidebar } from './AgentSidebar';
@@ -52,7 +54,7 @@ type Agent = { avatar_revision?: number; hidden?: boolean; visibility_revision?:
 type Channel = { activity: number; read_position: number; revision: number; archived: number; id: string; name: string; instructions: string; members: string[]; lead: string | null };
 type Thread = { id: string; agent: string; name: string; revision: number; archived: number; deleted: number };
 type AgentMessage = { paused: number; request: string; expects_reply: number; settled: number; id: string; agent: string; thread: string; name: string; status: string; error: string | null; reply: string | null; truncated: boolean };
-type Turn = { editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { name: string; agent: string; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
+type Turn = { recipient?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { name: string; agent: string; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
 type Directory = { agents: Agent[]; configured: boolean; defaultModel: string };
 type Pending = ChatCommand;
 const statusNames: Record<string, string> = { queued: 'Queued', running: 'Replying', done: 'Done', failed: 'Failed', interrupted: 'Interrupted', cancelled: 'Cancelled' };
@@ -245,9 +247,10 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     setTurns(null);
     let timer: ReturnType<typeof setTimeout>;
     async function refresh() {
-      try { const data = await api<Turn[]>(focusedTask ? `${path}?focus=${focusedTask}` : `${path}?${new URLSearchParams({ ...(before ? { before: String(before) } : {}), ...(query ? { q: query } : {}) })}`); if (!stopped) { loadedTask.current = focusedTask; setTurns(data); setReadError(''); } }
+      let delay = 1200;
+      try { const data = await api<Turn[]>(focusedTask ? `${path}?focus=${focusedTask}` : `${path}?${new URLSearchParams({ ...(before ? { before: String(before) } : {}), ...(query ? { q: query } : {}) })}`); if (!stopped) { loadedTask.current = focusedTask; setTurns(data); setReadError(''); delay = turnPollDelay(data); } }
       catch (error) { if (!stopped) setReadError(message(error)); }
-      if (!stopped) timer = setTimeout(refresh, 1200);
+      if (!stopped) timer = setTimeout(refresh, delay);
     }
     void refresh();
     return () => { stopped = true; clearTimeout(timer); };
@@ -344,33 +347,31 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
               : turns.length === 0 ? <div className="empty-chat"><AgentAvatar agent={agent} size={64} /><div className="empty-chat__title">Start with {agent.name}</div><div className="empty-chat__sub">Send your first task or question. The conversation is saved on this computer.</div></div>
               : turns.map(turn => <article key={turn.id} id={`turn-${turn.id}`} tabIndex={-1} className="turn-block">
                 {query && <button type="button" className="link-btn" onClick={() => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(turn.id); }}>Open this message</button>}
-                <div className="message-row">
-                  <span className="avatar bs-avatar message-avatar" aria-hidden>Y</span>
-                  <div className="message-column">
-                    <div className="turn-meta">
-                      <strong className="message-name">You</strong>
-                      <time className="message-time" dateTime={turn.created} title={new Date(turn.created).toLocaleString('en-US')}>{time(turn.created)}</time>
-                      {turn.workflow_run ? <span className="message-origin">Workflow</span> : turn.parent ? <span className="message-origin">Subtask</span> : null}
-                      {turn.parent && !turn.messageOrigin && <a className="link-btn link-btn--small" href={`#turn-${turn.parent}`} onClick={event => { event.preventDefault(); openFocused(turn.parent!); }}>View parent task</a>}
-                      {turn.messageOrigin && <button type="button" className="link-btn link-btn--small" onClick={() => turn.messageOrigin!.channel ? onOpenChannel?.(turn.messageOrigin!.channel) : onOpenAgent?.(turn.messageOrigin!.agent, turn.messageOrigin!.thread ?? '')}>Open requester conversation</button>}
-                    </div>
-                    <div className="message-body message-plain">{turn.text}</div>
-                    {!!turn.files?.length && <ul className="chip-list" aria-label="Message attachments">{turn.files.map(file => <li key={file.id}><a className="cite-chip" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}><Paperclip size={12} aria-hidden /> {file.name}</a></li>)}</ul>}
+                <div className="human-message" tabIndex={0} aria-label="Your message">
+                  <div className="human-bubble message-plain">{turn.text}</div>
+                  {!!turn.files?.length && <ul className="chip-list" aria-label="Message attachments">{turn.files.map(file => <li key={file.id}><a className="cite-chip" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}><Paperclip size={12} aria-hidden /> {file.name}</a></li>)}</ul>}
+                  <div className="turn-meta human-meta">
+                    <time className="message-time" dateTime={turn.created} title={new Date(turn.created).toLocaleString('en-US')}>{time(turn.created)}</time>
+                    {turn.workflow_run ? <span className="message-origin">Workflow</span> : turn.parent ? <span className="message-origin">Subtask</span> : null}
+                    <button type="button" className="link-btn link-btn--small" onClick={async () => { try { await navigator.clipboard.writeText(turn.text); } catch { setError('Message could not be copied. Select the text to copy it.'); } }}>Copy</button>
+                    <a className="link-btn link-btn--small" href={`#turn-${turn.id}`} onClick={event => { event.preventDefault(); openFocused(turn.id); }}>View task</a>
+                    {turn.parent && !turn.messageOrigin && <a className="link-btn link-btn--small" href={`#turn-${turn.parent}`} onClick={event => { event.preventDefault(); openFocused(turn.parent!); }}>View parent task</a>}
+                    {turn.messageOrigin && <button type="button" className="link-btn link-btn--small" onClick={() => turn.messageOrigin!.channel ? onOpenChannel?.(turn.messageOrigin!.channel) : onOpenAgent?.(turn.messageOrigin!.agent, turn.messageOrigin!.thread ?? '')}>Open requester conversation</button>}
                   </div>
                 </div>
-                <div className="message-row">
-                  <AgentAvatar agent={channel ? members.find(member => member.id === turn.agent) ?? { id: turn.agent, name: turn.agent_name ?? agent.name } : agent} size={32} />
+                <div className="agent-message">
+                  {channel && members.length > 1 && <div className="agent-identity"><AgentAvatar agent={members.find(member => member.id === turn.agent) ?? { id: turn.agent, name: turn.agent_name ?? agent.name }} size={24} /><strong className="message-name">{turn.agent_name ?? agent.name}</strong></div>}
                   <div className="message-column">
-                    <div className="turn-meta">
-                      <strong className="message-name">{turn.agent_name ?? agent.name}</strong>
-                      <span className={`turn-status is-${tone(turn)}`}><i aria-hidden />{statusLabel(turn)}</span>
-                      {turn.answer_model && <span className="turn-model" title="Answering model">{turn.answer_model}</span>}
-                      <time className="message-time" dateTime={turn.created} title={new Date(turn.created).toLocaleString('en-US')}>{time(turn.created)}</time>
-                    </div>
+                    <TurnActivity turn={turn} agentName={agent.name} onOpenTask={openFocused} />
                     <div className="message-body">
                       {turn.reply ? <div className="legacy"><Markdown text={turn.reply} scope={path.slice(0, -6)} origin={window.location.origin} /></div>
-                        : <p className={turn.error ? 'message-error' : `message-muted${turn.status === 'running' ? ' message-pending' : ''}`}>{turn.error && <CircleAlert size={14} aria-hidden />}{turn.error ?? <span className={turn.status === 'running' ? 'shimmer' : undefined}>{turn.questions?.some(question => question.answer === null) ? 'Answer the question to continue the task.' : turn.workflow_run ? 'Workflow finished without a text result.' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) ? 'Results will be combined after all recipients finish. New messages include results already available.' : turn.events?.some(event => event.status === 'waiting') ? 'Waiting for a signed event.' : turn.waiting_for ? 'Waiting for child task results.' : turn.status === 'queued' ? 'Waiting for turn.' : 'Waiting for provider response...'}</span>}</p>}
-                      {!turn.reply && turn.partial?.text && <div className="message-partial"><p className="message-muted">{turn.partial.status === 'pending' ? 'Temporary text' : 'Text from a previous attempt'} from {turn.partial.model}. Not a final result.</p><p className="message-plain">{turn.partial.text}</p></div>}
+                        : livePartial(turn) ? <div className="live-answer" aria-label="Streaming answer"><div className="legacy"><Markdown text={turn.partial!.text} scope={path.slice(0, -6)} origin={window.location.origin} /></div><span className="stream-caret" aria-hidden /></div>
+                        : <p className={turn.error ? 'message-error' : 'message-muted'}>{turn.error && <CircleAlert size={14} aria-hidden />}{turn.error ?? <span>{turn.questions?.some(question => question.answer === null) ? 'Answer the question to continue the task.' : turn.workflow_run ? 'Workflow finished without a text result.' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) ? 'Results will be combined after all recipients finish. New messages include results already available.' : turn.events?.some(event => event.status === 'waiting') ? 'Waiting for a signed event.' : turn.waiting_for ? 'Waiting for child task results.' : turn.status === 'queued' ? 'Waiting for turn.' : 'Waiting for provider response...'}</span>}</p>}
+                      {!turn.reply && turn.partial?.text && !livePartial(turn) && <div className="message-partial"><p className="message-muted">Text from a previous attempt from {turn.partial.model}. Not a final result.</p><div className="legacy"><Markdown text={turn.partial.text} scope={path.slice(0, -6)} origin={window.location.origin} /></div></div>}
+                    </div>
+                    <div className="turn-meta agent-meta">
+                      <span className={`turn-status is-${tone(turn)}`}><i aria-hidden />{statusLabel(turn)}</span>
+                      {(turn.answer_model || turn.partial?.model) && <span className="turn-model" title="Answering model">{turn.answer_model ?? turn.partial?.model}</span>}
                     </div>
                     <div className="turn-controls">
                       <TaskControls key={`${turn.id}:${turn.revision}`} turn={turn} path={path} members={channel ? members : []} archived={archived || !!turn.editing} />
