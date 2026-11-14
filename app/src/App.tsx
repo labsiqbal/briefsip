@@ -1,3 +1,5 @@
+import { restoreThreadCommand, type ThreadCommand } from '../thread-command';
+import './Conversations.css';
 import { AgentConversation, RoomMessages, type RoomView, type Exchange } from './ui/AgentConversation';
 import { UpdatesPanel, useUpdateBadge } from './UpdatesPanel';
 import { HarnessApprovalCard, type HarnessApproval } from './HarnessApprovalCard';
@@ -69,7 +71,7 @@ const SkillsPanel = lazy(() => import('./SkillsPanel').then(module => ({ default
 
 type Agent = { workspace_connected?: boolean; runtime?: 'api' | 'codex' | 'claude'; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; thread_limit: number; revision: number; id: string; name: string; role: string; model: string; instructions: string };
 type Channel = { project?: string | null; activity: number; read_position: number; revision: number; archived: number; id: string; name: string; instructions: string; members: string[]; lead: string | null };
-type Thread = { id: string; agent: string; name: string; revision: number; archived: number; deleted: number; fork?: { source_name: string; source_id: string; source_kind: 'agent' | 'channel' | 'thread'; source_agent: string; cutoff_turn: string; created: string } | null };
+type Thread = { delivery?: boolean; active?: boolean; activity?: number; id: string; agent: string; name: string; revision: number; archived: number; deleted: number; fork?: { source_name: string; source_id: string; source_kind: 'agent' | 'channel' | 'thread'; source_agent: string; cutoff_turn: string; created: string } | null };
 type AgentMessage = Exchange & { taskId?: string; task?: string; wait?: boolean; generatedFiles?: { id: string; name: string; size: number; thread: string }[]; paused: number; request: string; expects_reply: number; settled: number; id: string; agent: string; thread: string; name: string; status: string; error: string | null; reply: string | null; truncated: boolean };
 
 type Turn = { room?: RoomView | null; harnessApprovals?: HarnessApproval[]; computerWait?: ComputerWait; checkpoint?: { turn: string; restorable: boolean } | null; approvals?: AppApproval[]; recipient?: string | null; dispatch_mode?: 'queue' | 'steer' | 'restart'; dispatch_target?: string | null; dispatch_label?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { kind?: 'peer'; name: string; agent: string | null; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
@@ -431,7 +433,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
             <div ref={bottom} />
       </ChatTranscript>
       <footer className="composer-area">
-        {archived && <p className="composer__note">{!channel && (agent as Agent).hidden ? 'Agent is hidden. Restore it through Edit profile to resume the queue and receive new messages.' : 'Conversation is archived. History remains available. Restore it through settings to send new messages.'}</p>}
+        {archived && <p className="composer__note">{!channel && (agent as Agent).hidden ? 'Agent is hidden. Restore it through Edit profile to resume the queue and receive new messages.' : 'Conversation is archived. History remains available. Restore it through the conversation menu to send new messages.'}</p>}
         {!configured && <p className="composer__note">{!channel && 'provider_account' in agent && !!agent.provider_account && agent.provider_available === false ? 'This agent provider account is unavailable. Select a connected account in the agent profile, or restore the account configuration on the server.' : 'Provider not connected. Check provider account configuration on the server, then restart the app.'} Agent and history remain saved.</p>}
         {error && <div className="composer__error" role="alert"><span>{error} {pending && 'Use Retry send to check the same request without creating a duplicate message.'}</span></div>}
         {blocked && <div className="composer__error" role="alert"><span>Message recovery data could not be read. Sending is blocked. Check history to confirm the previous message was not sent.</span><Button size="sm" variant="ghost" onClick={async () => { if (!await confirm({ title: 'Discard recovery data?', description: 'The previous message may already have been received. Check history before sending another message.', confirm: 'Discard message recovery', danger: true })) return; try { sessionStorage.removeItem(storageKey); setBlocked(false); setError(''); requestAnimationFrame(() => composer.current?.focus()); } catch { setError('Recovery data could not be deleted. Check site storage.'); } }}>Discard message recovery</Button></div>}
@@ -913,88 +915,130 @@ function AgentConversations({ agent, configured, onEdit, workflowAgents, initial
   const [threads, setThreads] = useState<Thread[]>([]), [error, setError] = useState('');
   const storageKey = `briefsip:thread:${agent.id}`;
   const [selected, setSelected] = useState(() => { if (initialThread) return initialThread; try { return sessionStorage.getItem(storageKey) ?? ''; } catch { return ''; } });
-  const [form, setForm] = useState(false), [editing, setEditing] = useState(false), [loaded, setLoaded] = useState(false);
-  const [reload, setReload] = useState(0);
+  const [form, setForm] = useState<Thread | 'new' | null>(null), [loaded, setLoaded] = useState(false);
+  const [showArchived, setShowArchived] = useState(false), [busy, setBusy] = useState(false);
+  const confirm = useConfirm();
+  const commandKey = `briefsip:thread-command:${agent.id}`;
+  const [recovery] = useState(() => { try { return { command: restoreThreadCommand(sessionStorage.getItem(commandKey), agent.id), invalid: false }; } catch { return { command: null, invalid: true }; } });
+  const [pending, setPending] = useState<ThreadCommand | null>(recovery.command), [invalid, setInvalid] = useState(recovery.invalid);
+  const flight = useRef(false), actionFlight = useRef(false);
   const [showWorkspace, setShowWorkspace] = useState(false);
   const workspaceButton = useRef<HTMLButtonElement>(null);
   const [showWorkflows, setShowWorkflows] = useState(false);
   const loadVersion = useRef(0);
   const navigation = useRef(0);
   const thread = threads.find(item => item.id === selected);
-  function select(id: string) { setShowWorkspace(false); setShowWorkflows(false); navigation.current++; loadVersion.current++; setSelected(id); setForm(false); setEditing(false); try { sessionStorage.setItem(storageKey, id); } catch { /* Selection remains usable in memory. */ } }
-  async function load(preferred = selected, afterSave = false) {
+  function select(id: string) { setShowWorkspace(false); setShowWorkflows(false); navigation.current++; loadVersion.current++; setSelected(id); setForm(null); try { sessionStorage.setItem(storageKey, id); } catch { /* Selection remains usable in memory. */ } }
+  async function load(preferred = selected, afterSave = false, quiet = false) {
     const version = ++loadVersion.current;
     try {
       const rows = await api<Thread[]>(`/api/agents/${agent.id}/threads`);
       if (version !== loadVersion.current) return;
       const missing = !!preferred && !rows.some(row => row.id === preferred);
-      setThreads(rows); setLoaded(true); setReload(value => value + 1);
-      setError(missing ? 'Conversation is no longer available. Main chat opened.' : '');
+      setThreads(rows); setLoaded(true);
+      if (!quiet || missing) setError(missing ? 'Conversation is no longer available. Main chat opened.' : '');
       if (missing || afterSave) select(missing ? '' : preferred);
     }
-    catch (error) { if (!afterSave && version === loadVersion.current) setError(message(error)); throw new Error(message(error)); }
+    catch (error) { if (!afterSave && !quiet && version === loadVersion.current) setError(message(error)); throw new Error(message(error)); }
   }
   useEffect(() => {
     void load().catch(() => {});
     return () => { navigation.current++; loadVersion.current++; };
   }, []);
+  useEffect(() => { if (busy || pending || invalid) return; const timer = setInterval(() => { void load(selected, false, true).catch(() => {}); }, 5000); return () => clearInterval(timer); }, [selected, busy, pending, invalid]);
   useEffect(() => { if (initialThread !== undefined) { onThreadOpened(); void load(initialThread, true).catch(() => {}); } }, [initialThread]);
-  const navigationVersion = navigation.current;
   const leave = () => { navigation.current++; loadVersion.current++; };
-  const openForm = () => { leave(); setShowWorkspace(false); setShowWorkflows(false); setForm(true); setEditing(false); };
+  const openForm = () => { leave(); setShowWorkspace(false); setShowWorkflows(false); setForm('new'); };
   const openRoutines = () => { leave(); onManageRoutines(agent.id); };
   const openWorkflows = () => { leave(); setShowWorkspace(false); setShowWorkflows(true); };
-  const openWorkspace = () => { leave(); setShowWorkflows(false); setForm(false); setEditing(false); setShowWorkspace(true); };
+  const openWorkspace = () => { leave(); setShowWorkflows(false); setForm(null); setShowWorkspace(true); };
   const errorBanner = error && <p className="error" role="alert">{error} <button className="secondary" onClick={() => void load().catch(() => {})}>Reload conversation</button></p>;
   if (showWorkspace) return <PageView>{errorBanner}<Suspense fallback={<p className="empty" role="status">Loading workspace files...</p>}><WorkspacePanel key={agent.id} agent={agent} request={api} onClose={() => { setShowWorkspace(false); requestAnimationFrame(() => workspaceButton.current?.focus()); }} /></Suspense></PageView>;
   if (showWorkflows) return <PageView wide>{errorBanner}<Suspense fallback={<p className="empty" role="status">Loading workflows...</p>}><WorkflowPanel owner={agent} agents={workflowAgents} request={api} onNavigate={leave} onBack={() => { leave(); setShowWorkflows(false); }} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={workflowAgents.find(item => item.id === owner)} threadId={id} configured={configured} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />} /></Suspense></PageView>;
 
   if (!loaded) return <PageView>{errorBanner}<p className="empty" role="status">Loading conversation...</p></PageView>;
-  if (form) return <PageView>{errorBanner}<ThreadForm key={editing ? `${thread?.id}:${thread?.revision}:${reload}` : 'new'} agent={agent} thread={editing ? thread : undefined} onCancel={() => { leave(); setForm(false); }} onReload={() => { void load().catch(() => {}); }} onSaved={item => navigationVersion === navigation.current ? load(item.deleted ? '' : item.id, true) : Promise.resolve()} /></PageView>;
+  const locked = busy || !!pending || invalid;
+  async function execute(command: ThreadCommand) {
+    if (flight.current || invalid) return;
+    flight.current = true; setBusy(true); setError('');
+    const version = navigation.current;
+    try {
+      sessionStorage.setItem(commandKey, JSON.stringify(command)); setPending(command);
+      const result = await api<Thread>(command.path, command.data);
+      sessionStorage.removeItem(commandKey); setPending(null); setForm(null);
+      if (version === navigation.current) {
+        const hidden = result.deleted || result.archived && !showArchived;
+        await load(command.path === `/api/agents/${agent.id}/threads` ? result.id : selected === result.id && hidden ? '' : selected, true);
+        requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`[data-conversation-id="${hidden ? 'main' : result.id}"] > button`)?.focus());
+      }
+    } catch (error) {
+      if (error instanceof HttpError && error.status < 500) { sessionStorage.removeItem(commandKey); setPending(null); }
+      setError(message(error));
+    } finally { flight.current = false; setBusy(false); }
+  }
+  async function change(item: Thread, action: 'archive' | 'restore' | 'delete') {
+    if (locked || actionFlight.current) return;
+    actionFlight.current = true; setBusy(true);
+    const version = navigation.current;
+    try {
+      if (action === 'delete') {
+        const rows = await api<Thread[]>(`/api/agents/${agent.id}/threads`);
+        if (version !== navigation.current) return;
+        const latest = rows.find(row => row.id === item.id);
+        if (!latest) { await load('', true); return; }
+        item = latest;
+        if (item.active) { await confirm({ title: 'Stop work first', description: 'This conversation has running or queued work. Open it and stop unfinished turns before deleting it.', confirm: 'Got it' }); return; }
+      }
+      if (action !== 'restore' && !await confirm({ title: `${action === 'delete' ? 'Delete' : 'Archive'} conversation?`, description: action === 'delete' ? `“${item.name}” and its history will no longer be available. This cannot be undone.` : `“${item.name}” will be hidden. History stays saved; use Show archived to restore it. Unfinished work will be stopped. Earlier requests may still be billed.`, confirm: action === 'delete' ? 'Delete conversation' : 'Archive conversation', danger: true })) return;
+      if (version !== navigation.current) return;
+      await execute({ path: `/api/threads/${item.id}/${action === 'delete' ? 'delete' : 'edit'}`, data: { id: crypto.randomUUID(), revision: item.revision, ...(action === 'delete' ? {} : { name: item.name, archived: action === 'archive' }) } });
+    } catch (error) { if (version === navigation.current) setError(message(error)); }
+    finally { actionFlight.current = false; setBusy(false); }
+  }
+  async function reloadForm() {
+    const current = form, version = navigation.current;
+    if (!current || current === 'new' || locked) return;
+    try { const rows = await api<Thread[]>(`/api/agents/${agent.id}/threads`); if (version !== navigation.current) return; const latest = rows.find(row => row.id === current.id); if (!latest) throw new Error('Conversation is no longer available. Close this dialog and reload conversations.'); setForm(latest); setError(''); }
+    catch (error) { setError(message(error)); }
+  }
+
+  const actions = (item: Thread): MenuItem[] => [
+    { label: 'Rename', disabled: locked, onSelect: () => setForm(item) },
+    { label: item.archived ? 'Restore' : 'Archive', disabled: locked, onSelect: () => void change(item, item.archived ? 'restore' : 'archive') },
+    { label: 'Delete', danger: true, disabled: locked, onSelect: () => void change(item, 'delete') },
+  ];
+  const row = (item: Thread) => <div data-conversation-id={item.id} key={item.id} className={`conversation-row${selected === item.id ? ' is-current' : ''}`}>
+    <button type="button" className="panel-row panel-row--link" aria-current={selected === item.id || undefined} title={item.name} onClick={() => select(item.id)}><MessageSquare size={16} aria-hidden /><span className="panel-row__text"><span className="panel-row__title">{item.name}</span>{!!item.archived && <span className="panel-row__meta">Archived</span>}</span></button>
+    <ActionMenu label={`Menu conversation ${item.name}`} trigger={<button type="button" className="k-icon-btn" aria-label={`Menu conversation ${item.name}`} disabled={locked}><Ellipsis size={15} aria-hidden /></button>} items={actions(item)} />
+  </div>;
+  const visible = threads.filter(item => showArchived || !item.archived), deliveries = visible.filter(item => item.delivery);
   const conversations = <>
-    {error && <p className="cfg-error" role="alert">{error} <button type="button" className="link-btn" onClick={() => void load().catch(() => {})}>Reload conversation</button></p>}
+    {error && <Alert tone="error" actions={<Button size="sm" disabled={busy} onClick={() => void load().catch(() => {})}>Reload conversations</Button>}>{error}</Alert>}
+    {(pending || invalid) && <Alert tone="warn" title={invalid ? 'Conversation recovery is unavailable' : 'Conversation change is not confirmed'} actions={<>{pending && <Button size="sm" busy={busy} onClick={() => void execute(pending)}>Retry change</Button>}<Button size="sm" disabled={busy} onClick={async () => { if (await confirm({ title: 'Discard pending change?', description: 'Check conversations first. The change may already have been saved.', confirm: 'Discard', danger: true })) { try { sessionStorage.removeItem(commandKey); setPending(null); setInvalid(false); } catch { setError('Recovery could not be cleared. Check browser storage.'); } } }}>Discard</Button></>} />}
     <section aria-label="Agent conversations">
-      <div className="section-label section-label--row"><span>Conversation</span><button type="button" className="link-btn link-btn--small" onClick={openForm}>New conversation</button></div>
+      <div className="section-label section-label--row"><span>Conversations</span><button type="button" className="link-btn link-btn--small" disabled={locked} onClick={openForm}>New conversation</button></div>
       <div className="panel-card">
-        <button type="button" className={`panel-row panel-row--link${!thread ? ' is-current' : ''}`} aria-current={!thread || undefined} onClick={() => select('')}><MessageSquare size={16} aria-hidden /><span className="panel-row__title">Main chat</span></button>
-        {threads.map(item => <button key={item.id} type="button" className={`panel-row panel-row--link${thread?.id === item.id ? ' is-current' : ''}`} aria-current={thread?.id === item.id || undefined} onClick={() => select(item.id)}><MessageSquare size={16} aria-hidden /><span className="panel-row__text"><span className="panel-row__title">{item.name}</span>{!!item.archived && <span className="panel-row__meta">Archived</span>}</span></button>)}
+        <div className="conversation-row" data-conversation-id="main"><button type="button" className={`panel-row panel-row--link${!thread ? ' is-current' : ''}`} aria-current={!thread || undefined} onClick={() => select('')}><MessageSquare size={16} aria-hidden /><span className="panel-row__title">Main chat</span></button><ActionMenu label="Menu conversation Main chat" trigger={<button type="button" className="k-icon-btn" aria-label="Menu conversation Main chat"><Ellipsis size={15} aria-hidden /></button>} items={[{ label: 'Edit profile', onSelect: onEdit }]} /></div>
+        {visible.filter(item => !item.delivery).map(row)}
       </div>
+      {!!threads.some(item => item.delivery) && <Collapsible title={<>From other agents <Badge>{deliveries.length}</Badge></>}><div className="panel-card">{deliveries.length ? deliveries.map(row) : <p className="panel-empty">No active agent conversations.</p>}</div></Collapsible>}
+      <Checkbox checked={showArchived} onChange={next => { setShowArchived(next); if (!next && thread?.archived) select(''); }} label="Show archived" />
     </section>
   </>;
   const activity = <><UpcomingRoutines agent={agent.id} onManage={openRoutines} /><Collapsible title="Automation"><div className="panel-card"><button type="button" className="panel-row panel-row--action" onClick={openWorkflows}><WorkflowIcon size={16} aria-hidden /> Workflows</button></div></Collapsible></>;
   const library = agent.workspace_connected && <section aria-label="Workspace library"><div className="section-label">Workspace</div><div className="panel-card"><button ref={workspaceButton} type="button" className="panel-row panel-row--action" onClick={openWorkspace}><FolderOpen size={16} aria-hidden /> Workspace files</button></div></section>;
-  return <Chat onOpenChannel={onOpenChannel} onOpenAgent={onOpenAgent} key={thread?.id ?? agent.id} agent={agent} thread={thread} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)}
-    onEdit={thread ? () => { leave(); setEditing(true); setForm(true); } : onEdit}
-    menuItems={[{ label: 'New conversation', onSelect: openForm }, { label: 'Routines', onSelect: openRoutines }, { label: 'Workflows', onSelect: openWorkflows }, { label: 'Workspace files', onSelect: openWorkspace }]}
-    detailsExtra={{ chats: conversations, activity, library }} />;
+  return <><Chat onOpenChannel={onOpenChannel} onOpenAgent={onOpenAgent} key={thread?.id ?? agent.id} agent={agent} thread={thread} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)}
+    onEdit={thread ? () => setForm(thread) : onEdit}
+    menuItems={[...(thread ? actions(thread) : []), { label: 'New conversation', onSelect: openForm, disabled: locked }, { label: 'Routines', onSelect: openRoutines }, { label: 'Workflows', onSelect: openWorkflows }, { label: 'Workspace files', onSelect: openWorkspace }]}
+    detailsExtra={{ chats: conversations, activity, library }} />{form && <ThreadForm key={form === 'new' ? 'new' : `${form.id}:${form.revision}`} agent={agent} thread={form === 'new' ? undefined : form} busy={busy} locked={!!pending || invalid} onCancel={() => setForm(null)} onSave={command => void execute(command)} error={error} pending={pending} onRetry={() => pending && void execute(pending)} onReload={() => void reloadForm()} />}</>;
 }
 
-function ThreadForm({ agent, thread, onCancel, onSaved, onReload }: { agent: Agent; thread?: Thread; onCancel: () => void; onSaved: (thread: Thread) => Promise<void>; onReload: () => void }) {
-  const [archived, setArchived] = useState(!!thread?.archived), [confirmed, setConfirmed] = useState(false);
-  const [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const pending = useRef<{ path: string; data: { id: string; name?: string; revision?: number; archived?: boolean } } | null>(null);
-  async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (busy) return;
-    const form = new FormData(event.currentTarget);
-    const deleting = (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value') === 'delete';
-    if (deleting && (!thread?.archived || !confirmed)) return;
-    const request = pending.current ?? { path: thread ? `/api/threads/${thread.id}/${deleting ? 'delete' : 'edit'}` : `/api/agents/${agent.id}/threads`, data: { id: crypto.randomUUID(), ...(thread ? { revision: thread.revision } : {}), ...(!deleting ? { name: String(form.get('name')).trim(), ...(thread ? { archived } : {}) } : {}) } };
-    pending.current = request; setBusy(true); setError('');
-    try { await onSaved(await api<Thread>(request.path, request.data)); }
-    catch (error) { if (error instanceof HttpError && error.status < 500) pending.current = null; setError(message(error)); }
-    finally { setBusy(false); }
-  }
-  return <Dialog open onOpenChange={next => { if (!next && !busy) onCancel(); }} title={thread ? 'Conversation settings' : 'New side thread'} description={`Agent ${agent.name}, with history and a queue separate from the main chat.`}
-    footer={<>
-      {thread && error && !pending.current && <Button variant="ghost" onClick={onReload}>Reload settings</Button>}
-      <Button onClick={onCancel}>Cancel</Button><Button type="submit" form="thread-form" variant="primary" busy={busy} disabled={busy}>{busy ? 'Saving...' : pending.current ? 'Retry changes' : thread ? 'Save conversation' : 'Create conversation'}</Button>
-      {!!thread?.archived && <Button type="submit" form="thread-form" variant="danger" value="delete" disabled={busy || !confirmed || !!pending.current} className="k-dialog__foot-start" style={{ order: -1 }}>Delete conversation</Button>}
-    </>}>
-    <form id="thread-form" className="k-fieldset bs-root" onSubmit={save}>
-      <Field label="Conversation name"><Input name="name" required maxLength={80} defaultValue={thread?.name} readOnly={!!pending.current} autoFocus /></Field>
-      {thread && <Checkbox checked={archived} disabled={!!pending.current} onChange={setArchived} label="Archive and cancel unfinished work" />}
-      {!!thread?.archived && <Checkbox checked={confirmed} disabled={!!pending.current} onChange={setConfirmed} label="I understand that a deleted conversation cannot be reopened" />}
-      {error && <Alert tone="error">{error}</Alert>}
+function ThreadForm({ agent, thread, busy, locked, onCancel, onSave, error, pending, onRetry, onReload }: { onReload: () => void; error: string; pending: ThreadCommand | null; onRetry: () => void; agent: Agent; thread?: Thread; busy: boolean; locked: boolean; onCancel: () => void; onSave: (command: ThreadCommand) => void }) {
+  return <Dialog open onOpenChange={next => { if (!next && !busy) onCancel(); }} title={thread ? 'Rename conversation' : 'New side thread'} description={`Agent ${agent.name}, with history and a queue separate from the main chat.`}
+    footer={<><Button onClick={onCancel} disabled={busy}>Cancel</Button><Button type="submit" form="thread-form" variant="primary" busy={busy} disabled={locked}>{thread ? 'Save conversation' : 'Create conversation'}</Button></>}>
+    <form id="thread-form" className="k-fieldset bs-root" onSubmit={event => { event.preventDefault(); if (busy || locked) return; const name = String(new FormData(event.currentTarget).get('name')).trim(); if (!name) return; onSave({ path: thread ? `/api/threads/${thread.id}/edit` : `/api/agents/${agent.id}/threads`, data: { id: crypto.randomUUID(), name, ...(thread ? { revision: thread.revision, archived: !!thread.archived } : {}) } }); }}>
+      <Field label="Conversation name"><Input name="name" required maxLength={80} defaultValue={thread?.name} readOnly={locked} autoFocus /></Field>
+      {error && <Alert tone="error" actions={thread && !pending && <Button size="sm" disabled={busy} onClick={onReload}>Reload settings</Button>}>{error}</Alert>}{pending && <Alert tone="warn" title="Change is not confirmed" actions={<Button size="sm" busy={busy} onClick={onRetry}>Retry change</Button>}>Retry keeps the same request ID.</Alert>}
     </form>
   </Dialog>;
 }

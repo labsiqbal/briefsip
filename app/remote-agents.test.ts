@@ -38,6 +38,8 @@ for(const mode of ['message','wait','completion','restart-a','restart-b'])test(`
     const id=randomUUID(),path=`/api/agents/${f.alpha.id}/turns`;await api(f.a,path,{id,text:'Start'},202);
     await until(async()=>calls===1);
     const inbound=await until(async()=>{const threads=await api(f.b,`/api/agents/${beta}/threads`);if(!threads.length)return null;const rows=await api(f.b,`/api/threads/${threads[0].id}/turns`);return rows.find((row:any)=>row.origin==='peer:Briefsip: A')});assert.equal(inbound.message_depth,1);
+    const inboundThreads=await api(f.b,`/api/agents/${beta}/threads`);assert.equal(inboundThreads[0].delivery,true);assert.equal(inboundThreads[0].name,'Briefsip on A: Remote work');
+    const outboundThreads=await api(f.a,`/api/agents/${f.alpha.id}/threads`);assert.equal(outboundThreads[0].delivery,true);assert.equal(outboundThreads[0].name,'Beta on B: Remote work');
     assert.equal(f.machine.agents[0].role, 'Personal agent');
     await until(async()=>{return (await api(f.a,path)).some((row:any)=>row.id===id&&row.agentMessages?.length);});
     if(mode==='restart-a')await f.restartA();if(mode==='restart-b')await f.restartB();release();

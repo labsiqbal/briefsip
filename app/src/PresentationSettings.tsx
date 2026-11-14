@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
 import { applyPresentation, parsePresentation, presentationKey, readPresentation, type Presentation } from '../presentation';
-import { Alert, PageHeader, Section, Segmented } from './ui/kit';
+import { Alert, Card, PageHeader, Row, Section, Segmented, Switch } from './ui/kit';
 
 export function PresentationSettings() {
+  const [autoArchive, setAutoArchive] = useState<boolean | null>(null), [chatError, setChatError] = useState(''), [chatBusy, setChatBusy] = useState(false);
+  useEffect(() => { let stopped = false; void fetch('/api/conversations/settings').then(async response => { if (!response.ok) throw new Error(); const value = await response.json(); if (!stopped) setAutoArchive(value.autoArchive); }).catch(() => { if (!stopped) setChatError('Conversation settings could not be loaded. Reopen Appearance to retry.'); }); return () => { stopped = true; }; }, []);
+  async function changeArchive(value: boolean) { setChatBusy(true); setChatError(''); try { const response = await fetch('/api/conversations/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: crypto.randomUUID(), autoArchive: value }) }); if (!response.ok) throw new Error(); setAutoArchive((await response.json()).autoArchive); } catch { setChatError('Conversation settings could not be saved. Reopen Appearance to check the current value.'); } finally { setChatBusy(false); } }
   const [state, setState] = useState(readPresentation), [notice, setNotice] = useState('');
   useEffect(() => {
     function sync(event: StorageEvent) {
@@ -22,9 +25,10 @@ export function PresentationSettings() {
     } catch { setState(current => ({ ...current, error: 'Appearance has not been saved. Allow browser storage and try again.' })); setNotice(''); }
   }
   return <div className="k-page bs-root">
-    <PageHeader title="Appearance" description="Applies in this browser. Appearance does not change agents or conversations." />
+    <PageHeader title="Appearance" description="Theme and text size apply in this browser. Chat cleanup applies to this installation." />
     <Section title="Theme"><Segmented<Presentation['theme']> label="Theme" value={state.value.theme} onChange={theme => change({ ...state.value, theme })} options={[{ value: 'dark', label: 'Dark' }, { value: 'light', label: 'Light' }, { value: 'system', label: 'Match device' }]} /></Section>
     <Section title="Text size"><Segmented<Presentation['textSize']> label="Text size" value={state.value.textSize} onChange={textSize => change({ ...state.value, textSize })} options={[{ value: 'standard', label: 'Standard' }, { value: 'large', label: 'Large' }, { value: 'larger', label: 'Larger' }]} /></Section>
+    <Section title="Chats"><Card><Row title="Auto-archive conversations from other agents" meta="Hide delivery conversations seven days after work settles. History stays saved and can be restored." trailing={<Switch label="Auto-archive conversations from other agents" checked={autoArchive ?? true} disabled={autoArchive === null || chatBusy} onChange={value => void changeArchive(value)} />} /></Card>{chatError && <Alert tone="error">{chatError}</Alert>}</Section>
     {state.error && <Alert tone="error">{state.error}</Alert>}{notice && <Alert>{notice}</Alert>}
   </div>;
 }
