@@ -2403,8 +2403,7 @@ test('home execution loop resumes saved provider output after completion reply l
   } finally { globalThis.fetch = originalFetch; await runtime.close(); await f.close(); }
 });
 
-// Eighteen child startups plus six canonical restarts need a suite guard separate from effect/replay assertions.
-test('home execution loop survives SIGKILL across provider and tool results without replaying effects', { timeout: 120000 }, async () => {
+for (const checkpoint of ['provider-not-sent', 'canonical-not-sent', 'provider-saved', 'tool-reply', 'tool-report', 'provider-in-flight']) test(`home execution loop survives SIGKILL across provider and tool results without replaying effects: ${checkpoint}`, { timeout: 120000 }, async () => {
   const f = await fixture(), store = memoryKeys(), database = join(f.dir, 'killed-loop.sqlite'), keys = join(f.dir, 'loop-keys.json');
   const runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: store.entry }), calls = new Map<string, number>();
   const provider = createServer(async (req, res) => {
@@ -2422,7 +2421,7 @@ test('home execution loop survives SIGKILL across provider and tool results with
       const message = await Promise.race([once(child, 'message').then(([message]) => message), exited.then(() => { throw new Error(`Loop fixture exited: ${errors}`); })]);
       return { child, exited, message };
     }
-    for (const checkpoint of ['provider-not-sent', 'canonical-not-sent', 'provider-saved', 'tool-reply', 'tool-report', 'provider-in-flight']) {
+    {
       const { taskId } = await loopTask(f, runtime), running = await launch(taskId, checkpoint); assert.equal(running.message.checkpoint, checkpoint);
       running.child.kill('SIGKILL'); assert.equal((await running.exited)[1], 'SIGKILL'); await f.restart();
       for (let restart = 0; restart < 2; restart++) {
@@ -2957,7 +2956,7 @@ test('journal-backed host dispatches once, retries publication only and refuses 
   } finally { globalThis.fetch = originalFetch; await runtime.close(); await f.close(); }
 });
 
-test('SIGKILL recovery proves no send before marker and never repeats marked effects or lost result ACKs', { timeout: 30000 }, async () => {
+for (const checkpoint of ['after-intent','after-prepare','after-commit','after-marker','after-result','after-report']) test(`SIGKILL recovery proves no send before marker and never repeats marked effects or lost result ACKs: ${checkpoint}`, { timeout: 30000 }, async () => {
   const f = await fixture(), store = memoryKeys(), database = join(f.dir,'device.sqlite'), keys = join(f.dir,'synthetic-keys.json');
   const runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: store.entry });
   const calls = new Map<string,number>();
@@ -2983,7 +2982,7 @@ test('SIGKILL recovery proves no send before marker and never repeats marked eff
       const message=await Promise.race([once(child,'message').then(([message])=>message),exited.then(()=>{throw new Error(`Recovery fixture exited: ${errors}`);})]);
       return {child,exited,message};
     }
-    for(const checkpoint of ['after-intent','after-prepare','after-commit','after-marker','after-result','after-report']) {
+    {
       const taskId=randomUUID(),actionId=randomUUID(),payload={v:1,kind:'direct',message:{text:checkpoint,files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
       assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
       const running=await start({checkpoint,taskId,actionId});

@@ -1,3 +1,4 @@
+import { HarnessApprovalCard, type HarnessApproval } from './HarnessApprovalCard';
 import './ui/csp-nonce';
 import { SourceControl, RestoreCheckpoint } from './SourceControl';
 import { ComputerViewer, ComputerRequestCard } from './ComputerViewer';
@@ -62,11 +63,11 @@ const McpPanel = lazy(() => import('./McpPanel').then(module => ({ default: modu
 const ConnectedAppsPanel = lazy(() => import('./ConnectedAppsPanel').then(module => ({ default: module.ConnectedAppsPanel })).catch(panelLoadFailure));
 const SkillsPanel = lazy(() => import('./SkillsPanel').then(module => ({ default: module.SkillsPanel })).catch(panelLoadFailure));
 
-type Agent = { computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; thread_limit: number; revision: number; id: string; name: string; model: string; instructions: string };
+type Agent = { runtime?: 'api' | 'codex' | 'claude'; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; thread_limit: number; revision: number; id: string; name: string; model: string; instructions: string };
 type Channel = { activity: number; read_position: number; revision: number; archived: number; id: string; name: string; instructions: string; members: string[]; lead: string | null };
 type Thread = { id: string; agent: string; name: string; revision: number; archived: number; deleted: number };
 type AgentMessage = { generatedFiles?: { id: string; name: string; size: number; thread: string }[]; paused: number; request: string; expects_reply: number; settled: number; id: string; agent: string; thread: string; name: string; status: string; error: string | null; reply: string | null; truncated: boolean };
-type Turn = { computerWait?: ComputerWait; checkpoint?: { turn: string; restorable: boolean } | null; approvals?: AppApproval[]; recipient?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { kind?: 'peer'; name: string; agent: string | null; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
+type Turn = { harnessApprovals?: HarnessApproval[]; computerWait?: ComputerWait; checkpoint?: { turn: string; restorable: boolean } | null; approvals?: AppApproval[]; recipient?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { kind?: 'peer'; name: string; agent: string | null; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
 type Directory = { agents: Agent[]; configured: boolean; defaultModel: string };
 type Pending = ChatCommand;
 const statusNames: Record<string, string> = { queued: 'Queued', running: 'Replying', done: 'Done', failed: 'Failed', interrupted: 'Interrupted', cancelled: 'Cancelled' };
@@ -331,7 +332,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   if (showMemory) return <PageView><Suspense fallback={<p className="empty" role="status">Loading memory...</p>}><MemoryPanel key={scope} path={`/api/${channel ? 'channels' : 'agents'}/${agent.id}/memory`} channel={!!channel} archived={!!channel?.archived} request={api} onClose={() => { setShowMemory(false); requestAnimationFrame(() => memoryButton.current?.focus()); }} /></Suspense></PageView>;
   const active = turns?.filter(turn => turn.status === 'queued' || turn.status === 'running').length ?? 0;
   const title = thread?.name ?? agent.name;
-  const subtitle = channel ? `${members.length} members${channel.archived ? ' · Archived' : ''}` : thread ? `Side thread · ${agent.name}` : (agent as Agent).model;
+  const subtitle = channel ? `${members.length} members${channel.archived ? ' · Archived' : ''}` : thread ? `Side thread · ${agent.name}` : (agent as Agent).runtime && (agent as Agent).runtime !== 'api' ? `${(agent as Agent).runtime === 'codex' ? 'Codex' : 'Claude Code'} runtime` : (agent as Agent).model;
   const editLabel = channel ? 'Channel settings' : thread ? 'Conversation settings' : 'Edit profile';
   const openFiles = () => { setDetailsOpen(true); setFilesOpen(true); requestAnimationFrame(() => filesSection.current?.querySelector<HTMLButtonElement>('.k-collapsible__trigger')?.focus()); };
   const items: MenuItem[] = [
@@ -340,7 +341,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     { label: `${channel ? 'Channel' : 'Agent'} memory`, onSelect: () => setShowMemory(true) },
     { label: detailsOpen ? 'Hide details' : 'Show details', onSelect: () => setDetailsOpen(!detailsOpen) },
   ];
-  const statusLabel = (turn: Turn) => turn.computerWait ? 'Waiting for you' : turn.approvals?.some(approval => approval.state === 'approval') && !['done','cancelled'].includes(turn.status) ? 'Waiting for approval' : turn.editing ? 'Editing' : turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) ? 'Waiting for your answer' : turn.no_update ? 'No updates' : turn.paused && !['done','cancelled'].includes(turn.status) ? 'Paused' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) && turn.status === 'queued' ? 'Waiting for agent reply' : turn.waiting_for && turn.status === 'queued' ? 'Waiting for delegation' : turn.routing === 'pending' && turn.status === 'running' ? 'Selecting recipient' : turn.routing === 'clarify' ? 'Needs clarification' : turn.routing === 'none' ? 'No task needed' : turn.status === 'running' ? 'Running' : statusNames[turn.status] ?? turn.status;
+  const statusLabel = (turn: Turn) => turn.computerWait ? 'Waiting for you' : (turn.approvals?.some(approval => approval.state === 'approval') || turn.harnessApprovals?.some(approval => approval.state === 'approval')) && !['done','cancelled'].includes(turn.status) ? 'Waiting for approval' : turn.editing ? 'Editing' : turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) ? 'Waiting for your answer' : turn.no_update ? 'No updates' : turn.paused && !['done','cancelled'].includes(turn.status) ? 'Paused' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) && turn.status === 'queued' ? 'Waiting for agent reply' : turn.waiting_for && turn.status === 'queued' ? 'Waiting for delegation' : turn.routing === 'pending' && turn.status === 'running' ? 'Selecting recipient' : turn.routing === 'clarify' ? 'Needs clarification' : turn.routing === 'none' ? 'No task needed' : turn.status === 'running' ? 'Running' : statusNames[turn.status] ?? turn.status;
   const tone = (turn: Turn) => turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) || turn.paused && !['done','cancelled'].includes(turn.status) ? 'attention' : ['failed','interrupted'].includes(turn.status) ? 'error' : ['queued','running'].includes(turn.status) ? 'working' : 'done';
   const time = (value: string) => new Date(value).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
   const openFocused = (id: string) => { focusedOnce.current = ''; setQuery(''); setFocusedTask(id); };
@@ -381,7 +382,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
                     <div className="message-body">
                       {turn.reply ? <div className="legacy"><Markdown text={turn.reply} scope={path.slice(0, -6)} origin={window.location.origin} /></div>
                         : livePartial(turn) ? <div className="live-answer" aria-label="Streaming answer"><div className="legacy"><Markdown text={turn.partial!.text} scope={path.slice(0, -6)} origin={window.location.origin} /></div><span className="stream-caret" aria-hidden /></div>
-                        : <p className={turn.error ? 'message-error' : 'message-muted'}>{turn.error && <CircleAlert size={14} aria-hidden />}{turn.error ?? <span>{turn.approvals?.some(approval => approval.state === 'approval') ? 'Review the connected app action to continue.' : turn.questions?.some(question => question.answer === null) ? 'Answer the question to continue the task.' : turn.workflow_run ? 'Workflow finished without a text result.' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) ? 'Results will be combined after all recipients finish. New messages include results already available.' : turn.events?.some(event => event.status === 'waiting') ? 'Waiting for a signed event.' : turn.waiting_for ? 'Waiting for child task results.' : turn.status === 'queued' ? 'Waiting for turn.' : 'Waiting for provider response...'}</span>}</p>}
+                        : <p className={turn.error ? 'message-error' : 'message-muted'}>{turn.error && <CircleAlert size={14} aria-hidden />}{turn.error ?? <span>{(turn.approvals?.some(approval => approval.state === 'approval') || turn.harnessApprovals?.some(approval => approval.state === 'approval')) ? 'Review the connected app action to continue.' : turn.questions?.some(question => question.answer === null) ? 'Answer the question to continue the task.' : turn.workflow_run ? 'Workflow finished without a text result.' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) ? 'Results will be combined after all recipients finish. New messages include results already available.' : turn.events?.some(event => event.status === 'waiting') ? 'Waiting for a signed event.' : turn.waiting_for ? 'Waiting for child task results.' : turn.status === 'queued' ? 'Waiting for turn.' : 'Waiting for provider response...'}</span>}</p>}
                       {!turn.reply && turn.partial?.text && !livePartial(turn) && <div className="message-partial"><p className="message-muted">Text from a previous attempt from {turn.partial.model}. Not a final result.</p><div className="legacy"><Markdown text={turn.partial.text} scope={path.slice(0, -6)} origin={window.location.origin} /></div></div>}
                     </div>
                     <div className="turn-meta agent-meta">
@@ -395,6 +396,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
                     <div className="turn-extras k-stack">
                       {turn.reply && <SpeechPlayback key={`${path}:${turn.id}`} owner={`${path}:${turn.id}`} text={turn.reply} />}
                       {turn.events?.map(event => <section className="k-stack" key={event.id}><Row title={`Event ${event.event}: ${event.status === 'waiting' ? 'Waiting' : event.status === 'received' ? 'Received' : event.status === 'expired' ? 'Expired' : 'Closed'}`} meta={new Date(event.deadline).toLocaleString('en-US')} />{event.status === 'waiting' && !archived && <EventConnection path={`/api/turn-waits/${event.id}`} request={api} />}</section>)}
+                      {turn.harnessApprovals?.map(approval => <HarnessApprovalCard key={approval.id} approval={approval} path={`${path}/${turn.id}`} status={turn.status} archived={archived} request={api} />)}
                       {turn.approvals?.map(approval => <ApprovalCard key={approval.id} approval={approval} path={`${path}/${turn.id}`} status={turn.status} archived={archived} request={api} />)}
                       {turn.computerWait && <ComputerRequestCard agent={turn.agent} name={turn.agent_name ?? agent.name} wait={turn.computerWait} request={api} />}
                       {turn.questions?.map(question => <QuestionCard key={question.id} question={question} path={`${path}/${turn.id}`} status={turn.status} archived={archived} request={api} />)}
@@ -500,7 +502,7 @@ function WorkflowConversation({ agent, threadId, configured, onOpenAgent, onOpen
   if (!agent) return <p className="error" role="alert">Step agent is no longer available.</p>;
   if (error) return <p className="error" role="alert">{error} <button className="secondary" onClick={() => setReload(value => value + 1)}>Reload step conversation</button></p>;
   if (!thread) return <p className="empty" role="status">Loading step conversation...</p>;
-  return <Chat key={thread.id} agent={agent} thread={thread} configured={configured && agent.provider_available !== false} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />;
+  return <Chat key={thread.id} agent={agent} thread={thread} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />;
 }
 
 type Routine = { trigger: 'schedule' | 'webhook'; id: string; agent: string; name: string; prompt: string; next_at: number; interval_ms: number | null; enabled: number; revision: number };
@@ -874,7 +876,7 @@ function AgentConversations({ agent, configured, onEdit, workflowAgents, initial
       </div>
     </section>
   </>;
-  return <Chat onOpenChannel={onOpenChannel} onOpenAgent={onOpenAgent} key={thread?.id ?? agent.id} agent={agent} thread={thread} configured={configured && agent.provider_available !== false}
+  return <Chat onOpenChannel={onOpenChannel} onOpenAgent={onOpenAgent} key={thread?.id ?? agent.id} agent={agent} thread={thread} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)}
     onEdit={thread ? () => { leave(); setEditing(true); setForm(true); } : onEdit}
     menuItems={[{ label: 'New conversation', onSelect: openForm }, { label: 'Routines', onSelect: openRoutines }, { label: 'Workflows', onSelect: openWorkflows }, { label: 'Workspace files', onSelect: openWorkspace }]}
     detailsExtra={conversations} />;
@@ -923,6 +925,15 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
   const active = useRef(true);
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
 
+  const [runtime, setRuntime] = useState(profile?.runtime ?? 'api');
+  const [runtimeChoices, setRuntimeChoices] = useState<{ runtime: 'codex' | 'claude'; enabled: boolean; version: string | null; reason: string | null }[]>([]);
+  const [runtimeError, setRuntimeError] = useState('');
+  useEffect(() => {
+    if (!profile) return;
+    let stopped = false;
+    void api<{ choices: typeof runtimeChoices }>(`/api/agents/${profile.id}/runtimes`).then(data => { if (!stopped) setRuntimeChoices(data.choices); }).catch(error => { if (!stopped) setRuntimeError(message(error)); });
+    return () => { stopped = true; };
+  }, [profile]);
   const [account, setAccount] = useState(profile?.provider_account ?? recovery.command?.providerAccount ?? '');
   const [accounts, setAccounts] = useState<{ id: string; name: string; configured: boolean; defaultModel: string }[]>([]);
   const [accountError, setAccountError] = useState('');
@@ -935,13 +946,14 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
   const [models, setModels] = useState<string[]>([]);
   const [catalogStatus, setCatalogStatus] = useState('Loading model list. Wait for suggestions or enter a model ID.');
   useEffect(() => {
+    if (runtime !== 'api') { setModels([]); return; }
     let stopped = false;
     setModels([]); setCatalogStatus('Loading model list. Wait for suggestions or enter a model ID.');
     void api<{ models: string[] }>(`/api/models?account=${encodeURIComponent(account)}`).then(data => {
       if (!stopped) { setModels(data.models); setCatalogStatus(data.models.length ? `${data.models.length} models available. Select a suggestion or enter a model ID.` : 'Provider has not listed any models. Enter a model ID available in your account.'); }
     }).catch(error => { if (!stopped) setCatalogStatus(`${message(error)} Model ID can still be entered manually.`); });
     return () => { stopped = true; };
-  }, [account, accountReload]);
+  }, [account, accountReload, runtime]);
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   const [modelValue, setModelValue] = useState(profile?.model ?? recovery.command?.model ?? model);
   const [backupValue, setBackupValue] = useState(profile?.backup_model ?? recovery.command?.backupModel ?? '');
@@ -950,6 +962,10 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
     event.preventDefault(); if (busy || invalid) return;
     const form = new FormData(event.currentTarget);
     const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision } : setup ? { setup: true } : {}), providerAccount: account, name: String(form.get('name')).trim() || (setup ? 'New agent' : ''), model: String(form.get('model')).trim(), backupModel: String(form.get('backupModel')).trim(), instructions: String(form.get('instructions')).trim(), threadLimit: Number(form.get('threadLimit')) };
+    if (profile && runtime !== (profile.runtime ?? 'api') && !pending.current) {
+      if (!await confirm({ title: 'Change agent runtime?', description: 'Future turns use the selected runtime and its host login. Existing history remains in Briefsip; the new runtime starts a fresh conversation. Workspace edits can persist after a turn stops.', confirm: 'Change runtime' })) return;
+      Object.assign(data, { runtime, confirmRuntime: true });
+    }
     setBusy(true); setError('');
     function clearRecovery() { if (!profile && restoreAgentCreation(sessionStorage.getItem(creationKey))?.id === data.id) sessionStorage.removeItem(creationKey); }
     try {
@@ -1011,12 +1027,15 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
       <Field label={!profile && setup ? 'Temporary name' : 'Name'} optional={!profile && setup}>
         <Input ref={nameInput} name="name" required={!setup} maxLength={80} readOnly={locked} defaultValue={profile?.name ?? recovery.command?.name} placeholder="For example: Research partner" />
       </Field>
+      <Field label="Runtime" hint={profile ? 'Coding runtimes use the host login and connected workspace. Steering and image attachments are unavailable.' : 'Create the agent, then connect its host workspace to enable coding runtimes.'} error={runtimeError}>
+        <Select label="Runtime" value={runtime} onChange={value => setRuntime(value as typeof runtime)} disabled={locked || busy} options={[{ value: 'api', label: 'API model' }, ...(['codex','claude'] as const).map(value => { const choice = runtimeChoices.find(item => item.runtime === value); return { value, label: value === 'codex' ? 'Codex' : 'Claude Code', disabled: !choice?.enabled, hint: choice?.reason ?? choice?.version ?? 'Connect a host workspace folder first.' }; })]} />
+      </Field>
       <div className="k-grid-2">
         <Field label="Provider account" hint={accountError ? undefined : 'API keys stay on the server.'} error={accountError && <>{accountError} <button type="button" className="k-link" onClick={() => setAccountReload(value => value + 1)}>Reload</button></>}>
-          <Select value={account} onChange={setAccount} disabled={locked} options={accountOptions} />
+          <Select value={account} onChange={setAccount} disabled={locked || runtime !== 'api'} options={accountOptions} />
         </Field>
-        <Field label="Model" hint={catalogStatus}>
-          <Combobox name="model" value={modelValue} onChange={setModelValue} suggestions={models} required maxLength={160} readOnly={locked} placeholder="Model ID from provider" />
+        <Field label="Model" hint={runtime === 'api' ? catalogStatus : 'Saved API model. Coding runtimes use their host default model.'}>
+          <Combobox name="model" value={modelValue} onChange={setModelValue} suggestions={models} required maxLength={160} readOnly={locked || runtime !== 'api'} placeholder="Model ID from provider" />
         </Field>
       </div>
       <Field label={!profile && setup ? 'Needs description' : 'Instructions'} hint={!profile && setup ? 'Uses the selected provider. The agent and drafting task are created together; results or questions appear in chat.' : undefined}>
@@ -1024,8 +1043,8 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
       </Field>
       <Collapsible title="Advanced settings" defaultOpen={!!(profile?.backup_model || recovery.command?.backupModel)}>
         <div className="k-grid-2">
-          <Field label="Fallback model" optional hint="Tried once if the main model rejects because of quota or is unavailable.">
-            <Combobox name="backupModel" value={backupValue} onChange={setBackupValue} suggestions={models} maxLength={160} readOnly={locked} placeholder="Leave empty to disable" />
+          <Field label="Fallback model" optional hint={runtime === 'api' ? 'Tried once if the main model rejects because of quota or is unavailable.' : 'API model fallback stays saved; coding runtimes do not use it.'}>
+            <Combobox name="backupModel" value={backupValue} onChange={setBackupValue} suggestions={models} maxLength={160} readOnly={locked || runtime !== 'api'} placeholder="Leave empty to disable" />
           </Field>
           <Field label="Concurrent side threads" hint="Main chat has its own queue.">
             <Input name="threadLimit" type="number" min={1} max={32} step={1} required readOnly={locked} defaultValue={profile?.thread_limit ?? recovery.command?.threadLimit ?? 2} />
@@ -1219,7 +1238,7 @@ function App() {
       ? <button key={item.id} type="button" className={`bot-rail-item${current ? ' is-selected' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgent(item.id)} title={item.name} aria-label={item.name}><AgentAvatar agent={item} size={36} /></button>
       : <button key={item.id} type="button" className={`bot-row${current ? ' is-selected' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgent(item.id)}>
         <span className="bot-row__avatar"><AgentAvatar agent={item} size={36} />{item.computer_waiting && <span className="status-dot is-attention" aria-label="Waiting for you" />}{item.provider_available === false && <span className="status-dot is-attention" aria-label="Provider account unavailable" />}</span>
-        <span className="bot-row__text"><span className="bot-row__name">{item.name}{item.computer_waiting && <small> · Waiting for you</small>}</span><span className="bot-row__preview">{item.hidden ? 'Hidden' : item.model || 'Model not selected'}</span></span>
+        <span className="bot-row__text"><span className="bot-row__name">{item.name}{item.computer_waiting && <small> · Waiting for you</small>}</span><span className="bot-row__preview">{item.hidden ? 'Hidden' : item.runtime && item.runtime !== 'api' ? `${item.runtime === 'codex' ? 'Codex' : 'Claude Code'} runtime` : item.model || 'Model not selected'}</span></span>
       </button>;
   };
   let content: ReactNode;

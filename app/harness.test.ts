@@ -1,0 +1,81 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync, symlinkSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
+import { startApp } from './server.ts';
+import { harnessEnv, harnessAvailability, insideWorkspace, commandPrefix, type HarnessRuntime } from './harness.ts';
+process.env.BRIEFSIP_HARNESS_CANARY = 'never-inherit-this-canary';
+const fakeSource = readFileSync(new URL('./fixtures/fake-harness.mjs', import.meta.url), 'utf8');
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+function executable(directory: string) { const path = join(directory,'fake-harness'); writeFileSync(path, `#!${process.execPath}\n` + fakeSource.split('\n').slice(1).join('\n')); chmodSync(path,0o700); return path; }
+async function fixture(runtime: HarnessRuntime, write = true) {
+  const directory = mkdtempSync(join(tmpdir(),'briefsip-harness-')), workspace = join(directory,'workspace'); mkdirSync(workspace);
+  const binary = executable(directory), agent = randomUUID(), minted: {agent: string;turn: string;id: string}[] = [], revoked: string[] = [];
+  const options = { database:join(directory,'db.sqlite'), port:0, timeout:10_000, workspaces:[{agent,directory:workspace,write}], harness: { executables:{codex:binary,claude:binary}, issuer:{ mintAgentSession(input: {agent:string;turn:string}) { const id=randomUUID(); minted.push({...input,id});return {id,token:'test-mcp-session-token'}; }, revokeAgentSession(id:string) { revoked.push(id); } } } };
+  let app = await startApp(options);
+  const request = async (path:string, body?:unknown, expected=200) => { const response=await fetch(app.origin+path,{method:body?'POST':'GET',headers:{Origin:app.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const data=await response.json();assert(expected===200?response.ok:response.status===expected,JSON.stringify(data));return data; };
+  const profile = { name:'Coder', model:'saved-api-model', instructions:'Help with coding.' };
+  await request('/api/agents',{id:agent,...profile}); const path=`/api/agents/${agent}`;
+  await request(path+'/edit',{id:randomUUID(),revision:1,...profile,runtime,confirmRuntime:true});
+  const until = async (turn:string,predicate:(row:any)=>boolean) => { for(let i=0;i<600;i++){const row=(await request(path+'/turns')).find((row:any)=>row.id===turn);if(row&&predicate(row))return row;await delay(15);}assert.fail('Harness turn timed out'); };
+  const send = async(text:string) => {const id=randomUUID();await request(path+'/turns',{id,text});return id;};
+  return {directory,workspace,agent,path,profile,request,until,send,minted,revoked,options,get app(){return app;}, async restart(){await app.close();app=await startApp(options);},async close(){await app.close();rmSync(directory,{recursive:true,force:true});}};
+}
+for(const runtime of ['codex','claude'] as const) {
+  test(`${runtime}: stream, tool activity, MCP lifetime, follow-up and restart resume`,async()=>{
+    const f=await fixture(runtime);try {
+      const first=await f.send('FIRST'),partial=await f.until(first,row=>row.partial?.text||row.status==='failed');assert.equal(partial.status,'running',partial.error);
+      const done=await f.until(first,row=>['done','failed'].includes(row.status));assert.equal(done.status,'done',done.error);assert.equal(done.reply,'Harness finished');assert(done.activity.harness.length);assert.equal(done.activity.harness[0].state,'completed');
+      const second=await f.send('SECOND');assert.equal((await f.until(second,row=>['done','failed'].includes(row.status))).status,'done');
+      await f.restart();const third=await f.send('THIRD');assert.equal((await f.until(third,row=>['done','failed'].includes(row.status))).status,'done');
+      const log=readFileSync(join(f.workspace,'fake-log.jsonl'),'utf8');assert(runtime==='codex'?log.includes('thread/resume'):log.includes('"resume":true'));assert.equal(f.minted.length,3);assert.deepEqual(f.revoked,f.minted.map(row=>row.id));
+      const usage=await f.request('/api/usage');assert(usage.calls.some((call:any)=>call.input_tokens===11&&call.output_tokens===7));
+    } finally {await f.close();}
+  });
+  test(`${runtime}: durable approval allow, deny, prefix grant and scoped receipt`,async()=>{
+    const f=await fixture(runtime);try {
+      async function approval(decision:string){const id=await f.send('APPROVE'),row=await f.until(id,row=>row.harnessApprovals?.length||row.status==='failed');assert.equal(row.status,'running',row.error);const card=row.harnessApprovals[0];assert.equal(card.prefix,'echo hello');const body={id:randomUUID(),revision:card.revision,decision};await f.request(`${f.path}/turns/${id}/harness-approvals/${card.id}`,body);await f.request(`${f.path}/turns/${id}/harness-approvals/${card.id}`,body);const done=await f.until(id,row=>['done','failed'].includes(row.status));assert.equal(done.status,'done',done.error);assert.equal(done.reply,decision==='deny'?'Harness denied':'Harness finished');return id;}
+      await approval('deny');await approval('allow');await approval('always');const fourth=await f.send('APPROVE');const fourthDone=await f.until(fourth,row=>['done','failed'].includes(row.status));assert.equal(fourthDone.status,'done',fourthDone.error);assert.equal(fourthDone.harnessApprovals.length,0);
+      const secret=await f.send('APPROVE_SECRET'),row=await f.until(secret,row=>row.harnessApprovals?.length),card=row.harnessApprovals[0];
+      assert.equal(card.prefix,null);assert(!JSON.stringify(card).includes('test-mcp-session-token'));assert.match(card.command,/\[redacted\]/);
+      await f.request(`${f.path}/turns/${secret}/harness-approvals/${card.id}`,{id:randomUUID(),revision:card.revision,decision:'always'},400);
+      await f.request(`${f.path}/turns/${secret}/harness-approvals/${card.id}`,{id:randomUUID(),revision:card.revision,decision:'deny'});
+      assert.equal((await f.until(secret,row=>['done','failed'].includes(row.status))).reply,'Harness denied');
+      assert.equal(f.minted.length,5);assert.equal(f.revoked.length,5);
+    } finally {await f.close();}
+  });
+  test(`${runtime}: workspace write policy, outside-file and network consent`,async()=>{
+    const f=await fixture(runtime);try{
+      const inside=await f.send('WORKSPACE_WRITE');const done=await f.until(inside,row=>['done','failed'].includes(row.status));assert.equal(done.status,'done',done.error);assert.equal(done.harnessApprovals.length,0);
+      for(const [text,kind] of [['OUTSIDE_FILE','file'],['NETWORK','network']]){
+        const id=await f.send(text),row=await f.until(id,row=>row.harnessApprovals?.length||row.status==='failed');assert.equal(row.status,'running',row.error);const card=row.harnessApprovals[0];assert.equal(card.kind,kind);assert.equal(card.prefix,null);
+        await f.request(`${f.path}/turns/${id}/harness-approvals/${card.id}`,{id:randomUUID(),revision:card.revision,decision:'always'},400);
+        await f.request(`${f.path}/turns/${id}/harness-approvals/${card.id}`,{id:randomUUID(),revision:card.revision,decision:'deny'});
+        assert.equal((await f.until(id,row=>['done','failed'].includes(row.status))).reply,'Harness denied');
+      }
+    }finally{await f.close();}
+    const read=await fixture(runtime,false);try{
+      const id=await read.send('READ_ONLY_WRITE'),row=await read.until(id,row=>row.harnessApprovals?.length||row.status==='failed');assert.equal(row.status,'running',row.error);const card=row.harnessApprovals[0];assert.equal(card.kind,'file');
+      await read.request(`${read.path}/turns/${id}/harness-approvals/${card.id}`,{id:randomUUID(),revision:card.revision,decision:'allow'});assert.equal((await read.until(id,row=>['done','failed'].includes(row.status))).status,'done');
+    }finally{await read.close();}
+  });
+  test(`${runtime}: crash fails once, preserves unfinished text and never replays`,async()=>{
+    const f=await fixture(runtime);try {const id=await f.send('CRASH'),row=await f.until(id,row=>row.status==='failed');assert.match(row.error,/stopped before completion|could not start/);assert.equal(row.partial.text,'Harness ');await f.restart();await delay(100);assert.equal(f.minted.length,1);assert.equal(f.revoked.length,1);}finally{await f.close();}
+  });
+  test(`${runtime}: cancel kills descendants and revokes MCP; mid-turn runtime switch refused`,async()=>{
+    const f=await fixture(runtime);try {const id=await f.send('HOLD');await f.until(id,row=>row.partial?.text);await f.request(f.path+'/edit',{id:randomUUID(),revision:2,...f.profile,runtime:'api',confirmRuntime:true},409);await f.request(`${f.path}/turns/${id}/cancel`,{id:randomUUID()});await f.until(id,row=>row.status==='cancelled');for(let i=0;i<200&&!f.revoked.length;i++)await delay(10);assert.equal(f.revoked.length,1);const log=readFileSync(join(f.workspace,'fake-log.jsonl'),'utf8').trim().split('\n').map(line=>JSON.parse(line));const descendant=log.find(row=>row.type==='descendant');assert(descendant);let alive=true;try{const state=readFileSync(`/proc/${descendant.pid}/stat`,'utf8');alive=!state.includes(') Z ');}catch{alive=false;}assert.equal(alive,false,'Harness descendant survived cancel');}finally{await f.close();}
+  });
+  test(`${runtime}: pending approval expires on shutdown/restart, no auto approval`,async()=>{
+    const f=await fixture(runtime);try {const id=await f.send('APPROVE'),row=await f.until(id,row=>row.harnessApprovals?.length);const card=row.harnessApprovals[0];await f.restart();const expired=(await f.request(f.path+'/turns')).find((row:any)=>row.id===id);assert.equal(expired.harnessApprovals[0].state,'expired');assert.equal(f.revoked.length,1);await f.request(`${f.path}/turns/${id}/harness-approvals/${card.id}`,{id:randomUUID(),revision:card.revision,decision:'allow'},409);assert.equal(f.minted.length,1);}finally{await f.close();}
+  });
+  test(`${runtime}: bounded output fails without replay`,async()=>{const f=await fixture(runtime);try{const id=await f.send('OVERSIZE'),row=await f.until(id,row=>row.status==='failed');assert.match(row.error,/output line exceeded/);assert.equal(f.minted.length,1);assert.equal(f.revoked.length,1);}finally{await f.close();}});
+}
+test('environment excludes credential and loader canaries; workspace symlink and prefix limits',()=>{
+  const directory=mkdtempSync(join(tmpdir(),'briefsip-harness-boundary-'));try{mkdirSync(join(directory,'work'));symlinkSync('/tmp',join(directory,'work','escape'));const env=harnessEnv({PATH:'/usr/bin',HOME:'/fake',LANG:'C',OPENAI_API_KEY:'canary',COMPOSIO_API_KEY:'canary',NODE_OPTIONS:'canary'});assert.deepEqual(Object.keys(env).sort(),['HOME','LANG','PATH']);assert(insideWorkspace(join(directory,'work'),'new.txt'));assert(!insideWorkspace(join(directory,'work'),'escape/new.txt'));assert(!insideWorkspace(join(directory,'work'),'../outside'));assert.equal(commandPrefix('echo hello'),'echo hello');assert.equal(commandPrefix('echo hello; curl attacker'),null);}finally{rmSync(directory,{recursive:true,force:true});}
+});
+test('runtime changes require confirmation, revision and workspace; missing binary disabled',async()=>{
+  const f=await fixture('codex');try{await f.request(f.path+'/edit',{id:randomUUID(),revision:2,...f.profile,runtime:'api'},409);await f.request(f.path+'/edit',{id:randomUUID(),revision:1,...f.profile,runtime:'api',confirmRuntime:true},409);const command={id:randomUUID(),revision:2,...f.profile,runtime:'api',confirmRuntime:true};await f.request(f.path+'/edit',command);await f.request(f.path+'/edit',command);const directory=await f.request('/api/agents');assert.equal(directory.agents[0].runtime,'api');assert.equal(directory.agents[0].revision,3);const other=await f.request('/api/agents',{id:randomUUID(),...f.profile});const choices=await f.request(`/api/agents/${other.id}/runtimes`);assert(choices.choices.every((choice:any)=>!choice.enabled));await f.request(`/api/agents/${other.id}/edit`,{id:randomUUID(),revision:1,...f.profile,runtime:'codex',confirmRuntime:true},400);assert.equal((await harnessAvailability('codex',null)).available,false);}finally{await f.close();}
+});

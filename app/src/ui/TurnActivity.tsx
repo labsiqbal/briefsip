@@ -28,6 +28,7 @@ export function TurnActivity({ turn, agentName, onOpenTask }: Props) {
   }, [live]);
   const steps: { id: string; text: string; task?: string | null }[] = [];
   if (turn.routing || turn.recipient) steps.push({ id: 'routing', text: turn.routing === 'pending' ? 'Selecting recipient' : turn.routing === 'clarify' ? 'Requested routing clarification' : turn.routing === 'none' ? 'No task needed' : turn.routing === 'released' ? 'Waiting for an available recipient' : `Recipient selected: ${turn.agent_name ?? agentName}` });
+  for (const step of turn.activity?.harness ?? []) steps.push({ id: `harness-${step.id}`, text: `${step.name} · ${step.state}` });
   const actions = turn.coordination ?? [];
   const tools = turn.activity?.tools ?? [];
   for (let index = 0; index <= actions.length; index++) {

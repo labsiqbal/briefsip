@@ -493,5 +493,71 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE"
     }
+  ],
+  "harnessSourceEntries": [
+    {
+      "sourcePath": "packages/provider-core/src/server/ProviderAdapter.ts",
+      "symbols": [
+        "ProviderAdapterV2",
+        "ProviderAdapterV2RuntimePolicy",
+        "ProviderAdapterV2SessionRuntime"
+      ],
+      "adaptation": "Plain TypeScript HarnessAdapter contract and capability flags; Effect schemas removed, app-owned runtime IDs retained.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "076138e87a8a0accb4336366f03bf75ec1e5c19dd85ea87df28af045280d7a5f",
+      "localPath": "app/harness.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/harness.test.ts"
+    },
+    {
+      "sourcePath": "packages/effect-codex-app-server/src/protocol.ts",
+      "symbols": [
+        "CodexAppServerIncomingNotification",
+        "CodexAppServerIncomingRequest",
+        "makeCodexAppServerPatchedProtocol"
+      ],
+      "adaptation": "Incoming protocol interfaces retain T3 names; JSONL framing, request correlation, notification/request dispatch and termination translated from Effect to bounded native Node streams. Native Codex method names retained.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "7a75263f6c86882c054bc3962274e525849ac89af26c2266aa7da9407070ebc8",
+      "localPath": "app/harness.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/harness.test.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
+      "symbols": [
+        "makeClaudeAdapterV2",
+        "CanUseTool"
+      ],
+      "adaptation": "Claude Agent SDK query lifecycle, MCP HTTP headers, resume and permission callback adapted without T3 runtime imports.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "4f7f7861cd7100cf2a504ed313639da1d6a77185c9284bbd0601ef3c69ffe746",
+      "localPath": "app/harness.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [
+        "@anthropic-ai/claude-agent-sdk@0.3.321"
+      ],
+      "compatibilityCheck": "app/harness.test.ts"
+    },
+    {
+      "sourcePath": "packages/effect-codex-app-server/src/_internal/shared.ts",
+      "symbols": [
+        "JsonRpcId",
+        "JsonRpcResponseEnvelope"
+      ],
+      "adaptation": "JsonRpcResponseEnvelope retains the source name and id/result/error structure as a native TypeScript type; native guards replace Effect Schema.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "19f2415cc7ed54ae94481e70ae6fcb374c3d9770d47265ec960153d33a578ec4",
+      "localPath": "app/harness.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/harness.test.ts"
+    }
   ]
 }
