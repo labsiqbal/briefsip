@@ -1,0 +1,53 @@
+{
+  "name": "briefsip-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Briefsip desktop client shell",
+  "type": "module",
+  "main": "src/main.mjs",
+  "scripts": {
+    "dev": "electron .",
+    "test": "node --test src/*.test.mjs",
+    "build": "node scripts/build.mjs"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.9"
+  },
+  "devDependencies": {
+    "electron-builder": "26.16.1",
+    "electron": "44.10.1"
+  },
+  "build": {
+    "appId": "com.briefsip.desktop",
+    "productName": "Briefsip",
+    "asar": true,
+    "files": [
+      "src/**/*",
+      "!src/**/*.test.mjs",
+      "assets/**/*",
+      "update-feed.json",
+      "NOTICE",
+      "provenance.json"
+    ],
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Network",
+      "icon": "assets/icon.png",
+      "executableName": "briefsip",
+      "syncDesktopName": true
+    },
+    "publish": null,
+    "artifactName": "Briefsip-${version}-${arch}.${ext}",
+    "toolsets": {
+      "appimage": "1.0.3"
+    },
+    "directories": {
+      "output": "dist"
+    }
+  },
+  "author": "Briefsip",
+  "license": "Apache-2.0 AND MIT",
+  "desktopName": "com.briefsip.desktop"
+}
