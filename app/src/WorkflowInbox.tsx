@@ -34,7 +34,9 @@ export function WorkflowInbox({ request, onBack }: {
           if (enabled && seen.current !== null && newest > seen.current && Notification.permission === 'granted') {
             const count = current.notifications.filter(item => item.seq > seen.current! && !item.read).length;
             if (count) {
-              try { new Notification('Workflow results available', { body: 'Open the Briefsip inbox to read results.', tag: 'briefsip-workflow-results' }); }
+              let muted = false;
+              try { muted = localStorage.getItem('briefsip:workflow-notifications-muted') === '1'; } catch { /* Browser preference is unavailable. */ }
+              try { if (!muted) new Notification('Workflow results available', { body: 'Open the Briefsip inbox to read results.', tag: 'briefsip-workflow-results' }); }
               catch { setEnabled(false); setError('Browser notifications are unavailable. Results remain saved in the inbox.'); }
             }
           }

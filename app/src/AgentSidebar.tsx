@@ -13,11 +13,11 @@ function recover(): Command | null {
     || !Number.isSafeInteger(value.revision) || value.revision < 0) throw new Error('Saved sidebar request is invalid.');
   return { id: value.id, revision: value.revision, sections: parseSections(value.sections) };
 }
-export function AgentSidebar({ agents, renderAgent, request, mode = 'full' }: {
+export function AgentSidebar({ agents, renderAgent, request, mode = 'full', showHidden = false, searching = false }: {
   agents: { id: string; name: string; hidden?: boolean }[]; renderAgent: (id: string) => ReactNode;
   request: <T>(path: string, body?: unknown) => Promise<T>;
   /** `list` renders only the agent sections; `editor` renders only the section editor. */
-  mode?: 'full' | 'list' | 'editor';
+  mode?: 'full' | 'list' | 'editor'; showHidden?: boolean; searching?: boolean;
 }) {
   const [saved, setSaved] = useState<Sidebar | null>(null), [draft, setDraft] = useState<SidebarSection[]>([]);
   const [pending, setPending] = useState<Command | null>(null), [invalid, setInvalid] = useState(false), [editing, setEditing] = useState(false);
@@ -61,7 +61,7 @@ export function AgentSidebar({ agents, renderAgent, request, mode = 'full' }: {
     try { sessionStorage.removeItem(storage); setPending(null); setInvalid(false); await load(); }
     catch { setError('Browser storage is unavailable. Check browser settings and try again.'); }
   }
-  const shown = new Set(agents.filter(agent => !agent.hidden).map(agent => agent.id)), assigned = new Set(saved?.sections.flatMap(section => section.agents));
+  const shown = new Set(agents.filter(agent => showHidden || !agent.hidden).map(agent => agent.id)), assigned = new Set(saved?.sections.flatMap(section => section.agents));
   const displayed = pending?.sections ?? draft;
   const patch = (id: string, value: Partial<SidebarSection>) => setDraft(draft.map(section => section.id === id ? { ...section, ...value } : section));
   function move(index: number, offset: number) {
@@ -116,8 +116,8 @@ export function AgentSidebar({ agents, renderAgent, request, mode = 'full' }: {
         {agents.map(agent => <label key={agent.id}>{agent.name}<select value={displayed.find(section => section.agents.includes(agent.id))?.id ?? ''} onChange={event => setDraft(draft.map(section => ({ ...section, agents: [...section.agents.filter(id => id !== agent.id), ...(section.id === event.target.value ? [agent.id] : [])] })))}><option value="">Unassigned</option>{displayed.map(section => <option key={section.id} value={section.id}>{section.name}</option>)}</select></label>)}
       </fieldset><div className="form-actions"><button disabled={busy || invalid || !saved}>{busy ? 'Saving...' : pending ? 'Retry save' : 'Save sections'}</button><button type="button" className="secondary" disabled={busy} onClick={() => void reload()}>Reload settings</button></div></form>
     </section>}
-    {mode !== 'editor' && <>{saved?.sections.map(section => <details key={section.id} open><summary>{section.name}</summary>{section.agents.filter(id => shown.has(id)).map(id => renderAgent(id))}{!section.agents.some(id => shown.has(id)) && <p className="muted">No agents yet.</p>}</details>)}
-    {!!saved?.sections.length && <h3>Unassigned</h3>}{agents.filter(agent => !agent.hidden && !assigned.has(agent.id)).map(agent => renderAgent(agent.id))}
-    {agents.some(agent => agent.hidden) && <details><summary>Hidden agents</summary>{agents.filter(agent => agent.hidden).map(agent => renderAgent(agent.id))}</details>}</>}
+    {mode !== 'editor' && <>{saved?.sections.filter(section => !searching || section.agents.some(id => shown.has(id))).map(section => <details key={`${section.id}:${searching}`} open><summary>{section.name}</summary>{section.agents.filter(id => shown.has(id)).map(id => renderAgent(id))}{!section.agents.some(id => shown.has(id)) && <p className="muted">{searching ? 'No matching agents.' : 'No visible agents.'}</p>}</details>)}
+    {!!saved?.sections.length && agents.some(agent => (showHidden || !agent.hidden) && !assigned.has(agent.id)) && <h3>Unassigned</h3>}{agents.filter(agent => (showHidden || !agent.hidden) && !assigned.has(agent.id)).map(agent => renderAgent(agent.id))}
+    </>}
   </nav>;
 }

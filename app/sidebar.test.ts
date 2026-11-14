@@ -8,7 +8,7 @@ import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './server.ts';
 import { restoreWorkspace } from './backup.ts';
-import { parseSections } from './sidebar.ts';
+import { parseSections, readSidebarSummary } from './sidebar.ts';
 
 test('sidebar validates unique membership, names, IDs and bounded settings', () => {
   const id = randomUUID(), agent = randomUUID(), section = { id, name: ' Work ', agents: [agent] };
@@ -29,6 +29,9 @@ test('sidebar HTTP edits retain agents/history through delete, conflicts, retry,
   }
   try {
     assert.deepEqual(await request('/api/sidebar'), { revision: 0, sections: [] });
+    assert.deepEqual(await request('/api/sidebar/summary'), { summaries: [] });
+    await request('/api/sidebar/summary?limit=1', undefined, 400);
+    assert.equal((await fetch(app.origin + '/api/sidebar/summary', { headers: { Origin: 'https://foreign.test' } })).status, 403);
     const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' }, 201);
     const b = await request('/api/agents', { id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' }, 201);
     const historyPath = `/api/agents/${a.id}/turns`;
@@ -36,6 +39,9 @@ test('sidebar HTTP edits retain agents/history through delete, conflicts, retry,
     let history;
     for (let attempt = 0; attempt < 100; attempt++) { history = await request(historyPath); if (history[0]?.status === 'done') break; await new Promise(resolve => setTimeout(resolve, 10)); }
     assert.equal(history[0].status, 'done');
+    const summary = await request('/api/sidebar/summary');
+    assert.deepEqual(summary.summaries.find((row: any) => row.agent === a.id), { agent: a.id, preview: 'History retained.', time: history[0].created, status: 'idle' });
+    assert.equal((await fetch(app.origin + '/api/sidebar/summary')).headers.get('cache-control'), 'no-store');
     const first = { id: randomUUID(), name: 'Projects', agents: [a.id, b.id] }, second = { id: randomUUID(), name: 'Personal', agents: [] as string[] };
     const create = { id: randomUUID(), revision: 0, sections: [first, second] };
     const initial = await request('/api/sidebar', create);
@@ -71,6 +77,7 @@ test('sidebar HTTP edits retain agents/history through delete, conflicts, retry,
     assert.deepEqual(await request('/api/sidebar'), latest);
     assert.deepEqual(await request('/api/sidebar', create), initial);
     assert.deepEqual(await request(historyPath), history);
+    assert.deepEqual(await request('/api/sidebar/summary'), summary);
     const backup = await fetch(app.origin + '/api/backup', { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ id: randomUUID(), confirmed: true }) });
     assert.equal(backup.status, 200);
     const backupPath = join(directory, 'backup.sqlite'); writeFileSync(backupPath, Buffer.from(await backup.arrayBuffer()));
@@ -78,4 +85,34 @@ test('sidebar HTTP edits retain agents/history through delete, conflicts, retry,
     restored = await startApp({ database: restoredPath });
     assert.deepEqual(await (await fetch(restored.origin + '/api/sidebar')).json(), latest);
   } finally { await restored?.close(); await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('sidebar summary bounds entries and text, redacts credentials, and selects latest explicit remote messages', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(`CREATE TABLE agents(id TEXT PRIMARY KEY,instructions TEXT);
+      CREATE TABLE turns(seq INTEGER PRIMARY KEY,agent TEXT,text TEXT,reply TEXT,created TEXT,status TEXT,error TEXT);
+      CREATE TABLE paired_machines(environment_id TEXT,state TEXT,token TEXT);
+      CREATE TABLE remote_agent_calls(id TEXT,machine TEXT,agent TEXT,text TEXT,reply TEXT,created INTEGER,status TEXT,delivery TEXT);`);
+    const add = db.prepare('INSERT INTO agents VALUES (?,?)');
+    for (let i = 0; i < 501; i++) add.run(`agent-${i}`, 'PRIVATE_INSTRUCTIONS');
+    db.prepare('INSERT INTO turns VALUES (?,?,?,?,?,?,?)').run(1,'agent-0','old',null,'2026-11-14T00:00:00.000Z','running','PRIVATE_ERROR');
+    db.prepare('INSERT INTO turns VALUES (?,?,?,?,?,?,?)').run(2,'agent-0','unused prompt','saved-provider-credential Bearer abcdefghijklmnop token="hide-me" sk-abcdefghijklmnopqrstuv '+ 'x'.repeat(500),'2026-11-14T01:00:00.000Z','done','PRIVATE_ERROR');
+    db.prepare('INSERT INTO paired_machines VALUES (?,?,?)').run('machine','paired','PRIVATE_PAIRING_TOKEN');
+    const remote = db.prepare('INSERT INTO remote_agent_calls VALUES (?,?,?,?,?,?,?,?)');
+    remote.run('a','machine','remote','old',null,1000,'done',null);
+    remote.run('b','machine','remote','latest user message','Latest reply',2000,'done',null);
+    remote.run('c','machine','remote','AGENT_DELIVERY_SECRET',null,3000,'done','internal-turn');
+    remote.run('d','removed-machine','remote','UNPAIRED_SECRET',null,3000,'done',null);
+    const result = readSidebarSummary(db, ['saved-provider-credential']);
+    assert.equal(result.summaries.length,501);
+    assert.equal(result.summaries[0].status,'running');
+    assert.equal(result.summaries[0].preview.length,180);
+    assert.equal(result.summaries[0].time,'2026-11-14T01:00:00.000Z');
+    assert.deepEqual(result.summaries.at(-1),{agent:'remote@machine',preview:'Latest reply',time:'1970-01-01T00:00:02.000Z',status:'done'});
+    assert.deepEqual(Object.keys(result.summaries[0]).sort(),['agent','preview','status','time']);
+    assert.doesNotMatch(JSON.stringify(result),/PRIVATE_|hide-me|abcdefghijklmnop|saved-provider-credential|AGENT_DELIVERY_SECRET|UNPAIRED_SECRET|unused prompt/);
+    for(let i=0;i<501;i++) remote.run(`remote-${i}`,'machine',`r-${i}`,'hello',null,4000,'done',null);
+    assert.equal(readSidebarSummary(db).summaries.length,1000);
+  } finally { db.close(); }
 });

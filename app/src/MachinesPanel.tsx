@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Collapsible as Disclosure } from 'radix-ui';
-import { ChevronRight, Ellipsis, Monitor, Plus, RefreshCw } from 'lucide-react';
+import { Ellipsis, Monitor, Plus, RefreshCw } from 'lucide-react';
 import type { Environment, PairedMachine, PeerAgentSummary } from '../machines';
 import { ActionMenu, Alert, Badge, Button, Card, Checkbox, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, SkeletonRows, Textarea, useConfirm } from './ui/kit';
 import { Markdown } from './Markdown';
@@ -83,17 +82,6 @@ export function MachinesPanel({ request, onChanged }: { request: Request; onChan
       </div>
     </Dialog>
   </div>;
-}
-export function MachinesSidebar({ machines, error, onOpen, selected, onSettings }: { machines: PairedMachine[]; error: string; onOpen: (machine: PairedMachine, agent: PeerAgentSummary) => void; selected: { machine: string; agent: string } | null; onSettings: () => void }) {
-  return <nav className="machines-sidebar" aria-label="Machines">
-    <div className="sidebar__label">Machines</div>
-    {error && <p className="machines-sidebar__note" role="status">Machines could not be refreshed.</p>}
-    {!machines.length && <button type="button" className="bot-list__empty" onClick={onSettings}><span className="bot-list__empty-plus"><Monitor size={14} aria-hidden /></span><span><span className="bot-row__name">Pair a machine</span><span className="bot-row__preview">See agents on your other computers</span></span></button>}
-    {machines.map(machine => <Disclosure.Root key={machine.id} className="machines-sidebar__machine">
-      <Disclosure.Trigger className="machines-sidebar__trigger"><ChevronRight className="machines-sidebar__chevron" size={14} aria-hidden /><Monitor size={15} aria-hidden /><span className="machines-sidebar__identity"><span className="bot-row__name">{machine.name}</span><span className="bot-row__preview">{statusLabel[machine.status]} · {machine.agentCount} {machine.agentCount === 1 ? 'agent' : 'agents'}</span></span><span className={`machine-dot is-${machine.status}`} aria-hidden /></Disclosure.Trigger>
-      <Disclosure.Content className="machines-sidebar__agents">{machine.status !== 'online' && <p className="machines-sidebar__note">Showing last known agents.</p>}{!machine.agents.length ? <p className="machines-sidebar__note">No agents cached yet.</p> : machine.agents.map(agent => <button key={agent.id} className={`machines-sidebar__agent${selected?.machine === machine.id && selected.agent === agent.id ? ' is-selected' : ''}`} type="button" aria-current={selected?.machine === machine.id && selected.agent === agent.id ? 'page' : undefined} onClick={() => onOpen(machine, agent)}>{agent.name} on {machine.name}</button>)}</Disclosure.Content>
-    </Disclosure.Root>)}
-  </nav>;
 }
 type RemoteMessage = {id:string;text:string;status:string;state:string;reply:string|null;error:string|null;created:number};
 export function RemoteAgentDetail({ machine, agent, onBack, request }: { machine?: PairedMachine; agent?: PeerAgentSummary; onBack: () => void; request: Request }) {

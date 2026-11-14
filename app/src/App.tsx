@@ -21,19 +21,19 @@ import { livePartial, turnPollDelay, type TurnActivityData } from './ui/transcri
 import { EventConnection } from './EventConnection';
 import { applyPresentation, readPresentation } from '../presentation';
 import { AgentSidebar } from './AgentSidebar';
-import { MachinesPanel, MachinesSidebar, RemoteAgentDetail, useMachines } from './MachinesPanel';
+import { MachinesPanel, RemoteAgentDetail, useMachines } from './MachinesPanel';
 import { HtmlPreview } from './HtmlPreview';
 import { QuestionCard, type Question } from './QuestionCard';
 import { ApprovalCard, type AppApproval } from './ApprovalCard';
 import { CompactionPanel } from './CompactionPanel';
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, useId, type FormEvent, type ReactNode } from 'react';
-import { ArrowUp, Brain, CircleAlert, ChevronDown, ChevronLeft, ChevronRight, Clock, Ellipsis, FolderOpen, Hash, MessageSquare, PanelLeft, PanelRight, Paperclip, Plus, RefreshCw, Route, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
+import { ArrowUp, Bell, BellOff, Brain, CircleAlert, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Ellipsis, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Plus, RefreshCw, Route, Search, Server, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
 import { PanelResizeHandle, detailsPanel, sidebarPanel, useResizablePanel } from './ui/resizable';
 import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Collapsible, Combobox, ConfirmProvider, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Segmented, Select, SkeletonRows, Textarea, useConfirm, type SelectOption } from './ui/kit';
 import { createRoot } from 'react-dom/client';
-import { Dialog as RadixDialog } from 'radix-ui';
+import { Collapsible as Disclosure, Dialog as RadixDialog, DropdownMenu } from 'radix-ui';
 import { validateFlow, type FlowGraph, type FlowLink } from '../flows.ts';
 import './ui/tokens.css';
 import './ui/base.css';
@@ -70,6 +70,8 @@ type Thread = { id: string; agent: string; name: string; revision: number; archi
 type AgentMessage = { taskId?: string; task?: string; wait?: boolean; generatedFiles?: { id: string; name: string; size: number; thread: string }[]; paused: number; request: string; expects_reply: number; settled: number; id: string; agent: string; thread: string; name: string; status: string; error: string | null; reply: string | null; truncated: boolean };
 type Turn = { harnessApprovals?: HarnessApproval[]; computerWait?: ComputerWait; checkpoint?: { turn: string; restorable: boolean } | null; approvals?: AppApproval[]; recipient?: string | null; dispatch_mode?: 'queue' | 'steer' | 'restart'; dispatch_target?: string | null; dispatch_label?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { kind?: 'peer'; name: string; agent: string | null; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
 type Directory = { agents: Agent[]; configured: boolean; defaultModel: string };
+type Environment = { id: string; name: string; origin: string; version: string };
+type SidebarSummary = { agent: string; preview: string; time: string | null; status: string };
 type Pending = ChatCommand;
 const statusNames: Record<string, string> = { queued: 'Queued', running: 'Replying', done: 'Done', failed: 'Failed', interrupted: 'Interrupted', cancelled: 'Cancelled' };
 class HttpError extends Error { status: number; constructor(status: number, text: string) { super(text); this.status = status; } }
@@ -1206,17 +1208,41 @@ const settingsSections: { id: SettingsSection; label: string }[] = [
 ];
 type Dialog = 'agent' | 'channel' | 'edit' | null;
 const collapsedKey = 'briefsip:sidebar-collapsed';
+const machineGroupsKey = 'briefsip:sidebar-machine-groups';
+const machineStatus = { online: 'Online', offline: 'Offline', unauthorized: 'Unauthorized', 'version-mismatch': 'Version mismatch' };
+
+function MachineGroup({ name, subtitle, count, status, expanded, onExpandedChange, local, children }: {
+  name: string; subtitle?: string; count: number; status?: keyof typeof machineStatus; expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void; local?: boolean; children: ReactNode;
+}) {
+  return <Disclosure.Root className="machine-group" open={expanded} onOpenChange={onExpandedChange}>
+    <Disclosure.Trigger className="machine-group__header" title={subtitle}>
+      <ChevronRight className="machine-group__chevron" size={14} aria-hidden />{local ? <Monitor size={15} aria-hidden /> : <Server size={15} aria-hidden />}
+      <span className="machine-group__name">{name}</span><span className="machine-group__count" aria-label={`${count} agents`}>{count}</span>
+      {status && <span className={`machine-dot is-${status}`} role="img" aria-label={machineStatus[status]} title={machineStatus[status]} />}
+    </Disclosure.Trigger>
+    <Disclosure.Content className="machine-group__content" role="group" aria-label={`${name} contents`}>{children}</Disclosure.Content>
+  </Disclosure.Root>;
+}
+
 
 function App() {
   const [directory, setDirectory] = useState<Directory | null>(null); const [selected, setSelected] = useState('');
   const [channels, setChannels] = useState<Channel[]>([]), [selectedChannel, setSelectedChannel] = useState('');
+  const [environment, setEnvironment] = useState<Environment | null>(null), [summaries, setSummaries] = useState<SidebarSummary[]>([]);
   const [view, setView] = useState<'chat' | 'flows' | 'workflows' | 'remote'>('chat');
-  const remoteMachines = useMachines(api);
+  const remoteMachinesState = useMachines(api);
   const updateAvailable = useUpdateBadge(api);
   const [remoteSelection, setRemoteSelection] = useState<{ machine: string; agent: string } | null>(null);
   const [settings, setSettings] = useState<SettingsSection | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [newMenu, setNewMenu] = useState(false);
+  const [notificationsMuted, setNotificationsMuted] = useState(() => { try { return localStorage.getItem('briefsip:workflow-notifications-muted') === '1'; } catch { return false; } });
+  const [notificationError, setNotificationError] = useState('');
+  const [search, setSearch] = useState(''), [query, setQuery] = useState('');
+  const [searchMachineGroups, setSearchMachineGroups] = useState<Record<string, boolean>>({});
+  const [onlyOnline, setOnlyOnline] = useState(false), [showHidden, setShowHidden] = useState(false), [filterMenu, setFilterMenu] = useState(false);
+  const [machineGroups, setMachineGroups] = useState<Record<string, boolean>>(() => { try { const value: unknown = JSON.parse(localStorage.getItem(machineGroupsKey) ?? '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).filter(([, expanded]) => typeof expanded === 'boolean')) as Record<string, boolean> : {}; } catch { return {}; } });
   const [collapsed, setCollapsedState] = useState(() => { try { return localStorage.getItem(collapsedKey) === '1'; } catch { return false; } });
   const sidebar = useResizablePanel(sidebarPanel);
   const [openedThread, setOpenedThread] = useState<{ agent: string; thread: string } | null>(null);
@@ -1225,9 +1251,11 @@ function App() {
   const [error, setError] = useState('');
   const directoryRequest = useRef(0);
   function setCollapsed(value: boolean) { setCollapsedState(value); try { localStorage.setItem(collapsedKey, value ? '1' : '0'); } catch { /* Applies to this page only. */ } }
+  function setMachineExpanded(key: string, expanded: boolean) { if (query) { setSearchMachineGroups(current => ({ ...current, [key]: expanded })); return; } setMachineGroups(current => { const next = { ...current, [key]: expanded }; try { localStorage.setItem(machineGroupsKey, JSON.stringify(next)); } catch { /* Applies to this page only. */ } return next; }); }
+  useEffect(() => { const timer = setTimeout(() => { setQuery(search.trim().toLocaleLowerCase()); setSearchMachineGroups({}); }, 140); return () => clearTimeout(timer); }, [search]);
   async function load(propagate = false) {
     const version = ++directoryRequest.current;
-    try { const [data, rooms] = await Promise.all([api<Directory>('/api/agents'), api<Channel[]>('/api/channels')]); if (version !== directoryRequest.current) return; directoryRequest.current++; setDirectory(data); setChannels(rooms); setSelected(id => id || data.agents[0]?.id || ''); setError(''); }
+    try { const [data, rooms, local, summary] = await Promise.all([api<Directory>('/api/agents'), api<Channel[]>('/api/channels'), api<Environment>('/api/environment'), api<{ summaries: SidebarSummary[] }>('/api/sidebar/summary')]); if (version !== directoryRequest.current) return; directoryRequest.current++; setDirectory(data); setChannels(rooms); setEnvironment(local); setSummaries(summary.summaries); setSelected(id => id || data.agents[0]?.id || ''); setError(''); }
     catch (error) { if (version === directoryRequest.current) setError(message(error)); if (propagate) throw error; }
   }
   useEffect(() => { void load(); }, []);
@@ -1237,12 +1265,13 @@ function App() {
     async function refreshActivity() {
       try {
         const version = directoryRequest.current;
-        const [rooms, agents] = await Promise.all([api<Channel[]>('/api/channels'), api<Directory>('/api/agents')]);
+        const [rooms, agents, summary] = await Promise.all([api<Channel[]>('/api/channels'), api<Directory>('/api/agents'), api<{ summaries: SidebarSummary[] }>('/api/sidebar/summary')]);
         if (!stopped && version === directoryRequest.current) setDirectory(current => current && ({ ...current, agents: current.agents.map(agent => { const fresh = agents.agents.find(item => item.id === agent.id); return fresh && fresh.revision >= agent.revision ? fresh : agent; }) }));
         if (!stopped) { setActivityError(false); setChannels(current => current.map(room => {
           const fresh = rooms.find(item => item.id === room.id);
           return fresh ? { ...room, activity: Math.max(room.activity, fresh.activity), read_position: Math.max(room.read_position, fresh.read_position) } : room;
         })); }
+        if (!stopped) setSummaries(summary.summaries);
       } catch { if (!stopped) setActivityError(true); }
       if (!stopped) timer = setTimeout(refreshActivity, 2400);
     }
@@ -1268,21 +1297,28 @@ function App() {
   const openAgent = (id: string) => { setView('chat'); setOpenedThread(null); setSelected(id); setSelectedChannel(''); setDialog(null); };
   const openChannel = (id: string) => { setView('chat'); setSelectedChannel(id); setDialog(null); };
   const openThread = (owner: string, thread: string) => { if(owner.includes('@')){const [agent,machine]=owner.split('@');setRemoteSelection({machine,agent});setView('remote');setDialog(null);setSettings(null);return;} setOpenedThread({ agent: owner, thread }); setSelected(owner); setSelectedChannel(''); setView('chat'); setDialog(null); setSettings(null); };
+  const relativeTime = (value: string | null | undefined) => { if (!value) return ''; const age = Math.max(0, Date.now() - Date.parse(value)); if (!Number.isFinite(age)) return ''; const minutes = Math.floor(age / 60000); if (minutes < 60) return `${Math.max(1, minutes)}m`; const hours = Math.floor(minutes / 60); if (hours < 24) return `${hours}h`; return `${Math.floor(hours / 24)}d`; };
+  const summaryByAgent = new Map(summaries.map(item => [item.agent, item]));
+  const summaryFor = (id: string) => summaryByAgent.get(id);
+  const matches = (name: string, preview = '') => !query || `${name} ${preview}`.toLocaleLowerCase().includes(query);
+  const localAgents = (directory?.agents ?? []).filter(item => showHidden || !item.hidden).filter(item => matches(item.name, summaryFor(item.id)?.preview));
+  const localChannels = channels.filter(room => matches(room.name, room.archived ? 'Archived' : `${room.members.length} members`));
   const agentRow = (id: string) => {
     const item = directory?.agents.find(agent => agent.id === id);
     if (!item) return null;
-    const current = view === 'chat' && !selectedChannel && item.id === selected;
+    const current = view === 'chat' && !selectedChannel && item.id === selected, summary = summaryFor(item.id);
     return collapsed
       ? <button key={item.id} type="button" className={`bot-rail-item${current ? ' is-selected' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgent(item.id)} title={item.name} aria-label={item.name}><AgentAvatar agent={item} size={36} /></button>
-      : <button key={item.id} type="button" className={`bot-row${current ? ' is-selected' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgent(item.id)}>
-        <span className="bot-row__avatar"><AgentAvatar agent={item} size={36} />{item.computer_waiting && <span className="status-dot is-attention" aria-label="Waiting for you" />}{item.provider_available === false && <span className="status-dot is-attention" aria-label="Provider account unavailable" />}</span>
-        <span className="bot-row__text"><span className="bot-row__name">{item.name}{item.computer_waiting && <small> · Waiting for you</small>}</span><span className="bot-row__preview">{item.hidden ? 'Hidden' : item.runtime && item.runtime !== 'api' ? `${item.runtime === 'codex' ? 'Codex' : 'Claude Code'} runtime` : item.model || 'Model not selected'}</span></span>
+      : <button key={item.id} type="button" className={`bot-row${current ? ' is-selected' : ''}`} aria-label={`${item.name} ${summary?.status === 'running' ? 'Working' : 'Idle'}${item.computer_waiting ? ' - Waiting for you' : ''}${item.provider_available === false ? ' - Provider account unavailable' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgent(item.id)}>
+        <span className="bot-row__avatar"><AgentAvatar agent={item} size={36} /><span className={`status-dot ${summary?.status === 'running' ? 'is-working' : 'is-idle'}`} role="img" aria-label={summary?.status === 'running' ? 'Working' : 'Idle'} />{item.computer_waiting && <span className="status-dot is-attention" aria-label="Waiting for you" />}{item.provider_available === false && <span className="status-dot is-attention" aria-label="Provider account unavailable" />}</span>
+        <span className="bot-row__text"><span className="bot-row__name">{item.name}{item.computer_waiting && <small> · Waiting for you</small>}</span><span className="bot-row__preview">{summary?.preview || (item.hidden ? 'Hidden' : item.runtime && item.runtime !== 'api' ? `${item.runtime === 'codex' ? 'Codex' : 'Claude Code'} runtime` : item.model || 'Model not selected')}</span></span>{summary?.time && <time className="bot-row__time" dateTime={summary.time}>{relativeTime(summary.time)}</time>}
       </button>;
   };
+  const remoteMachines = remoteMachinesState.machines.filter(machine => !onlyOnline || machine.status === 'online').sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   let content: ReactNode;
   if (error) content = <PageView><div className="empty"><h1>Workspace is not open</h1><p role="alert">{error}</p><button onClick={() => void load()}>Try again</button></div></PageView>;
   else if (!directory) content = <main className="chat chat--empty bs-root"><p className="empty-chat__sub" role="status">Loading workspace...</p></main>;
-  else if (view === 'remote') { const machine = remoteMachines.machines.find(item => item.id === remoteSelection?.machine); content = <main className="chat bs-root remote-agent-page"><RemoteAgentDetail key={`${machine?.id}:${remoteSelection?.agent}`} request={api} machine={machine} agent={machine?.agents.find(item => item.id === remoteSelection?.agent)} onBack={() => setView('chat')} /></main>; }
+  else if (view === 'remote') { const machine = remoteMachinesState.machines.find(item => item.id === remoteSelection?.machine); content = <main className="chat bs-root remote-agent-page"><RemoteAgentDetail key={`${machine?.id}:${remoteSelection?.agent}`} request={api} machine={machine} agent={machine?.agents.find(item => item.id === remoteSelection?.agent)} onBack={() => setView('chat')} /></main>; }
   else if (view === 'workflows') content = <PageView wide><Suspense fallback={<p className="empty" role="status">Loading workflow directory...</p>}><WorkflowDirectory agents={directory.agents} request={api} onClose={() => setView('chat')} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={directory.agents.find(item => item.id === owner)} threadId={id} configured={directory.configured} onOpenAgent={openThread} onOpenChannel={openChannel} />} /></Suspense></PageView>;
   else if (view === 'flows') content = <PageView wide><FlowDirectory agents={directory.agents} onClose={() => setView('chat')} onOpen={openThread} /></PageView>;
   else if (channel) content = <Chat onOpenAgent={openThread} key={`channel:${channel.id}`} agent={channel} channel={{ ...channel, lead: directory.agents.find(agent => agent.id === channel.lead)?.hidden ? null : channel.lead }} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id) && !agent.hidden)} onEdit={() => setDialog('edit')} configured={directory.configured} />;
@@ -1293,8 +1329,9 @@ function App() {
     {collapsed && <button type="button" className="icon-btn icon-btn--bordered sidebar-reveal" onClick={() => setCollapsed(false)} aria-label="Expand sidebar" title="Sidebar (Ctrl/Cmd+B)"><PanelLeft size={16} aria-hidden /></button>}
     {!collapsed && <aside className="sidebar" style={{ width: `${sidebar.width}px` }} aria-label="Workspace navigation">
       <div className="sidebar__titlebar">
-        {!collapsed && <a className="sidebar__brand" href="/">Briefsip</a>}
+        {!collapsed && <span className="sidebar__bots-label">BOTS</span>}
         <div className="sidebar__controls">
+          <IconButton label={notificationsMuted ? 'Unmute workflow notifications' : 'Mute workflow notifications'} aria-pressed={notificationsMuted} title="Workflow inbox notifications only" onClick={() => { try { localStorage.setItem('briefsip:workflow-notifications-muted', notificationsMuted ? '0' : '1'); setNotificationsMuted(!notificationsMuted); setNotificationError(''); } catch { setNotificationError('Notification preference could not be saved. Check browser storage.'); } }}>{notificationsMuted ? <BellOff size={16} aria-hidden /> : <Bell size={16} aria-hidden />}</IconButton>
           <button type="button" className="icon-btn icon-btn--plain" onClick={() => setCollapsed(!collapsed)} aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} title="Sidebar (Ctrl/Cmd+B)"><PanelLeft size={16} aria-hidden /></button>
           {!collapsed && <span className="sidebar__new">
             <button type="button" className="icon-btn" onClick={() => setNewMenu(!newMenu)} aria-label="Create new" aria-haspopup="menu" aria-expanded={newMenu} title="Create new"><Plus size={16} aria-hidden /></button>
@@ -1306,32 +1343,62 @@ function App() {
           </span>}
         </div>
       </div>
+      <div className="sidebar__search">
+        <Search size={15} aria-hidden /><Input aria-label="Search agents and chatrooms" placeholder="Search agents and chatrooms..." value={search} onChange={event => setSearch(event.target.value)} />
+        <DropdownMenu.Root open={filterMenu} onOpenChange={setFilterMenu}>
+          <DropdownMenu.Trigger asChild><IconButton label="Filter sidebar" aria-pressed={onlyOnline || showHidden}><Filter size={15} aria-hidden /></IconButton></DropdownMenu.Trigger>
+          <DropdownMenu.Portal><DropdownMenu.Content className="k-pop k-menu" align="end" sideOffset={6}>
+            <DropdownMenu.CheckboxItem className="k-menu__item" checked={onlyOnline} onCheckedChange={setOnlyOnline}><DropdownMenu.ItemIndicator><Check size={14} aria-hidden /></DropdownMenu.ItemIndicator>Only online</DropdownMenu.CheckboxItem>
+            <DropdownMenu.CheckboxItem className="k-menu__item" checked={showHidden} onCheckedChange={setShowHidden}><DropdownMenu.ItemIndicator><Check size={14} aria-hidden /></DropdownMenu.ItemIndicator>Show hidden</DropdownMenu.CheckboxItem>
+          </DropdownMenu.Content></DropdownMenu.Portal>
+        </DropdownMenu.Root>
+      </div>
       <div className="sidebar__scroll">
         <nav className="islands" aria-label="Automation">
           <button type="button" className={`island${view === 'flows' ? ' is-selected' : ''}`} aria-current={view === 'flows' ? 'page' : undefined} disabled={!directory} onClick={() => { setView('flows'); setDialog(null); }} title="Agent flows"><Route size={16} aria-hidden />{!collapsed && <span>Agent flows</span>}</button>
           <button type="button" className={`island${view === 'workflows' ? ' is-selected' : ''}`} aria-current={view === 'workflows' ? 'page' : undefined} disabled={!directory} onClick={() => { setView('workflows'); setDialog(null); }} title="Workflows"><WorkflowIcon size={16} aria-hidden />{!collapsed && <span>Workflows</span>}</button>
         </nav>
-        {!collapsed && <div className="sidebar__label">Channels</div>}
-        <nav className="bot-list" aria-label="Select channel">
-          {channels.map(room => {
-            const current = view === 'chat' && room.id === selectedChannel;
-            const unread = room.activity > room.read_position;
-            return collapsed
-              ? <button key={room.id} type="button" className={`bot-rail-item${current ? ' is-selected' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openChannel(room.id)} title={room.name} aria-label={room.name}><AgentAvatar agent={room} size={36} /></button>
-              : <button key={room.id} type="button" className={`bot-row${current ? ' is-selected' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openChannel(room.id)}>
+        <nav className="machine-groups" aria-label="Machines">
+        <MachineGroup name="This device" subtitle={environment?.name} count={(directory?.agents ?? []).filter(item => showHidden || !item.hidden).length} expanded={query ? searchMachineGroups.local !== false : machineGroups.local !== false} onExpandedChange={expanded => setMachineExpanded('local', expanded)} local>
+          <div className="sidebar__label">Agents</div>
+          <div className="bot-list sidebar-agents">
+            <AgentSidebar mode="list" agents={localAgents} showHidden={showHidden} searching={!!query} request={api} renderAgent={agentRow} />
+            {!!directory?.agents.length && !localAgents.length && <p className="machine-group__note">No matching agents.</p>}
+            {directory && !directory.agents.length && <button type="button" className="bot-list__empty" onClick={() => setDialog('agent')}><span className="bot-list__empty-plus"><Plus size={14} aria-hidden /></span><span><span className="bot-row__name">New agent</span><span className="bot-row__preview">Assign a task, such as research or a summary</span></span></button>}
+          </div>
+          <div className="sidebar__label">Chatrooms</div>
+          <nav className="bot-list" aria-label="Select channel">
+            {localChannels.map(room => {
+              const current = view === 'chat' && room.id === selectedChannel, unread = room.activity > room.read_position;
+              return <button key={room.id} type="button" className={`bot-row${current ? ' is-selected' : ''}`} aria-label={`${room.name} ${room.archived ? 'Archived' : `${room.members.length} members`}${unread ? ' - Unread' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openChannel(room.id)}>
                 <span className="bot-row__avatar"><AgentAvatar agent={room} size={36} />{unread && <span className="status-dot is-unread" aria-label="Unread" />}</span>
                 <span className="bot-row__text"><span className="bot-row__name">{room.name}</span><span className="bot-row__preview">{room.archived ? 'Archived' : `${room.members.length} members`}{unread ? ' · Unread' : ''}</span></span>
               </button>;
-          })}
-          {!collapsed && !channels.length && <button type="button" className="bot-list__empty" disabled={!directory?.agents.length} onClick={() => setDialog('channel')}><span className="bot-list__empty-plus"><Hash size={14} aria-hidden /></span><span><span className="bot-row__name">New channel</span><span className="bot-row__preview">Bring several agents into one space</span></span></button>}
+            })}
+            {!!channels.length && !localChannels.length && <p className="machine-group__note">No matching chatrooms.</p>}
+            {!channels.length && <button type="button" className="bot-list__empty" disabled={!directory?.agents.length} onClick={() => setDialog('channel')}><span className="bot-list__empty-plus"><Hash size={14} aria-hidden /></span><span><span className="bot-row__name">New channel</span><span className="bot-row__preview">Bring several agents into one space</span></span></button>}
+          </nav>
+        </MachineGroup>
+        {remoteMachines.map(machine => <MachineGroup key={machine.id} name={machine.name} subtitle={`${machine.name} · ${machineStatus[machine.status]}`} count={machine.agentCount} status={machine.status} expanded={query ? searchMachineGroups[machine.id] !== false : machineGroups[machine.id] !== false} onExpandedChange={expanded => setMachineExpanded(machine.id, expanded)}>
+          {machine.status !== 'online' && <p className="machine-group__note">{machineStatus[machine.status]} · Last known agents</p>}
+          <div className="sidebar__label">Agents</div>
+          <nav className="bot-list" aria-label={`Agents on ${machine.name}`}>
+            {machine.agents.filter(item => matches(item.name, summaryFor(`${item.id}@${machine.id}`)?.preview)).map(item => {
+              const current = view === 'remote' && remoteSelection?.machine === machine.id && remoteSelection.agent === item.id, summary = summaryFor(`${item.id}@${machine.id}`);
+              return <button key={item.id} type="button" className={`bot-row${current ? ' is-selected' : ''}`} aria-label={`${item.name} on ${machine.name}`} aria-current={current ? 'page' : undefined} onClick={() => { setRemoteSelection({ machine: machine.id, agent: item.id }); setView('remote'); setDialog(null); }}>
+                <span className="bot-row__avatar"><AgentAvatar agent={item} size={36} /><span className={`status-dot${machine.status === 'online' ? ' is-online' : ' is-offline'}`} role="img" aria-label={machineStatus[machine.status]} /></span>
+                <span className="bot-row__text"><span className="bot-row__name">{item.name}</span><span className="bot-row__preview">{summary?.preview || 'No messages on this device'}</span></span>{summary?.time && <time className="bot-row__time" dateTime={summary.time}>{relativeTime(summary.time)}</time>}
+              </button>;
+            })}
+            {!machine.agents.length && <p className="machine-group__note">No agents cached yet.</p>}
+            {!!machine.agents.length && !machine.agents.some(item => matches(item.name, summaryFor(`${item.id}@${machine.id}`)?.preview)) && <p className="machine-group__note">No matching agents.</p>}
+          </nav>
+        </MachineGroup>)}
+        {remoteMachinesState.error && <p className="machine-group__note" role="status">Machines could not be refreshed.</p>}
+        {!remoteMachinesState.machines.length && <button type="button" className="bot-list__empty" onClick={() => setSettings('machines')}><Monitor size={16} aria-hidden /><span><span className="bot-row__name">Pair a machine</span><span className="bot-row__preview">See agents on your other computers</span></span></button>}
         </nav>
-        {!collapsed && <div className="sidebar__label">Agents</div>}
-        <div className="bot-list sidebar-agents">
-          <AgentSidebar mode="list" agents={directory?.agents ?? []} request={api} renderAgent={agentRow} />
-          {!collapsed && directory && !directory.agents.length && <button type="button" className="bot-list__empty" onClick={() => setDialog('agent')}><span className="bot-list__empty-plus"><Plus size={14} aria-hidden /></span><span><span className="bot-row__name">New agent</span><span className="bot-row__preview">Assign a task, such as research or a summary</span></span></button>}
-        </div>
-        <MachinesSidebar machines={remoteMachines.machines} error={remoteMachines.error} selected={view === 'remote' ? remoteSelection : null} onSettings={() => setSettings('machines')} onOpen={(machine, agent) => { setRemoteSelection({ machine: machine.id, agent: agent.id }); setView('remote'); setDialog(null); }} />
       </div>
+      {notificationError && <p className="machine-group__note" role="status">{notificationError}</p>}
       <div className="sidebar__footer">
         <div className="sidebar__fade" />
         {!collapsed && <div className="provider-status" role="status"><i className={directory?.configured ? 'is-on' : ''} aria-hidden /><span>{activityError ? 'Status not updated. Trying again.' : directory?.configured ? 'Provider configured' : 'Provider not connected'}</span></div>}
@@ -1361,7 +1428,7 @@ function App() {
           {!directory ? <p className="empty" role="status">Loading workspace...</p>
             : settings === 'skills' ? <Suspense fallback={<p className="empty" role="status">Loading skill library...</p>}><SkillsPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'updates' ? <UpdatesPanel request={api} />
-            : settings === 'machines' ? <MachinesPanel request={api} onChanged={() => { void remoteMachines.reload(); }} />
+            : settings === 'machines' ? <MachinesPanel request={api} onChanged={() => { void remoteMachinesState.reload(); void api<Environment>('/api/environment').then(setEnvironment).catch(() => setActivityError(true)); }} />
             : settings === 'connected-apps' ? <Suspense fallback={<p className="empty" role="status">Loading connected apps...</p>}><ConnectedAppsPanel agents={directory.agents} request={api} /></Suspense>
             : settings === 'mcp-server' ? <Suspense fallback={<p className="empty" role="status">Loading MCP server...</p>}><McpServerPanel request={api} /></Suspense>
             : settings === 'mcp' ? <Suspense fallback={<p className="empty" role="status">Loading MCP connections...</p>}><McpPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
