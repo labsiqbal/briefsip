@@ -22,7 +22,7 @@ export function ApprovalCard({ approval, path, status, archived, request }: { ap
     finally{sending.current=false;if(mounted.current)setBusy(false);}
   }
   const open=approval.state==='approval', disabled=busy || archived || status!=='queued' || invalid;
-  const outcome=approval.state==='uncertain'?'Result uncertain':approval.state==='running'?'Running approved action':approval.decision==='deny'?'Not allowed':approval.decision==='always'?'Always allowed for this agent':approval.state==='done'?'Allowed once':'Approved, waiting to run';
+  const outcome=approval.decision==='revoked'?'App access removed':approval.state==='uncertain'?'Result uncertain':approval.state==='running'?'Running approved action':approval.decision==='deny'?'Not allowed':approval.decision==='always'?'Always allowed for this agent':approval.state==='done'?'Allowed once':'Approved, waiting to run';
   const summary=Object.entries(approval.arguments).slice(0,6).map(([name,value])=>`${name}: ${typeof value==='string'?value.slice(0,160):JSON.stringify(value).slice(0,160)}`).join('\n') || 'No arguments';
   return <section className="bs-root k-stack" aria-label={`Approval for ${approval.tool}`}>
     <Card><div className="k-stack" style={{padding:14}}>

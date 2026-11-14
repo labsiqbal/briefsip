@@ -65,6 +65,7 @@ test('connected apps end to end: catalog, accounts, grants, tools, approvals, re
     const turns=`/api/agents/${agent.id}/turns`,access=`/api/agents/${agent.id}/connected-apps/gmail`;
     const noKey=randomUUID();await request(turns,{id:noKey,text:'unconfigured'},202);await wait(turns,noKey,row=>row.status==='failed');assert(!providerBodies.at(-1).tools.some((tool:any)=>tool.function.name.startsWith('composio__')));assert.equal(calls.length,0);
     await app.close();process.env.COMPOSIO_API_KEY=canary;app=await startApp(options);origin=app.origin;
+    await request('/api/connected-apps/key',{id:randomUUID(),revision:0,key:canary});
     const catalog=await request('/api/connected-apps?search=mail&category=communication');assert.equal(catalog.items[0].name,'Gmail');assert.equal(catalog.items[0].description,'[REDACTED]');assert(calls.some(row=>row.path.includes('search=mail')&&row.path.includes('category=communication')));
     assert.equal((await request('/api/connected-apps?after=catalog-page-2')).items[0].name,'Slack');
     const connect={id:randomUUID()},link=await request('/api/connected-apps/connect/gmail',connect);assert.equal(link.redirect_url,'https://connect.composio.dev/link/test');assert.deepEqual(await request('/api/connected-apps/connect/gmail',connect),link);assert.equal(calls.filter(row=>row.path.endsWith('/connected_accounts/link')).length,1);await request('/api/connected-apps/connect/slack',connect,409);
@@ -159,4 +160,93 @@ test('SIGKILL after Composio accepts write marks it uncertain without replay', {
     output.close(); if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL'); await exited.catch(()=>{});
     await stop(remote); rmSync(dir,{recursive:true,force:true}); if(prior===undefined)delete process.env.COMPOSIO_API_KEY;else process.env.COMPOSIO_API_KEY=prior;
   }
+});
+
+test('installation API key: validation, encrypted persistence, receipts, runtime precedence and restart', async () => {
+  const savedEnv=process.env.COMPOSIO_API_KEY; delete process.env.COMPOSIO_API_KEY;
+  const directory=mkdtempSync(join(tmpdir(),'briefsip-installation-key-')),database=join(directory,'app.sqlite');
+  const storedKey='INSTALLATION_CANARY_KEY_K9m2s8v4', replacement='REPLACEMENT_CANARY_KEY_V7r8b9n2', environment='ENVIRONMENT_CANARY_KEY_T8n5z2p4';
+  const remoteCalls:{key:string;path:string}[]=[],responses:string[]=[];
+  const remote=createServer((req,res)=>{const key=String(req.headers['x-api-key']);remoteCalls.push({key,path:req.url!});res.setHeader('Content-Type','application/json');if(![storedKey,replacement,environment].includes(key)){res.statusCode=401;return res.end(JSON.stringify({error:key}));}res.end(JSON.stringify(req.url!.endsWith('/toolkits/categories')?{items:[]}:{items:[{slug:'gmail',name:'Gmail',meta:{description:key},composio_managed_auth_schemes:['OAUTH2']}]}));});
+  const remoteOrigin=await listen(remote),options={database,composio:{baseURL:remoteOrigin+'/api/v3.1'}};
+  let app=await startApp(options),origin=app.origin,closed=false;
+  const request=async(path:string,data?:unknown,status=200,headers?:Record<string,string>)=>{const response=await fetch(origin+path,data?{method:'POST',headers:{Origin:origin,'Content-Type':'application/json',...headers},body:JSON.stringify(data)}:{});const raw=await response.text();responses.push(raw);assert.equal(response.status,status,raw);return JSON.parse(raw);};
+  try {
+    assert.deepEqual(await request('/api/connected-apps/key'),{source:'none',revision:0});
+    const invalid={id:randomUUID(),revision:0,key:'REJECTED_CANARY'};
+    await request('/api/connected-apps/key',invalid,400);assert.deepEqual(await request('/api/connected-apps/key'),{source:'none',revision:0});
+    assert.equal(remoteCalls.length,1);
+    for(const key of ['', 'x\ny', 'x\u0085y','x'.repeat(4097)])await request('/api/connected-apps/key',{id:randomUUID(),revision:0,key},400);
+    await request('/api/connected-apps/key',{id:randomUUID(),revision:-1,key:storedKey},400);
+    await request('/api/connected-apps/key',{id:randomUUID(),revision:0,key:storedKey},403,{Origin:'https://attacker.example'});
+    await request('/api/connected-apps/key',{id:randomUUID(),revision:0,key:storedKey},403,{'Content-Type':'text/plain'});
+    assert.equal(remoteCalls.length,1);
+    process.env.COMPOSIO_API_KEY=environment;
+    assert.deepEqual(await request('/api/connected-apps/key'),{source:'environment',revision:0});
+    await request('/api/connected-apps');assert.equal(remoteCalls.at(-1)!.key,environment);
+    const save={id:randomUUID(),revision:0,key:`  ${storedKey}  `},receipt=await request('/api/connected-apps/key',save);
+    assert.deepEqual(receipt,{source:'settings',revision:1});const count=remoteCalls.length;
+    assert.deepEqual(await request('/api/connected-apps/key',save),receipt);assert.equal(remoteCalls.length,count,'Exact retry must not verify or save twice');
+    await request('/api/connected-apps/key',{...save,key:replacement},409);assert.equal(remoteCalls.length,count);
+    await request('/api/connected-apps/key',{id:randomUUID(),revision:0,key:replacement},409);assert.equal(remoteCalls.length,count);
+    assert.deepEqual(await request('/api/connected-apps/key'),receipt);
+    const catalog=await request('/api/connected-apps');assert.equal(catalog.items[0].description,'[REDACTED]');assert(remoteCalls.slice(count).every(row=>row.key===storedKey));
+    await app.close();app=await startApp(options);origin=app.origin;
+    assert.deepEqual(await request('/api/connected-apps/key'),receipt);await request('/api/connected-apps');assert.equal(remoteCalls.at(-1)!.key,storedKey);
+    const replaced=await request('/api/connected-apps/key',{id:randomUUID(),revision:1,key:replacement});assert.equal(replaced.revision,2);await request('/api/connected-apps');assert.equal(remoteCalls.at(-1)!.key,replacement);
+    const remove={id:randomUUID(),revision:2},removed=await request('/api/connected-apps/key/remove',remove);assert.deepEqual(removed,{source:'environment',revision:3});assert.deepEqual(await request('/api/connected-apps/key/remove',remove),removed);
+    await request('/api/connected-apps/key/remove',{...remove,revision:3},409);
+    await request('/api/connected-apps/key',{...remove,key:storedKey},409);
+    await request('/api/connected-apps');assert.equal(remoteCalls.at(-1)!.key,environment);
+    await app.close();app=await startApp(options);origin=app.origin;assert.deepEqual(await request('/api/connected-apps/key'),removed);
+    delete process.env.COMPOSIO_API_KEY;assert.deepEqual(await request('/api/connected-apps/key'),{source:'none',revision:3});
+    await request('/api/connected-apps/key',{id:randomUUID(),revision:0,key:storedKey},409);
+    await request('/api/connected-apps/key',{id:randomUUID(),revision:3,key:storedKey});
+    await app.close();closed=true;
+    for(const key of [storedKey,replacement,environment,'REJECTED_CANARY']) {assert(!responses.join('').includes(key));assert(!readFileSync(database).includes(Buffer.from(key)));}
+    const db=new DatabaseSync(database);assert(!JSON.stringify(db.prepare('SELECT * FROM composio_commands').all()).includes(storedKey));assert(!String(db.prepare('SELECT ciphertext FROM composio_settings').get()!.ciphertext).includes(storedKey));db.close();
+    assert.equal((await import('node:fs')).statSync(database+'.composio-key').mode & 0o777,0o600);
+  } finally {if(!closed)await app.close();await stop(remote);rmSync(directory,{recursive:true,force:true});if(savedEnv===undefined)delete process.env.COMPOSIO_API_KEY;else process.env.COMPOSIO_API_KEY=savedEnv;}
+});
+
+test('key replacement and removal atomically reset identity, grants, policies and pending calls without replay', async()=>{
+  const savedEnv=process.env.COMPOSIO_API_KEY;process.env.COMPOSIO_API_KEY=canary;
+  const directory=mkdtempSync(join(tmpdir(),'briefsip-key-reset-')),database=join(directory,'db'),db=new DatabaseSync(database),agent=randomUUID();
+  db.exec("CREATE TABLE agents(id TEXT PRIMARY KEY); CREATE TABLE turns(id TEXT PRIMARY KEY,agent TEXT,status TEXT,paused INTEGER,revision INTEGER); CREATE TABLE generated_files(turn TEXT); CREATE TABLE flow_tool_calls(turn TEXT,call_id TEXT,call TEXT,result TEXT,after_output INTEGER,after_action INTEGER,UNIQUE(turn,call_id));");db.prepare('INSERT INTO agents VALUES(?)').run(agent);
+  const tx=<T>(run:()=>T)=>{db.exec('BEGIN IMMEDIATE');try{const value=run();db.exec('COMMIT');return value;}catch(error){db.exec('ROLLBACK');throw error;}};
+  let dispatches=0,validation=0;
+  const remote=createServer((req,res)=>{res.setHeader('Content-Type','application/json');if(req.url!.includes('/tools/execute/'))dispatches++;if(req.url!.endsWith('/toolkits/categories'))validation++;res.end(JSON.stringify(req.url!.includes('/connected_accounts')?{items:[{id:'ca_1',toolkit:{slug:'gmail'},status:'ACTIVE'}]}:req.url!.includes('/tools?')?{items:[rawTool('GMAIL_SEND_EMAIL',['createHint'])]}:{items:[]}));});
+  const origin=await listen(remote),client=createComposio(db,tx,{database,baseURL:origin+'/api/v3.1'}),signal=new AbortController().signal;
+  const identity=()=>String(db.prepare('SELECT user_id FROM composio_installation').get()!.user_id);
+  try {
+    for(const remove of [false,true]) {
+      const revision=client.keyStatus().revision,oldIdentity=identity();
+      const grantRevision=client.grants(agent)[0]?.revision??0;client.grant(randomUUID(),agent,'gmail',{revision:grantRevision,enabled:true});
+      db.prepare("INSERT OR REPLACE INTO composio_auth_configs VALUES('gmail','ac_old')").run();
+      const offered=await client.tools(agent),tool=offered[0];
+      db.prepare('INSERT OR REPLACE INTO composio_policies VALUES(?,?,?,?,?)').run(agent,'old-policy','old-tool','ca_1','gmail');
+      const pending:string[]=[];
+      for(const state of ['approval','ready','running','uncertain']) {
+        const turn=randomUUID();pending.push(turn);db.prepare("INSERT INTO turns VALUES(?,?,'running',0,1)").run(turn,agent);
+        await client.call(turn,agent,{id:'call',type:'function',function:{name:composioToolName(tool.slug),arguments:'{"target":"test"}'}},0,signal,offered);
+        if(state!=='approval')db.prepare('UPDATE composio_calls SET state=?,decision=? WHERE turn=?').run(state,'allow',turn);
+      }
+      // A failed transaction must keep the previous key, identity and permissions intact.
+      db.exec("CREATE TRIGGER reject_key_reset BEFORE DELETE ON composio_policies BEGIN SELECT RAISE(ABORT,'synthetic reset failure'); END;");
+      if(remove)assert.throws(()=>client.removeKey(randomUUID(),{revision}),/synthetic reset failure/);else await assert.rejects(client.saveKey(randomUUID(),{revision,key:'installation-key-one'}),/synthetic reset failure/);
+      assert.equal(identity(),oldIdentity);assert.equal(client.keyStatus().revision,revision);assert.equal(client.grants(agent)[0].enabled,true);db.exec('DROP TRIGGER reject_key_reset');
+      const id=randomUUID(),data={revision,...(remove?{}:{key:'installation-key-one'})};
+      const result=remove?client.removeKey(id,data):await client.saveKey(id,data);
+      assert.equal(result.revision,revision+1);assert.notEqual(identity(),oldIdentity);
+      assert.equal(db.prepare('SELECT count(*) n FROM composio_auth_configs').get()!.n,0);assert.equal(db.prepare('SELECT count(*) n FROM composio_policies').get()!.n,0);
+      assert.deepEqual(client.grants(agent),[{toolkit:'gmail',enabled:false,revision:grantRevision+2}]);
+      const newGrant=client.grants(agent)[0];client.grant(randomUUID(),agent,'gmail',{revision:newGrant.revision,enabled:true});
+      for(const turn of pending.slice(0,2)) {db.prepare("UPDATE turns SET status='running' WHERE id=?").run(turn);await client.resume(turn,agent,signal);assert.match(String(db.prepare('SELECT result FROM flow_tool_calls WHERE turn=?').get(turn)!.result),/access was removed/);await client.resume(turn,agent,signal);}
+      for(const turn of pending.slice(2)) {assert.equal(db.prepare('SELECT state FROM composio_calls WHERE turn=?').get(turn)!.state,'uncertain');await assert.rejects(client.resume(turn,agent,signal),/uncertain/);}
+      const turn=randomUUID();db.prepare("INSERT INTO turns VALUES(?,?,'running',0,1)").run(turn,agent);await assert.rejects(client.call(turn,agent,{id:'stale-offer',type:'function',function:{name:composioToolName(tool.slug),arguments:'{"target":"test"}'}},0,signal,offered),/revoked/);
+      assert.equal(dispatches,0);
+    }
+    assert(validation>=2);
+    for(const path of ['/api/connected-apps/key','/api/connected-apps/key/remove']) {const command={path,body:{id:randomUUID(),revision:3}};assert.deepEqual(restoreConnectedAppCommand(JSON.stringify(command)),command);assert.throws(()=>restoreConnectedAppCommand(JSON.stringify({...command,body:{...command.body,key:canary}})),/invalid/);}
+  } finally {client.close();db.close();await stop(remote);rmSync(directory,{recursive:true,force:true});if(savedEnv===undefined)delete process.env.COMPOSIO_API_KEY;else process.env.COMPOSIO_API_KEY=savedEnv;}
 });

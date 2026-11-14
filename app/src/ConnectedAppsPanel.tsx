@@ -4,6 +4,7 @@ import { ActionMenu, Alert, Badge, Button, Card, EmptyState, Field, IconButton, 
 import { restoreConnectedAppCommand, type ConnectedAppCommand } from '../connected-app-command';
 type Toolkit = { slug: string; name: string; description: string; managedAuth: boolean };
 type Catalog = { configured: boolean; items: Toolkit[]; categories: { id: string; name: string }[]; next_after: string | null };
+type KeyStatus = { source: 'settings' | 'environment' | 'none'; revision: number; last4?: string };
 type Account = { id: string; toolkit: string; status: string };
 type Grant = { toolkit: string; enabled: boolean; revision: number };
 type Policy = { toolkit: string; tool: string; account: string; fingerprint: string };
@@ -12,39 +13,58 @@ export function ConnectedAppsPanel({ agents, request }: { agents: { id: string; 
   const confirm = useConfirm(), heading = useRef<HTMLHeadingElement>(null), mounted = useRef(false), sending = useRef(false);
   const [recovery] = useState(() => { try { return { pending: restoreConnectedAppCommand(sessionStorage.getItem(storage)), invalid: false }; } catch { return { pending: null, invalid: true }; } });
   const [pending,setPending] = useState(recovery.pending), [invalid,setInvalid] = useState(recovery.invalid);
-  const [catalog,setCatalog] = useState<Catalog | null>(null), [accounts,setAccounts] = useState<Account[] | null>(null), [grants,setGrants] = useState<Grant[] | null>(null), [policies,setPolicies] = useState<Policy[] | null>(null);
+  const [catalog,setCatalog] = useState<Catalog | null>(null), [accounts,setAccounts] = useState<Account[] | null>(null), [grants,setGrants] = useState<Grant[] | null>(null), [policies,setPolicies] = useState<Policy[] | null>(null), [keyStatus,setKeyStatus] = useState<KeyStatus | null>(null), [key,setKey] = useState(''), [replacing,setReplacing] = useState(false);
   const [agent,setAgent] = useState(agents[0]?.id ?? ''), [search,setSearch] = useState(''), [query,setQuery] = useState(''), [category,setCategory] = useState(''), [cursors,setCursors] = useState(['']);
   const [refresh,setRefresh] = useState(0), [error,setError] = useState(''), [busy,setBusy] = useState(false), [link,setLink] = useState('');
-  const locked = busy || !!pending || invalid, after=cursors.at(-1)!;
+  const keySave=pending?.path==='/api/connected-apps/key', locked = busy || !!pending || invalid, after=cursors.at(-1)!;
   useEffect(() => { mounted.current=true; heading.current?.focus(); return ()=>{mounted.current=false;}; },[]);
   useEffect(()=>{
-    let stale=false; setCatalog(null); setAccounts(null); setGrants(null); setPolicies(null); setError('');
+    let stale=false; setCatalog(null); setAccounts(null); setKeyStatus(null); setGrants(null); setPolicies(null); setError('');
+    void request<KeyStatus>('/api/connected-apps/key').then(status=>{if(!stale)setKeyStatus(status);}).catch(error=>{if(!stale)setError(error.message || 'Composio key status could not load.');});
     const params=new URLSearchParams({search:query,category,after});
     void Promise.all([request<Catalog>(`/api/connected-apps?${params}`),request<{items:Account[]}>('/api/connected-apps/accounts'), agent ? request<{items:Grant[]}>(`/api/agents/${agent}/connected-apps`) : Promise.resolve({items:[]}),agent ? request<{items:Policy[]}>(`/api/agents/${agent}/connected-app-policies`) : Promise.resolve({items:[]})]).then(([catalog,accounts,grants,policies])=>{if(!stale){setCatalog(catalog);setAccounts(accounts.items);setGrants(grants.items);setPolicies(policies.items);}}).catch(error=>{if(!stale)setError(error.message || 'Connected apps could not load.');});
     return ()=>{stale=true;};
   },[agent,query,category,after,refresh]);
   async function execute(command:ConnectedAppCommand,connect=false) {
     if(sending.current || invalid)return;
+    if(command.path==='/api/connected-apps/key' && !key.trim()){setError('Paste the Composio API key again to retry this save.');return;}
     let popup:Window|null=null;
     if(connect){popup=window.open('about:blank','_blank'); if(popup)popup.opener=null;}
     try {
       restoreConnectedAppCommand(JSON.stringify(command)); sessionStorage.setItem(storage,JSON.stringify(command)); setPending(command); sending.current=true; setBusy(true); setError('');
-      const result=await request<{redirect_url?:string}>(command.path,command.body);
+      const result=await request<{redirect_url?:string}>(command.path,command.path==='/api/connected-apps/key'?{...command.body,key}:command.body);
       if(result.redirect_url){if(popup)popup.location.href=result.redirect_url; if(mounted.current)setLink(result.redirect_url);} else popup?.close();
       if(sessionStorage.getItem(storage)===JSON.stringify(command))sessionStorage.removeItem(storage);
-      if(mounted.current){setPending(null);setRefresh(n=>n+1);}
+      if(mounted.current){if(command.path.startsWith('/api/connected-apps/key')){setKey('');setReplacing(false);setLink('');}setPending(null);setRefresh(n=>n+1);}
     }catch(error){popup?.close();if(mounted.current)setError(error instanceof Error?error.message:'Change is not confirmed. Retry the saved request.');}
     finally{sending.current=false;if(mounted.current)setBusy(false);}
   }
   async function discard(){if(!await confirm({title:'Discard saved request?',description:'The change may already have succeeded. Connected accounts and access reload before another change.',confirm:'Discard recovery',danger:true}))return;try{sessionStorage.removeItem(storage);setPending(null);setInvalid(false);setRefresh(n=>n+1);}catch{setError('Browser recovery data could not be removed.');}}
+  async function saveKey() {
+    if(sending.current || invalid || !keyStatus || !key.trim() || pending && !keySave)return;
+    await execute(pending ?? {path:'/api/connected-apps/key',body:{id:crypto.randomUUID(),revision:keyStatus.revision}});
+  }
+  async function removeKey() {
+    if(sending.current || locked || keyStatus?.source!=='settings')return;
+    if(!await confirm({title:'Remove Composio API key?',description:'Connected accounts, agent access, pending approvals, and saved "Always allow" choices will be reset. Existing accounts remain in the old Composio project.',confirm:'Remove key',danger:true}))return;
+    await execute({path:'/api/connected-apps/key/remove',body:{id:crypto.randomUUID(),revision:keyStatus.revision}});
+  }
   const title=(slug:string)=>catalog?.items.find(row=>row.slug===slug)?.name ?? ({gmail:'Gmail',slack:'Slack',github:'GitHub',googlecalendar:'Google Calendar'}[slug] ?? slug);
   const connected=[...new Set(accounts?.filter(row=>row.status==='ACTIVE').map(row=>row.toolkit) ?? [])];
   return <div className="k-page bs-root">
     <PageHeader headingRef={heading} title="Connected apps" description="Connect your apps, then choose which agents can use them." actions={<IconButton label="Reload connected apps" disabled={busy} onClick={()=>setRefresh(n=>n+1)}><RefreshCw size={15} aria-hidden /></IconButton>} />
     {error && <Alert tone="error">{error}</Alert>}
     {invalid && <Alert tone="error" title="Recovery data could not be read" actions={<Button size="sm" onClick={()=>void discard()}>Discard recovery</Button>} />}
-    {pending && <Alert tone="warn" title="Change is not confirmed" actions={<><Button size="sm" busy={busy} onClick={()=>void execute(pending,pending.path.includes('/connect/'))}>Retry saved request</Button><Button size="sm" disabled={busy} onClick={()=>void discard()}>Discard recovery</Button></>}>Retry keeps the same request ID. An uncertain connection change must be checked before starting a new request.</Alert>}
-    {catalog?.configured===false ? <EmptyState icon={<Blocks size={20} aria-hidden />} title="Not configured">Set <code>COMPOSIO_API_KEY</code> in the server environment, then restart Briefsip. The key stays on the server.</EmptyState> : <>
+    {pending && <Alert tone="warn" title="Change is not confirmed" actions={<><Button size="sm" busy={busy} disabled={keySave && !key.trim()} onClick={()=>void execute(pending,pending.path.includes('/connect/'))}>Retry saved request</Button><Button size="sm" disabled={busy} onClick={()=>void discard()}>Discard recovery</Button></>}>{keySave?'Paste the same API key again below. Only the request ID and revision were saved for recovery.':'Retry keeps the same request ID. An uncertain connection change must be checked before starting a new request.'}</Alert>}
+    <Section title="Composio API key">
+      {!keyStatus ? <SkeletonRows count={1} /> : keyStatus.source==='environment' && !keySave ? <Alert title="From server environment">This Composio API key comes from the server environment and cannot be removed here.</Alert> : <Card>
+        {keyStatus.source==='settings' && !replacing && !keySave ? <Row title="Composio API key" meta={<Badge tone="success">Saved</Badge>} trailing={<><Button size="sm" disabled={locked} onClick={async()=>{if(sending.current || locked)return;if(await confirm({title:'Replace Composio API key?',description:'Connected accounts, agent access, pending approvals, and saved "Always allow" choices will be reset. Existing accounts remain in the old Composio project.',confirm:'Replace key',danger:true}))setReplacing(true);}}>Replace</Button><Button size="sm" disabled={locked} onClick={()=>void removeKey()}>Remove</Button></>} /> : <form className="k-stack" style={{padding:14}} onSubmit={event=>{event.preventDefault();void saveKey();}}>
+          <Field label={keySave?'Paste the same API key again':'Composio API key'} hint={<>Use your own Composio project. Get an API key at <a href="https://platform.composio.dev/" target="_blank" rel="noreferrer">platform.composio.dev</a>.</>}><Input type="password" autoComplete="off" spellCheck={false} maxLength={4096} value={key} disabled={busy || invalid} onChange={event=>setKey(event.target.value)} /></Field>
+          <div className="k-row-actions"><Button type="submit" variant="primary" busy={busy} disabled={busy || invalid || !key.trim() || !!pending && !keySave}>{keySave?'Retry save':'Save key'}</Button>{replacing && !pending && <Button disabled={busy} onClick={()=>{setReplacing(false);setKey('');}}>Cancel</Button>}</div>
+        </form>}
+      </Card>}
+    </Section>
+    {catalog?.configured===false ? <EmptyState icon={<Blocks size={20} aria-hidden />} title="Not configured">Save a Composio API key above to browse and connect apps.</EmptyState> : <>
       {link && <Alert title="Finish connecting in Composio" actions={<Button size="sm" onClick={()=>setRefresh(n=>n+1)}>Check connection</Button>}><a href={link} target="_blank" rel="noopener noreferrer">Open secure connection page</a>. Return here and check the connection when finished.</Alert>}
       <Section title="Browse apps">
         <form className="k-inline" style={{alignItems:'flex-end'}} onSubmit={event=>{event.preventDefault();setCursors(['']);setQuery(search);}}><Field label="Search apps"><Input type="search" maxLength={100} placeholder="Gmail, Slack, GitHub..." value={search} disabled={locked} onChange={event=>setSearch(event.target.value)} /></Field><Button type="submit" icon={<Search size={14} aria-hidden />} disabled={locked}>Search</Button></form>
