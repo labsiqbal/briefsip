@@ -12,7 +12,7 @@ test('SQLite authorizer enforces schema ownership, blocks host access and keeps 
   try {
     await execute('CREATE TABLE notes(id INTEGER PRIMARY KEY, text TEXT)');
     await execute('INSERT INTO notes(text) VALUES (?)', 'beta', ['shared']);
-    await assert.rejects(execute('ALTER TABLE notes RENAME TO briefsip_hidden'), /dilindungi/);
+    await assert.rejects(execute('ALTER TABLE notes RENAME TO briefsip_hidden'), /Table name is protected or exceeds 128 characters\./);
     await assert.rejects(execute('ALTER TABLE notes RENAME TO "' + 'n'.repeat(129) + '"'), /128/);
     assert.deepEqual((await execute('SELECT * FROM notes', 'beta')).rows, [[1, 'shared']]);
     for (const sql of ['DROP TABLE notes', 'ALTER TABLE notes ADD COLUMN private TEXT', 'CREATE INDEX bad_index ON notes(text)']) await assert.rejects(execute(sql, 'beta'), /authorized|prohibited/i);

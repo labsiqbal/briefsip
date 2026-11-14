@@ -7,15 +7,18 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './server.ts';
+import { subscribe, unsubscribe } from 'node:diagnostics_channel';
 
 test('agent history tools retrieve old originals and reject foreign conversations', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-history-tools-'));
   let foreignId = '', oldestId = '', attachmentId = '', before = 1, mode = 'read';
   const results: any[] = [];
+  const providerPhases: string[] = [];
   let duringRead: (() => Promise<unknown>) | undefined;
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const data = JSON.parse(raw);
+    providerPhases.push(data.messages[0].content.startsWith('Summarize conversation history') ? 'compaction' : 'answer');
     if (data.messages[0].content.startsWith('Summarize conversation history')) return res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Earlier details remain available through history tools.' } }] }));
     if (data.messages.at(-1).content?.startsWith('Future disclosure')) return res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Saved.' } }] }));
     if (duringRead) { const action = duringRead; duringRead = undefined; await action(); }
@@ -39,17 +42,28 @@ test('agent history tools retrieve old originals and reject foreign conversation
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` };
+  const networkErrors: {name: string; code: string | null}[] = [];
+  const captureError = (value: unknown) => {
+    const event = value as {request?: {origin?: string}; error?: {name?: string; code?: string}};
+    if (String(event.request?.origin) === `http://127.0.0.1:${address.port}`) networkErrors.push({name: event.error?.name ?? 'unknown', code: event.error?.code ?? null});
+  };
+  subscribe('undici:request:error', captureError);
   let app = await startApp(options);
   async function post(path: string, data: unknown) {
     const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     assert(response.ok, await response.clone().text()); return response.json();
   }
   async function run(path: string, expected: string) {
-    const id = randomUUID(); results.length = 0; await post(path, { id, text: 'Retrieve earlier evidence' });
+    const id = randomUUID(); results.length = 0; networkErrors.length = 0; providerPhases.length = 0; await post(path, { id, text: 'Retrieve earlier evidence' });
     for (let n = 0; n < 150; n++) {
       const rows = await (await fetch(app.origin + path)).json();
       const turn = rows.find((row: { id: string }) => row.id === id);
-      if (['done', 'failed'].includes(turn.status)) { assert.equal(turn.status, expected, turn.error); return; }
+      if (['done', 'failed'].includes(turn.status)) {
+        if (turn.status !== expected) {
+          assert.fail(JSON.stringify({expected, actual: turn.status, error: turn.error, mode, providerPhases, networkErrors}));
+        }
+        return;
+      }
       await new Promise(resolve => setTimeout(resolve, 10));
     }
     assert.fail('Tool run did not settle');
@@ -101,5 +115,5 @@ test('agent history tools retrieve old originals and reject foreign conversation
     await run(scopes[0].path, 'done'); assert.match(results[0].error, /not found/);
     mode = 'invalid'; await run(scopes[0].path, 'failed'); assert.equal(results.length, 0);
     mode = 'loop'; await run(scopes[0].path, 'failed'); assert.equal(results.length, 8);
-  } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
+  } finally { unsubscribe('undici:request:error', captureError); await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });

@@ -88,7 +88,7 @@ try:
                 break
             items.append(item)
         if tables and not items:
-            raise ValueError('Metadata tabel melebihi batas hasil.')
+            raise ValueError('Table metadata exceeds the result limit.')
         result = {'tables': items, 'next_after': items[-1]['name'] if len(tables) > len(items) else None}
     else:
         before = {identifier(row[0]): row[0] for row in db.execute("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*' AND name NOT GLOB 'briefsip_*'")}
@@ -103,10 +103,10 @@ try:
         result['changes'] = db.total_changes - changes_before
         db.set_authorizer(None)
         if len(json.dumps(result).encode('utf8')) > 128 * 1024:
-            raise ValueError('Hasil query melebihi 128 KiB. Pilih kolom atau halaman lebih kecil.')
+            raise ValueError('Query result exceeds 128 KiB. Choose fewer columns or a smaller page.')
         tables = [row[0] for row in db.execute("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*'")]
         if any(name != 'briefsip_owners' and (len(name) > 128 or identifier(name).startswith('briefsip_')) for name in tables):
-            raise ValueError('Nama tabel dilindungi atau melebihi 128 karakter.')
+            raise ValueError('Table name is protected or exceeds 128 characters.')
         after = {identifier(name): name for name in tables if name != 'briefsip_owners'}
         for removed in before.keys() - after.keys():
             db.execute('DELETE FROM briefsip_owners WHERE name=?', (before[removed],))
@@ -114,10 +114,10 @@ try:
             db.execute('INSERT INTO briefsip_owners VALUES (?,?)', (after[added], owner))
         db.execute('COMMIT')
     if len(json.dumps(result).encode('utf8')) > 128 * 1024:
-        raise ValueError('Hasil query melebihi 128 KiB. Pilih kolom atau halaman lebih kecil.')
+        raise ValueError('Query result exceeds 128 KiB. Choose fewer columns or a smaller page.')
     image = db.serialize() if changed else None
     if image and len(image) > 16 * 1024 * 1024:
-        raise ValueError('Database bersama maksimum 16 MiB.')
+        raise ValueError('Shared database limit is 16 MiB.')
     print(json.dumps({'result': result, 'image': base64.b64encode(image).decode('ascii') if image else None}, allow_nan=False))
 except (sqlite3.Error, ValueError, OverflowError) as error:
     print(json.dumps({'error': str(error)[:500]}))

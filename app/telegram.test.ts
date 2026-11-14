@@ -5,6 +5,46 @@ import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { telegramInput, telegramApi, initializeTelegram, queueTelegramReply, deliverTelegramReply } from './telegram.ts';
 
+test('Telegram question buttons answer the owning task once across restart and lost responses',async()=>{
+  const {mkdtempSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+  const {startApp}=await import('./server.ts');const {telegramLocal,telegramAgentStep,pollTelegram}=await import('./telegram-bridge.ts');const {bindTelegram,recordTelegramUpdates}=await import('./telegram.ts');
+  const root=mkdtempSync(join(tmpdir(),'briefsip-question-buttons-')),agent=randomUUID(),users=new Set([4,5]),sent:any[]=[],answers:any[]=[],providerAnswers:string[]=[];
+  const choices=Array.from({length:8},(_,i)=>`${i+1} ${'Long choice '.repeat(10)}${i}`);let sequence=0,updates:any[]=[],lose=true,free=false;
+  const provider=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const data=JSON.parse(raw),answer=data.messages.findLast((item:any)=>item.role==='tool');if(answer)providerAnswers.push(JSON.parse(answer.content).answer);res.end(JSON.stringify({choices:[{finish_reason:answer?'stop':'tool_calls',message:answer?{content:'Answered '+JSON.parse(answer.content).answer}:{tool_calls:[{id:'question',type:'function',function:{name:'ask_user',arguments:JSON.stringify({question:'Choose',choices:free?[]:choices})}}]}}]}));});
+  await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));const address=provider.address();assert(address&&typeof address!=='string');
+  const app=await startApp({database:join(root,'app.sqlite'),baseURL:`http://127.0.0.1:${address.port}/v1`,scriptDirectory:join(root,'scripts')});let db=new DatabaseSync(join(root,'telegram.sqlite'));
+  async function ui(path:string,body?:unknown):Promise<any>{const response=await fetch(app.origin+path,{method:body?'POST':'GET',headers:{Origin:app.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const result=await response.json();assert(response.ok,JSON.stringify(result));return result;}
+  const actual=telegramLocal(join(root,'scripts'));
+  const local=async(path:string,body?:unknown,signal?:AbortSignal)=>{const result=await actual(path,body,signal);if(path.endsWith('/answer')){answers.push({path,body});if(lose){lose=false;throw new Error('Lost answer');}}return result;};
+  const remote=async(method:string,body:Record<string,unknown>)=>{if(method==='getUpdates'){const batch=updates;updates=[];return batch;}if(method==='answerCallbackQuery')return true;const message_id=sent.length+100;sent.push({...body,message_id});return {message_id,chat:{id:body.chat_id}};};
+  function click(question:any,index:number,change:Record<string,unknown>={}){sequence++;updates.push({update_id:sequence,callback_query:{id:`query-${sequence}`,data:`q:${question.id}:${index}`,from:{id:4,is_bot:false},message:{message_id:question.message,chat:{id:4,type:'private'},from:{id:123,is_bot:true}},...change}});}
+  async function ask(){sequence++;recordTelegramUpdates(db,[{update_id:sequence,message:{message_id:sequence,chat:{id:4,type:'private'},from:{id:4,is_bot:false},text:`Ask ${sequence}`}}],users);const row=db.prepare('SELECT * FROM telegram_inbox WHERE update_id=?').get(sequence)!;
+    for(let n=0;n<100;n++){await telegramAgentStep(db,users,local,remote);const q=db.prepare('SELECT * FROM telegram_questions WHERE turn=?').get(row.turn);if(q){const notice=sent.find(item=>item.text.includes(String(q.id)));if(notice)return {id:String(q.id),turn:String(q.turn),thread:String(q.thread),message:notice.message_id,notice};}await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Question not delivered');}
+  try{
+    await ui('/api/agents',{id:agent,name:'Questions',model:'fixture',instructions:'Help'});await ui(`/api/agents/${agent}/scripts`,{id:randomUUID(),revision:0,enabled:true});initializeTelegram(db);bindTelegram(db,123,agent);
+    const q=await ask();assert.equal(q.notice.reply_markup.inline_keyboard.length,8);assert(q.notice.text.includes(choices[7]));assert(q.notice.reply_markup.inline_keyboard[7][0].text.endsWith('...'));assert(Buffer.byteLength(q.notice.reply_markup.inline_keyboard[7][0].callback_data)<=64);
+    click(q,8);click(q,0,{from:{id:5,is_bot:false}});click(q,0,{data:`a:${q.id}:y`});click(q,0,{message:{message_id:q.message+1,chat:{id:4,type:'private'},from:{id:123,is_bot:true}}});await pollTelegram(db,users,remote);await telegramAgentStep(db,users,local,remote);assert.equal(answers.length,0);
+    click(q,7);click(q,0);await pollTelegram(db,users,remote);assert.equal(db.prepare('SELECT selection FROM telegram_callbacks WHERE notice=?').get(q.id)!.selection,7);
+    db.close();db=new DatabaseSync(join(root,'telegram.sqlite'));initializeTelegram(db);await assert.rejects(telegramAgentStep(db,users,local,remote),/Lost answer/);
+    db.close();db=new DatabaseSync(join(root,'telegram.sqlite'));initializeTelegram(db);await telegramAgentStep(db,users,local,remote);
+    for(let n=0;n<100&&providerAnswers.length<1;n++)await new Promise(resolve=>setTimeout(resolve,10));assert.deepEqual(providerAnswers,[choices[7]]);assert.equal(answers.length,2);assert.deepEqual(answers[0],answers[1]);assert.equal(answers[0].body.text,choices[7]);assert(answers[0].path.includes(`/threads/${q.thread}/turns/${q.turn}/`));
+    click(q,7);await pollTelegram(db,users,remote);await telegramAgentStep(db,users,local,remote);assert.equal(answers.length,2);
+    const revoked=await ask();click(revoked,1);await pollTelegram(db,users,remote);await ui(`/api/agents/${agent}/scripts`,{id:randomUUID(),revision:1,enabled:false});await assert.rejects(telegramAgentStep(db,users,local,remote),/Script discovery is unavailable or unsafe\.|403/);assert.equal(db.prepare('SELECT status FROM telegram_callbacks WHERE notice=?').get(revoked.id)!.status,'queued');assert.equal(answers.length,2);
+    await ui(`/api/agents/${agent}/scripts`,{id:randomUUID(),revision:2,enabled:true});await telegramAgentStep(db,users,local,remote);assert.equal(answers.at(-1).body.text,choices[1]);
+    const cancelled=await ask();await ui(`/api/threads/${cancelled.thread}/turns/${cancelled.turn}/cancel`,{id:randomUUID()});click(cancelled,2);await pollTelegram(db,users,remote);await telegramAgentStep(db,users,local,remote);assert(sent.some(item=>item.text.includes('Answer could not be applied')));
+    free=true;const custom=await ask();assert.equal(custom.notice.reply_markup,undefined);click(custom,0);await pollTelegram(db,users,remote);assert.equal(db.prepare('SELECT 1 FROM telegram_callbacks WHERE notice=?').get(custom.id),undefined);
+  }finally{db.close();await app.close();provider.closeAllConnections();await new Promise<void>(resolve=>provider.close(()=>resolve()));rmSync(root,{recursive:true,force:true});}
+});
+
+test('Telegram callback migration preserves prior approval selection and defaults legacy question choices',async()=>{
+  const db=new DatabaseSync(':memory:'),notice=randomUUID(),id=randomUUID();
+  try{
+    db.exec("CREATE TABLE telegram_callbacks(notice TEXT PRIMARY KEY,id TEXT NOT NULL UNIQUE,chat INTEGER NOT NULL,message INTEGER NOT NULL,accepted INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'queued') STRICT; CREATE TABLE telegram_questions(id TEXT PRIMARY KEY,turn TEXT NOT NULL,thread TEXT NOT NULL,chat INTEGER NOT NULL) STRICT;");
+    db.prepare('INSERT INTO telegram_callbacks VALUES (?,?,?,?,?,?)').run(notice,id,4,100,1,'queued');db.prepare('INSERT INTO telegram_questions VALUES (?,?,?,?)').run(randomUUID(),randomUUID(),randomUUID(),4);
+    initializeTelegram(db);initializeTelegram(db);assert.equal(db.prepare('SELECT selection FROM telegram_callbacks').get()!.selection,1);assert.equal(db.prepare('SELECT choices FROM telegram_questions').get()!.choices,'[]');
+  }finally{db.close();}
+});
+
 test('Telegram offline recovery preserves sent parts and rejects repeated operator decisions', async () => {
   const {mkdtempSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
   const {spawnSync}=await import('node:child_process');const {telegramJournal}=await import('./telegram-runner.ts');
