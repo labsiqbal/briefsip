@@ -18,7 +18,7 @@ import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, useId, ty
 import { ArrowUp, Brain, CircleAlert, ChevronDown, ChevronLeft, ChevronRight, Clock, Ellipsis, FolderOpen, Hash, MessageSquare, PanelLeft, PanelRight, Paperclip, Plus, RefreshCw, Route, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
-import { SidebarResizeHandle, useResizableSidebar } from './ui/resizable';
+import { PanelResizeHandle, detailsPanel, sidebarPanel, useResizablePanel } from './ui/resizable';
 import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Collapsible, Combobox, ConfirmProvider, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Segmented, Select, SkeletonRows, Textarea, useConfirm, type SelectOption } from './ui/kit';
 import { createRoot } from 'react-dom/client';
 import { Dialog as RadixDialog } from 'radix-ui';
@@ -305,6 +305,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   }
   const [menuOpen, setMenuOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useDetailsOpen();
+  const details = useResizablePanel(detailsPanel);
   const [filesOpen, setFilesOpen] = useState(false);
   const filesSection = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -428,7 +429,8 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
         </div>
       </header>
     </main>
-    {detailsOpen && <aside className="details" aria-label="Conversation details">
+    {detailsOpen && <aside className="details" style={{ width: `${details.width}px` }} aria-label="Conversation details">
+      <PanelResizeHandle panel={details} />
       <div className="details__top">
         {onEdit && <button type="button" className="icon-btn icon-btn--bordered details__gear" onClick={onEdit} aria-label={editLabel} title={editLabel}><Settings size={16} aria-hidden /></button>}
         <button type="button" className="icon-btn icon-btn--bordered" onClick={() => setDetailsOpen(false)} aria-label="Close details"><X size={16} aria-hidden /></button>
@@ -1134,7 +1136,7 @@ function App() {
   const [dialog, setDialog] = useState<Dialog>(null);
   const [newMenu, setNewMenu] = useState(false);
   const [collapsed, setCollapsedState] = useState(() => { try { return localStorage.getItem(collapsedKey) === '1'; } catch { return false; } });
-  const sidebar = useResizableSidebar();
+  const sidebar = useResizablePanel(sidebarPanel);
   const [openedThread, setOpenedThread] = useState<{ agent: string; thread: string } | null>(null);
   const [activityError, setActivityError] = useState(false);
   const [editReload, setEditReload] = useState(0);
@@ -1204,8 +1206,9 @@ function App() {
   else if (agent) content = <AgentConversations onOpenChannel={openChannel} key={agent.id} agent={agent} workflowAgents={directory.agents} configured={directory.configured} initialThread={openedThread?.agent === agent.id ? openedThread.thread : undefined} onThreadOpened={() => setOpenedThread(null)} onOpenAgent={openThread} onEdit={() => setDialog('edit')} />;
   else content = <main className="chat chat--empty bs-root"><div className="empty-chat"><div className="empty-chat__title">Create your first agent</div><div className="empty-chat__sub">Name it, choose a model, then explain how it should work. The agent and its history are saved on this computer.</div><button type="button" className="btn btn--primary" onClick={() => setDialog('agent')}><Plus size={16} aria-hidden /> New agent</button></div></main>;
   const created = (item: Agent) => { setDirectory(current => current && { ...current, agents: [...current.agents.filter(agent => agent.id !== item.id), item] }); openAgent(item.id); };
-  return <RadixDialog.Root modal open={!!settings} onOpenChange={open => setSettings(current => open ? current ?? 'skills' : null)}><div className={`app bs-root${collapsed ? ' is-sidebar-collapsed' : ''}${sidebar.isDragging ? ' is-sidebar-resizing' : ''}`}>
-    <aside className={`sidebar${collapsed ? ' is-collapsed' : ''}`} style={collapsed ? undefined : { width: `${sidebar.width}px` }} aria-label="Workspace navigation">
+  return <RadixDialog.Root modal open={!!settings} onOpenChange={open => setSettings(current => open ? current ?? 'skills' : null)}><div className={`app bs-root${collapsed ? ' is-sidebar-collapsed' : ''}`}>
+    {collapsed && <button type="button" className="icon-btn icon-btn--bordered sidebar-reveal" onClick={() => setCollapsed(false)} aria-label="Expand sidebar" title="Sidebar (Ctrl/Cmd+B)"><PanelLeft size={16} aria-hidden /></button>}
+    {!collapsed && <aside className="sidebar" style={{ width: `${sidebar.width}px` }} aria-label="Workspace navigation">
       <div className="sidebar__titlebar">
         {!collapsed && <a className="sidebar__brand" href="/">Briefsip</a>}
         <div className="sidebar__controls">
@@ -1250,8 +1253,8 @@ function App() {
         {!collapsed && <div className="provider-status" role="status"><i className={directory?.configured ? 'is-on' : ''} aria-hidden /><span>{activityError ? 'Status not updated. Trying again.' : directory?.configured ? 'Provider configured' : 'Provider not connected'}</span></div>}
         <RadixDialog.Trigger asChild><button type="button" className="icon-btn icon-btn--bordered" aria-label="Settings" title="Settings (Ctrl/Cmd+,)"><Settings size={16} aria-hidden /></button></RadixDialog.Trigger>
       </div>
-      {!collapsed && <SidebarResizeHandle width={sidebar.width} maxWidth={sidebar.maxWidth} onWidthChange={sidebar.setWidth} onDraggingChange={sidebar.setIsDragging} />}
-    </aside>
+      <PanelResizeHandle panel={sidebar} />
+    </aside>}
     {content}
     {dialog === 'agent' && directory && <AgentForm model={directory.defaultModel} onCancel={() => setDialog(null)} onCreated={item => { created(item); setDialog(null); }} />}
     {dialog === 'channel' && directory && <ChannelForm agents={directory.agents} onCancel={() => setDialog(null)} onCreated={item => { setChannels(current => [...current.filter(room => room.id !== item.id), item]); openChannel(item.id); }} />}

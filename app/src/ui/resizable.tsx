@@ -1,117 +1,119 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Separator } from 'radix-ui';
 
-const SIDEBAR_DEFAULT_WIDTH = 350;
-const SIDEBAR_MIN_WIDTH = 240;
-const SIDEBAR_MAX_WIDTH = 480;
-const sidebarWidthKey = 'briefsip:sidebar-width';
+/** A side panel whose width the user drags, kept per browser. `edge` is where the handle sits. */
+export type PanelSpec = { key: string; label: string; edge: 'left' | 'right'; defaultWidth: number; minWidth: number; maxWidth: number; maxFraction: number };
+
+export const sidebarPanel: PanelSpec = { key: 'briefsip:sidebar-width', label: 'Resize sidebar', edge: 'right', defaultWidth: 350, minWidth: 240, maxWidth: 480, maxFraction: 0.45 };
+export const detailsPanel: PanelSpec = { key: 'briefsip:details-width', label: 'Resize details', edge: 'left', defaultWidth: 360, minWidth: 280, maxWidth: 560, maxFraction: 0.4 };
 
 function viewportWidth() {
   return typeof window === 'undefined' ? 1280 : window.innerWidth;
 }
 
-function maxSidebarWidth(viewport: number) {
-  return Math.min(SIDEBAR_MAX_WIDTH, Math.floor(viewport * 0.45));
+function maxPanelWidth(spec: PanelSpec, viewport: number) {
+  return Math.min(spec.maxWidth, Math.floor(viewport * spec.maxFraction));
 }
 
-function clampWidth(value: number, max: number) {
-  // Below 534px, the strict viewport cap takes precedence over the preferred minimum.
-  return Math.min(max, Math.max(Math.min(SIDEBAR_MIN_WIDTH, max), Math.round(value)));
+function clampWidth(spec: PanelSpec, value: number, max: number) {
+  // On narrow windows the viewport cap takes precedence over the preferred minimum.
+  return Math.min(max, Math.max(Math.min(spec.minWidth, max), Math.round(value)));
 }
 
-function readWidth(max: number) {
+function readWidth(spec: PanelSpec, max: number) {
   try {
-    const saved = localStorage.getItem(sidebarWidthKey);
+    const saved = localStorage.getItem(spec.key);
     const value = saved?.trim() ? Number(saved) : NaN;
-    return clampWidth(Number.isFinite(value) ? value : SIDEBAR_DEFAULT_WIDTH, max);
+    return clampWidth(spec, Number.isFinite(value) ? value : spec.defaultWidth, max);
   } catch {
-    return clampWidth(SIDEBAR_DEFAULT_WIDTH, max);
+    return clampWidth(spec, spec.defaultWidth, max);
   }
 }
 
-function saveWidth(width: number) {
-  try { localStorage.setItem(sidebarWidthKey, String(width)); } catch { /* The width still applies to this page. */ }
+function saveWidth(spec: PanelSpec, width: number) {
+  try { localStorage.setItem(spec.key, String(width)); } catch { /* The width still applies to this page. */ }
 }
 
-export function useResizableSidebar() {
+export function useResizablePanel(spec: PanelSpec) {
   const [viewport, setViewport] = useState(viewportWidth);
-  const maxWidth = maxSidebarWidth(viewport);
-  const [width, setWidthState] = useState(() => readWidth(maxSidebarWidth(viewportWidth())));
-  const [isDragging, setIsDragging] = useState(false);
+  const maxWidth = maxPanelWidth(spec, viewport);
+  const [width, setWidthState] = useState(() => readWidth(spec, maxPanelWidth(spec, viewportWidth())));
 
   const setWidth = useCallback((value: number) => {
-    const next = clampWidth(value, maxWidth);
+    const next = clampWidth(spec, value, maxWidth);
     setWidthState(next);
-    saveWidth(next);
-  }, [maxWidth]);
+    saveWidth(spec, next);
+  }, [spec, maxWidth]);
 
   useEffect(() => {
     const resize = () => {
       setViewport(window.innerWidth);
-      const nextMax = maxSidebarWidth(window.innerWidth);
+      const nextMax = maxPanelWidth(spec, window.innerWidth);
       setWidthState(current => {
-        const next = clampWidth(current, nextMax);
-        if (next !== current) saveWidth(next);
+        const next = clampWidth(spec, current, nextMax);
+        if (next !== current) saveWidth(spec, next);
         return next;
       });
     };
     window.addEventListener('resize', resize);
     return () => window.removeEventListener('resize', resize);
-  }, []);
+  }, [spec]);
 
-  return { width, maxWidth, isDragging, setWidth, setIsDragging };
+  return { spec, width, maxWidth, setWidth };
 }
 
-type SidebarResizeHandleProps = {
-  width: number;
-  maxWidth: number;
-  onWidthChange: (width: number) => void;
-  onDraggingChange: (dragging: boolean) => void;
-};
+/** While any panel drags, the document carries `is-panel-resizing` so text selection and transitions pause. */
+function setResizing(on: boolean) {
+  document.documentElement.classList.toggle('is-panel-resizing', on);
+}
 
-export function SidebarResizeHandle({ width, maxWidth, onWidthChange, onDraggingChange }: SidebarResizeHandleProps) {
+export function PanelResizeHandle({ panel }: { panel: ReturnType<typeof useResizablePanel> }) {
+  const { spec, width, maxWidth, setWidth } = panel;
   const drag = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
-  useEffect(() => () => onDraggingChange(false), [onDraggingChange]);
+  useEffect(() => () => setResizing(false), []);
+  // A handle on the panel's left edge grows the panel when dragged left.
+  const direction = spec.edge === 'right' ? 1 : -1;
 
   const endDrag = (event: PointerEvent<HTMLDivElement>) => {
     if (drag.current?.pointerId !== event.pointerId) return;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     drag.current = null;
-    onDraggingChange(false);
+    event.currentTarget.removeAttribute('data-dragging');
+    setResizing(false);
   };
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || drag.current) return;
     event.preventDefault();
-    event.currentTarget.focus();
     event.currentTarget.setPointerCapture(event.pointerId);
+    event.currentTarget.setAttribute('data-dragging', '');
     drag.current = { pointerId: event.pointerId, startX: event.clientX, startWidth: width };
-    onDraggingChange(true);
+    setResizing(true);
   };
 
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
     if (drag.current?.pointerId !== event.pointerId) return;
-    onWidthChange(drag.current.startWidth + event.clientX - drag.current.startX);
+    setWidth(drag.current.startWidth + direction * (event.clientX - drag.current.startX));
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     let next: number | undefined;
-    if (event.key === 'ArrowLeft') next = width - 16;
-    else if (event.key === 'ArrowRight') next = width + 16;
-    else if (event.key === 'Home') next = SIDEBAR_MIN_WIDTH;
+    if (event.key === 'ArrowLeft') next = width - 16 * direction;
+    else if (event.key === 'ArrowRight') next = width + 16 * direction;
+    else if (event.key === 'Home') next = spec.minWidth;
     else if (event.key === 'End') next = maxWidth;
     if (next === undefined) return;
     event.preventDefault();
-    onWidthChange(next);
+    setWidth(next);
   };
 
   return <Separator.Root
-    className="sidebar__resize-handle"
+    className={`panel-resize-handle panel-resize-handle--${spec.edge}`}
     decorative={false}
     orientation="vertical"
-    aria-label="Resize sidebar"
+    aria-label={spec.label}
     aria-orientation="vertical"
-    aria-valuemin={Math.min(SIDEBAR_MIN_WIDTH, maxWidth)}
+    aria-valuemin={Math.min(spec.minWidth, maxWidth)}
     aria-valuemax={maxWidth}
     aria-valuenow={width}
     aria-valuetext={`${width} pixels`}
@@ -122,6 +124,6 @@ export function SidebarResizeHandle({ width, maxWidth, onWidthChange, onDragging
     onPointerUp={endDrag}
     onPointerCancel={endDrag}
     onLostPointerCapture={endDrag}
-    onDoubleClick={() => onWidthChange(SIDEBAR_DEFAULT_WIDTH)}
+    onDoubleClick={() => setWidth(spec.defaultWidth)}
   />;
 }
