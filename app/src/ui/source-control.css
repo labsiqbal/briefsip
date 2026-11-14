@@ -1,0 +1,24 @@
+.source-control { min-width: 0; }
+.source-control .k-section { gap: 8px; }
+.source-control .k-section__title { font-size: 13px; }
+.source-control .k-row { min-width: 0; }
+.source-control .k-row__main { min-width: 0; padding: 8px; }
+.source-control .k-row__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-control .k-badge { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.source-control__files { max-height: 264px; overflow-y: auto; overflow-x: hidden; }
+.source-control__status { display: inline-block; width: 2ch; white-space: pre; font-family: var(--font-mono-stack); color: var(--color-text-secondary); }
+.source-control__hint { margin: 0; font-size: 12px; color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.source-control__unavailable { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; font-size: 12px; color: var(--color-text-secondary); }
+.git-diff { width: 100%; min-width: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--color-border-tertiary); border-radius: 8px; background: var(--color-bg-pane); }
+.git-diff__lines { width: max-content; min-width: 100%; font-family: var(--font-mono-stack); font-size: 12px; line-height: 22px; }
+.git-diff__line { display: flex; min-height: 22px; white-space: pre; }
+.git-diff__line code { padding: 0 12px; font: inherit; }
+.git-diff__number { display: inline-block; width: 5ch; flex-shrink: 0; padding: 0 6px; text-align: right; color: var(--color-text-secondary); font-variant-numeric: tabular-nums; user-select: none; }
+.git-diff__line.is-add { color: var(--color-success-text); background: var(--color-success-bg); }
+.git-diff__line.is-remove { color: var(--color-danger-text); background: var(--color-danger-bg); }
+.git-diff__line.is-hunk, .git-diff__line.is-meta { color: var(--color-text-secondary); }
+.git-diff__line.is-hunk { background: var(--color-bg-tertiary); }
+.checkpoint-action { margin-top: 8px; }
+.checkpoint-files { display: flex; flex-direction: column; gap: 8px; max-height: 280px; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
+.checkpoint-files li { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.checkpoint-files li > span:first-child { overflow-wrap: anywhere; min-width: 0; }

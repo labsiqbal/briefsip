@@ -108,7 +108,10 @@
     "app/t3/environment-link.ts": "eb842ebe6ea6403fd4adaef5016d1b2da277666051f63284f827a31ec5f9a19d",
     "app/t3/mcp-session-registry.ts": "6a16d9d250b10dd01556180e31dc2efb38f3580aad47cbfaa8eefb7ad3357967",
     "app/t3/mcp-tool-access.ts": "b9b209f536312658cd9c962a99a874945ac7915a95f959fa092a671cf55c3c50",
-    "app/mcp-server.ts": "c707cfbcd40a63cbd5df425c763f22a2d50da591c5d7590a6729224fdcbcf718"
+    "app/mcp-server.ts": "c707cfbcd40a63cbd5df425c763f22a2d50da591c5d7590a6729224fdcbcf718",
+    "app/workspace-git.ts": "1a1f70315f5fb397981e0c3ceb61b3adc89281329dcae252179754eaab2aa4ff",
+    "app/src/SourceControl.tsx": "e57ee243489ac4811838ee2a9ca8e85fa0aed73b34346d20fd49d7323b00f4b8",
+    "app/src/ui/source-control.css": "8b85c9f079aec8cb46ec8136a154baeb43dfe89efe08735bb476bc1553936053"
   },
   "typeSubstitutions": {
     "HttpServerRequest.HttpServerRequest": "LinkRequest with originalUrl and lowercase scalar headers",
@@ -117,7 +120,8 @@
     "Effect TaggedError": "plain discriminated record factories ConnectionTransientError/ConnectionBlockedError; message=detail",
     "ConnectionFailureFields": "ConnectionDiagnostics alias, retaining hop/via/failureCause/httpStatus/traceId",
     "ExecutionEnvironmentCapabilities": "only optional boolean threadRestartContinuation retained; native decoder drops unknown names",
-    "desktop-bootstrap": "briefsip-local-bootstrap; current caller authentication still required"
+    "desktop-bootstrap": "briefsip-local-bootstrap; current caller authentication still required",
+    "Effect Git/checkpoint services": "plain async functions, execFile argument arrays and durable node:sqlite operation/checkpoint journals"
   },
   "uiSourceEntries": [
     {
@@ -340,6 +344,154 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "compatibilityCheck": "app/mcp-server.test.ts"
+    }
+  ],
+  "workspaceSourceControlEntries": [
+    {
+      "sourcePath": "apps/server/src/vcs/GitVcsDriver.ts",
+      "symbols": [
+        "captureCheckpoint",
+        "restoreCheckpoint",
+        "write-tree",
+        "commit-tree",
+        "update-ref"
+      ],
+      "adaptation": "Temporary-index, stash-free working-tree capture and private checkpoint refs, translated from Effect into plain TypeScript. Raw blob capture includes untracked regular files; Briefsip adds binding boundaries, SQLite intent receipts, restore confirmation digests and conservative uncertain recovery.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "f44227ab093c129d26d1a3898c583d74b3522bddc117af788cff9b8094323e88",
+      "localPath": "app/workspace-git.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/workspace-git.test.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/vcs/GitVcsDriverCore.ts",
+      "symbols": [
+        "status",
+        "commit",
+        "createWorktree"
+      ],
+      "adaptation": "Local Git status, temporary-index commit and branch/worktree command patterns. Uses execFile argument arrays and local identity; Briefsip excludes remotes, disables hooks/filters/signing, bounds storage/output and records durable tool-call receipts.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "2f14761316e748cf3e1059fe3969d57d899708b9edbba4f6aba7d648fd3d1b40",
+      "localPath": "app/workspace-git.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/workspace-git.test.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/checkpointing/CheckpointStore.ts",
+      "symbols": [
+        "CheckpointStore",
+        "captureCheckpoint",
+        "restoreCheckpoint"
+      ],
+      "adaptation": "Checkpoint lifecycle and before-turn restoration semantics adapted to node:sqlite and private refs, with 50-ref retention. No Effect services or T3 runtime dependency.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "a1b1a7f354011b329472d01b3b0d03c877a010e5eb7a27acb4e0f0eff406cf4a",
+      "localPath": "app/workspace-git.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/workspace-git.test.ts"
+    },
+    {
+      "sourcePath": "packages/source-control-core/src/server/diffFileRevisions.ts",
+      "symbols": [
+        "parseDiffFileRevisions",
+        "parseEntries"
+      ],
+      "adaptation": "Text-only bounded unified diff semantics and hunk-body guard for line numbering, expressed using native Git output and a neutral React renderer.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "5e92306220e2e921a00f52e61036bf0ddb3216bff21991b89363d09321f9a9dc",
+      "localPath": "app/src/SourceControl.tsx",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/BranchToolbar.logic.ts",
+      "symbols": [
+        "resolveCurrentWorkspaceLabel",
+        "resolveEnvModeLabel"
+      ],
+      "adaptation": "Local branch/worktree status display patterns adapted to Briefsip kit rows; no remote actions. Create pull request remains disabled with Not available yet.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "bbc30bf2c91d0c59c15e35c4ab957dfe4e0bcfffdda2bfe992f393ae7dab3b5c",
+      "localPath": "app/src/SourceControl.tsx",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/diffs/DiffFileStatus.tsx",
+      "symbols": [
+        "DiffFileStatus"
+      ],
+      "adaptation": "Changed-file status labels adapted to Briefsip kit list rows using porcelain status codes.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "5acfc301203da0c3be04aaa4814f46bae9ccdbb4a8c6324f5bf84b3d5a824c3a",
+      "localPath": "app/src/SourceControl.tsx",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/diffs/StyledDiffCodeView.tsx",
+      "symbols": [
+        "StyledDiffCodeView"
+      ],
+      "adaptation": "Two line-number gutters, addition/deletion colors and viewer-local horizontal scrolling adapted to Briefsip tokens. No syntax-highlighting or diff-view package copied.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "e707de894e7631a8500cfe134bfe40a99eb3f001b74d3ac3f36285d883bbbeb5",
+      "localPath": "app/src/SourceControl.tsx",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "work/rebuild/ui-smoke/smoke.mjs"
+    }
+  ],
+  "workspaceSourceControlInspected": [
+    {
+      "sourcePath": "packages/source-control-core/src/shared/definition.ts",
+      "symbols": [
+        "SourceControlDefinition"
+      ],
+      "adaptation": "Inspected host/provider interface only; no remote, account, forge or pull-request code copied.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "dd1153e65d9da9335f2237a0d325ceaa0006cec08dc7f78a5ad4a6f769672fef",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": []
+    },
+    {
+      "sourcePath": "packages/source-control-core/src/server/discovery.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "2bd0e4c346d7df41f05cfabdb3ee9d7c4d69ac9399b62586766545a3ee456ef1",
+      "adaptation": "Inspected only. Provider/forge discovery, remote operations and pull-request integrations excluded from this local-only slice.",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE"
+    },
+    {
+      "sourcePath": "packages/source-control-core/src/server/driver.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "20fe22951da081fe4b6159ee05bae759a6ce7c5d28a7b859141ba6397c3e9172",
+      "adaptation": "Inspected only. Provider/forge discovery, remote operations and pull-request integrations excluded from this local-only slice.",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE"
+    },
+    {
+      "sourcePath": "packages/source-control-definitions/src/registry.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "1c3a999bb7e385aefbe97f79a1652c09638408b55bf696e3dcb104f04b78d53b",
+      "adaptation": "Inspected only. Provider/forge discovery, remote operations and pull-request integrations excluded from this local-only slice.",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE"
     }
   ]
 }

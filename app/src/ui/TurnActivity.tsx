@@ -4,12 +4,13 @@ import { activityLabel, liveTurn, type TurnActivityData } from './transcript';
 
 type Props = {
   turn: {
-    status: string; paused: number; created: string; routing?: string | null; recipient?: string | null; agent_name?: string; activity?: TurnActivityData;
+    status: string; paused: number; created: string; routing?: string | null; recipient?: string | null; agent_name?: string;
     coordination?: { kind: string; child: string | null; owner_name: string; target_name: string }[];
     agentMessages?: { id: string; name: string; status: string; settled: number; expects_reply: number }[];
     receivedAgentReplies?: { id: string; name: string; status: string }[];
     events?: { id: string; event: string; status: string }[];
     questions?: { id: string; prompt: string; answer: string | null }[];
+    activity?: TurnActivityData & { checkpoints?: { turn: string; state: string }[] };
     generatedFiles?: { id: string; name: string }[];
   };
   agentName: string;
@@ -39,6 +40,7 @@ export function TurnActivity({ turn, agentName, onOpenTask }: Props) {
   for (const event of turn.events ?? []) steps.push({ id: `event-${event.id}`, text: `Event ${event.event} · ${event.status}` });
   for (const question of turn.questions ?? []) steps.push({ id: `question-${question.id}`, text: `${question.answer === null ? 'Asked' : 'Answered'}: ${question.prompt}` });
   for (const file of turn.generatedFiles ?? []) steps.push({ id: `file-${file.id}`, text: `Generated ${file.name}` });
+  for (const checkpoint of turn.activity?.checkpoints ?? []) steps.push({ id: `checkpoint-${checkpoint.turn}`, text: checkpoint.state === 'done' ? 'Git checkpoint captured' : `Git checkpoint ${checkpoint.state}` });
   if (turn.activity?.fallback_model) steps.push({ id: 'fallback', text: `Fallback model used: ${turn.activity.fallback_model}` });
   return <div className="turn-activity">
     <Collapsible title={<span>{activityLabel(turn, now)}</span>}>
