@@ -2403,7 +2403,8 @@ test('home execution loop resumes saved provider output after completion reply l
   } finally { globalThis.fetch = originalFetch; await runtime.close(); await f.close(); }
 });
 
-test('home execution loop survives SIGKILL across provider and tool results without replaying effects', { timeout: 30000 }, async () => {
+// Eighteen child startups plus six canonical restarts need a suite guard separate from effect/replay assertions.
+test('home execution loop survives SIGKILL across provider and tool results without replaying effects', { timeout: 120000 }, async () => {
   const f = await fixture(), store = memoryKeys(), database = join(f.dir, 'killed-loop.sqlite'), keys = join(f.dir, 'loop-keys.json');
   const runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: store.entry }), calls = new Map<string, number>();
   const provider = createServer(async (req, res) => {

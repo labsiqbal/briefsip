@@ -3,6 +3,23 @@
   "repository": "https://github.com/NousResearch/hermes-agent",
   "revision": "d923a5eb487a17c0a68801bba9ef0f56c81040a8",
   "local_checkout": "/home/user/.hermes/hermes-agent",
-  "sources": ["tools/bot_desktop/runtime.py", "tools/bot_desktop/lease.py", "tools/bot_desktop/thumbnail.py", "tui_gateway/methods_display.py", "tui_gateway/methods_display_watch.py", "tui_gateway/contracts/display.py", "plugins/computer_use/"],
-  "license": "MIT; notice in agent-desktop.LICENSE"
+  "sources": [
+    "tools/bot_desktop/runtime.py",
+    "tools/bot_desktop/lease.py",
+    "tools/bot_desktop/thumbnail.py",
+    "tui_gateway/methods_display.py",
+    "tui_gateway/methods_display_watch.py",
+    "tui_gateway/contracts/display.py",
+    "plugins/computer_use/"
+  ],
+  "license": "MIT; notice in agent-desktop.LICENSE",
+  "takeover": {
+    "adapted_from": [
+      "tools/bot_desktop/lease.py",
+      "tui_gateway/methods_display.py",
+      "tui_gateway/methods_display_watch.py"
+    ],
+    "revision": "d923a5eb487a17c0a68801bba9ef0f56c81040a8",
+    "logic": "Hermes single-holder lease, persistent holder/since/epoch, request reason, and tool-level human-control fence translated into TypeScript. Briefsip uses SQLite revisions, its own durable turn pause/resume journal, screenshot hand-back note, SSE transport and three-viewer cap; no Hermes runtime or UI copied."
+  }
 }

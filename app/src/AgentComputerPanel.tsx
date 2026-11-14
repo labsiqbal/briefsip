@@ -1,9 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
-import { Alert, Badge, Button, Section } from './ui/kit';
+import { useEffect, useId, useRef, useState } from 'react';
+import { Alert, Badge, Button, Dialog, Section } from './ui/kit';
+import { Expand } from 'lucide-react';
+import { ComputerViewer } from './ComputerViewer';
 import type { DesktopStatus } from '../agent-desktop';
-export type ComputerStatus = DesktopStatus & { enabled: boolean; revision: number };
+import type { ComputerControl, ComputerWait } from '../agent-computer';
+export type ComputerStatus = DesktopStatus & { enabled: boolean; revision: number; control: ComputerControl; requests: ComputerWait[] };
 export type ComputerRequest = <T>(path: string, body?: unknown) => Promise<T>;
-export function AgentComputerPanel({ agent, request }: { agent: string; request: ComputerRequest }) {
+export function AgentComputerPanel({ agent, name, request }: { agent: string; name: string; request: ComputerRequest }) {
+  const titleId = useId();
+  const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<ComputerStatus | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false), [frame, setFrame] = useState('');
   const root = useRef<HTMLDivElement>(null), locked = useRef(false), active = useRef(true);
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
@@ -41,12 +46,12 @@ export function AgentComputerPanel({ agent, request }: { agent: string; request:
     finally { locked.current = false; if (active.current) setBusy(false); }
   }
   const state = status?.state ?? 'off';
-  return <div ref={root} className="bs-root k-stack"><Section title="Computer" actions={<Badge>{status === null ? 'Loading...' : state === 'starting' ? 'Starting' : state === 'running' ? 'Running' : state === 'idle' ? 'Idle' : 'Off'}</Badge>}>
+  return <div ref={root} className="bs-root k-stack"><Section id={titleId} title="Computer" actions={<><Badge>{status?.requests.length ? 'Waiting for you' : status === null ? 'Loading...' : state === 'starting' ? 'Starting' : state === 'running' ? 'Running' : state === 'idle' ? 'Idle' : 'Off'}</Badge><Button size="sm" icon={<Expand size={14} aria-hidden />} onClick={() => setOpen(true)}>Open</Button></>}>
     {frame && ['running','idle'].includes(state) && <img src={frame} width={960} height={600} alt="Agent computer screen" style={{ display: 'block', width: '100%', height: 'auto', borderRadius: 'var(--radius-md)' }} />}
-    <p className="k-field__hint">Watch only{status?.stopsInMs != null ? ` · Stops in ${Math.max(1, Math.ceil(status.stopsInMs / 60000))} min` : ''}</p>
+    <p className="k-field__hint">{status?.control.mode === 'user' ? 'You are in control' : 'Agent in control'}{status?.stopsInMs != null ? ` · Stops in ${Math.max(1, Math.ceil(status.stopsInMs / 60000))} min` : ''}</p>
     {status && !status.available && <p className="k-field__hint">Computer is disabled on this server.</p>}
     {status?.available && !status.enabled && <p className="k-field__hint">Enable Computer in agent settings.</p>}
     {error && <Alert tone="error">{error}</Alert>}
     <div className="k-inline"><Button size="sm" disabled={!status?.available || !status.enabled || busy || state !== 'off'} busy={busy && state === 'starting'} onClick={() => void control('start')}>Start computer</Button><Button size="sm" disabled={!status || busy || state === 'off'} onClick={() => void control('stop')}>Stop computer</Button></div>
-  </Section></div>;
+  </Section><Dialog open={open} onOpenChange={setOpen} title={`${name}'s computer`} size="lg"><ComputerViewer agent={agent} name={name} request={request} /></Dialog></div>;
 }

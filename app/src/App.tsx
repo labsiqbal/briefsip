@@ -1,5 +1,7 @@
 import './ui/csp-nonce';
 import { SourceControl, RestoreCheckpoint } from './SourceControl';
+import { ComputerViewer, ComputerRequestCard } from './ComputerViewer';
+import type { ComputerWait } from '../agent-computer';
 import { AgentComputerPanel } from './AgentComputerPanel';
 import { AgentComputerSettings } from './AgentComputerSettings';
 import { restoreChatCommand, restoreChannelCommand, type ChatCommand, type ChannelCommand } from '../conversation-command';
@@ -60,11 +62,11 @@ const McpPanel = lazy(() => import('./McpPanel').then(module => ({ default: modu
 const ConnectedAppsPanel = lazy(() => import('./ConnectedAppsPanel').then(module => ({ default: module.ConnectedAppsPanel })).catch(panelLoadFailure));
 const SkillsPanel = lazy(() => import('./SkillsPanel').then(module => ({ default: module.SkillsPanel })).catch(panelLoadFailure));
 
-type Agent = { avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; thread_limit: number; revision: number; id: string; name: string; model: string; instructions: string };
+type Agent = { computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; thread_limit: number; revision: number; id: string; name: string; model: string; instructions: string };
 type Channel = { activity: number; read_position: number; revision: number; archived: number; id: string; name: string; instructions: string; members: string[]; lead: string | null };
 type Thread = { id: string; agent: string; name: string; revision: number; archived: number; deleted: number };
 type AgentMessage = { generatedFiles?: { id: string; name: string; size: number; thread: string }[]; paused: number; request: string; expects_reply: number; settled: number; id: string; agent: string; thread: string; name: string; status: string; error: string | null; reply: string | null; truncated: boolean };
-type Turn = { checkpoint?: { turn: string; restorable: boolean } | null; approvals?: AppApproval[]; recipient?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { kind?: 'peer'; name: string; agent: string | null; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
+type Turn = { computerWait?: ComputerWait; checkpoint?: { turn: string; restorable: boolean } | null; approvals?: AppApproval[]; recipient?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { kind?: 'peer'; name: string; agent: string | null; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
 type Directory = { agents: Agent[]; configured: boolean; defaultModel: string };
 type Pending = ChatCommand;
 const statusNames: Record<string, string> = { queued: 'Queued', running: 'Replying', done: 'Done', failed: 'Failed', interrupted: 'Interrupted', cancelled: 'Cancelled' };
@@ -186,7 +188,7 @@ function TaskControls({ turn, path, members, archived }: { turn: Turn; path: str
   const [recipient, setRecipient] = useState(''), [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const pending = useRef<{ action: string; data: { id: string; revision: number; recipient?: string; acknowledgeUncertain?: boolean } } | null>(null);
-  if (turn.approvals?.some(approval => approval.state === 'approval' || approval.state === 'ready' && !['failed','interrupted'].includes(turn.status)) || ['done','cancelled'].includes(turn.status) || turn.questions?.some(question => question.answer === null)) return null;
+  if (turn.computerWait || turn.approvals?.some(approval => approval.state === 'approval' || approval.state === 'ready' && !['failed','interrupted'].includes(turn.status)) || ['done','cancelled'].includes(turn.status) || turn.questions?.some(question => question.answer === null)) return null;
   const resumable = !!turn.paused || ['failed','interrupted'].includes(turn.status);
   async function control(action: string) {
     if (busy) return;
@@ -338,7 +340,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     { label: `${channel ? 'Channel' : 'Agent'} memory`, onSelect: () => setShowMemory(true) },
     { label: detailsOpen ? 'Hide details' : 'Show details', onSelect: () => setDetailsOpen(!detailsOpen) },
   ];
-  const statusLabel = (turn: Turn) => turn.approvals?.some(approval => approval.state === 'approval') && !['done','cancelled'].includes(turn.status) ? 'Waiting for approval' : turn.editing ? 'Editing' : turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) ? 'Waiting for your answer' : turn.no_update ? 'No updates' : turn.paused && !['done','cancelled'].includes(turn.status) ? 'Paused' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) && turn.status === 'queued' ? 'Waiting for agent reply' : turn.waiting_for && turn.status === 'queued' ? 'Waiting for delegation' : turn.routing === 'pending' && turn.status === 'running' ? 'Selecting recipient' : turn.routing === 'clarify' ? 'Needs clarification' : turn.routing === 'none' ? 'No task needed' : turn.status === 'running' ? 'Running' : statusNames[turn.status] ?? turn.status;
+  const statusLabel = (turn: Turn) => turn.computerWait ? 'Waiting for you' : turn.approvals?.some(approval => approval.state === 'approval') && !['done','cancelled'].includes(turn.status) ? 'Waiting for approval' : turn.editing ? 'Editing' : turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) ? 'Waiting for your answer' : turn.no_update ? 'No updates' : turn.paused && !['done','cancelled'].includes(turn.status) ? 'Paused' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) && turn.status === 'queued' ? 'Waiting for agent reply' : turn.waiting_for && turn.status === 'queued' ? 'Waiting for delegation' : turn.routing === 'pending' && turn.status === 'running' ? 'Selecting recipient' : turn.routing === 'clarify' ? 'Needs clarification' : turn.routing === 'none' ? 'No task needed' : turn.status === 'running' ? 'Running' : statusNames[turn.status] ?? turn.status;
   const tone = (turn: Turn) => turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) || turn.paused && !['done','cancelled'].includes(turn.status) ? 'attention' : ['failed','interrupted'].includes(turn.status) ? 'error' : ['queued','running'].includes(turn.status) ? 'working' : 'done';
   const time = (value: string) => new Date(value).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
   const openFocused = (id: string) => { focusedOnce.current = ''; setQuery(''); setFocusedTask(id); };
@@ -394,6 +396,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
                       {turn.reply && <SpeechPlayback key={`${path}:${turn.id}`} owner={`${path}:${turn.id}`} text={turn.reply} />}
                       {turn.events?.map(event => <section className="k-stack" key={event.id}><Row title={`Event ${event.event}: ${event.status === 'waiting' ? 'Waiting' : event.status === 'received' ? 'Received' : event.status === 'expired' ? 'Expired' : 'Closed'}`} meta={new Date(event.deadline).toLocaleString('en-US')} />{event.status === 'waiting' && !archived && <EventConnection path={`/api/turn-waits/${event.id}`} request={api} />}</section>)}
                       {turn.approvals?.map(approval => <ApprovalCard key={approval.id} approval={approval} path={`${path}/${turn.id}`} status={turn.status} archived={archived} request={api} />)}
+                      {turn.computerWait && <ComputerRequestCard agent={turn.agent} name={turn.agent_name ?? agent.name} wait={turn.computerWait} request={api} />}
                       {turn.questions?.map(question => <QuestionCard key={question.id} question={question} path={`${path}/${turn.id}`} status={turn.status} archived={archived} request={api} />)}
                       {!!turn.generatedFiles?.length && <section aria-label="Agent output files"><Card>{turn.generatedFiles.map(file => <Row key={file.id} title={<a className="k-link" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}>{file.name}</a>} meta={`${file.size} byte`}><HtmlPreview path={`${path.replace(/\/turns$/, '/files')}/${file.id}`} name={file.name} request={api} /></Row>)}</Card></section>}
                       {!!turn.receivedAgentReplies?.length && <Collapsible title={`Agent results received with this message (${turn.receivedAgentReplies.length})`}>{turn.receivedAgentReplies.map(item => <div className="k-stack" key={item.id}><div className="k-section__title message-plain"><strong>{item.name}</strong>: {statusNames[item.status] ?? item.status}</div>{item.error && <div className="k-field__error">{item.error}</div>}{item.reply && <div className="message-plain">{item.reply}</div>}{!!item.generatedFiles?.length && <Card>{item.generatedFiles.map(file => <Row key={file.id} title={<a className="k-link" href={`/api/threads/${file.thread}/files/${file.id}`} download={file.name}>{file.name}</a>} meta={`${file.size} bytes`} />)}</Card>}{item.truncated && <div className="k-field__hint">Result excerpt. Open the conversation for the full text.</div>}{onOpenAgent && <div className="k-row-actions"><Button size="sm" variant="ghost" onClick={() => onOpenAgent(item.agent, item.thread)}>Open conversation {item.name}</Button></div>}</div>)}</Collapsible>}
@@ -458,7 +461,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
         <div className="details__sections">
           {detailsExtra}
           {!channel && <SourceControl key={agent.id} agent={agent.id} request={api} />}
-          {!channel && <AgentComputerPanel key={agent.id} agent={agent.id} request={api} />}
+          {!channel && <AgentComputerPanel key={agent.id} agent={agent.id} name={agent.name} request={api} />}
           {channel && <section><div className="section-label">Read status</div><div className="panel-card"><div className="panel-row panel-row--setting"><span>{channel.activity > channel.read_position ? 'Unread activity' : 'All activity read'}</span><button type="button" className="cfg-btn cfg-btn--secondary" disabled={markingRead || channel.activity <= channel.read_position} onClick={() => { setMarkingRead(true); void onRead?.().catch(error => setError(message(error))).finally(() => setMarkingRead(false)); }}>Mark as read</button></div></div></section>}
           <section>
             <div className="section-label">Search conversation</div>
@@ -1215,8 +1218,8 @@ function App() {
     return collapsed
       ? <button key={item.id} type="button" className={`bot-rail-item${current ? ' is-selected' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgent(item.id)} title={item.name} aria-label={item.name}><AgentAvatar agent={item} size={36} /></button>
       : <button key={item.id} type="button" className={`bot-row${current ? ' is-selected' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgent(item.id)}>
-        <span className="bot-row__avatar"><AgentAvatar agent={item} size={36} />{item.provider_available === false && <span className="status-dot is-attention" aria-label="Provider account unavailable" />}</span>
-        <span className="bot-row__text"><span className="bot-row__name">{item.name}</span><span className="bot-row__preview">{item.hidden ? 'Hidden' : item.model || 'Model not selected'}</span></span>
+        <span className="bot-row__avatar"><AgentAvatar agent={item} size={36} />{item.computer_waiting && <span className="status-dot is-attention" aria-label="Waiting for you" />}{item.provider_available === false && <span className="status-dot is-attention" aria-label="Provider account unavailable" />}</span>
+        <span className="bot-row__text"><span className="bot-row__name">{item.name}{item.computer_waiting && <small> · Waiting for you</small>}</span><span className="bot-row__preview">{item.hidden ? 'Hidden' : item.model || 'Model not selected'}</span></span>
       </button>;
   };
   let content: ReactNode;
@@ -1315,5 +1318,15 @@ function App() {
   </div></RadixDialog.Root>;
 }
 
+function ComputerWindow() {
+  const agent = new URLSearchParams(location.search).get('computer') ?? '';
+  const [name, setName] = useState('Agent'), [error, setError] = useState('');
+  useEffect(() => {
+    let active = true;
+    void api<Directory>('/api/agents').then(data => { const found = data.agents.find(item => item.id === agent); if (active) { if (found) setName(found.name); else setError('Agent not found.'); } }).catch(error => { if (active) setError(message(error)); });
+    return () => { active = false; };
+  }, [agent]);
+  return <main className="computer-window bs-root"><h1>{name}'s computer</h1>{error ? <Alert tone="error">{error}</Alert> : <ComputerViewer agent={agent} name={name} request={api} popout />}</main>;
+}
 applyPresentation(document.documentElement, readPresentation().value);
-createRoot(document.getElementById('root')!).render(<ConfirmProvider><App /></ConfirmProvider>);
+createRoot(document.getElementById('root')!).render(<ConfirmProvider>{new URLSearchParams(location.search).has('computer') ? <ComputerWindow /> : <App />}</ConfirmProvider>);
