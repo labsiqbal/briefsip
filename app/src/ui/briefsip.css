@@ -239,9 +239,12 @@
 /* Local project and section controls inherit the sidebar and kit tokens. */
 .sidebar-section-heading { display: flex; align-items: center; justify-content: space-between; min-height: 40px; padding-left: 10px; color: var(--color-text-secondary); font-size: 12px; font-weight: 500; }
 .sidebar-section-heading .k-icon-btn { width: 40px; height: 40px; }
-.sidebar-agent { display: flex; align-items: center; min-width: 0; }
+/* Full-width row; the actions button replaces the time on hover/focus instead of reserving a column. */
+.sidebar-agent { position: relative; display: flex; align-items: center; min-width: 0; }
 .sidebar-agent > .bot-row { flex: 1; min-width: 0; }
-.sidebar-agent > .k-icon-btn { width: 40px; height: 40px; flex-shrink: 0; }
+.sidebar-agent > .k-icon-btn { position: absolute; top: 50%; right: 6px; width: 28px; height: 28px; transform: translateY(-50%); flex-shrink: 0; }
+.sidebar-agent:is(:hover, :focus-within) > .bot-row .bot-row__time, .sidebar-agent:has(> .agent-actions[data-state="open"]) > .bot-row .bot-row__time { visibility: hidden; }
+.sidebar-agent:is(:hover, :focus-within) > .bot-row .bot-row__text, .sidebar-agent:has(> .agent-actions[data-state="open"]) > .bot-row .bot-row__text { padding-right: 24px; }
 .sidebar-agent > .k-icon-btn:not(:focus-visible) { color: var(--color-text-tertiary); }
 .sidebar-agent:hover > .k-icon-btn { color: var(--color-text-secondary); }
 .sidebar-section { margin-bottom: 4px; }
