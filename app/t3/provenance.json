@@ -1530,5 +1530,166 @@
       "adaptation": "46rem default lane mapped to fixed 736px across text preferences; 14px relaxed prose (1.625), heading scale, .65rem block rhythm, inline code, quote and row-separated table metrics. Colors map to Briefsip semantic tokens; no Tailwind dependency.",
       "compatibilityCheck": "app/markdown.test.ts; work/rebuild/chat-like-t3/capture.mjs; work/rebuild/ui-smoke/smoke.mjs"
     }
+  ],
+  "timelineMinimapSourceEntries": [
+    {
+      "sourcePath": "apps/web/src/components/chat/TimelineMinimap.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "4725be2370d2a94dccb2a7dc3445b9f22850db766b76e919f360b44bc1b07a3b",
+      "symbols": [
+        "TimelineMinimap",
+        "onMouseButtonsReleased"
+      ],
+      "localPaths": [
+        "app/src/ui/TimelineMinimap.tsx",
+        "app/src/ui/chat.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "CSS replaces Tailwind; shared kit buttons retain previous/next tooltips. Preserve pointer fisheye, drag-selection pass-through, keyboard navigation and preview. Fine-pointer narrow gutters reveal on hover/focus; small windows and coarse pointers hide the rail.",
+      "compatibilityCheck": "app/timeline-minimap.test.ts; work/rebuild/ui-smoke/timeline-minimap-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/timelineMinimapItems.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "195a9c50666bdc52e4e1cee406ff2f005f253e67b0c3998de8cc7a80ba80b1e7",
+      "symbols": [
+        "deriveTimelineMinimapItems",
+        "resolveTimelineMinimapPreview"
+      ],
+      "localPaths": [
+        "app/src/ui/timelineMinimapItems.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Briefsip turns replace T3 message rows; one tick per human room root, final room reply or current partial, no peer/subtask/routine ticks. Reuse installed marked and entities from Briefsip Markdown rather than remark; raw HTML stays inert source text as in Briefsip.",
+      "compatibilityCheck": "app/timeline-minimap.test.ts; work/rebuild/ui-smoke/timeline-minimap-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/MessagesTimeline.logic.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "cf587ba8da847283d1aaf54d5a56d21090367f04ee02a971b06f8b4749d2e1a3",
+      "symbols": [
+        "resolveTimelineMinimapHeightStyle",
+        "resolveTimelineMinimapTopPercent",
+        "resolveTimelineMinimapIndexFromPointer",
+        "resolveTimelineMinimapHitStripWidth",
+        "resolveTimelineMinimapHasPersistentGutter"
+      ],
+      "localPaths": [
+        "app/src/ui/timelineMinimapItems.ts",
+        "app/src/ui/TimelineMinimap.tsx"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Keep minimum two turns, 8px pitch, bounded proportional pointer mapping, viewport-capped height, 48px persistent gutter and gutter-bounded hit strip.",
+      "compatibilityCheck": "app/timeline-minimap.test.ts; work/rebuild/ui-smoke/timeline-minimap-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/MessagesTimeline.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "424113972c3053173506fc4d069e05b75e5f8ecde2c5bc283af2e4e154c902f4",
+      "symbols": [
+        "refreshMinimap",
+        "scheduleMinimapRefresh",
+        "forwardMinimapWheel"
+      ],
+      "localPaths": [
+        "app/src/ui/TimelineMinimap.tsx",
+        "app/src/ui/ChatPrimitives.tsx",
+        "app/src/App.tsx"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "DOM row intersection replaces virtual-list metrics. ResizeObserver plus one animation frame refresh viewport highlights during scroll, streaming and resize. Loaded-page items reset on paging/search changes.",
+      "compatibilityCheck": "app/timeline-minimap.test.ts; work/rebuild/ui-smoke/timeline-minimap-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/timelineViewport.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "8c23cbca0967f2b9d182ecb3127b9d08e26b7c3108d4d16d9e5eb95887a4b332",
+      "symbols": [
+        "TimelineNavigation",
+        "attachTimelineViewport"
+      ],
+      "localPaths": [
+        "app/src/ui/TimelineMinimap.tsx",
+        "app/src/App.tsx"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Release Briefsip follow before minimap jump/wheel via existing nearBottom ref; preserve jump-to-latest and native scroll listener.",
+      "compatibilityCheck": "app/timeline-minimap.test.ts; work/rebuild/ui-smoke/timeline-minimap-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/timelineMinimapWheel.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "e29365d0150fb7630c5bf76e235d53815abed7207b76b2f76a4e3562e0ac70be",
+      "symbols": [
+        "forwardWheelToTimeline"
+      ],
+      "localPaths": [
+        "app/src/ui/timelineMinimapWheel.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Retain native wheel forwarding, line/page units, precise trackpad deltas, accumulated mouse-notch glide, reduced-motion path and click/key interruption.",
+      "compatibilityCheck": "app/timeline-minimap.test.ts; work/rebuild/ui-smoke/timeline-minimap-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/index.css",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "d723ccee7571f98bc1bc931a880d7d856b5c5f660703845e4f5b66d7f56310ef",
+      "symbols": [
+        "dropdown-glass"
+      ],
+      "localPaths": [
+        "app/src/ui/chat.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Preserve preview surface/elevation role and overlay stacking with Briefsip theme tokens and existing popover shadow; no added glass theme or Tailwind dependency.",
+      "compatibilityCheck": "app/timeline-minimap.test.ts; work/rebuild/ui-smoke/timeline-minimap-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/timelineMinimapItems.test.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "54f4f1166064e6359d81cd423664d3b60b35933671656858f437732ed99ff773",
+      "symbols": [
+        "deriveTimelineMinimapItems",
+        "resolveTimelineMinimapPreview"
+      ],
+      "localPaths": [
+        "app/timeline-minimap.test.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Port attachment-only and preview normalization coverage to node:test using Briefsip empty attachment prompts and Markdown links; add room roots, streaming, peer/routine exclusions and rail geometry.",
+      "compatibilityCheck": "app/timeline-minimap.test.ts; work/rebuild/ui-smoke/timeline-minimap-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/timelineMinimapWheel.browser.test.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "dbf9d81f1e01f8ee2b72bbe0fd69a8b6601cb2b454097c94070633fcb83665fd",
+      "symbols": [
+        "forwardWheelToTimeline"
+      ],
+      "localPaths": [
+        "work/rebuild/ui-smoke/timeline-minimap-smoke.mjs"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Port wheel assertions to existing Playwright smoke harness; cover pixels, line/page units, accumulated mouse glide and interruption, plus rendered highlight, hover, keyboard/click jumps, narrow width and paging.",
+      "compatibilityCheck": "app/timeline-minimap.test.ts; work/rebuild/ui-smoke/timeline-minimap-smoke.mjs"
+    }
   ]
 }

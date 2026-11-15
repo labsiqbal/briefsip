@@ -24,6 +24,8 @@ import { Attachments } from './Attachments';
 import { TurnActivity } from './ui/TurnActivity';
 import { AgentMessage, ChatComposer, ChatEmptyState, ChatHeader, ChatTranscript, HumanMessage, TurnStatus } from './ui/ChatPrimitives';
 import { liveTurn, livePartial, streamIdentity, turnPollDelay, type TurnActivityData } from './ui/transcript';
+import { TimelineMinimap } from './ui/TimelineMinimap';
+import { deriveTimelineMinimapItems } from './ui/timelineMinimapItems';
 import { EventConnection } from './EventConnection';
 import { applyPresentation, presentationKey, readPresentation } from '../presentation';
 import { CreateProject, HelpPage, HowBriefsipWorks, ProjectHome, ProjectSidebar, ProjectSourceControl, useProjects } from './Projects';
@@ -320,7 +322,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   const openDiff = () => { rightPanel.select('diff'); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.right-panel > .k-tabs > .k-tabs__list > [data-state="active"]')?.focus()); };
   return <div className="chat-row bs-root">
     <main className="chat" aria-label={`Conversation ${title}`}>
-      <ChatTranscript ref={transcript} onScroll={onScroll} jump={showJump && !focusedTask && !before && !query ? <IconButton className="jump-btn" label="Jump to latest" onClick={jumpToLatest}><ChevronDown size={16} aria-hidden /></IconButton> : null}>
+      <ChatTranscript ref={transcript} onScroll={onScroll} minimap={<TimelineMinimap key={`${path}:${before}:${query}:${focusedTask}`} items={deriveTimelineMinimapItems(turns ?? [])} viewport={transcript} onNavigate={() => { nearBottom.current = false; }} />} jump={showJump && !focusedTask && !before && !query ? <IconButton className="jump-btn" label="Jump to latest" onClick={jumpToLatest}><ChevronDown size={16} aria-hidden /></IconButton> : null}>
             {(focusedTask || before || query) && <div className="history-banner" role="status"><span>{focusedTask ? channel ? 'Task family' : 'Selected message' : query ? `Search results: ${query}` : 'Older history'}</span><button type="button" className="link-btn" onClick={() => { focusHistory.current = true; setTurns(null); setFocusedTask(''); setHistoryPages([]); setQuery(''); focusedOnce.current = ''; nearBottom.current = true; }}>Back to latest messages</button></div>}
             {!focusedTask && <div ref={historyTop} tabIndex={-1} className="history-navigation" aria-label="History navigation">
               {!!turns && turns.filter(turn => turn.history_page !== 0).length >= 100 && <button type="button" className="link-btn" onClick={() => { if (turns?.length) { focusHistory.current = true; setTurns(null); setHistoryPages([...historyPages, turns.find(turn => turn.history_page !== 0)!.seq]); } }}>Older messages</button>}
