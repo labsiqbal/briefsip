@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Fake native peer. No model calls, no host configuration reads.
 import assert from 'node:assert/strict';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -19,16 +19,19 @@ function finish(allowed = true) {
   if (codex) {
     notify('item/completed', { item: { id: 'shell', type: 'commandExecution', command: 'echo hello', status: allowed ? 'completed' : 'declined' } });
     delta(allowed ? 'finished' : 'denied');
+    if (prompt.includes('FINAL_SECRET')) { delta(' test-mcp-session-'); delta('token'); }
     notify('thread/tokenUsage/updated', { tokenUsage: { last: { inputTokens: 11, outputTokens: 7 } } });
     notify('turn/completed', { turn: { id: 'fake-turn', status: 'completed' } });
   } else {
     send({ type: 'assistant', uuid: randomUUID(), session_id: session, parent_tool_use_id: null, message: { id: 'm1', role: 'assistant', type: 'message', content: [{ type: 'tool_use', id: 'shell', name: 'Bash', input: { command: 'echo hello' } }], model: 'fake', stop_reason: 'tool_use', stop_sequence: null, usage: { input_tokens: 11, output_tokens: 7 } } });
     send({ type: 'user', uuid: randomUUID(), session_id: session, parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'shell', content: 'fake result', is_error: !allowed }] } });
     delta(allowed ? 'finished' : 'denied');
+    if (prompt.includes('FINAL_SECRET')) { delta(' test-mcp-session-'); delta('token'); }
     send({ type: 'result', subtype: 'success', is_error: false, result: 'fake result', session_id: session, uuid: randomUUID(), duration_ms: 5, duration_api_ms: 5, num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 11, output_tokens: 7, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, modelUsage: {}, permission_denials: [] });
   }
 }
 function run(text) {
+  if (text.includes('STREAM_GATE') || text.includes('STREAM_CRASH')) { void streamGate(text); return; }
   prompt = text; log({ type: 'turn', session, prompt }); delta('Harness ');
   if (text.includes('CRASH')) { setTimeout(() => process.exit(19), 20); return; }
   if (text.includes('OVERSIZE')) { process.stdout.write('x'.repeat(1024 * 1024 + 1)); return; }
@@ -45,6 +48,35 @@ function run(text) {
     approvalId = 'approval-native'; send({ type: 'control_request', request_id: approvalId, request: { subtype: 'hook_callback', callback_id: callback, input: { session_id: session, transcript_path: '', cwd: process.cwd(), hook_event_name: 'PreToolUse', tool_name: text.includes('NETWORK') ? 'WebFetch' : /OUTSIDE_FILE|WORKSPACE_WRITE|READ_ONLY_WRITE/.test(text) ? 'Write' : 'Bash', tool_input: text.includes('NETWORK') ? {url:'https://example.invalid/'} : /OUTSIDE_FILE|WORKSPACE_WRITE|READ_ONLY_WRITE/.test(text) ? {file_path:text.includes('OUTSIDE_FILE') ? '/outside/hello.txt' : process.cwd()+'/hello.txt',content:'hello'} : { command: text.includes('APPROVE_SECRET') ? 'echo test-mcp-session-token' : 'echo hello' }, tool_use_id: 'shell' } } }); return;
   }
   setTimeout(() => finish(), 100);
+}
+async function streamGate(text) {
+  log({ type: 'turn', session, prompt: text });
+  const start = id => {
+    if (!codex) send({ type: 'stream_event', session_id: session, uuid: randomUUID(), parent_tool_use_id: null, event: { type: 'message_start', message: { id, type: 'message', role: 'assistant', content: [], model: 'fake', stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } } } });
+  };
+  const emit = (id, value) => {
+    if (codex) notify('item/agentMessage/delta', { itemId: id, delta: value }); else delta(value);
+  };
+  start('before');
+  emit('before', 'Before tool. ');
+  for (let i = 0; i < 100; i++) emit('before', '🧪');
+  emit('before', 'test-mcp-session-'); emit('before', 'token');
+  if (codex) notify('item/started', { item: { id: 'gate-tool', type: 'commandExecution', command: 'echo gate' } });
+  else send({ type: 'assistant', uuid: randomUUID(), session_id: session, parent_tool_use_id: null, message: { id: 'before', role: 'assistant', type: 'message', content: [{ type: 'tool_use', id: 'gate-tool', name: 'Read', input: { file_path: 'fixture.txt' } }], model: 'fake', stop_reason: 'tool_use', stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } } });
+  start('answer'); emit('answer', 'Draft ');
+  for (let i = 0; i < 100; i++) emit('answer', 'x');
+  log({ type: 'stream-gate' });
+  while (!existsSync('stream-release')) await new Promise(resolve => setTimeout(resolve, 5));
+  if (text.includes('STREAM_CRASH')) { emit('answer', ' buffered tail'); process.stdout.write('', () => process.exit(19)); return; }
+  if (codex) {
+    notify('item/completed', { item: { id: 'gate-tool', type: 'commandExecution', command: 'echo gate', status: 'completed' } });
+    notify('item/completed', { item: { id: 'answer', type: 'agentMessage', text: 'Final answer.' } });
+    notify('turn/completed', { turn: { id: 'fake-turn', status: 'completed' } });
+  } else {
+    send({ type: 'user', uuid: randomUUID(), session_id: session, parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'gate-tool', content: 'Done' }] } });
+    send({ type: 'assistant', uuid: randomUUID(), session_id: session, parent_tool_use_id: null, message: { id: 'answer', role: 'assistant', type: 'message', content: [{ type: 'text', text: 'Final answer.' }], model: 'fake', stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } } });
+    send({ type: 'result', subtype: 'success', is_error: false, result: 'Final answer.', session_id: session, uuid: randomUUID(), duration_ms: 5, duration_api_ms: 5, num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, modelUsage: {}, permission_denials: [] });
+  }
 }
 for await (const line of createInterface({ input: process.stdin })) {
   const value = JSON.parse(line);

@@ -237,7 +237,7 @@ test('project harness cwd and read-only native escalation denial; direct chat re
         await f.request(`/api/agents/${f.agent}/edit`, { id: randomUUID(), revision: 2, name: 'Coder', model: 'fixture', instructions: 'Help', runtime, confirmRuntime: true });
       const done = await f.send(`/api/channels/${f.project.channel}/turns`, 'READ_ONLY_WRITE');
       assert.equal(done.status, 'done', done.error);
-      assert.equal(done.reply, 'Harness denied');
+      assert.equal(done.reply, 'denied');
       assert(existsSync(join(f.workspace, 'fake-log.jsonl')));
       assert.match(readFileSync(join(f.workspace, 'fake-log.jsonl'), 'utf8'), runtime === 'codex' ? /thread\/start/ : /"type":"init"/);
       assert.equal(done.harnessApprovals.length, 0);

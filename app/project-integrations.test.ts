@@ -48,16 +48,16 @@ for(const runtime of ['codex','claude'] as const)test(`${runtime}: project envir
     await f.request(base,{id:randomUUID(),name:'PROJECT_TEST_TOKEN',value:'other',updated:null},409);
     await f.request(`/api/agents/${a.id}/edit`,{id:randomUUID(),revision:1,name:a.name,model:'fake',instructions:'Help.',runtime,confirmRuntime:true});
     const side=await f.request(`/api/projects/${p.id}/thread`,{id:randomUUID(),revision:p.revision,agent:a.id,folder:p.folders[0],name:'Project shell'});
-    const path=`/api/threads/${side.threads.at(-1).id}/turns`;const turn=await f.run(path,'ENV_PRESENT');assert.match(turn.reply,/\[REDACTED\]/);assert(!JSON.stringify(turn).includes(secret));
+    const path=`/api/threads/${side.threads.at(-1).id}/turns`;const turn=await f.run(path,'ENV_PRESENT');assert.match(JSON.stringify(turn.activity.stream),/\[REDACTED\]/);assert.equal(turn.reply,'finished');assert(!JSON.stringify(turn).includes(secret));
     const other=await f.request(`/api/projects/${b.id}/thread`,{id:randomUUID(),revision:b.revision,agent:a.id,folder:b.folders[0],name:'Other shell'});await f.run(`/api/threads/${other.threads.at(-1).id}/turns`,'ENV_ABSENT');
     await f.run(`/api/agents/${a.id}/turns`,'ENV_ABSENT');
     assert(!readFileSync(join(p.folders[0],'fake-log.jsonl'),'utf8').includes(secret));
     const routine=await f.request(`/api/agents/${a.id}/routines`,{id:randomUUID(),name:'Project routine',prompt:'ENV_PRESENT',trigger:'manual',nextAt:Date.now()+60000,enabled:false,project:p.id});
-    const run=await f.request(`/api/routines/${routine.id}/test`,{id:randomUUID(),revision:routine.revision});const done=await f.until(`/api/threads/${run.thread}/turns`,run.turn);assert.equal(done.status,'done',done.error);assert.match(done.reply,/\[REDACTED\]/);
+    const run=await f.request(`/api/routines/${routine.id}/test`,{id:randomUUID(),revision:routine.revision});const done=await f.until(`/api/threads/${run.thread}/turns`,run.turn);assert.equal(done.status,'done',done.error);assert.match(JSON.stringify(done.activity.stream),/\[REDACTED\]/);assert.equal(done.reply,'finished');
     await f.restart();await f.run(path,'ENV_PRESENT');assert.equal((await f.request(base)).items.length,1);
     assert.equal((await f.request(base)).exposeComputer,false);await f.request(base+'/settings',{id:randomUUID(),revision:1,exposeComputer:true},400);await f.request(base+'/settings',{id:randomUUID(),revision:1,exposeComputer:true,confirmed:true});
     const replacement=await f.request(base,{id:randomUUID(),name:saved.name,value:'replacement-value',updated:saved.updated});await f.request(base+'/remove',{id:randomUUID(),name:saved.name,updated:replacement.updated,confirmed:true});assert.deepEqual((await f.request(base)).items,[]);await f.run(path,'ENV_ABSENT');
-    assert(!f.responses.join('').includes(secret));await f.shutdown();assert(!readFileSync(f.database).includes(Buffer.from(secret)));const db=new DatabaseSync(f.database);assert(!JSON.stringify(db.prepare('SELECT * FROM provider_streams').all()).includes(secret));db.close();
+    assert(!f.responses.join('').includes(secret));await f.shutdown();assert(!readFileSync(f.database).includes(Buffer.from(secret)));const db=new DatabaseSync(f.database);assert(!JSON.stringify(db.prepare('SELECT * FROM provider_streams').all()).includes(secret));assert(!JSON.stringify(db.prepare('SELECT * FROM provider_stream_segments').all()).includes(secret));db.close();
   }finally{await f.close();rmSync(binaries,{recursive:true,force:true});}
 });
 

@@ -1,11 +1,23 @@
+import type { StreamPartial, StreamSegment } from '../../turn-stream';
+
 export type TurnActivityData = {
   budget_stopped?: number;
   dispatch?: { source_turn: string; target_turn: string; mode: 'steer' | 'restart' }[];
   calls: { seq: number; model: string; purpose: string; phase: string; status: string; created: string; finished: string | null }[];
   tools: { id: string; name: string; after_action: number; failed: number }[];
   harness?: { id: string; name: string; state: string }[];
+  stream?: StreamSegment[];
   fallback_model: string | null;
 };
+
+export function streamWork(turn: { partial?: StreamPartial | null; activity?: TurnActivityData }) {
+  return (turn.activity?.stream ?? []).filter(segment => !segment.final && (segment.kind === 'tool' || !!segment.text && !(turn.partial?.seq === segment.seq && turn.partial.segment === segment.id)));
+}
+export function streamIdentity(turn: { partial?: StreamPartial | null; activity?: TurnActivityData }) {
+  if (turn.partial) return `${turn.partial.seq}:${turn.partial.segment ?? 'text-0'}`;
+  const final = turn.activity?.stream?.findLast(segment => segment.final);
+  return final ? `${final.seq}:${final.id}` : undefined;
+}
 
 type ActivityTurn = { status: string; paused: number; created: string; activity?: TurnActivityData; questions?: { answer: string | null }[] };
 export const liveTurn = (turn: ActivityTurn) => ['queued', 'running'].includes(turn.status) && !turn.paused && !turn.questions?.some(question => question.answer === null);

@@ -184,7 +184,7 @@ test('local provider discovery and execution matrix preserves errors, bounded di
     await t.test('streamed credential echo never reaches partial storage', async () => {
       mode = 'stream-secret'; const before = calls.length, id = randomUUID();
       await request(path, { id, text: mode }, 202); const row = await until(path, id);
-      assert.equal(row.status, 'failed'); assert.equal(row.error, malformed); assert.equal(row.partial, null);
+      assert.equal(row.status, 'failed'); assert.equal(row.error, malformed); assert.equal(row.partial.text, ''); assert.equal(row.partial.final, false); assert.deepEqual(row.activity.stream, []);
       assert.equal(calls.length, before + 1); scan();
     });
     await t.test('unconfigured default is distinct from missing named account', async () => {

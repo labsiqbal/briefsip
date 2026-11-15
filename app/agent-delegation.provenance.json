@@ -122,5 +122,49 @@
     "license": "MIT; notice in agent-delegation.LICENSE",
     "repository": "https://github.com/NousResearch/hermes-agent",
     "revision": "d923a5eb487a17c0a68801bba9ef0f56c81040a8"
+  },
+  "streamDelivery": {
+    "repository": "https://github.com/NousResearch/hermes-agent",
+    "revision": "d923a5eb487a17c0a68801bba9ef0f56c81040a8",
+    "license": "MIT; notice in agent-delegation.LICENSE",
+    "sources": [
+      {
+        "path": "agent/stream_delivery.py",
+        "sourceSha256": "e0b3734108610ee5414c12e81e8973a5a75b2674c07be1ff6df3b1224a67ff47",
+        "symbols": [
+          "StreamDeliveryMixin._call_quietly",
+          "StreamDeliveryMixin._deliver_to_stream_callbacks"
+        ],
+        "adaptation": "Best-effort delivery callbacks cannot change provider or tool execution state."
+      },
+      {
+        "path": "agent/turn_tool_round.py",
+        "sourceSha256": "1ccd3574528597f5c3a5589729849f8a10e422f0d970af3bb03b1fbd277f1f29",
+        "symbols": [
+          "stream_delta_callback(None)"
+        ],
+        "adaptation": "Flush and seal pre-tool prose before tool work; subsequent text owns a separate segment."
+      },
+      {
+        "path": "gateway/stream_consumer.py",
+        "sourceSha256": "27b49c94f2f7a48f51ebf17d369e03f3dd8ec1ea6963fd7b194fd17147911172",
+        "symbols": [
+          "GatewayStreamConsumer.finish",
+          "GatewayStreamConsumer._end_segment",
+          "GatewayStreamConsumer._on_cancelled"
+        ],
+        "adaptation": "Authoritative final replaces matching provisional segment; boundary/error/abort flush retains unfinished snapshots. Browser persistence uses Briefsip's existing 40 ms cadence, never platform quotas."
+      }
+    ],
+    "localPaths": [
+      "app/harness-store.ts",
+      "app/harness.ts",
+      "app/server.ts",
+      "app/turn-stream.ts",
+      "app/src/ui/transcript.ts",
+      "app/src/ui/TurnActivity.tsx",
+      "app/src/ui/AgentConversation.tsx"
+    ],
+    "adaptation": "Briefsip-owned TypeScript snapshot writer and SQLite delivery seam. Latest admitted provider call, ordered segments, provisional/final reconciliation and isolated display failures. Hermes remains read-only logic evidence; no runtime, UI, reasoning, platform transport or quota copied."
   }
 }

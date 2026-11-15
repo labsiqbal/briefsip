@@ -22,9 +22,73 @@ async function fixture(runtime: HarnessRuntime, write = true) {
   await request(path+'/edit',{id:randomUUID(),revision:1,...profile,runtime,confirmRuntime:true});
   const until = async (turn:string,predicate:(row:any)=>boolean) => { for(let i=0;i<600;i++){const row=(await request(path+'/turns')).find((row:any)=>row.id===turn);if(row&&predicate(row))return row;await delay(15);}assert.fail('Harness turn timed out'); };
   const send = async(text:string) => {const id=randomUUID();await request(path+'/turns',{id,text});return id;};
-  return {directory,workspace,agent,path,profile,request,until,send,minted,revoked,options,get app(){return app;}, async restart(){await app.close();app=await startApp(options);},async close(){await app.close();rmSync(directory,{recursive:true,force:true});}};
+  return {directory,workspace,agent,path,profile,request,until,send,minted,revoked,options,get app(){return app;}, async editDatabase(edit: (db: DatabaseSync) => void){await app.close();const db=new DatabaseSync(options.database);try{edit(db);}finally{db.close();app=await startApp(options);}},async restart(){await app.close();app=await startApp(options);},async close(){await app.close();rmSync(directory,{recursive:true,force:true});}};
 }
 for(const runtime of ['codex','claude'] as const) {
+  test(`${runtime}: gated segments replace only final answer, coalesce writes and restore without replay`, async () => {
+    const f = await fixture(runtime);
+    try {
+      await f.editDatabase(db => db.exec('CREATE TABLE snapshot_writes(at INTEGER); CREATE TRIGGER count_snapshot_insert AFTER INSERT ON provider_streams BEGIN INSERT INTO snapshot_writes VALUES (1); END; CREATE TRIGGER count_snapshot_update AFTER UPDATE ON provider_streams BEGIN INSERT INTO snapshot_writes VALUES (1); END;'));
+      const start = Date.now(), id = await f.send('STREAM_GATE');
+      const partial = await f.until(id, row => row.partial?.text === 'Draft ' + 'x'.repeat(100));
+      assert.equal(partial.status, 'running'); assert.equal(partial.partial.final, false);
+      const segments = partial.activity.stream;
+      assert.deepEqual(segments.map((item: any) => [item.ordinal, item.kind]), [[0, 'text'], [1, 'tool'], [2, 'text']]);
+      assert.equal(segments[0].text, 'Before tool. ' + '🧪'.repeat(100) + '[REDACTED]');
+      assert(!JSON.stringify(partial).includes('test-mcp-session-token'));
+      assert.equal(partial.partial.segment, segments[2].id);
+      const restored = (await f.request(f.path + '/turns')).find((row: any) => row.id === id);
+      assert.deepEqual(restored.partial, partial.partial); assert.equal(f.minted.length, 1);
+      writeFileSync(join(f.workspace, 'stream-release'), '');
+      const done = await f.until(id, row => row.status === 'done');
+      assert.equal(done.reply, 'Final answer.'); assert.equal(done.partial, null);
+      assert.deepEqual(done.activity.stream.map((item: any) => [item.ordinal, item.id]), segments.map((item: any) => [item.ordinal, item.id]));
+      assert.equal(done.activity.stream[2].text, done.reply); assert.equal(done.activity.stream[2].final, 1);
+      let writes = 0;
+      const elapsed = Date.now() - start;
+      await f.editDatabase(db => { writes = Number(db.prepare('SELECT count(*) AS n FROM snapshot_writes').get()!.n); });
+      assert(writes <= Math.ceil(elapsed / 40) + 8 && writes < 30, `Token-rate writes: ${writes}`);
+      await f.restart();
+      const final = (await f.request(f.path + '/turns')).find((row: any) => row.id === id);
+      assert.equal(final.reply, 'Final answer.'); assert.deepEqual(final.activity.stream, done.activity.stream); assert.equal(f.minted.length, 1);
+    } finally { await f.close(); }
+  });
+  test(`${runtime}: abort flush preserves final pending segment and stays unfinished after restart`, async () => {
+    const f = await fixture(runtime);
+    try {
+      const id = await f.send('STREAM_GATE');
+      await f.until(id, row => row.partial?.text === 'Draft ' + 'x'.repeat(100));
+      await f.request(`${f.path}/turns/${id}/cancel`, { id: randomUUID() });
+      await f.until(id, row => row.status === 'cancelled');
+      for (let n = 0; n < 100 && !f.revoked.length; n++) await delay(10);
+      await f.restart();
+      const row = (await f.request(f.path + '/turns')).find((row: any) => row.id === id);
+      assert.equal(row.partial.text, 'Draft ' + 'x'.repeat(100)); assert.equal(row.partial.final, false);
+      assert.equal(row.partial.status, 'failed'); assert.equal(f.minted.length, 1); assert.equal(f.revoked.length, 1);
+    } finally { await f.close(); }
+  });
+  test(`${runtime}: error flush commits buffered tail without declaring a final answer`, async () => {
+    const f = await fixture(runtime);
+    try {
+      const id = await f.send('STREAM_CRASH');
+      await f.until(id, row => row.partial?.text === 'Draft ' + 'x'.repeat(100));
+      writeFileSync(join(f.workspace, 'stream-release'), '');
+      const failed = await f.until(id, row => row.status === 'failed');
+      assert.equal(failed.partial.text, 'Draft ' + 'x'.repeat(100) + ' buffered tail'); assert.equal(failed.partial.final, false);
+      assert.equal(failed.partial.status, 'failed'); assert.equal(failed.activity.stream.at(-1).final, 0);
+      await f.restart();
+      assert.deepEqual((await f.request(f.path + '/turns')).find((row: any) => row.id === id).partial, failed.partial);
+      assert.equal(f.minted.length, 1); assert.equal(f.revoked.length, 1);
+    } finally { await f.close(); }
+  });
+  test(`${runtime}: authoritative snapshot and reply apply identical session-token redaction`, async () => {
+    const f = await fixture(runtime);
+    try {
+      const id = await f.send('FINAL_SECRET'), done = await f.until(id, row => row.status === 'done');
+      assert.equal(done.reply, 'finished [REDACTED]');
+      assert.equal(done.activity.stream.at(-1).text, done.reply); assert(!JSON.stringify(done).includes('test-mcp-session-token'));
+    } finally { await f.close(); }
+  });
   test(`${runtime}: stream, tool activity, MCP lifetime, follow-up and restart resume`,async()=>{
     const f=await fixture(runtime);try {
       const streamController = new AbortController();
@@ -35,10 +99,10 @@ for(const runtime of ['codex','claude'] as const) {
         const frame = new TextDecoder().decode((await reader.read()).value);
         assert(frame.startsWith('data: '));
         const snapshot = JSON.parse(frame.split('\n\n')[0].slice(6));
-        assert.equal(snapshot.id, first); assert(snapshot.partial.text); assert.equal(snapshot.partial.seq, partial.partial.seq);
+        assert.equal(snapshot.id, first); assert.equal(snapshot.partial.text, ''); assert.equal(snapshot.partial.seq, partial.partial.seq);
       } finally { streamController.abort(); }
 
-      const done=await f.until(first,row=>['done','failed'].includes(row.status));assert.equal(done.status,'done',done.error);assert.equal(done.reply,'Harness finished');assert(done.activity.harness.length);assert.equal(done.activity.harness[0].state,'completed');
+      const done=await f.until(first,row=>['done','failed'].includes(row.status));assert.equal(done.status,'done',done.error);assert.equal(done.reply,'finished');assert(done.activity.harness.length);assert.equal(done.activity.harness[0].state,'completed');
       const second=await f.send('SECOND');assert.equal((await f.until(second,row=>['done','failed'].includes(row.status))).status,'done');
       await f.restart();const third=await f.send('THIRD');assert.equal((await f.until(third,row=>['done','failed'].includes(row.status))).status,'done');
       const log=readFileSync(join(f.workspace,'fake-log.jsonl'),'utf8');assert(runtime==='codex'?log.includes('thread/resume'):log.includes('"resume":true'));assert.equal(f.minted.length,3);assert.deepEqual(f.revoked,f.minted.map(row=>row.id));
@@ -69,7 +133,7 @@ for(const runtime of ['codex','claude'] as const) {
   });
   test(`${runtime}: durable approval allow, deny, prefix grant and scoped receipt`,async()=>{
     const f=await fixture(runtime);try {
-      async function approval(decision:string){const id=await f.send('APPROVE'),row=await f.until(id,row=>row.harnessApprovals?.length||row.status==='failed');assert.equal(row.status,'running',row.error);const card=row.harnessApprovals[0];assert.equal(card.prefix,'echo hello');const body={id:randomUUID(),revision:card.revision,decision};await f.request(`${f.path}/turns/${id}/harness-approvals/${card.id}`,body);await f.request(`${f.path}/turns/${id}/harness-approvals/${card.id}`,body);const done=await f.until(id,row=>['done','failed'].includes(row.status));assert.equal(done.status,'done',done.error);assert.equal(done.reply,decision==='deny'?'Harness denied':'Harness finished');return id;}
+      async function approval(decision:string){const id=await f.send('APPROVE'),row=await f.until(id,row=>row.harnessApprovals?.length||row.status==='failed');assert.equal(row.status,'running',row.error);const card=row.harnessApprovals[0];assert.equal(card.prefix,'echo hello');const body={id:randomUUID(),revision:card.revision,decision};await f.request(`${f.path}/turns/${id}/harness-approvals/${card.id}`,body);await f.request(`${f.path}/turns/${id}/harness-approvals/${card.id}`,body);const done=await f.until(id,row=>['done','failed'].includes(row.status));assert.equal(done.status,'done',done.error);assert.equal(done.reply,decision==='deny'?'denied':'finished');return id;}
       await approval('deny');await approval('allow');await approval('always');const fourth=await f.send('APPROVE');const fourthDone=await f.until(fourth,row=>['done','failed'].includes(row.status));assert.equal(fourthDone.status,'done',fourthDone.error);assert.equal(fourthDone.harnessApprovals.length,0);
       const peer=await f.request('/api/mcp-server/peer-tokens',{id:randomUUID(),name:'Peer',scopes:['agents:message']});
       const receipt=await fetch(f.app.origin+'/mcp',{method:'POST',headers:{Authorization:`Bearer ${peer.token}`,'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'send_message',arguments:{requestId:randomUUID(),recipient:f.agent,text:'APPROVE peer work'}}})}).then(response=>response.json());
@@ -77,12 +141,12 @@ for(const runtime of ['codex','claude'] as const) {
       let peerTurn:any;for(let n=0;n<600;n++){peerTurn=(await f.request(thread))[0];if(peerTurn?.harnessApprovals?.length)break;assert(!['done','failed'].includes(peerTurn?.status),'Peer bypassed saved command approval');await delay(15);}
       assert.equal(peerTurn.harnessApprovals[0].state,'approval');const peerCard=peerTurn.harnessApprovals[0];
       await f.request(`${thread}/${delivery.turn}/harness-approvals/${peerCard.id}`,{id:randomUUID(),revision:peerCard.revision,decision:'deny'});
-      for(let n=0;n<600;n++){peerTurn=(await f.request(thread))[0];if(peerTurn.status==='done')break;await delay(15);}assert.equal(peerTurn.reply,'Harness denied');
+      for(let n=0;n<600;n++){peerTurn=(await f.request(thread))[0];if(peerTurn.status==='done')break;await delay(15);}assert.equal(peerTurn.reply,'denied');
       const secret=await f.send('APPROVE_SECRET'),row=await f.until(secret,row=>row.harnessApprovals?.length),card=row.harnessApprovals[0];
       assert.equal(card.prefix,null);assert(!JSON.stringify(card).includes('test-mcp-session-token'));assert.match(card.command,/\[redacted\]/);
       await f.request(`${f.path}/turns/${secret}/harness-approvals/${card.id}`,{id:randomUUID(),revision:card.revision,decision:'always'},400);
       await f.request(`${f.path}/turns/${secret}/harness-approvals/${card.id}`,{id:randomUUID(),revision:card.revision,decision:'deny'});
-      assert.equal((await f.until(secret,row=>['done','failed'].includes(row.status))).reply,'Harness denied');
+      assert.equal((await f.until(secret,row=>['done','failed'].includes(row.status))).reply,'denied');
       assert.equal(f.minted.length,6);assert.equal(f.revoked.length,6);
     } finally {await f.close();}
   });
@@ -93,7 +157,7 @@ for(const runtime of ['codex','claude'] as const) {
         const id=await f.send(text),row=await f.until(id,row=>row.harnessApprovals?.length||row.status==='failed');assert.equal(row.status,'running',row.error);const card=row.harnessApprovals[0];assert.equal(card.kind,kind);assert.equal(card.prefix,null);
         await f.request(`${f.path}/turns/${id}/harness-approvals/${card.id}`,{id:randomUUID(),revision:card.revision,decision:'always'},400);
         await f.request(`${f.path}/turns/${id}/harness-approvals/${card.id}`,{id:randomUUID(),revision:card.revision,decision:'deny'});
-        assert.equal((await f.until(id,row=>['done','failed'].includes(row.status))).reply,'Harness denied');
+        assert.equal((await f.until(id,row=>['done','failed'].includes(row.status))).reply,'denied');
       }
     }finally{await f.close();}
     const read=await fixture(runtime,false);try{
