@@ -7,10 +7,31 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { durableWrite, fileManifest, parseRelease, syncDirectory } from '../app/update-release.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-export function buildRelease({ source = join(root, 'app'), releases = join(homedir(), '.local/share/briefsip/releases'), allowDirty = false, notes, build = true, install = true, repository = root } = {}) {
+export function readIssueComments(issue) {
+  return JSON.parse(execFileSync('gh', ['issue', 'view', String(issue), '-R', 'labsiqbal/briefsip', '--json', 'comments'], { encoding: 'utf8' })).comments;
+}
+
+export function buildRelease({ source = join(root, 'app'), releases = join(homedir(), '.local/share/briefsip/releases'), allowDirty = false, notes, build = true, install = true, repository = root, issues = [], readIssueComments: readComments = readIssueComments } = {}) {
   const git = args => execFileSync('git', args, { cwd: repository, encoding: 'utf8' }).trim();
+  if (!Array.isArray(issues) || issues.some(issue => !Number.isSafeInteger(issue) || issue <= 0)) throw new Error('Invalid issues. Use --issues 30,31 with positive issue numbers.');
+  issues = [...new Set(issues)];
+  if (!issues.length) console.warn('WARNING: RELEASE ANCESTRY GATE SKIPPED. Supply --issues 30,31 for every shipped issue.');
   if (!allowDirty && git(['status', '--porcelain'])) throw new Error('Refusing dirty worktree. Use --allow-dirty for a development release.');
   const { version } = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8')), commit = git(['rev-parse', 'HEAD']);
+  for (const issue of issues) {
+    let comments;
+    try { comments = readComments(issue); }
+    catch { throw new Error(`Issue #${issue}: cannot read claim comments. Check gh authentication and access to labsiqbal/briefsip, then retry.`); }
+    if (!Array.isArray(comments) || comments.some(comment => typeof comment?.body !== 'string')) throw new Error(`Issue #${issue}: invalid comments. Fix the issue reader and retry.`);
+    const branches = [...new Set(comments.flatMap(comment => [...comment.body.matchAll(/^Claimed by [^\r\n]+, branch (t3\/\S+)[ \t]*\r?$/gm)].map(match => match[1])))];
+    if (!branches.length) throw new Error(`Issue #${issue}: no claim comment. Add "Claimed by <agent>, branch t3/<slug>" and retry.`);
+    if (branches.length > 1) throw new Error(`Issue #${issue}: conflicting claims (${branches.join(', ')}). Resolve comments to one claimed branch and retry.`);
+    const branch = branches[0], ref = `refs/heads/${branch}`;
+    try { git(['show-ref', '--verify', '--quiet', ref]); }
+    catch { throw new Error(`Issue #${issue}: local branch ${branch} is missing. Restore the task branch locally and retry.`); }
+    try { git(['merge-base', '--is-ancestor', ref, commit]); }
+    catch { throw new Error(`Issue #${issue}: ${branch} is not an ancestor of ${commit}. Merge the branch tip and retry.`); }
+  }
   const id = `${version}-${commit.slice(0, 8)}`;
   const target = join(releases, id);
   if (existsSync(target)) throw new Error(`Release already exists: ${id}`);
@@ -27,7 +48,7 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
     if (install) execFileSync('npm', ['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: stage, stdio: 'inherit' });
     // No executable .bin links needed: server runs Node source. Remaining links are rejected by manifest.
     rmSync(join(stage, 'node_modules/.bin'), { recursive: true, force: true });
-    const info = parseRelease({ id, version, commit, created: new Date().toISOString(), node: process.version, notes: notes ?? git(['log', '-5', '--pretty=%s']), files: fileManifest(stage) });
+    const info = parseRelease({ id, version, commit, issues, created: new Date().toISOString(), node: process.version, notes: notes ?? git(['log', '-5', '--pretty=%s']), files: fileManifest(stage) });
     durableWrite(join(stage, 'release.json'), JSON.stringify(info, null, 2) + '\n', 0o644);
     renameSync(stage, target); syncDirectory(releases);
     mkdirSync(join(releases, 'feed'), { recursive: true, mode: 0o700 });
@@ -52,9 +73,9 @@ export function assertRelativeImports(stage, entries = ['server.ts', 'cli.ts', '
   if (missing.length) throw new Error(`Release is missing runtime modules:\n${missing.join('\n')}`);
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  const args = process.argv.slice(2), allowed = new Set(['--releases', '--notes', '--allow-dirty', '--desktop', '--desktop-feed']);
+  const args = process.argv.slice(2), allowed = new Set(['--releases', '--notes', '--allow-dirty', '--desktop', '--desktop-feed', '--issues']);
   const options = {};
-  for (let i = 0; i < args.length; i++) { const flag = args[i]; if (!allowed.has(flag)) throw new Error(`Unknown option: ${flag}`); if (!['--allow-dirty', '--desktop'].includes(flag) && (!args[i + 1] || args[i + 1].startsWith('--'))) throw new Error(`Missing value: ${flag}`); if (flag === '--releases') options.releases = resolve(args[++i]); else if (flag === '--notes') options.notes = args[++i]; else if (flag === '--allow-dirty') options.allowDirty = true; else if (flag === '--desktop-feed') options.desktopFeed = resolve(args[++i]); }
+  for (let i = 0; i < args.length; i++) { const flag = args[i]; if (!allowed.has(flag)) throw new Error(`Unknown option: ${flag}`); if (!['--allow-dirty', '--desktop'].includes(flag) && (!args[i + 1] || args[i + 1].startsWith('--'))) throw new Error(`Missing value: ${flag}`); if (flag === '--releases') options.releases = resolve(args[++i]); else if (flag === '--notes') options.notes = args[++i]; else if (flag === '--allow-dirty') options.allowDirty = true; else if (flag === '--desktop-feed') options.desktopFeed = resolve(args[++i]); else if (flag === '--issues') { const value = args[++i]; if (!/^\d+(,\d+)*$/.test(value)) throw new Error('Invalid issues. Use --issues 30,31 with positive issue numbers.'); options.issues = value.split(',').map(Number); } }
   if (!options.allowDirty && execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).trim()) throw new Error('Refusing dirty worktree. Use --allow-dirty for a development release.');
   if (args.includes('--desktop')) {
     const pkgPath = join(root, 'desktop/package.json'), lockPath = join(root, 'desktop/package-lock.json');
