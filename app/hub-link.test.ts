@@ -255,12 +255,15 @@ async function childApp(options: Record<string, unknown>, keys: Map<string, stri
 const hubFetch=(url,init)=>new Promise((resolve,reject)=>{const req=request(message.localOrigin+new URL(url).pathname,{method:init.method,headers:{...init.headers,Host:host}},res=>{const chunks=[];res.on('data',c=>chunks.push(c));res.on('end',()=>resolve(new Response(Buffer.concat(chunks),{status:res.statusCode})));});req.on('error',reject);req.end(init.body);});
 const webSocket=(url,settings)=>new WebSocket(url.replace(origin.replace('https','wss'),message.localOrigin.replace('http','ws')),{...settings,headers:{...settings.headers,Host:host}});
 const app=await startApp({...message.options,hubLink:{...message.options.hubLink,now:()=>message.clock,fetch:hubFetch,webSocket,entry:(service,name)=>({getPassword:()=>keys.get(service+'/'+name)??null,setPassword:value=>keys.set(service+'/'+name,value)})}});process.send({kind:'ready',origin:app.origin});}catch{process.send({kind:'failed'});process.exitCode=1;}});`;
-    const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', code], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+    const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', code], { cwd: new URL('.', import.meta.url), stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+    let stderr = ''; child.stderr!.on('data', chunk => { stderr = (stderr + chunk).slice(-16000); });
     const ready = once(child, 'message', { signal: AbortSignal.timeout(10000) });
     child.send({ options, keys: [...keys], localOrigin, clock });
-    const [message] = await ready;
-    assert.equal(message.kind, 'ready');
-    return child;
+    try {
+        const [message] = await ready;
+        assert.equal(message.kind, 'ready', stderr);
+        return child;
+    } catch (error) { await killChild(child); throw new Error(`Child startup failed: ${stderr}`, { cause: error }); }
 }
 async function killChild(child: ChildProcess) {
     if (child.exitCode !== null || child.signalCode !== null)
@@ -684,4 +687,19 @@ test('signed pending requests stay node-scoped; approval, stale revision, offlin
     }
     await until(() => bob.app.hubLink!.requests().length === 90, 'bounded multi-frame snapshot');
     assert(chunked); assert.equal(bob.app.hubLink!.status().connected, true);
+});
+
+test('local owner deletes linked agent, withdraws hub participation and removes local transport journals', async t => {
+    const f = await fixture(t), node = await f.node('Delete linked', f.alice), p = await node.participate();
+    await api(node.app, '/api/agents', { id: randomUUID(), name: 'Keep', model: 'fixture', instructions: 'Help' }, 201);
+    const post = f.post(f.alice, [p.participationId]); await f.done(post.turnIds[0]);
+    await api(node.app, `/api/agents/${node.agent.id}/delete`, { id: randomUUID() });
+    assert(!(await api(node.app, '/api/agents')).agents.some((agent: any) => agent.id === node.agent.id));
+    assert.deepEqual(await api(node.app, '/api/hub-link/history'), []);
+    await node.app.close();
+    const db = new DatabaseSync(node.database);
+    try {
+        for (const table of ['hub_link_threads','hub_link_grants','hub_link_turns','hub_link_events','hub_link_results','hub_link_actions']) assert.equal(db.prepare(`SELECT count(*) AS n FROM ${table}`).get()!.n, 0, table);
+        assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+    } finally { db.close(); }
 });

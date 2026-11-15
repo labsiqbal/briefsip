@@ -199,6 +199,7 @@ test('hub routes: local-owner APIs denied on all hosts, no CORS, cache isolation
   for (const host of [accounts, f.alpha.host, f.beta.host]) for (const path of ['/mcp', '/api/agents', '/api/settings', '/api/files', '/api/computer', '/api/releases', '/api/providers', '/api/update', '/api/machines', '/node', '/']) {
     const response = await f.request(host, path); assert.equal(response.status, 404, `${host}${path}`); assert.equal(response.headers['cache-control'], 'no-store'); assert.equal(response.headers['access-control-allow-origin'], undefined);
   }
+  for (const host of [accounts, f.alpha.host, f.beta.host]) assert.equal((await f.request(host, `/api/agents/${randomUUID()}/delete`, { body: { id: randomUUID() } })).status, 404);
   assert.equal((await f.request(f.alpha.host, '/api/project', { method: 'OPTIONS', origin: origin(f.beta.host) })).status, 404);
   const callback = await f.request(f.alpha.host, '/auth/callback');
   assert.equal(callback.headers['referrer-policy'], 'no-referrer'); assert.equal(callback.headers['cache-control'], 'no-store');

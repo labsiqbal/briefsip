@@ -200,7 +200,7 @@ test('conversation commands protect Main chat, revisions, queued work and delete
     const renamed = await post(edit, rename); assert.equal(renamed.revision, 2); assert.equal(renamed.name, 'Renamed task'); assert.deepEqual(await post(edit, rename), renamed);
     await post(edit, { ...rename, id: randomUUID() }, 409); await post(edit, { ...rename, name: 'Conflict' }, 409);
     await post(`/api/threads/${agent.id}/delete`, { id: randomUUID(), revision: 1 }, 404);
-    await post(`/api/agents/${agent.id}/delete`, { id: randomUUID(), revision: 1 }, 404);
+    await post(`/api/agents/${agent.id}/delete`, { id: randomUUID(), revision: 1 }, 400);
     const queued = randomUUID(); await post(turns, { id: queued, text: 'Queued task' }, 202);
     await post(remove, { id: randomUUID(), revision: 2 }, 409);
     const second = randomUUID(); await post(turns, { id: second, text: 'Second queued task' }, 202);

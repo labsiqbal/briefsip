@@ -263,3 +263,6 @@
 .help-page > .k-page-head { grid-column: 1 / -1; }
 @media (max-width: 900px) { .k-page.help-page { grid-template-columns: 1fr; } }
 .help-page .k-section > p + p { margin-top: 12px; }
+
+.sidebar-agent > .agent-actions { opacity: 0; }
+.sidebar-agent:hover > .agent-actions, .sidebar-agent:focus-within > .agent-actions, .sidebar-agent > .agent-actions[data-state="open"] { opacity: 1; }
