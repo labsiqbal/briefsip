@@ -16,7 +16,7 @@ const message = (error: unknown) => error instanceof Error ? error.message : 'Co
 
 export type Agent = { workspace_connected?: boolean; runtime?: 'api' | 'codex' | 'claude'; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; thread_limit: number; tool_budget?: number; revision: number; id: string; name: string; role: string; model: string; instructions: string };
 
-export function AgentForm({ model, focusComputer = false, profile: liveProfile, onCreated, onCancel, onReload, onVisibilityChanged, request: api, isClientError }: { request: <T>(path: string, data?: unknown) => Promise<T>; isClientError: (error: unknown) => boolean; model: string; focusComputer?: boolean; profile?: Agent; onCreated: (agent: Agent) => void; onCancel: () => void; onReload?: () => Promise<void>; onVisibilityChanged?: () => Promise<void> }) {
+export function AgentForm({ model, focusComputer = false, profile: liveProfile, onCreated, onCancel, onReload, onVisibilityChanged, onDelete, request: api, isClientError }: { request: <T>(path: string, data?: unknown) => Promise<T>; isClientError: (error: unknown) => boolean; model: string; focusComputer?: boolean; profile?: Agent; onCreated: (agent: Agent) => void; onCancel: () => void; onReload?: () => Promise<void>; onVisibilityChanged?: () => Promise<void>; onDelete?: (agent: Agent) => Promise<void> }) {
   const confirm = useConfirm();
   const [look, setLook] = useState<import('./ui/avatar-shapes').AvatarLook | null>(null);
   const [LookPicker] = useState(() => lazy(() => import('./ui/avatar-shapes').then(module => ({ default: module.AvatarPicker }))));
@@ -175,6 +175,7 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
     <Dialog open size={profile ? 'lg' : 'md'} onOpenChange={next => { if (!next && !busy) onCancel(); }} title={profile ? 'Agent profile' : 'New agent'}
       description={profile && <span className="agent-profile__context"><span>{profile.name}</span><ActionMenu label="Agent profile actions" trigger={<IconButton ref={exportTrigger} label="Agent profile actions"><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: 'Export template', onSelect: () => setExportOpen(true) }]} /></span>}
       footer={<>
+        {profile && onDelete && <Button variant="danger" className="k-dialog__foot-start" disabled={busy} onClick={() => void onDelete(profile).catch(error => setError(message(error)))}>Delete agent</Button>}
         {!profile && pending.current && <Button variant="ghost" disabled={busy} onClick={() => void discardPending()} className="k-dialog__foot-start">Discard recovery</Button>}
         {profile && error && onReload && <Button variant="ghost" onClick={onReload} className="k-dialog__foot-start">Discard changes and reload</Button>}
         {profile && tab === 'access' && !dirty && !pending.current ? <Button onClick={onCancel}>Done</Button> : <>

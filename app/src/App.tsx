@@ -1,3 +1,4 @@
+import { AgentActions, useDeleteAgent } from './AgentActions';
 import { RightPanel, useRightPanel } from './RightPanel';
 import { restoreThreadCommand, type ThreadCommand } from '../thread-command';
 import './Conversations.css';
@@ -1101,6 +1102,12 @@ function MachineGroup({ name, subtitle, count, status, expanded, onExpandedChang
 
 
 function App() {
+  const deleteAgent = useDeleteAgent(api, async id => {
+    setDialog(null); setComputerSettings(null); setAgentContent(null);
+    setSelected(current => current === id ? '' : current); setOpenedThread(current => current?.agent === id ? null : current);
+    setProjectThread(current => current?.agent === id ? null : current);
+    await load(true); await projectState.reload();
+  });
   const [directory, setDirectory] = useState<Directory | null>(null); const [selected, setSelected] = useState('');
   const [channels, setChannels] = useState<Channel[]>([]), [selectedChannel, setSelectedChannel] = useState('');
   const [environment, setEnvironment] = useState<Environment | null>(null), [summaries, setSummaries] = useState<SidebarSummary[]>([]);
@@ -1142,6 +1149,7 @@ function App() {
   const [detailsVisible] = useDetailsOpen();
   const sidebar = useResizablePanel(sidebarPanel, detailsVisible ? 280 : 0);
   const [openedThread, setOpenedThread] = useState<{ agent: string; thread: string } | null>(null);
+  const [agentActionError, setAgentActionError] = useState('');
   const [activityError, setActivityError] = useState(false);
   const [editReload, setEditReload] = useState(0);
   const [error, setError] = useState('');
@@ -1152,7 +1160,7 @@ function App() {
   useEffect(() => { try { localStorage.setItem(sidebarTabKey, sidebarTab); } catch { /* Keep tabs usable without storage. */ } }, [sidebarTab]);
   async function load(propagate = false) {
     const version = ++directoryRequest.current;
-    try { const [data, rooms, local, summary] = await Promise.all([api<Directory>('/api/agents'), api<Channel[]>('/api/channels'), api<Environment>('/api/environment'), api<{ summaries: SidebarSummary[] }>('/api/sidebar/summary')]); if (version !== directoryRequest.current) return; directoryRequest.current++; setDirectory(data); setChannels(rooms); setEnvironment(local); setSummaries(summary.summaries); setSelected(id => id || data.agents[0]?.id || ''); setError(''); }
+    try { const [data, rooms, local, summary] = await Promise.all([api<Directory>('/api/agents'), api<Channel[]>('/api/channels'), api<Environment>('/api/environment'), api<{ summaries: SidebarSummary[] }>('/api/sidebar/summary')]); if (version !== directoryRequest.current) return; directoryRequest.current++; setDirectory(data); setChannels(rooms); setEnvironment(local); setSummaries(summary.summaries); setSelected(id => data.agents.some(agent => agent.id === id) ? id : data.agents[0]?.id || ''); setError(''); }
     catch (error) { if (version === directoryRequest.current) setError(message(error)); if (propagate) throw error; }
   }
   useEffect(() => { void load(); }, []);
@@ -1163,7 +1171,7 @@ function App() {
       try {
         const version = directoryRequest.current;
         const [rooms, agents, summary] = await Promise.all([api<Channel[]>('/api/channels'), api<Directory>('/api/agents'), api<{ summaries: SidebarSummary[] }>('/api/sidebar/summary')]);
-        if (!stopped && version === directoryRequest.current) setDirectory(current => current && ({ ...current, agents: current.agents.map(agent => { const fresh = agents.agents.find(item => item.id === agent.id); return fresh && fresh.revision >= agent.revision ? fresh : agent; }) }));
+        if (!stopped && version === directoryRequest.current) setDirectory(current => current && ({ ...current, agents: agents.agents.map(fresh => { const old = current.agents.find(item => item.id === fresh.id); return old && old.revision > fresh.revision ? old : fresh; }) }));
         if (!stopped) { setActivityError(false); setChannels(current => rooms.map(fresh => { const old=current.find(room=>room.id===fresh.id); return {...fresh, activity:Math.max(old?.activity??0,fresh.activity), read_position:Math.max(old?.read_position??0,fresh.read_position)}; })); }
         if (!stopped) { setSummaries(summary.summaries); void projectState.reload().catch(() => {}); }
       } catch { if (!stopped) setActivityError(true); }
@@ -1220,10 +1228,10 @@ function App() {
     const current = view === 'chat' && !selectedProject && !projectThread && !selectedChannel && item.id === selected, summary = summaryFor(item.id);
     return collapsed
       ? <button key={item.id} type="button" className={`bot-rail-item${current ? ' is-selected' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgent(item.id)} title={item.name} aria-label={item.name}><AgentAvatar agent={item} size={36} /></button>
-      : <button key={item.id} type="button" className={`bot-row${current ? ' is-selected' : ''}`} aria-label={`${item.name} ${summary?.status === 'running' ? 'Working' : 'Idle'}${item.computer_waiting ? ' - Waiting for you' : ''}${item.provider_available === false ? ' - Provider account unavailable' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgent(item.id)}>
+      : <AgentActions key={item.id} agent={item} request={api} onChanged={() => load(true)} onEdit={() => { openAgent(item.id); setDialog('edit'); }} onDelete={() => deleteAgent(item)} onError={error => setAgentActionError(message(error))}><button type="button" className={`bot-row${current ? ' is-selected' : ''}`} aria-label={`${item.name} ${summary?.status === 'running' ? 'Working' : 'Idle'}${item.computer_waiting ? ' - Waiting for you' : ''}${item.provider_available === false ? ' - Provider account unavailable' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgent(item.id)}>
         <span className="bot-row__avatar"><AgentAvatar agent={item} size={36} /><span className={`status-dot ${summary?.status === 'running' ? 'is-working' : 'is-idle'}`} role="img" aria-label={summary?.status === 'running' ? 'Working' : 'Idle'} />{item.computer_waiting && <span className="status-dot is-attention" aria-label="Waiting for you" />}{item.provider_available === false && <span className="status-dot is-attention" aria-label="Provider account unavailable" />}</span>
         <span className="bot-row__text"><span className="bot-row__name">{item.name}{item.computer_waiting && <small> · Waiting for you</small>}</span><span className="bot-row__preview" title={plainPreview(summary?.preview) || undefined}>{item.hidden ? 'Hidden' : item.role || plainPreview(summary?.preview) || 'No role yet'}</span></span>{summary?.time && <time className="bot-row__time" dateTime={summary.time}>{relativeTime(summary.time)}</time>}
-      </button>;
+      </button></AgentActions>;
   };
   const remoteMachines = remoteMachinesState.machines.filter(machine => !onlyOnline || machine.status === 'online').sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   let content: ReactNode;
@@ -1270,6 +1278,7 @@ function App() {
           </DropdownMenu.Content></DropdownMenu.Portal>
         </DropdownMenu.Root>}
       </div>
+      {agentActionError && <Alert tone="error" actions={<IconButton label="Dismiss agent error" onClick={() => setAgentActionError('')}><X size={14} aria-hidden /></IconButton>}>{agentActionError}</Alert>}
       <div className="sidebar__scroll">
         <TabPanel value="agents">
         <nav className="machine-groups" aria-label="Machines">
@@ -1315,11 +1324,11 @@ function App() {
       <PanelResizeHandle panel={sidebar} />
     </aside>}
     {content}
-    {computerSettings && directory && <AgentForm request={api} isClientError={error => error instanceof HttpError && error.status < 500} key={`${computerSettings.id}:${editReload}`} model={directory.defaultModel} profile={directory.agents.find(item => item.id === computerSettings.id) ?? computerSettings} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} focusComputer onCancel={() => setComputerSettings(null)} onCreated={() => { void load(); setComputerSettings(null); }} />}
+    {computerSettings && directory && <AgentForm request={api} isClientError={error => error instanceof HttpError && error.status < 500} key={`${computerSettings.id}:${editReload}`} model={directory.defaultModel} profile={directory.agents.find(item => item.id === computerSettings.id) ?? computerSettings} onDelete={item => deleteAgent(item)} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} focusComputer onCancel={() => setComputerSettings(null)} onCreated={() => { void load(); setComputerSettings(null); }} />}
     {dialog === 'agent' && directory && <AgentForm request={api} isClientError={error => error instanceof HttpError && error.status < 500} model={directory.defaultModel} onCancel={() => setDialog(null)} onCreated={item => { created(item); setDialog(null); }} />}
     {dialog === 'project' && directory && <CreateProject state={projectState} agents={directory.agents} request={api} onClose={() => setDialog(null)} onCreated={item => { openProject(item.id); void load(); }} />}
     {dialog === 'edit' && directory && channel && <ChannelForm key={`${channel.id}:${channel.revision}:${editReload}`} agents={directory.agents} channel={channel} onCancel={() => setDialog(null)} onReload={() => { void load().then(() => setEditReload(value => value + 1)); }} onCreated={() => { void load(); setDialog(null); }} />}
-    {dialog === 'edit' && directory && !channel && agent && <AgentForm request={api} isClientError={error => error instanceof HttpError && error.status < 500} key={`${agent.id}:${editReload}`} model={directory.defaultModel} profile={agent} onCancel={() => setDialog(null)} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} onCreated={() => { void load(); setDialog(null); }} />}
+    {dialog === 'edit' && directory && !channel && agent && <AgentForm request={api} isClientError={error => error instanceof HttpError && error.status < 500} key={`${agent.id}:${editReload}`} model={directory.defaultModel} profile={agent} onCancel={() => setDialog(null)} onDelete={item => deleteAgent(item)} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} onCreated={() => { void load(); setDialog(null); }} />}
     {workspaceDialog && <Dialog open size="lg" title={workspaceDialog === 'help' ? 'Help' : 'Import template'} onOpenChange={open => { if (!open) setWorkspaceDialog(null); }}><div className="legacy"><Suspense fallback={<p role="status">Loading...</p>}>{workspaceDialog === 'help' ? <HelpPage /> : <AgentTemplateImport request={api} onClose={() => setWorkspaceDialog(null)} onCreated={item => { created(item); setWorkspaceDialog(null); }} />}</Suspense></div></Dialog>}
     {agentContent && <Dialog open size="lg" title={`${agentContent.agent.name} · ${agentContent.kind === 'sites' ? 'Agent sites' : 'Export template'}`} onOpenChange={open => { if (!open) setAgentContent(null); }}><div className="legacy"><Suspense fallback={<p role="status">Loading...</p>}>{agentContent.kind === 'sites' ? <SitesPanel agent={agentContent.agent.id} request={api} /> : <AgentTemplateExport id={agentContent.agent.id} request={api} />}</Suspense></div></Dialog>}
     <RadixDialog.Portal><RadixDialog.Content className="app-settings bs-root" aria-describedby={undefined} onEscapeKeyDown={event => { if (settingsQuery && document.activeElement === settingsSearch.current) { event.preventDefault(); setSettingsQuery(''); } }} onOpenAutoFocus={event => {
