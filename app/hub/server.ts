@@ -1,3 +1,6 @@
+import { type KeyObject, createPrivateKey } from 'node:crypto';
+import { attachNodeLink } from './node-link.ts';
+import { hubAssets, hubDocument, createHubWebApi } from './web.ts';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { readFileSync } from 'node:fs';
@@ -13,7 +16,7 @@ import { openHubDatabase } from './schema.ts';
 export type NodeUpgradeHandler = (request: IncomingMessage, socket: Duplex, head: Buffer,
   context: Readonly<{ host: string; authority: HubAuthority; routing: HubRouting }>) => void | Promise<void>;
 
-const callbackScript = `const data=new URLSearchParams(location.hash.slice(1));history.replaceState(null,'','/auth/callback');const state=data.get('state'),code=data.get('code');fetch('/auth/redeem',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':state||''},body:JSON.stringify({state,code})}).then(async r=>{if(!r.ok)throw Error();await r.json();location.replace('/');}).catch(()=>{document.body.textContent='Sign-in expired. Return to the project and sign in again.';});`;
+const callbackScript = `const data=new URLSearchParams(location.hash.slice(1));history.replaceState(null,'','/auth/callback');const state=data.get('state'),code=data.get('code');fetch('/auth/redeem',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':state||''},body:JSON.stringify({state,code})}).then(async r=>{if(!r.ok)throw Error();await r.json();const target=sessionStorage.getItem('briefsip:hub-return');sessionStorage.removeItem('briefsip:hub-return');location.replace(target==='/invite'?'/invite':'/');}).catch(()=>{document.body.textContent='Sign-in expired. Return to the project and sign in again.';});`;
 const callbackCsp = `default-src 'none'; script-src 'sha256-${Buffer.from(sha256(callbackScript), 'hex').toString('base64')}'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`;
 const callbackHtml = `<!doctype html><html lang="en"><meta charset="utf-8"><title>Briefsip sign-in</title><body>Completing sign-in...<script>${callbackScript}</script></body></html>`;
 
@@ -21,11 +24,16 @@ const callbackHtml = `<!doctype html><html lang="en"><meta charset="utf-8"><titl
 export function createHubServer(options: {
   authority: HubAuthority; verifier: SessionVerifier; accountsHost: string; domain: string;
   trustedGatewayAddresses?: string[]; pollIntervalMs?: number; maxStreams?: number;
+  web?: { distPath: string; developmentIdentity?: boolean };
+  nodeLink?: { origin: string; signingKey: KeyObject; development?: boolean };
 }) {
+  if (options.nodeLink && !options.nodeLink.development && options.nodeLink.origin !== `https://${options.accountsHost}`) throw new Error('Hub node origin must match the accounts host.');
   const { authority } = options, routing = createHubRouting(authority);
   const gateway = createHostGateway(authority, options), sessions = createHubSessions(authority, gateway, options.verifier);
   const streams = new Set<{ close(): void; tick(): void }>(), upgrades = new Set<Duplex>();
   let upgradeHandler: NodeUpgradeHandler | undefined;
+  let nodeEndpoint: ReturnType<typeof attachNodeLink> | undefined;
+  const web = options.web ? hubAssets(options.web.distPath) : undefined, browser = createHubWebApi(authority);
   const rate = new Map<string, { count: number; until: number }>();
   function limit(key: string, ceiling: number) {
     const prior = rate.get(key), row = prior && prior.until > authority.now() ? prior : { count: 0, until: authority.now() + 60000 };
@@ -59,7 +67,7 @@ export function createHubServer(options: {
     authority.member(ctx); if (sectionId) authority.section(ctx, sectionId);
     if (streams.size >= (options.maxStreams ?? 100)) throw new ProtocolError(429, 'stream_limit', 'Retry later.', true);
     response.setHeader('Content-Type', 'text/event-stream'); response.setHeader('X-Accel-Buffering', 'no'); response.flushHeaders();
-    let cursor = 0, snapshot = '', heartbeat = 0, closed = false;
+    let cursor = 0, snapshot = '', turnSnapshot = '', heartbeat = 0, closed = false;
     const stream = {
       close() { if (closed) return; closed = true; clearTimeout(expiry); streams.delete(stream); response.end(); },
       tick() {
@@ -79,6 +87,14 @@ export function createHubServer(options: {
               snapshot = digest;
             }
           }
+          if (sectionId) {
+            const turns = JSON.stringify(browser.turns(ctx, sectionId));
+            if (turns !== turnSnapshot) {
+              sessions.get(request, host); authority.section(ctx, sectionId);
+              if (!response.write(`event: turn.snapshot\ndata: ${turns}\n\n`)) { stream.close(); return; }
+              turnSnapshot = turns;
+            }
+          }
           if (authority.now() - heartbeat >= 15000) { heartbeat = authority.now(); if (!response.write(': heartbeat\n\n')) stream.close(); }
         } catch { stream.close(); }
       },
@@ -89,14 +105,30 @@ export function createHubServer(options: {
   const server = createServer({ maxHeaderSize: 16384, requestTimeout: 15000, headersTimeout: 10000 }, async (request, response) => {
     security(response);
     try {
+      if (nodeEndpoint && ['/api/nodes/enrollment/start', '/api/nodes/enrollment/poll', '/api/nodes/session'].includes(request.url ?? '')) {
+        if (await nodeEndpoint.handleHttp(request, response)) return;
+        throw notFound();
+      }
       const host = gateway.resolve(request), raw = request.url ?? '';
       if (!raw.startsWith('/') || raw.startsWith('//') || raw.includes('#') || /[\\\u0000-\u0020]/.test(raw)) throw notFound();
       const url = new URL(raw, `https://${host}`), path = url.pathname, central = host === gateway.accountsHost;
       if (path !== raw.split('?')[0]) throw notFound();
       const route = `${request.method} ${path}`;
-      // Explicit allowlist. Every local-owner route, asset/proxy and unsupported method is absent.
+      if (web && request.method === 'GET' && (['/', '/login', '/invite', '/join', '/nodes/link'].includes(path) || web.files.has(path))) {
+        if (singleHeader(request, 'origin') !== undefined) requireOrigin(request, host);
+        if (web.files.has(path)) {
+          const extension = path.split('.').at(-1)!;
+          const types: Record<string, string> = { js: 'text/javascript', css: 'text/css', woff2: 'font/woff2', svg: 'image/svg+xml' };
+          response.setHeader('Content-Type', types[extension] ?? 'application/octet-stream'); response.end(web.files.get(path)); return;
+        }
+        if (!central && ['/login', '/join', '/nodes/link'].includes(path) || central && path === '/invite') throw notFound();
+        const page = hubDocument(web.html, { accountsHost: gateway.accountsHost, domain: options.domain, developmentIdentity: !!options.web?.developmentIdentity });
+        response.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'nonce-${page.nonce}'; style-src 'self' 'nonce-${page.nonce}'; font-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
+        response.setHeader('Content-Type', 'text/html; charset=utf-8'); response.end(page.html); return;
+      }
+      // Explicit browser allowlist. No local-owner API or proxy is mounted.
       const publicRoutes = new Set(central ? ['GET /login', 'GET /auth/bootstrap', 'POST /auth/session', 'POST /auth/handoff'] : ['GET /auth/start', 'GET /auth/callback', 'POST /auth/redeem']);
-      const privateRoutes = new Set(central ? ['GET /api/session', 'POST /auth/logout', 'GET /api/projects', 'POST /api/projects'] : ['GET /api/session', 'POST /auth/logout', 'GET /api/project', 'GET /api/sections', 'POST /api/sections', 'GET /api/history', 'POST /api/messages', 'GET /api/turn', 'GET /api/events']);
+      const privateRoutes = new Set(central ? ['GET /api/session', 'POST /auth/logout', 'GET /api/projects', 'POST /api/projects', 'GET /api/nodes', 'GET /api/nodes/enrollment', 'POST /api/nodes/enrollment/approve', 'POST /api/agents', 'POST /api/participations', 'POST /api/project-options'] : ['GET /api/session', 'POST /auth/logout', 'GET /api/project', 'GET /api/sections', 'POST /api/sections', 'GET /api/history', 'POST /api/messages', 'GET /api/turn', 'GET /api/events', 'GET /api/invitation-session', 'GET /api/members', 'POST /api/members', 'GET /api/invitations', 'POST /api/invitations', 'POST /api/invitations/revoke', 'POST /api/invitations/accept', 'GET /api/participants', 'POST /api/participants/consent', 'POST /api/participants/withdraw', 'GET /api/turns']);
       if (!publicRoutes.has(route) && !privateRoutes.has(route)) throw notFound();
       if (singleHeader(request, 'origin') !== undefined) requireOrigin(request, host);
       if (request.method === 'POST') requireOrigin(request, host);
@@ -131,10 +163,33 @@ export function createHubServer(options: {
         const result = sessions.logout(request, host, data.global); sweep(); reply(response, result, [cookie('__Host-session', '', 0), cookie('__Host-login', '', 0)]); return;
       }
       if (central) {
-        if (route === 'GET /api/session') { reply(response, { accountId: actor.accountId, csrf: actor.csrf, expiresAt: actor.expiresAt }); return; }
+        if (route === 'GET /api/session') { reply(response, { accountId: actor.accountId, csrf: actor.csrf, expiresAt: actor.expiresAt, name: actor.identity.subject }); return; }
+        if (route === 'GET /api/nodes/enrollment') {
+          if (!nodeEndpoint || url.searchParams.size !== 1 || !url.searchParams.has('humanCode')) throw notFound();
+          reply(response, nodeEndpoint.inspectEnrollment(actor.accountId, url.searchParams.get('humanCode')!)); return;
+        }
+        if (route === 'GET /api/nodes') { reply(response, browser.nodes(actor.accountId)); return; }
         if (route === 'GET /api/projects') {
           const projects = authority.all("SELECT p.id,h.host,p.name FROM projects p JOIN host_bindings h ON h.project_id=p.id JOIN memberships m ON m.project_id=p.id WHERE p.status='active' AND h.active=1 AND m.account_id=? AND m.status='active' LIMIT 100", actor.accountId);
           reply(response, projects.map(project => ({ ...project, role: authority.member(gateway.project(String(project.host), actor.accountId, String(project.id))).role }))); return;
+        }
+        if (route !== 'POST /api/projects') {
+          const data = await body(request);
+          sessions.get(request, host, true);
+          limit(`manage:${actor.accountId}`, 60);
+          if (route === 'POST /api/nodes/enrollment/approve') {
+            const input = closedObject(data, ['humanCode', 'fingerprint']);
+            if (!nodeEndpoint || typeof input.humanCode !== 'string' || nodeEndpoint.inspectEnrollment(actor.accountId, input.humanCode).fingerprint !== input.fingerprint) throw notFound();
+            reply(response, nodeEndpoint.approveEnrollment(actor.accountId, input.humanCode)); return;
+          }
+          if (route === 'POST /api/agents') { reply(response, browser.registerAgent(actor.accountId, data)); return; }
+          const input = closedObject(data, route === 'POST /api/project-options' ? ['projectHost'] : ['projectHost', 'agentId', 'policy']);
+          if (typeof input.projectHost !== 'string') throw notFound();
+          const ctx = gateway.project(input.projectHost, actor.accountId); authority.member(ctx);
+          if (route === 'POST /api/project-options') {
+            reply(response, { projectId: ctx.projectId, members: browser.members(ctx), sections: authority.all('SELECT id,name FROM sections WHERE project_id=? AND archived=0 LIMIT 100', ctx.projectId) }); return;
+          }
+          reply(response, browser.propose(ctx, { agentId: input.agentId, policy: input.policy })); sweep(); return;
         }
         limit(`create:${actor.accountId}`, 10);
         const data = closedObject(await body(request), ['slug', 'name']);
@@ -142,8 +197,18 @@ export function createHubServer(options: {
         if (data.slug === 'hub-origin' || typeof data.slug === 'string' && data.slug.startsWith('xn--')) throw notFound();
         reply(response, authority.createProject(actor.accountId, data.slug as string, data.name as string)); return;
       }
-      const ctx = gateway.project(host, actor.accountId, actor.projectId); authority.member(ctx);
-      if (route === 'GET /api/session') { reply(response, { accountId: actor.accountId, projectId: ctx.projectId, role: authority.member(ctx).role, csrf: actor.csrf, expiresAt: actor.expiresAt }); return; }
+      const ctx = gateway.project(host, actor.accountId, actor.projectId);
+      if (route === 'GET /api/invitation-session') { reply(response, { accountId: actor.accountId, name: actor.identity.subject, csrf: actor.csrf, expiresAt: actor.expiresAt }); return; }
+      if (route === 'POST /api/invitations/accept') {
+        const data = await body(request); const current = sessions.get(request, host, true);
+        reply(response, browser.accept(ctx, data, current.identity)); sweep(); return;
+      }
+      authority.member(ctx);
+      if (route === 'GET /api/session') { reply(response, { accountId: actor.accountId, projectId: ctx.projectId, role: authority.member(ctx).role, csrf: actor.csrf, expiresAt: actor.expiresAt, name: actor.identity.subject }); return; }
+      if (route === 'GET /api/members') { reply(response, browser.members(ctx)); return; }
+      if (route === 'GET /api/invitations') { reply(response, browser.invitations(ctx)); return; }
+      if (route === 'GET /api/participants') { reply(response, browser.participants(ctx)); return; }
+      if (route === 'GET /api/turns') { reply(response, browser.turns(ctx, id(url.searchParams.get('sectionId')))); return; }
       if (route === 'GET /api/project') { reply(response, authority.one('SELECT id,slug,name,revision FROM projects WHERE id=?', ctx.projectId)); return; }
       if (route === 'GET /api/sections') { reply(response, authority.all('SELECT id,name,revision FROM sections WHERE project_id=? AND archived=0 LIMIT 100', ctx.projectId)); return; }
       if (route === 'GET /api/history') { reply(response, routing.history(ctx, id(url.searchParams.get('sectionId')))); return; }
@@ -152,7 +217,12 @@ export function createHubServer(options: {
       const data = await body(request);
       // Body streaming yielded; all authority and session evidence is checked again before mutation.
       sessions.get(request, host, true); authority.member(ctx);
-      if (route === 'POST /api/sections') { const input = closedObject(data, ['name']); reply(response, { sectionId: authority.createSection(ctx, input.name as string) }); }
+      if (route === 'POST /api/members') { const input = closedObject(data, ['accountId', 'revision', 'role']); authority.editMember(ctx, id(input.accountId), input.revision as number, input.role as 'member'); reply(response, { updated: true }); }
+      else if (route === 'POST /api/invitations') reply(response, browser.invite(ctx, data));
+      else if (route === 'POST /api/invitations/revoke') { const input = closedObject(data, ['invitationId']); authority.revokeInvite(ctx, id(input.invitationId)); reply(response, { revoked: true }); }
+      else if (route === 'POST /api/participants/consent') { const input = closedObject(data, ['participationId', 'revision', 'policyDigest']); authority.consent(ctx, id(input.participationId), input.revision as number, input.policyDigest as string, 'project'); reply(response, { approved: true }); }
+      else if (route === 'POST /api/participants/withdraw') { const input = closedObject(data, ['participationId']); authority.withdraw(ctx, id(input.participationId)); reply(response, { withdrawn: true }); }
+      else if (route === 'POST /api/sections') { const input = closedObject(data, ['name']); reply(response, { sectionId: authority.createSection(ctx, input.name as string) }); }
       else { limit(`post:${actor.accountId}`, 60); reply(response, routing.post(ctx, data as PostMessage)); }
       sweep();
     } catch (error) {
@@ -173,13 +243,16 @@ export function createHubServer(options: {
   interval.unref();
   server.on('upgrade', (request, socket, head) => {
     try {
+      if (nodeEndpoint && request.headers.host === new URL(options.nodeLink!.origin).host && request.url === '/node') return;
       const host = gateway.resolve(request);
-      if (host !== gateway.accountsHost || request.method !== 'GET' || request.url !== '/node' || singleHeader(request, 'origin') !== undefined || singleHeader(request, 'cookie') !== undefined || !upgradeHandler) throw notFound();
+      if (host !== gateway.accountsHost || request.method !== 'GET' || request.url !== '/node' || singleHeader(request, 'origin') !== undefined || singleHeader(request, 'cookie') !== undefined || !upgradeHandler && !nodeEndpoint) throw notFound();
       if (upgrades.size >= 100) throw notFound();
+      if (nodeEndpoint) return; // Its dedicated listener owns the verified upgrade bytes.
       upgrades.add(socket); socket.on('close', () => upgrades.delete(socket));
-      Promise.resolve(upgradeHandler(request, socket, head, Object.freeze({ host, authority, routing }))).catch(() => socket.destroy());
+      Promise.resolve(upgradeHandler!(request, socket, head, Object.freeze({ host, authority, routing }))).catch(() => socket.destroy());
     } catch { socket.end('HTTP/1.1 404 Not Found\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'); }
   });
+  if (options.nodeLink) nodeEndpoint = attachNodeLink(server, { ...options.nodeLink, authority, routing, now: authority.now });
   server.on('close', () => clearInterval(interval));
   return {
     server, authority, routing, gateway, sessions,
@@ -189,7 +262,7 @@ export function createHubServer(options: {
       return () => { if (upgradeHandler === handler) upgradeHandler = undefined; };
     },
     async close() {
-      clearInterval(interval); for (const stream of [...streams]) stream.close(); for (const socket of upgrades) socket.destroy();
+      clearInterval(interval); await nodeEndpoint?.close(); for (const stream of [...streams]) stream.close(); for (const socket of upgrades) socket.destroy();
       await new Promise<void>((resolve, reject) => { if (!server.listening) { resolve(); return; } server.close(error => error ? reject(error) : resolve()); server.closeIdleConnections(); });
     },
   };
@@ -198,6 +271,7 @@ export function createHubServer(options: {
 /** Operator-owned config points only at a new, isolated hub database. No implicit local data/config. */
 export function startHub(config: {
   domain: string; accountsHost: string; dataPath: string; mailboxKeyPath: string; port?: number; trustedGatewayAddresses?: string[];
+  web?: { distPath: string; developmentIdentity?: boolean }; nodeLink?: { origin: string; signingKeyPath: string };
   identity: { mode: 'clerk'; issuer: string; jwksPath: string; audience?: string } | { mode: 'stub'; tokensPath: string };
 }) {
   if (!Number.isInteger(config.port ?? 4318) || (config.port ?? 4318) < 0 || (config.port ?? 4318) > 65535 || !config.dataPath || !config.mailboxKeyPath) throw new Error('Explicit hub data/key paths and valid port required.');
@@ -209,7 +283,7 @@ export function startHub(config: {
   else throw new Error('Explicit clerk or stub identity mode required.');
   const storage = openHubDatabase(config.dataPath);
   try {
-    const hub = createHubServer({ authority: createHubAuthority(storage.db, { domain: config.domain, mailboxKey }), verifier, accountsHost: config.accountsHost, domain: config.domain, trustedGatewayAddresses: config.trustedGatewayAddresses });
+    const hub = createHubServer({ authority: createHubAuthority(storage.db, { domain: config.domain, mailboxKey }), verifier, accountsHost: config.accountsHost, domain: config.domain, trustedGatewayAddresses: config.trustedGatewayAddresses, web: config.web, ...(config.nodeLink ? { nodeLink: { origin: config.nodeLink.origin, signingKey: createPrivateKey(readFileSync(config.nodeLink.signingKeyPath)) } } : {}) });
     hub.server.once('close', () => storage.close()); hub.server.once('error', () => { void hub.close().finally(() => storage.close()); });
     hub.server.listen(config.port ?? 4318, '127.0.0.1');
     return hub;

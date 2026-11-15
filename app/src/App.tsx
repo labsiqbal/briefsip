@@ -33,7 +33,7 @@ import { QuestionCard, type Question } from './QuestionCard';
 import { ApprovalCard, type AppApproval } from './ApprovalCard';
 import { CompactionPanel } from './CompactionPanel';
 import { lazy, Suspense, useEffect, useRef, useState, useId, type FormEvent, type ReactNode } from 'react';
-import { Archive, BarChart3, BookOpen, Database, Download, KeyRound, Palette, Plug, SlidersHorizontal, Bell, BellOff, Brain, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, GitFork, ListRestart, Square, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
+import { Link as LinkIcon, Archive, BarChart3, BookOpen, Database, Download, KeyRound, Palette, Plug, SlidersHorizontal, Bell, BellOff, Brain, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, GitFork, ListRestart, Square, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
 import { PanelResizeHandle, sidebarPanel, useResizablePanel } from './ui/resizable';
@@ -72,6 +72,7 @@ const AgentTemplateExport = lazy(() => import('./AgentTemplateImport').then(modu
 const SitesPanel = lazy(() => import('./SitesPanel').then(module => ({ default: module.SitesPanel })).catch(panelLoadFailure));
 const McpServerPanel = lazy(() => import('./McpServerPanel').then(module => ({ default: module.McpServerPanel })).catch(panelLoadFailure));
 const McpPanel = lazy(() => import('./McpPanel').then(module => ({ default: module.McpPanel })).catch(panelLoadFailure));
+const HubConnection = lazy(() => import('./hub/HubConnection').then(module => ({ default: module.HubConnection })).catch(panelLoadFailure));
 const ConnectedAppsPanel = lazy(() => import('./ConnectedAppsPanel').then(module => ({ default: module.ConnectedAppsPanel })).catch(panelLoadFailure));
 const SkillsPanel = lazy(() => import('./SkillsPanel').then(module => ({ default: module.SkillsPanel })).catch(panelLoadFailure));
 
@@ -1000,7 +1001,7 @@ function AgentConversations({ agent, configured, onEdit, onComputerSettings, onS
     return () => { navigation.current++; loadVersion.current++; };
   }, []);
   useEffect(() => { if (busy || pending || invalid) return; const timer = setInterval(() => { void load(selected, false, true).catch(() => {}); }, 5000); return () => clearInterval(timer); }, [selected, busy, pending, invalid]);
-  useEffect(() => { if (initialThread !== undefined) { onThreadOpened(); void load(initialThread, true).catch(() => {}); } }, [initialThread]);
+  useEffect(() => { if (initialThread !== undefined) { select(initialThread); onThreadOpened(); void load(initialThread).catch(() => {}); } }, [initialThread]);
   const leave = () => { navigation.current++; loadVersion.current++; };
   const openForm = () => { leave(); setShowWorkspace(false); setShowWorkflows(false); setForm('new'); };
   const openRoutines = () => { leave(); onManageRoutines(agent.id); };
@@ -1163,11 +1164,11 @@ function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agent
 }
 
 
-type SettingsSection = 'general' | 'appearance' | 'skills' | 'connected-apps' | 'mcp' | 'machines' | 'updates' | 'usage' | 'data' | 'backup' | 'mcp-server';
+type SettingsSection = 'general' | 'appearance' | 'skills' | 'connected-apps' | 'hub' | 'mcp' | 'machines' | 'updates' | 'usage' | 'data' | 'backup' | 'mcp-server';
 const settingsGroups: { label: string; items: { id: SettingsSection; label: string; icon: typeof Settings }[] }[] = [
   { label: 'Preferences', items: [{ id: 'general', icon: SlidersHorizontal, label: 'General' }, { id: 'appearance', icon: Palette, label: 'Appearance' }] },
   { label: 'Agents', items: [{ id: 'skills', icon: BookOpen, label: 'Skills' }] },
-  { label: 'Connections', items: [{ id: 'connected-apps', icon: Plug, label: 'Connected apps' }, { id: 'mcp', icon: Server, label: 'MCP connections' }] },
+  { label: 'Connections', items: [{ id: 'hub', icon: LinkIcon, label: 'briefsip.com' }, { id: 'connected-apps', icon: Plug, label: 'Connected apps' }, { id: 'mcp', icon: Server, label: 'MCP connections' }] },
   { label: 'System', items: [{ id: 'machines', icon: Monitor, label: 'Machines' }, { id: 'updates', icon: Download, label: 'Updates' }] },
   { label: 'Data', items: [{ id: 'usage', icon: BarChart3, label: 'Usage' }, { id: 'data', icon: Database, label: 'Shared data' }, { id: 'backup', icon: Archive, label: 'Backup & restore' }] },
   { label: 'Advanced', items: [{ id: 'mcp-server', icon: KeyRound, label: 'External access' }] },
@@ -1448,6 +1449,7 @@ function App() {
             : settings === 'skills' ? <Suspense fallback={<p className="empty" role="status">Loading skill library...</p>}><SkillsPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'updates' ? <UpdatesPanel request={api} />
             : settings === 'machines' ? <MachinesPanel request={api} onChanged={() => { void remoteMachinesState.reload(); void api<Environment>('/api/environment').then(setEnvironment).catch(() => setActivityError(true)); }} />
+            : settings === 'hub' ? <Suspense fallback={<p className="empty" role="status">Loading hub connection...</p>}><HubConnection agents={directory.agents} request={api} /></Suspense>
             : settings === 'connected-apps' ? <Suspense fallback={<p className="empty" role="status">Loading connected apps...</p>}><ConnectedAppsPanel agents={directory.agents} request={api} /></Suspense>
             : settings === 'mcp-server' ? <Suspense fallback={<p className="empty" role="status">Loading MCP server...</p>}><McpServerPanel request={api} /></Suspense>
             : settings === 'mcp' ? <Suspense fallback={<p className="empty" role="status">Loading MCP connections...</p>}><McpPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>

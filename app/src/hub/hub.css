@@ -1,0 +1,46 @@
+.hub-shell { height: 100%; display: flex; background: var(--color-bg-chrome); }
+.hub-sidebar { width: 240px; flex: 0 0 240px; background: var(--color-bg-sidebar); border-right: .5px solid var(--color-border-tertiary); display: flex; flex-direction: column; padding: 20px 12px 12px; gap: 24px; }
+.hub-brand { display: flex; align-items: center; gap: 9px; padding: 0 10px; font-size: 18px; font-weight: 600; }
+.hub-sidebar nav { display: flex; flex-direction: column; gap: 3px; overflow: auto; }
+.hub-nav-item { display: flex; gap: 10px; align-items: center; width: 100%; min-height: 40px; padding: 8px 12px; border-radius: 8px; color: var(--color-text-secondary); text-decoration: none; }
+.hub-nav-item:hover { background: var(--color-bg-hover); color: var(--color-text-primary); }
+.hub-nav-item[aria-current] { background: var(--color-bg-active); color: var(--color-text-primary); }
+.hub-nav-heading { display: flex; align-items: center; justify-content: space-between; margin: 12px 8px 2px; color: var(--color-text-tertiary); font-size: 12px; }
+.hub-sidebar footer { margin-top: auto; display: flex; align-items: center; justify-content: space-between; padding: 8px; gap: 8px; }
+.hub-main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+.hub-main > .k-page { padding: 28px 32px; width: 100%; max-width: 1050px; margin-inline: auto; }
+.hub-header { display: flex; justify-content: space-between; align-items: center; min-height: 64px; border-bottom: .5px solid var(--color-border-tertiary); padding: 12px 24px; gap: 16px; }
+.hub-header h1 { font-size: 16px; font-weight: 600; margin: 0; display: flex; align-items: center; gap: 8px; }
+.hub-account { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hub-center { min-height: 100%; overflow: auto; display: grid; place-items: center; padding: 32px; }
+.hub-center > .k-page { width: min(100%, 460px); gap: 24px; }
+.hub-center h1 { font-size: 24px; margin: 0; line-height: 1.3; text-wrap: balance; }
+.hub-form { display: flex; flex-direction: column; gap: 20px; }
+.hub-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.hub-address { color: var(--color-text-secondary); font-size: 12px; overflow-wrap: anywhere; }
+.hub-link { text-decoration: none; }
+.hub-room { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.hub-room .transcript { padding-top: 32px; }
+.hub-room .transcript__col { gap: 28px; }
+.hub-room .composer-wrap { padding: 12px 24px 24px; }
+.hub-composer { display: flex; align-items: flex-end; gap: 10px; padding: 12px; border: .5px solid var(--color-border-secondary); border-radius: 16px; background: var(--color-bg-pane); max-width: 860px; margin-inline: auto; }
+.hub-composer .k-textarea { flex: 1; resize: none; border: none; background: transparent; box-shadow: none; max-height: 180px; }
+.hub-mentions { display: flex; gap: 8px; flex-wrap: wrap; max-width: 860px; margin: 0 auto 8px; }
+.hub-agent-strip { display: flex; align-items: center; gap: 8px; padding: 8px 24px; border-bottom: .5px solid var(--color-border-tertiary); overflow-x: auto; min-height: 46px; }
+.hub-agent-strip button { flex-shrink: 0; }
+.hub-author { display: flex; align-items: center; gap: 8px; color: var(--color-text-secondary); font-size: 12px; margin-bottom: 8px; }
+.hub-reply { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
+.hub-notice { padding: 12px 24px; }
+.hub-shell .k-row__title, .hub-local .k-row__title { overflow-wrap: anywhere; }
+.hub-shell .k-row__meta, .hub-local .k-row__meta { overflow-wrap: anywhere; }
+.hub-proof { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.hub-shell ::selection { background: var(--color-bg-active); color: var(--color-text-primary); }
+.hub-shell textarea, .hub-shell input { caret-color: var(--color-brand); }
+.hub-shell * { scrollbar-color: var(--color-border-secondary) transparent; scrollbar-width: thin; }
+@media (max-width: 1100px) { .hub-sidebar { width: 208px; flex-basis: 208px; } .hub-main > .k-page { padding: 24px; } }
+
+.hub-composer > .k-field { flex: 1; min-width: 0; }
+.hub-composer .k-field__label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+.hub-exchange { display: flex; flex-direction: column; width: 100%; gap: 24px; }
+.hub-room .human-message { align-self: flex-end; }
