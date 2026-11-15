@@ -48,3 +48,7 @@
   .right-panel > .k-tabs > .k-tabs__list > .k-tabs__tab { padding: 0 12px; }
   .right-panel__tab-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 }
+.agent-browser-chrome[hidden] { display: none; }
+.right-panel__browser .agent-browser-header { flex-wrap: wrap; row-gap: 10px; }
+.right-panel__browser .agent-browser-identity { flex: 1 1 100%; min-width: 0; }
+.right-panel__browser .agent-browser-identity p, .right-panel__browser .agent-browser-identity p span { white-space: nowrap; }

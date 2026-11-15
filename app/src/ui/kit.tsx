@@ -113,9 +113,9 @@ export function Checkbox({ checked, onChange, label, description, disabled }: { 
 }
 
 /** Tabs for switching views inside one page or dialog. */
-export function Tabs<T extends string>({ value, onChange, tabs, label, children }: { value: T; onChange: (value: T) => void; tabs: { value: T; label: ReactNode; count?: number }[]; label: string; children?: ReactNode }) {
+export function Tabs<T extends string>({ value, onChange, tabs, label, children }: { value: T; onChange: (value: T) => void; tabs: { value: T; label: ReactNode; count?: number; title?: string }[]; label: string; children?: ReactNode }) {
   return <RadixTabs.Root value={value} onValueChange={next => onChange(next as T)} className="k-tabs">
-    <RadixTabs.List className="k-tabs__list" aria-label={label}>{tabs.map(tab => <RadixTabs.Trigger key={tab.value} value={tab.value} className="k-tabs__tab">{tab.label}{tab.count !== undefined && <span className="k-tabs__count">{tab.count}</span>}</RadixTabs.Trigger>)}</RadixTabs.List>
+    <RadixTabs.List className="k-tabs__list" aria-label={label}>{tabs.map(tab => <RadixTabs.Trigger key={tab.value} value={tab.value} title={tab.title} className="k-tabs__tab">{tab.label}{tab.count !== undefined && <span className="k-tabs__count">{tab.count}</span>}</RadixTabs.Trigger>)}</RadixTabs.List>
     {children}
   </RadixTabs.Root>;
 }

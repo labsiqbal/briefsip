@@ -48,11 +48,11 @@ export function RightPanel({ path, name, state, request, onClose, details, setti
     void load(); return () => { stopped = true; clearTimeout(timer); };
   }, [base, request, refresh]);
   const tabs = [
-    { value: 'details', label: <><Info size={14} aria-hidden /><span className="right-panel__tab-label">Details</span></> },
-    { value: 'files', label: <><Files size={14} aria-hidden /><span className="right-panel__tab-label">Files</span></> },
-    ...(git?.isRepo ? [{ value: 'diff', label: <><FileDiff size={14} aria-hidden /><span className="right-panel__tab-label">Diff</span></> }] : []),
-    ...(context?.previews.length || context?.sites.length ? [{ value: 'preview', label: <><Globe size={14} aria-hidden /><span className="right-panel__tab-label">Preview</span></> }] : []),
-    ...(context?.computer ? [{ value: 'computer', label: <><Monitor size={14} aria-hidden /><span className="right-panel__tab-label">Computer</span></> }, { value: 'browser', label: <><AppWindow size={14} aria-hidden /><span className="right-panel__tab-label">Browser</span></> }] : []),
+    { value: 'details', title: 'Details', label: <><Info size={14} aria-hidden /><span className="right-panel__tab-label">Details</span></> },
+    { value: 'files', title: 'Files', label: <><Files size={14} aria-hidden /><span className="right-panel__tab-label">Files</span></> },
+    ...(git?.isRepo ? [{ value: 'diff', title: 'Diff', label: <><FileDiff size={14} aria-hidden /><span className="right-panel__tab-label">Diff</span></> }] : []),
+    ...(context?.previews.length || context?.sites.length ? [{ value: 'preview', title: 'Preview', label: <><Globe size={14} aria-hidden /><span className="right-panel__tab-label">Preview</span></> }] : []),
+    ...(context?.computer ? [{ value: 'computer', title: 'Computer', label: <><Monitor size={14} aria-hidden /><span className="right-panel__tab-label">Computer</span></> }, { value: 'browser', title: 'Browser', label: <><AppWindow size={14} aria-hidden /><span className="right-panel__tab-label">Browser</span></> }] : []),
     ...extensions,
   ];
   const selected = tabs.some(tab => tab.value === state.tab) ? state.tab : 'details';
