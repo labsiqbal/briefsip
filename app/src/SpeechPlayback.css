@@ -1,0 +1,2 @@
+.speech-playback { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 100%; }
+.voice-settings__notice { display: block; margin-top: 4px; }

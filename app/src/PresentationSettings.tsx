@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { applyPresentation, parsePresentation, presentationKey, readPresentation, type Presentation } from '../presentation';
+import { VoiceSettings } from './SpeechPlayback';
 import { colorThemes } from './ui/themes';
 import { Alert, Card, PageHeader, Row, Section, Segmented, Switch } from './ui/kit';
 
@@ -33,6 +34,7 @@ export function PresentationSettings({ children }: { children?: ReactNode }) {
     </button>)}</div></Section>
     <Section title="Mode"><Segmented<Presentation['theme']> label="Mode" value={state.value.theme} onChange={theme => change({ ...state.value, theme })} options={[{ value: 'dark', label: 'Dark' }, { value: 'light', label: 'Light' }, { value: 'system', label: 'Match device' }]} /></Section>
     <Section title="Text size"><Segmented<Presentation['textSize']> label="Text size" value={state.value.textSize} onChange={textSize => change({ ...state.value, textSize })} options={[{ value: 'standard', label: 'Standard' }, { value: 'large', label: 'Large' }, { value: 'larger', label: 'Larger' }]} /></Section>
+    <VoiceSettings />
     <Section title="Chats"><Card><Row title="Auto-archive conversations from other agents" meta="Hide delivery conversations seven days after work settles. History stays saved and can be restored." trailing={<Switch label="Auto-archive conversations from other agents" checked={autoArchive ?? true} disabled={autoArchive === null || chatBusy} onChange={value => void changeArchive(value)} />} /></Card>{chatError && <Alert tone="error">{chatError}</Alert>}</Section>
     {children}
     {state.error && <Alert tone="error">{state.error}</Alert>}{notice && <Alert>{notice}</Alert>}
