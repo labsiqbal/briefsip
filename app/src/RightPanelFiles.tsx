@@ -1,19 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, FileText, RefreshCw } from 'lucide-react';
-import { Alert, Button, Card, CodeBlock, EmptyState, IconButton, Input, Row, Section, Select, SkeletonRows } from './ui/kit';
+import { ArrowLeft, RefreshCw } from 'lucide-react';
+import { Alert, Button, CodeBlock, EmptyState, IconButton, Input, Section, Select, SkeletonRows } from './ui/kit';
 import { WorkspacePanel } from './WorkspacePanel';
+import { isAttachmentImage } from './attachments';
+import { Attachment } from './Attachments';
 import { HtmlPreview } from './HtmlPreview';
 import { Markdown } from './Markdown';
 import type { PanelRequest } from './RightPanel';
-export type PanelFile = { seq: number; id: string; name: string; size: number };
+export type PanelFile = { seq: number; id: string; name: string; size: number; image?: boolean };
 export type PanelSite = { id: string; name: string; revision: number };
-type OpenFile = { name: string; path: string };
+type OpenFile = { name: string; path: string; image?: boolean };
 export const previewURL = (path: string, preview: string) => `${path}${path.includes('?') ? '&' : '?'}preview=${preview}`;
 
 function InlineFile({ file, request, onClose }: { file: OpenFile; request: PanelRequest; onClose: () => void }) {
   const heading = useRef<HTMLSpanElement>(null);
   useEffect(() => { heading.current?.focus(); }, []);
-  const html = /\.html?$/i.test(file.name), image = /\.(png|jpe?g|webp)$/i.test(file.name);
+  const image = isAttachmentImage(file), html = !image && /\.html?$/i.test(file.name);
   const [text, setText] = useState<string | null>(null), [error, setError] = useState(''), [reload, setReload] = useState(0);
   const [page, setPage] = useState<{ next_offset?: number | null; digest?: string }>({}), [loadingMore, setLoadingMore] = useState(false);
   useEffect(() => {
@@ -53,7 +55,7 @@ export function PanelFiles({ base, files, workspace, loading, request }: { base:
     {selected && <InlineFile key={selected.path} file={selected} request={request} onClose={() => { setSelected(null); requestAnimationFrame(() => opener.current?.focus()); }} />}
     <div className="k-stack" hidden={!!selected}>
       <Section title="Conversation files">
-        {loading ? <SkeletonRows /> : rows.length ? <Card>{rows.map(file => <Row key={file.id} title={file.name} leading={<FileText size={15} aria-hidden />} meta={`${file.size.toLocaleString('en-US')} bytes`} onClick={() => open({ name: file.name, path: `${base}/files/${file.id}` })} />)}</Card> : <EmptyState title="No files yet">Attachments and agent results appear here.</EmptyState>}
+        {loading ? <SkeletonRows /> : rows.length ? <div className="attachments__list">{rows.map(file => <Attachment key={file.id} file={file} path={`${base}/files/${file.id}`} onOpen={() => open({ name: file.name, image: file.image, path: `${base}/files/${file.id}` })} />)}</div> : <EmptyState title="No files yet">Attachments and agent results appear here.</EmptyState>}
         {error && <Alert tone="error">{error}</Alert>}
         {files.length === 100 && more && <Button size="sm" busy={busy} onClick={() => void loadMore()}>Earlier files</Button>}
       </Section>

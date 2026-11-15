@@ -923,8 +923,8 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "compatibilityCheck": "app/diff-lines.test.ts"
-      }
-    ],
+    }
+  ],
   "browserSourceEntries": [
     {
       "sourcePath": "apps/web/src/components/preview/PreviewChromeRow.tsx",
@@ -1192,6 +1192,134 @@
       "dependencies": [],
       "adaptation": "Adapt generous sidebar maximum and bounded preferred width; reserve right-panel minimum when open. Keep Briefsip accessible keyboard resize and double-click reset.",
       "compatibilityCheck": "app/presentation.test.ts; app/right-panel-state.test.ts; work/rebuild/ui-smoke/smoke.mjs"
+    }
+  ],
+  "attachmentSourceEntries": [
+    {
+      "sourcePath": "apps/web/src/components/chat/ComposerAttachmentStrip.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "8a704bfd364d11c0275ad8a25124490d81b675f2a0c907e9d004947a3eefb256",
+      "localPaths": [
+        "app/src/Attachments.tsx",
+        "app/src/attachments.ts",
+        "app/src/attachments.css",
+        "app/src/ConversationAttachments.tsx",
+        "app/attachments.test.ts",
+        "work/rebuild/ui-smoke/attachment-smoke.mjs",
+        "app/server.ts",
+        "app/conversation-panel.ts",
+        "app/image-attachment.test.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt rounded image tiles with hover/focus removal, compact typed file chips with size, wrapped attachment strips, sent/Library galleries and keyboard-accessible image expansion to Briefsip Radix kit and tokens. Adapt classification and boundary-test patterns; only existing PNG/JPEG/WebP image previews admitted. Existing byte detection supplies an additive image boolean on scoped metadata/receipts and sent-file references, including extensionless images. Original upload journal, scope URLs, provider checks and sandboxed HTML/text previews retained. No T3 upload store, asset URL service, runtime or new dependency copied.",
+      "compatibilityCheck": "app/attachments.test.ts; app/image-attachment.test.ts; work/rebuild/ui-smoke/smoke.mjs (AT1)"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/composerAttachmentFiles.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "4c72cc8ef210e815f07a89af8c07edf86f95dd4c2bbd35c2e096aca47b9acedf",
+      "localPaths": [
+        "app/src/Attachments.tsx",
+        "app/src/attachments.ts",
+        "app/src/attachments.css",
+        "app/src/ConversationAttachments.tsx",
+        "app/attachments.test.ts",
+        "work/rebuild/ui-smoke/attachment-smoke.mjs",
+        "app/server.ts",
+        "app/conversation-panel.ts",
+        "app/image-attachment.test.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt rounded image tiles with hover/focus removal, compact typed file chips with size, wrapped attachment strips, sent/Library galleries and keyboard-accessible image expansion to Briefsip Radix kit and tokens. Adapt classification and boundary-test patterns; only existing PNG/JPEG/WebP image previews admitted. Existing byte detection supplies an additive image boolean on scoped metadata/receipts and sent-file references, including extensionless images. Original upload journal, scope URLs, provider checks and sandboxed HTML/text previews retained. No T3 upload store, asset URL service, runtime or new dependency copied.",
+      "compatibilityCheck": "app/attachments.test.ts; app/image-attachment.test.ts; work/rebuild/ui-smoke/smoke.mjs (AT1)"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/GuestMessageAttachments.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "a4ed4e5284fe416a5c1f9491a6b1137b5c75673fae053e57912eb52626ab47d5",
+      "localPaths": [
+        "app/src/Attachments.tsx",
+        "app/src/attachments.ts",
+        "app/src/attachments.css",
+        "app/src/ConversationAttachments.tsx",
+        "app/attachments.test.ts",
+        "work/rebuild/ui-smoke/attachment-smoke.mjs",
+        "app/server.ts",
+        "app/conversation-panel.ts",
+        "app/image-attachment.test.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt rounded image tiles with hover/focus removal, compact typed file chips with size, wrapped attachment strips, sent/Library galleries and keyboard-accessible image expansion to Briefsip Radix kit and tokens. Adapt classification and boundary-test patterns; only existing PNG/JPEG/WebP image previews admitted. Existing byte detection supplies an additive image boolean on scoped metadata/receipts and sent-file references, including extensionless images. Original upload journal, scope URLs, provider checks and sandboxed HTML/text previews retained. No T3 upload store, asset URL service, runtime or new dependency copied.",
+      "compatibilityCheck": "app/attachments.test.ts; app/image-attachment.test.ts; work/rebuild/ui-smoke/smoke.mjs (AT1)"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/ChatMarkdownMedia.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "365cf776f0b76aaa6dc38db9196df33bfb91750f081444f51718a8f4dd1cdfc9",
+      "localPaths": [
+        "app/src/Attachments.tsx",
+        "app/src/attachments.ts",
+        "app/src/attachments.css",
+        "app/src/ConversationAttachments.tsx",
+        "app/attachments.test.ts",
+        "work/rebuild/ui-smoke/attachment-smoke.mjs",
+        "app/server.ts",
+        "app/conversation-panel.ts",
+        "app/image-attachment.test.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt rounded image tiles with hover/focus removal, compact typed file chips with size, wrapped attachment strips, sent/Library galleries and keyboard-accessible image expansion to Briefsip Radix kit and tokens. Adapt classification and boundary-test patterns; only existing PNG/JPEG/WebP image previews admitted. Existing byte detection supplies an additive image boolean on scoped metadata/receipts and sent-file references, including extensionless images. Original upload journal, scope URLs, provider checks and sandboxed HTML/text previews retained. No T3 upload store, asset URL service, runtime or new dependency copied.",
+      "compatibilityCheck": "app/attachments.test.ts; app/image-attachment.test.ts; work/rebuild/ui-smoke/smoke.mjs (AT1)"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/composerAttachmentFiles.test.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "7f2b5c5ec89ac2b852b85761538eecd96996cca2057d2a8a72f78cce57c61b6b",
+      "localPaths": [
+        "app/src/Attachments.tsx",
+        "app/src/attachments.ts",
+        "app/src/attachments.css",
+        "app/src/ConversationAttachments.tsx",
+        "app/attachments.test.ts",
+        "work/rebuild/ui-smoke/attachment-smoke.mjs",
+        "app/server.ts",
+        "app/conversation-panel.ts",
+        "app/image-attachment.test.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt rounded image tiles with hover/focus removal, compact typed file chips with size, wrapped attachment strips, sent/Library galleries and keyboard-accessible image expansion to Briefsip Radix kit and tokens. Adapt classification and boundary-test patterns; only existing PNG/JPEG/WebP image previews admitted. Existing byte detection supplies an additive image boolean on scoped metadata/receipts and sent-file references, including extensionless images. Original upload journal, scope URLs, provider checks and sandboxed HTML/text previews retained. No T3 upload store, asset URL service, runtime or new dependency copied.",
+      "compatibilityCheck": "app/attachments.test.ts; app/image-attachment.test.ts; work/rebuild/ui-smoke/smoke.mjs (AT1)"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/ChatMarkdownMedia.browser.test.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "38344addf14ca061f3f5f45009b2c7d1bf6feab1498f947d1da6da33223585ff",
+      "localPaths": [
+        "app/src/Attachments.tsx",
+        "app/src/attachments.ts",
+        "app/src/attachments.css",
+        "app/src/ConversationAttachments.tsx",
+        "app/attachments.test.ts",
+        "work/rebuild/ui-smoke/attachment-smoke.mjs",
+        "app/server.ts",
+        "app/conversation-panel.ts",
+        "app/image-attachment.test.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt rounded image tiles with hover/focus removal, compact typed file chips with size, wrapped attachment strips, sent/Library galleries and keyboard-accessible image expansion to Briefsip Radix kit and tokens. Adapt classification and boundary-test patterns; only existing PNG/JPEG/WebP image previews admitted. Existing byte detection supplies an additive image boolean on scoped metadata/receipts and sent-file references, including extensionless images. Original upload journal, scope URLs, provider checks and sandboxed HTML/text previews retained. No T3 upload store, asset URL service, runtime or new dependency copied.",
+      "compatibilityCheck": "app/attachments.test.ts; app/image-attachment.test.ts; work/rebuild/ui-smoke/smoke.mjs (AT1)"
     }
   ]
 }
