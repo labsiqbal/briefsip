@@ -109,7 +109,7 @@
 .agent-meta { margin-top: 8px; }
 .agent-meta .turn-model { padding: 0; background: none; }
 .turn-activity { margin-bottom: 12px; padding-bottom: 8px; border-bottom: 0.5px solid var(--color-border-tertiary); }
-.turn-activity .k-collapsible__trigger { flex-direction: row-reverse; font-weight: 400; font-variant-numeric: tabular-nums; }
+.turn-activity .k-collapsible__trigger { font-weight: 400; font-variant-numeric: tabular-nums; }
 .turn-activity .k-collapsible__content { gap: 8px; padding: 8px 0 4px; }
 .activity-timing { margin: 0; color: var(--color-text-tertiary); font-size: 12px; line-height: 18px; }
 .activity-list { margin: 0; padding-left: 22px; font-size: 13px; line-height: 21px; color: var(--color-text-secondary); }

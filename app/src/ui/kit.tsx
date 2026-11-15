@@ -142,6 +142,14 @@ export function Alert({ tone = 'info', title, children, actions }: { tone?: 'inf
     <div className="k-alert__body">{title && <div className="k-alert__title">{title}</div>}{children && <div className="k-alert__text">{children}</div>}{actions && <div className="k-alert__actions">{actions}</div>}</div>
   </div>;
 }
+export function Progress({ children }: { children: ReactNode }) {
+  return <span className="k-progress" role="status" aria-live="polite"><span className="k-spinner" aria-hidden />{children}</span>;
+}
+/** Saved commands also exist while requests run; recovery actions only make sense after settlement. */
+export function RecoveryAlert({ inFlight, progress = 'Applying change...', ...props }: { inFlight: boolean; progress?: ReactNode; tone?: 'warn' | 'error'; title?: ReactNode; children?: ReactNode; actions?: ReactNode }) {
+  const { tone = 'warn', ...alert } = props;
+  return inFlight ? (progress ? <Progress>{progress}</Progress> : null) : <Alert tone={tone} {...alert} />;
+}
 export function Section({ title, actions, children, id }: { title: ReactNode; actions?: ReactNode; children: ReactNode; id?: string }) {
   return <section className="k-section" aria-labelledby={id}>
     <div className="k-section__head"><h2 className="k-section__title" id={id}>{title}</h2>{actions && <div className="k-section__actions">{actions}</div>}</div>
@@ -168,9 +176,11 @@ export function PageHeader({ title, description, actions, headingRef }: { title:
 }
 
 /** Disclosure. Uncontrolled by default; pass `open` and `onOpenChange` to control it (for example to load data only while open). */
-export function Collapsible({ title, children, defaultOpen = false, open, onOpenChange }: { title: ReactNode; children: ReactNode; defaultOpen?: boolean; open?: boolean; onOpenChange?: (open: boolean) => void }) {
+export function Collapsible({ title, children, defaultOpen = false, open, onOpenChange, variant = 'inline' }: { title: ReactNode; children: ReactNode; defaultOpen?: boolean; open?: boolean; onOpenChange?: (open: boolean) => void; variant?: 'inline' | 'section' }) {
   return <RadixCollapsible.Root className="k-collapsible" defaultOpen={defaultOpen} open={open} onOpenChange={onOpenChange}>
-    <RadixCollapsible.Trigger className="k-collapsible__trigger"><ChevronRight size={14} aria-hidden className="k-collapsible__chev" />{title}</RadixCollapsible.Trigger>
+    <RadixCollapsible.Trigger className={cx('k-collapsible__trigger', variant === 'section' && 'k-collapsible__trigger--section')}>
+      <span className="k-collapsible__title">{title}</span><ChevronDown size={15} aria-hidden className="k-collapsible__chev" />
+    </RadixCollapsible.Trigger>
     {/* Force-mounted so fields inside stay part of their form while collapsed. */}
     <RadixCollapsible.Content forceMount className="k-collapsible__content">{children}</RadixCollapsible.Content>
   </RadixCollapsible.Root>;
@@ -189,24 +199,27 @@ export function ActionMenu({ trigger, items, align = 'end', label }: { trigger: 
     </DropdownMenu.Content></DropdownMenu.Portal>
   </DropdownMenu.Root>;
 }
+export function ActionPopover({ trigger, children, label }: { trigger: ReactNode; children: ReactNode; label: string }) {
+  return <Popover.Root><Popover.Trigger asChild>{trigger}</Popover.Trigger><Popover.Portal><Popover.Content className="k-pop k-action-popover bs-root" aria-label={label} align="end" sideOffset={8}>{children}</Popover.Content></Popover.Portal></Popover.Root>;
+}
 
 // ---------- dialogs ----------
-export function Dialog({ open, onOpenChange, title, description, children, footer, size = 'md' }: { open: boolean; onOpenChange: (open: boolean) => void; title: ReactNode; description?: ReactNode; children: ReactNode; footer?: ReactNode; size?: 'md' | 'lg' }) {
+export function Dialog({ open, onOpenChange, title, description, children, footer, size = 'md', hideHeader = false }: { open: boolean; onOpenChange: (open: boolean) => void; title: ReactNode; description?: ReactNode; children: ReactNode; footer?: ReactNode; size?: 'md' | 'lg'; hideHeader?: boolean }) {
   // Dialogs open from code, not from a Radix trigger: remember the opener before focus moves in and return to it on close.
   const opener = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => { if (open) opener.current = document.activeElement instanceof HTMLElement && !document.activeElement.closest('.k-dialog') ? document.activeElement : opener.current ?? null; }, [open]);
   return <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
     <RadixDialog.Portal>
       <RadixDialog.Overlay className="k-overlay" />
-      <RadixDialog.Content className={cx('k-dialog', `k-dialog--${size}`)} onCloseAutoFocus={event => { const target = opener.current; opener.current = null; if (target?.isConnected) { event.preventDefault(); target.focus(); } }} onOpenAutoFocus={event => {
+      <RadixDialog.Content className={cx('k-dialog', 'bs-root', `k-dialog--${size}`)} onCloseAutoFocus={event => { const target = opener.current; opener.current = null; if (target?.isConnected) { event.preventDefault(); target.focus(); } }} onOpenAutoFocus={event => {
         const body = (event.currentTarget as HTMLElement).querySelector('.k-dialog__body');
         const first = body?.querySelector<HTMLElement>(':is(input:not([type=hidden]):not([type=number]), textarea):not([readonly]):not(:disabled)') ?? body?.querySelector<HTMLElement>('button:not(:disabled), [tabindex="0"]');
         if (first) { event.preventDefault(); first.focus(); }
       }}>
-        <div className="k-dialog__head">
+        {hideHeader ? <><RadixDialog.Title className="sr-only">{title}</RadixDialog.Title><RadixDialog.Description className="sr-only">{description ?? title}</RadixDialog.Description></> : <div className="k-dialog__head">
           <div><RadixDialog.Title className="k-dialog__title">{title}</RadixDialog.Title>{description ? <RadixDialog.Description className="k-dialog__desc">{description}</RadixDialog.Description> : <RadixDialog.Description className="sr-only">{title}</RadixDialog.Description>}</div>
           <RadixDialog.Close asChild><button type="button" className="k-icon-btn" aria-label="Close"><X size={16} aria-hidden /></button></RadixDialog.Close>
-        </div>
+        </div>}
         <div className="k-dialog__body">{children}</div>
         {footer && <div className="k-dialog__foot">{footer}</div>}
       </RadixDialog.Content>

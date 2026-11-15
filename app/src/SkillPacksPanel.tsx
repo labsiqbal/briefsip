@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { restoreSkillCommand, type SkillCommand } from '../skill-command';
 import { ArrowLeft, ChevronLeft, ChevronRight, Ellipsis, FileText, Package, Plus, RefreshCw } from 'lucide-react';
-import { ActionMenu, Alert, Badge, Button, Card, CodeBlock, Collapsible, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, useConfirm } from './ui/kit';
+import { ActionMenu, Alert, Badge, Button, Card, CodeBlock, Collapsible, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, useConfirm, RecoveryAlert } from './ui/kit';
 type Member = { skill: string; version: number; name: string; description: string; content: string };
 type Pack = { id: string; name: string; revision: number; latest: number; members: Member[] };
 type Binding = { revision: number; version: number; enabled: number; removed: number };
@@ -76,7 +76,7 @@ export function SkillPacksPanel({ agents, initialOwner, request, onClose }: { ag
   </>;
   const recoveryNotice = <>
     {invalid && <Alert tone="error" title="Pack recovery is invalid" actions={recoveryActions} />}
-    {pending && <Alert tone="warn" title="Changes are not confirmed yet" actions={!invalid && recoveryActions}>Retry sends the same request to avoid saving it twice.</Alert>}
+    {pending && <RecoveryAlert inFlight={busy} tone="warn" title="Changes are not confirmed yet" actions={!invalid && recoveryActions}>Retry sends the same request to avoid saving it twice.</RecoveryAlert>}
   </>;
   return <div className="k-page bs-root">
     <PageHeader headingRef={heading} title="Skill packs" description="Install revisions of multiple skills together; manual installations and other packs will not be overwritten."

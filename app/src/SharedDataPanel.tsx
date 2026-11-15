@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Database, Ellipsis, RefreshCw } from 'lucide-react';
-import { ActionMenu, Alert, Button, Card, CodeBlock, Collapsible, EmptyState, Field, IconButton, PageHeader, Row, Section, SkeletonRows, Textarea, useConfirm } from './ui/kit';
+import { ActionMenu, Alert, Button, Card, CodeBlock, Collapsible, EmptyState, Field, IconButton, PageHeader, Row, Section, SkeletonRows, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
 type Table = { name: string; owner: string; columns: { name: string; type: string }[] };
 type Listing = { tables: Table[]; next_after: string | null; revision: number };
 type QueryResult = { columns: string[]; rows: unknown[][]; truncated: boolean; changes: number; revision: number };
@@ -40,10 +40,10 @@ export function SharedDataPanel({ request, agents }: { agents: { id: string; nam
     <PageHeader headingRef={heading} title="Shared data" description="Read and manage data shared by agents." actions={<IconButton label="Reload" disabled={busy} onClick={() => setReload(n => n + 1)}><RefreshCw size={15} aria-hidden /></IconButton>} />
     <Alert>All agents can read and change rows. Only the table creator can change its structure. Do not store secrets or data that must not be shared.</Alert>
     {error && <Alert tone="error">{error}</Alert>}
-    {pending && <Alert tone="warn" title={`Deletion of ${pending.table} is not confirmed yet`} actions={<>
+    {pending && <RecoveryAlert inFlight={busy} tone="warn" title={`Deletion of ${pending.table} is not confirmed yet`} actions={<>
       <Button size="sm" disabled={busy || !listing} onClick={() => void execute()}>Retry deletion</Button>
       <Button size="sm" disabled={busy} onClick={() => { sessionStorage.removeItem(key); setPending(null); setReload(n => n + 1); }}>Close recovery and reload</Button>
-    </>}>Retrying does not repeat a deletion already saved.</Alert>}
+    </>}>Retrying does not repeat a deletion already saved.</RecoveryAlert>}
     <Section id="shared-data-tables" title="Tables">
       {!listing ? error ? <EmptyState title="Data is unavailable." /> : <><span className="sr-only" role="status">Loading tables...</span><SkeletonRows /></> : <>
         {!listing.tables.length ? <EmptyState icon={<Database size={18} />} title="No tables on this page">Ask an agent to create a table through a conversation.</EmptyState> : <Card>{listing.tables.map(table => <div key={table.name}>

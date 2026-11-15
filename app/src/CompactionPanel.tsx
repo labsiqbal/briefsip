@@ -25,7 +25,7 @@ export function CompactionPanel({ path, request }: { path: string; request: <T>(
   return <div className="k-stack bs-root" onClickCapture={event => {
     const trigger = (event.target as Element).closest('button');
     if (trigger === event.currentTarget.querySelector('.k-collapsible__trigger')) setOpen(trigger?.getAttribute('aria-expanded') !== 'true');
-  }}><Collapsible title="History summary">
+  }}><Collapsible variant="section" title="History summary">
     {open && <><p className="k-field__hint" style={{ margin: 0 }}>Older messages are summarized incrementally by the provider; additional calls are recorded in Usage. Original history stays intact. Summaries may miss details; check source messages for important decisions.</p>
       <div className="k-row-actions"><Button size="sm" onClick={() => setRefresh(n => n + 1)}>Reload summary</Button></div>
       {error ? <Alert tone="error">{error}</Alert> : !loaded ? <p className="k-field__hint" role="status">Loading summary...</p> : !data ? <p className="k-field__hint" style={{ margin: 0 }}>No valid summary yet. Replies still use recent history.</p> : <>
