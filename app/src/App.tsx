@@ -1,3 +1,4 @@
+import { RightPanel, useRightPanel } from './RightPanel';
 import { restoreThreadCommand, type ThreadCommand } from '../thread-command';
 import './Conversations.css';
 import { AgentConversation, RoomMessages, type RoomView, type Exchange } from './ui/AgentConversation';
@@ -34,7 +35,7 @@ import { lazy, Suspense, useEffect, useRef, useState, useId, type FormEvent, typ
 import { Bell, BellOff, Brain, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
-import { PanelResizeHandle, detailsPanel, sidebarPanel, useResizablePanel } from './ui/resizable';
+import { PanelResizeHandle, sidebarPanel, useResizablePanel } from './ui/resizable';
 import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Collapsible, Combobox, ConfirmProvider, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Segmented, Select, SkeletonRows, Switch, TabPanel, Tabs, Textarea, useConfirm, type SelectOption, RecoveryAlert } from './ui/kit';
 import { createRoot } from 'react-dom/client';
 import { Collapsible as Disclosure, Dialog as RadixDialog, DropdownMenu } from 'radix-ui';
@@ -358,14 +359,23 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     try { const value = localStorage.getItem(tabStorageKey); return value === 'activity' || value === 'library' ? value : 'chats'; } catch { return 'chats'; }
   });
   function selectDetailsTab(value: 'chats' | 'activity' | 'library') { setDetailsTab(value); try { localStorage.setItem(tabStorageKey, value); } catch { /* Keep tab selection in memory. */ } }
-  const details = useResizablePanel(detailsPanel);
+  const rightPanel = useRightPanel(scope);
+  useEffect(() => {
+    const key = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'b' && !document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')) {
+        event.preventDefault(); event.stopImmediatePropagation(); setDetailsOpen(!detailsOpen);
+      }
+    };
+    window.addEventListener('keydown', key, true);
+    return () => window.removeEventListener('keydown', key, true);
+  }, [detailsOpen, setDetailsOpen]);
   const [filesOpen, setFilesOpen] = useState(false);
   const filesSection = useRef<HTMLDivElement>(null);
   if (showMemory) return <PageView><Suspense fallback={<p className="empty" role="status">Loading memory...</p>}><MemoryPanel key={scope} path={`/api/${channel ? 'channels' : 'agents'}/${agent.id}/memory`} channel={!!channel} archived={!!channel?.archived} request={api} onClose={() => { setShowMemory(false); requestAnimationFrame(() => memoryButton.current?.focus()); }} /></Suspense></PageView>;
   const active = turns?.filter(turn => turn.status === 'queued' || turn.status === 'running').length ?? 0;
   const title = thread?.name ?? agent.name;
   const editLabel = channel ? 'Section settings' : thread ? 'Conversation settings' : 'Edit profile';
-  const openFiles = () => { setDetailsOpen(true); selectDetailsTab('library'); setFilesOpen(true); requestAnimationFrame(() => filesSection.current?.querySelector<HTMLButtonElement>('.k-collapsible__trigger')?.focus()); };
+  const openFiles = () => { rightPanel.select('details'); setDetailsOpen(true); selectDetailsTab('library'); setFilesOpen(true); requestAnimationFrame(() => filesSection.current?.querySelector<HTMLButtonElement>('.k-collapsible__trigger')?.focus()); };
   const items: MenuItem[] = [
     ...menuItems,
     ...(onEdit ? [{ label: editLabel, onSelect: onEdit }] : []),
@@ -458,14 +468,9 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
       <ChatHeader agent={agent} title={title} onToggle={() => setMenuOpen(!menuOpen)} expanded={menuOpen}
         menu={menuOpen && <Menu align="center" label={`Menu ${title}`} onClose={() => setMenuOpen(false)} items={items} />}
         right={<><span className={`activity-chip${active ? ' is-working' : ''}`} role="status">{active ? `${active} ${active === 1 ? 'message' : 'messages'} processing` : channel ? 'Shared section' : 'Direct conversation'}</span>
-          {!detailsOpen && <button type="button" className="icon-btn icon-btn--bordered" onClick={() => setDetailsOpen(true)} aria-label="Show details" title="Show details"><PanelRight size={16} aria-hidden /></button>}</>} />
+          {!detailsOpen && <button type="button" className="icon-btn icon-btn--bordered" onClick={() => setDetailsOpen(true)} aria-label="Show details" title="Show details (Ctrl/Cmd+Shift+B)" aria-keyshortcuts="Control+Shift+B Meta+Shift+B"><PanelRight size={16} aria-hidden /></button>}</>} />
     </main>
-    {detailsOpen && <aside className="details" style={{ width: `${details.width}px` }} aria-label="Conversation details">
-      <PanelResizeHandle panel={details} />
-      <div className="details__top">
-        {onEdit && <button type="button" className="icon-btn icon-btn--bordered details__gear" onClick={onEdit} aria-label={editLabel} title={editLabel}><Settings size={16} aria-hidden /></button>}
-        <button type="button" className="icon-btn icon-btn--bordered" onClick={() => setDetailsOpen(false)} aria-label="Close details"><X size={16} aria-hidden /></button>
-      </div>
+    {detailsOpen && <RightPanel path={path.replace(/\/turns$/, '')} name={agent.name} state={rightPanel} request={api} onClose={() => setDetailsOpen(false)} settings={onEdit && <IconButton label={editLabel} onClick={onEdit}><Settings size={16} aria-hidden /></IconButton>} details={
       <div className="details__scroll">
         <div className="details__identity">
           <AgentAvatar agent={agent} size={56} />
@@ -497,7 +502,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
           </Tabs>
         </div>
       </div>
-    </aside>}
+    } />}
   </div>;
 }
 

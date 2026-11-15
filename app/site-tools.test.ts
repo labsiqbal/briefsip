@@ -62,6 +62,12 @@ test('site tools bind sent files and owner, journal results and never replay old
     tool='list_sites';args={};await run(other);assert.deepEqual(result.sites,[]);await run(path);assert.equal(result.sites.find((row:any)=>row.id===site.id).revision,2);
     tool='publish_site';args={file,name:'Denied channel'};await run(`/api/channels/${room.id}`,[],'failed');assert.equal(advertised,false);
     const sideFile=await upload(sidePath,'<h1>Side</h1>');args={file:sideFile,name:'Side site'};await run(sidePath,[sideFile]);assert.equal(result.revision,1);
+    const sideSite=result;
+    assert.deepEqual((await request(sidePath+'/panel')).sites.map((row:any)=>row.id),[sideSite.id]);
+    assert(!(await request(path+'/panel')).sites.some((row:any)=>row.id===sideSite.id));
+    const scoped=await fetch(app.origin+sidePath+'/panel/sites/'+sideSite.id);assert.equal(scoped.status,200);assert.match(await scoped.text(),/Side/);
+    assert.equal((await fetch(app.origin+path+'/panel/sites/'+sideSite.id)).status,404);
+
     args={file,name:'Durable',site:site.id,revision:2};hold=true;observed=false;const interrupted=randomUUID();await request(path+'/turns',{id:interrupted,text:'Hold result'});await waitFor(async()=>observed);assert.equal(result.revision,3);
     await app.close();app=await startApp(options);hold=false;
     await request(path+'/sites',{id:randomUUID(),site:site.id,revision:3,name:'User latest',source:'<h1>User latest</h1>'});

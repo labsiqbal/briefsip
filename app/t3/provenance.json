@@ -440,7 +440,7 @@
       "adaptation": "Text-only bounded unified diff semantics and hunk-body guard for line numbering, expressed using native Git output and a neutral React renderer.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "5e92306220e2e921a00f52e61036bf0ddb3216bff21991b89363d09321f9a9dc",
-      "localPath": "app/src/SourceControl.tsx",
+      "localPath": "app/diff-lines.ts",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
@@ -837,6 +837,92 @@
       "notice": "app/agent-desktop.LICENSE",
       "dependencies": [],
       "compatibilityCheck": "app/tool-budget.test.ts"
+    }
+  ],
+  "rightPanelSourceEntries": [
+    {
+      "sourcePath": "apps/web/src/components/RightPanelTabs.tsx",
+      "symbols": [
+        "RightPanelTabs"
+      ],
+      "adaptation": "Adapted T3 icon-and-label overflow tab bar, applicable-surface filtering and selected-surface fallback into Briefsip Radix Tabs. Browser tab remains one-line extension point.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "de3aeb1ec4c7c10e5aefba9a7ca4a0514b10a3e41d11231359545ac683d2f0a3",
+      "localPath": "app/src/RightPanel.tsx",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/RightPanelSheet.tsx",
+      "symbols": [
+        "RightPanelSheet"
+      ],
+      "adaptation": "Adapted contained right-panel sizing and close boundary; Briefsip keeps existing desktop resize handle and local open state.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "67a33d3e35cce125ab4caee3b0cdb250cc7db4d4e0709fb110ea2571829e7d29",
+      "localPath": "app/src/RightPanel.tsx",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/DiffPanel.tsx",
+      "symbols": [
+        "DiffPanel"
+      ],
+      "adaptation": "Adapted changed-file selection and diff refresh behavior to existing Briefsip workspaceGit API.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "3a0a91c03f1c549fa9a45f97d0457fef1b614e60fde7a43fc5cdb30fcf4f6358",
+      "localPath": "app/src/RightPanelDiff.tsx",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/conversation-panel.test.ts"
+    },
+    {
+      "sourcePath": "apps/web/src/components/DiffPanelShell.tsx",
+      "symbols": [
+        "DiffPanelShell"
+      ],
+      "adaptation": "Adapted panel-contained header/body and narrow inline layout to Briefsip tokens.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "a79e8c085fc3e37efb41eeaf233242dd15b5d9b6267558d9c05438f4f73bb866",
+      "localPath": "app/src/right-panel.css",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/preview/PreviewPanelShell.tsx",
+      "symbols": [
+        "PreviewPanelShell"
+      ],
+      "adaptation": "Adapted preview address/reload shell semantics to existing HtmlPreview and sanitized local site responses.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "d54df2ef4ea19d539a4853b6ed616659ac316df69ddff9f20b7d687dbf34409c",
+      "localPath": "app/src/RightPanelFiles.tsx",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/diffs/StyledDiffCodeView.tsx",
+      "symbols": [
+        "StyledDiffCodeView"
+      ],
+      "adaptation": "Adapted unified/split line gutters and local horizontal scrolling; parser moved into pure native module.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "e707de894e7631a8500cfe134bfe40a99eb3f001b74d3ac3f36285d883bbbeb5",
+      "localPath": "app/diff-lines.ts",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/diff-lines.test.ts"
     }
   ]
 }
