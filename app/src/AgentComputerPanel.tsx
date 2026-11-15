@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState } from 'react';
-import { Alert, Badge, Button, Card, Dialog, Section } from './ui/kit';
+import { useEffect, useRef, useState } from 'react';
+import { Alert, Badge, Button, Dialog, Tooltip } from './ui/kit';
 import { Expand, Monitor } from 'lucide-react';
 import { useBrowserView } from './AgentBrowserViewer';
 import { useComputerView } from './computer-view';
@@ -9,7 +9,6 @@ import type { ComputerControl, ComputerWait } from '../agent-computer';
 export type ComputerStatus = DesktopStatus & { enabled: boolean; revision: number; control: ComputerControl; requests: ComputerWait[] };
 export type ComputerRequest = <T>(path: string, body?: unknown) => Promise<T>;
 export function AgentComputerPanel({ agent, name, request, onSettings }: { agent: string; name: string; request: ComputerRequest; onSettings?: () => void }) {
-  const titleId = useId();
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<ComputerStatus | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false), [frame, setFrame] = useState('');
   const running = !!status && ['running','idle'].includes(status.state);
@@ -56,12 +55,13 @@ export function AgentComputerPanel({ agent, name, request, onSettings }: { agent
   const page = browser.status?.tabs.find(tab => tab.id === browser.status?.activeTab);
   let host = ''; try { host = page ? new URL(page.url).host : ''; } catch { /* Internal Chrome pages have no host. */ }
   const thumbnail = view === 'browser' ? browser.frame : frame;
-  return <div ref={root} className="bs-root k-stack computer-hero"><Section id={titleId} title="Computer">
-    {!status ? <p className="computer-card-note" role="status">Loading computer...</p> : !status.available ? <p className="computer-card-note">Computer unavailable on this server.</p> : !status.enabled ? <p className="computer-card-note">Give this agent a computer in <Button size="sm" variant="ghost" onClick={onSettings}>agent settings</Button></p> : <Card className="computer-compact-card"><div className="computer-compact-row">
+  return <div ref={root} className="bs-root k-stack computer-hero"><section aria-label="Computer">
+    {!status ? <p className="computer-card-note" role="status">Loading computer...</p> : !status.available ? <p className="computer-card-note">Computer unavailable on this server.</p> : !status.enabled ? <div className="computer-compact-row"><Monitor size={16} aria-hidden /><span className="computer-compact-info">Computer</span><Badge>Disabled</Badge>{onSettings && <Button size="sm" variant="ghost" onClick={onSettings}>Settings</Button>}</div> : <div className="computer-compact-row">
       {running && (thumbnail ? <img src={thumbnail} alt={view === 'browser' ? 'Agent browser page' : 'Agent computer screen'} className="computer-compact-thumb" /> : <span className="computer-compact-placeholder"><Monitor size={16} aria-hidden /></span>)}
-      <div className="computer-compact-info">{pill}{running && <><strong title={page?.title}>{page?.title || (view === 'browser' ? 'Browser' : 'Desktop')}</strong>{host && <span title={host}>{host}</span>}</>}</div>
-      {running ? <Button size="sm" icon={<Expand size={14} aria-hidden />} onClick={() => setOpen(true)}>Open</Button> : <Button size="sm" variant="primary" busy={busy || state === 'starting'} disabled={busy || state === 'starting'} onClick={() => void start()}>Start computer</Button>}
-    </div></Card>}
+      {!running && <Monitor size={16} aria-hidden />}
+      <div className="computer-compact-info">{running ? <Tooltip content={[page?.title, host].filter(Boolean).join(' · ') || (view === 'browser' ? 'Browser' : 'Desktop')}><strong tabIndex={0}>{page?.title || (view === 'browser' ? 'Browser' : 'Desktop')}</strong></Tooltip> : <span>Computer</span>}</div>{pill}
+      {running ? <Button size="sm" variant="ghost" icon={<Expand size={14} aria-hidden />} onClick={() => setOpen(true)}>Open</Button> : <Button size="sm" variant="ghost" busy={busy || state === 'starting'} disabled={busy || state === 'starting'} onClick={() => void start()}>Start computer</Button>}
+    </div>}
     {error && <Alert tone="error">{error}</Alert>}
-  </Section><Dialog open={open} onOpenChange={setOpen} title={`${name}'s computer`} size="lg" hideHeader><ComputerViewer agent={agent} name={name} request={request} onClose={() => setOpen(false)} /></Dialog></div>;
+  </section><Dialog open={open} onOpenChange={setOpen} title={`${name}'s computer`} size="lg" hideHeader><ComputerViewer agent={agent} name={name} request={request} onClose={() => setOpen(false)} /></Dialog></div>;
 }

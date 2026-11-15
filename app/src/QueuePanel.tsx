@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight } from 'lucide-react';
-import { Alert, Button, Card, Collapsible, EmptyState, IconButton, Row, useConfirm, RecoveryAlert } from './ui/kit';
+import { Alert, Badge, Button, Card, Collapsible, EmptyState, IconButton, Row, useConfirm, RecoveryAlert } from './ui/kit';
 type Neighbor = { id: string; agent: string; revision: number; editing: boolean };
 type Entry = { previous: Neighbor | null; next: Neighbor | null; id: string; agent: string; text: string; revision: number; paused: number; editing: boolean };
 type Command = { id: string; target: string; other: string; revision: number; otherRevision: number };
@@ -22,7 +22,7 @@ export function QueuePanel({ path, request, onOpen }: { path: string; request: <
   const generation = useRef(0), flight = useRef(false), mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; generation.current++; }; }, []);
   useEffect(() => {
-    if (!open) return; let stopped = false; let timer: ReturnType<typeof setTimeout>;
+    let stopped = false; let timer: ReturnType<typeof setTimeout>;
     async function load() {
       const version = ++generation.current; setLoading(true);
       try { const result = await request<{ turns: Entry[]; more: boolean; next_after: number | null; snapshot: string }>(endpoint + (page ? `?after=${page.after}&snapshot=${page.snapshot}` : '')); if (!stopped && version === generation.current) { setRows(result.turns); setMore(result.more); setNextPage(result.next_after === null ? null : { after: result.next_after, snapshot: result.snapshot }); setLoadError(''); } }
@@ -45,12 +45,8 @@ export function QueuePanel({ path, request, onOpen }: { path: string; request: <
     catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : 'Order is not confirmed yet. Try again.'); }
     finally { flight.current = false; if (mounted.current) setBusy(false); }
   }
-  // Kit Collapsible is uncontrolled; track its trigger to stop polling when closed.
-  return <div className="k-stack bs-root" onClickCapture={event => {
-    const trigger = (event.target as Element).closest('button');
-    if (trigger === event.currentTarget.querySelector('.k-collapsible__trigger')) setOpen(trigger?.getAttribute('aria-expanded') !== 'true');
-  }}><Collapsible variant="section" title={<>Message queue{pending || invalid ? ' - recovery needed' : ''}</>}><div className="k-stack" style={{ display: open ? undefined : 'none' }}>
-    <p className="k-field__hint" style={{ margin: 0 }}>Messages that have not started can be reordered within the same agent. History still follows message receipt time.</p>
+  if (!rows.length && !pages.length && !pending && !invalid && !error && !loadError) return null;
+  return <div className="activity-section bs-root"><Collapsible variant="section" open={open} onOpenChange={setOpen} title={<>Queue <Badge>{rows.length}{more || pages.length ? '+' : ''}</Badge>{(pending || invalid) && <Badge tone="warn">Recovery needed</Badge>}</>}><div className="k-stack" style={{ display: open ? undefined : 'none' }}>
     <div className="k-row-actions"><Button size="sm" onClick={() => { generation.current++; setPages([]); setRefresh(value => value + 1); }}>Reload queue</Button></div>
     {notice && <Alert>{notice}</Alert>}
     {loadError && <Alert tone="error">{loadError}</Alert>}
@@ -64,7 +60,7 @@ export function QueuePanel({ path, request, onOpen }: { path: string; request: <
       meta={row.editing ? 'Being edited' : row.paused ? 'Paused' : 'Waiting in queue'}>
       <div className="k-row-actions" style={{ marginTop: 6 }}>
         <Button size="sm" onClick={() => onOpen(row.id)}>Open message</Button>
-        {[-1,1].map(direction => { const other = direction < 0 ? row.previous : row.next; return <IconButton key={direction} label={direction < 0 ? 'Move up' : 'Move down'} disabled={busy || loading || !!pending || invalid || row.editing || !other || other.agent !== row.agent || other.editing} onClick={() => void move(row, other)}>{direction < 0 ? <ArrowUp size={14} aria-hidden /> : <ArrowDown size={14} aria-hidden />}</IconButton>; })}
+        {[-1,1].map(direction => { const other = direction < 0 ? row.previous : row.next; return other && other.agent === row.agent && !row.editing && !other.editing ? <IconButton key={direction} label={direction < 0 ? 'Move up' : 'Move down'} disabled={busy || loading || !!pending || invalid} onClick={() => void move(row, other)}>{direction < 0 ? <ArrowUp size={14} aria-hidden /> : <ArrowDown size={14} aria-hidden />}</IconButton> : null; })}
       </div>
     </Row>)}</Card>}
     {(pages.length > 0 || more && nextPage) && <div className="k-pager">

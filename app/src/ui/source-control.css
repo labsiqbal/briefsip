@@ -8,7 +8,6 @@
 .source-control__files { max-height: 264px; overflow-y: auto; overflow-x: hidden; }
 .source-control__status { display: inline-block; width: 2ch; white-space: pre; font-family: var(--font-mono-stack); color: var(--color-text-secondary); }
 .source-control__hint { margin: 0; font-size: 12px; color: var(--color-text-secondary); overflow-wrap: anywhere; }
-.source-control__unavailable { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; font-size: 12px; color: var(--color-text-secondary); }
 .git-diff { width: 100%; min-width: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--color-border-tertiary); border-radius: 8px; background: var(--color-bg-pane); }
 .git-diff__lines { width: max-content; min-width: 100%; font-family: var(--font-mono-stack); font-size: 12px; line-height: 22px; }
 .git-diff__line { display: flex; min-height: 22px; white-space: pre; }
