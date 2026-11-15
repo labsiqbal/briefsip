@@ -1,8 +1,8 @@
 /* Type follows the browser base size. Density changes space, never panel widths or icons. */
 :root { --density: 1; }
 :root[data-text-size='compact'] { font-size: 87.5%; --density: .875; }
-:root[data-text-size='large'] { --density: 1.125; }
-:root[data-text-size='larger'] { --density: 1.25; }
+:root[data-text-size='large'] { font-size: 112.5%; --density: 1.125; }
+:root[data-text-size='larger'] { font-size: 125%; --density: 1.25; }
 
 .sidebar__bots-label { font-size: .8125rem; }
 .sidebar__tabs .k-tabs__tab { font-size: .8125rem; height: calc(34px * var(--density)); }
@@ -36,8 +36,8 @@
 .details__sections { gap: calc(20px * var(--density)); }
 .details__sections > section { gap: calc(10px * var(--density)); }
 .transcript { padding: 60px calc(16px * var(--density)) calc(16px * var(--density)); }
-.transcript__col { gap: calc(32px * var(--density)); }
-.turn-block { gap: calc(20px * var(--density)); }
+.transcript__col { gap: calc(36px * var(--density)); }
+.turn-block { gap: calc(12px * var(--density)); }
 .human-bubble { padding: calc(11px * var(--density)) calc(16px * var(--density)); }
 
 /* Narrow chat content wraps instead of imposing its intrinsic width on the layout. */

@@ -159,7 +159,6 @@ export function RemoteAgentDetail({ machine, agent, request }: { machine?: Paire
       {machine && agent && <ChatComposer label={`Message ${agent.name} on ${machine.name}`} input={{ id: 'remote-message', value: text, required: true, disabled: busy || !!pending || !!disabledReason, 'aria-describedby': disabledReason ? 'remote-send-reason' : undefined, onChange: event => { setText(event.target.value); try { sessionStorage.setItem(storage + ':draft', event.target.value); } catch { setError('Draft could not be saved in browser storage.'); } } }}
         onSubmit={event => { event.preventDefault(); void send(); }} onSendKey={() => void send()} attachmentDisabledReason="Remote conversations support text only."
         busy={busy} retry={!!pending} sendDisabled={busy || !!disabledReason || !text.trim()} sendLabel={busy ? 'Sending...' : pending ? 'Retry send' : 'Send message'} sendTitle={disabledReason ?? (pending ? 'Retry send' : 'Send (Enter)')} />}
-      <p className="composer__foot">Enter to send, Shift+Enter for a new line</p>
     </footer>
   </main>;
 }

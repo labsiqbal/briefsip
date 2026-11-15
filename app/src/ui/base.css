@@ -4,7 +4,7 @@ body {
   font-family: var(--font-stack);
   font-size: var(--text-base);
   line-height: 20px;
-  letter-spacing: 0.14px;
+  letter-spacing: 0;
   font-weight: 400;
   color: var(--color-text-primary);
   background: var(--color-bg-chrome);
@@ -19,6 +19,10 @@ button:disabled { cursor: default; }
 a { color: inherit; }
 :focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
 .boot { height: 100%; background: var(--color-bg-chrome); }
+
+h1, h2, h3, h4, h5, h6 { letter-spacing: -0.01em; }
+time, .k-badge, .activity-chip, .activity-timing, .steps__worked, .steps__count,
+.k-tabs__count, .cfg-nav__count, .sidebar-island__count { font-variant-numeric: tabular-nums; }
 
 /* ---------- shared controls ---------- */
 .icon-btn {
@@ -36,7 +40,7 @@ a { color: inherit; }
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   height: 36px; padding: 8px 16px; border-radius: var(--radius-full);
-  font-size: 14px; font-weight: 500; line-height: 20px; letter-spacing: 0.14px; white-space: nowrap; text-decoration: none;
+  font-size: 14px; font-weight: 500; line-height: 20px; letter-spacing: 0; white-space: nowrap; text-decoration: none;
   transition: background-color 120ms var(--ease-out), opacity 120ms;
 }
 .btn--sm { height: 32px; padding: 6px 12px; font-weight: 400; }
@@ -56,12 +60,12 @@ a { color: inherit; }
 
 .link-btn { color: var(--color-text-secondary); font-size: 13px; line-height: 18px; padding: 4px 6px; border-radius: 6px; }
 .link-btn:hover:not(:disabled) { background: var(--color-bg-hover); color: var(--color-text-primary); }
-.link-btn--small { font-size: 12px; line-height: 16px; letter-spacing: 0.12px; }
+.link-btn--small { font-size: 12px; line-height: 16px; letter-spacing: 0; }
 
 .text-input {
   width: 100%; height: 35px; padding: 8px 10px; border-radius: var(--radius-sm);
   border: 0.5px solid var(--color-border-secondary); background: var(--color-bg-pane);
-  font-size: 13px; line-height: 18px; letter-spacing: 0.195px; outline: none;
+  font-size: 13px; line-height: 18px; letter-spacing: 0; outline: none;
 }
 .text-input::placeholder { color: var(--color-text-tertiary); }
 .text-input:focus { border-color: var(--color-border-focus); box-shadow: 0 0 0 3px var(--color-focus-ring); }
@@ -104,7 +108,7 @@ a { color: inherit; }
 .menu.is-center { left: 50%; transform: translateX(-50%); animation: none; }
 .menu__item {
   display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%;
-  height: 30px; padding: 0 10px; border-radius: 6px; font-size: 13px; line-height: 18px; letter-spacing: 0.195px; white-space: nowrap;
+  height: 30px; padding: 0 10px; border-radius: 6px; font-size: 13px; line-height: 18px; letter-spacing: 0; white-space: nowrap;
 }
 .menu__item:hover { background: var(--color-bg-hover); }
 .menu__item.is-danger { color: var(--color-danger); }

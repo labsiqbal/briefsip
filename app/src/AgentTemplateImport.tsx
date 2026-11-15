@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { parseAgentTemplate, restoreTemplateImport, templateCommand, type AgentTemplate } from '../agent-template';
-import { Alert, Button, Card, CodeBlock, Field, Input, PageHeader, Section, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
+import { Alert, Button, Card, CodeBlock, Field, Input, Section, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
 
 type Agent = { id: string; name: string; role: string; model: string; instructions: string; thread_limit: number; revision: number };
 const storage = 'briefsip:agent-template-import';
@@ -9,9 +9,9 @@ export function AgentTemplateImport({ request, onCreated }: { request: <T>(path:
   const [pending, setPending] = useState(recovery.pending), [invalid, setInvalid] = useState(recovery.invalid);
   const [draft, setDraft] = useState<AgentTemplate | null>(recovery.pending?.template ?? null);
   const [error, setError] = useState(''), [busy, setBusy] = useState(false);
-  const heading = useRef<HTMLHeadingElement>(null), generation = useRef(0), inFlight = useRef(false), fileInput = useRef<HTMLInputElement>(null);
+  const generation = useRef(0), inFlight = useRef(false), fileInput = useRef<HTMLInputElement>(null);
   const confirm = useConfirm();
-  useEffect(() => { heading.current?.focus(); return () => { generation.current++; }; }, []);
+  useEffect(() => () => { generation.current++; }, []);
   async function choose(file?: File) {
     if (!file || pending || invalid || inFlight.current) return;
     const current = ++generation.current; setError(''); setDraft(null); setBusy(true);
@@ -43,10 +43,9 @@ export function AgentTemplateImport({ request, onCreated }: { request: <T>(path:
     catch { setError('Browser storage could not be updated. Try again.'); }
   }
   return <div className="k-page bs-root">
-    <PageHeader headingRef={heading} title="Import template" />
     {error && <Alert tone="error">{error}</Alert>}
     {invalid ? <Alert tone="error" title="Import recovery data could not be read." actions={<Button size="sm" disabled={busy} onClick={() => void discard()}>Ignore import recovery</Button>} /> : <>
-      <Section title="Template file"><input ref={fileInput} hidden type="file" accept=".json,application/json" disabled={!!pending || busy} onChange={event => void choose(event.target.files?.[0])} /><div><Button disabled={!!pending || busy} onClick={() => fileInput.current?.click()}>Choose file</Button></div>{busy && <p className="k-field__hint" role="status">Processing template...</p>}{pending && <RecoveryAlert inFlight={busy} tone="warn" title="Creation is not confirmed yet">Retry with the same request to avoid duplicates.</RecoveryAlert>}</Section>
+      <Section title="Template file"><input ref={fileInput} hidden type="file" accept=".json,application/json" disabled={!!pending || busy} onChange={event => void choose(event.target.files?.[0])} /><div><Button autoFocus disabled={!!pending || busy} onClick={() => fileInput.current?.click()}>Choose file</Button></div>{busy && <p className="k-field__hint" role="status">Processing template...</p>}{pending && <RecoveryAlert inFlight={busy} tone="warn" title="Creation is not confirmed yet">Retry with the same request to avoid duplicates.</RecoveryAlert>}</Section>
       {draft && <form onSubmit={event => { event.preventDefault(); void apply(); }}>
         <Section title="New profile preview">
           <Card><fieldset disabled={busy || !!pending} className="k-fieldset" style={{ padding: 12 }}>
