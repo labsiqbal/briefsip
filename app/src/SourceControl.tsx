@@ -2,7 +2,7 @@ import { diffLines } from '../diff-lines';
 export { diffLines } from '../diff-lines';
 // Branch and diff-status patterns adapted from T3 (MIT); see ../t3/provenance.json.
 import { useEffect, useRef, useState } from 'react';
-import { GitBranch, GitPullRequest, RefreshCw, RotateCcw } from 'lucide-react';
+import { ChevronRight, GitBranch, RefreshCw, RotateCcw } from 'lucide-react';
 import { Alert, Badge, Button, Card, Dialog, EmptyState, IconButton, Row, Section, useConfirm, RecoveryAlert } from './ui/kit';
 import './ui/source-control.css';
 
@@ -11,7 +11,7 @@ type Status = { isRepo: boolean; branch?: string | null; dirtyCount?: number; ch
 type Diff = { text: string; truncated: boolean; binaryFiles: string[] };
 const message = (error: unknown) => error instanceof Error ? error.message : 'Source control could not load. Try again.';
 
-export function SourceControl({ agent, request, showEmpty = false }: { agent: string; request: Request; showEmpty?: boolean }) {
+export function SourceControl({ agent, request, showEmpty = false, onOpenDiff }: { agent: string; request: Request; showEmpty?: boolean; onOpenDiff?: () => void }) {
   const [status, setStatus] = useState<Status | null>(null), [error, setError] = useState(''), [reload, setReload] = useState(0), [loading, setLoading] = useState(false);
   const [file, setFile] = useState<string | null>(null), [diff, setDiff] = useState<Diff | null>(null), [diffError, setDiffError] = useState('');
   const generation = useRef(0);
@@ -33,16 +33,19 @@ export function SourceControl({ agent, request, showEmpty = false }: { agent: st
     return () => { generation.current++; };
   }, [agent, file, request, reload]);
   if (!status?.isRepo && !error) return showEmpty ? <Section title="Source control"><EmptyState title={status ? "No Git repository in this folder" : "Loading source control..."} /></Section> : null;
+  if (onOpenDiff) return <section aria-label="Source control"><div className="section-label">Source control</div>
+    {error && <Alert tone="error">{error}</Alert>}
+    {status?.isRepo && <button type="button" className="panel-row panel-row--link" onClick={onOpenDiff} aria-label={`Open Diff: ${status.branch ?? 'Detached HEAD'}, ${status.dirtyCount ? `${status.dirtyCount} changed` : 'Clean'}`}><GitBranch size={16} aria-hidden /><span className="panel-row__title">{status.branch ?? 'Detached HEAD'}</span><Badge>{status.dirtyCount ? `${status.dirtyCount} changed` : 'Clean'}</Badge><ChevronRight size={14} aria-hidden /></button>}
+  </section>;
   return <div className="bs-root source-control"><Section id={`source-control-${agent}`} title="Source control" actions={<IconButton label="Refresh source control" disabled={loading} onClick={() => setReload(value => value + 1)}><RefreshCw size={14} aria-hidden /></IconButton>}>
     {error && <Alert tone="error">{error}</Alert>}
     {status?.isRepo && <>
-      <Card><Row title={status.branch ?? 'Detached HEAD'} leading={<GitBranch size={16} aria-hidden />} meta="Ahead / behind unknown" trailing={<Badge>{status.dirtyCount} changed</Badge>} />
+      <Card><Row title={status.branch ?? 'Detached HEAD'} leading={<GitBranch size={16} aria-hidden />} trailing={<Badge>{status.dirtyCount ? `${status.dirtyCount} changed` : 'Clean'}</Badge>} />
         <div className="source-control__files" aria-label="Changed files">
           {status.changedFiles?.length ? status.changedFiles.map(item => <Row key={item.path} title={<span title={item.path}>{item.path}</span>} leading={<span className="source-control__status" aria-label={item.code === '??' ? 'Untracked' : `Git status ${item.code}`}>{item.code}</span>} onClick={() => setFile(item.path)} />) : <EmptyState title="Working tree clean" />}
         </div>
       </Card>
       <p className="source-control__hint">Local branches: {status.localBranches?.length ?? 0} · Worktrees: {status.worktrees?.length ?? 0}</p>
-      <div className="source-control__unavailable"><Button size="sm" disabled icon={<GitPullRequest size={14} aria-hidden />}>Create pull request</Button><span>Not available yet</span></div>
     </>}
   </Section>
   <Dialog open={file !== null} onOpenChange={open => { if (!open) setFile(null); }} title="File diff" description={file ?? ''} size="lg">

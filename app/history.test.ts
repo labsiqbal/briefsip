@@ -56,7 +56,7 @@ test('history pages preserve order and conversation boundaries across restart', 
       assert.equal((await get(`${path}?q=Done.`)).length, 100);
       assert.deepEqual((await get(`${path}?q=${encodeURIComponent(' message 1')}`)).map((row: { id: string }) => row.id), search.map((row: { id: string }) => row.id));
       assert.deepEqual(await get(`${path}?q=${encodeURIComponent(' message 1 ')}`), []);
-      assert.deepEqual(await get(`${path}?q=MESSAGE`), []);
+      assert.equal((await get(`${path}?q=MESSAGE`)).length, 100);
       const selected = await get(`${path}?focus=${oldest[0].id}`);
       assert.deepEqual(selected.map((row: { id: string }) => row.id), [oldest[0].id]);
       for (const foreign of paths.filter(other => other !== path)) assert.equal((await fetch(`${app.origin}${foreign}?focus=${oldest[0].id}`)).status, 404);

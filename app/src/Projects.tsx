@@ -106,9 +106,9 @@ function ProjectNavigation({project,state,active,selectedSection,search,onProjec
     {editing&&<ProjectNameDialog {...editing} project={project} state={state} onClose={()=>setEditing(null)}/>}
   </Collapsible.Root>;
 }
-export function ProjectSourceControl({project,folder,request}:{project:string;folder:string;request:Request}) {
+export function ProjectSourceControl({project,folder,request,onOpenDiff}:{project:string;folder:string;request:Request;onOpenDiff?:()=>void}) {
   const gitRequest=useCallback<Request>((path,body)=>{const url=new URL(path,'http://local');const operation=url.pathname.split('/git')[1]??'';url.searchParams.set('folder',folder);return request(`/api/projects/${project}/git${operation}?${url.searchParams}`,body);},[project,folder,request]);
-  return <SourceControl showEmpty agent={project} request={gitRequest}/>;
+  return <SourceControl showEmpty={!onOpenDiff} agent={project} request={gitRequest} onOpenDiff={onOpenDiff}/>;
 }
 export function HowBriefsipWorks({action}:{action?:ReactNode}) {return <section className="how-briefsip-works"><h2>How Briefsip works</h2><p>Chat directly with an agent, or bring a team together in a project. Use sections for different kinds of work. Attach folders when needed.</p>{action}</section>;}
 export { HelpPage } from './HelpPage';

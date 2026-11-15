@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { Alert, Button, Field, Input } from './ui/kit';
 
-export function EventConnection({ path, request }: { path: string; request: <T>(path: string) => Promise<T> }) {
+export function EventConnection({ path, request, compact = false }: { path: string; request: <T>(path: string) => Promise<T>; compact?: boolean }) {
   const [connection, setConnection] = useState<{ event: string; deadline: number; url: string; secret: string } | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const generation = useRef(0);
@@ -14,7 +14,7 @@ export function EventConnection({ path, request }: { path: string; request: <T>(
     catch (error) { if (version === generation.current) setError(error instanceof Error ? error.message : 'Event connection is unavailable. Try again.'); }
     finally { if (version === generation.current) setBusy(false); }
   }
-  return <section className="k-stack bs-root"><h3 className="k-section__title">Waiting for event</h3><p className="k-field__hint" style={{ margin: 0 }}>The event applies only to this request. Local URLs require Briefsip to keep running.</p>
+  return <section className="k-stack bs-root">{!compact && <><h3 className="k-section__title">Waiting for event</h3><p className="k-field__hint" style={{ margin: 0 }}>The event applies only to this request. Local URLs require Briefsip to keep running.</p></>}
     {error && <Alert tone="error">{error}</Alert>}
     <Button size="sm" style={{ alignSelf: 'flex-start' }} disabled={busy} aria-expanded={!!connection} onClick={() => connection ? setConnection(null) : void reveal()}>{busy ? 'Loading connection...' : connection ? 'Hide connection' : 'Show event connection'}</Button>
     {connection && <>
