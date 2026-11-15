@@ -1,6 +1,7 @@
 import { createElement as h, memo, type ReactNode } from 'react';
 import { marked, type Token, type Tokens } from 'marked';
 import { decodeHTML } from 'entities';
+import { splitMarkdownBlocks } from './ui/markdownStreamBlocks.ts';
 
 export function markdownLink(value: string, scope: string, origin: string): { href: string; external: boolean } | null {
   value = decodeHTML(value);
@@ -59,3 +60,11 @@ export const Markdown = memo(function Markdown({ text, scope, origin }: { text: 
     return h('div', { className: 'markdown' }, render(marked.lexer(text, { gfm: true, breaks: false })));
   } catch { return h('p', { className: 'message-text' }, text); }
 });
+
+// Keep completed blocks mounted and memoized while only the trailing block changes.
+// Document-wide syntax falls back to one renderer to preserve Markdown semantics.
+export function StreamingMarkdown(props: { text: string; scope: string; origin: string }) {
+  const blocks = props.text.length <= 64000 ? splitMarkdownBlocks(props.text) ?? [props.text] : [props.text];
+  return h('div', { className: 'stream-markdown' }, blocks.map((text, index) =>
+    h(Markdown, { ...props, text, key: index })));
+}

@@ -2,7 +2,7 @@ import { diffLines } from '../diff-lines';
 export { diffLines } from '../diff-lines';
 // Branch and diff-status patterns adapted from T3 (MIT); see ../t3/provenance.json.
 import { useEffect, useRef, useState } from 'react';
-import { GitBranch, GitPullRequest, RefreshCw } from 'lucide-react';
+import { GitBranch, GitPullRequest, RefreshCw, RotateCcw } from 'lucide-react';
 import { Alert, Badge, Button, Card, Dialog, EmptyState, IconButton, Row, Section, useConfirm, RecoveryAlert } from './ui/kit';
 import './ui/source-control.css';
 
@@ -95,7 +95,7 @@ export function RestoreCheckpoint({ agent, turn, request }: { agent: string; tur
     if (!await confirm({ title: 'Clear restoration request?', description: 'Inspect the workspace first. Files already restored stay changed; clearing this request does not undo them.', confirm: 'Clear request', danger: true })) return;
     try { sessionStorage.removeItem(storage); setPending(null); setInvalid(false); setOpen(false); setError(''); } catch (error) { setError(message(error)); }
   }
-  return <div className="bs-root checkpoint-action"><Button size="sm" variant="ghost" onClick={() => void show()}>Restore to before this turn</Button>{notice && <p role="status" className="source-control__hint">{notice}</p>}
+  return <div className="bs-root checkpoint-action"><IconButton label="Restore to before this turn" onClick={() => void show()}><RotateCcw size={14} aria-hidden /></IconButton>{notice && <p role="status" className="source-control__hint">{notice}</p>}
     <Dialog open={open} onOpenChange={next => { if (!busy) setOpen(next); }} title="Restore to before this turn?" description="Restore the listed workspace files. Current files are checkpointed first. HEAD and the Git index stay unchanged." footer={<>
       {(pending || invalid) && <Button disabled={busy} onClick={() => void discard()}>Clear request</Button>}
       <Button disabled={busy} onClick={() => setOpen(false)}>Cancel</Button>

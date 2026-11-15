@@ -3,6 +3,7 @@ import { Badge, Collapsible } from './kit';
 import { activityLabel, liveTurn, type TurnActivityData } from './transcript';
 
 type Props = {
+  logOnly?: boolean;
   turn: {
     room?: { quiet: { name: string; silent: string }[] } | null; status: string; paused: number; created: string; routing?: string | null; recipient?: string | null; agent_name?: string;
     coordination?: { kind: string; child: string | null; owner_name: string; target_name: string }[];
@@ -19,9 +20,11 @@ type Props = {
   onOpenAgent?: (agent: string, thread: string) => void;
 };
 
-export function TurnActivity({ turn, agentName, onOpenTask, onOpenAgent, remote }: Props) {
+export function TurnActivity({ turn, agentName, onOpenTask, onOpenAgent, remote, logOnly }: Props) {
   const [now, setNow] = useState(Date.now);
   const live = liveTurn(turn);
+  const [open, setOpen] = useState(false);
+  useEffect(() => { if (!live) setOpen(false); }, [live]);
   useEffect(() => {
     if (!live) return;
     setNow(Date.now());
@@ -48,10 +51,10 @@ export function TurnActivity({ turn, agentName, onOpenTask, onOpenAgent, remote 
   for (const checkpoint of turn.activity?.checkpoints ?? []) steps.push({ id: `checkpoint-${checkpoint.turn}`, text: checkpoint.state === 'done' ? 'Git checkpoint captured' : `Git checkpoint ${checkpoint.state}` });
   if (turn.activity?.budget_stopped) steps.push({ id: 'budget', text: `Stopped after ${turn.activity.budget_stopped} tool steps` });
   if (turn.activity?.fallback_model) steps.push({ id: 'fallback', text: `Fallback model used: ${turn.activity.fallback_model}` });
-  return <div className="turn-activity">
-    <Collapsible title={<span>{activityLabel(turn, now)}</span>}>
-      {!!turn.activity?.calls.length && <p className="activity-timing">Elapsed time spans the first provider request to the latest response (or now while working), including waits between requests.</p>}
-      {steps.length ? <ol className="activity-list" aria-label="Turn activity">{steps.map(step => { const item = (turn.agentMessages ?? []).find(row => row.taskId === step.task); return <li key={step.id}><span>{step.text}</span>{item?.taskId && <Badge tone={['done'].includes(item.status) ? 'success' : ['failed','cancelled','uncertain'].includes(item.status) ? 'warn' : 'brand'}>{item.status === 'queued' && item.wait ? 'Waiting' : item.status.charAt(0).toUpperCase() + item.status.slice(1)}</Badge>}{step.task && <button type="button" className="link-btn link-btn--small" onClick={() => item?.agent && item.thread ? onOpenAgent?.(item.agent, item.thread) : onOpenTask(step.task!)}>{item ? 'Open conversation' : 'View subtask'}</button>}</li>; })}</ol> : <p className="activity-timing">{remote ? `Execution stays on the remote machine. Step details and elapsed time are not shared.` : live ? 'Waiting for provider response.' : 'No additional steps recorded.'}</p>}
-    </Collapsible>
-  </div>;
+  const contents = <>
+      {!!turn.activity?.calls.length && <p className="activity-timing">{[...new Set(turn.activity?.calls.map(call => call.model))].join(' · ')}</p>}
+      {steps.length ? <ol className="activity-list" aria-label="Turn activity">{steps.map(step => { const item = (turn.agentMessages ?? []).find(row => row.taskId === step.task); return <li key={step.id}><span>{step.text}</span>{item?.taskId && <Badge tone={['done'].includes(item.status) ? 'success' : ['failed','cancelled','uncertain'].includes(item.status) ? 'warn' : 'brand'}>{item.status === 'queued' && item.wait ? 'Waiting' : item.status.charAt(0).toUpperCase() + item.status.slice(1)}</Badge>}{step.task && <button type="button" className="link-btn link-btn--small" onClick={() => item?.agent && item.thread ? onOpenAgent?.(item.agent, item.thread) : onOpenTask(step.task!)}>{item ? 'Open conversation' : 'View subtask'}</button>}</li>; })}</ol> : null}
+  </>;
+  if (logOnly) return <div className="turn-activity-log">{contents}</div>;
+  return <div className="turn-activity"><Collapsible open={open} onOpenChange={setOpen} title={<span className="activity-label">{live && turn.status === 'running' && <span className="activity-working" aria-hidden />}{activityLabel(turn, now)}</span>}>{contents}</Collapsible></div>;
 }

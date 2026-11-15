@@ -25,6 +25,6 @@ export function activityLabel(turn: ActivityTurn, now: number) {
   if (turn.status === 'failed') return duration ? `Failed after ${duration}` : 'Failed';
   if (turn.status === 'interrupted') return duration ? `Interrupted after ${duration}` : 'Interrupted';
   if (turn.status === 'cancelled') return duration ? `Stopped after ${duration}` : 'Cancelled';
-  if (turn.status === 'queued' && !calls.length) return 'Queued';
+  if (turn.status === 'queued') return 'Queued';
   return duration ? `Working… ${duration}` : 'Working…';
 }
