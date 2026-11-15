@@ -1,5 +1,5 @@
 .bs-root.set4-page { min-width: 0; max-width: 100%; gap: 24px; }
-.bs-root.set4-page .k-page-head { padding-right: 40px; }
+.bs-root.set4-page .k-page-head { padding-right: 0; }
 .bs-root.set4-page .k-section__head { padding-left: 0; }
 .bs-root.machines-page .k-card > .k-row { align-items: center; flex-wrap: nowrap; padding: 0; }
 .bs-root.machines-page .k-card > .k-row > .k-row__main { flex-basis: 0; }

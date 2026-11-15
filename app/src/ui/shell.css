@@ -68,7 +68,7 @@
 .bot-rail-item { display: flex; align-items: center; justify-content: center; height: 54px; border-radius: 12px; }
 .bot-rail-item:hover { background: var(--color-bg-hover); }
 .bot-rail-item.is-selected { background: var(--color-bg-active); }
-.bot-list__empty { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 12px; border: 0.5px dashed var(--color-border-secondary); }
+.bot-list__empty { width: 100%; display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 12px; border: 0.5px dashed var(--color-border-secondary); }
 .bot-list__empty:hover { background: var(--color-bg-hover); }
 .bot-list__empty > span:last-child { display: flex; flex-direction: column; min-width: 0; }
 .bot-list__empty-plus { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%; background: var(--color-bg-pane); border: 0.5px solid var(--color-border-tertiary); }

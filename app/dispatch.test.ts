@@ -151,10 +151,17 @@ test('fork stores bounded immutable cutoff, same agent, idempotency and channel 
     await f.request(f.path, { id: second, text: 'Beyond cutoff' }); await f.turn(second, row => row.status === 'done');
     const forkPath = `${f.path}/${first}/fork`, command = { id: randomUUID() };
     const fork = await f.request(forkPath, command); assert.equal(fork.agent, f.agent.id); assert.equal(fork.fork.cutoff_turn, first);
+    assert.equal(fork.name, 'New conversation');
+    const inherited = await f.request(`/api/threads/${fork.id}/fork-context`);
+    assert.deepEqual(inherited.turns.map((turn: { id: string }) => turn.id), [first]);
+    assert.equal(inherited.turns[0].text, 'Fork source');
+    await f.request(`/api/threads/${randomUUID()}/fork-context`, undefined, 404);
     assert.deepEqual(await f.request(forkPath, command), fork); await f.request(`${f.path}/${second}/fork`, command, 409);
     const side = `/api/threads/${fork.id}/turns`, follow = randomUUID(); await f.request(side, { id: follow, text: 'Continue fork' }); await f.turn(follow, row => row.status === 'done', side);
     assert(JSON.stringify(f.calls.at(-1).messages).includes('Answer: Fork source')); assert(!JSON.stringify(f.calls.at(-1).messages).includes('Beyond cutoff'));
+    assert.equal((await f.request(`/api/agents/${f.agent.id}/threads`)).find((thread: { id: string }) => thread.id === fork.id).name, 'Continue fork');
     await f.restart(); assert.deepEqual(await f.request(forkPath, command), fork);
+    assert.deepEqual(await f.request(`/api/threads/${fork.id}/fork-context`), inherited);
     const channel = await f.request('/api/channels', { id: randomUUID(), name: 'Channel fork', instructions: 'Coordinate.', members: [f.agent.id], lead: f.agent.id });
     const at = `/api/channels/${channel.id}/turns`, channelTurn = randomUUID(); await f.request(at, { id: channelTurn, text: 'Channel answer', recipient: f.agent.id }); await f.turn(channelTurn, row => row.status === 'done', at);
     const channelCommand = { id: randomUUID() }, channelFork = await f.request(`${at}/${channelTurn}/fork`, channelCommand);

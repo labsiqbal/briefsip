@@ -1,4 +1,5 @@
 import { useRef, useState, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
 import { DropdownMenu } from 'radix-ui';
 import { Ellipsis, Eye, EyeOff, Pencil, Trash2 } from 'lucide-react';
 import type { Agent } from './AgentProfileDialog';
@@ -22,15 +23,17 @@ export function HiddenAgentBanner({ agent, request, onChanged }: { agent: Agent;
 
 export function useDeleteAgent(request: Request, onDeleted: (id: string) => Promise<void>) {
   const confirm = useConfirm(), flight = useRef(false);
-  return async (agent: Agent) => {
+  const [deleting, setDeleting] = useState('');
+  return { deleting, deleteAgent: async (agent: Agent) => {
     if (flight.current) return;
     flight.current = true;
     try {
       if (!await confirm({ title: `Delete ${agent.name}?`, description: 'Permanently removes agent data and access.', confirm: 'Delete agent', danger: true })) return;
+      flushSync(() => setDeleting(agent.id));
       await request(`/api/agents/${agent.id}/delete`, { id: crypto.randomUUID() });
       await onDeleted(agent.id);
-    } finally { flight.current = false; }
-  };
+    } finally { setDeleting(''); flight.current = false; }
+  } };
 }
 
 export function AgentActions({ agent, children, request, onEdit, onDelete, onChanged, onError }: {

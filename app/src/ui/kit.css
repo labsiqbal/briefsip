@@ -1,3 +1,4 @@
+.bs-root { --surface-inset: 22px; }
 /* Briefsip component kit on Bot HQ tokens. Behavior comes from Radix; every visual value comes from tokens.css. */
 
 /* ---------- type ---------- */
@@ -110,7 +111,7 @@ input, textarea { caret-color: var(--color-brand); }
 .k-page-head p { margin: 6px 0 0; max-width: 520px; font-size: 13.5px; line-height: 20px; color: var(--color-text-tertiary); }
 .k-page-head__actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; padding-top: 2px; }
 .k-section { display: flex; flex-direction: column; gap: 10px; }
-.k-section__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 30px; padding: 0 2px 0 4px; }
+.k-section__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 30px; padding: 0; }
 .k-section__title { margin: 0; font-size: 13px; font-weight: 500; line-height: 18px; color: var(--color-text-secondary); }
 .k-section__actions { display: flex; align-items: center; gap: 6px; }
 .k-card { display: flex; flex-direction: column; padding: 4px; border-radius: 14px; background: var(--color-bg-chrome); border: 0.5px solid var(--color-border-tertiary); }
@@ -175,11 +176,11 @@ button.k-row__main:disabled { cursor: default; }
 .k-dialog--sm { max-width: 420px; }
 .k-dialog--md { max-width: 520px; }
 .k-dialog--lg { max-width: 680px; }
-.k-dialog__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 16px 6px 22px; }
+.k-dialog__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px var(--surface-inset) 6px; }
 .k-dialog__title { margin: 0; font-size: 16px; font-weight: 600; line-height: 22px; letter-spacing: -0.15px; color: var(--color-ink); }
 .k-dialog__desc { margin: 4px 0 0; font-size: 13px; line-height: 19px; color: var(--color-text-tertiary); }
-.k-dialog__body { display: flex; flex-direction: column; gap: 18px; padding: 14px 22px 20px; overflow-y: auto; min-height: 0; }
-.k-dialog__foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 12px 16px 16px 22px; border-top: 0.5px solid var(--color-border-tertiary); }
+.k-dialog__body { display: flex; flex-direction: column; gap: 18px; padding: 14px var(--surface-inset) 20px; overflow-y: auto; min-height: 0; }
+.k-dialog__foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 12px var(--surface-inset) 16px; border-top: 0.5px solid var(--color-border-tertiary); }
 .k-dialog--sm .k-dialog__foot { border-top: 0; padding-top: 14px; }
 .k-dialog__foot-note { margin-right: auto; font-size: 12px; color: var(--color-text-tertiary); }
 .k-grid-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
