@@ -47,11 +47,11 @@ export function RightPanel({ path, name, state, request, onClose, details, setti
     void load(); return () => { stopped = true; clearTimeout(timer); };
   }, [base, request, refresh]);
   const tabs = [
-    { value: 'details', label: <><Info size={14} aria-hidden />Details</> },
-    { value: 'files', label: <><Files size={14} aria-hidden />Files</> },
-    ...(git?.isRepo ? [{ value: 'diff', label: <><FileDiff size={14} aria-hidden />Diff</> }] : []),
-    ...(context?.previews.length || context?.sites.length ? [{ value: 'preview', label: <><Globe size={14} aria-hidden />Preview</> }] : []),
-    ...(context?.computer ? [{ value: 'computer', label: <><Monitor size={14} aria-hidden />Computer</> }] : []),
+    { value: 'details', label: <><Info size={14} aria-hidden /><span className="right-panel__tab-label">Details</span></> },
+    { value: 'files', label: <><Files size={14} aria-hidden /><span className="right-panel__tab-label">Files</span></> },
+    ...(git?.isRepo ? [{ value: 'diff', label: <><FileDiff size={14} aria-hidden /><span className="right-panel__tab-label">Diff</span></> }] : []),
+    ...(context?.previews.length || context?.sites.length ? [{ value: 'preview', label: <><Globe size={14} aria-hidden /><span className="right-panel__tab-label">Preview</span></> }] : []),
+    ...(context?.computer ? [{ value: 'computer', label: <><Monitor size={14} aria-hidden /><span className="right-panel__tab-label">Computer</span></> }] : []),
     ...extensions,
   ];
   const selected = tabs.some(tab => tab.value === state.tab) ? state.tab : 'details';

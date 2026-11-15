@@ -20,7 +20,7 @@ export function PanelDiff({ base, status, request, refresh }: { base: string; st
   return <div className="right-panel__body k-stack">
     <Section title={status.branch ?? 'Detached HEAD'} actions={<Badge>{files.length} changed</Badge>}><p className="k-field__hint right-panel__branch"><GitBranch size={14} aria-hidden />Working tree, including staged and untracked files</p></Section>
     {!files.length ? <EmptyState title="Working tree clean" /> : <>
-      <div className="right-panel__changed-files" aria-label="Changed files"><Card>{files.map(item => <Row key={item.path} title={<span title={item.path}>{item.path}</span>} leading={<span className="source-control__status">{item.code}</span>} meta={item.path === file ? 'Selected' : undefined} onClick={() => setSelected(item.path)} />)}</Card></div>
+      <div className="right-panel__changed-files" aria-label="Changed files"><Card>{files.map(item => <Row key={item.path} title={<span title={item.path}>{item.path}</span>} leading={<span className="source-control__status" title={statusLabel(item.code)}>{item.code.trim() === '??' ? 'U' : item.code.trim().charAt(0)}</span>} meta={item.path === file ? 'Selected' : undefined} onClick={() => setSelected(item.path)} />)}</Card></div>
       <div className="right-panel__diff-toolbar"><span className="right-panel__path" title={file}>{file}</span><Select size="sm" label="Diff layout" value={layout} onChange={setLayout} options={[{ value: 'unified', label: 'Unified' }, { value: 'split', label: 'Split' }]} /></div>
       {error ? <Alert tone="error">{error}</Alert> : diff === null ? <SkeletonRows /> : <>
         {diff.truncated && <Alert tone="warn">Partial diff. Preview is limited to 256 KiB.</Alert>}
@@ -28,4 +28,9 @@ export function PanelDiff({ base, status, request, refresh }: { base: string; st
       </>}
     </>}
   </div>;
+}
+
+function statusLabel(code: string) {
+  const value = code.trim();
+  return value === '??' ? 'Untracked' : ({ M: 'Modified', A: 'Added', D: 'Deleted', R: 'Renamed', C: 'Copied', U: 'Conflict' } as Record<string, string>)[value.charAt(0)] ?? value;
 }

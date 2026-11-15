@@ -40,3 +40,11 @@
 
 
 .right-panel [hidden] { display: none; }
+
+/* Narrow panels show icon-only tabs; labels stay in the accessible name. */
+.right-panel { container-type: inline-size; }
+@container (max-width: 520px) {
+  .right-panel > .k-tabs > .k-tabs__list { justify-content: space-between; }
+  .right-panel > .k-tabs > .k-tabs__list > .k-tabs__tab { padding: 0 12px; }
+  .right-panel__tab-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
