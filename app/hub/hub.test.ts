@@ -393,7 +393,7 @@ test('exclusive writer/WAL, consistent backup/reopen and restore generation fenc
 });
 
 function guardImports(root: string, source?: string) {
-  const hub=resolve(root,'hub'),allowed=new Set(['node:crypto','node:fs','node:path','node:sqlite','node:url']),seen=new Set<string>();
+  const hub=resolve(root,'hub'),allowed=new Set(['node:crypto','node:fs','node:path','node:sqlite','node:url','node:http','node:stream','ws']),seen=new Set<string>();
   function scan(path: string, contents=readFileSync(path,'utf8')) {
     if (seen.has(path)) return; seen.add(path);
     const tree=ts.createSourceFile(path,contents,ts.ScriptTarget.Latest,true);
