@@ -1,15 +1,17 @@
+import { getNonce } from 'get-nonce';
 import { SkillPacksPanel } from './SkillPacksPanel';
 import { useEffect, useRef, useState } from 'react';
 import { restoreSkillCommand, type SkillCommand } from '../skill-command';
 import { parseSkillFiles, type SkillFile } from '../skill-files';
 import { SkillFolderImport, downloadSkillFolder } from './SkillFolderImport';
-import { BookOpen, ChevronLeft, ChevronRight, Ellipsis, FileText, Package, Plus, RefreshCw } from 'lucide-react';
-import { ActionMenu, Alert, Badge, Button, Card, Collapsible, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
+import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, Ellipsis, FileText, Plus, RefreshCw } from 'lucide-react';
+import { ActionMenu, Alert, Badge, Button, Card, Collapsible, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, TabPanel, Tabs, Textarea, Tooltip, useConfirm, RecoveryAlert } from './ui/kit';
 type Skill = { id: string; name: string; description: string; content: string; revision: number; latest: number; files?: SkillFile[] };
 type Installed = { pack?: string | null; removed: number; skill: string; name: string; version: number; enabled: number; revision: number; latest: number };
 const storage = 'briefsip:skill-command';
 export function SkillsPanel({ agents, request, onClose }: { agents: { id: string; name: string }[]; request: <T>(path: string, body?: unknown) => Promise<T>; onClose: () => void }) {
-  const [showPacks, setShowPacks] = useState(false);
+  const [tab, setTab] = useState('library');
+  const importControl = useRef<HTMLSpanElement>(null);
   const [owner, setOwner] = useState(agents[0]?.id ?? '');
   const [recovery] = useState(() => { try { return { command: restoreSkillCommand(sessionStorage.getItem(storage)), invalid: false }; } catch { return { command: null, invalid: true }; } });
   const [pending, setPending] = useState(recovery.command), [invalid, setInvalid] = useState(recovery.invalid);
@@ -26,7 +28,7 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
   const canReplace = async () => !dirty || confirm({ title: 'Discard skill changes?', description: 'Unsaved changes will be lost.', confirm: 'Discard changes', danger: true });
   const locked = busy || importBusy || !!pending || invalid, after = cursors.at(-1)!;
   useEffect(() => { heading.current?.focus(); return () => { navigation.current++; }; }, []);
-  useEffect(() => { heading.current?.focus(); }, [after, showPacks]);
+  useEffect(() => { heading.current?.focus(); }, [after]);
   useEffect(() => {
     let stopped = false; setPage(null); setInstalled(null); setError(''); setLoadError('');
     void Promise.all([request<NonNullable<typeof page>>(`/api/skills${after ? `?after=${after}` : ''}`), owner ? request<{ items: Installed[]; next_after: string | null }>(`/api/agents/${owner}/skills${installAfter ? `?after=${installAfter}` : ''}`) : Promise.resolve({ items: [], next_after: null })]).then(([library, rows]) => { if (!stopped) { setPage(library); setInstalled(rows.items); setInstallNext(rows.next_after); } }).catch(error => { if (!stopped) setLoadError(error.message || 'Skills could not load.'); });
@@ -57,11 +59,10 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
     finally { inFlight.current = false; if (current === navigation.current) setBusy(false); }
   }
   async function discard() {
-    if (busy || !await confirm({ title: 'Ignore saved request?', description: 'Changes may already have succeeded. The list reloads before the next change.', confirm: 'Ignore' })) return;
+    if (busy || !await confirm({ title: 'Discard saved request?', description: 'Changes may already have succeeded. The list reloads before the next change.', confirm: 'Discard request' })) return;
     try { sessionStorage.removeItem(storage); setPending(null); setInvalid(false); setRefresh(value => value + 1); }
     catch { setError('Browser storage could not be updated.'); }
   }
-  if (showPacks) return <SkillPacksPanel agents={agents} initialOwner={owner} request={request} onClose={() => { setShowPacks(false); setRefresh(value => value + 1); }} />;
   const ownerName = agents.find(agent => agent.id === owner)?.name ?? '';
   const startNew = async () => { if (!await canReplace()) return; setBaseline(''); setEditor({ id: '', name: '', description: '', content: '', revision: 0, latest: 0 }); setVersion(1); };
   const importFiles = async (files: SkillFile[]) => { if (!await canReplace()) return; const parsed = parseSkillFiles(files); setEditor({ id: editor?.id ?? '', revision: editor?.revision ?? 0, latest: editor?.latest ?? 0, ...parsed }); setVersion(editor?.revision || 1); };
@@ -74,23 +75,33 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
     <IconButton label={`${label} previous`} disabled={locked || !back} onClick={onBack}><ChevronLeft size={16} aria-hidden /></IconButton>
     <IconButton label={`${label} next`} disabled={locked || !next} onClick={onNext}><ChevronRight size={16} aria-hidden /></IconButton>
   </div>;
-  return <div className="k-page bs-root">
-    <PageHeader headingRef={heading} title="Skills" description="Additional instructions that can be installed on agents. Skills do not grant tool permissions or run scripts."
+  const recoveryNotice = <>
+    {invalid && <Alert tone="error" title="Recovery unavailable" actions={<Button size="sm" disabled={busy} onClick={() => void discard()}>Discard request</Button>} />}
+    {pending && <RecoveryAlert inFlight={busy} tone="warn" title="Not confirmed" actions={<><Button size="sm" variant="primary" busy={busy} onClick={() => void execute(pending)}>Try again</Button><Button size="sm" disabled={busy} onClick={() => void discard()}>Discard request</Button></>} />}
+  </>;
+  return <div className="k-page bs-root bs-set3-skills">
+    <style nonce={getNonce()}>{`.bs-root.bs-set3-skills > .k-page-head { padding-right: 40px; } .bs-root.bs-set3-skills .k-row__title { white-space: normal; overflow-wrap: anywhere; } .bs-root.bs-set3-skills .k-row__meta { overflow-wrap: anywhere; } .bs-root.bs-set3-skills .k-tabs__panel[hidden] { display: none; }`}</style>
+    <PageHeader headingRef={heading} title="Skills"
       actions={<>
-        <IconButton label="Reload" disabled={busy} onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton>
-        <Button icon={<Package size={14} aria-hidden />} disabled={locked} onClick={() => setShowPacks(true)}>Skill packs</Button>
-        <Button variant="primary" icon={<Plus size={14} aria-hidden />} disabled={locked} onClick={() => void startNew()}>Create skill</Button>
+        {tab !== 'packs' && <IconButton label="Reload" disabled={busy} onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton>}
+        {tab !== 'packs' && <><span hidden ref={importControl}><SkillFolderImport compact disabled={locked} onBusy={setImportBusy} onError={setError} onImport={files => void importFiles(files)} /></span>
+        <ActionMenu label="Import" trigger={<Button disabled={locked} icon={<ChevronDown size={14} aria-hidden />}>Import</Button>} items={[
+          { label: 'Folder', onSelect: () => importControl.current?.querySelectorAll('button')[0]?.click() },
+          { label: 'File', onSelect: () => importControl.current?.querySelectorAll('button')[1]?.click() },
+        ]} /></>}
+        {tab !== 'packs' && <Button variant="primary" icon={<Plus size={14} aria-hidden />} disabled={locked} onClick={() => void startNew()}>Create skill</Button>}
       </>} />
     {error && <Alert tone="error">{error}</Alert>}
-    {invalid && <Alert tone="error" title="Skill recovery data could not be read." actions={<Button size="sm" disabled={busy} onClick={() => void discard()}>Ignore recovery</Button>} />}
-    {pending && <RecoveryAlert inFlight={busy} tone="warn" title="Changes are not confirmed yet" actions={<><Button size="sm" variant="primary" busy={busy} onClick={() => void execute(pending)}>Try again</Button><Button size="sm" disabled={busy} onClick={() => void discard()}>Ignore</Button></>}>The same request is sent again to avoid saving it twice.</RecoveryAlert>}
+    {recoveryNotice}
 
-    <Section id="skills-installed" title="Installed on agent" actions={agents.length > 0 && <Select size="sm" label="Agent" value={owner} disabled={locked} onChange={value => { navigation.current++; setOwner(value); setInstallCursors(['']); }} options={agents.map(agent => ({ value: agent.id, label: agent.name }))} />}>
-      {!owner ? <EmptyState icon={<BookOpen size={18} />} title="No agents yet">Create an agent first, then install skills on it.</EmptyState>
+    <Tabs label="Skills" value={tab} onChange={value => { if (!busy && !importBusy && (value !== 'packs' || !locked)) setTab(value); }} tabs={[{ value: 'library', label: 'Library' }, { value: 'installed', label: 'Installed' }, { value: 'packs', label: 'Packs' }]}>
+    <TabPanel value="installed">
+    <Section id="skills-installed" title="Agent" actions={agents.length > 0 && <Select size="sm" label="Agent" value={owner} disabled={locked} onChange={value => { navigation.current++; setOwner(value); setInstallCursors(['']); }} options={agents.map(agent => ({ value: agent.id, label: agent.name }))} />}>
+      {!owner ? <EmptyState icon={<BookOpen size={18} />} title="No agents yet" />
         : loadError ? <Alert tone="error" actions={<Button size="sm" disabled={busy} onClick={() => setRefresh(value => value + 1)}>Try again</Button>}>{loadError}</Alert>
-        : installed === null ? <SkeletonRows count={2} />
-        : installed.length === 0 ? <EmptyState icon={<BookOpen size={18} />} title={`${ownerName} has no skills yet`}>Open a skill in the library, then install its version on this agent.</EmptyState>
-        : <Card>{installed.map(row => <Row key={row.skill} title={row.name} leading={<BookOpen size={16} aria-hidden />}
+        : installed === null ? <><span className="sr-only" role="status">Loading installed skills...</span><SkeletonRows count={2} /></>
+        : installed.length === 0 ? <EmptyState icon={<BookOpen size={18} />} title="No installed skills" />
+        : <Card>{installed.map(row => <Row key={row.skill} title={row.name} disabled={locked} onClick={() => void open(row.skill, row.version)} leading={<BookOpen size={16} aria-hidden />}
             meta={<><span>Version {row.version}</span>{row.latest > row.version && <Badge tone="warn">Version {row.latest} available</Badge>}{row.pack && <Badge>Pack</Badge>}{!row.enabled && <Badge>Inactive</Badge>}</>}
             trailing={<>
               <Switch checked={!!row.enabled} disabled={locked || !!row.pack} label={`${row.enabled ? 'Disable' : 'Enable'} ${row.name}`} onChange={() => void execute({ path: `/api/agents/${owner}/skills/${row.skill}`, body: { id: crypto.randomUUID(), revision: row.revision, version: row.version, enabled: !row.enabled } })} />
@@ -103,42 +114,48 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
       {pager(installCursors.length > 1, !!installNext, () => setInstallCursors(value => value.slice(0, -1)), () => setInstallCursors(value => [...value, installNext!]), 'Installation')}
     </Section>
 
-    <Section id="skills-library" title="Library" actions={<SkillFolderImport compact disabled={locked} onBusy={setImportBusy} onError={setError} onImport={files => void importFiles(files)} />}>
+    </TabPanel>
+    <TabPanel value="library">
+    <div id="skills-library" className="k-stack">
       {loadError ? <Alert tone="error" actions={<Button size="sm" disabled={busy} onClick={() => setRefresh(value => value + 1)}>Try again</Button>}>{loadError}</Alert>
-        : !page ? <SkeletonRows count={3} />
-        : page.skills.length === 0 ? <EmptyState icon={<FileText size={18} />} title="Library is empty" action={<Button variant="primary" size="sm" icon={<Plus size={14} aria-hidden />} disabled={locked} onClick={() => void startNew()}>Create skill</Button>}>Write a new skill, or import a folder containing SKILL.md.</EmptyState>
-        : <Card>{page.skills.map(skill => <Row key={skill.id} title={skill.name} meta={`Revision ${skill.revision}`} leading={<FileText size={16} aria-hidden />} disabled={locked} onClick={() => void open(skill.id)} />)}</Card>}
+        : !page ? <><span className="sr-only" role="status">Loading skills...</span><SkeletonRows count={3} /></>
+        : page.skills.length === 0 ? <EmptyState icon={<FileText size={18} />} title="No skills" />
+        : <Card>{page.skills.map(skill => <Row key={skill.id} title={skill.name} meta={`v${skill.revision}`} leading={<FileText size={16} aria-hidden />} disabled={locked} onClick={() => void open(skill.id)} trailing={<ActionMenu label={`Menu ${skill.name}`} trigger={<button type="button" className="k-icon-btn" aria-label={`Menu ${skill.name}`} disabled={locked}><Ellipsis size={16} aria-hidden /></button>} items={[{ label: 'Edit skill', onSelect: () => void open(skill.id) }]} />} />)}</Card>}
       {pager(cursors.length > 1, !!page?.next_after, () => setCursors(value => value.slice(0, -1)), () => setCursors(value => [...value, page!.next_after!]), 'Skill')}
-    </Section>
+    </div>
+    </TabPanel>
+    <TabPanel value="packs"><SkillPacksPanel embedded headingRef={heading} agents={agents} initialOwner={owner} request={request} onClose={() => { setTab('library'); setRefresh(value => value + 1); }} /></TabPanel>
+    </Tabs>
 
     <Dialog open={!!editor} size="lg" onOpenChange={async next => { if (!next && await canReplace()) setEditor(null); }}
       title={editor?.id ? editor.name : editor?.files ? `Import ${editor.name}` : 'New skill'}
-      description={editor?.id ? `Version ${editor.revision} of ${editor.latest}. Saving creates a new revision; agents keep using their installed version until you change it.` : 'Saving creates the first revision in the library.'}
+      description={editor?.id ? <Tooltip content="Agents keep installed version"><span tabIndex={0}>v{editor.revision} of {editor.latest}</span></Tooltip> : undefined}
       footer={<>
         {editor?.id && <span className="k-dialog__foot-note"><SkillFolderImport compact disabled={locked} onBusy={setImportBusy} onError={setError} onImport={files => void importFiles(files)} /></span>}
         <Button disabled={busy} onClick={async () => { if (await canReplace()) setEditor(null); }}>Close</Button>
-        <Button type="submit" form="skill-editor" variant="primary" busy={busy} disabled={locked && !busy}>Save revision</Button>
+        <Button type="submit" form="skill-editor" variant="primary" busy={busy} disabled={locked && !busy}>Save version</Button>
       </>}>
       {editor && <form id="skill-editor" className="k-page" style={{ gap: 18 }} onSubmit={event => { event.preventDefault(); save(); }}>
-        {error && <Alert tone="error">{error}</Alert>}
+        {error && <Alert tone="error">{error}</Alert>}{recoveryNotice}
         <fieldset disabled={locked} className="k-fieldset">
           <Field label="Name"><Input required readOnly={!!editor.files} maxLength={80} value={editor.name} onChange={event => setEditor({ ...editor, name: event.target.value })} placeholder="For example: meeting-summary" /></Field>
-          <Field label="Description" hint="When the agent should use this skill."><Textarea required readOnly={!!editor.files} maxLength={1024} rows={2} style={{ minHeight: 60 }} value={editor.description} onChange={event => setEditor({ ...editor, description: event.target.value })} /></Field>
+          <Field label="When to use"><Textarea required readOnly={!!editor.files} maxLength={1024} rows={2} style={{ minHeight: 60 }} value={editor.description} onChange={event => setEditor({ ...editor, description: event.target.value })} /></Field>
           <Field label="Instructions"><Textarea required readOnly={!!editor.files} maxLength={16000} rows={10} style={{ minHeight: 200 }} value={editor.content} onChange={event => setEditor({ ...editor, content: event.target.value })} /></Field>
         </fieldset>
         {editor.files && <Section title={`${editor.files.length} files from folder`} actions={<>
           <Button size="sm" variant="ghost" onClick={() => downloadSkillFolder(editor.files!)}>Export JSON</Button>
           <Button size="sm" variant="ghost" onClick={() => { try { downloadSkillFolder(editor.files!, true); } catch (error) { setError(error instanceof Error ? error.message : 'ZIP export failed. Check skill files.'); } }}>Export ZIP</Button>
         </>}>
-          <Alert>Folder metadata is preserved. To update, import the full folder again while this skill is open.</Alert>
+
           <Card className="k-file-list">{editor.files.map(file => <div key={file.path} className="k-file"><Collapsible title={<span className="k-file__path">{file.path}</span>}>{file.encoding ? <p className="k-file__note">Binary asset. Export ZIP to get the original file.</p> : <pre className="k-file__content" tabIndex={0} role="region" aria-label={`Contents of ${file.path}`}>{file.content}</pre>}</Collapsible></div>)}</Card>
         </Section>}
         {editor.id && <Section title="Version">
           <div className="k-version">
-            <Field label="Review another version"><div className="k-inline"><Input type="number" min={1} max={editor.latest} step={1} value={version} onChange={event => setVersion(Number(event.target.value))} style={{ width: 96 }} /><Button disabled={!Number.isSafeInteger(version) || version < 1 || version > editor.latest || locked} onClick={() => void open(editor.id, version)}>Load</Button></div></Field>
+            <Field label="Version"><div className="k-inline"><Input type="number" min={1} max={editor.latest} step={1} value={version} onChange={event => setVersion(Number(event.target.value))} style={{ width: 96 }} /><Button disabled={!Number.isSafeInteger(version) || version < 1 || version > editor.latest || locked} onClick={() => void open(editor.id, version)}>Load</Button></div></Field>
             <div className="k-version__install">
-              {binding?.removed === 1 && <p className="k-field__hint">This skill was previously removed from {ownerName}. Install a saved version to use it again.</p>}
-              <Button variant="brand" disabled={!owner || binding === undefined || (!!binding?.pack && !binding.removed) || locked} onClick={() => void install()}>Install version {editor.revision} on {ownerName || 'agent'}</Button>
+              <Select label="Install on agent" size="sm" value={owner} disabled={locked} onChange={value => { navigation.current++; setOwner(value); setInstallCursors(['']); }} options={agents.map(agent => ({ value: agent.id, label: agent.name }))} />
+              {binding?.removed === 1 && <Badge>Removed</Badge>}
+              <Button variant="brand" disabled={!owner || binding === undefined || (!!binding?.pack && !binding.removed) || locked} onClick={() => void install()}>Install v{editor.revision}</Button>
             </div>
           </div>
         </Section>}
