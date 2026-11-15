@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Database, Ellipsis, RefreshCw } from 'lucide-react';
-import { ActionMenu, Alert, Button, Card, CodeBlock, Collapsible, EmptyState, Field, IconButton, PageHeader, Row, Section, SkeletonRows, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
+import { ActionMenu, Alert, Button, Card, CodeBlock, Collapsible, EmptyState, Field, IconButton, PageHeader, Row, Section, SkeletonRows, Tooltip, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
+import './machines-data.css';
 type Table = { name: string; owner: string; columns: { name: string; type: string }[] };
 type Listing = { tables: Table[]; next_after: string | null; revision: number };
 type QueryResult = { columns: string[]; rows: unknown[][]; truncated: boolean; changes: number; revision: number };
@@ -36,21 +37,20 @@ export function SharedDataPanel({ request, agents }: { agents: { id: string; nam
     } catch (error) { if (active === version.current) setError((error as Error).message); }
     finally { if (active === version.current) setBusy(false); }
   }
-  return <div className="k-page bs-root">
-    <PageHeader headingRef={heading} title="Shared data" description="Read and manage data shared by agents." actions={<IconButton label="Reload" disabled={busy} onClick={() => setReload(n => n + 1)}><RefreshCw size={15} aria-hidden /></IconButton>} />
-    <Alert>All agents can read and change rows. Only the table creator can change its structure. Do not store secrets or data that must not be shared.</Alert>
+  return <div className="k-page bs-root set4-page">
+    <PageHeader headingRef={heading} title="Shared data" actions={<IconButton label="Reload" disabled={busy} onClick={() => setReload(n => n + 1)}><RefreshCw size={15} aria-hidden /></IconButton>} />
     {error && <Alert tone="error">{error}</Alert>}
-    {pending && <RecoveryAlert inFlight={busy} tone="warn" title={`Deletion of ${pending.table} is not confirmed yet`} actions={<>
-      <Button size="sm" disabled={busy || !listing} onClick={() => void execute()}>Retry deletion</Button>
-      <Button size="sm" disabled={busy} onClick={() => { sessionStorage.removeItem(key); setPending(null); setReload(n => n + 1); }}>Close recovery and reload</Button>
-    </>}>Retrying does not repeat a deletion already saved.</RecoveryAlert>}
-    <Section id="shared-data-tables" title="Tables">
+    {pending && <RecoveryAlert inFlight={busy} tone="warn" title={`Not confirmed: delete ${pending.table}`} actions={<>
+      <Button size="sm" disabled={busy || !listing} onClick={() => void execute()}>Try again</Button>
+      <Button size="sm" disabled={busy} onClick={() => { sessionStorage.removeItem(key); setPending(null); setReload(n => n + 1); }}>Discard request</Button>
+    </>} />}
+    <Section id="shared-data-tables" title={<Tooltip content={<span className="bs-root set4-tooltip">{"Agent-shared tables; schema owned by creator. Do not store secrets or private data here."}</span>}><span tabIndex={0}>Tables</span></Tooltip>}>
       {!listing ? error ? <EmptyState title="Data is unavailable." /> : <><span className="sr-only" role="status">Loading tables...</span><SkeletonRows /></> : <>
-        {!listing.tables.length ? <EmptyState icon={<Database size={18} />} title="No tables on this page">Ask an agent to create a table through a conversation.</EmptyState> : <Card>{listing.tables.map(table => <div key={table.name}>
-          <Row title={table.name} leading={<Database size={16} aria-hidden />} meta={`Creator: ${agents.find(agent => agent.id === table.owner)?.name ?? table.owner}`} trailing={<ActionMenu label={`Menu ${table.name}`} trigger={<button type="button" className="k-icon-btn" aria-label={`Menu ${table.name}`} disabled={busy || !!pending}><Ellipsis size={16} aria-hidden /></button>} items={[
+        {!listing.tables.length ? <EmptyState icon={<Database size={18} />} title="No tables" /> : <Card>{listing.tables.map(table => <div key={table.name}>
+          <Row title={table.name} leading={<Database size={16} aria-hidden />} meta={`${agents.find(agent => agent.id === table.owner)?.name ?? table.owner}`} trailing={<ActionMenu label={`Menu ${table.name}`} trigger={<button type="button" className="k-icon-btn" aria-label={`Menu ${table.name}`} disabled={busy || !!pending}><Ellipsis size={16} aria-hidden /></button>} items={[
             { label: `Delete table ${table.name}`, danger: true, onSelect: () => void execute(table.name) },
           ]} />} />
-          <div style={{ padding: '0 10px 10px' }}><Collapsible title="Columns"><CodeBlock label={`Columns in ${table.name}`}>{table.columns.map(column => `${column.name}: ${column.type || 'untyped'}`).join('\n')}</CodeBlock></Collapsible></div>
+          <div className="set4-schema"><Collapsible title="Schema"><CodeBlock label={`Columns in ${table.name}`}>{table.columns.map(column => `${column.name}: ${column.type || 'untyped'}`).join('\n')}</CodeBlock></Collapsible></div>
         </div>)}</Card>}
         {(after || listing.next_after) && <div className="k-pager">
           <IconButton label="First page" disabled={busy || !after} onClick={() => { setAfter(''); heading.current?.focus(); }}><ChevronLeft size={16} aria-hidden /></IconButton>
@@ -58,10 +58,10 @@ export function SharedDataPanel({ request, agents }: { agents: { id: string; nam
         </div>}
       </>}
     </Section>
-    {listing && <Section id="shared-data-query" title="Query">
-      <Field label="Read-only query"><Textarea rows={4} placeholder={'SELECT * FROM "table_name" LIMIT 50'} value={sql} maxLength={16000} disabled={busy || !!pending} onChange={event => setSQL(event.target.value)} /></Field>
-      <div className="k-row-actions"><Button variant="primary" disabled={busy || !!pending || !sql.trim()} busy={busy} onClick={() => void execute()}>{busy ? 'Processing...' : 'Run read query'}</Button></div>
-    </Section>}
+    {listing && <Collapsible title="SQL query">
+      <Field label={<Tooltip content={<span className="bs-root set4-tooltip">{"Read-only SQL. No writes or schema changes."}</span>}><span tabIndex={0}>SQL query</span></Tooltip>}><Textarea rows={4} placeholder={'SELECT * FROM "table_name" LIMIT 50'} value={sql} maxLength={16000} disabled={busy || !!pending} onChange={event => setSQL(event.target.value)} /></Field>
+      <div className="k-row-actions"><Button variant="primary" disabled={busy || !!pending || !sql.trim()} busy={busy} onClick={() => void execute()}>{busy ? 'Processing...' : 'Run query'}</Button></div>
+    </Collapsible>}
     {result !== null && <Collapsible title="Last query results" defaultOpen>
       {result.columns.length > 0 ? <div className="k-table-wrap"><table className="k-table">
         <caption className="sr-only">Last query results</caption>

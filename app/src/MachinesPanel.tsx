@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { Ellipsis, Monitor, Plus, RefreshCw } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Copy, Ellipsis, Monitor, Plus, RefreshCw } from 'lucide-react';
 import type { Environment, PairedMachine, PeerAgentSummary } from '../machines';
-import { ActionMenu, Alert, Badge, Button, Card, Checkbox, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, SkeletonRows, Textarea, useConfirm } from './ui/kit';
+import { ActionMenu, Alert, Badge, Button, Card, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, SkeletonRows, Switch, Textarea, Tooltip, useConfirm } from './ui/kit';
 import { Markdown } from './Markdown';
 import { restoreRemoteMessage } from '../remote-message-command';
 import { TurnActivity } from './ui/TurnActivity';
 import { ChatComposer, ChatEmptyState, ChatHeader, ChatTranscript, HumanMessage, AgentMessage, TurnStatus } from './ui/ChatPrimitives';
 import './ui/machines.css';
+import './machines-data.css';
+import { HostMetricsSection } from './HostMetricsSection';
 
 type Request = <T>(path: string, data?: unknown) => Promise<T>;
 const message = (error: unknown) => error instanceof Error ? error.message : 'Machine request failed. Try again.';
@@ -23,7 +25,8 @@ export function MachinesPanel({ request, onChanged }: { request: Request; onChan
   const [name, setName] = useState(''), [origin, setOrigin] = useState(''), [code, setCode] = useState('');
   const [pairingCode, setPairingCode] = useState<{ code: string; expiresAt: number } | null>(null), [now, setNow] = useState(Date.now());
   const [busy, setBusy] = useState(''), [error, setError] = useState(''), [notice, setNotice] = useState('');
-  const [installOpen, setInstallOpen] = useState(false), [install, setInstall] = useState<{ source: string; token: string; expiresAt: number } | null>(null), [installError, setInstallError] = useState(''), [installBusy, setInstallBusy] = useState(false), [copied, setCopied] = useState(false);
+  const [setup, setSetup] = useState<'install' | 'pair' | 'code' | null>(null), [detail, setDetail] = useState<string | null>(null), [install, setInstall] = useState<{ source: string; token: string; expiresAt: number } | null>(null), [installError, setInstallError] = useState(''), [installBusy, setInstallBusy] = useState(false), [copied, setCopied] = useState(false);
+  const addTrigger = useRef<HTMLButtonElement>(null);
   const heading = useRef<HTMLHeadingElement>(null), pendingAdd = useRef<{ id: string; origin: string; code: string } | null>(null);
   const confirm = useConfirm();
   async function reload() { try { const [local, result] = await Promise.all([request<Environment>('/api/environment'), request<{ machines: PairedMachine[] }>('/api/machines')]); setEnvironment(local); setName(local.name); setMachines(result.machines); setError(''); } catch (error) { setError(message(error)); } }
@@ -31,7 +34,7 @@ export function MachinesPanel({ request, onChanged }: { request: Request; onChan
   useEffect(() => { if (!pairingCode) return; const timer = setInterval(() => { const time = Date.now(); setNow(time); if (time >= pairingCode.expiresAt) setPairingCode(null); }, 1000); return () => clearInterval(timer); }, [pairingCode]);
   useEffect(() => { if (!install) return; const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, [install]);
   const installFlight = useRef(0);
-  function closeInstall(open: boolean) { setInstallOpen(open); if (!open) { installFlight.current++; setInstall(null); setInstallError(''); setInstallBusy(false); setCopied(false); } }
+  function closeInstall(open: boolean) { setSetup(open ? 'install' : null); if (!open) { installFlight.current++; setInstall(null); setInstallError(''); setInstallBusy(false); setCopied(false); } }
   async function createInstall() {
     const flight = ++installFlight.current; setInstallBusy(true); setInstallError(''); setCopied(false);
     try { const value = await request<{ source: string; token: string; expiresAt: number }>('/api/install/tokens', { id: crypto.randomUUID() }); if (flight === installFlight.current) { setInstall(value); setNow(Date.now()); } }
@@ -41,45 +44,66 @@ export function MachinesPanel({ request, onChanged }: { request: Request; onChan
   async function act(action: string, run: () => Promise<void>) { setBusy(action); setError(''); setNotice(''); try { await run(); onChanged(); } catch (error) { setError(message(error)); } finally { setBusy(''); } }
   async function unpair(machine: PairedMachine) {
     if (!await confirm({ title: `Unpair ${machine.name}?`, description: 'Removes this machine from your list and revokes its access here. Briefsip also asks the other machine to revoke access. If it is offline, remove this pairing there too.', confirm: 'Unpair machine', danger: true })) return;
-    await act('unpair', async () => { await request('/api/machines/remove', { id: crypto.randomUUID(), environmentId: machine.id }); await reload(); setNotice(`${machine.name} was unpaired.`); });
+    await act('unpair', async () => { await request('/api/machines/remove', { id: crypto.randomUUID(), environmentId: machine.id }); await reload(); setDetail(null); setNotice(`${machine.name} was unpaired.`); });
   }
   const remaining = pairingCode ? Math.max(0, Math.ceil((pairingCode.expiresAt - now) / 1000)) : 0;
   const installRemaining = install ? Math.max(0, Math.ceil((install.expiresAt - now) / 1000)) : 0;
   const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
   const installCommand = install && installRemaining ? `curl -fsSL ${shellQuote(install.source + '/api/install/script')} | sh -s -- --source ${shellQuote(install.source)} --token ${shellQuote(install.token)} --serve` : '';
-  return <div className="k-page bs-root machines-page">
-    <PageHeader headingRef={heading} title="Machines" description="Pair your Briefsip installations and see their agents in one workspace." actions={<><Button icon={<Plus size={14} aria-hidden />} onClick={() => closeInstall(true)}>Add a machine</Button><IconButton label="Reload machines" disabled={!!busy} onClick={() => void reload()}><RefreshCw size={15} aria-hidden /></IconButton></>} />
-    {error && <Alert tone="error">{error}</Alert>}{notice && <Alert>{notice}</Alert>}
-    <Section title="This machine">
-      {!environment ? <SkeletonRows count={1} /> : <form className="k-stack" onSubmit={event => { event.preventDefault(); void act('name', async () => { const saved = await request<Environment>('/api/environment', { id: crypto.randomUUID(), name }); setEnvironment(saved); setName(saved.name); setNotice('Machine name saved.'); }); }}>
-        <Field label="Display name" hint="Agents on other machines see this name."><Input value={name} maxLength={120} required disabled={!!busy} onChange={event => setName(event.target.value)} /></Field>
-        <div className="machines-form-actions"><span className="k-field__hint machines-origin">{environment.origin}</span><Button type="submit" busy={busy === 'name'} disabled={!!busy || name.trim() === environment.name}>Save name</Button></div>
-      </form>}
-    </Section>
-    <Section title="Pair from another machine">
-      <p className="k-field__hint">Create a code here, then enter this machine's origin and code in Briefsip on your other machine. Codes expire after 10 minutes and work once.</p>
-      {pairingCode ? <div className="machines-code" role="region" aria-label="One-time pairing code"><span className="machines-code__value">{pairingCode.code}</span><span className="k-field__hint">Expires in <span className="machines-countdown">{Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, '0')}</span>. Shown only here until you leave.</span><Button size="sm" onClick={() => setPairingCode(null)}>Hide code</Button></div>
-        : <Button disabled={!!busy} busy={busy === 'code'} onClick={() => void act('code', async () => { const result = await request<{ code: string; expiresAt: number }>('/api/pairing-codes', { id: crypto.randomUUID() }); setNow(Date.now()); setPairingCode(result); })}>Create pairing code</Button>}
-    </Section>
-    <Section title="Pair an existing installation">
-      <form className="k-stack" onSubmit={event => { event.preventDefault(); const command = pendingAdd.current ?? { id: crypto.randomUUID(), origin, code: code.trim().toUpperCase() }; pendingAdd.current = command; void act('add', async () => { await request('/api/machines', command); pendingAdd.current = null; setCode(''); setOrigin(''); await reload(); setNotice('Machines are paired in both directions.'); }); }}>
-        <Field label="Machine origin" hint="Use the exact private HTTPS origin, including its port."><Input type="url" required placeholder="https://workstation.example.ts.net:4317" value={origin} maxLength={2048} disabled={!!busy} onChange={event => { setOrigin(event.target.value); pendingAdd.current = null; }} /></Field>
-        <Field label="Pairing code"><Input required value={code} minLength={12} maxLength={12} autoComplete="off" spellCheck={false} disabled={!!busy} onChange={event => { setCode(event.target.value.toUpperCase()); pendingAdd.current = null; }} /></Field>
-        <div className="machines-form-actions"><Button type="submit" variant="primary" icon={<Plus size={14} aria-hidden />} busy={busy === 'add'} disabled={!!busy}>Pair machine</Button></div>
-      </form>
-    </Section>
+  const peer = machines?.find(machine => machine.id === detail);
+  function closeSetup(open: boolean) { if (!open && !busy) { setSetup(null); setPairingCode(null); setCopied(false); } }
+  function openSetup(flow: 'install' | 'pair' | 'code') { requestAnimationFrame(() => { addTrigger.current?.focus(); if (flow === 'install') closeInstall(true); else setSetup(flow); }); }
+  const addMachine = <ActionMenu label="Add machine" trigger={<Button ref={addTrigger} variant="primary" icon={<Plus size={14} aria-hidden />}>Add machine<ChevronDown size={14} aria-hidden /></Button>} items={[
+    { label: 'Install Briefsip', onSelect: () => openSetup('install') },
+    { label: 'Pair machine', onSelect: () => openSetup('pair') },
+    { label: 'Show pairing code', onSelect: () => openSetup('code') },
+  ]} />;
+  return <div className="k-page bs-root machines-page set4-page">
+    <PageHeader headingRef={heading} title="Machines" actions={<><IconButton label="Reload machines" disabled={!!busy} onClick={() => void reload()}><RefreshCw size={15} aria-hidden /></IconButton>{addMachine}</>} />
+    {error && <Alert tone="error">{error}</Alert>}<span className="sr-only" role="status">{notice}</span>
     <Section title="Paired machines">
-      {machines === null ? <SkeletonRows /> : !machines.length ? <EmptyState icon={<Monitor size={18} />} title="No paired machines">Add another installation using its origin and pairing code.</EmptyState> : <Card>{machines.map(machine => <Row key={machine.id} leading={<Monitor size={16} aria-hidden />} title={machine.name} meta={<><span className="machines-origin">{machine.origin}</span><Badge tone={machine.status === 'online' ? 'success' : 'warn'}>{statusLabel[machine.status]}</Badge><span>Version {machine.version}</span><span>{machine.agentCount} {machine.agentCount === 1 ? 'agent' : 'agents'}</span>{machine.pairingState === 'pending' && <Badge tone="warn">Return pairing pending</Badge>}<span>{machine.lastSeen ? `Last seen ${new Date(machine.lastSeen).toLocaleString()}` : 'Not seen yet'}</span></>} trailing={<div className="k-stack"><Checkbox label="Allow agents on this machine to message my agents" checked={machine.allowAgentMessaging} disabled={!!busy} onChange={allowed=>void act('policy',async()=>{await request('/api/machines/agent-messaging',{id:crypto.randomUUID(),environmentId:machine.id,allowed});await reload();})}/><Checkbox label={`Allow updates from ${machine.name}`} description="Enable on both machines. Updates interrupt running turns and use a database backup with automatic rollback." checked={machine.allowUpdates} disabled={!!busy} onChange={allowed=>void act('updates',async()=>{await request('/api/machines/updates',{id:crypto.randomUUID(),environmentId:machine.id,allowed});await reload();})}/><ActionMenu label={`Machine actions: ${machine.name}`} trigger={<IconButton label={`Machine actions: ${machine.name}`} disabled={!!busy}><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: `Unpair ${machine.name}`, danger: true, onSelect: () => { void unpair(machine); } }]} /></div>} />)}</Card>}
+      {machines === null ? !error && <SkeletonRows /> : !machines.length ? <EmptyState icon={<Monitor size={18} />} title="No paired machines" /> : <Card>{machines.map(machine => <Row key={machine.id} leading={<Monitor size={16} aria-hidden />} title={machine.name} onClick={() => setDetail(machine.id)} meta={<><Badge tone={machine.status === 'online' ? 'success' : 'warn'}>{statusLabel[machine.status]}</Badge><span>{machine.agentCount} {machine.agentCount === 1 ? 'agent' : 'agents'}</span>{machine.pairingState === 'pending' && <Badge tone="warn">Pairing incomplete</Badge>}</>} trailing={<><ActionMenu label={`Machine actions: ${machine.name}`} trigger={<IconButton label={`Machine actions: ${machine.name}`} disabled={!!busy}><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: `Unpair ${machine.name}`, danger: true, onSelect: () => { requestAnimationFrame(() => { document.querySelector<HTMLButtonElement>(`[aria-label="Machine actions: ${CSS.escape(machine.name)}"]`)?.focus(); void unpair(machine); }); } }]} /><IconButton label={`Open ${machine.name}`} onClick={() => setDetail(machine.id)}><ChevronRight size={16} aria-hidden /></IconButton></>} />)}</Card>}
     </Section>
-    <Dialog open={installOpen} onOpenChange={closeInstall} title="Add a machine" description="Install Briefsip on another Linux machine you own, then pair it with this one." footer={<><Button onClick={() => closeInstall(false)}>Close</Button>{!installCommand && <Button variant="primary" busy={installBusy} onClick={() => void createInstall()}>{install ? 'Create new command' : 'Create install command'}</Button>}</>}>
-      <div className="k-stack machine-install">
-        <p className="k-field__hint">Requires Node.js 22.23.4 or later, a systemd user session, and Tailscale on the same tailnet with MagicDNS and HTTPS enabled. Git and Bubblewrap are optional.</p>
-        <p className="k-field__hint">The command installs a private release, starts a user service, enables linger if permitted, and uses Tailscale Serve on port 4317. Provider credentials stay on each machine.</p>
+    <Section title="This computer"><Card><Row leading={<Monitor size={16} aria-hidden />} title="This computer" meta={environment?.name} onClick={() => setDetail('local')} trailing={<Button variant="ghost" onClick={() => setDetail('local')}>Resources<ChevronRight size={14} aria-hidden /></Button>} /></Card></Section>
+    <Dialog open={detail === 'local'} onOpenChange={open => { if (!open) setDetail(null); }} title="This computer" size="lg">
+      <div className="k-stack set4-detail">
+        {!environment ? <SkeletonRows count={1} /> : <form className="k-stack" onSubmit={event => { event.preventDefault(); void act('name', async () => { const saved = await request<Environment>('/api/environment', { id: crypto.randomUUID(), name }); setEnvironment(saved); setName(saved.name); setNotice('Machine name saved.'); }); }}>
+          <Field label="Name"><Input value={name} maxLength={120} required disabled={!!busy} onChange={event => setName(event.target.value)} /></Field>
+          <div className="machines-form-actions"><span className="k-field__hint machines-origin">{environment.origin}</span><Button type="submit" busy={busy === 'name'} disabled={!!busy || name.trim() === environment.name}>Save name</Button></div>
+        </form>}
+        {error && <Alert tone="error">{error}</Alert>}
+        {detail === 'local' && <HostMetricsSection request={request} />}
+      </div>
+    </Dialog>
+    <Dialog open={!!peer} onOpenChange={open => { if (!open) setDetail(null); }} title={peer?.name ?? 'Machine'} footer={<Button variant="danger" disabled={!!busy} onClick={() => { if (peer) void unpair(peer); }}>Unpair machine</Button>}>
+      {peer && <div className="k-stack set4-detail">
+        <Card><Row title="Address" trailing={<span className="machines-origin">{peer.origin}</span>} /><Row title="Status" trailing={<Badge tone={peer.status === 'online' ? 'success' : 'warn'}>{statusLabel[peer.status]}</Badge>} /><Row title="Version" trailing={peer.version} /><Row title="Agents" trailing={peer.agentCount} />{peer.pairingState === 'pending' && <Row title="Pairing" trailing={<Tooltip content={<span className="bs-root set4-tooltip">{"The other machine has not confirmed return access."}</span>}><span tabIndex={0}><Badge tone="warn">Pairing incomplete</Badge></span></Tooltip>} />}<Row title="Last seen" trailing={peer.lastSeen ? new Date(peer.lastSeen).toLocaleString() : 'Not seen yet'} /></Card>
+        <Card><Row title={<Tooltip content={<span className="bs-root set4-tooltip">{`Allow ${peer.name} agents to message agents here.`}</span>}><span tabIndex={0}>Incoming messages</span></Tooltip>} trailing={<Switch label="Incoming messages" checked={peer.allowAgentMessaging} disabled={!!busy} onChange={allowed=>void act('policy',async()=>{await request('/api/machines/agent-messaging',{id:crypto.randomUUID(),environmentId:peer.id,allowed});await reload();})} />} /><Row title={<Tooltip content={<span className="bs-root set4-tooltip">{`Allow updates from ${peer.name}. Enable on both machines.`}</span>}><span tabIndex={0}>Remote updates</span></Tooltip>} trailing={<Switch label="Remote updates" checked={peer.allowUpdates} disabled={!!busy} onChange={allowed=>void act('updates',async()=>{await request('/api/machines/updates',{id:crypto.randomUUID(),environmentId:peer.id,allowed});await reload();})} />} /></Card>
+        {error && <Alert tone="error">{error}</Alert>}
+      </div>}
+    </Dialog>
+    <Dialog open={setup === 'pair'} onOpenChange={closeSetup} title="Pair machine" footer={<><Button disabled={!!busy} onClick={() => closeSetup(false)}>Cancel</Button><Button form="set4-pair" type="submit" variant="primary" busy={busy === 'add'} disabled={!!busy}>Pair machine</Button></>}>
+      <form id="set4-pair" className="k-stack set4-detail" onSubmit={event => { event.preventDefault(); const command = pendingAdd.current ?? { id: crypto.randomUUID(), origin, code: code.trim().toUpperCase() }; pendingAdd.current = command; void act('add', async () => { await request('/api/machines', command); pendingAdd.current = null; setCode(''); setOrigin(''); await reload(); setSetup(null); setNotice('Machines are paired in both directions.'); }); }}>
+        <Field label={<Tooltip content={<span className="bs-root set4-tooltip">{"Private HTTPS URL, including port"}</span>}><span tabIndex={0}>Address</span></Tooltip>}><Input type="url" required placeholder="https://workstation.example.ts.net:4317" value={origin} maxLength={2048} disabled={!!busy} onChange={event => { setOrigin(event.target.value); pendingAdd.current = null; }} /></Field>
+        <Field label="Pairing code"><Input required value={code} minLength={12} maxLength={12} autoComplete="off" spellCheck={false} disabled={!!busy} onChange={event => { setCode(event.target.value.toUpperCase()); pendingAdd.current = null; }} /></Field>
+        {error && <Alert tone="error">{error}</Alert>}
+      </form>
+    </Dialog>
+    <Dialog open={setup === 'code'} onOpenChange={closeSetup} title="Show pairing code" footer={<><Button disabled={!!busy} onClick={() => closeSetup(false)}>Close</Button>{!pairingCode && <Button variant="primary" disabled={!!busy} busy={busy === 'code'} onClick={() => void act('code', async () => { const result = await request<{ code: string; expiresAt: number }>('/api/pairing-codes', { id: crypto.randomUUID() }); setNow(Date.now()); setCopied(false); setPairingCode(result); })}>Create code</Button>}</>}>
+      <div className="k-stack set4-detail"><Field label="Address"><Input readOnly value={environment?.origin ?? ''} /></Field>
+        {pairingCode ? <div className="machines-code" role="region" aria-label="One-time pairing code"><span className="machines-code__value">{pairingCode.code}</span><IconButton label={copied ? 'Copied' : 'Copy pairing code'} onClick={async () => { try { await navigator.clipboard.writeText(pairingCode.code); setCopied(true); } catch { setError('Copy failed. Select the code and copy it manually.'); } }}>{copied ? <Check size={15} aria-hidden /> : <Copy size={15} aria-hidden />}</IconButton><Tooltip content={<span className="bs-root set4-tooltip">Single use. Closing hides this code.</span>}><span className="k-field__hint" tabIndex={0}>Expires in <span className="machines-countdown">{Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, '0')}</span></span></Tooltip><Button size="sm" onClick={() => { setPairingCode(null); setCopied(false); }}>Hide code</Button></div> : <EmptyState title="No active code" />}
+        {error && <Alert tone="error">{error}</Alert>}
+      </div>
+    </Dialog>
+    <Dialog open={setup === 'install'} onOpenChange={closeInstall} title="Install Briefsip" footer={<><Button onClick={() => closeInstall(false)}>Close</Button>{!installCommand && <Button variant="primary" busy={installBusy} onClick={() => void createInstall()}>{install ? 'Create new command' : 'Create install command'}</Button>}</>}>
+      <div className="k-stack machine-install set4-detail">
+        <Tooltip content={<span className="bs-root set4-tooltip">{"Requires Node.js 22.23.4 or later, a systemd user session, and Tailscale on the same tailnet with MagicDNS and HTTPS enabled. Git and Bubblewrap are optional."}</span>}><span className="k-field__hint" tabIndex={0}>Linux · Requirements</span></Tooltip>
+        <Tooltip content={<span className="bs-root set4-tooltip">{"Installs a private release, starts a user service, enables linger if permitted, and uses Tailscale Serve on port 4317."}</span>}><span className="k-field__hint" tabIndex={0}>User service · Tailscale Serve :4317</span></Tooltip>
         {installError && <Alert tone="error">{installError}</Alert>}
         {installCommand ? <>
-          <Field label="Run on your new machine" hint="Keep this command private. It grants a release download and one pairing code."><Textarea readOnly className="machine-install__command" value={installCommand} spellCheck={false} autoComplete="off" /></Field>
-          <div className="machines-form-actions"><span className="k-field__hint">Expires in <span className="machines-countdown">{Math.floor(installRemaining / 60)}:{String(installRemaining % 60).padStart(2, '0')}</span>. Token works once.</span><Button onClick={async () => { try { await navigator.clipboard.writeText(installCommand); setCopied(true); } catch { setInstallError('Copy failed. Select the command and copy it manually.'); } }}>{copied ? 'Copied' : 'Copy command'}</Button></div>
-          <p className="k-field__hint" role="status">{copied ? 'Command copied. Paste it into a terminal on your new machine.' : 'Shown only here. Closing this dialog hides the command; it expires after 30 minutes.'}</p>
+          <Field label="Install command"><Textarea readOnly className="machine-install__command" value={installCommand} spellCheck={false} autoComplete="off" /></Field>
+          <div className="machines-form-actions"><Tooltip content={<span className="bs-root set4-tooltip">{"Grants one release download and pairing code. Closing hides the command. Provider credentials stay on each machine."}</span>}><span className="k-field__hint" tabIndex={0}>Private, single use</span></Tooltip><span className="k-field__hint">Expires in <span className="machines-countdown">{Math.floor(installRemaining / 60)}:{String(installRemaining % 60).padStart(2, '0')}</span></span><Button onClick={async () => { try { await navigator.clipboard.writeText(installCommand); setCopied(true); } catch { setInstallError('Copy failed. Select the command and copy it manually.'); } }}>{copied ? 'Copied' : 'Copy command'}</Button></div>
+          <span className="sr-only" role="status">{copied ? 'Command copied.' : ''}</span>
         </> : install && <Alert tone="warn">This install command expired. Create a new one to continue.</Alert>}
       </div>
     </Dialog>
