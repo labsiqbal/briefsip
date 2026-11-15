@@ -243,8 +243,8 @@
 .sidebar-agent { position: relative; display: flex; align-items: center; min-width: 0; }
 .sidebar-agent > .bot-row { flex: 1; min-width: 0; }
 .sidebar-agent > .k-icon-btn { position: absolute; top: 50%; right: 6px; width: 28px; height: 28px; transform: translateY(-50%); flex-shrink: 0; }
-.sidebar-agent:is(:hover, :focus-within) > .bot-row .bot-row__time, .sidebar-agent:has(> .agent-actions[data-state="open"]) > .bot-row .bot-row__time { visibility: hidden; }
-.sidebar-agent:is(:hover, :focus-within) > .bot-row .bot-row__text, .sidebar-agent:has(> .agent-actions[data-state="open"]) > .bot-row .bot-row__text { padding-right: 24px; }
+.sidebar-agent:is(:hover, :has(:focus-visible)) > .bot-row .bot-row__time, .sidebar-agent:has(> .agent-actions[data-state="open"]) > .bot-row .bot-row__time { visibility: hidden; }
+.sidebar-agent:is(:hover, :has(:focus-visible)) > .bot-row .bot-row__text, .sidebar-agent:has(> .agent-actions[data-state="open"]) > .bot-row .bot-row__text { padding-right: 24px; }
 .sidebar-agent > .k-icon-btn:not(:focus-visible) { color: var(--color-text-tertiary); }
 .sidebar-agent:hover > .k-icon-btn { color: var(--color-text-secondary); }
 .sidebar-section { margin-bottom: 4px; }
@@ -268,4 +268,4 @@
 .help-page .k-section > p + p { margin-top: 12px; }
 
 .sidebar-agent > .agent-actions { opacity: 0; }
-.sidebar-agent:hover > .agent-actions, .sidebar-agent:focus-within > .agent-actions, .sidebar-agent > .agent-actions[data-state="open"] { opacity: 1; }
+.sidebar-agent:hover > .agent-actions, .sidebar-agent:has(:focus-visible) > .agent-actions, .sidebar-agent > .agent-actions[data-state="open"] { opacity: 1; }
