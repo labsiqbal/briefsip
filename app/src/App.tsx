@@ -463,7 +463,6 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
             { value: 'steer', label: canSteer ? 'Steer' : 'Steer (restarts turn)', hint: canSteer ? 'Add guidance before the next provider call.' : 'This runtime cannot steer. Stops the current turn and starts another with its partial context.' },
             { value: 'restart', label: 'Restart', hint: 'Stop this turn and start another with its partial context. Effects may already have happened.' },
           ]} />
-          <span className="composer-dispatch__hint" role="status">{canSteer ? 'API runtime supports steering' : 'Runtime cannot steer; Steer uses Restart'}</span>
         </div>}
         <ChatComposer mentions={channel ? members : []} onMention={value => { setDraft(value); try { sessionStorage.setItem(draftKey, value); } catch { setError('Draft was not saved. Copy your message before leaving.'); } }} label={`Message ${agent.name}`} inputRef={composer} multiline={draft.includes('\n')} onSubmit={send} onSendKey={event => { void send(event, (event.ctrlKey || event.metaKey) && canSteer ? 'steer' : 'queue'); }} onAttach={openFiles}
           input={{ id: 'message', value: pending?.text ?? draft, readOnly: blocked || !!pending || busy, onChange: event => { setDraft(event.target.value); try { sessionStorage.setItem(draftKey, event.target.value); } catch { setError('Draft was not saved in the browser. Copy the message before switching agents.'); } } }}
