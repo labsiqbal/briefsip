@@ -1,3 +1,4 @@
+import { usePolling } from './hooks/usePolling';
 import { readClipboardText } from './ui/clipboard';
 import { MessageCopyButton } from './ui/MessageCopyButton';
 import { useEffect, useRef, useState } from 'react';
@@ -23,15 +24,12 @@ export function useComputerControl(agent: string, request: ComputerRequest) {
         setPending(saved);
       }
     } catch { setInvalid(true); }
-    let stopped = false, timer: ReturnType<typeof setTimeout>;
-    async function refresh() {
-      try { const value = await request<ComputerStatus>(`/api/agents/${agent}/computer`); if (!stopped && !flight.current) setStatus(value); }
-      catch (error) { if (!stopped) setError(error instanceof Error ? error.message : 'Computer status unavailable.'); }
-      if (!stopped) timer = setTimeout(refresh, 1000);
-    }
-    void refresh();
-    return () => { mounted.current = false; stopped = true; clearTimeout(timer); };
+    return () => { mounted.current = false; };
   }, [agent, request, key]);
+  usePolling(async signal => {
+    try { const value = await request<ComputerStatus>(`/api/agents/${agent}/computer`); if (!signal.aborted && !flight.current) setStatus(value); }
+    catch (error) { if (!signal.aborted) setError(error instanceof Error ? error.message : 'Computer status unavailable.'); }
+  }, { interval: 1000 }, [agent, request, key]);
   async function control(operation: ControlCommand['operation'], turn?: string) {
     if (!status || flight.current || invalid) return;
     if (!pending && operation === 'take' && !confirmed.current) {

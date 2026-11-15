@@ -1,3 +1,4 @@
+import { usePolling } from './hooks/usePolling';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Badge, Button, Dialog } from './ui/kit';
 import { Expand, Monitor } from 'lucide-react';
@@ -12,32 +13,29 @@ export function AgentComputerPanel({ agent, name, request, onSettings }: { agent
   const running = !!status && ['running','idle'].includes(status.state);
   const root = useRef<HTMLDivElement>(null), locked = useRef(false), active = useRef(true);
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+  const visible = useRef(true);
   useEffect(() => {
-    let mounted = true, visible = true, timer: ReturnType<typeof setTimeout>;
-    const controller = new AbortController();
-    const observer = new IntersectionObserver(entries => { visible = entries[0]?.isIntersecting ?? false; });
+    const observer = new IntersectionObserver(entries => { visible.current = entries[0]?.isIntersecting ?? false; });
     if (root.current) observer.observe(root.current);
-    async function refresh() {
-      try {
-        if (visible && !document.hidden && !open && !locked.current) {
-          const next = await request<ComputerStatus>(`/api/agents/${agent}/computer`);
-          if (!mounted || locked.current) return; setStatus(next);
-          if (next.enabled && ['running','idle'].includes(next.state)) {
-            const response = await fetch(`/api/agents/${agent}/computer/screenshot`, { signal: controller.signal });
-            if (!response.ok) throw new Error('Screen not updated. Check computer status.');
-            const bytes = new Uint8Array(await response.arrayBuffer());
-            if (!mounted || locked.current) return;
-            let binary = ''; for (const byte of bytes) binary += String.fromCharCode(byte);
-            setFrame(`data:image/jpeg;base64,${btoa(binary)}`);
-          } else setFrame('');
-          setError('');
-        }
-      } catch (error) { if (mounted && !locked.current) setError(error instanceof Error ? error.message : 'Computer status unavailable.'); }
-      finally { if (mounted) timer = setTimeout(() => void refresh(), 5000); }
-    }
-    void refresh();
-    return () => { mounted = false; controller.abort(); clearTimeout(timer); observer.disconnect(); };
+    return () => observer.disconnect();
   }, [agent, request, open]);
+  usePolling(async signal => {
+    try {
+      if (visible.current && !document.hidden && !open && !locked.current) {
+        const next = await request<ComputerStatus>(`/api/agents/${agent}/computer`);
+        if (signal.aborted || locked.current) return; setStatus(next);
+        if (next.enabled && ['running','idle'].includes(next.state)) {
+          const response = await fetch(`/api/agents/${agent}/computer/screenshot`, { signal });
+          if (!response.ok) throw new Error('Screen not updated. Check computer status.');
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          if (signal.aborted || locked.current) return;
+          let binary = ''; for (const byte of bytes) binary += String.fromCharCode(byte);
+          setFrame(`data:image/jpeg;base64,${btoa(binary)}`);
+        } else setFrame('');
+        setError('');
+      }
+    } catch (error) { if (!signal.aborted && !locked.current) setError(error instanceof Error ? error.message : 'Computer status unavailable.'); }
+  }, { interval: 5000 }, [agent, request, open]);
   async function start() {
     if (locked.current) return; locked.current = true; setBusy(true); setError('');
     setStatus(current => current && { ...current, state: 'starting' });

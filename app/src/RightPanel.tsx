@@ -1,5 +1,6 @@
+import { usePolling } from './hooks/usePolling';
 // Panel tabs and surface composition adapted from T3 (MIT); see ../t3/provenance.json.
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { FileDiff, Files, Globe, Info, Monitor, RefreshCw, X } from 'lucide-react';
 import { Alert, IconButton, TabPanel, Tabs } from './ui/kit';
 import { PanelResizeHandle, detailsPanel, useResizablePanel } from './ui/resizable';
@@ -30,22 +31,18 @@ export function RightPanel({ path, name, state, request, onClose, details, setti
   const base = `${path}/panel`;
   const [context, setContext] = useState<Context | null>(null), [files, setFiles] = useState<PanelFile[]>([]), [git, setGit] = useState<GitStatus | null>(null);
   const [error, setError] = useState(''), [refresh, setRefresh] = useState(0), [loading, setLoading] = useState(true);
-  useEffect(() => {
-    let stopped = false, timer: ReturnType<typeof setTimeout>;
-    async function load() {
-      try {
-        const [next, rows] = await Promise.all([request<Context>(base), request<PanelFile[]>(`${base}/files`)]);
-        if (stopped) return;
-        setContext(next); setFiles(rows); setError('');
-        if (next.workspace) {
-          try { const status = await request<GitStatus>(`${base}/git`); if (!stopped) setGit(status); }
-          catch (reason) { if (!stopped) { setGit(null); setError(reason instanceof Error ? reason.message : 'Source control could not load.'); } }
-        } else setGit(null);
-      } catch (reason) { if (!stopped) { setContext(null); setFiles([]); setGit(null); setError(reason instanceof Error ? reason.message : 'Panel could not load.'); } }
-      finally { if (!stopped) { setLoading(false); timer = setTimeout(load, 5000); } }
-    }
-    void load(); return () => { stopped = true; clearTimeout(timer); };
-  }, [base, request, refresh]);
+  usePolling(async signal => {
+    try {
+      const [next, rows] = await Promise.all([request<Context>(base), request<PanelFile[]>(`${base}/files`)]);
+      if (signal.aborted) return;
+      setContext(next); setFiles(rows); setError('');
+      if (next.workspace) {
+        try { const status = await request<GitStatus>(`${base}/git`); if (!signal.aborted) setGit(status); }
+        catch (reason) { if (!signal.aborted) { setGit(null); setError(reason instanceof Error ? reason.message : 'Source control could not load.'); } }
+      } else setGit(null);
+    } catch (reason) { if (!signal.aborted) { setContext(null); setFiles([]); setGit(null); setError(reason instanceof Error ? reason.message : 'Panel could not load.'); } }
+    finally { if (!signal.aborted) setLoading(false); }
+  }, { interval: 5000 }, [base, request, refresh]);
   const tabs = [
     { value: 'details', title: 'Details', label: <><Info size={14} aria-hidden /><span className="right-panel__tab-label">Details</span></> },
     { value: 'files', title: 'Files', label: <><Files size={14} aria-hidden /><span className="right-panel__tab-label">Files</span></> },

@@ -1,3 +1,4 @@
+import { downloadBlob } from './hooks/downloadBlob';
 import { useEffect, useRef, useState } from 'react';
 import { FileUp, FolderUp } from 'lucide-react';
 import { Button } from './ui/kit';
@@ -47,7 +48,5 @@ export function SkillFolderImport({ disabled, onImport, onBusy, compact = false,
 }
 
 export function downloadSkillFolder(files: SkillFile[], zip = false) {
-  const url = URL.createObjectURL(new Blob([zip ? writeSkillZip(files) : JSON.stringify({ format: 'briefsip-skill-folder', version: 1, files })], { type: zip ? 'application/zip' : 'application/json' }));
-  const link = document.createElement('a'); link.href = url; link.download = zip ? `${parseSkillFiles(files).name}.zip` : 'briefsip-skill-folder.json'; link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  downloadBlob(new Blob([zip ? writeSkillZip(files) : JSON.stringify({ format: 'briefsip-skill-folder', version: 1, files })], { type: zip ? 'application/zip' : 'application/json' }), zip ? `${parseSkillFiles(files).name}.zip` : 'briefsip-skill-folder.json');
 }

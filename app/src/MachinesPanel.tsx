@@ -1,3 +1,4 @@
+import { usePolling } from './hooks/usePolling';
 import { copyText } from './ui/clipboard';
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, ChevronRight, Copy, Ellipsis, Monitor, Plus, RefreshCw } from 'lucide-react';
@@ -17,8 +18,9 @@ const statusLabel = { online: 'Online', offline: 'Offline', unauthorized: 'Unaut
 export function useMachines(request: Request) {
   const [machines, setMachines] = useState<PairedMachine[]>([]), [error, setError] = useState('');
   const generation = useRef(0);
-  async function reload() { const current = ++generation.current; try { const result = await request<{ machines: PairedMachine[] }>('/api/machines'); if (current === generation.current) { setMachines(result.machines); setError(''); } } catch (error) { if (current === generation.current) setError(message(error)); } }
-  useEffect(() => { void reload(); const timer = setInterval(() => { void reload(); }, 5000); return () => { clearInterval(timer); generation.current++; }; }, []);
+  async function reload(signal?: AbortSignal) { const current = ++generation.current; try { const result = await request<{ machines: PairedMachine[] }>('/api/machines'); if (!signal?.aborted && current === generation.current) { setMachines(result.machines); setError(''); } } catch (error) { if (!signal?.aborted && current === generation.current) setError(message(error)); } }
+  useEffect(() => () => { generation.current++; }, []);
+  usePolling(signal => reload(signal), { interval: 5000 });
   return { machines, error, reload };
 }
 export function MachinesPanel({ request, onChanged }: { request: Request; onChanged: () => void }) {
@@ -121,11 +123,8 @@ export function RemoteAgentDetail({ machine, agent, request }: { machine?: Paire
   const end=useRef<HTMLDivElement>(null),readEpoch=useRef(0),flight=useRef(false),mounted=useRef(true),confirm=useConfirm();
   useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;};},[]);
   const path=`/api/remote-agents/messages?machine=${machine?.id ?? ''}&agent=${agent?.id ?? ''}`;
-  useEffect(()=>{
-    let alive=true,timer:ReturnType<typeof setTimeout>;
-    async function poll(){if(!machine||!agent)return;const epoch=++readEpoch.current;try{const result=await request<{messages:RemoteMessage[]}>(path);if(alive&&epoch===readEpoch.current){setMessages(result.messages);setLoadError('');}}catch(e){if(alive&&epoch===readEpoch.current)setLoadError(message(e));}if(alive)timer=setTimeout(()=>void poll(),1000);}
-    setMessages(null);void poll();return()=>{alive=false;readEpoch.current++;clearTimeout(timer);};
-  },[path]);
+  useEffect(() => { setMessages(null); return () => { readEpoch.current++; }; }, [path]);
+  usePolling(async signal => {if(!machine||!agent)return;const epoch=++readEpoch.current;try{const result=await request<{messages:RemoteMessage[]}>(path);if(!signal.aborted&&epoch===readEpoch.current){setMessages(result.messages);setLoadError('');}}catch(e){if(!signal.aborted&&epoch===readEpoch.current)setLoadError(message(e));}}, { interval: 1000 }, [path]);
   useEffect(()=>{end.current?.scrollIntoView({block:'nearest'});},[messages?.length,messages?.at(-1)?.reply]);
   async function send(){
     if(!machine||!agent||flight.current||invalid||disabledReason||!text.trim())return;

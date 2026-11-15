@@ -1,3 +1,4 @@
+import { downloadBlob } from './hooks/downloadBlob';
 import { useEffect, useRef, useState } from 'react';
 import { parseAgentTemplate, restoreTemplateImport, templateCommand, type AgentTemplate } from '../agent-template';
 import { Alert, Button, Card, CodeBlock, Field, Input, Section, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
@@ -82,9 +83,7 @@ export function AgentTemplateExport({ id, request }: { id: string; request: <T>(
     <div className="k-row-actions"><Button size="sm" disabled={busy} onClick={() => void preview()}>{busy ? 'Loading saved profile...' : 'Preview export template'}</Button></div>
     {error && <Alert tone="error">{error}</Alert>}
     {template && <>{template.avatar && <img src={`data:image/png;base64,${template.avatar}`} alt="Template avatar" width={64} height={64} style={{ borderRadius: 12, objectFit: 'cover' }} />}<CodeBlock label="File contents to download">{JSON.stringify(template, null, 2)}</CodeBlock><div className="k-row-actions"><Button size="sm" variant="secondary" onClick={() => {
-      const url = URL.createObjectURL(new Blob([JSON.stringify(template, null, 2) + '\n'], { type: 'application/json' }));
-      const link = document.createElement('a'); link.href = url; link.download = 'briefsip-agent-template.json'; link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      downloadBlob(new Blob([JSON.stringify(template, null, 2) + '\n'], { type: 'application/json' }), 'briefsip-agent-template.json');
     }}>Download reviewed template</Button></div></>}
   </Section></div>;
 }
