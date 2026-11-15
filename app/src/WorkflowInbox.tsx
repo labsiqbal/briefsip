@@ -1,3 +1,4 @@
+import { usePolling } from './hooks/usePolling';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Badge, Button, Card, EmptyState, IconButton, PageHeader, Row, Section, SkeletonRows } from './ui/kit';
 import { Markdown } from './Markdown';
@@ -18,36 +19,30 @@ export function WorkflowInbox({ request, onBack }: {
   useEffect(() => { heading.current?.focus(); }, [result, before]);
   useEffect(() => () => { version.current++; }, []);
   // ponytail: inbox-only delivery; use push infrastructure for notifications after closing the app.
-  useEffect(() => {
-    let stopped = false, timer: ReturnType<typeof setTimeout>;
-    setPage(null); setError('');
-    async function load() {
-      try {
-        const [data, latest] = await Promise.all([
-          request<Page>(`/api/workflow-notifications${before ? `?before=${before}` : ''}`),
-          before && enabled ? request<Page>('/api/workflow-notifications') : Promise.resolve(null),
-        ]);
-        if (stopped) return;
-        setPage(data); setError('');
-        if (!before || latest) {
-          const current = latest ?? data, newest = current.notifications[0]?.seq ?? 0;
-          if (enabled && seen.current !== null && newest > seen.current && Notification.permission === 'granted') {
-            const count = current.notifications.filter(item => item.seq > seen.current! && !item.read).length;
-            if (count) {
-              let muted = false;
-              try { muted = localStorage.getItem('briefsip:workflow-notifications-muted') === '1'; } catch { /* Browser preference is unavailable. */ }
-              try { if (!muted) new Notification('Workflow results available', { body: 'Open the Briefsip inbox to read results.', tag: 'briefsip-workflow-results' }); }
-              catch { setEnabled(false); setError('Browser notifications are unavailable. Results remain saved in the inbox.'); }
-            }
+  useEffect(() => { setPage(null); setError(''); }, [before, refresh, enabled]);
+  usePolling(async signal => {
+    try {
+      const [data, latest] = await Promise.all([
+        request<Page>(`/api/workflow-notifications${before ? `?before=${before}` : ''}`),
+        before && enabled ? request<Page>('/api/workflow-notifications') : Promise.resolve(null),
+      ]);
+      if (signal.aborted) return;
+      setPage(data); setError('');
+      if (!before || latest) {
+        const current = latest ?? data, newest = current.notifications[0]?.seq ?? 0;
+        if (enabled && seen.current !== null && newest > seen.current && Notification.permission === 'granted') {
+          const count = current.notifications.filter(item => item.seq > seen.current! && !item.read).length;
+          if (count) {
+            let muted = false;
+            try { muted = localStorage.getItem('briefsip:workflow-notifications-muted') === '1'; } catch { /* Browser preference is unavailable. */ }
+            try { if (!muted) new Notification('Workflow results available', { body: 'Open the Briefsip inbox to read results.', tag: 'briefsip-workflow-results' }); }
+            catch { setEnabled(false); setError('Browser notifications are unavailable. Results remain saved in the inbox.'); }
           }
-          seen.current = newest;
         }
-      } catch (error) { if (!stopped) setError(error instanceof Error ? error.message : 'Inbox could not load. Try again.'); }
-      finally { if (!stopped) timer = setTimeout(load, 5000); }
-    }
-    void load();
-    return () => { stopped = true; clearTimeout(timer); };
-  }, [before, refresh, enabled]);
+        seen.current = newest;
+      }
+    } catch (error) { if (!signal.aborted) setError(error instanceof Error ? error.message : 'Inbox could not load. Try again.'); }
+  }, { interval: 5000 }, [before, refresh, enabled]);
   async function open(item: Notice) {
     if (busy) return;
     const current = ++version.current; setBusy(true); setError('');

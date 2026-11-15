@@ -1,3 +1,4 @@
+import { usePolling } from './hooks/usePolling';
 import { Markdown } from './Markdown';
 import { EventConnection } from './EventConnection';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -98,19 +99,13 @@ export function WorkflowPanel({ owner, agents, request, onBack, renderConversati
     return () => { stopped = true; };
   }, [after, refresh, listPath, selected?.id]);
   useEffect(() => { heading.current?.focus(); }, [editing, selected?.id]);
-  useEffect(() => {
-    if (!selected) return;
-    let stopped = false, timer: ReturnType<typeof setTimeout>;
-    async function poll() {
-      try {
-        const rows = await request<NonNullable<typeof runs>>(`/api/workflows/${selected!.id}/runs${beforeRun ? `?before=${beforeRun}` : ''}`);
-        const detail = runId ? await request<Run>(`/api/workflow-runs/${runId}`) : null;
-        if (!stopped) { setRuns(rows); setRun(detail); }
-      } catch (error) { if (!stopped) setError(error instanceof Error ? error.message : 'History has not loaded.'); }
-      if (!stopped) timer = setTimeout(poll, 1200);
-    }
-    void poll(); return () => { stopped = true; clearTimeout(timer); };
-  }, [selected?.id, runId, refresh, beforeRun]);
+  usePolling(async signal => {
+    try {
+      const rows = await request<NonNullable<typeof runs>>(`/api/workflows/${selected!.id}/runs${beforeRun ? `?before=${beforeRun}` : ''}`);
+      const detail = runId ? await request<Run>(`/api/workflow-runs/${runId}`) : null;
+      if (!signal.aborted) { setRuns(rows); setRun(detail); }
+    } catch (error) { if (!signal.aborted) setError(error instanceof Error ? error.message : 'History has not loaded.'); }
+  }, { interval: 1200, enabled: !!selected }, [selected?.id, runId, refresh, beforeRun]);
   async function execute(command: Command) {
     if (busy || inFlight.current) return false;
     const version = navigation.current;

@@ -1,3 +1,4 @@
+import { usePolling } from './hooks/usePolling';
 import { AgentActions, HiddenAgentBanner, useDeleteAgent } from './AgentActions';
 import { RightPanel, useRightPanel } from './RightPanel';
 import { restoreThreadCommand, type ThreadCommand } from '../thread-command';
@@ -99,8 +100,8 @@ type SidebarSummary = { agent: string; preview: string; time: string | null; sta
 type Pending = ChatCommand;
 const statusNames: Record<string, string> = { queued: 'Queued', running: 'Replying', done: 'Done', failed: 'Failed', interrupted: 'Interrupted', cancelled: 'Cancelled' };
 class HttpError extends Error { status: number; constructor(status: number, text: string) { super(text); this.status = status; } }
-async function api<T>(path: string, data?: unknown): Promise<T> {
-  const response = await fetch(path, data ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) } : undefined)
+async function api<T>(path: string, data?: unknown, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(path, { ...(data ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) } : {}), signal })
     .catch(() => { throw new Error('Briefsip connection lost. Check your connection, then try again.'); });
   const body = await response.json();
   if (!response.ok) throw new HttpError(response.status, body.error ?? `HTTP ${response.status}`);
@@ -226,20 +227,14 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
   const requestActive = useRef(false);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  useEffect(() => {
-    let stopped = false;
-    loadedTask.current = null;
-    setTurns(null);
-    let timer: ReturnType<typeof setTimeout>;
-    async function refresh() {
-      let delay = 1200;
-      try { const [active, data, latest] = await Promise.all([api<typeof activeTurns>(path.replace(/\/turns$/, '/dispatch')), api<Turn[]>(focusedTask ? `${path}?focus=${focusedTask}` : `${path}?${new URLSearchParams({ ...(before ? { before: String(before) } : {}), ...(query ? { q: query } : {}) })}`), !channel && (focusedTask || before || query) ? api<Turn[]>(path) : null]); if (!stopped) { setActiveTurns(active); setQueueTurns(latest ?? data); loadedTask.current = focusedTask; setTurns(mergeStream(data)); setReadError(''); delay = turnPollDelay(latest ?? data); } }
-      catch (error) { if (!stopped) setReadError(message(error)); }
-      if (!stopped) timer = setTimeout(refresh, delay);
-    }
-    void refresh();
-    return () => { stopped = true; clearTimeout(timer); };
-  }, [path, focusedTask, before, query]);
+  useEffect(() => { loadedTask.current = null; setTurns(null); }, [path, focusedTask, before, query]);
+  usePolling(async signal => {
+    let delay = 1200;
+    try { const [active, data, latest] = await Promise.all([api<typeof activeTurns>(path.replace(/\/turns$/, '/dispatch'), undefined, signal), api<Turn[]>(focusedTask ? `${path}?focus=${focusedTask}` : `${path}?${new URLSearchParams({ ...(before ? { before: String(before) } : {}), ...(query ? { q: query } : {}) })}`, undefined, signal), !channel && (focusedTask || before || query) ? api<Turn[]>(path, undefined, signal) : null]); if (!signal.aborted) { setActiveTurns(active); setQueueTurns(latest ?? data); loadedTask.current = focusedTask; setTurns(mergeStream(data)); setReadError(''); delay = turnPollDelay(latest ?? data); } }
+    catch (error) { if (!signal.aborted) setReadError(message(error)); }
+
+    return delay;
+  }, { interval: 1200 }, [path, focusedTask, before, query]);
   useEffect(() => {
     if (focusedTask && loadedTask.current === focusedTask && turns && focusedOnce.current !== focusedTask) {
       const target = document.getElementById(`turn-${focusedTask}`);
@@ -469,29 +464,20 @@ type RoutineCommand = { routineId: string | null; data: { id: string; revision?:
 const routineReportLabel = (routine: Routine) => routine.report_section ? `${routine.project_name ?? 'Project'} / # ${routine.report_section}` : routine.report_to === 'direct' ? "Owner agent's direct chat" : "Only in the run's own conversation";
 function SectionRoutines({channel,onOpen}:{channel:string;onOpen?:(agent:string,thread:string)=>void}) {
   const [rows,setRows]=useState<Routine[] | null>(null),[error,setError]=useState('');
-  useEffect(()=>{
-    let stopped=false, timer:ReturnType<typeof setTimeout>;
-    async function refresh(){try {
-      const all:Routine[]=[]; let after='';
-      do { const page=await api<{routines:Routine[];next_after:string|null}>(`/api/routines?${new URLSearchParams({reportTo:channel,after})}`);all.push(...page.routines);after=page.next_after ?? ''; } while(after && !stopped);
-      if(!stopped){setRows(all);setError('');}
-    } catch(error){if(!stopped)setError(message(error));} if(!stopped)timer=setTimeout(refresh,5000);}
-    void refresh();return()=>{stopped=true;clearTimeout(timer);};
-  },[channel]);
+  usePolling(async signal => {try {
+    const all:Routine[]=[]; let after='';
+    do { const page=await api<{routines:Routine[];next_after:string|null}>(`/api/routines?${new URLSearchParams({reportTo:channel,after})}`);all.push(...page.routines);after=page.next_after ?? ''; } while(after && !signal.aborted);
+    if(!signal.aborted){setRows(all);setError('');}
+  } catch(error){if(!signal.aborted)setError(message(error));} }, { interval: 5000 }, [channel]);
   if (!error && !rows?.length) return null;
   return <section className="activity-section" aria-label="Routines reporting here"><Collapsible variant="section" title={<>Upcoming <Badge>{rows?.length ?? 0}</Badge></>}>{error && <Alert tone="error">{error}</Alert>}<div className="panel-card">{rows===null ? <p className="panel-empty" role="status">Loading routines...</p> : rows.length ? rows.map(row=><div key={row.id} className="panel-row"><span className="panel-row__text"><span className="panel-row__title">{row.name}</span><span className="panel-row__meta">{routineTriggerLabel(row)} · {row.enabled ? 'Enabled' : 'Paused'}</span>{row.last_thread && <button type="button" className="link-btn link-btn--small" onClick={()=>onOpen?.(row.agent,row.last_thread!)}>Open last run</button>}</span></div>) : <p className="panel-empty">No routines report to this section.</p>}</div></Collapsible></section>;
 }
 function UpcomingRoutines({ agent, onManage }: { agent: string; onManage: () => void }) {
   const [rows, setRows] = useState<Routine[] | null>(null), [error, setError] = useState('');
-  useEffect(() => {
-    let stopped = false, timer: ReturnType<typeof setTimeout>;
-    async function refresh() {
-      try { const next = await api<Routine[]>(`/api/agents/${agent}/routines`); if (!stopped) { setRows(next); setError(''); } }
-      catch (error) { if (!stopped) setError(message(error)); }
-      if (!stopped) timer = setTimeout(refresh, 1200);
-    }
-    void refresh(); return () => { stopped = true; clearTimeout(timer); };
-  }, [agent]);
+  usePolling(async signal => {
+    try { const next = await api<Routine[]>(`/api/agents/${agent}/routines`); if (!signal.aborted) { setRows(next); setError(''); } }
+    catch (error) { if (!signal.aborted) setError(message(error)); }
+  }, { interval: 1200 }, [agent]);
   // ponytail: preview the next three schedules; Manage opens the full routine list.
   const upcoming = rows?.filter(row => row.enabled && row.trigger === 'schedule').sort((a, b) => a.next_at - b.next_at).slice(0, 3);
   if (!error && !upcoming?.length) return null;
@@ -640,14 +626,9 @@ function FlowEditor({ routine, onOpen }: { routine: Routine; onOpen: (thread: st
     }).catch(error => { if (!stopped) setError(message(error)); });
     return () => { stopped = true; };
   }, [path, reload]);
-  useEffect(() => {
-    let stopped = false; let timer: ReturnType<typeof setTimeout>;
-    async function refresh() {
-      try { const rows = await api<FlowRun[]>(`/api/routines/${routine.id}/flow-runs`); if (!stopped) { setRuns(rows); setRunError(''); } } catch (error) { if (!stopped) setRunError(message(error)); }
-      if (!stopped) timer = setTimeout(refresh, 1200);
-    }
-    void refresh(); return () => { stopped = true; clearTimeout(timer); };
-  }, [routine.id]);
+  usePolling(async signal => {
+    try { const rows = await api<FlowRun[]>(`/api/routines/${routine.id}/flow-runs`); if (!signal.aborted) { setRuns(rows); setRunError(''); } } catch (error) { if (!signal.aborted) setRunError(message(error)); }
+  }, { interval: 1200 }, [routine.id]);
   const locked = !loaded || busy || !!pending || conflict;
   let graph: FlowGraph = { root: routine.agent, nodes: [routine.agent], links: [] };
   try { if (loaded) graph = validateFlow(links, routine.agent, new Set(agents.map(agent => agent.id))); } catch { /* Server validates recovered requests; keep the editable edge list visible. */ }
@@ -717,18 +698,13 @@ function RoutinesHub({ agents, projects, initialAgent, onClose, onOpen }: { agen
   const after = cursors.at(-1)!;
   useEffect(() => { setPage(null); }, [filters, after]);
   useEffect(() => () => { mounted.current = false; }, []);
-  useEffect(() => {
-    let stopped = false, timer: ReturnType<typeof setTimeout>;
-    async function refresh() {
-      const version = loadVersion.current;
-      try {
-        const data = await api<{ routines: Routine[]; next_after: string | null }>(`/api/routines?${new URLSearchParams({ ...filters, after })}`);
-        if (!stopped && version === loadVersion.current) { setPage(data); setDetail(current => current ? data.routines.find(row => row.id === current.id) ?? current : null); }
-      } catch (error) { if (!stopped) setError(message(error)); }
-      if (!stopped) timer = setTimeout(refresh, 1200);
-    }
-    void refresh(); return () => { stopped = true; clearTimeout(timer); };
-  }, [filters, after, reload]);
+  usePolling(async signal => {
+    const version = loadVersion.current;
+    try {
+      const data = await api<{ routines: Routine[]; next_after: string | null }>(`/api/routines?${new URLSearchParams({ ...filters, after })}`);
+      if (!signal.aborted && version === loadVersion.current) { setPage(data); setDetail(current => current ? data.routines.find(row => row.id === current.id) ?? current : null); }
+    } catch (error) { if (!signal.aborted) setError(message(error)); }
+  }, { interval: 1200 }, [filters, after, reload]);
   useEffect(() => { if (!detail) heading.current?.focus(); }, [!!detail, after]);
   const locked = busy || !!pending || blocked;
   function filter(name: keyof typeof filters, value: string) { setCursors(['']); setFilters(current => ({ ...current, [name]: value })); }
@@ -794,14 +770,9 @@ function RoutineDetail({ routine, locked, recovery, onBack, onEdit, onRun, onTog
   const [tab, setTab] = useState('overview'), [runs, setRuns] = useState<RoutineRun[] | null>(null), [error, setError] = useState('');
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => { heading.current?.focus(); }, []);
-  useEffect(() => {
-    let stopped = false, timer: ReturnType<typeof setTimeout>;
-    async function refresh() {
-      try { const data = await api<RoutineRun[]>(`/api/routines/${routine.id}/runs`); if (!stopped) { setRuns(data); setError(''); } } catch (error) { if (!stopped) setError(message(error)); }
-      if (!stopped) timer = setTimeout(refresh, 1200);
-    }
-    void refresh(); return () => { stopped = true; clearTimeout(timer); };
-  }, [routine.id]);
+  usePolling(async signal => {
+    try { const data = await api<RoutineRun[]>(`/api/routines/${routine.id}/runs`); if (!signal.aborted) { setRuns(data); setError(''); } } catch (error) { if (!signal.aborted) setError(message(error)); }
+  }, { interval: 1200 }, [routine.id]);
   return <div className="k-page bs-root routine-detail"><PageHeader headingRef={heading} title={routine.name} description={`Owned by ${routine.owner_name ?? 'local agent'}`} actions={<><Button variant="ghost" onClick={onBack}>All routines</Button><Button disabled={locked} icon={<Pencil size={14} aria-hidden />} onClick={onEdit}>Edit routine</Button><Button disabled={locked} icon={routine.enabled ? <Pause size={14} aria-hidden /> : <Play size={14} aria-hidden />} onClick={onToggle}>{routine.enabled ? 'Pause' : 'Resume'}</Button><Button disabled={locked} variant="primary" icon={<Play size={14} aria-hidden />} onClick={onRun}>Run now</Button><ActionMenu label="Routine actions" trigger={<button type="button" className="k-icon-btn" aria-label="Routine actions" disabled={locked}><Ellipsis size={16} aria-hidden /></button>} items={[{ label: 'Delete routine', danger: true, onSelect: onDelete }]} /></>} />
     {recovery}
     <Tabs value={tab} onChange={setTab} label="Routine sections" tabs={[{ value: 'overview', label: 'Overview' }, { value: 'flow', label: 'Flow' }]}>
@@ -896,11 +867,11 @@ function AgentConversations({ agent, onRestored, configured, onEdit, onComputerS
   const navigation = useRef(0);
   const thread = threads.find(item => item.id === selected);
   function select(id: string) { setShowWorkspace(false); setShowWorkflows(false); navigation.current++; loadVersion.current++; setSelected(id); setForm(null); try { sessionStorage.setItem(storageKey, id); } catch { /* Selection remains usable in memory. */ } }
-  async function load(preferred = selected, afterSave = false, quiet = false) {
+  async function load(preferred = selected, afterSave = false, quiet = false, signal?: AbortSignal) {
     const version = ++loadVersion.current;
     try {
       const rows = await api<Thread[]>(`/api/agents/${agent.id}/threads`);
-      if (version !== loadVersion.current) return;
+      if (signal?.aborted || version !== loadVersion.current) return;
       const missing = !!preferred && !rows.some(row => row.id === preferred);
       setThreads(rows); setLoaded(true);
       if (!quiet || missing) setError(missing ? 'Conversation is no longer available. Main chat opened.' : '');
@@ -912,7 +883,7 @@ function AgentConversations({ agent, onRestored, configured, onEdit, onComputerS
     void load().catch(() => {});
     return () => { navigation.current++; loadVersion.current++; };
   }, []);
-  useEffect(() => { if (busy || pending || invalid) return; const timer = setInterval(() => { void load(selected, false, true).catch(() => {}); }, 5000); return () => clearInterval(timer); }, [selected, busy, pending, invalid]);
+  usePolling(signal => load(selected, false, true, signal).catch(() => {}), { interval: 5000, enabled: !busy && !pending && !invalid, immediate: false }, [selected]);
   useEffect(() => { if (initialThread !== undefined) { select(initialThread); onThreadOpened(); void load(initialThread).catch(() => {}); } }, [initialThread]);
   const leave = () => { navigation.current++; loadVersion.current++; };
   const openForm = () => { leave(); setShowWorkspace(false); setShowWorkflows(false); setForm('new'); };
@@ -1168,22 +1139,15 @@ function App() {
     catch (error) { if (version === directoryRequest.current) setError(message(error)); if (propagate) throw error; }
   }
   useEffect(() => { void load(); }, []);
-  useEffect(() => {
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout>;
-    async function refreshActivity() {
-      try {
-        const version = directoryRequest.current;
-        const [rooms, agents, summary] = await Promise.all([api<Channel[]>('/api/channels'), api<Directory>('/api/agents'), api<{ summaries: SidebarSummary[] }>('/api/sidebar/summary')]);
-        if (!stopped && version === directoryRequest.current) setDirectory(current => current && ({ ...current, agents: agents.agents.map(fresh => { const old = current.agents.find(item => item.id === fresh.id); return old && old.revision > fresh.revision ? old : fresh; }) }));
-        if (!stopped) { setActivityError(false); setChannels(current => rooms.map(fresh => { const old=current.find(room=>room.id===fresh.id); return {...fresh, activity:Math.max(old?.activity??0,fresh.activity), read_position:Math.max(old?.read_position??0,fresh.read_position)}; })); }
-        if (!stopped) { setSummaries(summary.summaries); void projectState.reload().catch(() => {}); }
-      } catch { if (!stopped) setActivityError(true); }
-      if (!stopped) timer = setTimeout(refreshActivity, 2400);
-    }
-    timer = setTimeout(refreshActivity, 2400);
-    return () => { stopped = true; clearTimeout(timer); };
-  }, []);
+  usePolling(async signal => {
+    try {
+      const version = directoryRequest.current;
+      const [rooms, agents, summary] = await Promise.all([api<Channel[]>('/api/channels'), api<Directory>('/api/agents'), api<{ summaries: SidebarSummary[] }>('/api/sidebar/summary')]);
+      if (!signal.aborted && version === directoryRequest.current) setDirectory(current => current && ({ ...current, agents: agents.agents.map(fresh => { const old = current.agents.find(item => item.id === fresh.id); return old && old.revision > fresh.revision ? old : fresh; }) }));
+      if (!signal.aborted) { setActivityError(false); setChannels(current => rooms.map(fresh => { const old=current.find(room=>room.id===fresh.id); return {...fresh, activity:Math.max(old?.activity??0,fresh.activity), read_position:Math.max(old?.read_position??0,fresh.read_position)}; })); }
+      if (!signal.aborted) { setSummaries(summary.summaries); void projectState.reload().catch(() => {}); }
+    } catch { if (!signal.aborted) setActivityError(true); }
+  }, { interval: 2400, immediate: false }, []);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey)) return;
