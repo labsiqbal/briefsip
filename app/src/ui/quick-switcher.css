@@ -9,3 +9,8 @@
 .quick-switcher__item span { min-width: 0; overflow-wrap: anywhere; }
 .quick-switcher__item small { display: block; color: var(--color-text-secondary); font-size: 12px; }
 .quick-switcher__empty { padding: 20px; text-align: center; color: var(--color-text-secondary); }
+
+.k-dialog:has(.quick-switcher) { top: 10vh; transform: translateX(-50%); animation: none; }
+.quick-switcher__search .k-input:is(:focus, :focus-visible) { border: 0; box-shadow: none; outline: none; }
+.quick-switcher__search:focus-within { box-shadow: inset 0 -2px var(--color-border-focus); }
+.quick-switcher__item > :is(svg, .avatar) { flex: none; }

@@ -146,7 +146,7 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
       <Button ref={avatarChange} onClick={() => setAvatarOpen(true)}>Change</Button>
     </div>}
     <Field label={!profile && setup ? 'Temporary name' : 'Name'} optional={!profile && setup} error={fieldErrors.name}>
-      <Input ref={nameInput} name="name" required={!setup} maxLength={80} readOnly={locked} defaultValue={profile?.name ?? recovery.command?.name} placeholder="For example: Research partner" />
+      <Input ref={nameInput} name="name" required={!setup} maxLength={80} readOnly={locked} defaultValue={profile?.name ?? recovery.command?.name} placeholder="Iris" />
     </Field>
     <Field label="Role" optional><Input name="role" maxLength={60} readOnly={locked} defaultValue={profile?.role ?? recovery.command?.role ?? ''} /></Field>
     <Field label={!profile && setup ? 'Brief' : 'Instructions'} optional={!profile && !setup} error={fieldErrors.instructions}>

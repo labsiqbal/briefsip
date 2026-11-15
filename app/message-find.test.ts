@@ -10,3 +10,10 @@ test('find matches literal text, case, Unicode and repeat occurrences', () => {
   assert.deepEqual(matchOffsets('hello', ''), []);
   assert.deepEqual(matchOffsets('hello', '   '), []);
 });
+
+test('work log titles hide protocol separators without dropping tool identity', async () => {
+  const { toolTitle } = await import('./src/ui/transcript.ts');
+  assert.equal(toolTitle('create_text_file'), 'Create text file');
+  assert.equal(toolTitle('mcp__briefsip__read_workspace_file'), 'Read workspace file');
+  assert.equal(toolTitle('shell-command'), 'Shell command');
+});
