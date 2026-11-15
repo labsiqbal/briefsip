@@ -1,7 +1,7 @@
 import { usePolling } from './hooks/usePolling';
 import { copyText } from './ui/clipboard';
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, Copy, Ellipsis, Monitor, Plus, RefreshCw } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Copy, Ellipsis, Monitor, Plus } from 'lucide-react';
 import type { Environment, PairedMachine, PeerAgentSummary } from '../machines';
 import { ActionMenu, Alert, Badge, Button, Card, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, SkeletonRows, Switch, Textarea, Tooltip, useConfirm } from './ui/kit';
 import { Markdown } from './Markdown';
@@ -32,8 +32,10 @@ export function MachinesPanel({ request, onChanged }: { request: Request; onChan
   const addTrigger = useRef<HTMLButtonElement>(null);
   const heading = useRef<HTMLHeadingElement>(null), pendingAdd = useRef<{ id: string; origin: string; code: string } | null>(null);
   const confirm = useConfirm();
-  async function reload() { try { const [local, result] = await Promise.all([request<Environment>('/api/environment'), request<{ machines: PairedMachine[] }>('/api/machines')]); setEnvironment(local); setName(local.name); setMachines(result.machines); setError(''); } catch (error) { setError(message(error)); } }
-  useEffect(() => { heading.current?.focus(); void reload(); }, []);
+  const [loadError, setLoadError] = useState('');
+  async function reload(signal?: AbortSignal) { try { const [local, result] = await Promise.all([request<Environment>('/api/environment'), request<{ machines: PairedMachine[] }>('/api/machines')]); if (signal?.aborted) return; setEnvironment(local); setName(current => environment && current !== environment.name ? current : local.name); setMachines(result.machines); setLoadError(''); } catch (error) { if (!signal?.aborted) setLoadError(message(error)); } }
+  useEffect(() => { heading.current?.focus(); }, []);
+  usePolling(signal => reload(signal), { interval: 5000, enabled: !busy }, [request]);
   useEffect(() => { if (!pairingCode) return; const timer = setInterval(() => { const time = Date.now(); setNow(time); if (time >= pairingCode.expiresAt) setPairingCode(null); }, 1000); return () => clearInterval(timer); }, [pairingCode]);
   useEffect(() => { if (!install) return; const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, [install]);
   const installFlight = useRef(0);
@@ -62,8 +64,8 @@ export function MachinesPanel({ request, onChanged }: { request: Request; onChan
     { label: 'Show pairing code', onSelect: () => openSetup('code') },
   ]} />;
   return <div className="k-page bs-root machines-page set4-page">
-    <PageHeader headingRef={heading} title="Machines" actions={<><IconButton label="Reload machines" disabled={!!busy} onClick={() => void reload()}><RefreshCw size={15} aria-hidden /></IconButton>{addMachine}</>} />
-    {error && <Alert tone="error">{error}</Alert>}<span className="sr-only" role="status">{notice}</span>
+    <PageHeader headingRef={heading} title="Machines" actions={<>{addMachine}</>} />
+    {(error || loadError) && <Alert tone="error" actions={loadError && <Button size="sm" onClick={() => void reload()}>Retry</Button>}>{error || loadError}</Alert>}<span className="sr-only" role="status">{notice}</span>
     <Section title="Paired machines">
       {machines === null ? !error && <SkeletonRows /> : !machines.length ? <EmptyState icon={<Monitor size={18} />} title="No paired machines" /> : <Card>{machines.map(machine => <Row key={machine.id} leading={<Monitor size={16} aria-hidden />} title={machine.name} onClick={() => setDetail(machine.id)} meta={<><Badge tone={machine.status === 'online' ? 'success' : 'warn'}>{statusLabel[machine.status]}</Badge><span>{machine.agentCount} {machine.agentCount === 1 ? 'agent' : 'agents'}</span>{machine.pairingState === 'pending' && <Badge tone="warn">Pairing incomplete</Badge>}</>} trailing={<><ActionMenu label={`Machine actions: ${machine.name}`} trigger={<IconButton label={`Machine actions: ${machine.name}`} disabled={!!busy}><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: `Unpair ${machine.name}`, danger: true, onSelect: () => { requestAnimationFrame(() => { document.querySelector<HTMLButtonElement>(`[aria-label="Machine actions: ${CSS.escape(machine.name)}"]`)?.focus(); void unpair(machine); }); } }]} /><IconButton label={`Open ${machine.name}`} onClick={() => setDetail(machine.id)}><ChevronRight size={16} aria-hidden /></IconButton></>} />)}</Card>}
     </Section>

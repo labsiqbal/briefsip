@@ -1,7 +1,8 @@
 import { copyText } from './ui/clipboard';
 import { getNonce } from 'get-nonce';
+import { usePolling } from './hooks/usePolling';
 import { useEffect, useRef, useState } from 'react';
-import { Copy, Ellipsis, KeyRound, Plus, RefreshCw } from 'lucide-react';
+import { Copy, Ellipsis, KeyRound, Plus } from 'lucide-react';
 import { ActionMenu, Alert, Badge, Button, Card, Checkbox, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, SkeletonRows, Tooltip, useConfirm, RecoveryAlert } from './ui/kit';
 import { mcpScopeCatalog as scopes, type McpScope as Scope } from '../mcp-scopes';
 type PeerToken = { id: string; name: string; scopes: Scope[]; created: number; lastUsed: number | null; revoked: number | null };
@@ -29,11 +30,11 @@ export function McpServerPanel({ request }: { request: <T>(path: string, body?: 
   const heading = useRef<HTMLHeadingElement>(null), mounted = useRef(true), flight = useRef(false), reads = useRef(0);
   const confirm = useConfirm(), locked = busy || !!pending || invalid;
   useEffect(() => { mounted.current = true; heading.current?.focus(); return () => { mounted.current = false; reads.current++; }; }, []);
-  useEffect(() => {
-    const version = ++reads.current; setError('');
-    void request<NonNullable<typeof page>>(path).then(result => { if (mounted.current && version === reads.current) setPage(result); }).catch(error => { if (mounted.current && version === reads.current) setError(error.message); });
-    return () => { reads.current++; };
-  }, [refresh]);
+  usePolling(async signal => {
+    const version = ++reads.current;
+    try { const result = await request<NonNullable<typeof page>>(path); if (!signal.aborted && mounted.current && version === reads.current) { setPage(result); setError(''); } }
+    catch (reason) { if (!signal.aborted && mounted.current && version === reads.current) setError(reason instanceof Error ? reason.message : 'Access tokens could not load.'); }
+  }, { interval: 5000, enabled: !busy && !pending && !invalid }, [refresh, request]);
   async function copy(value: string) { try { await copyText(value); if (mounted.current) { setError(''); setNotice('Copied.'); } } catch { if (mounted.current) { setNotice(''); setError('Could not copy. Select the text and copy it manually.'); } } }
   async function execute(command: Command) {
     if (flight.current || busy || invalid) return;
@@ -61,8 +62,8 @@ export function McpServerPanel({ request }: { request: <T>(path: string, body?: 
   return <div className="k-page bs-root bs-set3-external">
     <style nonce={getNonce()}>{`.bs-root.bs-set3-external > .k-page-head { padding-right: 40px; } .bs-root.bs-set3-external .k-row__title { white-space: normal; overflow-wrap: anywhere; } .bs-root.bs-set3-external .k-row__meta { overflow-wrap: anywhere; }`}</style>
     <PageHeader headingRef={heading} title="External access" description="Apps that can access Briefsip"
-      actions={<><IconButton label="Reload" disabled={busy} onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton><Button variant="primary" icon={<Plus size={14} aria-hidden />} disabled={locked} onClick={() => setShowForm(true)}>Create token</Button></>} />
-    {error && <Alert tone="error">{error}</Alert>}
+      actions={<><Button variant="primary" icon={<Plus size={14} aria-hidden />} disabled={locked} onClick={() => setShowForm(true)}>Create token</Button></>} />
+    {error && <Alert tone="error" actions={<Button size="sm" onClick={() => setRefresh(value => value + 1)}>Retry</Button>}>{error}</Alert>}
     {notice && (notice === 'Copied.' ? <span role="status" className="sr-only">{notice}</span> : <Alert>{notice}</Alert>)}
     {recoveryNotice}
     <Field label={<Tooltip content="Remote clients need an allowed address."><span tabIndex={0}>Endpoint</span></Tooltip>}>

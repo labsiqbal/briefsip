@@ -14,3 +14,8 @@ export function createRightPanelStore(storage: Storage) {
     select(scope: string, tab: string) { try { storage.setItem(rightPanelKey(scope), JSON.stringify(tab)); } catch { /* Selection remains in memory. */ } },
   };
 }
+
+export const detailsDockMinWidth = 920;
+export function restoreDetailsOpen(viewport: number, sidebar: number, saved: string | null): boolean {
+  return viewport - sidebar >= detailsDockMinWidth && (saved === null ? viewport >= 1280 : saved === '1');
+}

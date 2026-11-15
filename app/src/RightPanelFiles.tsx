@@ -1,7 +1,7 @@
 import { useVisiblePolling } from './hooks/useVisiblePolling';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Ellipsis } from 'lucide-react';
-import { ActionMenu, Alert, Button, CodeBlock, EmptyState, IconButton, Input, Section, Select, SkeletonRows } from './ui/kit';
+import { ArrowLeft, Download, Ellipsis } from 'lucide-react';
+import { ActionMenu, Alert, Button, CodeBlock, EmptyState, IconButton, Section, Select, SkeletonRows, Tooltip } from './ui/kit';
 import { TranscriptionPanel } from './TranscriptionPanel';
 import { WorkspacePanel } from './WorkspacePanel';
 import { isAttachmentImage } from './attachments';
@@ -41,8 +41,8 @@ function InlineFile({ file, request, onClose }: { file: OpenFile; request: Panel
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'File could not load.'); }
     finally { setLoadingMore(false); }
   }
-  return <div ref={root}><Section title={<span ref={heading} tabIndex={-1} className="right-panel__path">{file.name}</span>} actions={<IconButton label="Close file" onClick={onClose}><ArrowLeft size={15} aria-hidden /></IconButton>}>
-    <div className="k-inline"><a className="k-link" href={file.path.replace('/workspace/file?', '/workspace/download?')} download={file.name}>Download original</a></div>
+  return <div ref={root}><Section title={<span ref={heading} tabIndex={-1} className="right-panel__path">{file.name}</span>} actions={<><IconButton label="Close file" onClick={onClose}><ArrowLeft size={15} aria-hidden /></IconButton><Tooltip content="Download original. Preview removes scripts, forms, links and external resources."><a className="k-icon-btn" aria-label="Download original" href={file.path.replace('/workspace/file?', '/workspace/download?')} download={file.name}><Download size={15} aria-hidden /></a></Tooltip></>}>
+
     {error && <Alert tone="error" actions={<Button size="sm" onClick={() => setReload(value => value + 1)}>Retry</Button>}>{error}</Alert>}
     {file.transcribe ? <TranscriptionPanel path={file.path.replace('/panel/files/', '/files/')} request={request} /> : html ? <HtmlPreview key={reload} path={file.path} name={file.name} request={request} embedded /> : image ? <img key={reload} className="right-panel__image" src={previewURL(file.path, 'image')} alt={file.name} onError={() => setError('Image preview could not load. Download the original file.')} /> : !error && (text === null ? <SkeletonRows /> : /\.md(?:own)?$/i.test(file.name) ? <Markdown text={text} scope={file.path.split('/files/')[0]} origin={window.location.origin} /> : <>{/\.pdf$/i.test(file.name) && <p className="k-field__hint">Extracted PDF text. Layout, images and scanned pages are not included.</p>}<CodeBlock label={`Contents of ${file.name}`} maxHeight={600}>{text || '(Empty file)'}</CodeBlock></>)}
     {!html && !image && page.next_offset != null && <Button size="sm" busy={loadingMore} onClick={() => void loadMore()}>Load more text</Button>}
@@ -62,18 +62,18 @@ export function PanelFiles({ base, files, workspace, loading, request, attached,
   return <div className="right-panel__body k-stack">
     {selected && <InlineFile key={selected.path} file={selected} request={request} onClose={() => { setSelected(null); requestAnimationFrame(() => opener.current?.focus()); }} />}
     <div className="k-stack" hidden={!!selected}>
-      <Section title="Conversation files">
+      {(loading || !!rows.length || !workspace) && <Section title="Conversation files">
         {loading ? <SkeletonRows /> : rows.length ? <div className="attachments__list">{rows.map(file => <div className="right-panel__file-row" key={file.id}>
           <Attachment file={file} path={`${base}/files/${file.id}`} onOpen={() => open({ name: file.name, image: file.image, path: `${base}/files/${file.id}` })} />
           {onAttach && <ActionMenu label={`File actions: ${file.name}`} trigger={<IconButton label={`File actions: ${file.name}`}><Ellipsis size={16} aria-hidden /></IconButton>} items={[
             ...(/\.(mp3|wav|ogg|m4a|webm|mp4|mov)$/i.test(file.name) ? [{ label: 'Transcribe', onSelect: () => open({ name: file.name, path: `${base}/files/${file.id}`, transcribe: true }) }] : []),
             { label: attached.includes(file.id) ? 'Remove from message' : 'Attach to message', disabled: attachDisabled || !attached.includes(file.id) && attachedCount >= 4, onSelect: () => onAttach(file) },
           ]} />}
-        </div>)}</div> : <EmptyState title="No files yet" />}
+        </div>)}</div> : !workspace && <EmptyState title="No files yet" />}
 
         {error && <Alert tone="error">{error}</Alert>}
         {files.length === 100 && more && <Button size="sm" busy={busy} onClick={() => void loadMore()}>Earlier files</Button>}
-      </Section>
+      </Section>}
       {workspace && <WorkspacePanel key={base} agent={{ id: base, name: workspace }} basePath={`${base}/workspace`} compact request={request} onClose={() => {}} onOpenFile={path => open({ name: path.split('/').pop()!, path: `${base}/workspace/file?${new URLSearchParams({ path })}` })} />}
     </div>
   </div>;
@@ -85,9 +85,9 @@ export function PanelPreview({ base, files, sites, request }: { base: string; fi
   const item = items.find(item => item.value === selected) ?? items[0];
   return <div className="right-panel__body k-stack">
     {items.length > 1 && <Select label="Preview artifact" value={item?.value ?? ''} options={items} onChange={value => { setSelected(value); setError(''); }} />}
-    {item ? <><div className="right-panel__address"><Input aria-label="Preview address" readOnly value={item.path} /></div>
+    {item ? <><div className="right-panel__preview-head"><span className="right-panel__path">{item.label}</span><Tooltip content="Download original. Preview removes scripts, forms, links and external resources."><a className="k-icon-btn" aria-label="Download original" href={item.path} download={item.label}><Download size={15} aria-hidden /></a></Tooltip></div>
       {error && <Alert tone="error">{error}</Alert>}
-      {sites.some(site => site.id === item.value) ? <><p className="k-field__hint">Local static site. Scripts, forms, images and external connections are removed.</p><iframe key={`${item.path}:${sites.find(site => site.id === item.value)?.revision ?? 0}`} title={`Visual preview ${item.label}`} sandbox="" referrerPolicy="no-referrer" src={item.path} onError={() => setError('Site could not load.')} className="right-panel__preview" /></> : <HtmlPreview key={`${item.path}:${sites.find(site => site.id === item.value)?.revision ?? 0}`} path={item.path} name={item.label} request={request} embedded />}
+      {sites.some(site => site.id === item.value) ? <><iframe key={`${item.path}:${sites.find(site => site.id === item.value)?.revision ?? 0}`} title={`Visual preview ${item.label}`} sandbox="" referrerPolicy="no-referrer" src={item.path} onError={() => setError('Site could not load.')} className="right-panel__preview" /></> : <HtmlPreview key={`${item.path}:${sites.find(site => site.id === item.value)?.revision ?? 0}`} path={item.path} name={item.label} request={request} embedded />}
     </> : <EmptyState title="No HTML artifacts yet" />}
   </div>;
 }

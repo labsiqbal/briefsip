@@ -1,9 +1,10 @@
+import { usePolling } from './hooks/usePolling';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { WorkflowPanel } from './WorkflowPanel';
 import { WorkflowInbox } from './WorkflowInbox';
 import type { Workflow } from './WorkflowEditor';
 import { Alert, Badge, Button, Card, Checkbox, EmptyState, Field, IconButton, PageHeader, Row, Section, Select, SkeletonRows } from './ui/kit';
-import { ChevronLeft, ChevronRight, Inbox, Plus, RefreshCw, Workflow as WorkflowIcon } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Inbox, Plus, Workflow as WorkflowIcon } from 'lucide-react';
 
 type Agent = { id: string; name: string; model: string };
 type Page = { workflows: (Workflow & { owner_name: string })[]; next_after: string | null };
@@ -18,12 +19,10 @@ export function WorkflowDirectory({ agents, request, onClose, renderConversation
   const [owner, setOwner] = useState(agents[0]?.id ?? '');
   const [opened, setOpened] = useState<Workflow | 'new' | null>(null);
   const heading = useRef<HTMLHeadingElement>(null), after = cursors.at(-1)!;
-  useEffect(() => {
-    if (opened || inbox) return;
-    let stopped = false; setPage(null); setError('');
-    void request<Page>(`/api/workflows?deleted=${deleted ? 1 : 0}${after ? `&after=${after}` : ''}`).then(data => { if (!stopped) setPage(data); }).catch(error => { if (!stopped) setError(error.message); });
-    return () => { stopped = true; };
-  }, [after, refresh, opened, deleted, inbox]);
+  usePolling(async signal => {
+    try { const data = await request<Page>(`/api/workflows?deleted=${deleted ? 1 : 0}${after ? `&after=${after}` : ''}`); if (!signal.aborted) { setPage(data); setError(''); } }
+    catch (reason) { if (!signal.aborted) setError(reason instanceof Error ? reason.message : 'Workflows could not load.'); }
+  }, { interval: 5000, enabled: !opened && !inbox }, [after, refresh, deleted, request]);
   useEffect(() => { if (!opened && !inbox) heading.current?.focus(); }, [opened, after, inbox]);
   const selectedOwner = agents.find(agent => agent.id === (opened && opened !== 'new' ? opened.agent : owner));
   if (inbox) return <WorkflowInbox request={request} onBack={() => setInbox(false)} />;
@@ -31,8 +30,8 @@ export function WorkflowDirectory({ agents, request, onClose, renderConversation
     onNavigate={() => {}} onBack={() => { setOpened(null); setRefresh(value => value + 1); }} renderConversation={renderConversation} />;
   return <div className="k-page bs-root">
     <PageHeader headingRef={heading} title="Workspace workflows" description="Manage workflows for all agents. Each step can use a different agent or model."
-      actions={<><Button variant="ghost" onClick={onClose}>Back</Button><IconButton label="Reload" onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton><Button onClick={() => setInbox(true)} icon={<Inbox size={14} aria-hidden />}>Results inbox</Button><Button variant="primary" disabled={!selectedOwner} type="submit" form="create-workflow" icon={<Plus size={14} aria-hidden />}>Create workflow</Button></>} />
-    {error && <Alert tone="error">{error}</Alert>}
+      actions={<><Button variant="ghost" onClick={onClose}>Back</Button><Button onClick={() => setInbox(true)} icon={<Inbox size={14} aria-hidden />}>Results inbox</Button><Button variant="primary" disabled={!selectedOwner} type="submit" form="create-workflow" icon={<Plus size={14} aria-hidden />}>Create workflow</Button></>} />
+    {error && <Alert tone="error" actions={<Button size="sm" onClick={() => setRefresh(value => value + 1)}>Retry</Button>}>{error}</Alert>}
     <Section title="Workflow library" actions={<Checkbox label="Show deleted" checked={deleted} onChange={value => { setDeleted(value); setCursors(['']); }} />}>
       {agents.length ? <form id="create-workflow" onSubmit={event => { event.preventDefault(); if (selectedOwner) setOpened('new'); }} className="k-grid-2">
         <Field label="Workflow starting agent" hint={agents.find(agent => agent.id === owner)?.name}><Select value={owner} onChange={setOwner} options={agents.map(agent => ({ value: agent.id, label: agent.name.length > 24 ? agent.name.slice(0, 21) + '...' : agent.name }))} /></Field>

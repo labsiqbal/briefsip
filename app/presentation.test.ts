@@ -67,3 +67,13 @@ test('panel widths reserve main chat and clamp safely as available space shrinks
   assert.equal(clampPanelWidth(NaN, 280, 730), 280);
   assert.equal(clampPanelWidth(500.7, 280, 730), 501);
 });
+
+test('right panel widths recover stale preferences and preserve a 640px conversation', () => {
+  for (const available of [920, 980, 1140, 1620]) {
+    for (const saved of [-100, 360, 720, 99999, Infinity, NaN]) {
+      const width = clampPanelWidth(saved, 280, maxPanelWidth(available, 280));
+      assert(width >= 280);
+      assert(available - width >= 640);
+    }
+  }
+});
