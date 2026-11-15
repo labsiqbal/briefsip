@@ -23,7 +23,7 @@
 .attachments--grid .attachment__open { display: block; aspect-ratio: 1; width: 100%; height: auto; }
 .attachments--grid .attachment__open img { width: 100%; height: 100%; object-fit: cover; }
 .attachments__list .attachment__file { width: 100%; }
-.composer-attachments { display: grid; gap: 8px; margin: 0 auto; min-width: 0; max-width: 960px; }
+.composer-attachments { display: grid; gap: 8px; margin: 0 auto; min-width: 0; max-width: var(--chat-content-max-width); }
 .composer-attachments .attachments { padding: 5px 5px 0 0; }
 .human-message > .attachments { justify-content: flex-end; }
 @media (hover: none) { .attachment .attachment__remove { opacity: 1; } }

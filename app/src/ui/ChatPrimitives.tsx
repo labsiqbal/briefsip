@@ -1,4 +1,4 @@
-import { ArrowUp, ChevronDown, Paperclip } from 'lucide-react';
+import { ArrowUp, ChevronDown, Plus } from 'lucide-react';
 import { forwardRef, useId, useLayoutEffect, useRef, useState, type ComponentProps, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { AgentAvatar } from '../AgentAvatar';
 
@@ -68,8 +68,6 @@ export function ChatComposer({ label, input, inputRef, onSubmit, onSendKey, onAt
   return <form className={`composer${(multiline ?? String(input.value ?? '').includes('\n')) ? ' is-multiline' : ''}`} onSubmit={onSubmit} onDragOver={event => { if (onPasteFiles && !input.readOnly && !input.disabled && Array.from(event.dataTransfer.types).includes('Files')) event.preventDefault(); }} onDrop={event => { if (!onPasteFiles || input.readOnly || input.disabled || !event.dataTransfer.files.length) return; event.preventDefault(); onPasteFiles(Array.from(event.dataTransfer.files)); }}>
     {!!candidates.length && <div id={listId} className="mention-list" role="listbox" aria-label="Mention a room member">{candidates.map((member, index) => <button id={`${listId}-${index}`} type="button" role="option" aria-selected={index === current} key={member.id} tabIndex={-1} onMouseDown={event => event.preventDefault()} onClick={() => choose(index)}><AgentAvatar agent={member} size={22} /><span><strong>{member.name}</strong><small>{member.role}</small></span></button>)}</div>}
     <div className="composer__left">
-      <span className="composer__plus-anchor" title={attachmentDisabledReason}><button type="button" className="composer__btn" onClick={onAttach} disabled={!onAttach || !!attachmentDisabledReason} aria-label="Attach conversation file" title={attachmentDisabledReason ?? 'Attach file'}><Paperclip size={14} aria-hidden /></button></span>
-      {recipient}
       <label className="sr-only" htmlFor={input.id}>{label}</label>
       <textarea ref={ref} className="composer__input" rows={1} placeholder={label} maxLength={16000} {...input} aria-autocomplete={mentions.length ? 'list' : undefined} aria-controls={candidates.length ? listId : undefined} aria-activedescendant={candidates.length ? `${listId}-${current}` : undefined} onPaste={event => {
         input.onPaste?.(event);
@@ -90,10 +88,14 @@ export function ChatComposer({ label, input, inputRef, onSubmit, onSendKey, onAt
         if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); onSendKey(event); }
       }} />
     </div>
-    <div className="composer__right">
-      {retry && !busy && <span className="composer__retry">Retry send</span>}
-      {actions}
-      <button type="submit" className="composer__cta" disabled={sendDisabled} aria-label={sendLabel} title={sendTitle}>{busy ? <span className="step__spin" aria-hidden /> : <ArrowUp size={16} aria-hidden />}</button>
+    <div className="composer__toolbar">
+      <span className="composer__plus-anchor" title={attachmentDisabledReason}><button type="button" className="composer__btn" onClick={onAttach} disabled={!onAttach || !!attachmentDisabledReason} aria-label="Attach conversation file" title={attachmentDisabledReason ?? 'Attach file'}><Plus size={16} aria-hidden /></button></span>
+      {recipient}
+      <div className="composer__right">
+        {retry && !busy && <span className="composer__retry">Retry send</span>}
+        {actions}
+        <button type="submit" className="composer__cta" disabled={sendDisabled} aria-label={sendLabel} title={sendTitle}>{busy ? <span className="step__spin" aria-hidden /> : <ArrowUp size={16} aria-hidden />}</button>
+      </div>
     </div>
   </form>;
 }

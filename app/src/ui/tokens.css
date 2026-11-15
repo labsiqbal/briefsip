@@ -1,5 +1,6 @@
 /* Design tokens adapted from Bot HQ (MIT, see NOTICE). Light by default; dark via data-theme. */
 :root {
+  --chat-content-max-width: 736px;
   --color-bg-chrome: #FCFCFC;
   --color-bg-sidebar: #F5F5F5;
   --color-bg-pane: #FFFFFF;
@@ -29,7 +30,7 @@
   --text-xs: 12px;
   --text-sm: 13px;
   --text-base: 14px;
-  --text-message: 15px;
+  --text-message: 14px;
   --text-lg: 17px;
   --font-weight-regular: 425;
   --font-weight-medium: 500;

@@ -8,7 +8,7 @@ const origin = 'http://localhost:3000';
 const render = (text: string) => renderToStaticMarkup(createElement(Markdown, { text, scope, origin }));
 test('Markdown renders structure and scoped links without model-supplied DOM or automatic network loads', () => {
   const html = render(`# Heading\n\n**Bold**, *italic*, ~~old~~ and \`<code>\`.\n\n- One\n- Two\n\n| Name | Value |\n| --- | --- |\n| A | B |\n\n\`\`\`html\n<script>alert(1)</script>\n\`\`\`\n\n[File](${scope}/files/${file})\n\n[Docs](https://example.com/docs?q=one&v=two)`);
-  for (const tag of ['<h3>', '<strong>', '<em>', '<del>', '<ul>', '<table>', '<pre']) assert(html.includes(tag), tag);
+  for (const tag of ['<h1 aria-level="4">', '<strong>', '<em>', '<del>', '<ul>', '<table>', '<pre']) assert(html.includes(tag), tag);
   assert(html.includes(`href="${scope}/files/${file}"`)); assert(html.includes('download=""')); assert(html.includes('rel="noopener noreferrer"')); assert(!html.includes('<script>'));
   const attack = render('<img src="https://tracker.test/x" onerror="alert(1)">\n\n<script>alert(1)</script>\n\n[evil](javascript:alert(1))\n\n![track](https://tracker.test/x)\n\n<iframe src="/api/backup"></iframe>');
   for (const tag of ['<img', '<script', '<iframe', '<style']) assert(!attack.includes(tag));
