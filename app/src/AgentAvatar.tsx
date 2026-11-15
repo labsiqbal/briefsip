@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Button, Card, Field, IconButton, Input, Row, Section, useConfirm } from './ui/kit';
+import { Alert, Button, Card, Field, IconButton, Input, Row, Section, useConfirm, RecoveryAlert } from './ui/kit';
 import { RefreshCw } from 'lucide-react';
 import { AvatarPicker, avatarPng, type AvatarLook } from './ui/avatar-shapes';
 
@@ -87,7 +87,7 @@ export function AvatarEditor({ agent, request, onChanged }: { agent: string; req
       }} /><div className="k-row-actions"><Button size="sm" aria-label="Choose avatar image" disabled={busy || !!pending || invalid || !state} onClick={() => file.current?.click()}>Choose image</Button><span className="k-field__hint" role="status" style={{ alignSelf: 'center', overflowWrap: 'anywhere' }}>{selected?.name ?? 'No image chosen'}</span></div></Field>
       {invalid && <Alert tone="error">Saved request is invalid. Reload the avatar to continue.</Alert>}
       {error && <Alert tone="error">{error}</Alert>}{notice && <Alert>{notice}</Alert>}
-      {pending && <Alert tone="warn" title="Changes are not confirmed yet">Retry sends the same avatar request and ID.</Alert>}
+      {pending && <RecoveryAlert inFlight={busy} tone="warn" title="Changes are not confirmed yet">Retry sends the same avatar request and ID.</RecoveryAlert>}
       <div className="k-inline">
         <Button size="sm" variant="secondary" busy={busy} disabled={busy || invalid || !state || !pending && !validFile && !look} onClick={() => void save(false)}>{busy ? 'Processing avatar...' : pending ? 'Retry avatar change' : 'Save avatar'}</Button>
         <Button size="sm" disabled={busy || !!pending || invalid || !state?.present} onClick={() => { if (!busy && !pending && !invalid && state?.present) void save(true); }}>Delete avatar</Button>

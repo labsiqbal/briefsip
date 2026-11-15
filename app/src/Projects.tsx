@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ChevronRight, Ellipsis, Folder, FolderOpen, Hash, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import type { LocalProject } from '../local-projects';
-import { ActionMenu, Alert, Badge, Button, Card, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, TabPanel, Tabs, Textarea, useConfirm } from './ui/kit';
+import { ActionMenu, Alert, Badge, Button, Card, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, TabPanel, Tabs, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
 import { AgentAvatar } from './AgentAvatar';
 import { SourceControl } from './SourceControl';
 import { Collapsible } from 'radix-ui';
@@ -26,7 +26,7 @@ export function useProjects(request: Request) {
     flight.current=true;setBusy(true);setError('');
     try {sessionStorage.setItem(storage,JSON.stringify(command));commandRef.current=command;setPending(command);await request(command.path,command.body);await reload();sessionStorage.removeItem(storage);commandRef.current=null;setPending(null);return true;} catch(error){setError(message(error));return false;} finally{flight.current=false;setBusy(false);}
   }
-  const recovery = <>{error && <Alert tone="error" actions={<Button size="sm" onClick={() => void reload().then(()=>setError('')).catch(error=>setError(message(error)))}>Reload projects</Button>}>{error}</Alert>}{(pending || invalid) && <Alert tone="warn" title={invalid ? 'Saved project request could not be read' : 'Project change is not confirmed'} actions={<>{pending && <Button size="sm" disabled={busy} onClick={()=>void execute(pending.path,pending.body)}>Retry project change</Button>}<Button size="sm" disabled={busy} onClick={async()=>{if(await confirm({title:'Clear project request?',description:'Check project state first. Changes already saved and folders already created remain. Clearing this request does not undo them.',confirm:'Clear request'}))try{sessionStorage.removeItem(storage);commandRef.current=null;setPending(null);setInvalid(false);await reload();}catch(error){setError(message(error));}}}>Clear request</Button></>} />}</>;
+  const recovery = <>{error && <Alert tone="error" actions={<Button size="sm" onClick={() => void reload().then(()=>setError('')).catch(error=>setError(message(error)))}>Reload projects</Button>}>{error}</Alert>}{(pending || invalid) && <RecoveryAlert inFlight={busy} tone="warn" title={invalid ? 'Saved project request could not be read' : 'Project change is not confirmed'} actions={<>{pending && <Button size="sm" disabled={busy} onClick={()=>void execute(pending.path,pending.body)}>Retry project change</Button>}<Button size="sm" disabled={busy} onClick={async()=>{if(await confirm({title:'Clear project request?',description:'Check project state first. Changes already saved and folders already created remain. Clearing this request does not undo them.',confirm:'Clear request'}))try{sessionStorage.removeItem(storage);commandRef.current=null;setPending(null);setInvalid(false);await reload();}catch(error){setError(message(error));}}}>Clear request</Button></>} />}</>;
   return {projects,root,reload,execute,busy,locked:busy || !!pending || invalid,recovery};
 }
 export type ProjectState = ReturnType<typeof useProjects>;

@@ -1,7 +1,7 @@
 // Branch and diff-status patterns adapted from T3 (MIT); see ../t3/provenance.json.
 import { useEffect, useRef, useState } from 'react';
 import { GitBranch, GitPullRequest, RefreshCw } from 'lucide-react';
-import { Alert, Badge, Button, Card, Dialog, EmptyState, IconButton, Row, Section, useConfirm } from './ui/kit';
+import { Alert, Badge, Button, Card, Dialog, EmptyState, IconButton, Row, Section, useConfirm, RecoveryAlert } from './ui/kit';
 import './ui/source-control.css';
 
 type Request = <T>(path: string, body?: unknown) => Promise<T>;
@@ -116,7 +116,7 @@ export function RestoreCheckpoint({ agent, turn, request }: { agent: string; tur
     </>}>
       {error && <Alert tone="error">{error}</Alert>}
       {invalid && <Alert tone="error">Saved restoration request could not be read. Inspect workspace files before clearing it.</Alert>}
-      {pending && <Alert tone="warn">Restoration was requested. Check its saved result before another write.</Alert>}
+      {pending && <RecoveryAlert inFlight={busy} tone="warn">Restoration was requested. Check its saved result before another write.</RecoveryAlert>}
       {busy && !preview && <p role="status">Loading checkpoint...</p>}
       {preview && <ul className="checkpoint-files" aria-label="Files to restore">{preview.files.map(file => <li key={file.path}><span>{file.path}</span><Badge>{file.action}</Badge></li>)}</ul>}
       {preview && !preview.files.length && <EmptyState title="No files to restore">Workspace already matches this checkpoint.</EmptyState>}

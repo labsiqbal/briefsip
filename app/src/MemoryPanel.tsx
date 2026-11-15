@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { memoryCommand, memoryDraft, type MemoryCommand, type MemoryDraft, type MemoryEntry } from '../memory-command.ts';
 
 import { ChevronLeft, ChevronRight, Ellipsis, RefreshCw } from 'lucide-react';
-import { ActionMenu, Alert, Button, Card, Checkbox, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, SkeletonRows, Textarea, useConfirm } from './ui/kit';
+import { ActionMenu, Alert, Button, Card, Checkbox, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, SkeletonRows, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
 
 type Entry = MemoryEntry;
 type Page = { items: Entry[]; next_after: string | null };
@@ -71,9 +71,9 @@ export function MemoryPanel({ path, channel, archived, request, onClose }: { pat
     <p className="k-field__hint" style={{ margin: 0 }}>Notes are sent to the provider when included or searched. Agents can add or edit note contents, but cannot delete notes. Context selection stays under your control unless delegated to the agent. Saved changes remain even if the task is canceled. Reload to see the latest changes.</p>
     {archived && <Alert>Channel archived. Restore the channel to change memory.</Alert>}
     {(blocked || error) && <Alert tone="error">{blocked || error}</Alert>}{notice && <Alert>{notice}</Alert>}
-    {(pending || blocked) && <Alert tone="warn" title="Changes await confirmation" actions={<>{pending && <Button size="sm" disabled={busy} onClick={() => void save()}>Retry save</Button>}<Button size="sm" disabled={busy} onClick={() => void discard()}>Discard recovery and reload</Button></>}>
+    {(blocked || pending) && <RecoveryAlert inFlight={busy} tone="warn" title="Changes await confirmation" actions={<>{pending && <Button size="sm" disabled={busy} onClick={() => void save()}>Retry save</Button>}<Button size="sm" disabled={busy} onClick={() => void discard()}>Discard recovery and reload</Button></>}>
       Retrying uses the same data.{pending && <p style={{ whiteSpace: 'pre-wrap' }}>{pending.remove ? 'Delete note' : pending.text}</p>}
-    </Alert>}
+    </RecoveryAlert>}
     <Section title={entry ? 'Edit note' : 'New note'}>
       <form className="k-stack" onSubmit={event => { event.preventDefault(); if (!locked) void save(); }}>
         <Field label="Memory contents"><Textarea ref={editor} maxLength={2000} required value={text} disabled={locked} onChange={event => draft({ entry, text: event.target.value, essential, automatic })} /></Field>

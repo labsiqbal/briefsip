@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight } from 'lucide-react';
-import { Alert, Button, Card, Collapsible, EmptyState, IconButton, Row, useConfirm } from './ui/kit';
+import { Alert, Button, Card, Collapsible, EmptyState, IconButton, Row, useConfirm, RecoveryAlert } from './ui/kit';
 type Neighbor = { id: string; agent: string; revision: number; editing: boolean };
 type Entry = { previous: Neighbor | null; next: Neighbor | null; id: string; agent: string; text: string; revision: number; paused: number; editing: boolean };
 type Command = { id: string; target: string; other: string; revision: number; otherRevision: number };
@@ -49,14 +49,14 @@ export function QueuePanel({ path, request, onOpen }: { path: string; request: <
   return <div className="k-stack bs-root" onClickCapture={event => {
     const trigger = (event.target as Element).closest('button');
     if (trigger === event.currentTarget.querySelector('.k-collapsible__trigger')) setOpen(trigger?.getAttribute('aria-expanded') !== 'true');
-  }}><Collapsible title={<>Message queue{pending || invalid ? ' - recovery needed' : ''}</>}><div className="k-stack" style={{ display: open ? undefined : 'none' }}>
+  }}><Collapsible variant="section" title={<>Message queue{pending || invalid ? ' - recovery needed' : ''}</>}><div className="k-stack" style={{ display: open ? undefined : 'none' }}>
     <p className="k-field__hint" style={{ margin: 0 }}>Messages that have not started can be reordered within the same agent. History still follows message receipt time.</p>
     <div className="k-row-actions"><Button size="sm" onClick={() => { generation.current++; setPages([]); setRefresh(value => value + 1); }}>Reload queue</Button></div>
     {notice && <Alert>{notice}</Alert>}
     {loadError && <Alert tone="error">{loadError}</Alert>}
     {error && <Alert tone="error">{error}</Alert>}
     {invalid && <Alert tone="error">Saved order request is invalid.</Alert>}
-    {(pending || invalid) && <Alert tone="warn" title="Order awaits confirmation" actions={<>{pending && <Button size="sm" disabled={busy} onClick={() => void move()}>Retry order</Button>}<Button size="sm" disabled={busy} onClick={async () => { if (!await confirm({ title: 'Discard the saved order request?', description: 'Changes already accepted by the server still apply.', confirm: 'Discard request', danger: true })) return; try { sessionStorage.removeItem(key); setPending(null); setInvalid(false); setError(''); setRefresh(value => value + 1); } catch { setError('Browser storage is unavailable.'); } }}>Discard saved request</Button></>} />}
+    {(pending || invalid) && <RecoveryAlert inFlight={busy} tone="warn" title="Order awaits confirmation" actions={<>{pending && <Button size="sm" disabled={busy} onClick={() => void move()}>Retry order</Button>}<Button size="sm" disabled={busy} onClick={async () => { if (!await confirm({ title: 'Discard the saved order request?', description: 'Changes already accepted by the server still apply.', confirm: 'Discard request', danger: true })) return; try { sessionStorage.removeItem(key); setPending(null); setInvalid(false); setError(''); setRefresh(value => value + 1); } catch { setError('Browser storage is unavailable.'); } }}>Discard saved request</Button></>} />}
     {loading && <p className="k-field__hint" role="status">Loading queue...</p>}
     {!loading && !rows.length && !error && !loadError && <EmptyState title="No queued messages yet." />}
     {!!rows.length && <Card>{rows.map(row => <Row key={row.id}

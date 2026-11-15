@@ -4,7 +4,7 @@ import { restoreSkillCommand, type SkillCommand } from '../skill-command';
 import { parseSkillFiles, type SkillFile } from '../skill-files';
 import { SkillFolderImport, downloadSkillFolder } from './SkillFolderImport';
 import { BookOpen, ChevronLeft, ChevronRight, Ellipsis, FileText, Package, Plus, RefreshCw } from 'lucide-react';
-import { ActionMenu, Alert, Badge, Button, Card, Collapsible, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, Textarea, useConfirm } from './ui/kit';
+import { ActionMenu, Alert, Badge, Button, Card, Collapsible, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
 type Skill = { id: string; name: string; description: string; content: string; revision: number; latest: number; files?: SkillFile[] };
 type Installed = { pack?: string | null; removed: number; skill: string; name: string; version: number; enabled: number; revision: number; latest: number };
 const storage = 'briefsip:skill-command';
@@ -83,7 +83,7 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
       </>} />
     {error && <Alert tone="error">{error}</Alert>}
     {invalid && <Alert tone="error" title="Skill recovery data could not be read." actions={<Button size="sm" disabled={busy} onClick={() => void discard()}>Ignore recovery</Button>} />}
-    {pending && <Alert tone="warn" title="Changes are not confirmed yet" actions={<><Button size="sm" variant="primary" busy={busy} onClick={() => void execute(pending)}>Try again</Button><Button size="sm" disabled={busy} onClick={() => void discard()}>Ignore</Button></>}>The same request is sent again to avoid saving it twice.</Alert>}
+    {pending && <RecoveryAlert inFlight={busy} tone="warn" title="Changes are not confirmed yet" actions={<><Button size="sm" variant="primary" busy={busy} onClick={() => void execute(pending)}>Try again</Button><Button size="sm" disabled={busy} onClick={() => void discard()}>Ignore</Button></>}>The same request is sent again to avoid saving it twice.</RecoveryAlert>}
 
     <Section id="skills-installed" title="Installed on agent" actions={agents.length > 0 && <Select size="sm" label="Agent" value={owner} disabled={locked} onChange={value => { navigation.current++; setOwner(value); setInstallCursors(['']); }} options={agents.map(agent => ({ value: agent.id, label: agent.name }))} />}>
       {!owner ? <EmptyState icon={<BookOpen size={18} />} title="No agents yet">Create an agent first, then install skills on it.</EmptyState>

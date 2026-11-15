@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { parseAgentTemplate, restoreTemplateImport, templateCommand, type AgentTemplate } from '../agent-template';
-import { Alert, Button, Card, CodeBlock, Field, Input, PageHeader, Section, Textarea, useConfirm } from './ui/kit';
+import { Alert, Button, Card, CodeBlock, Field, Input, PageHeader, Section, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
 
 type Agent = { id: string; name: string; role: string; model: string; instructions: string; thread_limit: number; revision: number };
 const storage = 'briefsip:agent-template-import';
@@ -46,7 +46,7 @@ export function AgentTemplateImport({ request, onCreated }: { request: <T>(path:
     <PageHeader headingRef={heading} title="Import agent template" description="Check the name, role, model, and instructions before creating a new agent. Templates do not grant tool permissions, change provider credential settings, or replace existing agents." />
     {error && <Alert tone="error">{error}</Alert>}
     {invalid ? <Alert tone="error" title="Import recovery data could not be read." actions={<Button size="sm" disabled={busy} onClick={() => void discard()}>Ignore import recovery</Button>} /> : <>
-      <Section title="Template file"><input ref={fileInput} hidden type="file" accept=".json,application/json" disabled={!!pending || busy} onChange={event => void choose(event.target.files?.[0])} /><div><Button disabled={!!pending || busy} onClick={() => fileInput.current?.click()}>Choose file</Button></div>{busy && <p className="k-field__hint" role="status">Processing template...</p>}{pending && <Alert tone="warn" title="Creation is not confirmed yet">Retry with the same request to avoid duplicates.</Alert>}</Section>
+      <Section title="Template file"><input ref={fileInput} hidden type="file" accept=".json,application/json" disabled={!!pending || busy} onChange={event => void choose(event.target.files?.[0])} /><div><Button disabled={!!pending || busy} onClick={() => fileInput.current?.click()}>Choose file</Button></div>{busy && <p className="k-field__hint" role="status">Processing template...</p>}{pending && <RecoveryAlert inFlight={busy} tone="warn" title="Creation is not confirmed yet">Retry with the same request to avoid duplicates.</RecoveryAlert>}</Section>
       {draft && <form onSubmit={event => { event.preventDefault(); void apply(); }}>
         <Section title="New profile preview">
           <Card><fieldset disabled={busy || !!pending} className="k-fieldset" style={{ padding: 12 }}>

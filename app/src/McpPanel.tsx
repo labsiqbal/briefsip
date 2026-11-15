@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Ellipsis, Plug, Plus, RefreshCw } from 'lucide-react';
-import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Collapsible, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, useConfirm } from './ui/kit';
+import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Collapsible, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, useConfirm, RecoveryAlert } from './ui/kit';
 type Connection = { id: string; name: string; url: string; hasToken: boolean; enabled: number; revision: number };
 type Tool = { name: string; title?: string; description?: string; inputSchema: unknown; _meta?: Record<string, unknown> };
 const label = (tool: Tool) => `${tool._meta?.['briefsip.kind'] === 'resource-template' ? 'Resource template: ' : tool._meta?.['briefsip.kind'] === 'resource' ? 'Resource: ' : tool._meta?.['briefsip.kind'] === 'prompt' ? 'Prompt: ' : 'Tool: '}${tool.title && tool.title !== tool.name && !tool._meta?.['briefsip.kind'] ? `${tool.title} (${tool.name})` : tool.title ?? tool.name}`;
@@ -69,7 +69,7 @@ export function McpPanel({ agents, request, project }: { project?: string; agent
   const ignoreRecovery = <Button size="sm" disabled={busy} onClick={async () => { if (!await confirm({ title: 'Ignore the saved request?', description: 'Changes may already have succeeded. Check the list after it reloads.', confirm: 'Ignore' })) return; try { sessionStorage.removeItem(storage); setPending(null); setInvalid(false); setRefresh(value => value + 1); } catch { setError('Browser storage could not be updated.'); } }}>Ignore recovery</Button>;
   const recoveryNotice = <>
     {invalid && <Alert tone="error" title="MCP recovery data could not be read." actions={!pending && ignoreRecovery} />}
-    {pending && <Alert tone="warn" title="Changes are not confirmed yet" actions={<><Button size="sm" variant="primary" disabled={busy} onClick={() => void execute(pending)}>Retry change</Button>{ignoreRecovery}</>}>Retry sends the same saved request.</Alert>}
+    {pending && <RecoveryAlert inFlight={busy} tone="warn" title="Changes are not confirmed yet" actions={<><Button size="sm" variant="primary" disabled={busy} onClick={() => void execute(pending)}>Retry change</Button>{ignoreRecovery}</>}>Retry sends the same saved request.</RecoveryAlert>}
   </>;
   const host = (value: string) => { try { return new URL(value).host; } catch { return value; } };
   return <div className="k-page bs-root">

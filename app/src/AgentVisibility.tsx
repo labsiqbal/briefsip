@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { visibilityCommand } from '../agent-visibility';
-import { Alert, Badge, Button, Card, Row, Section, useConfirm } from './ui/kit';
+import { Alert, Badge, Button, Card, Row, Section, useConfirm, RecoveryAlert } from './ui/kit';
 
 export function AgentVisibility({ agent, request, onChanged }: { agent: { id: string; hidden?: boolean; visibility_revision?: number }; request: <T>(path: string, body?: unknown) => Promise<T>; onChanged: () => Promise<void> }) {
   const key = `briefsip-visibility:${agent.id}`;
@@ -36,7 +36,7 @@ export function AgentVisibility({ agent, request, onChanged }: { agent: { id: st
   return <div className="k-stack bs-root">
     <Section title="Visibility">
       <Card><Row title={agent.hidden ? 'Agent hidden' : 'Agent visibility'} meta="History, files, memory, and sidebar sections remain saved." trailing={<Badge>{agent.hidden ? 'Hidden' : 'Visible'}</Badge>} /></Card>
-      {recovery.pending && <Alert tone="warn" title="Changes are not confirmed yet">Retry with the same request.</Alert>}
+      {recovery.pending && <RecoveryAlert inFlight={busy} tone="warn" title="Changes are not confirmed yet">Retry with the same request.</RecoveryAlert>}
       {recovery.invalid && <Alert tone="error">Saved request is invalid. Load the latest status before continuing.</Alert>}
       {error && <Alert tone="error">{error}</Alert>}
       <div className="k-inline">

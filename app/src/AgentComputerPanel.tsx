@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Alert, Badge, Button, Dialog, Section } from './ui/kit';
+import { Alert, Badge, Button, Card, Dialog, Section } from './ui/kit';
 import { Expand } from 'lucide-react';
 import { ComputerViewer } from './ComputerViewer';
 import type { DesktopStatus } from '../agent-desktop';
@@ -53,7 +53,13 @@ export function AgentComputerPanel({ agent, name, request, compact = false }: { 
     {error && <Alert tone="error">{error}</Alert>}
     <div className="k-inline">{!compact && <Button size="sm" disabled={!status?.available || !status.enabled || busy || state !== 'off'} busy={busy && state === 'starting'} onClick={() => void control('start')}>Start computer</Button>}<Button size="sm" disabled={!status || busy || state === 'off'} onClick={() => void control('stop')}>Stop computer</Button></div>
   </>;
-  return <div ref={root} className={`bs-root k-stack${compact ? ' computer-hero' : ''}`}><Section id={titleId} title="Computer" actions={<><Badge>{error ? 'Unavailable' : status?.requests.length ? 'Waiting for you' : status === null ? 'Loading...' : !status.available ? 'Unavailable' : !status.enabled ? 'Disabled' : state === 'starting' ? 'Starting' : state === 'running' ? 'Running' : state === 'idle' ? 'Idle' : 'Off'}</Badge><Button size="sm" icon={<Expand size={14} aria-hidden />} onClick={() => setOpen(true)}>Open</Button></>}>
-    {!compact && <>{frame && ['running','idle'].includes(state) && <img src={frame} width={960} height={600} alt="Agent computer screen" style={{ display: 'block', width: '100%', height: 'auto', borderRadius: 'var(--radius-md)' }} />}{controls}</>}
-  </Section><Dialog open={open} onOpenChange={setOpen} title={`${name}'s computer`} size="lg">{compact && <div className="k-stack">{controls}</div>}<ComputerViewer agent={agent} name={name} request={request} /></Dialog></div>;
+  const label = error ? 'Unavailable' : status?.requests.length ? 'Waiting for you' : status === null ? 'Loading...' : !status.available ? 'Unavailable' : !status.enabled ? 'Disabled' : state === 'starting' ? 'Starting' : state === 'running' ? 'Live' : state === 'idle' ? 'Idle' : 'Off';
+  const pill = <Badge tone={label === 'Live' || label === 'Idle' ? 'success' : label === 'Starting' ? 'warn' : 'neutral'}>{label}</Badge>;
+  return <div ref={root} className={`bs-root k-stack${compact ? ' computer-hero' : ''}`}><Section id={titleId} title="Computer" actions={!compact && <>{pill}<Button size="sm" icon={<Expand size={14} aria-hidden />} onClick={() => setOpen(true)}>Open</Button></>}>
+    {compact ? <Card className="computer-compact-card"><div className="computer-compact-row">
+      {frame && ['running','idle'].includes(state) ? <img src={frame} alt="Agent computer screen" className="computer-compact-thumb" /> : <span className="computer-compact-placeholder"><Expand size={16} aria-hidden /></span>}
+      <div className="computer-compact-info">{pill}<span>{status && ['running','idle'].includes(state) ? status.control.mode === 'user' ? "You're in control" : 'Agent in control' : status?.available && !status.enabled ? 'Enable in agent settings' : 'Desktop preview'}</span></div>
+      <Button size="sm" onClick={() => setOpen(true)}>Open</Button>
+    </div></Card> : <>{frame && ['running','idle'].includes(state) && <img src={frame} width={960} height={600} alt="Agent computer screen" style={{ display: 'block', width: '100%', height: 'auto', borderRadius: 'var(--radius-md)' }} />}{controls}</>}
+  </Section><Dialog open={open} onOpenChange={setOpen} title={`${name}'s computer`} size="lg" hideHeader><ComputerViewer agent={agent} name={name} request={request} onClose={() => setOpen(false)} /></Dialog></div>;
 }

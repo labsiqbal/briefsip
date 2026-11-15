@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Copy, Ellipsis, KeyRound, Plus, RefreshCw } from 'lucide-react';
-import { ActionMenu, Alert, Badge, Button, Card, Checkbox, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, SkeletonRows, useConfirm } from './ui/kit';
+import { ActionMenu, Alert, Badge, Button, Card, Checkbox, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, SkeletonRows, useConfirm, RecoveryAlert } from './ui/kit';
 import { mcpScopeCatalog as scopes, type McpScope as Scope } from '../mcp-scopes';
 type PeerToken = { id: string; name: string; scopes: Scope[]; created: number; lastUsed: number | null; revoked: number | null };
 type Command = { path: string; body: { id: string; name?: string; scopes?: Scope[] } };
@@ -46,7 +46,7 @@ export function McpServerPanel({ request }: { request: <T>(path: string, body?: 
   }
   const recoveryNotice = <>
     {invalid && <Alert tone="error" title="Saved request could not be read" actions={<Button size="sm" onClick={() => void discard()}>Discard request</Button>} />}
-    {pending && <Alert tone="warn" title="Change is not confirmed" actions={<><Button size="sm" disabled={busy} onClick={() => void execute(pending)}>Retry saved request</Button><Button size="sm" disabled={busy} onClick={() => void discard()}>Discard request</Button></>}>Retry uses the same ID and payload. A created token is never revealed twice.</Alert>}
+    {pending && <RecoveryAlert inFlight={busy} tone="warn" title="Change is not confirmed" actions={<><Button size="sm" disabled={busy} onClick={() => void execute(pending)}>Retry saved request</Button><Button size="sm" disabled={busy} onClick={() => void discard()}>Discard request</Button></>}>Retry uses the same ID and payload. A created token is never revealed twice.</RecoveryAlert>}
   </>;
   return <div className="k-page bs-root">
     <PageHeader headingRef={heading} title="MCP server" description="Let another Briefsip instance or a coding agent use tools on this computer."

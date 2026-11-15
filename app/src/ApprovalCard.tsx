@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ShieldCheck } from 'lucide-react';
-import { Alert, Badge, Button, Card, CodeBlock, Collapsible, Row, useConfirm } from './ui/kit';
+import { Alert, Badge, Button, Card, CodeBlock, Collapsible, Row, useConfirm, RecoveryAlert } from './ui/kit';
 import { restoreConnectedAppCommand, type ConnectedAppCommand } from '../connected-app-command';
 export type AppApproval = { id: string; toolkit: string; tool: string; slug: string; account: string; arguments: Record<string, unknown>; state: string; decision: string; revision: number };
 export function ApprovalCard({ approval, path, status, archived, request }: { approval: AppApproval; path: string; status: string; archived: boolean; request: <T>(path: string, data?: unknown) => Promise<T> }) {
@@ -33,7 +33,7 @@ export function ApprovalCard({ approval, path, status, archived, request }: { ap
       {open && <>
         <p className="k-field__hint" style={{margin:0}}>Always allow applies to this action, app account, agent, and conversation scope. Change it in this project’s Connected apps tab, or Settings &gt; Connected apps for direct chats.</p>
         {error && <Alert tone="error">{error}</Alert>}
-        {(pending || invalid) && <Alert tone="warn" title={invalid?'Approval recovery data is invalid':'Decision is not confirmed'} actions={<>{pending && <Button size="sm" disabled={disabled} onClick={()=>void send(pending.body.decision!)}>Retry saved decision</Button>}<Button size="sm" disabled={busy} onClick={async()=>{if(!await confirm({title:'Discard saved decision?',description:'The decision may already be saved. Check the transcript before making another decision.',confirm:'Discard recovery',danger:true}))return;try{sessionStorage.removeItem(key);setPending(null);setInvalid(false);}catch{setError('Recovery data could not be removed.');}}}>Discard recovery</Button></>} />}
+        {(pending || invalid) && <RecoveryAlert inFlight={busy} tone="warn" title={invalid?'Approval recovery data is invalid':'Decision is not confirmed'} actions={<>{pending && <Button size="sm" disabled={disabled} onClick={()=>void send(pending.body.decision!)}>Retry saved decision</Button>}<Button size="sm" disabled={busy} onClick={async()=>{if(!await confirm({title:'Discard saved decision?',description:'The decision may already be saved. Check the transcript before making another decision.',confirm:'Discard recovery',danger:true}))return;try{sessionStorage.removeItem(key);setPending(null);setInvalid(false);}catch{setError('Recovery data could not be removed.');}}}>Discard recovery</Button></>} />}
         <div className="k-row-actions"><Button size="sm" disabled={disabled || !!pending} onClick={()=>void send('deny')}>Don't allow</Button><Button size="sm" disabled={disabled || !!pending} onClick={()=>void send('always')}>Always allow for this agent</Button><Button size="sm" variant="primary" disabled={disabled || !!pending} onClick={()=>void send('allow')}>Allow once</Button></div>
         {(archived || status!=='queued') && <Alert>Approval is unavailable while this task is stopped or its conversation is archived.</Alert>}
       </>}
