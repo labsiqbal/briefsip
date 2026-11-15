@@ -791,5 +791,52 @@
       "dependencies": [],
       "compatibilityCheck": "app/updates.test.ts"
     }
+  ],
+  "toolBudgetSourceEntries": [
+    {
+      "repository": "https://github.com/NousResearch/hermes-agent",
+      "sourceRevision": "d923a5eb487a17c0a68801bba9ef0f56c81040a8",
+      "sourcePaths": [
+        {
+          "path": "run_agent.py",
+          "sha256": "2bd45c545c2cf0dec95702e71232f026b1265b54bf234a1c03c8cf83f5236f10"
+        },
+        {
+          "path": "hermes_cli/config.py",
+          "sha256": "a1667a958f52aa6201200bde354c3a380d79d49fd7635aeee3a3ebb23533a788"
+        },
+        {
+          "path": "agent/iteration_budget.py",
+          "sha256": "c6ac199bf3d53ae6eb840fa1e72fa191e8c00af535f0621896a98196fe880f72"
+        },
+        {
+          "path": "agent/turn_context.py",
+          "sha256": "1fdc08f930d6f76825c5b06f14377768c31f2178e9d893dc0bed10911be33991"
+        },
+        {
+          "path": "agent/chat_completion_helpers.py",
+          "sha256": "d7b982ddeabe7bb02cb92fd905d213ecba3b2d21672e249510f760fff27ec8a1"
+        }
+      ],
+      "symbols": [
+        "AIAgent.max_iterations",
+        "resolve_turn_limit",
+        "IterationBudget.consume",
+        "_reset_per_turn_agent_state",
+        "handle_max_iterations"
+      ],
+      "adaptation": "Original TypeScript/SQLite per-task tool-step counter and wrap-up path. Budget survives automatic waits/requeues; explicit Resume/reassign starts a fresh attempt without clearing tool receipts. At exhaustion Briefsip makes exactly one tools-disabled provider call asking for progress, remaining work and a continue invitation. Unlike Hermes, Briefsip does not retry empty summaries and fails with a clear resumable message if wrap-up fails. Desktop context retains only the latest three screenshot images; attachment images retain their existing limits. No Hermes runtime dependency.",
+      "defaultDecision": "Pinned executable source uses sys.maxsize (unlimited) for AIAgent.max_iterations and resolve_turn_limit; docs and iteration_budget.py docstring still say 500. No finite Hermes default is authoritative at this revision. Briefsip uses Owner-requested finite fallback 90 and bounds profile input to 10-200.",
+      "localPaths": [
+        "app/server.ts",
+        "app/agent-template.ts",
+        "app/src/App.tsx",
+        "app/src/ui/TurnActivity.tsx"
+      ],
+      "license": "MIT",
+      "notice": "app/agent-desktop.LICENSE",
+      "dependencies": [],
+      "compatibilityCheck": "app/tool-budget.test.ts"
+    }
   ]
 }

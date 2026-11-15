@@ -107,7 +107,7 @@ test('canonical draft carries project/home authority and rejects legacy or malfo
   try {
     const command = f.command(); assert.deepEqual(restoreCanonicalAgentCreation(JSON.stringify(command)), command);
     assert.equal(restoreCanonicalAgentCreation(null), null);
-    for (const change of [{ homeDeviceId: 'bad' }, { requestId: randomUUID() }, { expectedProjectRevision: 0 }, { expectedHomeDeviceRevision: 1.5 }, { providerBinding: {} }, { providerAccount: '' }, { setup: 'yes' }]) assert.throws(() => parseCanonicalAgentCreation({ ...command, ...change }));
+    for (const change of [{ homeDeviceId: 'bad' }, { requestId: randomUUID() }, { expectedProjectRevision: 0 }, { expectedHomeDeviceRevision: 1.5 }, { providerBinding: {} }, { providerAccount: '' }, { setup: 'yes' }, { toolBudget: 9 }, { toolBudget: null }, { toolBudget: 201 }]) assert.throws(() => parseCanonicalAgentCreation({ ...command, ...change }));
     assert.throws(() => restoreCanonicalAgentCreation(JSON.stringify({ id: randomUUID(), name: 'Old draft' })));
   } finally { f.close(); }
 });
@@ -125,8 +125,9 @@ test('canonical creation is owner/home scoped, offline-safe, exact and fully ato
     db.prepare("UPDATE devices SET status='blocked' WHERE id=?").run(home);
     await assert.rejects(access.createAgent(owner, f.command()), code('resource_not_found'));
     db.prepare("UPDATE devices SET status='offline' WHERE id=?").run(home);
-    const command = f.command({ role: ' Orchestration agent ' }), result = await access.createAgent(owner, command);
+    const command = f.command({ role: ' Orchestration agent ', toolBudget: 30 }), result = await access.createAgent(owner, command);
     assert.equal(db.prepare('SELECT role FROM agents WHERE id=?').get(command.id)!.role, 'Orchestration agent');
+    assert.equal(db.prepare('SELECT tool_budget FROM agents WHERE id=?').get(command.id)!.tool_budget, 30);
     await assert.rejects(access.createAgent(owner, { ...command, role: 'Personal agent' }), code('payload_conflict'));
     await assert.rejects(access.createAgent(owner, f.command({ role: 'x'.repeat(61) })), code('invalid_agent'));
     assert.equal(result.status, 201); assert.equal(result.data.homeDeviceId, home);
