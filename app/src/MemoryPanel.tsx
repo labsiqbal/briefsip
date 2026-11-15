@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useVisiblePolling } from './hooks/useVisiblePolling';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { memoryCommand, memoryDraft, type MemoryCommand, type MemoryDraft, type MemoryEntry } from '../memory-command.ts';
 
-import { ChevronLeft, ChevronRight, Ellipsis, RefreshCw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Ellipsis } from 'lucide-react';
 import { ActionMenu, Alert, Button, Card, Checkbox, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, SkeletonRows, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
 
 type Entry = MemoryEntry;
@@ -24,11 +25,13 @@ export function MemoryPanel({ path, channel, archived, request, onClose }: { pat
   const after = cursors.at(-1) ?? '', locked = !!pending || !!blocked || busy || archived;
   const dirty = text !== (entry?.text ?? '') || essential !== !!entry?.essential || automatic !== (entry?.selection_locked === 0);
   useEffect(() => { mounted.current = true; heading.current?.focus(); return () => { mounted.current = false; generation.current++; }; }, []);
-  useEffect(() => {
-    const version = ++generation.current; setPage(null); setError('');
-    void request<Page>(`${path}?${new URLSearchParams({ query: search, after })}`).then(value => { if (mounted.current && generation.current === version) setPage(value); }).catch(error => { if (mounted.current && generation.current === version) setError(error instanceof TypeError ? 'Memory could not load. Try reloading.' : error.message); });
-    return () => { generation.current++; };
-  }, [after, search, refresh]);
+  const [loadError, setLoadError] = useState('');
+  const root = useVisiblePolling(useCallback(async current => {
+    if (busy) return;
+    try { const value = await request<Page>(`${path}?${new URLSearchParams({ query: search, after })}`); if (current()) { setPage(value); setLoadError(''); } }
+    catch (error) { if (current()) setLoadError(error instanceof Error ? error.message : 'Memory could not load.'); }
+  }, [path, after, search, refresh, request, busy]));
+  useEffect(() => { generation.current++; setPage(null); }, [path, after, search]);
   function draft(value: MemoryDraft) {
     try { sessionStorage.setItem(draftKey, JSON.stringify(value)); setDraftStored(true); }
     catch { setDraftStored(false); setError('Draft has not been saved in the browser. Copy the text before leaving this page.'); }
@@ -64,11 +67,11 @@ export function MemoryPanel({ path, channel, archived, request, onClose }: { pat
       if (mounted.current) setError(error instanceof TypeError ? 'Save result is unknown. Retry with the same changes.' : error instanceof Error ? error.message : 'Changes are not confirmed yet. Try again.');
     } finally { sending.current = false; if (mounted.current) setBusy(false); }
   }
-  return <div className="k-page bs-root">
+  return <div ref={root} className="k-page bs-root">
     <PageHeader headingRef={heading} title={`Memory for this ${channel ? 'section' : 'agent'}`}
       description={channel ? 'Used by members when replying in this section. Private agent memory is excluded.' : 'Used by the agent in Main chat and all its conversations. Excluded from sections.'}
-      actions={<><Button variant="ghost" onClick={async () => { if (draftStored || await confirm({ title: 'Leave and discard changes?', description: 'Draft has not been saved in the browser.', confirm: 'Leave', danger: true })) onClose(); }}>Back</Button><IconButton label="Reload" disabled={busy} onClick={() => setRefresh(n => n + 1)}><RefreshCw size={15} aria-hidden /></IconButton></>} />
-    <p className="k-field__hint" style={{ margin: 0 }}>Notes are sent to the provider when included or searched. Agents can add or edit note contents, but cannot delete notes. Context selection stays under your control unless delegated to the agent. Saved changes remain even if the task is canceled. Reload to see the latest changes.</p>
+      actions={<><Button variant="ghost" onClick={async () => { if (draftStored || await confirm({ title: 'Leave and discard changes?', description: 'Draft has not been saved in the browser.', confirm: 'Leave', danger: true })) onClose(); }}>Back</Button></>} />
+    <p className="k-field__hint" style={{ margin: 0 }}>Notes are sent to the provider when included or searched. Agents can add or edit note contents, but cannot delete notes. Context selection stays under your control unless delegated to the agent. Saved changes remain even if the task is canceled.</p>
     {archived && <Alert>Section archived. Restore the section to change memory.</Alert>}
     {(blocked || error) && <Alert tone="error">{blocked || error}</Alert>}{notice && <Alert>{notice}</Alert>}
     {(blocked || pending) && <RecoveryAlert inFlight={busy} tone="warn" title="Changes await confirmation" actions={<>{pending && <Button size="sm" disabled={busy} onClick={() => void save()}>Retry save</Button>}<Button size="sm" disabled={busy} onClick={() => void discard()}>Discard recovery and reload</Button></>}>
@@ -87,6 +90,7 @@ export function MemoryPanel({ path, channel, archived, request, onClose }: { pat
         </div>
       </form>
     </Section>
+    {loadError && <Alert tone="error" actions={<Button size="sm" onClick={() => setRefresh(n => n + 1)}>Retry</Button>}>{loadError}</Alert>}
     <Section title="Saved notes">
       <form className="k-stack" onSubmit={event => { event.preventDefault(); setCursors([]); setSearch(query); setRefresh(n => n + 1); }}>
         <Field label="Search memory"><Input value={query} maxLength={200} disabled={busy} onChange={event => setQuery(event.target.value)} /></Field>

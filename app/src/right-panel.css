@@ -1,5 +1,11 @@
-.right-panel { min-width: 0; max-width: max(0px, calc(100% - 360px)); animation: none; }
-.chat-row:has(> .right-panel) > .chat { min-width: min(360px, 100%); }
+.right-panel { min-width: 0; max-width: 100%; animation: none; }
+.right-panel-slot { flex: none; min-width: 0; position: relative; }
+.right-panel-mount, .right-panel-mount > .right-panel { height: 100%; }
+.right-panel-poll { position: absolute; top: 0; right: 0; width: 1px; height: 1px; }
+.right-panel-backdrop { position: fixed; inset: 0; background: var(--color-bg-scrim); z-index: 80; }
+.right-panel-sheet { position: fixed; top: 0; right: 0; bottom: 0; max-width: calc(100vw - 32px); background: var(--color-bg-pane); z-index: 81; box-shadow: var(--shadow-popover); }
+.right-panel-sheet > .right-panel { height: 100%; }
+.chat-row:has(> .right-panel-slot) > .chat { min-width: min(360px, 100%); }
 .right-panel__header { height: 60px; flex: none; display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: .5px solid var(--color-border-tertiary); }
 .right-panel__header > span { color: var(--color-text-tertiary); font-size: 12px; }
 .right-panel__header > div { display: flex; gap: 2px; }
@@ -43,8 +49,15 @@
 
 /* Narrow panels show icon-only tabs; labels stay in the accessible name. */
 .right-panel { container-type: inline-size; }
-@container (max-width: 520px) {
+@container (max-width: 358px) {
   .right-panel > .k-tabs > .k-tabs__list { gap: 2px; }
   .right-panel > .k-tabs > .k-tabs__list > .k-tabs__tab { padding: 0 12px; }
   .right-panel__tab-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 }
+
+.right-panel__file-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.right-panel__file-row > .attachment { flex: 1; min-width: 0; }
+.right-panel__file-row > .k-icon-btn { flex: none; }
+.right-panel .attachment.is-image .attachment__open { width: 100%; max-width: 100%; }
+
+.right-panel .details__sections { padding: 16px; }

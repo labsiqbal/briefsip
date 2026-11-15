@@ -53,13 +53,13 @@ test('release builder publishes verified immutable files before feed metadata an
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 
-test('release lint failure stops tests, build and packaging; successful gates run in order',()=>{
+test('release lint failure stops build, tests and packaging; successful gates run in order',()=>{
  const dir=temp(),source=join(dir,'source'),releases=join(dir,'releases');try{
  fixture(source,'1.0.0');const file=join(source,'package.json'),pkg=JSON.parse(readFileSync(file,'utf8'));
- pkg.scripts={lint:'node -e "process.exit(7)"',test:'node -e "require(\'node:fs\').writeFileSync(\'tested\',\'yes\')"',build:'node -e "const fs=require(\'node:fs\');if(!fs.existsSync(\'tested\'))process.exit(8);fs.writeFileSync(\'built\',\'yes\')"'};
+ pkg.scripts={lint:'node -e "process.exit(7)"',build:'node -e "require(\'node:fs\').writeFileSync(\'built\',\'yes\')"',test:'node -e "const fs=require(\'node:fs\');if(!fs.existsSync(\'built\'))process.exit(8);fs.writeFileSync(\'tested\',\'yes\')"'};
  writeFileSync(file,JSON.stringify(pkg));assert.throws(()=>buildRelease({source,releases,install:false,allowDirty:true}),/Command failed/);
  assert(!existsSync(join(source,'tested')));assert(!existsSync(join(source,'built')));assert(!existsSync(releases));
- pkg.scripts.lint='node -e "0"';writeFileSync(file,JSON.stringify(pkg));buildRelease({source,releases,install:false,allowDirty:true});assert(existsSync(join(source,'built')));
+ pkg.scripts.lint='node -e "0"';writeFileSync(file,JSON.stringify(pkg));buildRelease({source,releases,install:false,allowDirty:true});assert(existsSync(join(source,'built')));assert(existsSync(join(source,'tested')));
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 
