@@ -100,14 +100,14 @@ async function api<T>(path: string, data?: unknown): Promise<T> {
 }
 const message = (error: unknown) => error instanceof Error ? error.message : 'Connection failed. Try again.';
 
-function ConversationFiles({ path, archived, attached, onAttach, locked, open, onOpenChange }: { path: string; archived: boolean; attached: string[]; onAttach: (ids: string[]) => void; locked: boolean; open: boolean; onOpenChange: (open: boolean) => void }) {
+function ConversationFiles({ path, archived, attached, onAttach, locked, open, onOpenChange, pastedFiles, onPasteSettled }: { onPasteSettled?: () => void; pastedFiles?: File[]; path: string; archived: boolean; attached: string[]; onAttach: (ids: string[]) => void; locked: boolean; open: boolean; onOpenChange: (open: boolean) => void }) {
   type StoredFile = { seq: number; id: string; name: string; size: number };
-  type Upload = { id: string; name: string; size: number; digest: string; file?: File };
+  type Upload = { id: string; name: string; size: number; digest: string; file?: File; attach?: boolean };
   const storageKey = `briefsip:upload:${path}`;
   const [recovered] = useState<Upload | null>(() => {
     try {
       const value = JSON.parse(sessionStorage.getItem(storageKey) ?? 'null');
-      return value && /^[0-9a-f-]{36}$/i.test(value.id) && typeof value.name === 'string' && Number.isSafeInteger(value.size) && value.size >= 0 && value.size <= 10 * 1024 * 1024 && /^[0-9a-f]{64}$/.test(value.digest) ? { id: value.id, name: value.name, size: value.size, digest: value.digest } : null;
+      return value && /^[0-9a-f-]{36}$/i.test(value.id) && typeof value.name === 'string' && Number.isSafeInteger(value.size) && value.size >= 0 && value.size <= 10 * 1024 * 1024 && /^[0-9a-f]{64}$/.test(value.digest) ? { id: value.id, name: value.name, size: value.size, digest: value.digest, attach: value.attach === true } : null;
     } catch { return null; }
   });
   const [files, setFiles] = useState<StoredFile[]>([]);
@@ -116,6 +116,15 @@ function ConversationFiles({ path, archived, attached, onAttach, locked, open, o
   const [selected, setSelected] = useState<File | null>(null), [recording, setRecording] = useState(false);
   const [preview, setPreview] = useState<StoredFile | null>(null), [previewText, setPreviewText] = useState<string | null>(null), [previewError, setPreviewError] = useState('');
   const pending = useRef<Upload | null>(recovered);
+  const pasteSeen = useRef<File[] | undefined>(undefined);
+  const attachmentState = useRef({ attached, onAttach });
+  attachmentState.current = { attached, onAttach };
+  const attachUploaded = (id: string) => {
+    const current = attachmentState.current;
+    if (!current.attached.includes(id) && current.attached.length < 4) {
+      const ids = [...current.attached, id]; current.attached = ids; current.onAttach(ids);
+    }
+  };
   const input = useRef<HTMLInputElement>(null);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -137,24 +146,34 @@ function ConversationFiles({ path, archived, attached, onAttach, locked, open, o
     void api<StoredFile[]>(path).then(rows => { if (!stopped) { setFiles(rows); setMore(rows.length === 100); setError(''); } }).catch(error => { if (!stopped) setError(message(error)); }).finally(() => { if (!stopped) setLoading(false); });
     return () => { stopped = true; };
   }, [open, path, reload]);
-  async function upload(event: FormEvent) {
-    event.preventDefault(); if (busy || loading || recording) return;
-    const file = pending.current?.file ?? selected;
+  useEffect(() => {
+    if (!pastedFiles?.length || pasteSeen.current === pastedFiles || busy || loading) return;
+    pasteSeen.current = pastedFiles;
+    if (archived || locked || recording || pending.current || selected) { setError('Finish the current upload before pasting files.'); onPasteSettled?.(); return; }
+    if (pastedFiles.length + attachmentState.current.attached.length > 4) { setError('Up to four attachments per message.'); onPasteSettled?.(); return; }
+    if (pastedFiles.some(file => file.size > 10 * 1024 * 1024)) { setError('Maximum file size is 10 MiB.'); onPasteSettled?.(); return; }
+    void (async () => { try { for (const file of pastedFiles) { if (!mounted.current || !await upload(undefined, file)) break; } } finally { onPasteSettled?.(); } })();
+  }, [pastedFiles, busy, loading]);
+  async function upload(event?: FormEvent, pasted?: File) {
+    event?.preventDefault(); if (busy || loading || recording) return false;
+    const file = pending.current?.file ?? pasted ?? selected;
     if (!file) { setError('Select the same file again to continue the upload.'); return; }
     if (file.size > 10 * 1024 * 1024) { setError('Maximum file size is 10 MiB.'); return; }
-    setBusy(true); setError('');
+    setBusy(true); setError(''); if (pasted) setSelected(pasted);
     try {
       const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()))].map(byte => byte.toString(16).padStart(2, '0')).join('');
       if (!mounted.current) return;
       if (pending.current && (pending.current.name !== file.name || pending.current.size !== file.size || pending.current.digest !== digest)) throw new Error('File differs from the pending upload. Select the original file or check upload status.');
-      const request = pending.current ?? { id: crypto.randomUUID(), name: file.name, size: file.size, digest };
-      sessionStorage.setItem(storageKey, JSON.stringify({ id: request.id, name: request.name, size: request.size, digest: request.digest }));
+      const request = pending.current ?? { id: crypto.randomUUID(), name: file.name, size: file.size, digest, attach: !!pasted };
+      sessionStorage.setItem(storageKey, JSON.stringify({ id: request.id, name: request.name, size: request.size, digest: request.digest, attach: request.attach }));
       pending.current = { ...request, file };
       const response = await fetch(`${path}/${request.id}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) }, body: file }).catch(() => { throw new Error('Connection lost. Try the same upload again.'); });
       const result = await response.json();
       if (!response.ok) throw new HttpError(response.status, result.error ?? 'Upload failed.');
       setFiles(current => [result, ...current.filter(file => file.id !== result.id)]);
+      if (request.attach) attachUploaded(result.id);
       clearUpload(request.id); setSelected(null); if (input.current) input.current.value = '';
+      return true;
     } catch (error) {
       if (error instanceof HttpError && error.status < 500 && error.status !== 409) {
         try { if (pending.current) clearUpload(pending.current.id); } catch { /* Retain retry identity if browser storage is unavailable. */ }
@@ -170,6 +189,7 @@ function ConversationFiles({ path, archived, attached, onAttach, locked, open, o
       const result = await api<StoredFile & { digest: string }>(`${path}/${request.id}?metadata=1`);
       if (result.name !== request.name || result.size !== request.size || result.digest !== request.digest) throw new Error('Receipt does not match the pending upload.');
       setFiles(current => [result, ...current.filter(file => file.id !== result.id)]);
+      if (request.attach) attachUploaded(result.id);
       clearUpload(request.id); setSelected(null); if (input.current) input.current.value = '';
     } catch (error) { setError(error instanceof HttpError && error.status === 404 ? 'Upload was not saved. Select the original file again to continue.' : message(error)); }
     finally { setBusy(false); }
@@ -182,7 +202,7 @@ function ConversationFiles({ path, archived, attached, onAttach, locked, open, o
     } catch (error) { setError(message(error)); }
     finally { setBusy(false); }
   }
-  return <div className="k-stack bs-root"><Collapsible variant="section" title="Conversation files" open={open} onOpenChange={onOpenChange}>
+  return <div className="conversation-files k-stack bs-root"><Collapsible variant="section" title="Conversation files" open={open} onOpenChange={onOpenChange}>
     <div className="k-stack">
       <p className="k-field__hint">Maximum 10 MiB per file. Select attachments to send with your next message. Up to four attachments: 32 KiB total UTF-8 text and 4 MiB total PNG/JPEG/WebP images. Select a model that supports images.</p>
       {open && <AudioRecorder disabled={archived || busy || loading || !!pending.current || !!selected} onRecording={setRecording} onReady={file => { setSelected(file); if (input.current) input.current.value = ''; }} />}
@@ -292,6 +312,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   const focusHistory = useRef(false);
   const focusedOnce = useRef('');
   const loadedTask = useRef<string | null>(null);
+  const [pastedFiles, setPastedFiles] = useState<File[]>([]);
   const attachmentKey = `briefsip:attachments:${scope}`;
   const [attached, setAttached] = useState<string[]>(() => { try { const ids = JSON.parse(sessionStorage.getItem(attachmentKey) ?? '[]'); return Array.isArray(ids) && ids.length <= 4 && ids.every(id => typeof id === 'string') ? ids : []; } catch { return []; } });
   function attach(ids: string[]) { try { sessionStorage.setItem(attachmentKey, JSON.stringify(ids)); setAttached(ids); } catch { setError('Attachment selection was not saved. Check browser storage.'); } }
@@ -354,7 +375,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   useEffect(() => { setDispatchMode('queue'); }, [dispatchTarget?.id]);
   async function send(event: FormEvent, forcedMode?: 'queue' | 'steer') {
     event.preventDefault();
-    if (requestActive.current || blocked || (!pending && !draft.trim())) return;
+    if (requestActive.current || pastedFiles.length || blocked || (!pending && !draft.trim())) return;
     if (archived) { setError('Restore the conversation before sending a new message.'); return; }
     const mode = dispatchTarget ? forcedMode ?? dispatchMode : 'queue';
     const request = pending ?? { id: crypto.randomUUID(), text: draft.trim(), ...(mode !== 'queue' ? { dispatchMode: mode, targetTurn: dispatchTarget!.id, ...(channel ? { recipient: dispatchTarget!.agent } : {}) } : {}), ...(attached.length ? { files: attached } : {}),  };
@@ -489,10 +510,10 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
             { value: 'restart', label: 'Restart' },
           ]} />
         </div>}
-        <ChatComposer mentions={channel ? members : []} onMention={value => { setDraft(value); try { sessionStorage.setItem(draftKey, value); } catch { setError('Draft was not saved. Copy your message before leaving.'); } }} label={`Message ${agent.name}`} inputRef={composer} multiline={draft.includes('\n')} onSubmit={send} onSendKey={event => { void send(event, (event.ctrlKey || event.metaKey) && canSteer ? 'steer' : 'queue'); }} onAttach={openFiles}
+        <ChatComposer onPasteFiles={files => { if (pastedFiles.length) { setError('Wait for pasted files to finish uploading.'); return; } setPastedFiles(files); openFiles(); }} mentions={channel ? members : []} onMention={value => { setDraft(value); try { sessionStorage.setItem(draftKey, value); } catch { setError('Draft was not saved. Copy your message before leaving.'); } }} label={`Message ${agent.name}`} inputRef={composer} multiline={draft.includes('\n')} onSubmit={send} onSendKey={event => { void send(event, (event.ctrlKey || event.metaKey) && canSteer ? 'steer' : 'queue'); }} onAttach={openFiles}
           input={{ id: 'message', value: pending?.text ?? draft, readOnly: blocked || !!pending || busy, onChange: event => { setDraft(event.target.value); try { sessionStorage.setItem(draftKey, event.target.value); } catch { setError('Draft was not saved in the browser. Copy the message before switching agents.'); } } }}
           busy={busy} retry={!!pending}
-          sendDisabled={blocked || archived || !configured || busy || (!pending && !draft.trim())}
+          sendDisabled={!!pastedFiles.length || blocked || archived || !configured || busy || (!pending && !draft.trim())}
           sendLabel={busy ? 'Sending...' : pending ? 'Retry send' : dispatchTarget ? dispatchMode === 'queue' ? 'Queue message' : dispatchMode === 'steer' ? canSteer ? 'Steer turn' : 'Steer by restarting turn' : 'Restart turn' : 'Send message'}
           sendTitle={pending ? 'Retry send' : dispatchTarget ? `${dispatchMode === 'queue' ? 'Queue' : dispatchMode === 'steer' ? 'Steer' : 'Restart'} message` : 'Send (Enter)'} />
         <p className="composer__foot" title="Provider receives up to 40 previous conversations.">{focusedTask ? channel ? 'Task family shown · ' : 'Selected message shown · ' : query ? 'Up to 100 results per page · ' : before ? 'Up to 100 older messages per page · ' : ''}{dispatchTarget ? `Enter to queue${canSteer ? ', Ctrl/Cmd+Enter to steer' : ''}` : 'Enter to send'}, Shift+Enter for a new line</p>
@@ -530,7 +551,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
               {detailsExtra?.activity}
               <Collapsible variant="section" title="Event waits"><div className="k-stack">{turns?.some(turn => turn.events?.some(event => event.status === 'waiting')) ? turns.flatMap(turn => turn.events?.filter(event => event.status === 'waiting').map(event => <div key={event.id} className="k-stack"><button type="button" className="panel-row panel-row--link" onClick={() => openFocused(turn.id)}><span className="panel-row__text"><span className="panel-row__title">{event.event}</span><time className="panel-row__meta" dateTime={new Date(event.deadline).toISOString()}>{new Date(event.deadline).toLocaleString('en-US')}</time></span></button>{!archived && <EventConnection path={`/api/turn-waits/${event.id}`} request={api} />}</div>)) : <p className="panel-empty">No event waits in this view.</p>}</div></Collapsible>
             </div></TabPanel>
-            <TabPanel value="library"><div className="details__sections"><section><div className="section-label">Memory and context</div><div className="panel-card"><button ref={memoryButton} type="button" className="panel-row panel-row--action" onClick={() => setShowMemory(true)}><Brain size={16} aria-hidden /> {channel ? 'Channel' : 'Agent'} memory</button></div><CompactionPanel path={path.replace(/\/turns$/, '/compaction')} request={api} /></section><section ref={filesSection}><ConversationFiles path={path.replace(/\/turns$/, '/files')} archived={archived} attached={pending?.files ?? attached} onAttach={attach} locked={blocked || !!pending || busy} open={filesOpen} onOpenChange={setFilesOpen} /></section>{sourceControl ?? (!channel && (agent as Agent).workspace_connected && <SourceControl key={agent.id} agent={agent.id} request={api} />)}{detailsExtra?.library}</div></TabPanel>
+            <TabPanel value="library"><div className="details__sections"><section><div className="section-label">Memory and context</div><div className="panel-card"><button ref={memoryButton} type="button" className="panel-row panel-row--action" onClick={() => setShowMemory(true)}><Brain size={16} aria-hidden /> {channel ? 'Channel' : 'Agent'} memory</button></div><CompactionPanel path={path.replace(/\/turns$/, '/compaction')} request={api} /></section><section ref={filesSection}><ConversationFiles pastedFiles={pastedFiles} onPasteSettled={() => setPastedFiles([])} path={path.replace(/\/turns$/, '/files')} archived={archived} attached={pending?.files ?? attached} onAttach={attach} locked={blocked || !!pending || busy} open={filesOpen} onOpenChange={setFilesOpen} /></section>{sourceControl ?? (!channel && (agent as Agent).workspace_connected && <SourceControl key={agent.id} agent={agent.id} request={api} />)}{detailsExtra?.library}</div></TabPanel>
           </Tabs>
         </div>
       </div>

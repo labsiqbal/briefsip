@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canNotify, isAllowedExternal, isAllowedNavigation, parseServerUrl, trustedSender, validateServer } from './policy.mjs';
+import { canGrantPermission, canNotify, isAllowedExternal, isAllowedNavigation, parseServerUrl, trustedSender, validateServer } from './policy.mjs';
 
 test('server URL validation permits HTTPS or loopback HTTP, rejects unsafe and ambiguous URLs', () => {
   for (const url of ['https://nuc.example.ts.net:4317', 'http://localhost:4317', 'http://127.0.0.1:4317', 'http://[::1]:4317']) assert.ok(parseServerUrl(url));
@@ -44,4 +44,15 @@ test('validation accepts environment metadata, rejects redirects, wrong app, HTT
 
 test('validation bounds identity responses from untrusted servers', async () => {
   await assert.rejects(validateServer('https://nuc.test', async () => new Response('x'.repeat(512 * 1024 + 1))), /exceeds 512 KiB/);
+});
+
+test('clipboard grants require configured origin and main frame; other permissions stay denied', () => {
+  const server = 'https://nuc.example.ts.net:4317/';
+  for (const permission of ['clipboard-read', 'clipboard-sanitized-write', 'notifications']) {
+    assert.equal(canGrantPermission(permission, server, server, { isMainFrame: true }), true);
+    for (const details of [{ isMainFrame: false }, {}, undefined]) assert.equal(canGrantPermission(permission, server, server, details), false);
+    for (const url of ['https://other.test', 'https://nuc.example.ts.net:4318', 'http://nuc.example.ts.net:4317', 'file:///app/connect.html', 'about:blank', undefined]) assert.equal(canGrantPermission(permission, url, server, { isMainFrame: true }), false);
+    assert.equal(canGrantPermission(permission, server, null, { isMainFrame: true }), false);
+  }
+  for (const permission of ['camera', 'media', 'geolocation', 'clipboard-write', 'deprecated-sync-clipboard-read', 'unknown']) assert.equal(canGrantPermission(permission, server, server, { isMainFrame: true }), false);
 });

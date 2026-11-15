@@ -1,3 +1,4 @@
+import { copyText } from './ui/clipboard';
 import { getNonce } from 'get-nonce';
 import { useEffect, useRef, useState } from 'react';
 import { Copy, Ellipsis, KeyRound, Plus, RefreshCw } from 'lucide-react';
@@ -33,7 +34,7 @@ export function McpServerPanel({ request }: { request: <T>(path: string, body?: 
     void request<NonNullable<typeof page>>(path).then(result => { if (mounted.current && version === reads.current) setPage(result); }).catch(error => { if (mounted.current && version === reads.current) setError(error.message); });
     return () => { reads.current++; };
   }, [refresh]);
-  async function copy(value: string) { try { await navigator.clipboard.writeText(value); if (mounted.current) setNotice('Copied.'); } catch { if (mounted.current) setError('Could not copy. Select the text and copy it manually.'); } }
+  async function copy(value: string) { try { await copyText(value); if (mounted.current) { setError(''); setNotice('Copied.'); } } catch { if (mounted.current) { setNotice(''); setError('Could not copy. Select the text and copy it manually.'); } } }
   async function execute(command: Command) {
     if (flight.current || busy || invalid) return;
     flight.current = true; setBusy(true); setError(''); setNotice(''); setSecret('');

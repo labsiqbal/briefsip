@@ -5,7 +5,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell, session, screen } from 'electron';
 import electronUpdater from 'electron-updater';
 import { addServer, readSettings, removeServer, resolveWindowBounds, writeSettings } from './settings.mjs';
-import { canNotify, isAllowedExternal, isAllowedNavigation, parseServerUrl, trustedSender, validateServer } from './policy.mjs';
+import { canGrantPermission, canNotify, isAllowedExternal, isAllowedNavigation, parseServerUrl, trustedSender, validateServer } from './policy.mjs';
+import { installContextMenu } from './context-menu.mjs';
 import { configureUpdates } from './updates.mjs';
 
 const isDev = !app.isPackaged;
@@ -64,9 +65,11 @@ function buildMenu() {
 }
 function configurePermissions() {
   session.defaultSession.setPermissionRequestHandler((contents, permission, done, details) => {
-    done(contents === mainWindow?.webContents && details.isMainFrame && canNotify(permission, details.requestingUrl, configuredUrl));
+    done(contents === mainWindow?.webContents && canGrantPermission(permission, details.requestingUrl, configuredUrl, details));
   });
-  session.defaultSession.setPermissionCheckHandler((_contents, permission, origin) => canNotify(permission, origin, configuredUrl));
+  session.defaultSession.setPermissionCheckHandler((contents, permission, origin, details) =>
+    permission === 'notifications' ? canNotify(permission, origin, configuredUrl) :
+      contents === mainWindow?.webContents && canGrantPermission(permission, origin, configuredUrl, details));
 }
 function createWindow() {
   mainWindow = new BrowserWindow({ ...resolveWindowBounds(settings.window, screen.getAllDisplays().map((display) => display.workArea)),
@@ -77,6 +80,7 @@ function createWindow() {
   mainWindow.on('close', saveWindowState);
   mainWindow.on('closed', () => { mainWindow = null; });
   const contents = mainWindow.webContents;
+  installContextMenu(mainWindow, contents, () => configuredUrl, connectUrl);
   contents.setWindowOpenHandler(({ url }) => { openLink(url); return { action: 'deny' }; });
   contents.on('will-attach-webview', (event) => event.preventDefault());
   contents.on('will-frame-navigate', (event) => {
