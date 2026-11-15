@@ -62,7 +62,7 @@ import { sendAgentMessage } from './agent-messages.ts';
 type Script = (body: any) => Promise<{ name: string; args: unknown } | string> | { name: string; args: unknown } | string;
 async function fixture(script: Script, agentLimits?: Partial<AgentLimits>) {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-delegation-')), calls: any[] = [];
-  const provider = createServer(async (req, res) => {
+  const provider = createServer({ keepAliveTimeout: 0 }, async (req, res) => {
     let raw = ''; for await (const part of req) raw += part;
     const body = JSON.parse(raw); calls.push(body);
     try {
@@ -76,7 +76,7 @@ async function fixture(script: Script, agentLimits?: Partial<AgentLimits>) {
   let app = await startApp(options), stopped = false;
   const stop = async () => { if (!stopped) { await app.close(); stopped = true; } };
   const api = async (path: string, body?: unknown) => {
-    const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json', Connection: 'close' }, body: body ? JSON.stringify(body) : undefined });
     const value = await response.json(); assert(response.ok, JSON.stringify(value)); return value;
   };
   const until = async (path: string, predicate: (rows: any[]) => boolean): Promise<any[]> => {

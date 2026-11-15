@@ -13,7 +13,7 @@ test('new user turns capture only ready same-scope group replies once across ret
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-reply-capture-'));
   const calls: any[] = [], release: (() => void)[] = [];
   let targets: string[] = [], holdGamma = true, failConsumer = true;
-  const provider = createServer(async (req, res) => {
+  const provider = createServer({ keepAliveTimeout: 0 }, async (req, res) => {
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString()); calls.push(body);
     const prompt = body.messages.filter((m: any) => m.role === 'user').at(-1).content;

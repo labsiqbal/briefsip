@@ -6,6 +6,7 @@ import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './server.ts';
 import { restoreRemoteMessage } from './remote-message-command.ts';
@@ -20,7 +21,7 @@ test('remote message recovery keeps exact target, ID and payload and rejects cor
 async function api(app:App,path:string,body?:unknown,status=200):Promise<any>{const r=await fetch(app.origin+path,{method:body===undefined?'GET':'POST',headers:{Origin:app.origin,'Content-Type':'application/json',Connection:'close'},body:body===undefined?undefined:JSON.stringify(body)});const value=await r.json();assert.equal(r.status,status,JSON.stringify(value));return value;}
 async function until(check:()=>Promise<any>){const end=Date.now()+20000;while(Date.now()<end){const result=await check();if(result)return result;await new Promise(r=>setTimeout(r,30));}assert.fail('Remote fixture timed out');}
 async function fixture(script:(body:any)=>any,limits={}){
-  const dir=mkdtempSync(join(process.cwd(),'node_modules/.remote-agents-'));
+  const dir=mkdtempSync(join(tmpdir(),'briefsip-remote-agents-'));
   const provider=createServer(async(req,res)=>{let raw='';for await(const c of req)raw+=c;try{const result=await script(JSON.parse(raw)),message=typeof result==='string'?{content:result}:{tool_calls:[{id:randomUUID(),type:'function',function:{name:result.name,arguments:JSON.stringify(result.args)}}]};res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{finish_reason:typeof result==='string'?'stop':'tool_calls',message}]}));}catch{res.writeHead(500);res.end('{}');}});
   await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));const address=provider.address();assert(address&&typeof address!=='string');
   const common={baseURL:`http://127.0.0.1:${address.port}/v1`,agentLimits:limits}, aOptions={...common,database:join(dir,'a.sqlite')},bOptions={...common,database:join(dir,'b.sqlite')};let a=await startApp(aOptions),b=await startApp(bOptions);
