@@ -1,6 +1,7 @@
 import { ArrowUp, ChevronDown, Plus } from 'lucide-react';
 import { forwardRef, useId, useLayoutEffect, useRef, useState, type ComponentProps, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { AgentAvatar } from '../AgentAvatar';
+import { Tooltip } from './kit';
 
 type ChatAgent = ComponentProps<typeof AgentAvatar>['agent'];
 
@@ -27,7 +28,7 @@ export function ChatEmptyState({ agent, title = agent.name, children }: { agent:
 }
 
 export function HumanMessage({ text, label = 'Your message', attachments, children }: { text: string; label?: string; attachments?: ReactNode; children: ReactNode }) {
-  return <div className="human-message" tabIndex={0} aria-label={label}><div className="human-bubble message-plain">{text}</div>{attachments}<div className="turn-meta human-meta">{children}</div></div>;
+  return <div className="human-message" tabIndex={-1} aria-label={label}><div className="human-bubble message-plain">{text}</div>{attachments}<div className="turn-meta human-meta">{children}</div></div>;
 }
 
 export function AgentMessage({ identity, children }: { identity?: ReactNode; children: ReactNode }) {
@@ -38,8 +39,8 @@ export function TurnStatus({ tone, label, model }: { tone: string; label: string
   return <div className="turn-meta agent-meta"><span className={`turn-status is-${tone}`}><i aria-hidden />{label}</span>{model && <span className="turn-model" title="Answering model">{model}</span>}</div>;
 }
 
-export function ChatComposer({ label, input, inputRef, onSubmit, onSendKey, onAttach, attachmentDisabledReason, recipient, actions, busy, retry, sendDisabled, sendLabel, sendTitle, multiline, mentions = [], onMention, onPasteFiles }: {
-  onPasteFiles?: (files: File[]) => void;
+export function ChatComposer({ label, input, inputRef, onSubmit, onSendKey, onAttach, attachmentDisabledReason, recipient, actions, busy, retry, sendDisabled, sendLabel, sendTitle, stopAction, multiline, mentions = [], onMention, onPasteFiles }: {
+  onPasteFiles?: (files: File[]) => void; stopAction?: ReactNode;
   mentions?: { id: string; name: string; role: string }[]; onMention?: (value: string) => void;
   label: string; input: ComponentProps<'textarea'>; inputRef?: RefObject<HTMLTextAreaElement | null>; onSubmit: (event: FormEvent) => void; onSendKey: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onAttach?: () => void; attachmentDisabledReason?: string; recipient?: ReactNode; actions?: ReactNode; busy: boolean; retry: boolean; sendDisabled: boolean; sendLabel: string; sendTitle: string; multiline?: boolean;
@@ -89,13 +90,30 @@ export function ChatComposer({ label, input, inputRef, onSubmit, onSendKey, onAt
       }} />
     </div>
     <div className="composer__toolbar">
-      <span className="composer__plus-anchor" title={attachmentDisabledReason}><button type="button" className="composer__btn" onClick={onAttach} disabled={!onAttach || !!attachmentDisabledReason} aria-label="Attach conversation file" title={attachmentDisabledReason ?? 'Attach file'}><Plus size={16} aria-hidden /></button></span>
+      <Tooltip content={attachmentDisabledReason ?? 'Attach file'}><span className="composer__plus-anchor"><button type="button" className="composer__btn" onClick={onAttach} disabled={!onAttach || !!attachmentDisabledReason} aria-label="Attach conversation file" title={attachmentDisabledReason ?? 'Attach file'}><Plus size={16} aria-hidden /></button></span></Tooltip>
       {recipient}
       <div className="composer__right">
         {retry && !busy && <span className="composer__retry">Retry send</span>}
         {actions}
-        <button type="submit" className="composer__cta" disabled={sendDisabled} aria-label={sendLabel} title={sendTitle}>{busy ? <span className="step__spin" aria-hidden /> : <ArrowUp size={16} aria-hidden />}</button>
+        {(!stopAction || value.trim() || retry) && <Tooltip content={sendTitle}><button type="submit" className="composer__cta" disabled={sendDisabled} aria-label={sendLabel} title={sendTitle}>{busy ? <span className="step__spin" aria-hidden /> : <ArrowUp size={16} aria-hidden />}</button></Tooltip>}
+        {stopAction}
       </div>
     </div>
   </form>;
+}
+
+// One tab stop per turn; arrows reach its links and actions without delaying composer access.
+export function ChatTurn({ children, ...props }: ComponentProps<'article'>) {
+  const ref = useRef<HTMLElement>(null);
+  const selector = 'button:not(:disabled), a[href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [contenteditable="true"]';
+  useLayoutEffect(() => { ref.current?.querySelectorAll<HTMLElement>(selector).forEach(element => { if (!element.closest('form')) element.tabIndex = -1; }); }, [children]);
+  return <article {...props} ref={ref} tabIndex={0} onKeyDown={event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) || (event.target as HTMLElement).closest('input, textarea, select, [contenteditable="true"], [role="menu"], [role="dialog"], [role="listbox"]')) return;
+    const actions = Array.from(ref.current?.querySelectorAll<HTMLElement>(selector) ?? []).filter(element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden');
+    if (!actions.length) return;
+    event.preventDefault();
+    const current = actions.indexOf(document.activeElement as HTMLElement);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? actions.length - 1 : current < 0 ? event.key === 'ArrowRight' ? 0 : actions.length - 1 : (current + (event.key === 'ArrowRight' ? 1 : actions.length - 1)) % actions.length;
+    actions[next]?.focus();
+  }}>{children}</article>;
 }

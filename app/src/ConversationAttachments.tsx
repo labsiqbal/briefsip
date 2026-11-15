@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Ellipsis, Eye, Mic, RefreshCw, X } from 'lucide-react';
+import { Ellipsis, Eye, RefreshCw, X } from 'lucide-react';
 import { AudioRecorder } from './AudioRecorder';
 import { TranscriptionPanel } from './TranscriptionPanel';
 import { HtmlPreview } from './HtmlPreview';
@@ -29,7 +29,6 @@ export function useConversationAttachments({ path, archived, attached, onAttach,
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [more, setMore] = useState(false);
   const [loading, setLoading] = useState(false), [reload, setReload] = useState(0);
   const [selected, setSelected] = useState<File | null>(null), [recording, setRecording] = useState(false);
-  const [recordingOpen, setRecordingOpen] = useState(false);
   const [preview, setPreview] = useState<StoredFile | null>(null), [previewText, setPreviewText] = useState<string | null>(null), [previewError, setPreviewError] = useState('');
   const pending = useRef<Upload | null>(recovered);
   const pasteSeen = useRef<File[] | undefined>(undefined);
@@ -141,7 +140,6 @@ export function useConversationAttachments({ path, archived, attached, onAttach,
     {selected && !busy && !pending.current && <div className="k-inline"><span className="attachment__name">{selected.name}</span><Button size="sm" onClick={() => selected && void upload(undefined, selected)}>Upload file</Button><Button size="sm" variant="ghost" onClick={() => setSelected(null)}>Remove file</Button></div>}
     {pending.current && <RecoveryAlert inFlight={busy} tone="warn" title={`Upload ${pending.current.name} is not confirmed yet`} actions={<><Button size="sm" disabled={busy || loading} onClick={() => pending.current?.file ? void upload() : choose()}>Retry upload</Button><Button size="sm" disabled={busy || loading} onClick={() => void checkPending()}>Check upload status</Button></>}>Select the same file again or check upload status.</RecoveryAlert>}
     {error && <Alert tone="error" actions={!pending.current && <><IconButton label="Reload files" disabled={busy || loading} onClick={() => setReload(value => value + 1)}><RefreshCw size={14} aria-hidden /></IconButton><IconButton label="Dismiss attachment error" onClick={() => setError('')}><X size={14} aria-hidden /></IconButton></>}>{error}</Alert>}
-    {recordingOpen && <Dialog open onOpenChange={setRecordingOpen} title="Record audio"><AudioRecorder disabled={archived || busy || loading || !!pending.current || !!selected} onRecording={setRecording} onReady={file => { setSelected(file); setRecordingOpen(false); }} /></Dialog>}
   </div>;
   const library = <section className="conversation-files k-stack bs-root" aria-label="Attachments"><div className="section-label">Attachments</div>
     {loading ? <SkeletonRows /> : files.length === 0 ? <EmptyState title="No files yet" /> : <>
@@ -154,5 +152,5 @@ export function useConversationAttachments({ path, archived, attached, onAttach,
     {more && <Button size="sm" disabled={busy} onClick={() => void loadMore()}>Earlier files</Button>}
     {preview && <Dialog open onOpenChange={open => { if (!open) setPreview(null); }} title={preview.name}>{previewError ? <Alert tone="error">{previewError}</Alert> : previewText === null ? <p role="status">Loading preview...</p> : <CodeBlock label={`Preview ${preview.name}`}>{previewText || '(Empty file)'}</CodeBlock>}</Dialog>}
   </section>;
-  return { composer, library, choose, uploading: busy || recording, recordingAction: <IconButton label="Record audio" disabled={disabled || !!pending.current || !!selected} onClick={() => setRecordingOpen(true)}><Mic size={14} aria-hidden /></IconButton> };
+  return { composer, library, choose, uploading: busy || recording, recordingAction: <AudioRecorder disabled={archived || locked || busy || loading || !!pastedFiles.length || !!pending.current || !!selected || attached.length >= 4} onRecording={setRecording} onReady={file => onFiles([file])} /> };
 }
