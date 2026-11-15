@@ -1,10 +1,11 @@
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { Tabs as RadixTabs } from 'radix-ui';
-import { Ellipsis } from 'lucide-react';
+import { Brain, Ellipsis, Globe } from 'lucide-react';
 import { restoreAgentCreation, type AgentCreation } from '../agent-create';
 import { AgentAvatar, AvatarEditor } from './AgentAvatar';
 import { MascotAvatar } from './ui/avatar-shapes';
+import { CompactionPanel } from './CompactionPanel';
 import { AgentComputerSettings } from './AgentComputerSettings';
 import { AgentVisibility } from './AgentVisibility';
 import { ActionMenu, Alert, Button, Collapsible, Combobox, Dialog, Field, IconButton, Input, RecoveryAlert, Segmented, Select, Tabs, Textarea, Tooltip, useConfirm, type SelectOption } from './ui/kit';
@@ -12,6 +13,8 @@ import { ActionMenu, Alert, Button, Collapsible, Combobox, Dialog, Field, IconBu
 import './agent-profile.css';
 
 const AgentTemplateExport = lazy(() => import('./AgentTemplateImport').then(module => ({ default: module.AgentTemplateExport })).catch(() => ({ default: () => <Alert tone="error" actions={<Button onClick={() => window.location.reload()}>Reload app</Button>}>Panel could not be loaded</Alert> })));
+const MemoryPanel = lazy(() => import('./MemoryPanel').then(module => ({ default: module.MemoryPanel })));
+const SitesPanel = lazy(() => import('./SitesPanel').then(module => ({ default: module.SitesPanel })));
 const message = (error: unknown) => error instanceof Error ? error.message : 'Connection failed. Try again.';
 
 export type Agent = { workspace_connected?: boolean; runtime?: 'api' | 'codex' | 'claude'; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; thread_limit: number; tool_budget?: number; revision: number; id: string; name: string; role: string; model: string; instructions: string };
@@ -27,6 +30,10 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
   const [tab, setTab] = useState(focusComputer ? 'access' : 'profile');
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [resource, setResource] = useState<'memory' | 'sites' | null>(null);
+  const resourceTrigger = useRef<HTMLElement | null>(null);
+  function openResource(value: 'memory' | 'sites') { resourceTrigger.current = document.activeElement as HTMLElement; setResource(value); }
+  function closeResource() { setResource(null); requestAnimationFrame(() => resourceTrigger.current?.focus()); }
   const exportTrigger = useRef<HTMLButtonElement>(null), exportWasOpen = useRef(false);
   useEffect(() => {
     if (exportWasOpen.current && !exportOpen) requestAnimationFrame(() => exportTrigger.current?.focus());
@@ -202,7 +209,13 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
               {/* Force-mounted panels keep all staged values in FormData, including coding-runtime API settings. */}
               <RadixTabs.Content forceMount value="profile" hidden={tab !== 'profile'} className="k-tabs__panel">{profileFields}</RadixTabs.Content>
               <RadixTabs.Content forceMount value="model" hidden={tab !== 'model'} className="k-tabs__panel">{modelFields}</RadixTabs.Content>
-              <RadixTabs.Content forceMount value="advanced" hidden={tab !== 'advanced'} className="k-tabs__panel">{advancedFields}</RadixTabs.Content>
+              <RadixTabs.Content forceMount value="advanced" hidden={tab !== 'advanced'} className="k-tabs__panel">{advancedFields}
+                <div className="details-list">
+                  <Button variant="ghost" icon={<Brain size={16} aria-hidden />} onClick={() => openResource('memory')}>Agent memory</Button>
+                  <CompactionPanel path={`/api/agents/${profile.id}/compaction`} request={api} />
+                  <Button variant="ghost" icon={<Globe size={16} aria-hidden />} onClick={() => openResource('sites')}>Agent sites</Button>
+                </div>
+              </RadixTabs.Content>
             </> : <>
               <Segmented label="How to create an agent" value={setup ? 'describe' : 'manual'} disabled={busy || locked || invalid} onChange={value => setSetup(value === 'describe')} options={[{ value: 'manual', label: 'Manual' }, { value: 'describe', label: 'Draft with AI' }]} />
               {profileFields}{modelFields}
@@ -217,6 +230,9 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
         {error && <Alert tone="error">{error}</Alert>}
       </div>
     </Dialog>
+    {profile && resource && <Dialog open size="lg" title={resource === 'memory' ? 'Agent memory' : 'Agent sites'} onOpenChange={open => { if (!open) closeResource(); }}>
+      <Suspense fallback={<p role="status">Loading...</p>}>{resource === 'memory' ? <MemoryPanel channel={false} archived={false} path={`/api/agents/${profile.id}/memory`} request={api} onClose={closeResource} /> : <SitesPanel agent={profile.id} request={api} />}</Suspense>
+    </Dialog>}
     {profile && exportOpen && <Dialog open size="lg" title="Export template" description={profile.name} onOpenChange={setExportOpen} footer={<Button onClick={() => setExportOpen(false)}>Done</Button>}><Suspense fallback={<p role="status">Loading saved profile...</p>}><AgentTemplateExport id={profile.id} request={api} /></Suspense></Dialog>}
     {!profile && <Dialog open={avatarOpen} size="md" title="Avatar" onOpenChange={setAvatarOpen} footer={<Button onClick={() => setAvatarOpen(false)}>Done</Button>}><Suspense fallback={<p role="status">Loading avatar picker...</p>}><LookPicker value={look} onChange={setLook} disabled={busy || locked || invalid} /></Suspense></Dialog>}
     {profile && onVisibilityChanged && avatarOpen && <AvatarEditor agent={profile.id} request={api} onChanged={onVisibilityChanged} onClose={() => setAvatarOpen(false)} />}

@@ -1,6 +1,8 @@
 import { readClipboardText } from './ui/clipboard';
 import { MessageCopyButton } from './ui/MessageCopyButton';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useVisiblePolling } from './useVisiblePolling';
+import { useComputerSettings } from './AgentComputerSettings';
 import RFB from '@novnc/novnc';
 import { ClipboardType, Ellipsis, ExternalLink, Monitor, RefreshCw, X } from 'lucide-react';
 import { ActionMenu, ActionPopover, Alert, Badge, Button, Card, Field, IconButton, Input, useConfirm, RecoveryAlert } from './ui/kit';
@@ -23,15 +25,12 @@ export function useComputerControl(agent: string, request: ComputerRequest) {
         setPending(saved);
       }
     } catch { setInvalid(true); }
-    let stopped = false, timer: ReturnType<typeof setTimeout>;
-    async function refresh() {
-      try { const value = await request<ComputerStatus>(`/api/agents/${agent}/computer`); if (!stopped && !flight.current) setStatus(value); }
-      catch (error) { if (!stopped) setError(error instanceof Error ? error.message : 'Computer status unavailable.'); }
-      if (!stopped) timer = setTimeout(refresh, 1000);
-    }
-    void refresh();
-    return () => { mounted.current = false; stopped = true; clearTimeout(timer); };
+    return () => { mounted.current = false; };
   }, [agent, request, key]);
+  const ref = useVisiblePolling(useCallback(async current => {
+    try { const value = await request<ComputerStatus>(`/api/agents/${agent}/computer`); if (current() && !flight.current) { setStatus(value); } }
+    catch (error) { if (current()) setError(error instanceof Error ? error.message : 'Computer status unavailable.'); }
+  }, [agent, request]), 1000);
   async function control(operation: ControlCommand['operation'], turn?: string) {
     if (!status || flight.current || invalid) return;
     if (!pending && operation === 'take' && !confirmed.current) {
@@ -62,12 +61,12 @@ export function useComputerControl(agent: string, request: ComputerRequest) {
     {pending && <RecoveryAlert inFlight={busy} progress={false} tone="warn" title="Control change not confirmed" actions={<><Button size="sm" variant="primary" onClick={() => void control(pending.operation, pending.turn)}>Retry saved request</Button><Button size="sm" onClick={() => void discard()}>Load current control</Button></>}>Couldn't confirm the change. Retry to finish it, or load the latest status.</RecoveryAlert>}
     {invalid && <Alert tone="error" title="Saved control request could not be read" actions={<Button size="sm" onClick={() => void discard()}>Load current control</Button>}>Check the latest computer status before sending another request.</Alert>}
   </>;
-  return { status, setStatus, control, setError, busy, locked: busy || !!pending || invalid, recovery };
+  return { ref, status, setStatus, control, setError, busy, locked: busy || !!pending || invalid, recovery };
 }
 
 export function ComputerRequestCard({ agent, name, wait, request }: { agent: string; name: string; wait: ComputerWait; request: ComputerRequest }) {
   const controls = useComputerControl(agent, request);
-  return <div className="bs-root computer-request"><Card>
+  return <div ref={controls.ref} className="bs-root computer-request"><Card>
     <p><strong>{name} needs you to take over: {wait.reason || 'The user is controlling this computer.'}</strong></p>
     <div className="k-inline">{controls.status?.control.mode === 'user'
       ? <Button size="sm" busy={controls.busy} disabled={controls.locked} onClick={() => void controls.control('hand-back')}>Hand back to agent</Button>
@@ -78,6 +77,7 @@ export function ComputerRequestCard({ agent, name, wait, request }: { agent: str
 
 export function ComputerViewer({ agent, name, request, popout = false, onClose }: { agent: string; name: string; request: ComputerRequest; popout?: boolean; onClose?: () => void }) {
   const controls = useComputerControl(agent, request), { status } = controls;
+  const settings = useComputerSettings(agent, request, controls.setStatus);
   const confirm = useConfirm();
   const [visible, setVisible] = useState(!document.hidden), [text, setText] = useState(''), [screenError, setScreenError] = useState(false), [starting, setStarting] = useState(false), [sendingText, setSendingText] = useState(false);
   const [connected, setConnected] = useState(false), [connection, setConnection] = useState(0), [stopping, setStopping] = useState(false);
@@ -146,8 +146,15 @@ export function ComputerViewer({ agent, name, request, popout = false, onClose }
     return () => window.removeEventListener('keydown', escape, true);
   }, [running, user, controls.locked]);
   async function start() {
-    if (starting) return; setStarting(true);
-    try { controls.setStatus(await request<ComputerStatus>(`/api/agents/${agent}/computer/start`, {})); }
+    if (starting || settings.locked || controls.locked) return; setStarting(true); controls.setError('');
+    try {
+      if (!status?.enabled) {
+        const enabled = await settings.save(true);
+        if (!enabled?.enabled) return;
+        controls.setStatus(enabled);
+      }
+      controls.setStatus(await request<ComputerStatus>(`/api/agents/${agent}/computer/start`, {}));
+    }
     catch (error) { controls.setError(error instanceof Error ? error.message : 'Computer did not start.'); }
     finally { setStarting(false); }
   }
@@ -162,10 +169,11 @@ export function ComputerViewer({ agent, name, request, popout = false, onClose }
   const statusLabel = !status ? 'Loading' : !status.available ? 'Unavailable' : !status.enabled ? 'Disabled' : starting || status.state === 'starting' ? 'Starting' : running ? 'Live' : 'Off';
   const statusTone = statusLabel === 'Live' ? 'success' : statusLabel === 'Starting' ? 'warn' : 'neutral';
   const waits = running ? status?.requests ?? [] : [];
-  const locked = controls.locked || starting || stopping;
+  const locked = controls.locked || settings.locked || starting || stopping;
   const placeholder = !visible ? 'Viewer paused while window is hidden.' : running && screenError ? 'Live screen unavailable.' : !status ? 'Loading computer status...' : !status.available ? 'Computer is disabled on this server.' : !status.enabled ? 'No computer assigned.' : starting || status.state === 'starting' ? 'Starting computer...' : running ? 'Connecting to computer...' : 'Computer is off.';
-  return <div className="computer-viewer bs-root">
-    <header className="computer-viewer__toolbar">
+  return <div ref={controls.ref} className="computer-viewer bs-root">
+    <div ref={settings.section} className="computer-viewer__poll" />
+    <header className="computer-viewer__toolbar" hidden={!running && !onClose}>
       <div className="computer-viewer__identity">
         <div className="computer-viewer__heading"><h2 className="computer-viewer__title" title={`${name}'s computer`}>{name}'s computer</h2>
           <Badge tone={statusTone}><span className={`computer-viewer__status-dot ${statusTone === 'success' ? 'is-live' : statusTone === 'warn' ? 'is-starting' : ''}`} aria-hidden />{statusLabel}</Badge>
@@ -185,21 +193,20 @@ export function ComputerViewer({ agent, name, request, popout = false, onClose }
         {running && (user ? <Button ref={handBack} size="sm" variant="primary" busy={controls.busy} disabled={locked} onClick={() => void controls.control('hand-back')}>Hand back to agent</Button> : <Button size="sm" variant="primary" busy={controls.busy} disabled={!status?.enabled || !status.available || locked} onClick={() => void controls.control('take')}>Take control</Button>)}
         {running && <ActionMenu label="More computer actions" trigger={<IconButton label="More computer actions" disabled={stopping} aria-busy={stopping || undefined}>{stopping ? <span className="k-spinner" aria-hidden /> : <Ellipsis size={16} aria-hidden />}</IconButton>} items={[
           { label: 'Reconnect', icon: <RefreshCw size={14} aria-hidden />, disabled: locked, onSelect: () => setConnection(value => value + 1) },
-          { label: 'Refresh view', icon: <RefreshCw size={14} aria-hidden />, onSelect: () => setConnection(value => value + 1) },
           'separator', { label: 'Stop computer', danger: true, icon: <Monitor size={14} aria-hidden />, disabled: locked, onSelect: () => void stopComputer() },
         ]} />}
         {onClose && <IconButton label="Close" onClick={onClose}><X size={16} aria-hidden /></IconButton>}
       </div>
     </header>
     {!!waits.length && <div className="computer-viewer__requests">{waits.map(wait => <div className="computer-viewer__request" key={wait.turn}><span>{name} needs you to take over: {wait.reason || 'Computer access is waiting for you.'}</span>{!user && <Button size="sm" variant="ghost" disabled={locked} onClick={() => void controls.control('dismiss', wait.turn)}>Dismiss</Button>}</div>)}</div>}
-    {controls.recovery}
+    {controls.recovery}{settings.recovery}
     {!running && user && <p className="computer-viewer__idle-control">You still hold control. <Button size="sm" variant="ghost" busy={controls.busy} disabled={locked} onClick={() => void controls.control('hand-back')}>Hand back</Button></p>}
     <div ref={screen} className={`computer-viewer__screen${running && user ? ' is-controlled' : ''}`} title={running && user ? 'Shift+Escape returns to controls' : undefined} role={running ? 'application' : undefined} aria-label={running ? `${name}'s computer. Click to send keys. Shift+Escape returns to controls.` : undefined}>
       {running && <div ref={canvas} className="computer-viewer__canvas" aria-label={`${name}'s live computer screen`} />}
       {(!running || !visible || !connected) && <div className="computer-viewer__empty" role="status" aria-live="polite">
         {(starting || status?.state === 'starting' || running && visible && !screenError) ? <span className="k-spinner computer-viewer__spinner" aria-hidden /> : <Monitor size={28} strokeWidth={1.5} aria-hidden />}
-        <p>{placeholder}</p>
-        {screenError && running ? <><span className="computer-viewer__empty-hint">Close another viewer if three are already open.</span><Button size="sm" onClick={() => setConnection(value => value + 1)}>Reconnect</Button></> : !running && status?.enabled && status.available && !starting && status.state !== 'starting' && <Button size="sm" variant="primary" disabled={locked} onClick={() => void start()}>Start computer</Button>}
+        {(running || starting || status?.state === 'starting' || !status) && <p>{placeholder}</p>}
+        {screenError && running ? <><span className="computer-viewer__empty-hint">Close another viewer if three are already open.</span><Button size="sm" onClick={() => setConnection(value => value + 1)}>Reconnect</Button></> : !running && status?.available && !starting && status.state !== 'starting' && <Button size="sm" variant="primary" disabled={locked} onClick={() => void start()}>Turn on computer</Button>}
       </div>}
     </div>
   </div>;

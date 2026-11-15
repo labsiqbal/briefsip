@@ -848,7 +848,7 @@
       "symbols": [
         "RightPanelTabs"
       ],
-      "adaptation": "Adapted T3 icon-and-label overflow tab bar, applicable-surface filtering and selected-surface fallback into Briefsip Radix Tabs. Browser tab remains one-line extension point.",
+      "adaptation": "Adapt T3 icon-and-label overflow and selected-surface fallback to one Briefsip Radix row: Chats, Activity, Files, Computer. Files owns source-control and preview drill-downs. Labels remain visible at 360px.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "de3aeb1ec4c7c10e5aefba9a7ca4a0514b10a3e41d11231359545ac683d2f0a3",
       "localPath": "app/src/RightPanel.tsx",
@@ -862,7 +862,7 @@
       "symbols": [
         "RightPanelSheet"
       ],
-      "adaptation": "Adapted contained right-panel sizing and close boundary; Briefsip keeps existing desktop resize handle and local open state.",
+      "adaptation": "Adapt T3 Radix sheet boundary for panels that would leave less than 640px of chat; preserve focus, Escape and backdrop dismissal. Computer defaults to half the window, with separate saved width. Briefsip keeps inline resizing on wider windows.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "67a33d3e35cce125ab4caee3b0cdb250cc7db4d4e0709fb110ea2571829e7d29",
       "localPath": "app/src/RightPanel.tsx",
@@ -890,7 +890,7 @@
       "symbols": [
         "DiffPanelShell"
       ],
-      "adaptation": "Adapted panel-contained header/body and narrow inline layout to Briefsip tokens.",
+      "adaptation": "Adapt panel-contained shell to Briefsip tokens; add responsive overlay sheet and one icon-and-label navigation row.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "a79e8c085fc3e37efb41eeaf233242dd15b5d9b6267558d9c05438f4f73bb866",
       "localPath": "app/src/right-panel.css",
@@ -904,7 +904,7 @@
       "symbols": [
         "PreviewPanelShell"
       ],
-      "adaptation": "Adapted preview address/reload shell semantics to existing HtmlPreview and sanitized local site responses.",
+      "adaptation": "Adapt preview address shell to existing HtmlPreview and sanitized local sites; focus/visible polling replaces manual refresh. Files owns per-row attach actions and inline previews.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "d54df2ef4ea19d539a4853b6ed616659ac316df69ddff9f20b7d687dbf34409c",
       "localPath": "app/src/RightPanelFiles.tsx",

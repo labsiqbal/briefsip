@@ -1,20 +1,18 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Ellipsis, Eye, Mic, RefreshCw, X } from 'lucide-react';
+import { Mic, RefreshCw, X } from 'lucide-react';
 import { AudioRecorder } from './AudioRecorder';
-import { TranscriptionPanel } from './TranscriptionPanel';
-import { HtmlPreview } from './HtmlPreview';
-import { Attachment, Attachments } from './Attachments';
-import { isAttachmentImage, removeAttachment, uploadLimitError } from './attachments';
-import { ActionPopover, Alert, Button, Checkbox, CodeBlock, Dialog, EmptyState, IconButton, RecoveryAlert, SkeletonRows } from './ui/kit';
+import { Attachments } from './Attachments';
+import { removeAttachment, uploadLimitError } from './attachments';
+import { Alert, Button, Dialog, IconButton, RecoveryAlert } from './ui/kit';
 
 type Request = <T>(path: string, data?: unknown) => Promise<T>;
 class HttpError extends Error { status: number; constructor(status: number, text: string) { super(text); this.status = status; } }
 const message = (error: unknown) => error instanceof Error ? error.message : 'Connection failed. Try again.';
 
 // Keep upload receipts in conversation scope, independent of the right panel.
-export function useConversationAttachments({ path, archived, attached, onAttach, locked, pastedFiles, onPasteSettled, onFiles, libraryOpen, api }: {
+export function useConversationAttachments({ path, archived, attached, onAttach, locked, pastedFiles, onPasteSettled, onFiles, filesOpen, api }: {
   path: string; archived: boolean; attached: string[]; onAttach: (ids: string[]) => void; locked: boolean;
-  libraryOpen: boolean; pastedFiles: File[]; onPasteSettled: () => void; onFiles: (files: File[]) => void; api: Request;
+  filesOpen: boolean; pastedFiles: File[]; onPasteSettled: () => void; onFiles: (files: File[]) => void; api: Request;
 }) {
   type StoredFile = { seq: number; id: string; name: string; size: number; image?: boolean };
   type Upload = { id: string; name: string; size: number; digest: string; file?: File; attach?: boolean };
@@ -25,12 +23,11 @@ export function useConversationAttachments({ path, archived, attached, onAttach,
       return value && /^[0-9a-f-]{36}$/i.test(value.id) && typeof value.name === 'string' && Number.isSafeInteger(value.size) && value.size >= 0 && value.size <= 10 * 1024 * 1024 && /^[0-9a-f]{64}$/.test(value.digest) ? { id: value.id, name: value.name, size: value.size, digest: value.digest, attach: value.attach === true } : null;
     } catch { return null; }
   });
-  const [files, setFiles] = useState<StoredFile[]>([]), [metadata, setMetadata] = useState<Record<string, StoredFile>>({});
-  const [error, setError] = useState(''), [busy, setBusy] = useState(false), [more, setMore] = useState(false);
+  const [files, setFiles] = useState<StoredFile[]>([]), [metadata, setMetadata] = useState<Record<string, StoredFile>>({}), [panelCopies, setPanelCopies] = useState<Record<string, string>>({});
+  const [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false), [reload, setReload] = useState(0);
   const [selected, setSelected] = useState<File | null>(null), [recording, setRecording] = useState(false);
   const [recordingOpen, setRecordingOpen] = useState(false);
-  const [preview, setPreview] = useState<StoredFile | null>(null), [previewText, setPreviewText] = useState<string | null>(null), [previewError, setPreviewError] = useState('');
   const pending = useRef<Upload | null>(recovered);
   const pasteSeen = useRef<File[] | undefined>(undefined);
   const attachmentState = useRef({ attached, onAttach });
@@ -49,19 +46,12 @@ export function useConversationAttachments({ path, archived, attached, onAttach,
     if (pending.current?.id === id) pending.current = null;
   }
   useEffect(() => {
-    setPreviewText(null); setPreviewError('');
-    if (!preview) return;
-    let stopped = false;
-    void api<{ text: string }>(`${path}/${preview.id}?preview=text`).then(result => { if (!stopped) setPreviewText(result.text); }).catch(error => { if (!stopped) setPreviewError(message(error)); });
-    return () => { stopped = true; };
-  }, [path, preview]);
-  useEffect(() => {
     if (busy) return;
     let stopped = false;
     setLoading(true);
-    void api<StoredFile[]>(path).then(rows => { if (!stopped) { setFiles(rows); setMore(rows.length === 100); setError(''); } }).catch(error => { if (!stopped) setError(message(error)); }).finally(() => { if (!stopped) setLoading(false); });
+    void api<StoredFile[]>(path).then(rows => { if (!stopped) { setFiles(rows); setError(''); } }).catch(error => { if (!stopped) setError(message(error)); }).finally(() => { if (!stopped) setLoading(false); });
     return () => { stopped = true; };
-  }, [path, reload, libraryOpen]);
+  }, [path, reload, filesOpen]);
   useEffect(() => {
     if (!pastedFiles?.length || pasteSeen.current === pastedFiles || busy || loading) return;
     pasteSeen.current = pastedFiles;
@@ -98,7 +88,7 @@ export function useConversationAttachments({ path, archived, attached, onAttach,
       setFiles(current => [result, ...current.filter(file => file.id !== result.id)]);
       if (request.attach) attachUploaded(result.id);
       clearUpload(request.id); setSelected(null); if (input.current) input.current.value = '';
-      return true;
+      return request.id;
     } catch (error) {
       if (error instanceof HttpError && error.status < 500 && error.status !== 409) {
         try { if (pending.current) clearUpload(pending.current.id); } catch { /* Retain retry identity if browser storage is unavailable. */ }
@@ -119,13 +109,21 @@ export function useConversationAttachments({ path, archived, attached, onAttach,
     } catch (error) { setError(error instanceof Error && 'status' in error && error.status === 404 ? 'Upload was not saved. Select the original file again to continue.' : message(error)); }
     finally { setBusy(false); }
   }
-  async function loadMore() {
-    if (busy) return; setBusy(true); setError('');
+  async function togglePanelFile(file: StoredFile) {
+    if (disabled || pending.current || selected) return;
+    const id = panelCopies[file.id] ?? file.id;
+    if (attached.includes(id)) { onAttach(removeAttachment(attached, id)); return; }
+    if (attached.length >= 4) return;
+    if (files.some(row => row.id === id) || metadata[id]) { onAttach([...attached, id]); return; }
+    // Returned task files keep their source scope. Copy through the owner upload API before sending.
+    setBusy(true); setError('');
     try {
-      const rows = await api<StoredFile[]>(`${path}?before=${files.at(-1)!.seq}`);
-      setFiles(current => [...current, ...rows.filter(row => !current.some(file => file.id === row.id))]); setMore(rows.length === 100);
-    } catch (error) { setError(message(error)); }
-    finally { setBusy(false); }
+      if (file.size > 10 * 1024 * 1024) throw new Error('Maximum file size is 10 MiB.');
+      const response = await fetch(`${path.replace(/\/files$/, '/panel/files')}/${file.id}`);
+      if (!response.ok) throw new Error('File could not load. Try again.');
+      const copy = await upload(undefined, new File([await response.blob()], file.name));
+      if (typeof copy === 'string') setPanelCopies(current => ({ ...current, [file.id]: copy }));
+    } catch (error) { setError(message(error)); } finally { setBusy(false); }
   }
   const selectedFiles = attached.map(id => files.find(file => file.id === id) ?? metadata[id] ?? { id, name: 'Attachment', size: 0 });
   const disabled = archived || locked || recording || busy || loading || !!pastedFiles.length;
@@ -143,16 +141,5 @@ export function useConversationAttachments({ path, archived, attached, onAttach,
     {error && <Alert tone="error" actions={!pending.current && <><IconButton label="Reload files" disabled={busy || loading} onClick={() => setReload(value => value + 1)}><RefreshCw size={14} aria-hidden /></IconButton><IconButton label="Dismiss attachment error" onClick={() => setError('')}><X size={14} aria-hidden /></IconButton></>}>{error}</Alert>}
     {recordingOpen && <Dialog open onOpenChange={setRecordingOpen} title="Record audio"><AudioRecorder disabled={archived || busy || loading || !!pending.current || !!selected} onRecording={setRecording} onReady={file => { setSelected(file); setRecordingOpen(false); }} /></Dialog>}
   </div>;
-  const library = <section className="conversation-files k-stack bs-root" aria-label="Attachments"><div className="section-label">Attachments</div>
-    {loading ? <SkeletonRows /> : files.length === 0 ? <EmptyState title="No files yet" /> : <>
-      <div className="attachments__gallery">{files.filter(isAttachmentImage).map(file => <div className="attachment-library-image" key={file.id}><Attachment file={file} path={`${path}/${file.id}`} /><Checkbox label={<span className="sr-only">{`Attach ${file.name}`}</span>} checked={attached.includes(file.id)} disabled={disabled || (!attached.includes(file.id) && attached.length >= 4)} onChange={checked => onAttach(checked ? [...attached, file.id] : removeAttachment(attached, file.id))} /></div>)}</div>
-      <div className="attachments__list">{files.filter(file => !isAttachmentImage(file)).map(file => <div className="attachment-library-file" key={file.id}>
-        <Attachment file={file} path={`${path}/${file.id}`} />
-        <div className="k-inline"><Checkbox label={<span className="sr-only">{`Attach ${file.name}`}</span>} checked={attached.includes(file.id)} disabled={disabled || (!attached.includes(file.id) && attached.length >= 4)} onChange={checked => onAttach(checked ? [...attached, file.id] : removeAttachment(attached, file.id))} /><ActionPopover label={`File actions: ${file.name}`} trigger={<IconButton label={`File actions: ${file.name}`}><Ellipsis size={14} aria-hidden /></IconButton>}><div className="k-stack attachment-file-actions"><Button size="sm" variant="ghost" aria-label={`View text: ${file.name}`} onClick={() => setPreview(file)}><Eye size={14} aria-hidden />View text</Button><HtmlPreview path={`${path}/${file.id}`} name={file.name} request={api} /><TranscriptionPanel path={`${path}/${file.id}`} request={api} /></div></ActionPopover></div>
-      </div>)}</div>
-    </>}
-    {more && <Button size="sm" disabled={busy} onClick={() => void loadMore()}>Earlier files</Button>}
-    {preview && <Dialog open onOpenChange={open => { if (!open) setPreview(null); }} title={preview.name}>{previewError ? <Alert tone="error">{previewError}</Alert> : previewText === null ? <p role="status">Loading preview...</p> : <CodeBlock label={`Preview ${preview.name}`}>{previewText || '(Empty file)'}</CodeBlock>}</Dialog>}
-  </section>;
-  return { composer, library, choose, uploading: busy || recording, recordingAction: <IconButton label="Record audio" disabled={disabled || !!pending.current || !!selected} onClick={() => setRecordingOpen(true)}><Mic size={14} aria-hidden /></IconButton> };
+  return { composer, choose, togglePanelFile, panelAttached: [...attached, ...Object.entries(panelCopies).filter(([, id]) => attached.includes(id)).map(([id]) => id)], uploading: busy || recording, recordingAction: <IconButton label="Record audio" disabled={disabled || !!pending.current || !!selected} onClick={() => setRecordingOpen(true)}><Mic size={14} aria-hidden /></IconButton> };
 }

@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useVisiblePolling } from './useVisiblePolling';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { siteCommand } from '../site-command';
 import { Alert, Button, Card, Dialog, EmptyState, Field, IconButton, Input, Row, SkeletonRows, Textarea, Tooltip, useConfirm, RecoveryAlert } from './ui/kit';
-import { ChevronLeft, ChevronRight, ExternalLink, Plus, RefreshCw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ExternalLink, Plus } from 'lucide-react';
 
 type Site = { id: string; name: string; source: string; revision: number; deleted: number };
 type Page = { sites: Site[]; next_after: string | null };
@@ -25,12 +26,13 @@ export function SitesPanel({ agent, request }: { agent: string; request: <T>(pat
     catch { setInvalid(true); setOpen(true); setEditorOpen(true); }
     return () => { generation.current++; };
   }, [key]);
-  useEffect(() => {
-    if (!open) return;
-    let stopped = false; setPage(null); heading.current?.focus();
-    void request<Page>(`${path}?after=${after}`).then(value => { if (!stopped) setPage(value); }).catch(reason => { if (!stopped) setError(failure(reason)); });
-    return () => { stopped = true; };
-  }, [open, path, after, reload, request]);
+  const [loadError, setLoadError] = useState('');
+  const root = useVisiblePolling(useCallback(async current => {
+    if (!open || busy) return;
+    try { const value = await request<Page>(`${path}?after=${after}`); if (current()) { setPage(value); setLoadError(''); } }
+    catch (reason) { if (current()) setLoadError(failure(reason)); }
+  }, [open, path, after, reload, request, busy]));
+  useEffect(() => { setPage(null); heading.current?.focus(); }, [path, after]);
   useEffect(() => { if (editing && !busy && !pending) nameInput.current?.focus(); }, [editing, busy, pending]);
   function reset() { generation.current++; setEditing(null); setName(''); setSource(''); setError(''); nameInput.current?.focus(); }
   async function edit(id: string) {
@@ -61,8 +63,9 @@ export function SitesPanel({ agent, request }: { agent: string; request: <T>(pat
   }
   const locked = busy || !!pending || invalid;
   const pager = (back: boolean, next: boolean) => (back || next) && <div className="k-pager"><IconButton label="Previous sites" disabled={!back} onClick={() => setCursors(values => values.slice(0, -1))}><ChevronLeft size={16} aria-hidden /></IconButton><IconButton label="Next sites" disabled={!next} onClick={() => setCursors(values => [...values, page!.next_after!])}><ChevronRight size={16} aria-hidden /></IconButton></div>;
-  return <div className="k-stack bs-root">
-    <header className="k-section__head"><h2 ref={heading} tabIndex={-1} className="k-section__title">Agent sites</h2><div className="k-section__actions"><div className="k-inline"><IconButton label="Reload sites" onClick={() => { setError(''); setReload(value => value + 1); }}><RefreshCw size={15} aria-hidden /></IconButton><Button ref={addButton} size="sm" variant="primary" icon={<Plus size={14} aria-hidden />} disabled={locked} onClick={event => { editorTrigger.current = event.currentTarget; setEditorOpen(true); }}>{editing ? 'Continue editing' : 'Create site'}</Button></div></div></header>
+  return <div ref={root} className="k-stack bs-root">
+    <header className="k-section__head"><h2 ref={heading} tabIndex={-1} className="k-section__title">Agent sites</h2><div className="k-section__actions"><div className="k-inline"><Button ref={addButton} size="sm" variant="primary" icon={<Plus size={14} aria-hidden />} disabled={locked} onClick={event => { editorTrigger.current = event.currentTarget; setEditorOpen(true); }}>{editing ? 'Continue editing' : 'Create site'}</Button></div></div></header>
+    {loadError && <Alert tone="error" actions={<Button size="sm" onClick={() => setReload(value => value + 1)}>Retry</Button>}>{loadError}</Alert>}
     {open && <div className="k-stack">
       {error && <Alert tone="error">{error}</Alert>}{notice && <span className="sr-only" role="status">{notice}</span>}
       {(pending || invalid) && <RecoveryAlert inFlight={busy} tone={invalid ? 'error' : 'warn'} title={invalid ? 'Recovery data could not be read' : 'Changes are not confirmed yet'} actions={<>{pending && <Button size="sm" variant="primary" busy={busy} onClick={() => void save()}>Try again</Button>}<Button size="sm" disabled={busy} onClick={() => void discard()}>Discard recovery</Button></>}>{invalid ? 'Check the site list before discarding it.' : 'Retrying uses the same contents and ID.'}</RecoveryAlert>}
