@@ -1,3 +1,4 @@
+import { createPrivateKey } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { readFileSync } from 'node:fs';
@@ -9,6 +10,7 @@ import { createHubSessions, createClerkVerifier, createStubVerifier, cookie, req
 import { createHubAuthority, type HubAuthority } from './project-authority.ts';
 import { createHubRouting, type HubRouting, type PostMessage } from './routing.ts';
 import { openHubDatabase } from './schema.ts';
+import { attachNodeLink, type NodeLinkDeps } from './node-link.ts';
 
 export type NodeUpgradeHandler = (request: IncomingMessage, socket: Duplex, head: Buffer,
   context: Readonly<{ host: string; authority: HubAuthority; routing: HubRouting }>) => void | Promise<void>;
@@ -20,12 +22,15 @@ const callbackHtml = `<!doctype html><html lang="en"><meta charset="utf-8"><titl
 /** Separate HTTP composition. Never imports or mounts the owner application. Does not listen by itself. */
 export function createHubServer(options: {
   authority: HubAuthority; verifier: SessionVerifier; accountsHost: string; domain: string;
+  nodeLink?: Omit<NodeLinkDeps, 'authority' | 'routing'>;
   trustedGatewayAddresses?: string[]; pollIntervalMs?: number; maxStreams?: number;
 }) {
   const { authority } = options, routing = createHubRouting(authority);
   const gateway = createHostGateway(authority, options), sessions = createHubSessions(authority, gateway, options.verifier);
+  if (options.nodeLink && options.nodeLink.origin !== `https://${gateway.accountsHost}`) throw new Error('Node origin must match accounts host.');
   const streams = new Set<{ close(): void; tick(): void }>(), upgrades = new Set<Duplex>();
   let upgradeHandler: NodeUpgradeHandler | undefined;
+  let nodeLink: ReturnType<typeof attachNodeLink> | undefined;
   const rate = new Map<string, { count: number; until: number }>();
   function limit(key: string, ceiling: number) {
     const prior = rate.get(key), row = prior && prior.until > authority.now() ? prior : { count: 0, until: authority.now() + 60000 };
@@ -90,13 +95,14 @@ export function createHubServer(options: {
     security(response);
     try {
       const host = gateway.resolve(request), raw = request.url ?? '';
+      if (host === gateway.accountsHost && nodeLink && await nodeLink.handleHttp(request, response)) return;
       if (!raw.startsWith('/') || raw.startsWith('//') || raw.includes('#') || /[\\\u0000-\u0020]/.test(raw)) throw notFound();
       const url = new URL(raw, `https://${host}`), path = url.pathname, central = host === gateway.accountsHost;
       if (path !== raw.split('?')[0]) throw notFound();
       const route = `${request.method} ${path}`;
       // Explicit allowlist. Every local-owner route, asset/proxy and unsupported method is absent.
       const publicRoutes = new Set(central ? ['GET /login', 'GET /auth/bootstrap', 'POST /auth/session', 'POST /auth/handoff'] : ['GET /auth/start', 'GET /auth/callback', 'POST /auth/redeem']);
-      const privateRoutes = new Set(central ? ['GET /api/session', 'POST /auth/logout', 'GET /api/projects', 'POST /api/projects'] : ['GET /api/session', 'POST /auth/logout', 'GET /api/project', 'GET /api/sections', 'POST /api/sections', 'GET /api/history', 'POST /api/messages', 'GET /api/turn', 'GET /api/events']);
+      const privateRoutes = new Set(central ? ['GET /api/session', 'POST /auth/logout', 'GET /api/projects', 'POST /api/projects', ...(nodeLink ? ['GET /api/nodes/enrollment', 'POST /api/nodes/enrollment/approve'] : [])] : ['GET /api/session', 'POST /auth/logout', 'GET /api/project', 'GET /api/sections', 'POST /api/sections', 'GET /api/history', 'POST /api/messages', 'GET /api/turn', 'GET /api/events']);
       if (!publicRoutes.has(route) && !privateRoutes.has(route)) throw notFound();
       if (singleHeader(request, 'origin') !== undefined) requireOrigin(request, host);
       if (request.method === 'POST') requireOrigin(request, host);
@@ -131,6 +137,16 @@ export function createHubServer(options: {
         const result = sessions.logout(request, host, data.global); sweep(); reply(response, result, [cookie('__Host-session', '', 0), cookie('__Host-login', '', 0)]); return;
       }
       if (central) {
+        if (nodeLink && route === 'GET /api/nodes/enrollment') {
+          if (url.searchParams.size !== 1 || !url.searchParams.has('humanCode')) throw notFound();
+          reply(response, nodeLink.inspectEnrollment(actor.accountId, url.searchParams.get('humanCode')!)); return;
+        }
+        if (nodeLink && route === 'POST /api/nodes/enrollment/approve') {
+          const data = closedObject(await body(request), ['humanCode', 'fingerprint']);
+          const current = sessions.get(request, host, true);
+          if (typeof data.humanCode !== 'string' || nodeLink.inspectEnrollment(current.accountId, data.humanCode).fingerprint !== data.fingerprint) throw notFound();
+          reply(response, nodeLink.approveEnrollment(current.accountId, data.humanCode)); return;
+        }
         if (route === 'GET /api/session') { reply(response, { accountId: actor.accountId, csrf: actor.csrf, expiresAt: actor.expiresAt }); return; }
         if (route === 'GET /api/projects') {
           const projects = authority.all("SELECT p.id,h.host,p.name FROM projects p JOIN host_bindings h ON h.project_id=p.id JOIN memberships m ON m.project_id=p.id WHERE p.status='active' AND h.active=1 AND m.account_id=? AND m.status='active' LIMIT 100", actor.accountId);
@@ -181,14 +197,18 @@ export function createHubServer(options: {
     } catch { socket.end('HTTP/1.1 404 Not Found\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'); }
   });
   server.on('close', () => clearInterval(interval));
+  function mountNodeUpgrade(handler: NodeUpgradeHandler) {
+    if (upgradeHandler) throw new Error('Node upgrade handler already mounted.');
+    upgradeHandler = handler;
+    return () => { if (upgradeHandler === handler) upgradeHandler = undefined; };
+  }
+  if (options.nodeLink) {
+    nodeLink = attachNodeLink({ mountNodeUpgrade }, { ...options.nodeLink, authority, routing });
+  }
   return {
-    server, authority, routing, gateway, sessions,
-    mountNodeUpgrade(handler: NodeUpgradeHandler) {
-      if (upgradeHandler) throw new Error('Node upgrade handler already mounted.');
-      upgradeHandler = handler;
-      return () => { if (upgradeHandler === handler) upgradeHandler = undefined; };
-    },
+    server, authority, routing, gateway, sessions, nodeLink, mountNodeUpgrade,
     async close() {
+      await nodeLink?.close();
       clearInterval(interval); for (const stream of [...streams]) stream.close(); for (const socket of upgrades) socket.destroy();
       await new Promise<void>((resolve, reject) => { if (!server.listening) { resolve(); return; } server.close(error => error ? reject(error) : resolve()); server.closeIdleConnections(); });
     },
@@ -198,6 +218,7 @@ export function createHubServer(options: {
 /** Operator-owned config points only at a new, isolated hub database. No implicit local data/config. */
 export function startHub(config: {
   domain: string; accountsHost: string; dataPath: string; mailboxKeyPath: string; port?: number; trustedGatewayAddresses?: string[];
+  nodeLink?: { signingKeyPath: string };
   identity: { mode: 'clerk'; issuer: string; jwksPath: string; audience?: string } | { mode: 'stub'; tokensPath: string };
 }) {
   if (!Number.isInteger(config.port ?? 4318) || (config.port ?? 4318) < 0 || (config.port ?? 4318) > 65535 || !config.dataPath || !config.mailboxKeyPath) throw new Error('Explicit hub data/key paths and valid port required.');
@@ -209,7 +230,7 @@ export function startHub(config: {
   else throw new Error('Explicit clerk or stub identity mode required.');
   const storage = openHubDatabase(config.dataPath);
   try {
-    const hub = createHubServer({ authority: createHubAuthority(storage.db, { domain: config.domain, mailboxKey }), verifier, accountsHost: config.accountsHost, domain: config.domain, trustedGatewayAddresses: config.trustedGatewayAddresses });
+    const hub = createHubServer({ authority: createHubAuthority(storage.db, { domain: config.domain, mailboxKey }), verifier, accountsHost: config.accountsHost, domain: config.domain, trustedGatewayAddresses: config.trustedGatewayAddresses, ...(config.nodeLink ? { nodeLink: { origin: `https://${config.accountsHost}`, signingKey: createPrivateKey(readFileSync(config.nodeLink.signingKeyPath)) } } : {}) });
     hub.server.once('close', () => storage.close()); hub.server.once('error', () => { void hub.close().finally(() => storage.close()); });
     hub.server.listen(config.port ?? 4318, '127.0.0.1');
     return hub;
