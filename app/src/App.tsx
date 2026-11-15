@@ -9,13 +9,11 @@ import { SourceControl, RestoreCheckpoint } from './SourceControl';
 import { ComputerViewer, ComputerRequestCard } from './ComputerViewer';
 import type { ComputerWait } from '../agent-computer';
 import { AgentComputerPanel } from './AgentComputerPanel';
-import { AgentComputerSettings } from './AgentComputerSettings';
 import { restoreChatCommand, restoreChannelCommand, type ChatCommand, type ChannelCommand } from '../conversation-command';
-import { restoreAgentCreation, type AgentCreation } from '../agent-create';
-import { AgentAvatar, AvatarEditor } from './AgentAvatar';
+import { AgentForm } from './AgentProfileDialog';
+import { AgentAvatar } from './AgentAvatar';
 import { QueuePanel } from './QueuePanel';
 import { QueueEditor } from './QueueEditor';
-import { AgentVisibility } from './AgentVisibility';
 import { Markdown, StreamingMarkdown } from './Markdown';
 import { MessageCopyButton } from './ui/MessageCopyButton';
 import { useTimelineFollow } from './ui/useTimelineFollow';
@@ -39,7 +37,7 @@ import { Bell, BellOff, Brain, CalendarClock, Check, ChevronDown, ChevronLeft, C
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
 import { PanelResizeHandle, sidebarPanel, useResizablePanel } from './ui/resizable';
-import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Collapsible, Combobox, ConfirmProvider, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Segmented, Select, SkeletonRows, Switch, TabPanel, Tabs, Textarea, useConfirm, type SelectOption, RecoveryAlert } from './ui/kit';
+import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Collapsible, ConfirmProvider, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, TabPanel, Tabs, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
 import { createRoot } from 'react-dom/client';
 import { Collapsible as Disclosure, Dialog as RadixDialog, DropdownMenu } from 'radix-ui';
 import { validateFlow, type FlowGraph, type FlowLink } from '../flows.ts';
@@ -57,11 +55,13 @@ import './Routines.css';
 import { RoutineSchedule, scheduleLabel, type RoutineTiming } from './RoutineSchedule';
 import '@fontsource-variable/inter';
 
-const panelLoadFailure = () => ({ default: () => <section className="empty"><h1>Panel could not be loaded</h1><p role="alert">Check your connection, then reload the app.</p><button onClick={() => window.location.reload()}>Reload app</button></section> });
+const focusFailedPanelHeading = (heading: HTMLHeadingElement | null) => heading?.focus();
+const panelLoadFailure = () => ({ default: () => <section className="empty"><h1 tabIndex={-1} ref={focusFailedPanelHeading}>Panel could not be loaded</h1><p role="alert">Check your connection, then reload the app.</p><button onClick={() => window.location.reload()}>Reload app</button></section> });
 const WorkspacePanel = lazy(() => import('./WorkspacePanel').then(module => ({ default: module.WorkspacePanel })).catch(panelLoadFailure));
 const MemoryPanel = lazy(() => import('./MemoryPanel').then(module => ({ default: module.MemoryPanel })).catch(panelLoadFailure));
 const WorkflowPanel = lazy(() => import('./WorkflowPanel').then(module => ({ default: module.WorkflowPanel })).catch(panelLoadFailure));
 const WorkflowDirectory = lazy(() => import('./WorkflowDirectory').then(module => ({ default: module.WorkflowDirectory })).catch(panelLoadFailure));
+const GeneralSettings = lazy(() => import('./GeneralSettings').then(module => ({ default: module.GeneralSettings })).catch(panelLoadFailure));
 const PresentationSettings = lazy(() => import('./PresentationSettings').then(module => ({ default: module.PresentationSettings })).catch(panelLoadFailure));
 const SharedDataPanel = lazy(() => import('./SharedDataPanel').then(module => ({ default: module.SharedDataPanel })).catch(panelLoadFailure));
 const UsagePanel = lazy(() => import('./UsagePanel').then(module => ({ default: module.UsagePanel })).catch(panelLoadFailure));
@@ -74,7 +74,7 @@ const McpPanel = lazy(() => import('./McpPanel').then(module => ({ default: modu
 const ConnectedAppsPanel = lazy(() => import('./ConnectedAppsPanel').then(module => ({ default: module.ConnectedAppsPanel })).catch(panelLoadFailure));
 const SkillsPanel = lazy(() => import('./SkillsPanel').then(module => ({ default: module.SkillsPanel })).catch(panelLoadFailure));
 
-type Agent = { workspace_connected?: boolean; runtime?: 'api' | 'codex' | 'claude'; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; thread_limit: number; tool_budget?: number; revision: number; id: string; name: string; role: string; model: string; instructions: string };
+import type { Agent } from './AgentProfileDialog';
 type Channel = { project?: string | null; activity: number; read_position: number; revision: number; archived: number; id: string; name: string; instructions: string; members: string[]; lead: string | null };
 type Thread = { delivery?: boolean; active?: boolean; activity?: number; id: string; agent: string; name: string; revision: number; archived: number; deleted: number; fork?: { source_name: string; source_id: string; source_kind: 'agent' | 'channel' | 'thread'; source_agent: string; cutoff_turn: string; created: string } | null };
 type AgentMessage = Exchange & { taskId?: string; task?: string; wait?: boolean; generatedFiles?: { id: string; name: string; size: number; thread: string }[]; paused: number; request: string; expects_reply: number; settled: number; id: string; agent: string; thread: string; name: string; status: string; error: string | null; reply: string | null; truncated: boolean };
@@ -939,7 +939,7 @@ function RoutineForm({ owner, agents, projects, routine, onBack, onSaved }: { ow
   </Dialog>;
 }
 
-function AgentConversations({ agent, configured, onEdit, onComputerSettings, workflowAgents, initialThread, onOpenAgent, onOpenChannel, onThreadOpened, onManageRoutines }: { onManageRoutines: (agent: string) => void; onOpenChannel: (channel: string) => void; agent: Agent; workflowAgents: Agent[]; configured: boolean; onEdit: () => void; onComputerSettings: (agent: Agent) => void; initialThread?: string; onThreadOpened: () => void; onOpenAgent: (owner: string, thread: string) => void }) {
+function AgentConversations({ agent, configured, onEdit, onComputerSettings, onSites, onExport, workflowAgents, initialThread, onOpenAgent, onOpenChannel, onThreadOpened, onManageRoutines }: { onSites: () => void; onExport: () => void; onManageRoutines: (agent: string) => void; onOpenChannel: (channel: string) => void; agent: Agent; workflowAgents: Agent[]; configured: boolean; onEdit: () => void; onComputerSettings: (agent: Agent) => void; initialThread?: string; onThreadOpened: () => void; onOpenAgent: (owner: string, thread: string) => void }) {
   const [threads, setThreads] = useState<Thread[]>([]), [error, setError] = useState('');
   const storageKey = `briefsip:thread:${agent.id}`;
   const [selected, setSelected] = useState(() => { if (initialThread) return initialThread; try { return sessionStorage.getItem(storageKey) ?? ''; } catch { return ''; } });
@@ -1054,10 +1054,10 @@ function AgentConversations({ agent, configured, onEdit, onComputerSettings, wor
     </section>
   </>;
   const activity = <><UpcomingRoutines agent={agent.id} onManage={openRoutines} /><Collapsible variant="section" title="Automation"><div className="panel-card"><button type="button" className="panel-row panel-row--action" onClick={openWorkflows}><WorkflowIcon size={16} aria-hidden /> Workflows</button></div></Collapsible></>;
-  const library = agent.workspace_connected && <section aria-label="Workspace library"><div className="section-label">Workspace</div><div className="panel-card"><button ref={workspaceButton} type="button" className="panel-row panel-row--action" onClick={openWorkspace}><FolderOpen size={16} aria-hidden /> Workspace files</button></div></section>;
+  const library = <><section aria-label="Agent library"><div className="section-label">Agent</div><div className="panel-card"><button type="button" className="panel-row panel-row--action" onClick={onSites}>Agent sites</button></div></section>{agent.workspace_connected && <section aria-label="Workspace library"><div className="section-label">Workspace</div><div className="panel-card"><button ref={workspaceButton} type="button" className="panel-row panel-row--action" onClick={openWorkspace}><FolderOpen size={16} aria-hidden /> Workspace files</button></div></section>}</>;
   return <><Chat onOpenChannel={onOpenChannel} onOpenAgent={onOpenAgent} key={thread?.id ?? agent.id} agent={agent} thread={thread} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)}
     onEdit={thread ? () => setForm(thread) : onEdit} onComputerSettings={() => onComputerSettings(agent)}
-    menuItems={[...(thread ? actions(thread) : []), { label: 'New conversation', onSelect: openForm, disabled: locked }, { label: 'Routines', onSelect: openRoutines }, { label: 'Workflows', onSelect: openWorkflows }, { label: 'Workspace files', onSelect: openWorkspace }]}
+    menuItems={[...(thread ? actions(thread) : []), { label: 'Export template', onSelect: onExport }, { label: 'New conversation', onSelect: openForm, disabled: locked }, { label: 'Routines', onSelect: openRoutines }, { label: 'Workflows', onSelect: openWorkflows }, { label: 'Workspace files', onSelect: openWorkspace }]}
     detailsExtra={{ chats: conversations, activity, library }} />{form && <ThreadForm key={form === 'new' ? 'new' : `${form.id}:${form.revision}`} agent={agent} thread={form === 'new' ? undefined : form} busy={busy} locked={!!pending || invalid} onCancel={() => setForm(null)} onSave={command => void execute(command)} error={error} pending={pending} onRetry={() => pending && void execute(pending)} onReload={() => void reloadForm()} />}</>;
 }
 
@@ -1071,161 +1071,6 @@ function ThreadForm({ agent, thread, busy, locked, onCancel, onSave, error, pend
   </Dialog>;
 }
 
-function AgentForm({ model, focusComputer = false, profile: liveProfile, onCreated, onCancel, onReload, onVisibilityChanged }: { model: string; focusComputer?: boolean; profile?: Agent; onCreated: (agent: Agent) => void; onCancel: () => void; onReload?: () => Promise<void>; onVisibilityChanged?: () => Promise<void> }) {
-  const confirm = useConfirm();
-  const [look, setLook] = useState<import('./ui/avatar-shapes').AvatarLook | null>(null);
-  const [LookPicker] = useState(() => lazy(() => import('./ui/avatar-shapes').then(module => ({ default: module.AvatarPicker }))));
-  const [profile] = useState(liveProfile);
-  const creationKey = 'briefsip-agent-creation';
-  const nameInput = useRef<HTMLInputElement>(null);
-  const [recovery, setRecovery] = useState(() => { try { return { command: liveProfile ? null : restoreAgentCreation(sessionStorage.getItem(creationKey)), invalid: false }; } catch { return { command: null, invalid: true }; } });
-  const [invalid, setInvalid] = useState(recovery.invalid);
-  const [setup, setSetup] = useState(recovery.command?.setup ?? false);
-  const active = useRef(true);
-  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
-
-  const [runtime, setRuntime] = useState(profile?.runtime ?? 'api');
-  const [runtimeChoices, setRuntimeChoices] = useState<{ runtime: 'codex' | 'claude'; enabled: boolean; version: string | null; reason: string | null }[]>([]);
-  const [runtimeError, setRuntimeError] = useState('');
-  useEffect(() => {
-    if (!profile) return;
-    let stopped = false;
-    void api<{ choices: typeof runtimeChoices }>(`/api/agents/${profile.id}/runtimes`).then(data => { if (!stopped) setRuntimeChoices(data.choices); }).catch(error => { if (!stopped) setRuntimeError(message(error)); });
-    return () => { stopped = true; };
-  }, [profile]);
-  const [account, setAccount] = useState(profile?.provider_account ?? recovery.command?.providerAccount ?? '');
-  const [accounts, setAccounts] = useState<{ id: string; name: string; configured: boolean; defaultModel: string }[]>([]);
-  const [accountError, setAccountError] = useState('');
-  const [accountReload, setAccountReload] = useState(0);
-  useEffect(() => {
-    let stopped = false; setAccountError('');
-    void api<typeof accounts>('/api/provider-accounts').then(items => { if (!stopped) setAccounts(items); }).catch(error => { if (!stopped) setAccountError(message(error)); });
-    return () => { stopped = true; };
-  }, [accountReload]);
-  const [models, setModels] = useState<string[]>([]);
-  const [catalogStatus, setCatalogStatus] = useState('Loading model list. Wait for suggestions or enter a model ID.');
-  useEffect(() => {
-    if (runtime !== 'api') { setModels([]); return; }
-    let stopped = false;
-    setModels([]); setCatalogStatus('Loading model list. Wait for suggestions or enter a model ID.');
-    void api<{ models: string[] }>(`/api/models?account=${encodeURIComponent(account)}`).then(data => {
-      if (!stopped) { setModels(data.models); setCatalogStatus(data.models.length ? `${data.models.length} models available. Select a suggestion or enter a model ID.` : 'Provider has not listed any models. Enter a model ID available in your account.'); }
-    }).catch(error => { if (!stopped) setCatalogStatus(`${message(error)} Model ID can still be entered manually.`); });
-    return () => { stopped = true; };
-  }, [account, accountReload, runtime]);
-  const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
-  const [modelValue, setModelValue] = useState(profile?.model ?? recovery.command?.model ?? model);
-  const [backupValue, setBackupValue] = useState(profile?.backup_model ?? recovery.command?.backupModel ?? '');
-  const pending = useRef<(AgentCreation & { revision?: number }) | null>(recovery.command);
-  async function create(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (busy || invalid) return;
-    const form = new FormData(event.currentTarget);
-    const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision } : setup ? { setup: true } : {}), providerAccount: account, name: String(form.get('name')).trim() || (setup ? 'New agent' : ''), role: String(form.get('role')).trim(), model: String(form.get('model')).trim(), backupModel: String(form.get('backupModel')).trim(), instructions: String(form.get('instructions')).trim(), threadLimit: Number(form.get('threadLimit')), toolBudget: Number(form.get('toolBudget')) };
-    if (profile && runtime !== (profile.runtime ?? 'api') && !pending.current) {
-      if (!await confirm({ title: 'Change agent runtime?', description: 'Future turns use the selected runtime and its host login. Existing history remains in Briefsip; the new runtime starts a fresh conversation. Workspace edits can persist after a turn stops.', confirm: 'Change runtime' })) return;
-      Object.assign(data, { runtime, confirmRuntime: true });
-    }
-    setBusy(true); setError('');
-    function clearRecovery() { if (!profile && restoreAgentCreation(sessionStorage.getItem(creationKey))?.id === data.id) sessionStorage.removeItem(creationKey); }
-    try {
-      if (!profile) { restoreAgentCreation(JSON.stringify(data)); sessionStorage.setItem(creationKey, JSON.stringify(data)); }
-      pending.current = data;
-      const created = await api<Agent>(profile ? `/api/agents/${profile.id}/edit` : '/api/agents', data);
-      clearRecovery();
-      if (!profile && look) {
-        const { avatarPng, notifyAvatarFailure } = await import('./ui/avatar-shapes');
-        try {
-          const key = `briefsip-avatar:${created.id}`;
-          const command = { id: crypto.randomUUID(), revision: created.avatar_revision ?? 0, image: await avatarPng(look) };
-          sessionStorage.setItem(key, JSON.stringify(command));
-          const result = await api<{ revision: number }>(`/api/agents/${created.id}/avatar`, command);
-          created.avatar_revision = result.revision;
-          sessionStorage.removeItem(key);
-        } catch { notifyAvatarFailure(); }
-      }
-      if (active.current) onCreated(created);
-    } catch (error) {
-      if (error instanceof HttpError && error.status < 500) { try { clearRecovery(); pending.current = null; } catch { /* Keep exact retry if recovery storage cannot be cleared. */ } }
-      if (active.current) setError(message(error));
-    } finally { if (active.current) setBusy(false); }
-
-  }
-  const locked = !!pending.current;
-  const discardInvalid = async () => {
-    if (!await confirm({ title: 'Discard recovery data?', description: 'The agent may already have been created; check the agent list before discarding it.', confirm: 'Discard', danger: true })) return;
-    try { sessionStorage.removeItem(creationKey); setInvalid(false); nameInput.current?.focus(); } catch { setError('Recovery storage could not be cleared.'); }
-  };
-  const discardPending = async () => {
-    if (!await confirm({ title: 'Discard this request?', description: 'The agent may already have been created; check the agent list before creating a new one.', confirm: 'Discard recovery', danger: true })) return;
-    try { sessionStorage.removeItem(creationKey); pending.current = null; setRecovery({ command: null, invalid: false }); setError(''); nameInput.current?.focus(); } catch { setError('Recovery storage could not be cleared.'); }
-  };
-  const accountOptions: SelectOption[] = [
-    ...(!accounts.some(item => item.id === '') ? [{ value: '', label: 'Server default' }] : []),
-    ...(account && !accounts.some(item => item.id === account) ? [{ value: account, label: 'Account unavailable' }] : []),
-    ...accounts.map(item => ({ value: item.id, label: item.name.slice(0, 40), hint: item.configured ? undefined : 'Not connected' })),
-  ];
-  const submitLabel = profile ? 'Save profile' : pending.current ? 'Retry creation' : setup ? 'Create and draft' : 'Create agent';
-  return <Dialog open size={profile ? 'lg' : 'md'} onOpenChange={next => { if (!next && !busy) onCancel(); }}
-    title={profile ? 'Edit agent profile' : 'New agent'}
-    description={profile ? undefined : 'Name it, choose a model, then explain how it should work.'}
-    footer={<>
-      {!profile && pending.current && <Button variant="ghost" disabled={busy} onClick={() => void discardPending()} className="k-dialog__foot-start">Discard recovery</Button>}
-      {profile && error && onReload && <Button variant="ghost" onClick={onReload} className="k-dialog__foot-start">Discard changes and reload</Button>}
-      <Button disabled={busy} onClick={onCancel}>Cancel</Button>
-      <Button type="submit" form="agent-form" variant="primary" busy={busy} disabled={invalid}>{busy ? 'Saving...' : submitLabel}</Button>
-    </>}>
-    {invalid && <Alert tone="error" title="Recovery data could not be read" actions={<Button size="sm" onClick={() => void discardInvalid()}>Discard recovery data</Button>}>Check the agent list before discarding it.</Alert>}
-    {!profile && pending.current && <RecoveryAlert inFlight={busy} tone="warn" title="Creation is not confirmed yet">Try again with the same request to avoid creating a duplicate agent.</RecoveryAlert>}
-    {profile && onVisibilityChanged && <div className="legacy k-legacy-block agent-form__avatar"><AvatarEditor agent={profile.id} request={api} onChanged={onVisibilityChanged} /></div>}
-    <form id="agent-form" className="k-fieldset" onSubmit={create}>
-      {!profile && <Suspense fallback={<p role="status">Loading avatar picker...</p>}><LookPicker value={look} onChange={setLook} disabled={busy || locked || invalid} /></Suspense>}
-      {!profile && <Segmented label="How to create an agent" value={setup ? 'describe' : 'manual'} disabled={busy || locked || invalid} onChange={value => setSetup(value === 'describe')} options={[
-        { value: 'manual', label: 'Fill in yourself', description: 'Enter the name and instructions.' },
-        { value: 'describe', label: 'Draft from a description', description: 'The agent drafts its profile through chat.' },
-      ]} />}
-      <Field label={!profile && setup ? 'Temporary name' : 'Name'} optional={!profile && setup}>
-        <Input ref={nameInput} name="name" required={!setup} maxLength={80} readOnly={locked} defaultValue={profile?.name ?? recovery.command?.name} placeholder="For example: Research partner" />
-      </Field>
-      <Field label="Role" optional hint="Shown under the agent's name, e.g. Orchestration agent">
-        <Input name="role" maxLength={60} readOnly={locked} defaultValue={profile?.role ?? recovery.command?.role ?? ''} />
-      </Field>
-      <Field label="Runtime" hint={profile ? 'Coding runtimes use the host login and the current project folder. Direct chats need a host workspace binding. Steer restarts the running turn; image attachments are unavailable.' : 'Create the agent, add it to a project, then choose a coding runtime.'} error={runtimeError}>
-        <Select label="Runtime" value={runtime} onChange={value => setRuntime(value as typeof runtime)} disabled={locked || busy} options={[{ value: 'api', label: 'API model' }, ...(['codex','claude'] as const).map(value => { const choice = runtimeChoices.find(item => item.runtime === value); return { value, label: value === 'codex' ? 'Codex' : 'Claude Code', disabled: !choice?.enabled, hint: choice?.reason ?? choice?.version ?? 'Add this agent to a project first.' }; })]} />
-      </Field>
-      <div className="k-grid-2">
-        <Field label="Provider account" hint={accountError ? undefined : 'API keys stay on the server.'} error={accountError && <>{accountError} <button type="button" className="k-link" onClick={() => setAccountReload(value => value + 1)}>Reload</button></>}>
-          <Select value={account} onChange={setAccount} disabled={locked || runtime !== 'api'} options={accountOptions} />
-        </Field>
-        <Field label="Model" hint={runtime === 'api' ? catalogStatus : 'Saved API model. Coding runtimes use their host default model.'}>
-          <Combobox name="model" value={modelValue} onChange={setModelValue} suggestions={models} required maxLength={160} readOnly={locked || runtime !== 'api'} placeholder="Model ID from provider" />
-        </Field>
-      </div>
-      <Field label={!profile && setup ? 'Needs description' : 'Instructions'} hint={!profile && setup ? 'Uses the selected provider. The agent and drafting task are created together; results or questions appear in chat.' : undefined}>
-        <Textarea name="instructions" required maxLength={8000} readOnly={locked} defaultValue={profile?.instructions ?? recovery.command?.instructions} rows={5} placeholder={!profile && setup ? 'Describe the work this agent should help with.' : 'What should this agent do? How should it present results?'} />
-      </Field>
-      <Collapsible title="Advanced settings" defaultOpen={!!(profile?.backup_model || recovery.command?.backupModel)}>
-        <div className="k-grid-2">
-          <Field label="Fallback model" optional hint={runtime === 'api' ? 'Tried once if the main model rejects because of quota or is unavailable.' : 'API model fallback stays saved; coding runtimes do not use it.'}>
-            <Combobox name="backupModel" value={backupValue} onChange={setBackupValue} suggestions={models} maxLength={160} readOnly={locked || runtime !== 'api'} placeholder="Leave empty to disable" />
-          </Field>
-          <Field label="Concurrent side threads" hint="Main chat has its own queue.">
-            <Input name="threadLimit" type="number" min={1} max={32} step={1} required readOnly={locked} defaultValue={profile?.thread_limit ?? recovery.command?.threadLimit ?? 2} />
-          </Field>
-          <Field label="Tool steps per task" hint={runtime === 'api' ? '10-200 steps. Stops with a summary; reply “continue” for more.' : 'Saved for API tasks. Coding runtimes manage their own steps.'}>
-            <Input name="toolBudget" type="number" min={10} max={200} step={1} required readOnly={locked || runtime !== 'api'} defaultValue={profile?.tool_budget ?? recovery.command?.toolBudget ?? 90} />
-          </Field>
-        </div>
-      </Collapsible>
-      {error && <Alert tone="error">{error}</Alert>}
-    </form>
-    {profile && <div className="legacy k-legacy-block">
-      <AgentComputerSettings agent={profile.id} request={api} autoFocus={focusComputer} />
-      {onVisibilityChanged && <AgentVisibility agent={liveProfile!} request={api} onChanged={onVisibilityChanged} />}
-      <Suspense fallback={<p role="status">Loading local sites...</p>}><SitesPanel key={`sites:${profile.id}`} agent={profile.id} request={api} /></Suspense>
-      <Suspense fallback={<p className="empty" role="status">Loading agent export...</p>}><AgentTemplateExport key={profile.id} id={profile.id} request={api} /></Suspense>
-    </div>}
-  </Dialog>;
-}
 
 function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agents: Agent[]; channel?: Channel; onCreated: (channel: Channel) => void; onCancel: () => void; onReload?: () => void }) {
   const confirm = useConfirm();
@@ -1292,20 +1137,14 @@ function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agent
 }
 
 
-type SettingsSection = 'updates' | 'machines' | 'connected-apps' | 'skills' | 'mcp' | 'mcp-server' | 'data' | 'usage' | 'backup' | 'import' | 'help' | 'appearance';
-const settingsSections: { id: SettingsSection; label: string }[] = [
-  { id: 'skills', label: 'Skills' },
-  { id: 'connected-apps', label: 'Connected apps' },
-  { id: 'mcp', label: 'MCP connections' },
-  { id: 'machines', label: 'Machines' },
-  { id: 'updates', label: 'Updates' },
-  { id: 'mcp-server', label: 'MCP server' },
-  { id: 'data', label: 'Shared data' },
-  { id: 'usage', label: 'Usage' },
-  { id: 'import', label: 'Import agent' },
-  { id: 'backup', label: 'Backup' },
-  { id: 'appearance', label: 'Appearance' },
-  { id: 'help', label: 'Help' },
+type SettingsSection = 'general' | 'appearance' | 'skills' | 'connected-apps' | 'mcp' | 'machines' | 'updates' | 'usage' | 'data' | 'backup' | 'mcp-server';
+const settingsGroups: { label: string; items: { id: SettingsSection; label: string }[] }[] = [
+  { label: 'Preferences', items: [{ id: 'general', label: 'General' }, { id: 'appearance', label: 'Appearance' }] },
+  { label: 'Agents', items: [{ id: 'skills', label: 'Skills' }] },
+  { label: 'Connections', items: [{ id: 'connected-apps', label: 'Connected apps' }, { id: 'mcp', label: 'MCP connections' }] },
+  { label: 'System', items: [{ id: 'machines', label: 'Machines' }, { id: 'updates', label: 'Updates' }] },
+  { label: 'Data', items: [{ id: 'usage', label: 'Usage' }, { id: 'data', label: 'Shared data' }, { id: 'backup', label: 'Backup & restore' }] },
+  { label: 'Advanced', items: [{ id: 'mcp-server', label: 'External access' }] },
 ];
 type Dialog = 'agent' | 'project' | 'edit' | null;
 const collapsedKey = 'briefsip:sidebar-collapsed';
@@ -1338,6 +1177,8 @@ function App() {
   const remoteMachinesState = useMachines(api);
   const updateAvailable = useUpdateBadge(api);
   const [remoteSelection, setRemoteSelection] = useState<{ machine: string; agent: string } | null>(null);
+  const [workspaceDialog, setWorkspaceDialog] = useState<'import' | 'help' | null>(null);
+  const [agentContent, setAgentContent] = useState<{ agent: Agent; kind: 'sites' | 'export' } | null>(null);
   const [settings, setSettings] = useState<SettingsSection | null>(null);
   const projectState = useProjects(api);
   const [selectedProject, setSelectedProject] = useState('');
@@ -1391,7 +1232,7 @@ function App() {
       const name = event.key.toLowerCase();
       if (name === 'b') { event.preventDefault(); setCollapsedState(value => { try { localStorage.setItem(collapsedKey, value ? '0' : '1'); } catch { /* Applies to this page only. */ } return !value; }); }
       else if (name === '1' || name === '2') { if (document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')) return; event.preventDefault(); setSidebarTab(name === '1' ? 'agents' : 'projects'); }
-      else if (name === ',') { event.preventDefault(); setSettings(current => current ?? 'skills'); }
+      else if (name === ',') { event.preventDefault(); setSettings(current => current ?? 'general'); }
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
@@ -1448,10 +1289,10 @@ function App() {
   else if (project) content = <PageView wide><ProjectHome project={project} agents={directory.agents} state={projectState} request={api} onChat={id => { void load(true).then(() => openChannel(id)); }} onThread={(agent,thread) => { setProjectThread({project:project.id,agent,thread}); setSelectedProject(''); }} onDeleted={() => { setSelectedProject(''); void load(); }} /></PageView>;
   else if (projectThread && directory.agents.find(agent => agent.id === projectThread.agent)) { const owner = directory.agents.find(agent => agent.id === projectThread.agent)!; const thread = projectState.projects.find(project => project.id === projectThread.project)?.threads.find(thread => thread.id === projectThread.thread) ?? projectThread.conversation; content = thread ? <Chat key={thread.id} sourceControl={thread.folder ? <ProjectSourceControl project={projectThread.project} folder={thread.folder} request={api}/> : undefined} agent={owner} onComputerSettings={() => setComputerSettings(owner)} thread={{...thread,revision:1,archived:0,deleted:0}} configured={directory.configured} menuItems={[{label:'Back to project',onSelect:()=>openProject(projectThread.project)}]} /> : <PageView><EmptyState title="Project thread unavailable" /></PageView>; }
   else if (channel) content = <Chat onOpenAgent={openThread} key={`channel:${channel.id}`} agent={channel} channel={{ ...channel, lead: directory.agents.find(agent => agent.id === channel.lead)?.hidden ? null : channel.lead }} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id) && !agent.hidden)} onEdit={channel.project ? undefined : () => setDialog('edit')} menuItems={channel.project ? [{label:'Back to project',onSelect:()=>openProject(channel.project!)}] : []} configured={directory.configured} />;
-  else if (agent) content = <AgentConversations onManageRoutines={id => { setRoutineAgent(id); setView('routines'); }} onOpenChannel={openChannel} key={agent.id} agent={agent} workflowAgents={directory.agents} configured={directory.configured} initialThread={openedThread?.agent === agent.id ? openedThread.thread : undefined} onThreadOpened={() => setOpenedThread(null)} onOpenAgent={openThread} onEdit={() => setDialog('edit')} onComputerSettings={setComputerSettings} />;
-  else content = <main className="chat chat--empty bs-root"><div className="empty-chat"><div className="empty-chat__title">Create your first agent</div><div className="empty-chat__sub">Name it, choose a model, then explain how it should work. The agent and its history are saved on this computer.</div><button type="button" className="btn btn--primary" onClick={() => setDialog('agent')}><Plus size={16} aria-hidden /> New agent</button><HowBriefsipWorks action={<Button variant="ghost" onClick={() => setSettings('help')}>Read quick guide</Button>} /></div></main>;
+  else if (agent) content = <AgentConversations onSites={() => setAgentContent({ agent, kind: 'sites' })} onExport={() => setAgentContent({ agent, kind: 'export' })} onManageRoutines={id => { setRoutineAgent(id); setView('routines'); }} onOpenChannel={openChannel} key={agent.id} agent={agent} workflowAgents={directory.agents} configured={directory.configured} initialThread={openedThread?.agent === agent.id ? openedThread.thread : undefined} onThreadOpened={() => setOpenedThread(null)} onOpenAgent={openThread} onEdit={() => setDialog('edit')} onComputerSettings={setComputerSettings} />;
+  else content = <main className="chat chat--empty bs-root"><div className="empty-chat"><div className="empty-chat__title">Create your first agent</div><div className="empty-chat__sub">Name it, choose a model, then explain how it should work. The agent and its history are saved on this computer.</div><button type="button" className="btn btn--primary" onClick={() => setDialog('agent')}><Plus size={16} aria-hidden /> New agent</button><HowBriefsipWorks action={<Button variant="ghost" onClick={() => setWorkspaceDialog('help')}>Read quick guide</Button>} /></div></main>;
   const created = (item: Agent) => { setDirectory(current => current && { ...current, agents: [...current.agents.filter(agent => agent.id !== item.id), item] }); openAgent(item.id); };
-  return <RadixDialog.Root modal open={!!settings} onOpenChange={open => setSettings(current => open ? current ?? 'skills' : null)}><div className={`app bs-root${collapsed ? ' is-sidebar-collapsed' : ''}`}>
+  return <RadixDialog.Root modal open={!!settings} onOpenChange={open => setSettings(current => open ? current ?? 'general' : null)}><div className={`app bs-root${collapsed ? ' is-sidebar-collapsed' : ''}`}>
     {collapsed && <button type="button" className="icon-btn icon-btn--bordered sidebar-reveal" onClick={() => setCollapsed(false)} aria-label="Expand sidebar" title="Sidebar (Ctrl/Cmd+B)"><PanelLeft size={16} aria-hidden /></button>}
     {!collapsed && <aside className="sidebar" style={{ width: `${sidebar.width}px` }} aria-label="Workspace navigation">
       <div className="sidebar__titlebar">
@@ -1461,6 +1302,7 @@ function App() {
           <IconButton label="Workflows" aria-current={view === 'workflows' ? 'page' : undefined} disabled={!directory} onClick={() => { setView('workflows'); setDialog(null); }}><WorkflowIcon size={16} aria-hidden /></IconButton>
           <ActionMenu label="Create new" trigger={<IconButton label="Create new"><Plus size={16} aria-hidden /></IconButton>} items={[
             { label: 'New agent', onSelect: () => setDialog('agent'), disabled: !directory },
+            { label: 'Import template', onSelect: () => setWorkspaceDialog('import'), disabled: !directory },
             { label: 'New project', onSelect: () => setDialog('project'), disabled: !directory },
             { label: 'Add a machine', onSelect: () => setSettings('machines') },
           ]} />
@@ -1521,29 +1363,32 @@ function App() {
         <div className="sidebar__fade" />
         {!collapsed && <div className="provider-status" role="status"><i className={directory?.configured ? 'is-on' : ''} aria-hidden /><span>{activityError ? 'Status not updated. Trying again.' : directory?.configured ? 'Provider configured' : 'Provider not connected'}</span></div>}
         {updateAvailable && <button type="button" className="update-available-badge" onClick={() => setSettings('updates')}>Update available</button>}
+        <ActionMenu label="Workspace menu" trigger={<IconButton label="Workspace menu"><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: 'Help', onSelect: () => setWorkspaceDialog('help') }]} />
         <RadixDialog.Trigger asChild><button type="button" className="icon-btn icon-btn--bordered" aria-label="Settings" title="Settings (Ctrl/Cmd+,)"><Settings size={16} aria-hidden /></button></RadixDialog.Trigger>
       </div>
       <PanelResizeHandle panel={sidebar} />
     </aside>}
     {content}
-    {computerSettings && directory && <AgentForm key={`${computerSettings.id}:${editReload}`} model={directory.defaultModel} profile={directory.agents.find(item => item.id === computerSettings.id) ?? computerSettings} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} focusComputer onCancel={() => setComputerSettings(null)} onCreated={() => { void load(); setComputerSettings(null); }} />}
-    {dialog === 'agent' && directory && <AgentForm model={directory.defaultModel} onCancel={() => setDialog(null)} onCreated={item => { created(item); setDialog(null); }} />}
+    {computerSettings && directory && <AgentForm request={api} isClientError={error => error instanceof HttpError && error.status < 500} key={`${computerSettings.id}:${editReload}`} model={directory.defaultModel} profile={directory.agents.find(item => item.id === computerSettings.id) ?? computerSettings} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} focusComputer onCancel={() => setComputerSettings(null)} onCreated={() => { void load(); setComputerSettings(null); }} />}
+    {dialog === 'agent' && directory && <AgentForm request={api} isClientError={error => error instanceof HttpError && error.status < 500} model={directory.defaultModel} onCancel={() => setDialog(null)} onCreated={item => { created(item); setDialog(null); }} />}
     {dialog === 'project' && directory && <CreateProject state={projectState} agents={directory.agents} request={api} onClose={() => setDialog(null)} onCreated={item => { openProject(item.id); void load(); }} />}
     {dialog === 'edit' && directory && channel && <ChannelForm key={`${channel.id}:${channel.revision}:${editReload}`} agents={directory.agents} channel={channel} onCancel={() => setDialog(null)} onReload={() => { void load().then(() => setEditReload(value => value + 1)); }} onCreated={() => { void load(); setDialog(null); }} />}
-    {dialog === 'edit' && directory && !channel && agent && <AgentForm key={`${agent.id}:${editReload}`} model={directory.defaultModel} profile={agent} onCancel={() => setDialog(null)} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} onCreated={() => { void load(); setDialog(null); }} />}
+    {dialog === 'edit' && directory && !channel && agent && <AgentForm request={api} isClientError={error => error instanceof HttpError && error.status < 500} key={`${agent.id}:${editReload}`} model={directory.defaultModel} profile={agent} onCancel={() => setDialog(null)} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} onCreated={() => { void load(); setDialog(null); }} />}
+    {workspaceDialog && <Dialog open size="lg" title={workspaceDialog === 'help' ? 'Help' : 'Import template'} onOpenChange={open => { if (!open) setWorkspaceDialog(null); }}><div className="legacy"><Suspense fallback={<p role="status">Loading...</p>}>{workspaceDialog === 'help' ? <HelpPage /> : <AgentTemplateImport request={api} onClose={() => setWorkspaceDialog(null)} onCreated={item => { created(item); setWorkspaceDialog(null); }} />}</Suspense></div></Dialog>}
+    {agentContent && <Dialog open size="lg" title={`${agentContent.agent.name} · ${agentContent.kind === 'sites' ? 'Agent sites' : 'Export template'}`} onOpenChange={open => { if (!open) setAgentContent(null); }}><div className="legacy"><Suspense fallback={<p role="status">Loading...</p>}>{agentContent.kind === 'sites' ? <SitesPanel agent={agentContent.agent.id} request={api} /> : <AgentTemplateExport id={agentContent.agent.id} request={api} />}</Suspense></div></Dialog>}
     <RadixDialog.Portal><RadixDialog.Content className="app-settings bs-root" aria-describedby={undefined} onOpenAutoFocus={event => {
       event.preventDefault();
       const page = (event.currentTarget as HTMLElement).querySelector<HTMLElement>('.app-settings__page');
       (page?.querySelector<HTMLElement>('h1[tabindex], button:not(:disabled), input:not([type="hidden"]):not(:disabled), [tabindex="0"]') ?? page)?.focus();
     }}>
       <aside className="app-settings__nav">
-        <button type="button" className="app-settings__back" onClick={() => setSettings(null)}><ChevronDown size={14} aria-hidden style={{ transform: 'rotate(90deg)' }} /> Back to workspace</button>
+        <button type="button" className="app-settings__back" aria-label="Back to workspace" onClick={() => setSettings(null)}><ChevronDown size={14} aria-hidden style={{ transform: 'rotate(90deg)' }} /> Back</button>
         <RadixDialog.Title asChild><div className="app-settings__heading">Settings</div></RadixDialog.Title>
-        {settingsSections.map(section => <button key={section.id} type="button" className={`cfg-nav__item${settings === section.id ? ' is-active' : ''}`} aria-current={settings === section.id || undefined} onClick={() => setSettings(section.id)}>{section.label}</button>)}
+        <nav aria-label="Settings" className="app-settings__groups">{settingsGroups.map(group => <div key={group.label} role="group" aria-labelledby={`settings-${group.label}`} className="app-settings__group"><h2 id={`settings-${group.label}`}>{group.label}</h2>{group.items.map(section => <button key={section.id} type="button" className={`cfg-nav__item${settings === section.id ? ' is-active' : ''}`} aria-current={settings === section.id ? 'page' : undefined} onClick={event => { if (settings === section.id) event.currentTarget.closest('[role="dialog"]')?.querySelector<HTMLElement>('.app-settings__page h1')?.focus(); else setSettings(section.id); }}>{section.label}</button>)}</div>)}</nav>
       </aside>
+      <IconButton className="app-settings__close" label="Close settings" onClick={() => setSettings(null)}><X size={16} aria-hidden /></IconButton>
       <div className="app-settings__main">
-        <button type="button" className="app-settings__close icon-btn" onClick={() => setSettings(null)} aria-label="Close settings" title="Close (Esc)"><X size={16} aria-hidden /></button>
-        <div className="app-settings__page legacy" tabIndex={-1}>
+        <div className={`app-settings__page legacy${settings === 'general' || settings === 'appearance' ? ' app-settings__page--preferences' : settings === 'usage' || settings === 'data' ? ' app-settings__page--wide' : ''}`} tabIndex={-1}>
           {!directory ? <p className="empty" role="status">Loading workspace...</p>
             : settings === 'skills' ? <Suspense fallback={<p className="empty" role="status">Loading skill library...</p>}><SkillsPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'updates' ? <UpdatesPanel request={api} />
@@ -1554,9 +1399,8 @@ function App() {
             : settings === 'data' ? <Suspense fallback={<p className="empty" role="status">Loading shared data...</p>}><SharedDataPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'usage' ? <Suspense fallback={<p className="empty" role="status">Loading usage...</p>}><UsagePanel request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'backup' ? <Suspense fallback={<p className="empty" role="status">Loading backup...</p>}><BackupPanel onClose={() => setSettings(null)} /></Suspense>
-            : settings === 'import' ? <Suspense fallback={<p className="empty" role="status">Loading agent import...</p>}><AgentTemplateImport request={api} onClose={() => setSettings(null)} onCreated={item => { created(item); setSettings(null); }} /></Suspense>
-            : settings === 'help' ? <HelpPage />
-            : <Suspense fallback={<p className="empty" role="status">Loading appearance settings...</p>}><PresentationSettings><Section title="Notifications"><Row title="Workflow inbox notifications" meta="Applies in this browser." trailing={<Switch label="Workflow inbox notifications" checked={!notificationsMuted} onChange={enabled => { try { localStorage.setItem('briefsip:workflow-notifications-muted', enabled ? '0' : '1'); setNotificationsMuted(!enabled); setNotificationError(''); } catch { setNotificationError('Notification preference could not be saved. Check browser storage.'); } }} />}/>{notificationError && <Alert tone="error">{notificationError}</Alert>}</Section></PresentationSettings></Suspense>}
+            : settings === 'general' ? <Suspense fallback={<p className="empty" role="status">Loading general settings...</p>}><GeneralSettings notificationsMuted={notificationsMuted} notificationError={notificationError} onNotificationsChange={enabled => { try { localStorage.setItem('briefsip:workflow-notifications-muted', enabled ? '0' : '1'); setNotificationsMuted(!enabled); setNotificationError(''); } catch { setNotificationError('Notification preference could not be saved. Check browser storage.'); } }} /></Suspense>
+            : <Suspense fallback={<p className="empty" role="status">Loading appearance settings...</p>}><PresentationSettings /></Suspense>}
         </div>
       </div>
     </RadixDialog.Content></RadixDialog.Portal>

@@ -209,3 +209,34 @@
 .theme-preview__chat b { width: 46%; margin-top: auto; margin-left: auto; background: var(--color-brand); opacity: 1; }
 .color-theme-card__name { display: flex; justify-content: space-between; gap: 6px; font-size: 13px; line-height: 18px; font-weight: 500; }
 .color-theme-card__name span { color: var(--color-brand-text); font-size: 11px; font-weight: 600; }
+
+/* SET1: grouped settings shell and preference pages. Other panels keep their layout. */
+.app-settings__nav { width: 240px; padding: 0 12px 16px; overflow-y: auto; gap: 0; }
+.app-settings__back { min-height: 40px; margin: 8px 0 0; }
+.app-settings__heading { height: 24px; padding: 0 10px; }
+.app-settings__groups { display: flex; flex-direction: column; gap: 8px; }
+.app-settings__group { display: flex; flex-direction: column; }
+.app-settings__group h2 { margin: 0; padding: 8px 10px 4px; font-size: 12px; font-weight: 500; line-height: 16px; color: var(--color-text-tertiary); }
+.app-settings__group .cfg-nav__item { width: 100%; height: 32px; min-height: 32px; margin: 0; padding: 0 10px; text-align: left; }
+.app-settings .app-settings__close { position: absolute; z-index: 1; top: 12px; right: 16px; width: 40px; height: 40px; }
+.app-settings__page { margin: 0; max-width: 864px; padding: 40px 32px 64px; }
+.app-settings__page--wide { max-width: 1184px; }
+.app-settings__page--preferences .k-page { gap: 24px; }
+.app-settings__page--preferences .k-page-head { padding-right: 40px; }
+.app-settings__page--preferences .k-section { gap: 12px; }
+.app-settings__page--preferences .k-section__head { min-height: 18px; padding: 0; }
+.app-settings__page--preferences .k-card { padding: 0; }
+.app-settings__page--preferences .k-row { min-height: 64px; gap: 8px; flex-wrap: wrap; padding: 12px 16px; }
+.app-settings__page--preferences .k-row__main { min-height: 0; padding: 0; flex-basis: 180px; }
+.app-settings__page--preferences .k-row__title { white-space: normal; overflow: visible; }
+.app-settings__page--preferences .k-row__trailing { max-width: 100%; padding: 0; flex-wrap: wrap; justify-content: flex-end; margin-left: auto; }
+.app-settings__page--preferences .k-icon-btn, .app-settings__page--preferences .k-btn { min-width: 40px; min-height: 40px; }
+.app-settings__page--preferences .color-theme-picker { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.settings-fact { color: var(--color-text-secondary); font-size: 12px; white-space: nowrap; }
+@media (max-width: 1100px) {
+  .app-settings__page { padding: 24px 24px 48px; }
+  .app-settings__page--preferences { max-width: 848px; }
+}
+.app-settings__page--preferences .k-switch::after { content: ''; position: absolute; inset: -10px -3px; }
+.app-settings__page--preferences .k-choice { display: flex; flex-wrap: wrap; }
+.app-settings__page--preferences .k-choice__opt { flex: 1 0 auto; min-height: 40px; }
