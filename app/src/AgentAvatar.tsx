@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Button, Card, Field, IconButton, Input, Row, Section, useConfirm, RecoveryAlert } from './ui/kit';
+import { Alert, Button, Card, Dialog, Field, IconButton, Input, Row, Section, useConfirm, RecoveryAlert, Tooltip } from './ui/kit';
 import { RefreshCw } from 'lucide-react';
 import { AvatarPicker, avatarPng, type AvatarLook } from './ui/avatar-shapes';
 
@@ -9,7 +9,7 @@ export function AgentAvatar({ agent, size }: { agent: { id: string; name: string
   const channel = Array.isArray(agent.members);
   return <span className={`avatar${size ? ' bs-avatar' : ''}${channel ? ' is-channel' : ''}`} style={size ? { width: size, height: size, fontSize: Math.round(size * 0.42) } : undefined} aria-hidden="true">{!channel && agent.avatar_revision ? <img key={agent.avatar_revision} src={`/api/agents/${agent.id}/avatar/image?v=${agent.avatar_revision}`} alt="" /> : channel ? '#' : agent.name.slice(0, 1).toUpperCase()}</span>;
 }
-export function AvatarEditor({ agent, request, onChanged }: { agent: string; request: <T>(path: string, body?: unknown) => Promise<T>; onChanged: () => Promise<void> }) {
+export function AvatarEditor({ agent, request, onChanged, onClose }: { agent: string; request: <T>(path: string, body?: unknown) => Promise<T>; onChanged: () => Promise<void>; onClose?: () => void }) {
   const path = `/api/agents/${agent}/avatar`, key = `briefsip-avatar:${agent}`;
   const [state, setState] = useState<State | null>(null), [pending, setPending] = useState<Command | null>(null), [invalid, setInvalid] = useState(false);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
@@ -76,22 +76,22 @@ export function AvatarEditor({ agent, request, onChanged }: { agent: string; req
     try { sessionStorage.removeItem(key); setPending(null); setInvalid(false); setNotice(''); await load(true); }
     catch { setError('Browser storage is unavailable. Try again.'); }
   }
-  return <div className="k-stack bs-root">
-    <Section title="Avatar" actions={<IconButton label="Reload avatar" disabled={busy} onClick={() => void reload()}><RefreshCw size={15} aria-hidden /></IconButton>}>
-      <Card><Row title="Agent image" meta="Static PNG, JPEG, or WebP, up to 512 KiB and 16 megapixels. Images are cropped to a square; metadata is removed."
+  return <Dialog open size="md" title="Avatar" onOpenChange={open => { if (!open) onClose?.(); }} footer={<>
+    <Button className="k-dialog__foot-start" variant="ghost" disabled={busy || !!pending || invalid || !state?.present} onClick={async () => { if (!busy && !pending && !invalid && state?.present && await confirm({ title: 'Remove avatar?', confirm: 'Remove avatar', danger: true })) void save(true); }}>Remove avatar</Button>
+    <Button onClick={onClose}>Done</Button>
+    <Button variant="primary" busy={busy} disabled={busy || invalid || !state || !pending && !validFile && !look} onClick={() => void save(false)}>{busy ? 'Saving...' : pending ? 'Try again' : 'Save'}</Button>
+  </>}>
+    <Section title="Image" actions={<IconButton label="Reload avatar" disabled={busy} onClick={() => void reload()}><RefreshCw size={15} aria-hidden /></IconButton>}>
+      <Card><Row title={<Tooltip content="PNG, JPEG, or WebP. Up to 512 KiB and 16 megapixels. Cropped to a square; metadata removed."><span tabIndex={0}>Current avatar</span></Tooltip>}
         trailing={state?.present && <img src={`${path}/image?v=${state.revision}`} alt="Current agent avatar" width={64} height={64} style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8 }} />} /></Card>
       <AvatarPicker value={look} disabled={busy || !!pending || invalid || !state} onChange={next => { setLook(next); setSelected(null); setError(''); if (file.current) file.current.value = ''; }} />
-      <Field label="Upload an image instead"><Input ref={file} hidden style={{ display: 'none' }} type="file" accept="image/png,image/jpeg,image/webp" disabled={busy || !!pending || invalid || !state} onChange={event => {
+      <Field label="Upload image"><Input ref={file} hidden style={{ display: 'none' }} type="file" accept="image/png,image/jpeg,image/webp" disabled={busy || !!pending || invalid || !state} onChange={event => {
         const chosen = event.target.files?.[0] ?? null; setSelected(chosen); if (chosen) setLook(null); setError('');
         if (chosen && (!chosen.size || chosen.size > 512 * 1024 || !['image/png', 'image/jpeg', 'image/webp'].includes(chosen.type))) setError('Choose a PNG, JPEG, or WebP image up to 512 KiB.');
       }} /><div className="k-row-actions"><Button size="sm" aria-label="Choose avatar image" disabled={busy || !!pending || invalid || !state} onClick={() => file.current?.click()}>Choose image</Button><span className="k-field__hint" role="status" style={{ alignSelf: 'center', overflowWrap: 'anywhere' }}>{selected?.name ?? 'No image chosen'}</span></div></Field>
       {invalid && <Alert tone="error">Saved request is invalid. Reload the avatar to continue.</Alert>}
-      {error && <Alert tone="error">{error}</Alert>}{notice && <Alert>{notice}</Alert>}
-      {pending && <RecoveryAlert inFlight={busy} tone="warn" title="Changes are not confirmed yet">Retry sends the same avatar request and ID.</RecoveryAlert>}
-      <div className="k-inline">
-        <Button size="sm" variant="secondary" busy={busy} disabled={busy || invalid || !state || !pending && !validFile && !look} onClick={() => void save(false)}>{busy ? 'Processing avatar...' : pending ? 'Retry avatar change' : 'Save avatar'}</Button>
-        <Button size="sm" disabled={busy || !!pending || invalid || !state?.present} onClick={() => { if (!busy && !pending && !invalid && state?.present) void save(true); }}>Delete avatar</Button>
-      </div>
+      {error && <Alert tone="error">{error}</Alert>}{notice && <span className="sr-only" role="status">{notice}</span>}
+      {pending && <RecoveryAlert inFlight={busy} tone="warn" title="Not confirmed" />}
     </Section>
-  </div>;
+  </Dialog>;
 }
