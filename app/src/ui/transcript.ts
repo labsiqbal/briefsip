@@ -1,4 +1,5 @@
 export type TurnActivityData = {
+  budget_stopped?: number;
   dispatch?: { source_turn: string; target_turn: string; mode: 'steer' | 'restart' }[];
   calls: { seq: number; model: string; purpose: string; phase: string; status: string; created: string; finished: string | null }[];
   tools: { id: string; name: string; after_action: number; failed: number }[];

@@ -114,6 +114,6 @@ test('agent history tools retrieve old originals and reject foreign conversation
     duringRead = () => post(scopes[0].path, { id: randomUUID(), text: 'Future disclosure', files: [unsentId] });
     await run(scopes[0].path, 'done'); assert.match(results[0].error, /not found/);
     mode = 'invalid'; await run(scopes[0].path, 'failed'); assert.equal(results.length, 0);
-    mode = 'loop'; await run(scopes[0].path, 'failed'); assert.equal(results.length, 8);
+    mode = 'loop'; await run(scopes[0].path, 'done'); assert.equal(results.length, 9);
   } finally { unsubscribe('undici:request:error', captureError); await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });

@@ -36,8 +36,8 @@ test('M4 real owner and session MCP HTTP clients read and write feature families
   const owner=await f.client(f.peer().token!),session=await f.client(f.session().token);
   assert((await owner.listTools()).tools.some(t=>t.name==='delegate_task'));assert((await session.listTools()).tools.some(t=>t.name==='create_routine'));
   assert.equal((await call(owner,'read_agent',{agent:f.a.id})).name,'A');
-  const agent=await call(owner,'create_agent',{requestId:randomUUID(),name:'MCP agent',model:'fixture',instructions:'Help.'});
-  await call(owner,'update_agent',{requestId:randomUUID(),agent:agent.id,revision:1,role:'New role'});
+  const agent=await call(owner,'create_agent',{requestId:randomUUID(),name:'MCP agent',model:'fixture',instructions:'Help.',toolBudget:25});assert.equal(agent.tool_budget,25);
+  await call(owner,'update_agent',{requestId:randomUUID(),agent:agent.id,revision:1,role:'New role',toolBudget:30});assert.equal((await call(owner,'read_agent',{agent:agent.id})).tool_budget,30);
   const hidden=await call(owner,'hide_agent',{requestId:randomUUID(),agent:f.b.id,revision:0,confirmed:true});assert.equal(hidden.hidden,true);
   const open=await owner.callTool({name:'open_computer',arguments:{requestId:randomUUID(),agent:f.a.id}});assert(open.isError);assert(JSON.stringify(open).includes('403'));
   const side=await call(owner,'create_conversation',{requestId:randomUUID(),agent:agent.id,name:'MCP side'});

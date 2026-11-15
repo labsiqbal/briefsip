@@ -46,6 +46,7 @@ export function TurnActivity({ turn, agentName, onOpenTask, onOpenAgent, remote 
   for (const question of turn.questions ?? []) steps.push({ id: `question-${question.id}`, text: `${question.answer === null ? 'Asked' : 'Answered'}: ${question.prompt}` });
   for (const file of turn.generatedFiles ?? []) steps.push({ id: `file-${file.id}`, text: `Generated ${file.name}` });
   for (const checkpoint of turn.activity?.checkpoints ?? []) steps.push({ id: `checkpoint-${checkpoint.turn}`, text: checkpoint.state === 'done' ? 'Git checkpoint captured' : `Git checkpoint ${checkpoint.state}` });
+  if (turn.activity?.budget_stopped) steps.push({ id: 'budget', text: `Stopped after ${turn.activity.budget_stopped} tool steps` });
   if (turn.activity?.fallback_model) steps.push({ id: 'fallback', text: `Fallback model used: ${turn.activity.fallback_model}` });
   return <div className="turn-activity">
     <Collapsible title={<span>{activityLabel(turn, now)}</span>}>

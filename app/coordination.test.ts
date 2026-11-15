@@ -77,9 +77,13 @@ test('coordination: durable delegation, transfer, cancellation, rejection and re
     const before = calls.length; await post(path, outsider);
     assert.match((await waitTurn(path, outsider.id, 'failed')).error, /member/);
     assert.equal(calls.length, before + 1);
-    const cycle = { id: randomUUID(), text: 'cycle', recipient: alpha.id };
-    await post(path, cycle);
-    assert.match((await waitTurn(path, cycle.id, 'failed')).error, /Coordination limit/);
+    // Keep the longer family-limit cycle separate from later rate-sensitive scenarios.
+    const cycleAgents = await Promise.all(['Cycle A', 'Cycle B'].map(name => post('/api/agents', { id: randomUUID(), name, model: 'cycle', instructions: 'Coordinate.' })));
+    const cycleRoom = await post('/api/channels', { id: randomUUID(), name: 'Cycle', instructions: 'Coordinate.', members: cycleAgents.map(agent => agent.id), lead: cycleAgents[0].id });
+    const cyclePath = `/api/channels/${cycleRoom.id}/turns`, cycle = { id: randomUUID(), text: 'cycle', recipient: cycleAgents[0].id };
+    await post(cyclePath, cycle);
+    const cycled = await waitTurn(cyclePath, cycle.id, 'failed');
+    assert.match(cycled.error, /Coordination limit/); assert.equal(cycled.coordination.length, 32);
     const cancellation = { id: randomUUID(), text: 'cancel-tree', recipient: alpha.id };
     await post(path, cancellation);
     for (let i = 0; i < 100; i++) {

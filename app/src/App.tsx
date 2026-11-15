@@ -70,7 +70,7 @@ const McpPanel = lazy(() => import('./McpPanel').then(module => ({ default: modu
 const ConnectedAppsPanel = lazy(() => import('./ConnectedAppsPanel').then(module => ({ default: module.ConnectedAppsPanel })).catch(panelLoadFailure));
 const SkillsPanel = lazy(() => import('./SkillsPanel').then(module => ({ default: module.SkillsPanel })).catch(panelLoadFailure));
 
-type Agent = { workspace_connected?: boolean; runtime?: 'api' | 'codex' | 'claude'; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; thread_limit: number; revision: number; id: string; name: string; role: string; model: string; instructions: string };
+type Agent = { workspace_connected?: boolean; runtime?: 'api' | 'codex' | 'claude'; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; thread_limit: number; tool_budget?: number; revision: number; id: string; name: string; role: string; model: string; instructions: string };
 type Channel = { project?: string | null; activity: number; read_position: number; revision: number; archived: number; id: string; name: string; instructions: string; members: string[]; lead: string | null };
 type Thread = { delivery?: boolean; active?: boolean; activity?: number; id: string; agent: string; name: string; revision: number; archived: number; deleted: number; fork?: { source_name: string; source_id: string; source_kind: 'agent' | 'channel' | 'thread'; source_agent: string; cutoff_turn: string; created: string } | null };
 type AgentMessage = Exchange & { taskId?: string; task?: string; wait?: boolean; generatedFiles?: { id: string; name: string; size: number; thread: string }[]; paused: number; request: string; expects_reply: number; settled: number; id: string; agent: string; thread: string; name: string; status: string; error: string | null; reply: string | null; truncated: boolean };
@@ -1108,7 +1108,7 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (busy || invalid) return;
     const form = new FormData(event.currentTarget);
-    const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision } : setup ? { setup: true } : {}), providerAccount: account, name: String(form.get('name')).trim() || (setup ? 'New agent' : ''), role: String(form.get('role')).trim(), model: String(form.get('model')).trim(), backupModel: String(form.get('backupModel')).trim(), instructions: String(form.get('instructions')).trim(), threadLimit: Number(form.get('threadLimit')) };
+    const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision } : setup ? { setup: true } : {}), providerAccount: account, name: String(form.get('name')).trim() || (setup ? 'New agent' : ''), role: String(form.get('role')).trim(), model: String(form.get('model')).trim(), backupModel: String(form.get('backupModel')).trim(), instructions: String(form.get('instructions')).trim(), threadLimit: Number(form.get('threadLimit')), toolBudget: Number(form.get('toolBudget')) };
     if (profile && runtime !== (profile.runtime ?? 'api') && !pending.current) {
       if (!await confirm({ title: 'Change agent runtime?', description: 'Future turns use the selected runtime and its host login. Existing history remains in Briefsip; the new runtime starts a fresh conversation. Workspace edits can persist after a turn stops.', confirm: 'Change runtime' })) return;
       Object.assign(data, { runtime, confirmRuntime: true });
@@ -1198,6 +1198,9 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
           </Field>
           <Field label="Concurrent side threads" hint="Main chat has its own queue.">
             <Input name="threadLimit" type="number" min={1} max={32} step={1} required readOnly={locked} defaultValue={profile?.thread_limit ?? recovery.command?.threadLimit ?? 2} />
+          </Field>
+          <Field label="Tool steps per task" hint={runtime === 'api' ? '10-200 steps. Stops with a summary; reply “continue” for more.' : 'Saved for API tasks. Coding runtimes manage their own steps.'}>
+            <Input name="toolBudget" type="number" min={10} max={200} step={1} required readOnly={locked || runtime !== 'api'} defaultValue={profile?.tool_budget ?? recovery.command?.toolBudget ?? 90} />
           </Field>
         </div>
       </Collapsible>
