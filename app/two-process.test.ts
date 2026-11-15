@@ -660,7 +660,8 @@ test('canonical workflow cron validates HTTP input and admits one retained overd
       const invalid=randomUUID(),response=await f.send(path,{...command,requestId:invalid,id:invalid,spec:{kind:'cron',expression}});
       assert([400,422].includes(response.status),JSON.stringify(response.body));assert.equal((await f.send(path)).body.data.schedule,null);
     }
-    const saved=await f.send(path,command);assert.equal(saved.status,201,JSON.stringify(saved.body));assert(saved.body.data.nextAt>Date.now());
+    // Compare with the request start: a save just before a 5-minute boundary returns that boundary, which can pass before the response arrives.
+    const before=Date.now(),saved=await f.send(path,command);assert.equal(saved.status,201,JSON.stringify(saved.body));assert(saved.body.data.nextAt>before);
     // Model a persisted cron that became overdue while canonical and home were offline.
     const dueAt=Math.floor(Date.now()/300000)*300000-900000,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
     try{db.prepare('UPDATE schedules SET next_at=? WHERE id=?').run(dueAt,f.workflow);}finally{db.close();}
