@@ -1,7 +1,8 @@
 import { downloadBlob } from './hooks/downloadBlob';
-import { useEffect, useRef, useState } from 'react';
+import { useVisiblePolling } from './hooks/useVisiblePolling';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { ChevronLeft, ChevronRight, Download, FileText, Folder, RefreshCw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, FileText, Folder } from 'lucide-react';
 import { Alert, Button, Card, CodeBlock, EmptyState, IconButton, PageHeader, Row, Section, SkeletonRows } from './ui/kit';
 
 type Location = { path: string; file: boolean; after?: string; offset?: number; digest?: string };
@@ -14,16 +15,17 @@ export function WorkspacePanel({ agent, request, onClose, basePath = `/api/agent
   const heading = useRef<HTMLHeadingElement>(null), generation = useRef(0);
   const location = locations[locations.length-1];
   useEffect(() => {
-    const current = ++generation.current; setPage(null); setError(''); setDownloading(false); setDownloadError(''); heading.current?.focus();
+    generation.current++; setPage(null); setError(''); setDownloading(false); setDownloadError(''); heading.current?.focus();
+    return () => { generation.current++; };
+  }, [basePath, location]);
+  const root = useVisiblePolling(useCallback(async current => {
     const params = new URLSearchParams({path:location.path});
     if(location.after !== undefined)params.set('after',location.after);
     if(location.offset !== undefined)params.set('offset',String(location.offset));
     if(location.digest !== undefined)params.set('digest',location.digest);
-    void request<Page>(`${basePath}/${location.file?'file':'entries'}?${params}`).then(value => {
-      if(current === generation.current)setPage(value);
-    }).catch(reason => {if(current === generation.current)setError(reason instanceof Error ? reason.message : 'Workspace could not load. Try again.');});
-    return () => {generation.current++;};
-  },[agent.id,basePath,location,reload,request]);
+    try { const value = await request<Page>(`${basePath}/${location.file?'file':'entries'}?${params}`); if (current()) { setPage(value); setError(''); } }
+    catch(reason) { if(current())setError(reason instanceof Error ? reason.message : 'Workspace could not load. Try again.'); }
+  }, [basePath, location, reload, request]));
   function open(next:Location){if(next.file && onOpenFile){onOpenFile(next.path);return;}generation.current++;setPage(null);setError('');setLocations(value=>[...value,next]);}
   function back(){generation.current++;setPage(null);setError('');setLocations(value=>value.slice(0,-1));}
   async function download() {
@@ -37,18 +39,18 @@ export function WorkspacePanel({ agent, request, onClose, basePath = `/api/agent
     } catch(reason) {if(current===generation.current)setDownloadError(reason instanceof TypeError?'Download interrupted. Check the connection and try again.':reason instanceof Error?reason.message:'Download failed. Try again.');}
     finally {if(current===generation.current)setDownloading(false);}
   }
-  return <div className={`${compact ? "k-stack" : "k-page"} bs-root`}>
+  return <div ref={root} className={`${compact ? "k-stack" : "k-page"} bs-root`}>
     {!compact && <PageHeader headingRef={heading} title={`Workspace files for ${agent.name}`}
       description="Local files linked by the host owner. Previews are read-only; opening files here does not send their contents to the model."
-      actions={<><Button variant="ghost" onClick={onClose}>Back</Button><IconButton label="Reload from start" onClick={()=>{generation.current++;setPage(null);setError('');setLocations(value=>[...value.slice(0,-1),{path:location.path,file:location.file}]);setReload(value=>value+1);}}><RefreshCw size={15} aria-hidden /></IconButton></>} />}
-    {compact && <Section title="Project workspace" actions={<IconButton label="Reload workspace" onClick={()=>setReload(value=>value+1)}><RefreshCw size={15} aria-hidden /></IconButton>}>{null}</Section>}
+      actions={<Button variant="ghost" onClick={onClose}>Back</Button>} />}
+    {compact && <Section title="Project workspace">{null}</Section>}
     <div className="k-row-actions">
       <Button disabled={locations.length<2} onClick={back} icon={<ChevronLeft size={14} aria-hidden />}>Previous</Button>
       <Button onClick={()=>{generation.current++;setPage(null);setError('');setLocations([{path:'',file:false}]);}} icon={<Folder size={14} aria-hidden />}>Root directory</Button>
     </div>
     <Section title={<span style={{ overflowWrap: 'anywhere' }}>{location.path || 'Root directory'}</span>}>
       {location.file && <><div className="k-row-actions"><Button aria-disabled={downloading} aria-busy={downloading} onClick={()=>void download()} icon={<Download size={14} aria-hidden />}>{downloading?'Preparing download...':'Download original file'}</Button></div><p className="k-field__hint" style={{ margin: 0 }}>Text or binary, up to 10 MiB. Downloads use the current file version.</p>{downloadError&&<Alert tone="error">{downloadError}</Alert>}</>}
-      {error ? <Alert tone="error">{error}</Alert> : !page ? <><p className="k-field__hint" role="status">Loading workspace...</p><SkeletonRows /></> : location.file ? <>
+      {error ? <Alert tone="error" actions={<Button onClick={()=>{generation.current++;setPage(null);setError('');setLocations(value=>[...value.slice(0,-1),{path:location.path,file:location.file}]);setReload(value=>value+1);}}>Retry</Button>}>{error}</Alert> : !page ? <><p className="k-field__hint" role="status">Loading workspace...</p><SkeletonRows /></> : location.file ? <>
         <p className="k-field__hint" style={{ margin: 0 }}>Starting at character {(location.offset??0)+1}. Maximum 8000 characters per page.</p>
         <CodeBlock label={`Contents of ${location.path}`}>{page.text || '(Empty file)'}</CodeBlock>
         {page.next_offset != null && <div className="k-pager"><IconButton label="Next text page" disabled={page.next_offset == null} onClick={()=>open({...location,offset:page.next_offset!,digest:page.digest})}><ChevronRight size={16} aria-hidden /></IconButton></div>}

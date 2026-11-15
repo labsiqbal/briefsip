@@ -79,11 +79,6 @@
       "count": 1
     }
   },
-  "src/AgentComputerPanel.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
-      "count": 2
-    }
-  },
   "src/AgentComputerSettings.tsx": {
     "briefsip-lifecycle/no-component-effects": {
       "count": 2
@@ -94,10 +89,7 @@
   },
   "src/AgentProfileDialog.tsx": {
     "briefsip-lifecycle/no-component-effects": {
-      "count": 7
-    },
-    "no-restricted-globals": {
-      "count": 2
+      "count": 5
     }
   },
   "src/AgentTemplateImport.tsx": {
@@ -115,7 +107,7 @@
       "count": 26
     },
     "no-restricted-globals": {
-      "count": 5
+      "count": 4
     }
   },
   "src/ApprovalCard.tsx": {
@@ -138,7 +130,7 @@
   },
   "src/CompactionPanel.tsx": {
     "briefsip-lifecycle/no-component-effects": {
-      "count": 2
+      "count": 1
     },
     "no-restricted-globals": {
       "count": 1
@@ -156,7 +148,7 @@
   },
   "src/ConversationAttachments.tsx": {
     "briefsip-lifecycle/no-component-effects": {
-      "count": 5
+      "count": 4
     }
   },
   "src/EventConnection.tsx": {
@@ -167,11 +159,6 @@
   "src/GeneralSettings.tsx": {
     "briefsip-lifecycle/no-component-effects": {
       "count": 2
-    }
-  },
-  "src/HtmlPreview.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
-      "count": 1
     }
   },
   "src/MachinesPanel.tsx": {
@@ -242,7 +229,7 @@
   },
   "src/RightPanelFiles.tsx": {
     "briefsip-lifecycle/no-component-effects": {
-      "count": 2
+      "count": 1
     },
     "no-restricted-globals": {
       "count": 1

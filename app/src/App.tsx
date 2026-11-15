@@ -7,7 +7,7 @@ import { AgentConversation, RoomMessages, type RoomView, type Exchange } from '.
 import { UpdatesPanel, useUpdateBadge } from './UpdatesPanel';
 import { HarnessApprovalCard, type HarnessApproval } from './HarnessApprovalCard';
 import './ui/csp-nonce';
-import { SourceControl, RestoreCheckpoint } from './SourceControl';
+import { RestoreCheckpoint } from './SourceControl';
 import { ComputerViewer, ComputerRequestCard } from './ComputerViewer';
 import type { ComputerWait } from '../agent-computer';
 import { AgentComputerPanel } from './AgentComputerPanel';
@@ -33,14 +33,14 @@ import { TimelineMinimap } from './ui/TimelineMinimap';
 import { deriveTimelineMinimapItems } from './ui/timelineMinimapItems';
 import { EventConnection } from './EventConnection';
 import { applyPresentation, presentationKey, readPresentation } from '../presentation';
-import { CreateProject, HelpPage, ProjectHome, ProjectSidebar, ProjectSourceControl, useProjects } from './Projects';
+import { CreateProject, HelpPage, ProjectHome, ProjectSidebar, useProjects } from './Projects';
 import { MachinesPanel, RemoteAgentDetail, useMachines } from './MachinesPanel';
 import { HtmlPreview } from './HtmlPreview';
 import { QuestionCard, type Question } from './QuestionCard';
 import { ApprovalCard, type AppApproval } from './ApprovalCard';
 import { CompactionPanel } from './CompactionPanel';
 import { lazy, Suspense, useEffect, useRef, useState, useId, type FormEvent, type ReactNode } from 'react';
-import { Link as LinkIcon, Archive, BarChart3, BookOpen, Database, Download, KeyRound, Palette, Plug, SlidersHorizontal, Bell, BellOff, Brain, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, GitFork, ListRestart, Square, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
+import { Link as LinkIcon, Archive, BarChart3, BookOpen, Database, Download, KeyRound, Palette, Plug, SlidersHorizontal, Bell, BellOff, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, GitFork, ListRestart, Square, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
 import { PanelResizeHandle, sidebarPanel, useResizablePanel } from './ui/resizable';
@@ -76,7 +76,6 @@ const UsagePanel = lazy(() => import('./UsagePanel').then(module => ({ default: 
 const BackupPanel = lazy(() => import('./BackupPanel').then(module => ({ default: module.BackupPanel })).catch(panelLoadFailure));
 const AgentTemplateImport = lazy(() => import('./AgentTemplateImport').then(module => ({ default: module.AgentTemplateImport })).catch(panelLoadFailure));
 const AgentTemplateExport = lazy(() => import('./AgentTemplateImport').then(module => ({ default: module.AgentTemplateExport })).catch(panelLoadFailure));
-const SitesPanel = lazy(() => import('./SitesPanel').then(module => ({ default: module.SitesPanel })).catch(panelLoadFailure));
 const McpServerPanel = lazy(() => import('./McpServerPanel').then(module => ({ default: module.McpServerPanel })).catch(panelLoadFailure));
 const McpPanel = lazy(() => import('./McpPanel').then(module => ({ default: module.McpPanel })).catch(panelLoadFailure));
 const HubConnection = lazy(() => import('./hub/HubConnection').then(module => ({ default: module.HubConnection })).catch(panelLoadFailure));
@@ -181,14 +180,13 @@ function ForkAnswer({ path, turn, onOpen }: { path: string; turn: Turn; onOpen?:
   return <><IconButton label="Fork from here" disabled={busy || !onOpen} aria-busy={busy || undefined} onClick={() => void fork()}><GitFork size={14} aria-hidden /></IconButton>{error && <span className="message-error" role="alert">{error} Retry uses the same fork request.</span>}</>;
 }
 
-type DetailsContent = { chats: ReactNode; onManageRoutines?: () => void; library?: ReactNode };
-function Chat({ agent, configured, channel, thread, members = [], onRead, onRestored, onEdit, onComputerSettings, onOpenAgent, onOpenChannel, menuItems = [], detailsExtra, sourceControl }: { sourceControl?: (onOpenDiff: () => void) => ReactNode; onComputerSettings?: () => void; menuItems?: MenuItem[]; detailsExtra?: DetailsContent; onOpenChannel?: (channel: string) => void; onOpenAgent?: (agent: string, thread: string) => void; onRead?: () => Promise<void>; onRestored?: () => Promise<void>; onEdit?: () => void; agent: Agent | Channel; configured: boolean; channel?: Channel; thread?: Thread; members?: Agent[] }) {
+type DetailsContent = { chats: ReactNode; onManageRoutines?: () => void };
+function Chat({ agent, configured, channel, thread, members = [], onRead, onRestored, onEdit, onOpenAgent, onOpenChannel, menuItems = [], detailsExtra }: { menuItems?: MenuItem[]; detailsExtra?: DetailsContent; onOpenChannel?: (channel: string) => void; onOpenAgent?: (agent: string, thread: string) => void; onRead?: () => Promise<void>; onRestored?: () => Promise<void>; onEdit?: () => void; agent: Agent | Channel; configured: boolean; channel?: Channel; thread?: Thread; members?: Agent[] }) {
   const confirm = useConfirm();
   const archived = !!(channel?.archived || thread?.archived || (!channel && (agent as Agent).hidden));
   const scope = thread ? `thread:${thread.id}` : channel ? `channel:${agent.id}` : agent.id;
   const path = thread ? `/api/threads/${thread.id}/turns` : `/api/${channel ? 'channels' : 'agents'}/${agent.id}/turns`;
   const [showMemory, setShowMemory] = useState(false);
-  const memoryButton = useRef<HTMLButtonElement>(null);
   const [focusedTask, setFocusedTask] = useState(() => { try { const key = `briefsip:focus:${scope}`, id = sessionStorage.getItem(key) ?? ''; sessionStorage.removeItem(key); return /^[a-f0-9-]{36}$/i.test(id) ? id : ''; } catch { return ''; } });
   const [searchText, setSearchText] = useState('');
   const [query, setQuery] = useState('');
@@ -282,13 +280,8 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
     try { await api(`${path}/${turn.id}/cancel`, { id: crypto.randomUUID() }); setError(''); }
     catch (error) { setError(message(error)); }
   }
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false), [summaryOpen, setSummaryOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useDetailsOpen();
-  const tabStorageKey = `briefsip:details-tab:${scope}`;
-  const [detailsTab, setDetailsTab] = useState<'chats' | 'activity' | 'library'>(() => {
-    try { const value = localStorage.getItem(tabStorageKey); return value === 'activity' || value === 'library' ? value : 'chats'; } catch { return 'chats'; }
-  });
-  function selectDetailsTab(value: 'chats' | 'activity' | 'library') { setDetailsTab(value); try { localStorage.setItem(tabStorageKey, value); } catch { /* Keep tab selection in memory. */ } }
   const rightPanel = useRightPanel(scope);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
@@ -300,8 +293,8 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
     window.addEventListener('keydown', key, true);
     return () => window.removeEventListener('keydown', key, true);
   }, [detailsOpen, setDetailsOpen]);
-  const attachments = useConversationAttachments({ path: path.replace(/\/turns$/, '/files'), archived, attached: pending?.files ?? attached, onAttach: attach, locked: blocked || !!pending || busy, pastedFiles, onPasteSettled: () => setPastedFiles([]), onFiles: setPastedFiles, libraryOpen: detailsOpen && rightPanel.tab === 'details' && detailsTab === 'library', api });
-  if (showMemory) return <PageView><Suspense fallback={<p className="empty" role="status">Loading memory...</p>}><MemoryPanel key={scope} path={`/api/${channel ? 'channels' : 'agents'}/${agent.id}/memory`} channel={!!channel} archived={!!channel?.archived} request={api} onClose={() => { setShowMemory(false); requestAnimationFrame(() => memoryButton.current?.focus()); }} /></Suspense></PageView>;
+  const attachments = useConversationAttachments({ path: path.replace(/\/turns$/, '/files'), archived, attached: pending?.files ?? attached, onAttach: attach, locked: blocked || !!pending || busy, pastedFiles, onPasteSettled: () => setPastedFiles([]), onFiles: setPastedFiles, filesOpen: detailsOpen && rightPanel.tab === 'files', api });
+  if (showMemory) return <PageView><Suspense fallback={<p className="empty" role="status">Loading memory...</p>}><MemoryPanel key={scope} path={`/api/${channel ? 'channels' : 'agents'}/${agent.id}/memory`} channel={!!channel} archived={!!channel?.archived} request={api} onClose={() => { setShowMemory(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.chat__pill')?.focus()); }} /></Suspense></PageView>;
   const refreshTurns = () => { void Promise.all([api<Turn[]>(path), api<typeof activeTurns>(path.replace(/\/turns$/, '/dispatch'))]).then(([data, active]) => { setQueueTurns(data); if (!focusedTask && !before && !query) setTurns(mergeStream(data)); setActiveTurns(active); }).catch(error => setError(message(error))); };
   const queued = (turn: Turn) => !channel && turn.status === 'queued' && !turn.paused && !turn.questions?.some(question => question.answer === null) && !turn.events?.some(event => event.status === 'waiting') && !turn.parent && !turn.waiting_for && !turn.routineReport && !turn.workflow_run && !turn.activity?.calls.length && !turn.agentMessages?.length;
   const runningTurn = !channel ? activeTurns[0] : undefined;
@@ -311,7 +304,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
   const items: MenuItem[] = [
     ...menuItems,
     ...(onEdit ? [{ label: editLabel, onSelect: onEdit }] : []),
-    { label: `${channel ? 'Section' : 'Agent'} memory`, onSelect: () => setShowMemory(true) },
+    ...(channel || thread ? [{ label: `${channel ? 'Section' : 'Agent'} memory`, onSelect: () => setShowMemory(true) }, { label: 'History summary', onSelect: () => setSummaryOpen(true) }] : []),
     { label: detailsOpen ? 'Hide details' : 'Show details', onSelect: () => setDetailsOpen(!detailsOpen) },
   ];
   const statusLabel = (turn: Turn) => turn.computerWait ? 'Waiting for you' : (turn.approvals?.some(approval => approval.state === 'approval') || turn.harnessApprovals?.some(approval => approval.state === 'approval')) && !['done','cancelled'].includes(turn.status) ? 'Waiting for approval' : turn.editing ? 'Editing' : turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) ? 'Waiting for your answer' : turn.no_update ? 'No updates' : turn.paused && !['done','cancelled'].includes(turn.status) ? 'Paused' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) && turn.status === 'queued' ? 'Waiting for agent reply' : turn.waiting_for && turn.status === 'queued' ? 'Waiting for delegation' : turn.routing === 'pending' && turn.status === 'running' ? 'Selecting recipient' : turn.routing === 'clarify' ? 'Needs clarification' : turn.routing === 'none' ? 'No task needed' : turn.status === 'running' ? 'Running' : statusNames[turn.status] ?? turn.status;
@@ -320,8 +313,9 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
   const openFocused = (id: string) => { focusedOnce.current = ''; setQuery(''); setFocusedTask(id); };
   const delegated = turns?.filter(turn => turn.coordination?.length || turn.agentMessages?.length || turn.parent) ?? [];
   const waiting = turns?.flatMap(turn => turn.events?.filter(event => event.status === 'waiting').map(event => ({ turn, event })) ?? []) ?? [];
-  const openDiff = () => { rightPanel.select('diff'); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.right-panel > .k-tabs > .k-tabs__list > [data-state="active"]')?.focus()); };
+
   return <div className="chat-row bs-root">
+    {summaryOpen && <Dialog open title="Conversation context" onOpenChange={setSummaryOpen}><CompactionPanel path={path.replace(/\/turns$/, '/compaction')} request={api} /></Dialog>}
     <main className="chat" aria-label={`Conversation ${title}`}>
       <ChatTranscript ref={transcript} onScroll={onScroll} minimap={<TimelineMinimap key={`${path}:${before}:${query}:${focusedTask}`} items={deriveTimelineMinimapItems(turns ?? [])} viewport={transcript} onNavigate={() => { nearBottom.current = false; }} />} jump={showJump && !focusedTask && !before && !query ? <IconButton className="jump-btn" label="Jump to latest" onClick={jumpToLatest}><ChevronDown size={16} aria-hidden /></IconButton> : null}>
             {(focusedTask || before || query) && <div className="history-banner" role="status"><span>{focusedTask ? channel ? 'Task family' : 'Selected message' : query ? `Search results: ${query}` : 'Older history'}</span><button type="button" className="link-btn" onClick={() => { focusHistory.current = true; setTurns(null); setFocusedTask(''); setHistoryPages([]); setQuery(''); focusedOnce.current = ''; nearBottom.current = true; }}>Back to latest messages</button></div>}
@@ -402,7 +396,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
         right={<><span className={`activity-chip${active ? ' is-working' : ''}`} role="status">{active ? `${active} ${active === 1 ? 'message' : 'messages'} processing` : channel ? 'Section' : 'Direct conversation'}</span>
           {!detailsOpen && <button type="button" className="icon-btn icon-btn--bordered" onClick={() => setDetailsOpen(true)} aria-label="Show details" title="Show details (Ctrl/Cmd+Shift+B)" aria-keyshortcuts="Control+Shift+B Meta+Shift+B"><PanelRight size={16} aria-hidden /></button>}</>} />
     </main>
-    {detailsOpen && <RightPanel path={path.replace(/\/turns$/, '')} name={agent.name} state={rightPanel} request={api} onClose={() => setDetailsOpen(false)} settings={onEdit && <IconButton label={editLabel} onClick={onEdit}><Settings size={16} aria-hidden /></IconButton>} details={
+    {detailsOpen && <RightPanel path={path.replace(/\/turns$/, '')} name={agent.name} state={rightPanel} request={api} onClose={() => setDetailsOpen(false)} attached={attachments.panelAttached} attachedCount={(pending?.files ?? attached).length} attachDisabled={archived || blocked || !!pending || busy || attachments.uploading} onAttach={file => void attachments.togglePanelFile(file)} settings={onEdit && <IconButton label={editLabel} onClick={onEdit}><Settings size={16} aria-hidden /></IconButton>} details={
       <div className="details__scroll">
         <div className="details__identity">
           <AgentAvatar agent={agent} size={36} />
@@ -411,19 +405,18 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
             {!channel && <span className="details__model" title={(agent as Agent).runtime && (agent as Agent).runtime !== 'api' ? `${(agent as Agent).runtime} runtime` : (agent as Agent).model}>{(agent as Agent).runtime && (agent as Agent).runtime !== 'api' ? `${(agent as Agent).runtime} runtime` : (agent as Agent).model}</span>}
           </div>
         </div>
-        {!channel && <div className="details__computer"><AgentComputerPanel key={`computer:${agent.id}`} agent={agent.id} name={agent.name} request={api} onSettings={onComputerSettings} /></div>}
+        {!channel && <div className="details__computer"><AgentComputerPanel key={`computer:${agent.id}`} agent={agent.id} request={api} onOpen={() => rightPanel.select('computer')} /></div>}
         {channel && <div className="details__channel-meta">
           <div className="section-label">{members.length} members</div>
           <div className="details__members" aria-label={`${members.length} channel members`}>{members.map(member => <span key={member.id} role="img" aria-label={`${member.name}${member.id === channel.lead ? ", lead" : ""}`} title={member.name}><AgentAvatar agent={member} size={24} /></span>)}</div>
           <div className="details__read"><span>{channel.activity > channel.read_position ? 'Unread activity' : 'All activity read'}</span><button type="button" className="link-btn link-btn--small" disabled={markingRead || channel.activity <= channel.read_position} onClick={() => { setMarkingRead(true); void onRead?.().catch(error => setError(message(error))).finally(() => setMarkingRead(false)); }}>Mark as read</button></div>
         </div>}
-        <div className="details__tabs">
-          <Tabs value={detailsTab} onChange={selectDetailsTab} label="Details sections" tabs={[{ value: 'chats', label: 'Chats' }, { value: 'activity', label: 'Activity' }, { value: 'library', label: 'Library' }]}>
-            <TabPanel value="chats"><div className="details__sections">
+        <div className="details__sections">
               <form className="details-search" role="search" onSubmit={event => { event.preventDefault(); if (!searchText.trim()) return; focusHistory.current = true; nearBottom.current = false; setQuery(searchText); setFocusedTask(''); setHistoryPages([]); focusedOnce.current = ''; }}><Search size={15} aria-hidden /><label className="sr-only" htmlFor="history-search">Search this conversation</label><input id="history-search" type="search" maxLength={200} value={searchText} onChange={event => setSearchText(event.target.value)} placeholder="Search messages" /></form>
               {detailsExtra?.chats}
-            </div></TabPanel>
-            <TabPanel value="activity"><div className="details__sections details-activity">
+            </div>
+      </div>
+    } activity={<div className="details__sections details-activity">
               {!!activeTurns.length && <section className="activity-section" aria-label="Running messages"><Collapsible variant="section" defaultOpen title={<>Running <Badge tone="success">{activeTurns.length}</Badge></>}><div className="panel-card">{activeTurns.map(turn => <button key={turn.id} type="button" className="panel-row panel-row--link" onClick={() => openFocused(turn.id)}><span className="panel-row__title">{turns?.find(item => item.id === turn.id)?.text ?? 'Open running message'}</span><Badge tone="success">{turns?.find(item => item.id === turn.id) ? statusLabel(turns.find(item => item.id === turn.id)!) : 'Running'}</Badge></button>)}</div></Collapsible></section>}
               <QueuePanel path={path} request={api} onOpen={id => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(id); }} />
               {!!delegated.length && <section className="activity-section"><Collapsible variant="section" title={<>Delegated <Badge>{delegated.length}</Badge></>}><div className="panel-card">{delegated.map(turn => <button key={turn.id} type="button" className="panel-row panel-row--link" onClick={() => openFocused(turn.id)}><span className="panel-row__text"><span className="panel-row__title">{turn.text}</span><span className="panel-row__meta">{statusLabel(turn)}</span></span></button>)}</div></Collapsible></section>}
@@ -431,16 +424,11 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
               {channel?.project && <SectionRoutines channel={channel.id} onOpen={onOpenAgent} />}
               {detailsExtra?.onManageRoutines && <UpcomingRoutines agent={agent.id} onManage={detailsExtra.onManageRoutines} />}
               <div className="activity-empty" role="status"><Clock size={20} aria-hidden /><span>No activity</span></div>
-            </div></TabPanel>
-            <TabPanel value="library"><div className="details__sections details-library">{attachments.library}<section><div className="section-label">Memory and context</div><div className="details-list"><button ref={memoryButton} type="button" className="panel-row panel-row--link" onClick={() => setShowMemory(true)}><Brain size={16} aria-hidden /><span className="panel-row__title">{channel ? 'Section' : 'Agent'} memory</span><ChevronRight size={14} aria-hidden /></button><CompactionPanel path={path.replace(/\/turns$/, '/compaction')} request={api} /></div></section>{sourceControl?.(openDiff) ?? (!channel && (agent as Agent).workspace_connected && <SourceControl key={agent.id} agent={agent.id} request={api} onOpenDiff={openDiff} />)}{detailsExtra?.library}</div></TabPanel>
-          </Tabs>
-        </div>
-      </div>
-    } />}
+            </div>} />}
   </div>;
 }
 
-function WorkflowConversation({ agent, threadId, configured, onOpenAgent, onOpenChannel, onComputerSettings }: { onComputerSettings: (agent: Agent) => void; agent?: Agent; threadId: string; configured: boolean; onOpenAgent: (agent: string, thread: string) => void; onOpenChannel: (channel: string) => void }) {
+function WorkflowConversation({ agent, threadId, configured, onOpenAgent, onOpenChannel }: { agent?: Agent; threadId: string; configured: boolean; onOpenAgent: (agent: string, thread: string) => void; onOpenChannel: (channel: string) => void }) {
   const [thread, setThread] = useState<Thread | null>(null), [error, setError] = useState(''), [reload, setReload] = useState(0);
   useEffect(() => {
     if (!agent) return;
@@ -455,7 +443,7 @@ function WorkflowConversation({ agent, threadId, configured, onOpenAgent, onOpen
   if (!agent) return <p className="error" role="alert">Step agent is no longer available.</p>;
   if (error) return <p className="error" role="alert">{error} <button className="secondary" onClick={() => setReload(value => value + 1)}>Reload step conversation</button></p>;
   if (!thread) return <p className="empty" role="status">Loading step conversation...</p>;
-  return <Chat key={thread.id} agent={agent} thread={thread} onComputerSettings={() => onComputerSettings(agent)} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />;
+  return <Chat key={thread.id} agent={agent} thread={thread} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />;
 }
 
 type Routine = { trigger: 'schedule' | 'webhook' | 'manual' | 'script'; id: string; agent: string; name: string; prompt: string; next_at: number; interval_ms: number | null; enabled: number; revision: number; project?: string | null; project_name?: string | null; report_to?: string; report_section?: string | null; schedule?: import('../schedule-spec').Spec | null; schedule_zone?: string | null; routineReport?: { run: string; status: string; thread: string }; owner_name?: string; flow_agents?: number; last_source?: string | null; last_scheduled_at?: number | null; last_status?: string | null; last_paused?: number | null; last_no_update?: number | null; last_created?: string | null; last_thread?: string | null };
@@ -849,7 +837,7 @@ function RoutineForm({ owner, agents, projects, routine, onBack, onSaved }: { ow
   </Dialog>;
 }
 
-function AgentConversations({ agent, onRestored, configured, onEdit, onComputerSettings, onSites, onExport, workflowAgents, initialThread, onOpenAgent, onOpenChannel, onThreadOpened, onManageRoutines }: { onRestored: () => Promise<void>; onSites: () => void; onExport: () => void; onManageRoutines: (agent: string) => void; onOpenChannel: (channel: string) => void; agent: Agent; workflowAgents: Agent[]; configured: boolean; onEdit: () => void; onComputerSettings: (agent: Agent) => void; initialThread?: string; onThreadOpened: () => void; onOpenAgent: (owner: string, thread: string) => void }) {
+function AgentConversations({ agent, onRestored, configured, onEdit, onExport, workflowAgents, initialThread, onOpenAgent, onOpenChannel, onThreadOpened, onManageRoutines }: { onRestored: () => Promise<void>; onExport: () => void; onManageRoutines: (agent: string) => void; onOpenChannel: (channel: string) => void; agent: Agent; workflowAgents: Agent[]; configured: boolean; onEdit: () => void; initialThread?: string; onThreadOpened: () => void; onOpenAgent: (owner: string, thread: string) => void }) {
   const [threads, setThreads] = useState<Thread[]>([]), [error, setError] = useState('');
   const storageKey = `briefsip:thread:${agent.id}`;
   const [selected, setSelected] = useState(() => { if (initialThread) return initialThread; try { return sessionStorage.getItem(storageKey) ?? ''; } catch { return ''; } });
@@ -892,7 +880,7 @@ function AgentConversations({ agent, onRestored, configured, onEdit, onComputerS
   const openWorkspace = () => { leave(); setShowWorkflows(false); setForm(null); setShowWorkspace(true); };
   const errorBanner = error && <p className="error" role="alert">{error} <button className="secondary" onClick={() => void load().catch(() => {})}>Reload conversation</button></p>;
   if (showWorkspace) return <PageView>{errorBanner}<Suspense fallback={<p className="empty" role="status">Loading workspace files...</p>}><WorkspacePanel key={agent.id} agent={agent} request={api} onClose={() => { setShowWorkspace(false); requestAnimationFrame(() => workspaceButton.current?.focus()); }} /></Suspense></PageView>;
-  if (showWorkflows) return <PageView wide>{errorBanner}<Suspense fallback={<p className="empty" role="status">Loading workflows...</p>}><WorkflowPanel owner={agent} agents={workflowAgents} request={api} onNavigate={leave} onBack={() => { leave(); setShowWorkflows(false); }} renderConversation={(id, owner) => <WorkflowConversation key={id} onComputerSettings={onComputerSettings} agent={workflowAgents.find(item => item.id === owner)} threadId={id} configured={configured} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />} /></Suspense></PageView>;
+  if (showWorkflows) return <PageView wide>{errorBanner}<Suspense fallback={<p className="empty" role="status">Loading workflows...</p>}><WorkflowPanel owner={agent} agents={workflowAgents} request={api} onNavigate={leave} onBack={() => { leave(); setShowWorkflows(false); }} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={workflowAgents.find(item => item.id === owner)} threadId={id} configured={configured} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />} /></Suspense></PageView>;
 
   if (!loaded) return <PageView>{errorBanner}<p className="empty" role="status">Loading conversation...</p></PageView>;
   const locked = busy || !!pending || invalid;
@@ -962,11 +950,10 @@ function AgentConversations({ agent, onRestored, configured, onEdit, onComputerS
       {!!deliveries.length && <Collapsible variant="section" title={<>From other agents <Badge>{deliveries.length}</Badge></>}><div className="panel-card">{deliveries.map(row)}</div></Collapsible>}
     </section>
   </>;
-  const library = <section aria-label="Resources"><div className="section-label">Resources</div><div className="details-list"><button type="button" className="panel-row panel-row--link" onClick={onSites}><LinkIcon size={16} aria-hidden /><span className="panel-row__title">Agent sites</span><ChevronRight size={14} aria-hidden /></button>{agent.workspace_connected && <button ref={workspaceButton} type="button" className="panel-row panel-row--link" onClick={openWorkspace}><FolderOpen size={16} aria-hidden /><span className="panel-row__title">Workspace files</span><ChevronRight size={14} aria-hidden /></button>}</div></section>;
   return <><Chat onRestored={onRestored} onOpenChannel={onOpenChannel} onOpenAgent={onOpenAgent} key={thread?.id ?? agent.id} agent={agent} thread={thread} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)}
-    onEdit={thread ? () => setForm(thread) : onEdit} onComputerSettings={() => onComputerSettings(agent)}
+    onEdit={thread ? () => setForm(thread) : onEdit}
     menuItems={[...(thread ? actions(thread) : []), { label: 'Export template', onSelect: onExport }, { label: 'New conversation', onSelect: openForm, disabled: locked }, { label: 'Routines', onSelect: openRoutines }, { label: 'Workflows', onSelect: openWorkflows }, { label: 'Workspace files', onSelect: openWorkspace }]}
-    detailsExtra={{ chats: conversations, onManageRoutines: openRoutines, library }} />{form && <ThreadForm key={form === 'new' ? 'new' : `${form.id}:${form.revision}`} agent={agent} thread={form === 'new' ? undefined : form} busy={busy} locked={!!pending || invalid} onCancel={() => setForm(null)} onSave={command => void execute(command)} error={error} pending={pending} onRetry={() => pending && void execute(pending)} onReload={() => void reloadForm()} />}</>;
+    detailsExtra={{ chats: conversations, onManageRoutines: openRoutines }} />{form && <ThreadForm key={form === 'new' ? 'new' : `${form.id}:${form.revision}`} agent={agent} thread={form === 'new' ? undefined : form} busy={busy} locked={!!pending || invalid} onCancel={() => setForm(null)} onSave={command => void execute(command)} error={error} pending={pending} onRetry={() => pending && void execute(pending)} onReload={() => void reloadForm()} />}</>;
 }
 
 function ThreadForm({ agent, thread, busy, locked, onCancel, onSave, error, pending, onRetry, onReload }: { onReload: () => void; error: string; pending: ThreadCommand | null; onRetry: () => void; agent: Agent; thread?: Thread; busy: boolean; locked: boolean; onCancel: () => void; onSave: (command: ThreadCommand) => void }) {
@@ -1078,7 +1065,7 @@ function MachineGroup({ name, subtitle, count, status, expanded, onExpandedChang
 
 function App() {
   const deleteAgent = useDeleteAgent(api, async id => {
-    setDialog(null); setComputerSettings(null); setAgentContent(null);
+    setDialog(null); setAgentContent(null);
     setSelected(current => current === id ? '' : current); setOpenedThread(current => current?.agent === id ? null : current);
     setProjectThread(current => current?.agent === id ? null : current);
     await load(true); await projectState.reload();
@@ -1092,7 +1079,7 @@ function App() {
   const updateAvailable = useUpdateBadge(api);
   const [remoteSelection, setRemoteSelection] = useState<{ machine: string; agent: string } | null>(null);
   const [workspaceDialog, setWorkspaceDialog] = useState<'import' | 'help' | null>(null);
-  const [agentContent, setAgentContent] = useState<{ agent: Agent; kind: 'sites' | 'export' } | null>(null);
+  const [agentContent, setAgentContent] = useState<{ agent: Agent; kind: 'export' } | null>(null);
   const [settings, setSettings] = useState<SettingsSection | null>(null);
   const [settingsQuery, setSettingsQuery] = useState('');
   const settingsSearch = useRef<HTMLInputElement>(null);
@@ -1111,7 +1098,6 @@ function App() {
   const [selectedProject, setSelectedProject] = useState('');
   const [projectThread, setProjectThread] = useState<{project:string;thread:string;agent:string;conversation?:Thread & {folder?:string}} | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
-  const [computerSettings, setComputerSettings] = useState<Agent | null>(null);
   const [notificationsMuted, setNotificationsMuted] = useState(() => { try { return localStorage.getItem('briefsip:workflow-notifications-muted') === '1'; } catch { return false; } });
   const [notificationError, setNotificationError] = useState('');
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() => { try { return localStorage.getItem(sidebarTabKey) === 'projects' ? 'projects' : 'agents'; } catch { return 'agents'; } });
@@ -1207,12 +1193,12 @@ function App() {
   if (error) content = <PageView><div className="empty"><h1>Workspace is not open</h1><p role="alert">{error}</p><button onClick={() => void load()}>Try again</button></div></PageView>;
   else if (!directory) content = <main className="chat chat--empty bs-root"><p className="empty-chat__sub" role="status">Loading workspace...</p></main>;
   else if (view === 'remote') { const machine = remoteMachinesState.machines.find(item => item.id === remoteSelection?.machine); content = <RemoteAgentDetail key={`${machine?.id}:${remoteSelection?.agent}`} request={api} machine={machine} agent={machine?.agents.find(item => item.id === remoteSelection?.agent)} />; }
-  else if (view === 'workflows') content = <PageView wide><Suspense fallback={<p className="empty" role="status">Loading workflow directory...</p>}><WorkflowDirectory agents={directory.agents} request={api} onClose={() => setView('chat')} renderConversation={(id, owner) => <WorkflowConversation key={id} onComputerSettings={setComputerSettings} agent={directory.agents.find(item => item.id === owner)} threadId={id} configured={directory.configured} onOpenAgent={openThread} onOpenChannel={openChannel} />} /></Suspense></PageView>;
+  else if (view === 'workflows') content = <PageView wide><Suspense fallback={<p className="empty" role="status">Loading workflow directory...</p>}><WorkflowDirectory agents={directory.agents} request={api} onClose={() => setView('chat')} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={directory.agents.find(item => item.id === owner)} threadId={id} configured={directory.configured} onOpenAgent={openThread} onOpenChannel={openChannel} />} /></Suspense></PageView>;
   else if (view === 'routines') content = <PageView wide><RoutinesHub key={routineAgent} initialAgent={routineAgent} agents={directory.agents.filter(agent => !agent.hidden)} projects={projectState.projects} onClose={() => setView('chat')} onOpen={openThread} /></PageView>;
   else if (project) content = <PageView wide><ProjectHome project={project} agents={directory.agents} state={projectState} request={api} onChat={id => { void load(true).then(() => openChannel(id)); }} onThread={(agent,thread) => { setProjectThread({project:project.id,agent,thread}); setSelectedProject(''); }} onDeleted={() => { setSelectedProject(''); void load(); }} /></PageView>;
-  else if (projectThread && directory.agents.find(agent => agent.id === projectThread.agent)) { const owner = directory.agents.find(agent => agent.id === projectThread.agent)!; const thread = projectState.projects.find(project => project.id === projectThread.project)?.threads.find(thread => thread.id === projectThread.thread) ?? projectThread.conversation; content = thread ? <Chat key={thread.id} sourceControl={thread.folder ? onOpenDiff => <ProjectSourceControl project={projectThread.project} folder={thread.folder!} request={api} onOpenDiff={onOpenDiff}/> : undefined} agent={owner} onComputerSettings={() => setComputerSettings(owner)} thread={{...thread,revision:1,archived:0,deleted:0}} configured={directory.configured} menuItems={[{label:'Back to project',onSelect:()=>openProject(projectThread.project)}]} /> : <PageView><EmptyState title="Project conversation unavailable" /></PageView>; }
+  else if (projectThread && directory.agents.find(agent => agent.id === projectThread.agent)) { const owner = directory.agents.find(agent => agent.id === projectThread.agent)!; const thread = projectState.projects.find(project => project.id === projectThread.project)?.threads.find(thread => thread.id === projectThread.thread) ?? projectThread.conversation; content = thread ? <Chat key={thread.id} agent={owner} thread={{...thread,revision:1,archived:0,deleted:0}} configured={directory.configured} menuItems={[{label:'Back to project',onSelect:()=>openProject(projectThread.project)}]} /> : <PageView><EmptyState title="Project conversation unavailable" /></PageView>; }
   else if (channel) content = <Chat onOpenAgent={openThread} key={`channel:${channel.id}`} agent={channel} channel={{ ...channel, lead: directory.agents.find(agent => agent.id === channel.lead)?.hidden ? null : channel.lead }} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id) && !agent.hidden)} onEdit={channel.project ? undefined : () => setDialog('edit')} menuItems={channel.project ? [{label:'Back to project',onSelect:()=>openProject(channel.project!)}] : []} configured={directory.configured} />;
-  else if (agent) content = <AgentConversations onRestored={() => load(true)} onSites={() => setAgentContent({ agent, kind: 'sites' })} onExport={() => setAgentContent({ agent, kind: 'export' })} onManageRoutines={id => { setRoutineAgent(id); setView('routines'); }} onOpenChannel={openChannel} key={agent.id} agent={agent} workflowAgents={directory.agents} configured={directory.configured} initialThread={openedThread?.agent === agent.id ? openedThread.thread : undefined} onThreadOpened={() => setOpenedThread(null)} onOpenAgent={openThread} onEdit={() => setDialog('edit')} onComputerSettings={setComputerSettings} />;
+  else if (agent) content = <AgentConversations onRestored={() => load(true)} onExport={() => setAgentContent({ agent, kind: 'export' })} onManageRoutines={id => { setRoutineAgent(id); setView('routines'); }} onOpenChannel={openChannel} key={agent.id} agent={agent} workflowAgents={directory.agents} configured={directory.configured} initialThread={openedThread?.agent === agent.id ? openedThread.thread : undefined} onThreadOpened={() => setOpenedThread(null)} onOpenAgent={openThread} onEdit={() => setDialog('edit')} />;
   else content = <main className="chat chat--empty bs-root"><div className="empty-chat"><div className="empty-chat__title">Create your first agent</div><button type="button" className="btn btn--primary" onClick={() => setDialog('agent')}><Plus size={16} aria-hidden /> New agent</button></div></main>;
   const created = (item: Agent) => { setDirectory(current => current && { ...current, agents: [...current.agents.filter(agent => agent.id !== item.id), item] }); openAgent(item.id); };
   return <RadixDialog.Root modal open={!!settings} onOpenChange={open => setSettings(current => open ? current ?? 'general' : null)}><div className={`app bs-root${collapsed ? ' is-sidebar-collapsed' : ''}`}>
@@ -1293,13 +1279,12 @@ function App() {
       <PanelResizeHandle panel={sidebar} />
     </aside>}
     {content}
-    {computerSettings && directory && <AgentForm request={api} isClientError={error => error instanceof HttpError && error.status < 500} key={`${computerSettings.id}:${editReload}`} model={directory.defaultModel} profile={directory.agents.find(item => item.id === computerSettings.id) ?? computerSettings} onDelete={item => deleteAgent(item)} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} focusComputer onCancel={() => setComputerSettings(null)} onCreated={() => { void load(); setComputerSettings(null); }} />}
     {dialog === 'agent' && directory && <AgentForm request={api} isClientError={error => error instanceof HttpError && error.status < 500} model={directory.defaultModel} onCancel={() => setDialog(null)} onCreated={item => { created(item); setDialog(null); }} />}
     {dialog === 'project' && directory && <CreateProject state={projectState} agents={directory.agents} request={api} onClose={() => setDialog(null)} onCreated={item => { openProject(item.id); void load(); }} />}
     {dialog === 'edit' && directory && channel && <ChannelForm key={`${channel.id}:${channel.revision}:${editReload}`} agents={directory.agents} channel={channel} onCancel={() => setDialog(null)} onReload={() => { void load().then(() => setEditReload(value => value + 1)); }} onCreated={() => { void load(); setDialog(null); }} />}
     {dialog === 'edit' && directory && !channel && agent && <AgentForm request={api} isClientError={error => error instanceof HttpError && error.status < 500} key={`${agent.id}:${editReload}`} model={directory.defaultModel} profile={agent} onCancel={() => setDialog(null)} onDelete={item => deleteAgent(item)} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} onCreated={() => { void load(); setDialog(null); }} />}
     {workspaceDialog && <Dialog open size="lg" title={workspaceDialog === 'help' ? 'Help' : 'Import template'} onOpenChange={open => { if (!open) setWorkspaceDialog(null); }}><div className="legacy"><Suspense fallback={<p role="status">Loading...</p>}>{workspaceDialog === 'help' ? <HelpPage /> : <AgentTemplateImport request={api} onClose={() => setWorkspaceDialog(null)} onCreated={item => { created(item); setWorkspaceDialog(null); }} />}</Suspense></div></Dialog>}
-    {agentContent && <Dialog open size="lg" title={`${agentContent.agent.name} · ${agentContent.kind === 'sites' ? 'Agent sites' : 'Export template'}`} onOpenChange={open => { if (!open) setAgentContent(null); }}><div className="legacy"><Suspense fallback={<p role="status">Loading...</p>}>{agentContent.kind === 'sites' ? <SitesPanel agent={agentContent.agent.id} request={api} /> : <AgentTemplateExport id={agentContent.agent.id} request={api} />}</Suspense></div></Dialog>}
+    {agentContent && <Dialog open size="lg" title={`${agentContent.agent.name} · Export template`} onOpenChange={open => { if (!open) setAgentContent(null); }}><div className="legacy"><Suspense fallback={<p role="status">Loading...</p>}><AgentTemplateExport id={agentContent.agent.id} request={api} /></Suspense></div></Dialog>}
     <RadixDialog.Portal><RadixDialog.Content className="app-settings bs-root" aria-describedby={undefined} onEscapeKeyDown={event => { if (settingsQuery && document.activeElement === settingsSearch.current) { event.preventDefault(); setSettingsQuery(''); } }} onOpenAutoFocus={event => {
       event.preventDefault();
       const page = (event.currentTarget as HTMLElement).querySelector<HTMLElement>('.app-settings__page');
