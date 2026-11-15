@@ -1625,7 +1625,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "CSS replaces Tailwind; shared kit buttons retain previous/next tooltips. Preserve pointer fisheye, drag-selection pass-through, keyboard navigation and preview. Fine-pointer narrow gutters reveal on hover/focus; small windows and coarse pointers hide the rail.",
+      "adaptation": "CSS replaces Tailwind; shared kit buttons retain previous/next tooltips. Preserve pointer fisheye, drag-selection pass-through, keyboard navigation and preview. Fine-pointer narrow gutters keep an 8px rail visible; small windows and coarse pointers hide the rail.",
       "compatibilityCheck": "app/timeline-minimap.test.ts; work/rebuild/ui-smoke/timeline-minimap-smoke.mjs"
     },
     {
@@ -1663,7 +1663,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Keep minimum two turns, 8px pitch, bounded proportional pointer mapping, viewport-capped height, 48px persistent gutter and gutter-bounded hit strip.",
+      "adaptation": "Keep minimum two turns, 8px pitch, bounded proportional pointer mapping, viewport-capped height and gutter-bounded hit strip with 8px minimum. Navigation respects the floating header scroll padding.",
       "compatibilityCheck": "app/timeline-minimap.test.ts; work/rebuild/ui-smoke/timeline-minimap-smoke.mjs"
     },
     {
@@ -1768,6 +1768,44 @@
       "dependencies": [],
       "adaptation": "Port wheel assertions to existing Playwright smoke harness; cover pixels, line/page units, accumulated mouse glide and interruption, plus rendered highlight, hover, keyboard/click jumps, narrow width and paging.",
       "compatibilityCheck": "app/timeline-minimap.test.ts; work/rebuild/ui-smoke/timeline-minimap-smoke.mjs"
+    }
+  ],
+  "messageFindSourceEntries": [
+    {
+      "sourcePath": "apps/web/src/components/chat/ThreadFindBar.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "feab8f379745c5893f1cb89c9fd272fc04e81437461424df19e8c169ed17f705",
+      "symbols": [
+        "ThreadFindBar"
+      ],
+      "localPaths": [
+        "app/src/ui/MessageFind.tsx",
+        "app/src/ui/transcript.ts",
+        "app/src/ui/chat.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt compact find bar, native CSS Highlight ranges, match count, previous/next and Escape. Briefsip uses its existing history pages, Markdown DOM and kit controls; no T3 store or virtualizer.",
+      "compatibilityCheck": "app/message-find.test.ts; work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/threadFindHighlights.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "9bb994f22c470846b66482556ed3c3ddb275ca178f45c5c54ffe5374691b3915",
+      "symbols": [
+        "collectThreadFindRanges"
+      ],
+      "localPaths": [
+        "app/src/ui/MessageFind.tsx",
+        "app/src/ui/transcript.ts",
+        "app/src/ui/chat.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt compact find bar, native CSS Highlight ranges, match count, previous/next and Escape. Briefsip uses its existing history pages, Markdown DOM and kit controls; no T3 store or virtualizer.",
+      "compatibilityCheck": "app/message-find.test.ts; work/rebuild/ui-smoke/smoke.mjs"
     }
   ]
 }

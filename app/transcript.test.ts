@@ -78,3 +78,10 @@ test('turn list exposes scoped read-only activity metadata in direct, thread and
     assert.deepEqual(await request(`/api/agents/${foreign.id}/turns`), []);
   } finally { await app.close(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(directory, { recursive: true, force: true }); }
 });
+
+test('subsecond and stopped turn labels remain terminal', () => {
+  const turn = { status: 'done', paused: 0, created, activity: { ...activity, calls: [{ ...activity.calls[0], created, finished: created }] } };
+  assert.equal(activityLabel(turn, Date.now()), 'Worked for <1s');
+  assert.equal(activityLabel({ ...turn, status: 'cancelled' }, Date.now()), 'Stopped after <1s');
+  assert.equal(activityLabel({ ...turn, status: 'cancelled', activity: undefined }, Date.now()), 'Stopped after <1s');
+});

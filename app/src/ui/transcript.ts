@@ -40,3 +40,9 @@ export function activityLabel(turn: ActivityTurn, now: number) {
   if (turn.status === 'queued') return 'Queued';
   return duration ? `Working… ${duration}` : 'Working…';
 }
+
+export function matchOffsets(text: string, query: string) {
+  if (!query.trim()) return [];
+  return [...text.matchAll(new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu'))]
+    .map(match => ({ start: match.index, end: match.index + match[0].length }));
+}
