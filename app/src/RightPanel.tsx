@@ -1,12 +1,13 @@
 // Panel tabs and surface composition adapted from T3 (MIT); see ../t3/provenance.json.
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { FileDiff, Files, Globe, Info, Monitor, RefreshCw, X } from 'lucide-react';
+import { AppWindow, FileDiff, Files, Globe, Info, Monitor, RefreshCw, X } from 'lucide-react';
 import { Alert, IconButton, TabPanel, Tabs } from './ui/kit';
 import { PanelResizeHandle, detailsPanel, useResizablePanel } from './ui/resizable';
 import { createRightPanelStore, rightPanelWidthKey } from './right-panel-state';
 import { PanelFiles, PanelPreview, type PanelFile, type PanelSite } from './RightPanelFiles';
 import { PanelDiff, type GitStatus } from './RightPanelDiff';
 import { ComputerViewer } from './ComputerViewer';
+import { AgentBrowserViewer } from './AgentBrowserViewer';
 import './right-panel.css';
 
 export type PanelRequest = <T>(path: string, body?: unknown) => Promise<T>;
@@ -24,7 +25,7 @@ export function useRightPanel(scope: string) {
 export function RightPanel({ path, name, state, request, onClose, details, settings, extensions = [] }: {
   path: string; name: string; state: ReturnType<typeof useRightPanel>; request: PanelRequest; onClose: () => void;
   details: ReactNode; settings?: ReactNode;
-  /** Browser extension point: extensions={[{ value: 'browser', label: ..., content: <AgentBrowserPanel .../> }]}. */
+  /** Extra tabs: extensions={[{ value, label, content }]}. */
   extensions?: RightPanelExtension[];
 }) {
   const base = `${path}/panel`;
@@ -51,7 +52,7 @@ export function RightPanel({ path, name, state, request, onClose, details, setti
     { value: 'files', label: <><Files size={14} aria-hidden /><span className="right-panel__tab-label">Files</span></> },
     ...(git?.isRepo ? [{ value: 'diff', label: <><FileDiff size={14} aria-hidden /><span className="right-panel__tab-label">Diff</span></> }] : []),
     ...(context?.previews.length || context?.sites.length ? [{ value: 'preview', label: <><Globe size={14} aria-hidden /><span className="right-panel__tab-label">Preview</span></> }] : []),
-    ...(context?.computer ? [{ value: 'computer', label: <><Monitor size={14} aria-hidden /><span className="right-panel__tab-label">Computer</span></> }] : []),
+    ...(context?.computer ? [{ value: 'computer', label: <><Monitor size={14} aria-hidden /><span className="right-panel__tab-label">Computer</span></> }, { value: 'browser', label: <><AppWindow size={14} aria-hidden /><span className="right-panel__tab-label">Browser</span></> }] : []),
     ...extensions,
   ];
   const selected = tabs.some(tab => tab.value === state.tab) ? state.tab : 'details';
@@ -65,6 +66,7 @@ export function RightPanel({ path, name, state, request, onClose, details, setti
       <TabPanel value="diff">{git?.isRepo && <PanelDiff base={base} status={git} request={request} refresh={refresh} />}</TabPanel>
       <TabPanel value="preview"><PanelPreview base={base} files={context?.previews ?? []} sites={context?.sites ?? []} request={request} /></TabPanel>
       <TabPanel value="computer">{context?.computer && <div className="right-panel__computer"><ComputerViewer agent={context.computer} name={name} request={request} /></div>}</TabPanel>
+      <TabPanel value="browser">{context?.computer && <div className="right-panel__computer right-panel__browser"><AgentBrowserViewer agent={context.computer} name={name} request={request} /></div>}</TabPanel>
       {extensions.map(extension => <TabPanel key={extension.value} value={extension.value}>{extension.content}</TabPanel>)}
     </Tabs>
   </aside>;
