@@ -19,7 +19,9 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
   const stage = mkdtempSync(join(releases, '.staging-'));
   try {
     // Runtime source only. Never include workspace data, .env, test fixtures or development bundles.
-    for (const name of readdirSync(source)) if (/\.(ts|mjs)$/.test(name) && !/(?:\.test\.ts|-it\.ts|\.d\.ts)$/.test(name) || ['package.json', 'package-lock.json', 'dist', 't3'].includes(name)) cpSync(join(source, name), join(stage, name), { recursive: true, filter: p => !p.endsWith('.test.ts') && !p.endsWith('-it.ts') && !p.endsWith('.d.ts') });
+    for (const name of readdirSync(source)) if (/\.(ts|mjs)$/.test(name) && !/(?:\.test\.ts|-it\.ts|\.d\.ts)$/.test(name) || ['package.json', 'package-lock.json', 'dist', 't3', 'hub'].includes(name)) cpSync(join(source, name), join(stage, name), { recursive: true, filter: p => !p.endsWith('.test.ts') && !p.endsWith('-it.ts') && !p.endsWith('.d.ts') });
+    // A missing runtime module crashes the candidate after apply; fail the release here instead.
+    assertRelativeImports(stage);
     mkdirSync(join(stage, 'machine'), { mode: 0o700 });
     for (const name of ['install-machine.sh', 'uninstall-machine.sh', 'briefsip-launcher.mjs']) cpSync(join(root, 'scripts', name), join(stage, 'machine', name));
     if (install) execFileSync('npm', ['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: stage, stdio: 'inherit' });
@@ -33,6 +35,21 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
     durableWrite(join(releases, 'feed/latest.json'), JSON.stringify(info, null, 2) + '\n', 0o644);
     return info;
   } finally { rmSync(stage, { recursive: true, force: true }); }
+}
+// Every relative import reachable from a runtime entry point must resolve to a staged file.
+export function assertRelativeImports(stage, entries = ['server.ts', 'cli.ts', 'hub/server.ts', 'update-release.mjs', 'agent-desktop-host.mjs', 'browser-pipe.mjs']) {
+  const missing = [], seen = new Set();
+  const pattern = /(?:^|\n)\s*(?:import|export)\b[^'"`;]*?from\s*['"](\.{1,2}\/[^'"]+)['"]|\bimport\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)/g;
+  const visit = path => {
+    if (seen.has(path)) return; seen.add(path);
+    for (const match of readFileSync(path, 'utf8').matchAll(pattern)) {
+      const spec = match[1] ?? match[2], target = resolve(dirname(path), spec);
+      if (!existsSync(target)) missing.push(`${path.slice(stage.length + 1)} -> ${spec}`);
+      else if (/\.(ts|mjs|js)$/.test(target)) visit(target);
+    }
+  };
+  for (const entry of entries) if (existsSync(join(stage, entry))) visit(join(stage, entry));
+  if (missing.length) throw new Error(`Release is missing runtime modules:\n${missing.join('\n')}`);
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const args = process.argv.slice(2), allowed = new Set(['--releases', '--notes', '--allow-dirty', '--desktop', '--desktop-feed']);
