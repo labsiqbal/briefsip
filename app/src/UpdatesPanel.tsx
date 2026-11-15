@@ -1,3 +1,4 @@
+import { usePolling } from './hooks/usePolling';
 // Machine summary and restart confirmation adapted from T3 UpdateEverythingDialog (MIT).
 import { useEffect, useRef, useState } from 'react';
 import { Download, Monitor, RefreshCw } from 'lucide-react';
@@ -13,7 +14,7 @@ const terminal = (status?: string) => !!status && ['done','rolled-back','failed'
 const message = (error: unknown) => error instanceof Error ? error.message : 'Update status is unavailable.';
 export function useUpdateBadge(request: Request) {
   const [available, setAvailable] = useState(false);
-  useEffect(() => { let alive = true, timer: ReturnType<typeof setTimeout>; async function read() { try { const state = await request<UpdateState>('/api/updates'); if (alive) setAvailable(!!state.available); } catch {} if (alive) timer = setTimeout(() => void read(), 15000); } void read(); return () => { alive = false; clearTimeout(timer); }; }, [request]);
+  usePolling(async signal => { try { const state = await request<UpdateState>('/api/updates'); if (!signal.aborted) setAvailable(!!state.available); } catch {}  }, { interval: 15000 }, [request]);
   return available;
 }
 export function UpdatesPanel({ request }: { request: Request }) {
@@ -22,12 +23,8 @@ export function UpdatesPanel({ request }: { request: Request }) {
   const [results,setResults] = useState<{machine:string;status:string;reason?:string;id?:string}[]>([]), [fanBusy,setFanBusy] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null), confirm = useConfirm(), pending = useRef<{id:string;version:string}|null>(null), fanPending = useRef<{id:string;version:string;machines:string[]}|null>(null);
   useEffect(() => { heading.current?.focus(); try { const saved = sessionStorage.getItem('briefsip:update'); if (saved) { const value = JSON.parse(saved); if (typeof value.id === 'string' && typeof value.version === 'string') pending.current = value; } } catch { setError('Saved update request could not be read. Check update history before retrying.'); } }, []);
-  useEffect(() => {
-    let alive = true, timer: ReturnType<typeof setTimeout>;
-    async function poll() { try { const result = await request<UpdateState>('/api/updates'); if (alive) { setState(result); setReconnecting(false); if (result.lastAttempt?.id === pending.current?.id && terminal(result.lastAttempt?.status)) { pending.current = null; sessionStorage.removeItem('briefsip:update'); } } } catch (error) { if (alive) { if (pending.current) setReconnecting(true); else setError(message(error)); } } if (alive) timer = setTimeout(() => void poll(), 1000); }
-    void poll(); return () => { alive = false; clearTimeout(timer); };
-  }, [request]);
-  useEffect(() => { let alive = true, timer: ReturnType<typeof setTimeout>; async function poll() { try { const [list, statuses] = await Promise.all([request<{machines:PairedMachine[]}>('/api/machines'),request<{machines:PeerState[]}>('/api/updates/machines')]); if (alive) { setMachines(list.machines); setPeers(statuses.machines); } } catch (error) { if (alive) setError(message(error)); } if (alive) timer = setTimeout(() => void poll(),5000); } void poll(); return () => { alive = false; clearTimeout(timer); }; }, [request]);
+  usePolling(async signal => { try { const result = await request<UpdateState>('/api/updates'); if (!signal.aborted) { setState(result); setReconnecting(false); if (result.lastAttempt?.id === pending.current?.id && terminal(result.lastAttempt?.status)) { pending.current = null; sessionStorage.removeItem('briefsip:update'); } } } catch (error) { if (!signal.aborted) { if (pending.current) setReconnecting(true); else setError(message(error)); } }  }, { interval: 1000 }, [request]);
+  usePolling(async signal => { try { const [list, statuses] = await Promise.all([request<{machines:PairedMachine[]}>('/api/machines'),request<{machines:PeerState[]}>('/api/updates/machines')]); if (!signal.aborted) { setMachines(list.machines); setPeers(statuses.machines); } } catch (error) { if (!signal.aborted) setError(message(error)); }  }, { interval: 5000 }, [request]);
   async function apply() {
     if (!state?.available || busy) return;
     if (!pending.current && !await confirm({ title: `Update to ${state.available.version}?`, description: `Briefsip backs up your workspace database before restarting. If health checks fail, the previous version and database return automatically. ${state.runningTurns} running ${state.runningTurns === 1 ? 'turn will' : 'turns will'} be interrupted and can resume after restart. Files and external actions are outside database rollback.`, confirm: 'Update now' })) return;

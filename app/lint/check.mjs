@@ -39,6 +39,30 @@ await check("import { parseDocument } from 'yaml';", 'skill-files.ts');
 await check('debugger;', 'hub/probe.ts', 'no-debugger');
 await check('function probe() { return; throw new Error(); }', 'server.ts', 'no-unreachable');
 
+// #38: exercise the ratchets without applying the existing bulk suppressions.
+const timerRule = 'no-restricted-globals', effectRule = 'briefsip-lifecycle/no-component-effects', anyRule = '@typescript-eslint/no-explicit-any';
+for (const timer of ['setTimeout', 'setInterval', 'requestAnimationFrame', 'requestIdleCallback']) {
+  for (const code of [`${timer}(() => {});`, `const later = ${timer};`, `window.${timer}(() => {});`, `self['${timer}'](() => {});`, `globalThis.${timer}(() => {});`])
+    await check(code, 'src/lifecycle-probe.tsx', timerRule);
+  await check(`${timer}(() => {});`, 'src/hooks/lifecycle-probe.ts');
+}
+for (const code of [
+  "import { useEffect } from 'react'; useEffect(() => {}, []);",
+  "import { useEffect as effect } from 'react'; effect(() => {}, []);",
+  "import React from 'react'; React.useEffect(() => {}, []);",
+  "import * as R from 'react'; R['useEffect'](() => {}, []);",
+  "import React from 'react'; const { useEffect: effect } = React; effect(() => {}, []);",
+]) await check(code, 'src/lifecycle-probe.tsx', effectRule);
+for (const file of ['src/hooks/probe.ts', 'src/ui/kit.tsx', 'src/ui/Menu.tsx', 'src/ui/Modal.tsx', 'src/ui/ChatPrimitives.tsx', 'src/ui/resizable.tsx', 'src/ui/primitives/probe.tsx'])
+  await check("import { useEffect } from 'react'; useEffect(() => {}, []);", file);
+await check('const setTimeout = (callback: () => void) => callback(); setTimeout(() => {});', 'src/lifecycle-probe.tsx');
+await check('function useEffect() {} useEffect();', 'src/lifecycle-probe.tsx');
+for (const file of ['src/lifecycle-probe.tsx', 'server.ts', 'hub/probe.ts', 'src/hooks/probe.ts'])
+  await check('let value: any;', file, anyRule);
+await check('let value: unknown;', 'src/lifecycle-probe.tsx');
+await check('let value: any;', 'lifecycle-probe.test.ts');
+await check('setTimeout(() => {});', 'src/ui/kit.tsx', timerRule);
+
 // Re-audit the only package reachable from shared root modules using its browser entry.
 const packageFiles = new Set();
 function visit(file) {
@@ -73,4 +97,4 @@ async function countRules(directory) {
   }
 }
 await countRules(root);
-console.log(`Lint foundation: ${checks} assertions passed; ${browserSafeModules.length} shared modules guarded; yaml browser graph ${packageFiles.size} files; ${rules.size} enforced rules: ${[...rules].sort().join(', ')}.`);
+console.log(`Lint: ${checks} assertions passed; ${browserSafeModules.length} shared modules guarded; yaml browser graph ${packageFiles.size} files; ${rules.size} enforced rules: ${[...rules].sort().join(', ')}.`);

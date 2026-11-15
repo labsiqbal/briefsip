@@ -1,3 +1,4 @@
+import { downloadBlob } from './hooks/downloadBlob';
 import { useEffect, useRef, useState } from 'react';
 
 import { ChevronLeft, ChevronRight, Download, FileText, Folder, RefreshCw } from 'lucide-react';
@@ -32,8 +33,7 @@ export function WorkspacePanel({ agent, request, onClose, basePath = `/api/agent
       const response=await fetch(`${basePath}/download?${new URLSearchParams({path:location.path})}`);
       if(!response.ok)throw new Error((await response.json()).error);
       const blob=await response.blob();if(current!==generation.current)return;
-      const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=location.path.split('/').pop()!;
-      document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+      downloadBlob(blob, location.path.split('/').pop()!);
     } catch(reason) {if(current===generation.current)setDownloadError(reason instanceof TypeError?'Download interrupted. Check the connection and try again.':reason instanceof Error?reason.message:'Download failed. Try again.');}
     finally {if(current===generation.current)setDownloading(false);}
   }

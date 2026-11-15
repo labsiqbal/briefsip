@@ -1,3 +1,4 @@
+import { downloadBlob } from './hooks/downloadBlob';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Badge, Button, Card, CodeBlock, Dialog, PageHeader, Row, Section, useConfirm } from './ui/kit';
 
@@ -17,9 +18,7 @@ export function BackupPanel({}: { onClose: () => void }) {
       if (!response.ok) throw new Error((await response.json()).error ?? 'Backup could not be created. Try again.');
       const blob = await response.blob();
       if (pending.signal.aborted) return;
-      const url = URL.createObjectURL(blob), link = document.createElement('a');
-      link.href = url; link.download = 'briefsip-workspace.sqlite'; link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000); setDownloaded(true);
+      downloadBlob(blob, 'briefsip-workspace.sqlite'); setDownloaded(true);
     } catch (error) { if (!pending.signal.aborted) setError(error instanceof TypeError ? 'Connection lost. Try downloading the backup again.' : error instanceof Error ? error.message : 'Backup download failed.'); }
     finally { if (!pending.signal.aborted) { controller.current = null; setBusy(false); } }
   }

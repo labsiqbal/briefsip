@@ -1,3 +1,4 @@
+import { usePolling } from '../hooks/usePolling';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowUp, Bot, Check, Ellipsis, ExternalLink, FolderOpen, Hash, LogOut, Monitor, Plus, RefreshCw, ShieldCheck, Users } from 'lucide-react';
 import { ActionMenu, Alert, Badge, Button, Card, Checkbox, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Textarea, useConfirm } from '../ui/kit';
@@ -99,7 +100,7 @@ function ProjectPage({ request, session, onExpired }: { request: Request; sessio
   const [project, setProject] = useState<{ id: string; name: string } | null>(null), [sections, setSections] = useState<{ id: string; name: string }[]>([]), [members, setMembers] = useState<Member[]>([]), [participants, setParticipants] = useState<Participant[]>([]), [error, setError] = useState(''), [access, setAccess] = useState(true), [view, setView] = useState(location.hash), [revision, setRevision] = useState(0), [sectionDialog, setSectionDialog] = useState(false), [sectionName, setSectionName] = useState(''), [busy, setBusy] = useState(false);
   const confirm = useConfirm(), canManage = session.role === 'owner' || session.role === 'admin';
   useEffect(() => { const changed = () => setView(location.hash); window.addEventListener('hashchange', changed); return () => window.removeEventListener('hashchange', changed); }, []);
-  useEffect(() => { let active = true; void Promise.all([request<NonNullable<typeof project>>('/api/project'), request<typeof sections>('/api/sections'), request<Member[]>('/api/members'), request<Participant[]>('/api/participants')]).then(([project, sections, members, participants]) => { if (active) { setProject(project); setSections(sections); setMembers(members); setParticipants(participants); setError(''); } }).catch(error => { if (active) { setError(fail(error)); if (error instanceof HubError && [401, 403, 404].includes(error.status)) setAccess(false); } }); return () => { active = false; }; }, [revision]);
+  usePolling(async signal => { await Promise.all([request<NonNullable<typeof project>>('/api/project'), request<typeof sections>('/api/sections'), request<Member[]>('/api/members'), request<Participant[]>('/api/participants')]).then(([project, sections, members, participants]) => { if (!signal.aborted) { setProject(project); setSections(sections); setMembers(members); setParticipants(participants); setError(''); } }).catch(error => { if (!signal.aborted) { setError(fail(error)); if (error instanceof HubError && [401, 403, 404].includes(error.status)) setAccess(false); } }); }, { interval: 3000 }, [revision]);
   useEffect(() => {
     let active = true, checking = false;
     const stream = new EventSource('/api/events');
@@ -108,8 +109,7 @@ function ProjectPage({ request, session, onExpired }: { request: Request; sessio
       if (checking) return; checking = true;
       void request('/api/session').catch(error => { if (!active) return; if (error instanceof HubError && [401, 403, 404].includes(error.status)) { stream.close(); setAccess(false); setError('Project access ended.'); if (error.status === 401) onExpired(); } }).finally(() => { checking = false; });
     };
-    const timer = setInterval(() => { if (active) setRevision(value => value + 1); }, 3000);
-    return () => { active = false; clearInterval(timer); stream.close(); };
+    return () => { active = false; stream.close(); };
   }, []);
   const run = async (path: string, body: unknown) => { if (busy) return; setBusy(true); setError(''); try { await request(path, body); setRevision(value => value + 1); } catch (error) { setError(fail(error)); } finally { setBusy(false); } };
   if (!access) return <div className="k-page bs-root"><PageHeader title="Project unavailable" /><Alert tone="error">{error || 'Project access ended.'}</Alert></div>;

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { usePolling } from './hooks/usePolling';
+import { useState } from 'react';
 import type { HostMetrics } from '../host-metrics';
 import { Alert, Badge, Card, Collapsible, IconButton, Row, Section, Tooltip } from './ui/kit';
 import './machines-data.css';
@@ -13,17 +14,12 @@ const percent = (value: number | null, pending: boolean) => value === null ? (pe
 const fileNames: Record<string, string> = { database: 'Database', wal: 'WAL journal', 'shared-memory': 'SQLite shared memory', 'rollback-journal': 'Rollback journal', 'mcp-key': 'MCP keys' };
 export function HostMetricsSection({ request }: { request: <T>(path: string) => Promise<T> }) {
   const [metrics, setMetrics] = useState<HostMetrics | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false), [refresh, setRefresh] = useState(0);
-  useEffect(() => {
-    let stopped = false, timer: ReturnType<typeof setTimeout>;
-    async function load() {
-      if (document.visibilityState === 'hidden') { timer = setTimeout(() => void load(), 10000); return; }
-      setBusy(true);
-      try { const result = await request<HostMetrics>('/api/host-metrics'); if (!stopped) { setMetrics(result); setError(''); } }
-      catch (error) { if (!stopped) setError(error instanceof Error ? error.message : 'Host metrics are unavailable.'); }
-      finally { if (!stopped) { setBusy(false); timer = setTimeout(() => void load(), 10000); } }
-    }
-    void load(); return () => { stopped = true; clearTimeout(timer); };
-  }, [refresh, request]);
+  usePolling(async signal => {
+    setBusy(true);
+    try { const result = await request<HostMetrics>('/api/host-metrics'); if (!signal.aborted) { setMetrics(result); setError(''); } }
+    catch (error) { if (!signal.aborted) setError(error instanceof Error ? error.message : 'Host metrics are unavailable.'); }
+    finally { if (!signal.aborted) setBusy(false); }
+  }, { interval: 10000 }, [refresh, request]);
   return <Section title="System resources" actions={<IconButton label="Reload metrics" disabled={busy} onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton>}>
     {error && <Alert tone="error">{error}{metrics ? ' Last readings may have changed.' : ''}</Alert>}
     {!metrics && !error && <Card><Row title="System resources" trailing="Loading..." /></Card>}

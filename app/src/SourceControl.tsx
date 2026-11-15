@@ -1,3 +1,4 @@
+import { usePolling } from './hooks/usePolling';
 import { diffLines } from '../diff-lines';
 export { diffLines } from '../diff-lines';
 // Branch and diff-status patterns adapted from T3 (MIT); see ../t3/provenance.json.
@@ -16,16 +17,12 @@ export function SourceControl({ agent, request, showEmpty = false, onOpenDiff }:
   const [file, setFile] = useState<string | null>(null), [diff, setDiff] = useState<Diff | null>(null), [diffError, setDiffError] = useState('');
   const generation = useRef(0);
   useEffect(() => { setStatus(null); setFile(null); }, [agent]);
-  useEffect(() => {
-    let stopped = false, timer: ReturnType<typeof setTimeout>;
-    const load = async () => {
-      setLoading(true);
-      try { const next = await request<Status>(`/api/agents/${agent}/git`); if (!stopped) { setStatus(next); setError(''); } }
-      catch (error) { if (!stopped) setError(message(error)); }
-      finally { if (!stopped) { setLoading(false); timer = setTimeout(load, 5000); } }
-    };
-    void load(); return () => { stopped = true; clearTimeout(timer); };
-  }, [agent, request, reload]);
+  usePolling(async signal => {
+    setLoading(true);
+    try { const next = await request<Status>(`/api/agents/${agent}/git`); if (!signal.aborted) { setStatus(next); setError(''); } }
+    catch (error) { if (!signal.aborted) setError(message(error)); }
+    finally { if (!signal.aborted) setLoading(false); }
+  }, { interval: 5000 }, [agent, request, reload]);
   useEffect(() => {
     const version = ++generation.current; setDiff(null); setDiffError('');
     if (file === null) return;

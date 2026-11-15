@@ -1,3 +1,4 @@
+import { usePolling } from './hooks/usePolling';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Alert, Badge, Button, Card, Collapsible, EmptyState, IconButton, Row, useConfirm, RecoveryAlert } from './ui/kit';
@@ -21,21 +22,18 @@ export function QueuePanel({ path, request, onOpen }: { path: string; request: <
   const [pending, setPending] = useState<Command | null>(recovery.pending), [invalid, setInvalid] = useState(recovery.invalid);
   const generation = useRef(0), flight = useRef(false), mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; generation.current++; }; }, []);
-  useEffect(() => {
-    let stopped = false; let timer: ReturnType<typeof setTimeout>;
-    async function load() {
-      const version = ++generation.current; setLoading(true);
-      try { const result = await request<{ turns: Entry[]; more: boolean; next_after: number | null; snapshot: string }>(endpoint + (page ? `?after=${page.after}&snapshot=${page.snapshot}` : '')); if (!stopped && version === generation.current) { setRows(result.turns); setMore(result.more); setNextPage(result.next_after === null ? null : { after: result.next_after, snapshot: result.snapshot }); setLoadError(''); } }
-      catch (error) {
-        if (!stopped && version === generation.current) {
-          if (page && error && typeof error === 'object' && 'status' in error && error.status === 409) { setRows([]); setNextPage(null); setPages([]); setNotice('Queue changed. The list returned to the first page.'); }
-          else setLoadError('Queue has not loaded. Try reloading.');
-        }
+  useEffect(() => () => { generation.current++; }, [open, endpoint, request, refresh, page]);
+  usePolling(async signal => {
+    const version = ++generation.current; setLoading(true);
+    try { const result = await request<{ turns: Entry[]; more: boolean; next_after: number | null; snapshot: string }>(endpoint + (page ? `?after=${page.after}&snapshot=${page.snapshot}` : '')); if (!signal.aborted && version === generation.current) { setRows(result.turns); setMore(result.more); setNextPage(result.next_after === null ? null : { after: result.next_after, snapshot: result.snapshot }); setLoadError(''); } }
+    catch (error) {
+      if (!signal.aborted && version === generation.current) {
+        if (page && error && typeof error === 'object' && 'status' in error && error.status === 409) { setRows([]); setNextPage(null); setPages([]); setNotice('Queue changed. The list returned to the first page.'); }
+        else setLoadError('Queue has not loaded. Try reloading.');
       }
-      finally { if (!stopped && version === generation.current) setLoading(false); if (!stopped) timer = setTimeout(() => void load(), 1500); }
     }
-    void load(); return () => { stopped = true; generation.current++; clearTimeout(timer); };
-  }, [open, endpoint, request, refresh, page]);
+    finally { if (!signal.aborted && version === generation.current) setLoading(false); }
+  }, { interval: 1500 }, [open, endpoint, request, refresh, page]);
   async function move(row?: Entry, other?: Neighbor | null) {
     if (flight.current || invalid || (!pending && (!row || !other))) return;
     const command = pending ?? { id: crypto.randomUUID(), target: row!.id, other: other!.id, revision: row!.revision, otherRevision: other!.revision };

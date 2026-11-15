@@ -1,3 +1,4 @@
+import { usePolling } from './hooks/usePolling';
 import { Alert, Button, Checkbox, Collapsible, IconButton, Tooltip } from './ui/kit';
 import { RefreshCw } from 'lucide-react';
 import './machines-data.css';
@@ -12,15 +13,15 @@ export function TranscriptionPanel({ path, request }: { path: string; request: <
 function TranscriptionControls({ path, request }: { path: string; request: <T>(path: string, data?: unknown) => Promise<T> }) {
   const [info, setInfo] = useState<Info | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false), [consent, setConsent] = useState(false), [cancelling, setCancelling] = useState(false);
   const generation = useRef(0), locked = useRef(false), endpoint = `${path}?transcription=1`;
-  async function refresh() {
+  async function refresh(signal?: AbortSignal) {
     if (locked.current) return;
     locked.current = true; const version = ++generation.current; setBusy(true);
-    try { const value = await request<Info>(endpoint); if (version === generation.current) { setInfo(value); setError(''); setConsent(false); } }
-    catch { if (version === generation.current) { setInfo(null); setError('Transcription status unavailable. Reload status before trying again.'); } }
+    try { const value = await request<Info>(endpoint); if (!signal?.aborted && version === generation.current) { setInfo(value); setError(''); setConsent(false); } }
+    catch { if (!signal?.aborted && version === generation.current) { setInfo(null); setError('Transcription status unavailable. Reload status before trying again.'); } }
     finally { if (version === generation.current) { locked.current = false; setBusy(false); } }
   }
   useEffect(() => { void refresh(); return () => { generation.current++; }; }, []);
-  useEffect(() => { if (info?.operation?.status !== 'pending') return; const timer = setInterval(() => void refresh(), 1500); return () => clearInterval(timer); }, [info?.operation?.status]);
+  usePolling(signal => refresh(signal), { interval: 1500, enabled: info?.operation?.status === 'pending', immediate: false });
   async function send() {
     if (locked.current || !consent || !info?.provider || !info.format) return;
     locked.current = true; const version = ++generation.current; setBusy(true); setError(''); setConsent(false);

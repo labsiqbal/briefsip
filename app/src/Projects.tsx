@@ -1,3 +1,4 @@
+import { usePolling } from './hooks/usePolling';
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Ellipsis, Folder, FolderOpen, Hash, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import type { LocalProject } from '../local-projects';
@@ -18,8 +19,9 @@ const message = (error: unknown) => error instanceof Error ? error.message : 'Pr
 export function useProjects(request: Request) {
   const [projects,setProjects] = useState<LocalProject[]>([]), [root,setRoot] = useState(''), [error,setError] = useState(''), [busy,setBusy] = useState(false), [pending,setPending] = useState<Command | null>(null), [invalid,setInvalid] = useState(false);
   const generation = useRef(0), flight = useRef(false), commandRef = useRef<Command | null>(null), confirm = useConfirm();
-  const reload = useCallback(async () => { const current=++generation.current; const result = await request<{projects: LocalProject[]; root: string}>('/api/projects'); if(current===generation.current){setProjects(result.projects);setRoot(result.root);} },[request]);
-  useEffect(() => { try { const raw = sessionStorage.getItem(storage); if(raw) { const value = JSON.parse(raw); if(!value || typeof value.path !== 'string' || !/^\/api\/projects(?:\/[a-f0-9-]{36}\/(?:edit|archive|delete|thread|sections(?:\/[a-f0-9-]{36}\/edit)?))?$/.test(value.path) || !value.body || !/^[a-f0-9-]{36}$/i.test(value.body.id)) throw new Error(); commandRef.current=value;setPending(value); } } catch {setInvalid(true);} void reload().catch(error=>setError(message(error))); const timer=setInterval(()=>{if(!document.hidden)void reload().catch(error=>setError(message(error)));},5000);return()=>{clearInterval(timer);generation.current++;}; },[reload]);
+  const reload = useCallback(async (signal?: AbortSignal) => { const current=++generation.current; const result = await request<{projects: LocalProject[]; root: string}>('/api/projects'); if(!signal?.aborted && current===generation.current){setProjects(result.projects);setRoot(result.root);} },[request]);
+  useEffect(() => { try { const raw = sessionStorage.getItem(storage); if(raw) { const value = JSON.parse(raw); if(!value || typeof value.path !== 'string' || !/^\/api\/projects(?:\/[a-f0-9-]{36}\/(?:edit|archive|delete|thread|sections(?:\/[a-f0-9-]{36}\/edit)?))?$/.test(value.path) || !value.body || !/^[a-f0-9-]{36}$/i.test(value.body.id)) throw new Error(); commandRef.current=value;setPending(value); } } catch {setInvalid(true);} return()=>{generation.current++;}; },[reload]);
+  usePolling(async signal => { try { await reload(signal); } catch(error) { if (!signal.aborted) setError(message(error)); } }, { interval: 5000 }, [reload]);
   async function execute(path: string, body: Record<string,unknown>): Promise<boolean> {
     if(flight.current || invalid) return false; const command = commandRef.current ?? {path,body};
     if(commandRef.current && (path !== command.path || JSON.stringify(body) !== JSON.stringify(command.body))) {setError('Resolve the pending project change first.');return false;}
