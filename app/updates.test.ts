@@ -53,11 +53,21 @@ test('release builder publishes verified immutable files before feed metadata an
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 
+test('release lint failure stops tests, build and packaging; successful gates run in order',()=>{
+ const dir=temp(),source=join(dir,'source'),releases=join(dir,'releases');try{
+ fixture(source,'1.0.0');const file=join(source,'package.json'),pkg=JSON.parse(readFileSync(file,'utf8'));
+ pkg.scripts={lint:'node -e "process.exit(7)"',test:'node -e "require(\'node:fs\').writeFileSync(\'tested\',\'yes\')"',build:'node -e "const fs=require(\'node:fs\');if(!fs.existsSync(\'tested\'))process.exit(8);fs.writeFileSync(\'built\',\'yes\')"'};
+ writeFileSync(file,JSON.stringify(pkg));assert.throws(()=>buildRelease({source,releases,install:false,allowDirty:true}),/Command failed/);
+ assert(!existsSync(join(source,'tested')));assert(!existsSync(join(source,'built')));assert(!existsSync(releases));
+ pkg.scripts.lint='node -e "0"';writeFileSync(file,JSON.stringify(pkg));buildRelease({source,releases,install:false,allowDirty:true});assert(existsSync(join(source,'built')));
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});
+
 test('desktop release sync follows dirty guard and publishes matching version through desktop helper',()=>{
  const dir=temp();try{
  for(const folder of ['app','scripts','desktop/scripts'])mkdirSync(join(dir,folder),{recursive:true});
  cpSync(join(root,'scripts/release.mjs'),join(dir,'scripts/release.mjs'));for(const name of ['install-machine.sh','uninstall-machine.sh','briefsip-launcher.mjs'])cpSync(join(root,'scripts',name),join(dir,'scripts',name));cpSync(join(root,'app/update-release.mjs'),join(dir,'app/update-release.mjs'));
- const app={name:'release-fixture',version:'1.0.1',type:'module',scripts:{build:'node -e "0"'}};
+ const app={name:'release-fixture',version:'1.0.1',type:'module',scripts:{lint:'node -e "0"',test:'node -e "0"',build:'node -e "0"'}};
  writeFileSync(join(dir,'app/package.json'),JSON.stringify(app));writeFileSync(join(dir,'app/package-lock.json'),JSON.stringify({name:app.name,version:app.version,lockfileVersion:3,packages:{'':app}}));
  writeFileSync(join(dir,'app/server.ts'),'// Fixture runtime');mkdirSync(join(dir,'app/dist'));writeFileSync(join(dir,'app/dist/index.html'),'fixture');
  writeFileSync(join(dir,'desktop/package.json'),JSON.stringify({version:'1.0.0'}));writeFileSync(join(dir,'desktop/package-lock.json'),JSON.stringify({version:'1.0.0',packages:{'':{version:'1.0.0'}}}));

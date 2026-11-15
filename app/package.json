@@ -19,7 +19,8 @@
     "cli": "node --experimental-strip-types cli.ts",
     "telegram": "node --experimental-strip-types telegram-runner.ts",
     "slack": "node --experimental-strip-types slack-runner.ts",
-    "skills": "node --experimental-strip-types skill-directory.ts"
+    "skills": "node --experimental-strip-types skill-directory.ts",
+    "lint": "eslint . --max-warnings 0 && node lint/check.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.321",
@@ -47,7 +48,9 @@
     "@types/react-dom": "^19.3.0",
     "@types/sanitize-html": "2.16.2",
     "@types/ws": "8.18.1",
+    "eslint": "9.39.5",
     "typescript": "^5.9.3",
+    "typescript-eslint": "8.72.2",
     "vite": "^7.3.8"
   }
 }
