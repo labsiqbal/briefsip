@@ -1,3 +1,5 @@
+import { useMessageChanged } from './hooks/useMessageChanged';
+import { useOptimisticTurns } from './hooks/useOptimisticTurns';
 import { useQuickSwitcher } from './hooks/useQuickSwitcher';
 import { QuickSwitcher, type SwitcherItem } from './ui/QuickSwitcher';
 import { usePolling } from './hooks/usePolling';
@@ -91,7 +93,7 @@ type Thread = { delivery?: boolean; active?: boolean; activity?: number; id: str
 type ForkContext = { summary?: string; inherited?: string; turns: { id: string; text: string; reply: string | null }[] };
 type AgentMessage = Exchange & { taskId?: string; task?: string; wait?: boolean; generatedFiles?: { id: string; name: string; size: number; thread: string }[]; paused: number; request: string; expects_reply: number; settled: number; id: string; agent: string; thread: string; name: string; status: string; error: string | null; reply: string | null; truncated: boolean };
 
-type Turn = { history_page?: number; routineReport?: { run: string; name: string; agent: string; thread: string; destination: string; status: string } | null; room?: RoomView | null; harnessApprovals?: HarnessApproval[]; computerWait?: ComputerWait; checkpoint?: { turn: string; restorable: boolean } | null; approvals?: AppApproval[]; recipient?: string | null; dispatch_mode?: 'queue' | 'steer' | 'restart'; dispatch_target?: string | null; dispatch_label?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { kind?: 'peer'; name: string; agent: string | null; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string; seq: number } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number; image?: boolean }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
+type Turn = { optimistic?: boolean; history_page?: number; routineReport?: { run: string; name: string; agent: string; thread: string; destination: string; status: string } | null; room?: RoomView | null; harnessApprovals?: HarnessApproval[]; computerWait?: ComputerWait; checkpoint?: { turn: string; restorable: boolean } | null; approvals?: AppApproval[]; recipient?: string | null; dispatch_mode?: 'queue' | 'steer' | 'restart'; dispatch_target?: string | null; dispatch_label?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { kind?: 'peer'; name: string; agent: string | null; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string; seq: number } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number; image?: boolean }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
 const mergeHistory = (history: Turn[], page: Turn[]) => [...new Map([...history, ...page].map(turn => [turn.id, turn])).values()].sort((a, b) => a.seq - b.seq);
 type Directory = { agents: Agent[]; configured: boolean; defaultModel: string };
 type Environment = { id: string; name: string; origin: string; version: string };
@@ -219,6 +221,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
   const storageKey = `briefsip:pending:${scope}`;
   const [turns, setTurns] = useState<Turn[] | null>(null);
   const [inheritedContext, setInheritedContext] = useState<ForkContext | null>(null);
+  const optimistic = useOptimisticTurns<Turn>();
   const [queueTurns, setQueueTurns] = useState<Turn[]>([]);
   const [activeTurns, setActiveTurns] = useState<{ id: string; agent: string; capabilities: { steer: boolean; queue: boolean; restart: boolean } }[]>([]);
   const [addressedTurn, setAddressedTurn] = useState('');
@@ -273,7 +276,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
         data = mergeHistory(findHistory.current, page);
         findHistory.current = data;
       }
-      if (!signal.aborted) { setActiveTurns(active); setQueueTurns(latest ?? page); loadedTask.current = focusedTask; setTurns(mergeStream(data)); setReadError(''); delay = turnPollDelay(latest ?? page); }
+      if (!signal.aborted) { setActiveTurns(active); setQueueTurns(optimistic.merge(latest ?? page)); loadedTask.current = focusedTask; setTurns(optimistic.merge(mergeStream(data))); setReadError(''); delay = turnPollDelay(latest ?? page); }
     }
     catch (error) { if (!signal.aborted) setReadError(message(error)); }
     return delay;
@@ -290,20 +293,23 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
     if (!focusedTask && !before && !finding && nearBottom.current) jumpToLatest();
   }, [focusedTask, turns, before, finding]);
   useEffect(() => {
-    if (!requestActive.current && pending && turns?.some(turn => turn.id === pending.id)) {
+    if (!requestActive.current && pending && turns?.some(turn => turn.id === pending.id && !turn.optimistic)) {
       try { sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); } catch { /* The same ID remains safe to retry. */ }
       setPending(null); setDraft(''); setAttached([]); setError('');
     }
   }, [turns, pending, storageKey, draftKey, attachmentKey]);
   async function send(event: FormEvent, forcedMode?: 'queue' | 'steer') {
     event.preventDefault();
-    if (requestActive.current || pastedFiles.length || attachments.uploading || blocked || (!pending && !draft.trim())) return;
+    if (requestActive.current || pastedFiles.length || attachments.uploading || blocked || (!pending && !draft.trim() && !attached.length)) return;
     if (archived) { setError('Restore the conversation before sending a new message.'); return; }
     const mode = dispatchTarget ? forcedMode ?? 'queue' : 'queue';
     const request = pending ?? { id: crypto.randomUUID(), text: draft.trim(), ...(mode !== 'queue' ? { dispatchMode: mode, targetTurn: dispatchTarget!.id, ...(channel ? { recipient: dispatchTarget!.agent } : {}) } : {}), ...(channel && mode === 'queue' && dispatchTarget ? { recipient: dispatchTarget.agent } : {}), ...(attached.length ? { files: attached } : {}),  };
     try { sessionStorage.setItem(storageKey, JSON.stringify(request)); }
     catch { setError('The browser could not save send status. Enable site storage before sending.'); return; }
     requestActive.current = true; setBusy(true); setPending(request); setError(''); nearBottom.current = true;
+    const local: Turn = { id: request.id, text: request.text, seq: Math.max(0, ...(turns ?? []).map(turn => turn.seq), ...queueTurns.map(turn => turn.seq)) + 1, agent: agent.id, status: dispatchTarget || turns?.some(turn => turn.optimistic && turn.status === 'running') ? 'queued' : 'running', optimistic: true, revision: 1, paused: 0, no_update: 0, reply: null, error: null, created: new Date().toISOString(), files: attachments.selectedFiles.filter(file => request.files?.includes(file.id)) };
+    optimistic.add(local); setTurns(rows => optimistic.merge(rows ?? [], false)); setQueueTurns(rows => optimistic.merge(rows, false));
+    setFocusedTask(''); setHistoryPages([]); setQuery(''); setFinding(false);
     try {
       await api<Turn>(path, request);
       // A remounted conversation owns recovery and any newer draft after navigation.
@@ -314,6 +320,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
       if (!mounted.current) return;
       if (error instanceof HttpError && (error.status < 500 || error.status === 503)) {
         try { sessionStorage.removeItem(storageKey); sessionStorage.setItem(draftKey, request.text); } catch { /* Keep the draft in memory if storage fails. */ }
+        optimistic.remove(request.id); setTurns(rows => rows?.filter(turn => turn.id !== request.id) ?? null); setQueueTurns(rows => rows.filter(turn => turn.id !== request.id));
         setPending(null); setDraft(request.text);
       }
       setError(message(error));
@@ -347,7 +354,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
   }, [detailsOpen, setDetailsOpen, finding]);
   const attachments = useConversationAttachments({ path: path.replace(/\/turns$/, '/files'), archived, attached: pending?.files ?? attached, onAttach: attach, locked: blocked || !!pending || busy, pastedFiles, onPasteSettled: () => setPastedFiles([]), onFiles: setPastedFiles, filesOpen: detailsOpen && rightPanel.tab === 'files', api });
   if (showMemory) return <PageView><Suspense fallback={<p className="empty" role="status">Loading memory...</p>}><MemoryPanel key={scope} path={`/api/${channel ? 'channels' : 'agents'}/${agent.id}/memory`} channel={!!channel} archived={!!channel?.archived} request={api} onClose={() => { setShowMemory(false); nextFrame(() => document.querySelector<HTMLButtonElement>('.chat__pill')?.focus()); }} /></Suspense></PageView>;
-  const refreshTurns = () => { void Promise.all([api<Turn[]>(path), api<typeof activeTurns>(path.replace(/\/turns$/, '/dispatch'))]).then(([data, active]) => { setQueueTurns(data); if (!focusedTask && !before && !finding) setTurns(mergeStream(findHistory.current ? mergeHistory(findHistory.current, data) : data)); setActiveTurns(active); }).catch(error => setError(message(error))); };
+  const refreshTurns = () => { window.dispatchEvent(new Event('briefsip:message-changed')); void Promise.all([api<Turn[]>(path), api<typeof activeTurns>(path.replace(/\/turns$/, '/dispatch'))]).then(([data, active]) => { setQueueTurns(optimistic.merge(data)); if (!focusedTask && !before && !finding) setTurns(optimistic.merge(mergeStream(findHistory.current ? mergeHistory(findHistory.current, data) : data))); setActiveTurns(active); }).catch(error => setError(message(error))); };
   const queued = (turn: Turn) => !channel && turn.status === 'queued' && !turn.paused && !turn.questions?.some(question => question.answer === null) && !turn.events?.some(event => event.status === 'waiting') && !turn.parent && !turn.waiting_for && !turn.routineReport && !turn.workflow_run && !turn.activity?.calls.length && !turn.agentMessages?.length;
   const runningTurn = !channel ? activeTurns[0] : undefined;
   const runningRoom = channel ? turns?.find(turn => turn.room?.active)?.room : undefined;
@@ -417,7 +424,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
                       {turn.questions?.map(question => <QuestionCard key={question.id} question={question} path={`${path}/${turn.id}`} status={turn.status} archived={archived} request={api} />)}
                       {!!turn.generatedFiles?.length && <section aria-label="Agent output files"><Attachments files={turn.generatedFiles} path={path.replace(/\/turns$/, '/files')} label="Agent output files" />{turn.generatedFiles.map(file => <HtmlPreview key={file.id} path={`${path.replace(/\/turns$/, '/files')}/${file.id}`} name={file.name} request={api} />)}</section>}
                       {!!turn.coordination?.length && <Collapsible title={`Task coordination (${turn.coordination.length})`}>{turn.coordination.map((action, index) => <div className="k-stack" key={index}><div className="k-section__title">{action.owner_name} {action.kind === 'delegate_task' ? 'delegated to' : 'reassigned to'} {action.target_name}.</div><div className="message-plain">{action.prompt}</div>{action.child && <div className="k-row-actions"><Button size="sm" variant="ghost" onClick={() => openFocused(action.child!)}>View subtask</Button></div>}</div>)}</Collapsible>}
-                      {turn.dispatch_mode !== 'steer' && !turn.approvals?.length && <QueueEditor turn={{ ...turn, files: turn.files ?? [] }} path={path} archived={archived} request={api} />}
+                      {turn.status === 'queued' && !turn.approvals?.length && turn.dispatch_mode !== 'steer' && <QueueEditor turn={{ ...turn, files: turn.files ?? [] }} path={path} archived={archived} request={api} onChanged={refreshTurns} />}
                     </div>
                 </AgentMessage>}</>}
               </ChatTurn>)}
@@ -428,14 +435,13 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
         {!configured && <p className="composer__note">{!channel && 'provider_account' in agent && !!agent.provider_account && agent.provider_available === false ? 'Provider account unavailable. Choose a provider in the agent profile.' : 'Provider not configured. Check Settings > Providers.'}</p>}
         {error && <div className="composer__error" role="alert"><span>{error} {pending && 'Use Retry send to check the same request without creating a duplicate message.'}</span></div>}
         {blocked && <div className="composer__error" role="alert"><span>Message recovery data could not be read. Sending is blocked. Check history to confirm the previous message was not sent.</span><Button size="sm" variant="ghost" onClick={async () => { if (!await confirm({ title: 'Discard recovery data?', description: 'The previous message may already have been received. Check history before sending another message.', confirm: 'Discard message recovery', danger: true })) return; try { sessionStorage.removeItem(storageKey); setBlocked(false); setError(''); nextFrame(() => composer.current?.focus()); } catch { setError('Recovery data could not be deleted. Check site storage.'); } }}>Discard message recovery</Button></div>}
-        {attachments.composer}
         <QueuedRunsControl turns={queueTurns.filter(queued)} path={path} target={dispatchTarget} request={api} archived={archived} onChanged={refreshTurns} />
-        <ChatComposer onPasteFiles={files => { if (pastedFiles.length) { setError('Wait for pasted files to finish uploading.'); return; } setPastedFiles(files); }} mentions={channel ? members : []} onMention={value => { setDraft(value); try { sessionStorage.setItem(draftKey, value); } catch { setError('Draft was not saved. Copy your message before leaving.'); } }} label={`Message ${agent.name}`} inputRef={composer} multiline={draft.includes('\n')} onSubmit={send} onSendKey={event => { void send(event, (event.ctrlKey || event.metaKey) && canSteer ? 'steer' : 'queue'); }} onAttach={attachments.choose} attachmentDisabledReason={archived || blocked || !!pending || busy || attachments.uploading ? 'Attachments unavailable' : undefined} actions={attachments.recordingAction}
+        <ChatComposer attachments={attachments.composer} hasAttachments={!!attached.length} onPasteFiles={files => { if (pastedFiles.length) { setError('Wait for pasted files to finish uploading.'); return; } setPastedFiles(files); }} mentions={channel ? members : []} onMention={value => { setDraft(value); try { sessionStorage.setItem(draftKey, value); } catch { setError('Draft was not saved. Copy your message before leaving.'); } }} label={`Message ${agent.name}`} inputRef={composer} multiline={draft.includes('\n')} onSubmit={send} onSendKey={event => { void send(event, (event.ctrlKey || event.metaKey) && canSteer ? 'steer' : 'queue'); }} onAttach={attachments.choose} attachmentDisabledReason={archived || blocked || !!pending || busy || attachments.uploading ? 'Attachments unavailable' : undefined} actions={attachments.recordingAction}
           recipient={channel && activeTurns.length > 0 ? <Select size="sm" label="Addressed member" value={dispatchTarget?.id ?? ''} disabled={busy || !!pending || blocked} onChange={setAddressedTurn} options={[{ value: '', label: 'Everyone' }, ...activeTurns.map(turn => ({ value: turn.id, label: members.find(member => member.id === turn.agent)?.name ?? turn.agent }))]} /> : undefined}
           stopAction={runningRoom && !archived ? <RoomStop key={runningRoom.root} room={runningRoom} path={path} archived={archived} onStopped={() => { refreshTurns(); composer.current?.focus(); }} /> : runningTurn && !archived ? <CancelTurn key={runningTurn.id} primary turn={runningTurn.id} path={path} request={api} onCancelled={() => { refreshTurns(); composer.current?.focus(); }} /> : undefined}
           input={{ id: 'message', value: pending?.text ?? draft, readOnly: blocked || !!pending || busy, onChange: event => { setDraft(event.target.value); try { sessionStorage.setItem(draftKey, event.target.value); } catch { setError('Draft was not saved in the browser. Copy the message before switching agents.'); } } }}
           busy={busy} retry={!!pending}
-          sendDisabled={!!pastedFiles.length || attachments.uploading || blocked || archived || !configured || busy || (!pending && !draft.trim())}
+          sendDisabled={!!pastedFiles.length || attachments.uploading || blocked || archived || !configured || busy || (!pending && !draft.trim() && !attached.length)}
           sendLabel={busy ? 'Sending...' : pending ? 'Retry send' : dispatchTarget ? 'Queue message' : 'Send message'}
           sendTitle={pending ? 'Retry send' : dispatchTarget ? `Queue message (Enter to queue${canSteer ? ', Ctrl/Cmd+Enter to steer' : ''})` : 'Send (Enter)'} />
         {(focusedTask || before) && <p className="composer__foot">{focusedTask ? channel ? 'Task family shown' : 'Selected message shown' : 'Older messages · 100 per page'}</p>}
@@ -1172,6 +1178,7 @@ function App() {
     catch (error) { if (version === directoryRequest.current) setError(message(error)); if (propagate) throw error; }
   }
   useEffect(() => { void load(); }, []);
+  useMessageChanged(() => { void api<{ summaries: SidebarSummary[] }>('/api/sidebar/summary').then(result => setSummaries(result.summaries)).catch(() => {}); });
   usePolling(async signal => {
     try {
       const version = directoryRequest.current;
@@ -1232,7 +1239,7 @@ function App() {
       ? <button key={item.id} type="button" className={`bot-rail-item${current ? ' is-selected' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgent(item.id)} title={item.name} aria-label={item.name}><AgentAvatar agent={item} size={36} /></button>
       : <AgentActions key={item.id} agent={item} request={api} onChanged={() => load(true)} onEdit={() => { openAgent(item.id); setDialog('edit'); }} onDelete={() => deleteAgent(item)} onError={error => setAgentActionError(message(error))}><button type="button" className={`bot-row${current ? ' is-selected' : ''}`} aria-label={`${item.name} ${summary?.status === 'running' ? 'Working' : 'Idle'}${item.computer_waiting ? ' - Waiting for you' : ''}${item.provider_available === false ? ' - Provider account unavailable' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgent(item.id)}>
         <span className="bot-row__avatar"><AgentAvatar agent={item} size={36} /><span className={`status-dot ${summary?.status === 'running' ? 'is-working' : 'is-idle'}`} role="img" aria-label={summary?.status === 'running' ? 'Working' : 'Idle'} />{item.computer_waiting && <span className="status-dot is-attention" aria-label="Waiting for you" />}{item.provider_available === false && <span className="status-dot is-attention" aria-label="Provider account unavailable" />}</span>
-        <span className="bot-row__text"><span className="bot-row__name">{item.name}{item.computer_waiting && <small> · Waiting for you</small>}</span><span className="bot-row__preview" title={plainPreview(summary?.preview) || undefined}>{item.hidden ? 'Hidden' : item.role || plainPreview(summary?.preview) || 'No role yet'}</span></span>{summary?.time && <time className="bot-row__time" dateTime={summary.time}>{relativeTime(summary.time)}</time>}
+        <span className="bot-row__text"><span className="bot-row__name">{item.name}{item.computer_waiting && <small> · Waiting for you</small>}</span><span className="bot-row__preview" title={plainPreview(summary?.preview) || undefined}>{item.hidden ? 'Hidden' : plainPreview(summary?.preview) || item.role || 'No role yet'}</span></span>{summary?.time && <time className="bot-row__time" dateTime={summary.time}>{relativeTime(summary.time)}</time>}
       </button></AgentActions>;
   };
   const remoteMachines = remoteMachinesState.machines.filter(machine => !onlyOnline || machine.status === 'online').sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
@@ -1310,7 +1317,7 @@ function App() {
               const current = view === 'remote' && remoteSelection?.machine === machine.id && remoteSelection.agent === item.id, summary = summaryFor(`${item.id}@${machine.id}`);
               return <button key={item.id} type="button" className={`bot-row${current ? ' is-selected' : ''}`} aria-label={`${item.name} on ${machine.name}`} aria-current={current ? 'page' : undefined} onClick={() => { setRemoteSelection({ machine: machine.id, agent: item.id }); setView('remote'); setDialog(null); }}>
                 <span className="bot-row__avatar"><AgentAvatar agent={item} size={36} /><span className={`status-dot${machine.status === 'online' ? ' is-online' : ' is-offline'}`} role="img" aria-label={machineStatus[machine.status]} /></span>
-                <span className="bot-row__text"><span className="bot-row__name">{item.name}</span><span className="bot-row__preview" title={plainPreview(summary?.preview) || undefined}>{item.role || plainPreview(summary?.preview) || 'No role yet'}</span></span>{summary?.time && <time className="bot-row__time" dateTime={summary.time}>{relativeTime(summary.time)}</time>}
+                <span className="bot-row__text"><span className="bot-row__name">{item.name}</span><span className="bot-row__preview" title={plainPreview(summary?.preview) || undefined}>{plainPreview(summary?.preview) || item.role || 'No role yet'}</span></span>{summary?.time && <time className="bot-row__time" dateTime={summary.time}>{relativeTime(summary.time)}</time>}
               </button>;
             })}
             {!machine.agents.length && <p className="machine-group__note">No agents cached yet.</p>}

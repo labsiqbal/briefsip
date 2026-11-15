@@ -28,7 +28,7 @@ export function ChatEmptyState({ agent, title = agent.name, children }: { agent:
 }
 
 export function HumanMessage({ text, label = 'Your message', attachments, children }: { text: string; label?: string; attachments?: ReactNode; children: ReactNode }) {
-  return <div className="human-message" tabIndex={-1} aria-label={label}><div className="human-bubble message-plain">{text}</div>{attachments}<div className="turn-meta human-meta">{children}</div></div>;
+  return <div className="human-message" tabIndex={-1} aria-label={label}>{text.trim() && <div className="human-bubble message-plain">{text}</div>}{attachments}<div className="turn-meta human-meta">{children}</div></div>;
 }
 
 export function AgentMessage({ identity, children }: { identity?: ReactNode; children: ReactNode }) {
@@ -39,7 +39,8 @@ export function TurnStatus({ tone, label, model }: { tone: string; label: string
   return <div className="turn-meta agent-meta"><span className={`turn-status is-${tone}`}><i aria-hidden />{label}</span>{model && <span className="turn-model" title="Answering model">{model}</span>}</div>;
 }
 
-export function ChatComposer({ label, input, inputRef, onSubmit, onSendKey, onAttach, attachmentDisabledReason, recipient, actions, busy, retry, sendDisabled, sendLabel, sendTitle, stopAction, multiline, mentions = [], onMention, onPasteFiles }: {
+export function ChatComposer({ label, input, inputRef, onSubmit, onSendKey, onAttach, attachmentDisabledReason, recipient, actions, busy, retry, sendDisabled, sendLabel, sendTitle, stopAction, multiline, mentions = [], onMention, onPasteFiles, attachments, hasAttachments = false }: {
+  attachments?: ReactNode; hasAttachments?: boolean;
   onPasteFiles?: (files: File[]) => void; stopAction?: ReactNode;
   mentions?: { id: string; name: string; role: string }[]; onMention?: (value: string) => void;
   label: string; input: ComponentProps<'textarea'>; inputRef?: RefObject<HTMLTextAreaElement | null>; onSubmit: (event: FormEvent) => void; onSendKey: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
@@ -47,6 +48,7 @@ export function ChatComposer({ label, input, inputRef, onSubmit, onSendKey, onAt
 }) {
   const ownRef = useRef<HTMLTextAreaElement>(null), ref = inputRef ?? ownRef;
   const listId = useId();
+  const [dragging, setDragging] = useState(false);
   const [caret, setCaret] = useState(0), [selected, setSelected] = useState(0), [dismissed, setDismissed] = useState(false);
   const value = String(input.value ?? '');
   const match = value.slice(0, caret).match(/(?:^|[^\p{L}\p{N}_@])@([^@\n]*)$/u);
@@ -66,7 +68,9 @@ export function ChatComposer({ label, input, inputRef, onSubmit, onSendKey, onAt
     element.style.height = `${Math.min(element.scrollHeight, 200)}px`;
     element.style.overflowY = element.scrollHeight > 200 ? 'auto' : 'hidden';
   }, [input.value, ref]);
-  return <form className={`composer${(multiline ?? String(input.value ?? '').includes('\n')) ? ' is-multiline' : ''}`} onSubmit={onSubmit} onDragOver={event => { if (onPasteFiles && !input.readOnly && !input.disabled && Array.from(event.dataTransfer.types).includes('Files')) event.preventDefault(); }} onDrop={event => { if (!onPasteFiles || input.readOnly || input.disabled || !event.dataTransfer.files.length) return; event.preventDefault(); onPasteFiles(Array.from(event.dataTransfer.files)); }}>
+  return <form className={`composer${(multiline ?? String(input.value ?? '').includes('\n')) ? ' is-multiline' : ''}${dragging ? ' is-dragging' : ''}`} onSubmit={onSubmit} onDragOver={event => { if (onPasteFiles && !input.readOnly && !input.disabled && Array.from(event.dataTransfer.types).includes('Files')) { event.preventDefault(); setDragging(true); } }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false); }} onDrop={event => { setDragging(false); if (!onPasteFiles || input.readOnly || input.disabled || !event.dataTransfer.files.length) return; event.preventDefault(); onPasteFiles(Array.from(event.dataTransfer.files)); }}>
+    {dragging && <div className="composer__drop-target" role="status">Drop files to attach</div>}
+    {attachments}
     {!!candidates.length && <div id={listId} className="mention-list" role="listbox" aria-label="Mention a section member">{candidates.map((member, index) => <button id={`${listId}-${index}`} type="button" role="option" aria-selected={index === current} key={member.id} tabIndex={-1} onMouseDown={event => event.preventDefault()} onClick={() => choose(index)}><AgentAvatar agent={member} size={22} /><span><strong>{member.name}</strong><small>{member.role}</small></span></button>)}</div>}
     <div className="composer__left">
       <label className="sr-only" htmlFor={input.id}>{label}</label>
@@ -95,7 +99,7 @@ export function ChatComposer({ label, input, inputRef, onSubmit, onSendKey, onAt
       <div className="composer__right">
         {retry && !busy && <span className="composer__retry">Retry send</span>}
         {actions}
-        {(!stopAction || value.trim() || retry) && <Tooltip content={sendTitle}><button type="submit" className="composer__cta" disabled={sendDisabled} aria-label={sendLabel} title={sendTitle}>{busy ? <span className="step__spin" aria-hidden /> : <ArrowUp size={16} aria-hidden />}</button></Tooltip>}
+        {(!stopAction || value.trim() || hasAttachments || retry) && <Tooltip content={sendTitle}><button type="submit" className="composer__cta" disabled={sendDisabled} aria-label={sendLabel} title={sendTitle}>{busy ? <span className="step__spin" aria-hidden /> : <ArrowUp size={16} aria-hidden />}</button></Tooltip>}
         {stopAction}
       </div>
     </div>

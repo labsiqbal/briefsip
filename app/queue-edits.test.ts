@@ -49,6 +49,11 @@ test('queue edit holds survive restart, preserve order and original receipt, rej
       const turn = await request(path, command); await request(path, { id: tail, text: 'TAIL' });
       const editPath = `${path}/${turn.id}/edit`, hold = { id: randomUUID(), editor: randomUUID(), revision: turn.revision, action: 'hold' };
       const accepted = await request(editPath, hold); assert.deepEqual(accepted.files, originalFiles); assert.deepEqual(await request(editPath, hold), accepted);
+      const renew = { ...hold, id: randomUUID(), revision: accepted.revision, action: 'renew' };
+      assert.equal((await request(editPath, renew)).revision, accepted.revision);
+      assert.deepEqual(await request(editPath, renew), await request(editPath, renew));
+      await request(editPath, { ...renew, id: randomUUID(), editor: randomUUID() }, 409);
+      await request(editPath, { ...renew, id: randomUUID(), revision: turn.revision }, 409);
       await request(`/api/agents/${b.id}/turns/${turn.id}/edit`, hold, 404);
       await request(editPath, { ...hold, id: randomUUID(), editor: randomUUID(), revision: accepted.revision }, 409);
       await request(`${path}/${turn.id}/pause`, { id: randomUUID(), revision: accepted.revision }, 409);
@@ -83,4 +88,75 @@ test('queue edit holds survive restart, preserve order and original receipt, rej
     finish(held!); await until(async () => (await request(path)).find((row: any) => row.id === turn.id)?.status === 'done');
     assert.equal(calls.at(-1), 'UNCHANGED');
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('abandoned edit lease expires and drains its message and following queue in order', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-abandoned-edit-'));
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const calls: string[] = [];
+  const provider = createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    const text = JSON.parse(raw).messages.at(-1).content; calls.push(text);
+    if (text === 'BLOCK') await gate;
+    res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Done' } }] }));
+  });
+  await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+  const address = provider.address(); assert(address && typeof address !== 'string');
+  const database = join(dir, 'db.sqlite');
+  const options = { database, baseURL: `http://127.0.0.1:${address.port}/v1` };
+  let app = await startApp(options);
+  const request = async (path: string, data?: unknown) => {
+    const response = await fetch(app.origin + path, { method: data ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: data ? JSON.stringify(data) : undefined });
+    assert(response.ok, await response.clone().text()); return response.json();
+  };
+  try {
+    const agent = await request('/api/agents', { id: randomUUID(), name: 'Abandoned', model: 'fixture', instructions: 'Synthetic' });
+    const path = `/api/agents/${agent.id}/turns`;
+    await request(path, { id: randomUUID(), text: 'BLOCK' });
+    const turn = await request(path, { id: randomUUID(), text: 'ABANDONED' });
+    const tail = await request(path, { id: randomUUID(), text: 'TAIL' });
+    const hold = { id: randomUUID(), editor: randomUUID(), revision: turn.revision, action: 'hold' };
+    await request(`${path}/${turn.id}/edit`, hold);
+    release();
+    for (let n = 0; n < 100 && (await request(path))[0]?.status !== 'done'; n++) await new Promise(resolve => setTimeout(resolve, 10));
+    await app.close();
+    const db = new DatabaseSync(database);
+    db.prepare('UPDATE queue_edits SET expires_at=0 WHERE editor=?').run(hold.editor);
+    db.close(); app = await startApp(options);
+    let rows: any[] = [];
+    for (let n = 0; n < 100; n++) {
+      rows = await request(path);
+      if (rows.find(row => row.id === tail.id)?.status === 'done') break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    assert.equal(rows.find(row => row.id === turn.id)?.editing, false, 'Abandoned editor must release its queue hold');
+    assert.equal(rows.find(row => row.id === tail.id)?.status, 'done', 'Queue must drain after abandoned edit');
+    assert.deepEqual(calls, ['BLOCK', 'ABANDONED', 'TAIL']);
+    const stale = await fetch(`${app.origin}${path}/${turn.id}/edit`, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ ...hold, id: randomUUID(), revision: 2, action: 'save', text: 'STALE', files: [] }) });
+    assert.equal(stale.status, 409);
+  } finally { release(); await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('legacy permanent holds migrate to expired leases, and expiry fences the old revision once', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { initializeQueueEdits, expireQueueEdits, queueEditing } = await import('./queue-edits.ts');
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(`CREATE TABLE turns(id TEXT PRIMARY KEY,revision INTEGER NOT NULL);
+      CREATE TABLE queue_edits(editor TEXT PRIMARY KEY,turn TEXT NOT NULL,state TEXT NOT NULL,original TEXT NOT NULL);
+      INSERT INTO turns VALUES('legacy',1);
+      INSERT INTO queue_edits VALUES('old-editor','legacy','held','{}');`);
+    initializeQueueEdits(db);
+    assert.equal(queueEditing(db, 'legacy'), false);
+    assert.equal(db.prepare("SELECT revision FROM turns WHERE id='legacy'").get()!.revision, 2);
+    expireQueueEdits(db); assert.equal(db.prepare("SELECT revision FROM turns WHERE id='legacy'").get()!.revision, 2);
+    db.exec(`INSERT INTO turns VALUES('new',1);
+      INSERT INTO queue_edits VALUES('new-editor','new','held','{}',${Date.now() + 30000});`);
+    assert.equal(queueEditing(db, 'new'), true);
+    expireQueueEdits(db, Date.now() + 30001);
+    assert.equal(queueEditing(db, 'new'), false);
+    assert.equal(db.prepare("SELECT revision FROM turns WHERE id='new'").get()!.revision, 2);
+  } finally { db.close(); }
 });

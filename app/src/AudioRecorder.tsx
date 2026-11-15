@@ -32,6 +32,7 @@ export function AudioRecorder({ disabled, onReady, onRecording }: { disabled: bo
   }
   return <span className="voice-input">
     {state === 'idle' ? !disabled && <IconButton label="Record audio" onClick={start}><Mic size={14} aria-hidden /></IconButton> : <span className="voice-input__pill" role="group" aria-label="Audio recording">
+      {state === 'recording' && <span className="voice-input__dot" aria-hidden />}
       <span className="voice-input__timer" role="timer" aria-label={state === 'requesting' ? 'Waiting for microphone' : state === 'stopping' ? 'Finishing recording' : 'Recording duration'}>{state === 'recording' ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : state === 'requesting' ? 'Connecting…' : 'Finishing…'}</span>
       {state === 'recording' && <IconButton label="Stop recording" onClick={() => session.current?.stop()}><Square size={14} aria-hidden /></IconButton>}
       <IconButton label="Cancel recording" onClick={() => session.current?.cancel()}><X size={14} aria-hidden /></IconButton>

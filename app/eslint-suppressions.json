@@ -209,11 +209,6 @@
       "count": 2
     }
   },
-  "src/QueueEditor.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
-      "count": 4
-    }
-  },
   "src/QueuePanel.tsx": {
     "briefsip-lifecycle/no-component-effects": {
       "count": 2

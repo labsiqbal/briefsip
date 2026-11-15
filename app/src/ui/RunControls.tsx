@@ -1,11 +1,11 @@
 // Queue and primary Stop patterns adapted from T3 (MIT, see app/t3/NOTICE).
-import { Ellipsis, Square, X } from 'lucide-react';
+import { ArrowUp, Square, X } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { QueueEditor } from '../QueueEditor';
-import { ActionMenu, Button, IconButton, Tooltip } from './kit';
+import { Button, IconButton, Tooltip } from './kit';
 
 type Request = <T>(path: string, data?: unknown) => Promise<T>;
-type QueuedTurn = { id: string; revision: number; status: string; text: string; paused: number; dispatch_mode?: string; dispatch_label?: string | null; editing?: boolean; files?: { id: string; name: string }[] };
+type QueuedTurn = { id: string; revision: number; status: string; text: string; paused: number; dispatch_mode?: string; dispatch_label?: string | null; editing?: boolean; files?: { id: string; name: string; size?: number }[] };
 
 export function CancelTurn({ turn, path, request, onCancelled, primary = false, label = 'Remove' }: { turn: string; path: string; request: Request; onCancelled: (id: string) => void; primary?: boolean; label?: string }) {
   const key = `briefsip:cancel:${path}:${turn}`;
@@ -50,16 +50,16 @@ function QueuedRun({ turn, path, target, request, archived, onChanged }: { turn:
       setError(error instanceof Error ? error.message : 'Change not confirmed. Try again.');
     } finally { flight.current = false; setBusy(false); }
   }
+  const text = turn.text || turn.files?.map(file => file.name).join(', ') || 'Attachment';
   const guidance = turn.dispatch_mode === 'steer', restarting = turn.dispatch_mode === 'restart';
-  return <li className="queued-run" aria-label={`Queued message: ${turn.text}`}>
-    <div className="queued-run__line"><span className="queued-run__text" title={turn.text}>{turn.text}</span><div className="queued-run__actions">
-      {!archived && !guidance && !restarting && <QueueEditor compact turn={{ ...turn, files: turn.files ?? [] }} path={path} archived={archived} request={request} />}
-      {retry && <Button size="sm" variant="ghost" disabled={busy} onClick={() => void dispatch('steer')}>Retry change</Button>}
-      {!archived && !retry && !guidance && !restarting && target?.capabilities.steer && !turn.files?.length && !turn.editing && <Button size="sm" variant="ghost" disabled={busy} onClick={() => void dispatch('steer')}>Steer</Button>}
-      {!archived && !retry && !guidance && !restarting && target && !turn.editing && <ActionMenu label="Queued message actions" trigger={<IconButton label="Queued message actions"><Ellipsis size={14} aria-hidden /></IconButton>} items={[{ label: 'Restart', disabled: busy, onSelect: () => void dispatch('restart') }]} />}
+  return <li className="queued-run" aria-label={`Queued message: ${text}`}>
+    <div className="queued-run__line"><span className="queued-run__text" title={text}>{text}</span><div className="queued-run__actions">
+      {!archived && !guidance && !restarting && <QueueEditor turn={{ ...turn, files: turn.files ?? [] }} path={path} archived={archived} request={request} onChanged={onChanged} />}
+      {retry && <Button size="sm" variant="ghost" disabled={busy} onClick={() => void dispatch('restart')}>Retry change</Button>}
+      {!archived && !retry && !guidance && !restarting && target && !turn.editing && <Tooltip content="Stop current reply and send this message"><Button size="sm" variant="ghost" disabled={busy} onClick={() => void dispatch('restart')}><ArrowUp size={14} aria-hidden />Send now</Button></Tooltip>}
       {!archived && <CancelTurn turn={turn.id} path={path} request={request} onCancelled={onChanged} />}
     </div></div>
-    {(guidance || restarting || turn.dispatch_label === 'Queued after active turn') && <span className="queued-run__status">{guidance ? 'Steering…' : restarting ? 'Restarting…' : 'Queued for next turn'}</span>}
+    {(guidance || restarting || turn.dispatch_label === 'Queued after active turn') && <span className="queued-run__status">{guidance ? 'Sends next' : restarting ? 'Sending now…' : 'Queued for next turn'}</span>}
     {error && <span role="alert" className="message-error">{error}</span>}
   </li>;
 }
