@@ -1,7 +1,8 @@
+import { usePolling } from './hooks/usePolling';
 import { useEffect, useRef, useState } from 'react';
 import './machines-data.css';
-import { Alert, Card, EmptyState, IconButton, PageHeader, Row, Section, SkeletonRows, Tabs, TabPanel, Tooltip } from './ui/kit';
-import { ChevronLeft, ChevronRight, RefreshCw, Receipt } from 'lucide-react';
+import { Alert, Button, Card, EmptyState, IconButton, PageHeader, Row, Section, SkeletonRows, Tabs, TabPanel, Tooltip } from './ui/kit';
+import { ChevronLeft, ChevronRight, Receipt } from 'lucide-react';
 
 type Call = { account?: string; family: string; seq: number; agent_name: string; model: string; origin: string; purpose: string; phase: string; status: string; created: string; input_tokens: number | null; output_tokens: number | null; total_tokens: number | null };
 type Report = { transcription: { calls: number; pending: number; uncertain: number; cancelled: number; unknown: number; input_tokens: string | null; output_tokens: string | null; total_tokens: string | null; seconds: number | null }; summary: { calls: number; pending: number; failed: number; interrupted: number; input_tokens: string | null; output_tokens: string | null; total_tokens: string | null; unknown_input: number; unknown_output: number; unknown_total: number }; calls: Call[]; next_before: number | null };
@@ -13,15 +14,13 @@ export function UsagePanel({ request }: { request: <T>(path: string) => Promise<
   const [cursors, setCursors] = useState<number[]>([]), before = cursors.at(-1);
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => { heading.current?.focus(); }, [before]);
-  useEffect(() => {
-    let stopped = false; setReport(null); setError('');
-    void request<Report>(`/api/usage${before ? `?before=${before}` : ''}`).then(data => { if (!stopped) setReport(data); }).catch(error => { if (!stopped) setError(error.message); });
-    return () => { stopped = true; };
-  }, [before, refresh]);
+  usePolling(async signal => {
+    try { const data = await request<Report>(`/api/usage${before ? `?before=${before}` : ''}`); if (!signal.aborted) { setReport(data); setError(''); } }
+    catch (reason) { if (!signal.aborted) setError(reason instanceof Error ? reason.message : 'Usage could not load.'); }
+  }, { interval: 5000 }, [before, request, refresh]);
   return <div className="k-page bs-root set4-page">
-    <PageHeader headingRef={heading} title="Usage"
-      actions={<IconButton label="Reload usage" onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton>} />
-    {error && <Alert tone="error">{error}</Alert>}
+    <PageHeader headingRef={heading} title="Usage" />
+    {error && <Alert tone="error" actions={<Button size="sm" onClick={() => setRefresh(value => value + 1)}>Retry</Button>}>{error}</Alert>}
     <Tabs value={tab} onChange={setTab} label="Usage" tabs={[{ value: 'calls', label: 'Calls' }, { value: 'transcription', label: 'Transcription' }]}>
       {!report ? !error && <SkeletonRows count={3} /> : <>
         <TabPanel value="calls">

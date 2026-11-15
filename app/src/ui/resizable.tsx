@@ -47,7 +47,7 @@ export function useResizablePanel(spec: PanelSpec, reservedWidth = 0) {
   }, [element]);
 
   // Viewport clamping never overwrites the preferred width; growing the window restores it.
-  return { ref, spec, width, maxWidth, setWidth };
+  return { ref, spec, width, maxWidth, available, setWidth };
 }
 
 /** While any panel drags, the document carries `is-panel-resizing` so text selection and transitions pause. */

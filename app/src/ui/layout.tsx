@@ -1,3 +1,4 @@
+import { restoreDetailsOpen } from '../right-panel-state';
 import { useEffect, useState, type ReactNode } from 'react';
 
 const detailsKey = 'briefsip:details-open';
@@ -6,7 +7,9 @@ const detailsEvent = 'briefsip:details-open';
 /** Whether the right-hand details panel is open. Shared by every conversation and kept per browser. */
 export function useDetailsOpen(): [boolean, (open: boolean) => void] {
   const [open, setOpen] = useState(() => {
-    try { const saved = localStorage.getItem(detailsKey); if (saved !== null) return saved === '1'; } catch { /* Fall back to the width default. */ }
+    try {
+      const sidebar = localStorage.getItem('briefsip:sidebar-collapsed') === '1' ? 0 : Math.min(window.innerWidth - 360, Math.max(240, Number(localStorage.getItem('briefsip:sidebar-width')) || 300));
+      return restoreDetailsOpen(window.innerWidth, sidebar, localStorage.getItem(detailsKey)); } catch { /* Fall back to the width default. */ }
     return window.innerWidth >= 1280;
   });
   useEffect(() => {

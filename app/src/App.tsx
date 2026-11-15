@@ -363,7 +363,6 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
   const tone = (turn: Turn) => turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) || turn.paused && !['done','cancelled'].includes(turn.status) ? 'attention' : ['failed','interrupted'].includes(turn.status) ? 'error' : ['queued','running'].includes(turn.status) ? 'working' : 'done';
   const time = (value: string) => new Date(value).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
   const openFocused = (id: string) => { findHistory.current = null; focusedOnce.current = ''; setQuery(''); setFinding(false); setFocusedTask(id); };
-  const delegated = turns?.filter(turn => turn.coordination?.length || turn.agentMessages?.length || turn.parent) ?? [];
   const waiting = turns?.flatMap(turn => turn.events?.filter(event => event.status === 'waiting').map(event => ({ turn, event })) ?? []) ?? [];
   return <div className="chat-row bs-root">
     {summaryOpen && <Dialog open title="Conversation context" onOpenChange={setSummaryOpen}><CompactionPanel path={path.replace(/\/turns$/, '/compaction')} request={api} /></Dialog>}
@@ -446,7 +445,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
         right={<>
           {!detailsOpen && <button type="button" className="icon-btn icon-btn--bordered" onClick={() => setDetailsOpen(true)} aria-label="Show details" title="Show details (Ctrl/Cmd+Shift+B)" aria-keyshortcuts="Control+Shift+B Meta+Shift+B"><PanelRight size={16} aria-hidden /></button>}</>} />
     </main>
-    {detailsOpen && <RightPanel path={path.replace(/\/turns$/, '')} name={agent.name} state={rightPanel} request={api} onClose={() => setDetailsOpen(false)} attached={attachments.panelAttached} attachedCount={(pending?.files ?? attached).length} attachDisabled={archived || blocked || !!pending || busy || attachments.uploading} onAttach={file => void attachments.togglePanelFile(file)} settings={onEdit && <IconButton label={editLabel} onClick={onEdit}><Settings size={16} aria-hidden /></IconButton>} details={
+    {detailsOpen && <RightPanel path={path.replace(/\/turns$/, '')} name={agent.name} state={rightPanel} onOpenActivity={openFocused} members={channel ? members.map(member => ({ ...member, lead: member.id === channel.lead })) : undefined} request={api} onClose={() => setDetailsOpen(false)} attached={attachments.panelAttached} attachedCount={(pending?.files ?? attached).length} attachDisabled={archived || blocked || !!pending || busy || attachments.uploading} onAttach={file => void attachments.togglePanelFile(file)} settings={onEdit && <IconButton label={editLabel} onClick={onEdit}><Settings size={16} aria-hidden /></IconButton>} details={
       <div className="details__scroll">
         <div className="details__identity">
           <AgentAvatar agent={agent} size={36} />
@@ -466,13 +465,10 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
             </div>
       </div>
     } activity={<div className="details__sections details-activity">
-              {!!activeTurns.length && <section className="activity-section" aria-label="Running messages"><Collapsible variant="section" defaultOpen title={<>Running <Badge tone="success">{activeTurns.length}</Badge></>}><div className="panel-card">{activeTurns.map(turn => <button key={turn.id} type="button" className="panel-row panel-row--link" onClick={() => openFocused(turn.id)}><span className="panel-row__title">{turns?.find(item => item.id === turn.id)?.text ?? 'Open running message'}</span><Badge tone="success">{turns?.find(item => item.id === turn.id) ? statusLabel(turns.find(item => item.id === turn.id)!) : 'Running'}</Badge></button>)}</div></Collapsible></section>}
               <QueuePanel path={path} request={api} onOpen={id => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(id); }} />
-              {!!delegated.length && <section className="activity-section"><Collapsible variant="section" title={<>Delegated <Badge>{delegated.length}</Badge></>}><div className="panel-card">{delegated.map(turn => <button key={turn.id} type="button" className="panel-row panel-row--link" onClick={() => openFocused(turn.id)}><span className="panel-row__text"><span className="panel-row__title">{turn.text}</span><span className="panel-row__meta">{statusLabel(turn)}</span></span></button>)}</div></Collapsible></section>}
               {!!waiting.length && <section className="activity-section"><Collapsible variant="section" title={<>Waiting <Badge>{waiting.length}</Badge></>}><div className="k-stack">{waiting.map(({turn, event}) => <div key={event.id} className="k-stack"><button type="button" className="panel-row panel-row--link" onClick={() => openFocused(turn.id)}><span className="panel-row__text"><span className="panel-row__title">{event.event}</span><time className="panel-row__meta" dateTime={new Date(event.deadline).toISOString()}>{new Date(event.deadline).toLocaleString('en-US')}</time></span></button>{!archived && <EventConnection compact path={`/api/turn-waits/${event.id}`} request={api} />}</div>)}</div></Collapsible></section>}
               {channel?.project && <SectionRoutines channel={channel.id} onOpen={onOpenAgent} />}
               {detailsExtra?.onManageRoutines && <UpcomingRoutines agent={agent.id} onManage={detailsExtra.onManageRoutines} />}
-              <div className="activity-empty" role="status"><Clock size={20} aria-hidden /><span>No activity</span></div>
             </div>} />}
   </div>;
 }

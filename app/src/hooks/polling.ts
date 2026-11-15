@@ -37,11 +37,13 @@ export function startPolling(fn: Poll, { interval, enabled = true, immediate = t
   }
   if (enabled) {
     visibility.addEventListener('visibilitychange', changed);
+    globalThis.window?.addEventListener('focus', changed);
     if (immediate) void run(); else schedule(interval);
   }
   return () => {
     controller.abort();
     clearTimeout(timer);
     visibility.removeEventListener('visibilitychange', changed);
+    globalThis.window?.removeEventListener('focus', changed);
   };
 }

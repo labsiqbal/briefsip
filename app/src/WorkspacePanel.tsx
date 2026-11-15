@@ -43,21 +43,21 @@ export function WorkspacePanel({ agent, request, onClose, basePath = `/api/agent
     {!compact && <PageHeader headingRef={heading} title={`Workspace files for ${agent.name}`}
       description="Local files linked by the host owner. Previews are read-only; opening files here does not send their contents to the model."
       actions={<Button variant="ghost" onClick={onClose}>Back</Button>} />}
-    {compact && <Section title="Project workspace">{null}</Section>}
-    <div className="k-row-actions">
-      <Button disabled={locations.length<2} onClick={back} icon={<ChevronLeft size={14} aria-hidden />}>Previous</Button>
-      <Button onClick={()=>{generation.current++;setPage(null);setError('');setLocations([{path:'',file:false}]);}} icon={<Folder size={14} aria-hidden />}>Root directory</Button>
-    </div>
-    <Section title={<span style={{ overflowWrap: 'anywhere' }}>{location.path || 'Root directory'}</span>}>
+    <nav className="k-row-actions" aria-label="Workspace path">
+      {!compact && <Button disabled={locations.length<2} onClick={back} icon={<ChevronLeft size={14} aria-hidden />}>Previous</Button>}
+      <Button variant="ghost" onClick={()=>{generation.current++;setPage(null);setError('');setLocations([{path:'',file:false}]);}} icon={<Folder size={14} aria-hidden />}>{compact ? 'Workspace' : 'Root directory'}</Button>
+      {compact && location.path.split('/').filter(Boolean).map((part, index, parts) => <Button key={index} variant="ghost" onClick={() => setLocations([{path: parts.slice(0, index + 1).join('/'), file: false}])}>{part}</Button>)}
+    </nav>
+    <Section title={compact ? undefined : <span style={{ overflowWrap: 'anywhere' }}>{location.path || 'Root directory'}</span>}>
       {location.file && <><div className="k-row-actions"><Button aria-disabled={downloading} aria-busy={downloading} onClick={()=>void download()} icon={<Download size={14} aria-hidden />}>{downloading?'Preparing download...':'Download original file'}</Button></div><p className="k-field__hint" style={{ margin: 0 }}>Text or binary, up to 10 MiB. Downloads use the current file version.</p>{downloadError&&<Alert tone="error">{downloadError}</Alert>}</>}
       {error ? <Alert tone="error" actions={<Button onClick={()=>{generation.current++;setPage(null);setError('');setLocations(value=>[...value.slice(0,-1),{path:location.path,file:location.file}]);setReload(value=>value+1);}}>Retry</Button>}>{error}</Alert> : !page ? <><p className="k-field__hint" role="status">Loading workspace...</p><SkeletonRows /></> : location.file ? <>
         <p className="k-field__hint" style={{ margin: 0 }}>Starting at character {(location.offset??0)+1}. Maximum 8000 characters per page.</p>
         <CodeBlock label={`Contents of ${location.path}`}>{page.text || '(Empty file)'}</CodeBlock>
         {page.next_offset != null && <div className="k-pager"><IconButton label="Next text page" disabled={page.next_offset == null} onClick={()=>open({...location,offset:page.next_offset!,digest:page.digest})}><ChevronRight size={16} aria-hidden /></IconButton></div>}
       </> : <>
-        {page.entries?.length ? <Card>{page.entries.map(entry=><Row key={entry.name} title={entry.name}
+        {page.entries?.some(entry => entry.name !== '.git') ? <Card>{page.entries.filter(entry => entry.name !== '.git').map(entry=><Row key={entry.name} title={entry.name}
           leading={entry.kind==='directory'?<Folder size={16} aria-hidden />:<FileText size={16} aria-hidden />}
-          meta={entry.kind==='directory'?'Directory':entry.kind==='file'?'File':'Unsupported'}
+          meta={compact ? undefined : entry.kind==='directory'?'Directory':entry.kind==='file'?'File':'Unsupported'}
           disabled={!['file','directory'].includes(entry.kind)||/[\x00-\x1f\x7f\\]/.test(entry.name)}
           onClick={()=>open({path:[location.path,entry.name].filter(Boolean).join('/'),file:entry.kind==='file'})} />)}</Card> : <EmptyState icon={<Folder size={18} />} title="Directory is empty on this page." />}
         {page.next_after && <div className="k-pager"><IconButton label="Next entries" disabled={!page.next_after} onClick={()=>open({...location,after:page.next_after!})}><ChevronRight size={16} aria-hidden /></IconButton></div>}

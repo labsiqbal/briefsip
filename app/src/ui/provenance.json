@@ -16,7 +16,8 @@
     { "sourcePath": "web/src/components/Menu.tsx", "localPath": "app/src/ui/Menu.tsx", "adaptation": "Disabled items, labelled menu, focus first item." },
     { "sourcePath": "web/src/components/modals/Modal.tsx", "localPath": "app/src/ui/Modal.tsx", "adaptation": "Built-in header/close button with Lucide icon; stable close callback." },
     { "sourcePath": "web/src/components/DetailsPanel.tsx", "localPath": "app/src/App.tsx", "adaptation": "Identity, compact Computer hero, three-tab structure and Upcoming routines with Manage adapted to Briefsip Chats / Activity / Library using the existing Radix kit; channel identity, member avatars and inline read status. Briefsip request paths, command recovery and resizable panel retained." },
-    { "sourcePath": "web/src/components/ComputerViewer.tsx", "localPath": "app/src/ComputerViewer.tsx", "adaptation": "noVNC RFB lifecycle, watch viewOnly and scaleViewport pattern. Briefsip keeps Radix Dialog, persistent C1 control/waits and same-origin single-use ticket routing; original clipboard field and keyboard escape." }
+    { "sourcePath": "web/src/components/ComputerViewer.tsx", "localPath": "app/src/ComputerViewer.tsx", "adaptation": "noVNC RFB lifecycle, watch viewOnly and scaleViewport pattern. Briefsip keeps Radix Dialog, persistent C1 control/waits and same-origin single-use ticket routing; original clipboard field and keyboard escape." },
+    { "sourcePath": "web/src/components/MembersCard.tsx", "localPath": "app/src/RightPanel.tsx", "adaptation": "Member rows with Briefsip avatars, names and role labels replace section avatar strip; membership and lead identity retained." }
   ],
   "notUsed": "Bot HQ icon SVGs, avatar shapes and Grok Bot-derived visuals are not copied; icons come from lucide-react (ISC).",
   "additionalSources": [

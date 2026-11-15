@@ -97,3 +97,17 @@ test('download attaches, clicks and removes link, then revokes URL after one sec
     t.mock.timers.tick(1000); assert.deepEqual(events, ['append', 'click', 'remove', 'revoke']);
   } finally { if (saved) Object.defineProperty(globalThis, 'document', saved); else Reflect.deleteProperty(globalThis, 'document'); }
 });
+
+test('polling refreshes on window focus and removes focus listener on stop', async t => {
+  const focus = new EventTarget();
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: focus });
+  t.after(() => { if (previous) Object.defineProperty(globalThis, 'window', previous); else Reflect.deleteProperty(globalThis, 'window'); });
+  const document = new Visibility();
+  let calls = 0;
+  const stop = startPolling(() => { calls++; }, { interval: 60000 }, document);
+  await flush(); assert.equal(calls, 1);
+  focus.dispatchEvent(new Event('focus')); await flush(); assert.equal(calls, 2);
+  document.change(true); focus.dispatchEvent(new Event('focus')); await flush(); assert.equal(calls, 2);
+  stop(); focus.dispatchEvent(new Event('focus')); await flush(); assert.equal(calls, 2);
+});
