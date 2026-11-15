@@ -19,8 +19,8 @@ import { MessageCopyButton } from './ui/MessageCopyButton';
 import { useTimelineFollow } from './ui/useTimelineFollow';
 import { useTurnStream } from './ui/useTurnStream';
 import { SpeechPlayback } from './SpeechPlayback';
-import { AudioRecorder } from './AudioRecorder';
-import { TranscriptionPanel } from './TranscriptionPanel';
+import { useConversationAttachments } from './ConversationAttachments';
+import { Attachments } from './Attachments';
 import { TurnActivity } from './ui/TurnActivity';
 import { AgentMessage, ChatComposer, ChatEmptyState, ChatHeader, ChatTranscript, HumanMessage, TurnStatus } from './ui/ChatPrimitives';
 import { livePartial, streamIdentity, turnPollDelay, type TurnActivityData } from './ui/transcript';
@@ -37,7 +37,7 @@ import { Link as LinkIcon, Archive, BarChart3, BookOpen, Database, Download, Key
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
 import { PanelResizeHandle, sidebarPanel, useResizablePanel } from './ui/resizable';
-import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Collapsible, ConfirmProvider, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, TabPanel, Tabs, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
+import { ActionMenu, Alert, Badge, Button, Card, Checkbox, Collapsible, ConfirmProvider, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, TabPanel, Tabs, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
 import { createRoot } from 'react-dom/client';
 import { Collapsible as Disclosure, Dialog as RadixDialog, DropdownMenu } from 'radix-ui';
 import { validateFlow, type FlowGraph, type FlowLink } from '../flows.ts';
@@ -81,7 +81,7 @@ type Channel = { project?: string | null; activity: number; read_position: numbe
 type Thread = { delivery?: boolean; active?: boolean; activity?: number; id: string; agent: string; name: string; revision: number; archived: number; deleted: number; fork?: { source_name: string; source_id: string; source_kind: 'agent' | 'channel' | 'thread'; source_agent: string; cutoff_turn: string; created: string } | null };
 type AgentMessage = Exchange & { taskId?: string; task?: string; wait?: boolean; generatedFiles?: { id: string; name: string; size: number; thread: string }[]; paused: number; request: string; expects_reply: number; settled: number; id: string; agent: string; thread: string; name: string; status: string; error: string | null; reply: string | null; truncated: boolean };
 
-type Turn = { history_page?: number; routineReport?: { run: string; name: string; agent: string; thread: string; destination: string; status: string } | null; room?: RoomView | null; harnessApprovals?: HarnessApproval[]; computerWait?: ComputerWait; checkpoint?: { turn: string; restorable: boolean } | null; approvals?: AppApproval[]; recipient?: string | null; dispatch_mode?: 'queue' | 'steer' | 'restart'; dispatch_target?: string | null; dispatch_label?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { kind?: 'peer'; name: string; agent: string | null; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string; seq: number } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
+type Turn = { history_page?: number; routineReport?: { run: string; name: string; agent: string; thread: string; destination: string; status: string } | null; room?: RoomView | null; harnessApprovals?: HarnessApproval[]; computerWait?: ComputerWait; checkpoint?: { turn: string; restorable: boolean } | null; approvals?: AppApproval[]; recipient?: string | null; dispatch_mode?: 'queue' | 'steer' | 'restart'; dispatch_target?: string | null; dispatch_label?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { kind?: 'peer'; name: string; agent: string | null; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string; seq: number } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number; image?: boolean }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
 type Directory = { agents: Agent[]; configured: boolean; defaultModel: string };
 type Environment = { id: string; name: string; origin: string; version: string };
 /** One-line sidebar preview: strip Markdown markers so rows read as plain text. */
@@ -102,129 +102,6 @@ async function api<T>(path: string, data?: unknown): Promise<T> {
 }
 const message = (error: unknown) => error instanceof Error ? error.message : 'Connection failed. Try again.';
 
-function ConversationFiles({ path, archived, attached, onAttach, locked, open, onOpenChange, pastedFiles, onPasteSettled }: { onPasteSettled?: () => void; pastedFiles?: File[]; path: string; archived: boolean; attached: string[]; onAttach: (ids: string[]) => void; locked: boolean; open: boolean; onOpenChange: (open: boolean) => void }) {
-  type StoredFile = { seq: number; id: string; name: string; size: number };
-  type Upload = { id: string; name: string; size: number; digest: string; file?: File; attach?: boolean };
-  const storageKey = `briefsip:upload:${path}`;
-  const [recovered] = useState<Upload | null>(() => {
-    try {
-      const value = JSON.parse(sessionStorage.getItem(storageKey) ?? 'null');
-      return value && /^[0-9a-f-]{36}$/i.test(value.id) && typeof value.name === 'string' && Number.isSafeInteger(value.size) && value.size >= 0 && value.size <= 10 * 1024 * 1024 && /^[0-9a-f]{64}$/.test(value.digest) ? { id: value.id, name: value.name, size: value.size, digest: value.digest, attach: value.attach === true } : null;
-    } catch { return null; }
-  });
-  const [files, setFiles] = useState<StoredFile[]>([]);
-  const [error, setError] = useState(''), [busy, setBusy] = useState(false), [more, setMore] = useState(false);
-  const [loading, setLoading] = useState(false), [reload, setReload] = useState(0);
-  const [selected, setSelected] = useState<File | null>(null), [recording, setRecording] = useState(false);
-  const [preview, setPreview] = useState<StoredFile | null>(null), [previewText, setPreviewText] = useState<string | null>(null), [previewError, setPreviewError] = useState('');
-  const pending = useRef<Upload | null>(recovered);
-  const pasteSeen = useRef<File[] | undefined>(undefined);
-  const attachmentState = useRef({ attached, onAttach });
-  attachmentState.current = { attached, onAttach };
-  const attachUploaded = (id: string) => {
-    const current = attachmentState.current;
-    if (!current.attached.includes(id) && current.attached.length < 4) {
-      const ids = [...current.attached, id]; current.attached = ids; current.onAttach(ids);
-    }
-  };
-  const input = useRef<HTMLInputElement>(null);
-  const mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  function clearUpload(id: string) {
-    if (JSON.parse(sessionStorage.getItem(storageKey) ?? 'null')?.id === id) sessionStorage.removeItem(storageKey);
-    if (pending.current?.id === id) pending.current = null;
-  }
-  useEffect(() => {
-    setPreviewText(null); setPreviewError('');
-    if (!preview) return;
-    let stopped = false;
-    void api<{ text: string }>(`${path}/${preview.id}?preview=text`).then(result => { if (!stopped) setPreviewText(result.text); }).catch(error => { if (!stopped) setPreviewError(message(error)); });
-    return () => { stopped = true; };
-  }, [path, preview]);
-  useEffect(() => {
-    if (!open || busy) return;
-    let stopped = false;
-    setLoading(true);
-    void api<StoredFile[]>(path).then(rows => { if (!stopped) { setFiles(rows); setMore(rows.length === 100); setError(''); } }).catch(error => { if (!stopped) setError(message(error)); }).finally(() => { if (!stopped) setLoading(false); });
-    return () => { stopped = true; };
-  }, [open, path, reload]);
-  useEffect(() => {
-    if (!pastedFiles?.length || pasteSeen.current === pastedFiles || busy || loading) return;
-    pasteSeen.current = pastedFiles;
-    if (archived || locked || recording || pending.current || selected) { setError('Finish the current upload before pasting files.'); onPasteSettled?.(); return; }
-    if (pastedFiles.length + attachmentState.current.attached.length > 4) { setError('Up to four attachments per message.'); onPasteSettled?.(); return; }
-    if (pastedFiles.some(file => file.size > 10 * 1024 * 1024)) { setError('Maximum file size is 10 MiB.'); onPasteSettled?.(); return; }
-    void (async () => { try { for (const file of pastedFiles) { if (!mounted.current || !await upload(undefined, file)) break; } } finally { onPasteSettled?.(); } })();
-  }, [pastedFiles, busy, loading]);
-  async function upload(event?: FormEvent, pasted?: File) {
-    event?.preventDefault(); if (busy || loading || recording) return false;
-    const file = pending.current?.file ?? pasted ?? selected;
-    if (!file) { setError('Select the same file again to continue the upload.'); return; }
-    if (file.size > 10 * 1024 * 1024) { setError('Maximum file size is 10 MiB.'); return; }
-    setBusy(true); setError(''); if (pasted) setSelected(pasted);
-    try {
-      const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()))].map(byte => byte.toString(16).padStart(2, '0')).join('');
-      if (!mounted.current) return;
-      if (pending.current && (pending.current.name !== file.name || pending.current.size !== file.size || pending.current.digest !== digest)) throw new Error('File differs from the pending upload. Select the original file or check upload status.');
-      const request = pending.current ?? { id: crypto.randomUUID(), name: file.name, size: file.size, digest, attach: !!pasted };
-      sessionStorage.setItem(storageKey, JSON.stringify({ id: request.id, name: request.name, size: request.size, digest: request.digest, attach: request.attach }));
-      pending.current = { ...request, file };
-      const response = await fetch(`${path}/${request.id}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) }, body: file }).catch(() => { throw new Error('Connection lost. Try the same upload again.'); });
-      const result = await response.json();
-      if (!response.ok) throw new HttpError(response.status, result.error ?? 'Upload failed.');
-      setFiles(current => [result, ...current.filter(file => file.id !== result.id)]);
-      if (request.attach) attachUploaded(result.id);
-      clearUpload(request.id); setSelected(null); if (input.current) input.current.value = '';
-      return true;
-    } catch (error) {
-      if (error instanceof HttpError && error.status < 500 && error.status !== 409) {
-        try { if (pending.current) clearUpload(pending.current.id); } catch { /* Retain retry identity if browser storage is unavailable. */ }
-      }
-      setError(message(error));
-    }
-    finally { setBusy(false); }
-  }
-  async function checkPending() {
-    const request = pending.current; if (!request || busy || loading) return;
-    setBusy(true); setError('');
-    try {
-      const result = await api<StoredFile & { digest: string }>(`${path}/${request.id}?metadata=1`);
-      if (result.name !== request.name || result.size !== request.size || result.digest !== request.digest) throw new Error('Receipt does not match the pending upload.');
-      setFiles(current => [result, ...current.filter(file => file.id !== result.id)]);
-      if (request.attach) attachUploaded(result.id);
-      clearUpload(request.id); setSelected(null); if (input.current) input.current.value = '';
-    } catch (error) { setError(error instanceof HttpError && error.status === 404 ? 'Upload was not saved. Select the original file again to continue.' : message(error)); }
-    finally { setBusy(false); }
-  }
-  async function loadMore() {
-    if (busy) return; setBusy(true); setError('');
-    try {
-      const rows = await api<StoredFile[]>(`${path}?before=${files.at(-1)!.seq}`);
-      setFiles(current => [...current, ...rows.filter(row => !current.some(file => file.id === row.id))]); setMore(rows.length === 100);
-    } catch (error) { setError(message(error)); }
-    finally { setBusy(false); }
-  }
-  return <div className="conversation-files k-stack bs-root"><Collapsible variant="section" title="Conversation files" open={open} onOpenChange={onOpenChange}>
-    <div className="k-stack">
-      <p className="k-field__hint">Maximum 10 MiB per file. Select attachments to send with your next message. Up to four attachments: 32 KiB total UTF-8 text and 4 MiB total PNG/JPEG/WebP images. Select a model that supports images.</p>
-      {open && <AudioRecorder disabled={archived || busy || loading || !!pending.current || !!selected} onRecording={setRecording} onReady={file => { setSelected(file); if (input.current) input.current.value = ''; }} />}
-      <form className="k-stack" onSubmit={upload}>
-        <input ref={input} type="file" hidden disabled={recording || busy || loading || !!pending.current?.file || (archived && !pending.current)} onChange={event => setSelected(event.target.files?.[0] ?? null)} />
-        <div className="k-row-actions"><Button size="sm" disabled={recording || busy || loading || !!pending.current?.file || (archived && !pending.current)} onClick={() => input.current?.click()}>Choose file</Button><Button type="submit" size="sm" busy={busy} disabled={recording || busy || loading || (archived && !pending.current) || (!selected && !pending.current?.file)}>{busy ? 'Processing...' : pending.current ? 'Retry upload' : 'Upload file'}</Button></div>
-        {selected && <span className="k-field__hint">{selected.name}</span>}
-      </form>
-      {pending.current && <RecoveryAlert inFlight={busy} tone="warn" title={`Upload ${pending.current.name} is not confirmed yet`} actions={<Button size="sm" disabled={busy || loading} onClick={() => void checkPending()}>Check upload status</Button>}>Select the same file again or check upload status.</RecoveryAlert>}
-      {error && <Alert tone="error" actions={!pending.current && <Button size="sm" disabled={busy || loading} onClick={() => setReload(value => value + 1)}>Reload files</Button>}>{error}</Alert>}
-      {loading ? <><span className="sr-only" role="status">Loading files...</span><SkeletonRows /></> : !error && files.length === 0 && <EmptyState title="No files yet" />}
-      {files.length > 0 && <Card>{files.map(file => <Row key={file.id} title={<a className="k-link" href={`${path}/${file.id}`} download={file.name}>{file.name}</a>} meta={`${file.size.toLocaleString('en-US')} byte`}>
-        <div className="k-stack"><Checkbox label={`Attach ${file.name}`} checked={attached.includes(file.id)} disabled={locked || archived || (!attached.includes(file.id) && attached.length >= 4)} onChange={checked => onAttach(checked ? [...attached, file.id] : attached.filter(id => id !== file.id))} />
-        <div className="k-row-actions"><Button size="sm" variant="ghost" aria-label={`View text: ${file.name}`} onClick={() => setPreview(file)}>View text</Button><HtmlPreview path={`${path}/${file.id}`} name={file.name} request={api} /><TranscriptionPanel path={`${path}/${file.id}`} request={api} /></div></div>
-      </Row>)}</Card>}
-      {preview && <Section title={preview.name} actions={<Button size="sm" variant="ghost" onClick={() => setPreview(null)}>Close preview</Button>}>{previewError ? <Alert tone="error">{previewError}</Alert> : previewText === null ? <p role="status">Loading preview...</p> : <CodeBlock label={`Preview ${preview.name}`}>{previewText || '(Empty file)'}</CodeBlock>}</Section>}
-      {more && <Button size="sm" disabled={busy} onClick={() => void loadMore()}>Earlier files</Button>}
-    </div>
-  </Collapsible></div>;
-}
 
 function RoomStop({ room, path, archived, onStopped }: { room: RoomView; path: string; archived: boolean; onStopped: () => void }) {
   const confirm = useConfirm(), key = `briefsip:room-stop:${path}:${room.root}`;
@@ -377,7 +254,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   useEffect(() => { setDispatchMode('queue'); }, [dispatchTarget?.id]);
   async function send(event: FormEvent, forcedMode?: 'queue' | 'steer') {
     event.preventDefault();
-    if (requestActive.current || pastedFiles.length || blocked || (!pending && !draft.trim())) return;
+    if (requestActive.current || pastedFiles.length || attachments.uploading || blocked || (!pending && !draft.trim())) return;
     if (archived) { setError('Restore the conversation before sending a new message.'); return; }
     const mode = dispatchTarget ? forcedMode ?? dispatchMode : 'queue';
     const request = pending ?? { id: crypto.randomUUID(), text: draft.trim(), ...(mode !== 'queue' ? { dispatchMode: mode, targetTurn: dispatchTarget!.id, ...(channel ? { recipient: dispatchTarget!.agent } : {}) } : {}), ...(attached.length ? { files: attached } : {}),  };
@@ -423,13 +300,11 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     window.addEventListener('keydown', key, true);
     return () => window.removeEventListener('keydown', key, true);
   }, [detailsOpen, setDetailsOpen]);
-  const [filesOpen, setFilesOpen] = useState(false);
-  const filesSection = useRef<HTMLDivElement>(null);
+  const attachments = useConversationAttachments({ path: path.replace(/\/turns$/, '/files'), archived, attached: pending?.files ?? attached, onAttach: attach, locked: blocked || !!pending || busy, pastedFiles, onPasteSettled: () => setPastedFiles([]), onFiles: setPastedFiles, libraryOpen: detailsOpen && rightPanel.tab === 'details' && detailsTab === 'library', api });
   if (showMemory) return <PageView><Suspense fallback={<p className="empty" role="status">Loading memory...</p>}><MemoryPanel key={scope} path={`/api/${channel ? 'channels' : 'agents'}/${agent.id}/memory`} channel={!!channel} archived={!!channel?.archived} request={api} onClose={() => { setShowMemory(false); requestAnimationFrame(() => memoryButton.current?.focus()); }} /></Suspense></PageView>;
   const active = turns?.filter(turn => turn.status === 'queued' || turn.status === 'running').length ?? 0;
   const title = thread?.name ?? agent.name;
   const editLabel = channel ? 'Section settings' : thread ? 'Conversation settings' : 'Edit profile';
-  const openFiles = () => { rightPanel.select('details'); setDetailsOpen(true); selectDetailsTab('library'); setFilesOpen(true); requestAnimationFrame(() => filesSection.current?.querySelector<HTMLButtonElement>('.k-collapsible__trigger')?.focus()); };
   const items: MenuItem[] = [
     ...menuItems,
     ...(onEdit ? [{ label: editLabel, onSelect: onEdit }] : []),
@@ -456,7 +331,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
               : turns.length === 0 ? <ChatEmptyState agent={agent} title={thread?.fork ? `Continue with ${agent.name}` : undefined}>{thread?.fork ? 'Earlier context is included through the selected answer. New messages stay in this conversation.' : 'Send your first task or question. The conversation is saved on this computer.'}</ChatEmptyState>
               : turns.filter(turn => !turn.room || turn.room.root === turn.id || !turns.some(root => root.id === turn.room!.root)).map(turn => <article key={turn.id} id={`turn-${turn.id}`} tabIndex={-1} className={`turn-block${turn.id === turns.at(-1)?.id ? ' is-latest' : ''}`}>
                 {query && <button type="button" className="link-btn" onClick={() => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(turn.id); }}>Open this message</button>}
-                {turn.routineReport ? <section className="routine-report" aria-label={`Routine report: ${turn.routineReport.name}`}><div className="routine-report__meta"><CalendarClock size={16} aria-hidden /><strong>Routine report</strong><time dateTime={turn.created}>{time(turn.created)}</time></div><div className="legacy routine-report__body"><Markdown text={turn.reply ?? ''} scope={path.slice(0, -6)} origin={window.location.origin} /></div><a className="k-link" href={`#routine-run-${turn.routineReport.run}`} onClick={event=>{event.preventDefault();onOpenAgent?.(turn.routineReport!.agent,turn.routineReport!.thread);}}>Open full run</a></section> : <><HumanMessage text={turn.text} label={turn.messageOrigin?.kind === 'peer' ? `Message from ${turn.messageOrigin.name}` : 'Your message'} attachments={!!turn.files?.length && <ul className="chip-list" aria-label="Message attachments">{turn.files.map(file => <li key={file.id}><a className="cite-chip" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}><Paperclip size={12} aria-hidden /> {file.name}</a></li>)}</ul>}>
+                {turn.routineReport ? <section className="routine-report" aria-label={`Routine report: ${turn.routineReport.name}`}><div className="routine-report__meta"><CalendarClock size={16} aria-hidden /><strong>Routine report</strong><time dateTime={turn.created}>{time(turn.created)}</time></div><div className="legacy routine-report__body"><Markdown text={turn.reply ?? ''} scope={path.slice(0, -6)} origin={window.location.origin} /></div><a className="k-link" href={`#routine-run-${turn.routineReport.run}`} onClick={event=>{event.preventDefault();onOpenAgent?.(turn.routineReport!.agent,turn.routineReport!.thread);}}>Open full run</a></section> : <><HumanMessage text={turn.text} label={turn.messageOrigin?.kind === 'peer' ? `Message from ${turn.messageOrigin.name}` : 'Your message'} attachments={!!turn.files?.length && <Attachments files={turn.files} path={path.replace(/\/turns$/, '/files')} />}>
                     <time className="message-time" dateTime={turn.created} title={new Date(turn.created).toLocaleString('en-US')}>{time(turn.created)}</time>
                     {turn.messageOrigin?.kind === 'peer' ? <span className="message-origin">From {turn.messageOrigin.name}</span> : turn.workflow_run ? <span className="message-origin">Workflow</span> : turn.parent ? <span className="message-origin">Subtask</span> : null}
                     {turn.room && <RoomStop room={turn.room} path={path} archived={archived} onStopped={() => composer.current?.focus()} />}
@@ -503,7 +378,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
         {!configured && <p className="composer__note">{!channel && 'provider_account' in agent && !!agent.provider_account && agent.provider_available === false ? 'This agent provider account is unavailable. Select a connected account in the agent profile, or restore the account configuration on the server.' : 'Provider not connected. Check provider account configuration on the server, then restart the app.'} Agent and history remain saved.</p>}
         {error && <div className="composer__error" role="alert"><span>{error} {pending && 'Use Retry send to check the same request without creating a duplicate message.'}</span></div>}
         {blocked && <div className="composer__error" role="alert"><span>Message recovery data could not be read. Sending is blocked. Check history to confirm the previous message was not sent.</span><Button size="sm" variant="ghost" onClick={async () => { if (!await confirm({ title: 'Discard recovery data?', description: 'The previous message may already have been received. Check history before sending another message.', confirm: 'Discard message recovery', danger: true })) return; try { sessionStorage.removeItem(storageKey); setBlocked(false); setError(''); requestAnimationFrame(() => composer.current?.focus()); } catch { setError('Recovery data could not be deleted. Check site storage.'); } }}>Discard message recovery</Button></div>}
-        {(pending?.files ?? attached).length > 0 && <p className="composer__note"><Paperclip size={12} aria-hidden /> {(pending?.files ?? attached).length} attachments will be sent to the provider with the message.</p>}
+        {attachments.composer}
         {channel && activeTurns.length > 0 && <div className="composer-dispatch bs-root"><Select size="sm" label="Addressed member" value={dispatchTarget?.id ?? ''} disabled={busy || !!pending || blocked} onChange={setAddressedTurn} options={[{ value: '', label: 'Everyone' }, ...activeTurns.map(turn => ({ value: turn.id, label: members.find(member => member.id === turn.agent)?.name ?? turn.agent }))]} /></div>}
         {dispatchTarget && <div className="composer-dispatch bs-root">
           <Select size="sm" label="Message mode" value={pending?.dispatchMode ?? dispatchMode} disabled={busy || !!pending || blocked} onChange={value => setDispatchMode(value as typeof dispatchMode)} options={[
@@ -512,10 +387,10 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
             { value: 'restart', label: 'Restart' },
           ]} />
         </div>}
-        <ChatComposer onPasteFiles={files => { if (pastedFiles.length) { setError('Wait for pasted files to finish uploading.'); return; } setPastedFiles(files); openFiles(); }} mentions={channel ? members : []} onMention={value => { setDraft(value); try { sessionStorage.setItem(draftKey, value); } catch { setError('Draft was not saved. Copy your message before leaving.'); } }} label={`Message ${agent.name}`} inputRef={composer} multiline={draft.includes('\n')} onSubmit={send} onSendKey={event => { void send(event, (event.ctrlKey || event.metaKey) && canSteer ? 'steer' : 'queue'); }} onAttach={openFiles}
+        <ChatComposer onPasteFiles={files => { if (pastedFiles.length) { setError('Wait for pasted files to finish uploading.'); return; } setPastedFiles(files); }} mentions={channel ? members : []} onMention={value => { setDraft(value); try { sessionStorage.setItem(draftKey, value); } catch { setError('Draft was not saved. Copy your message before leaving.'); } }} label={`Message ${agent.name}`} inputRef={composer} multiline={draft.includes('\n')} onSubmit={send} onSendKey={event => { void send(event, (event.ctrlKey || event.metaKey) && canSteer ? 'steer' : 'queue'); }} onAttach={attachments.choose} attachmentDisabledReason={archived || blocked || !!pending || busy || attachments.uploading ? 'Attachments unavailable' : undefined} recipient={attachments.recordingAction}
           input={{ id: 'message', value: pending?.text ?? draft, readOnly: blocked || !!pending || busy, onChange: event => { setDraft(event.target.value); try { sessionStorage.setItem(draftKey, event.target.value); } catch { setError('Draft was not saved in the browser. Copy the message before switching agents.'); } } }}
           busy={busy} retry={!!pending}
-          sendDisabled={!!pastedFiles.length || blocked || archived || !configured || busy || (!pending && !draft.trim())}
+          sendDisabled={!!pastedFiles.length || attachments.uploading || blocked || archived || !configured || busy || (!pending && !draft.trim())}
           sendLabel={busy ? 'Sending...' : pending ? 'Retry send' : dispatchTarget ? dispatchMode === 'queue' ? 'Queue message' : dispatchMode === 'steer' ? canSteer ? 'Steer turn' : 'Steer by restarting turn' : 'Restart turn' : 'Send message'}
           sendTitle={pending ? 'Retry send' : dispatchTarget ? `${dispatchMode === 'queue' ? 'Queue' : dispatchMode === 'steer' ? 'Steer' : 'Restart'} message` : 'Send (Enter)'} />
         <p className="composer__foot" title="Provider receives up to 40 previous conversations.">{focusedTask ? channel ? 'Task family shown · ' : 'Selected message shown · ' : query ? 'Up to 100 results per page · ' : before ? 'Up to 100 older messages per page · ' : ''}{dispatchTarget ? `Enter to queue${canSteer ? ', Ctrl/Cmd+Enter to steer' : ''}` : 'Enter to send'}, Shift+Enter for a new line</p>
@@ -553,7 +428,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
               {detailsExtra?.activity}
               <Collapsible variant="section" title="Event waits"><div className="k-stack">{turns?.some(turn => turn.events?.some(event => event.status === 'waiting')) ? turns.flatMap(turn => turn.events?.filter(event => event.status === 'waiting').map(event => <div key={event.id} className="k-stack"><button type="button" className="panel-row panel-row--link" onClick={() => openFocused(turn.id)}><span className="panel-row__text"><span className="panel-row__title">{event.event}</span><time className="panel-row__meta" dateTime={new Date(event.deadline).toISOString()}>{new Date(event.deadline).toLocaleString('en-US')}</time></span></button>{!archived && <EventConnection path={`/api/turn-waits/${event.id}`} request={api} />}</div>)) : <p className="panel-empty">No event waits in this view.</p>}</div></Collapsible>
             </div></TabPanel>
-            <TabPanel value="library"><div className="details__sections"><section><div className="section-label">Memory and context</div><div className="panel-card"><button ref={memoryButton} type="button" className="panel-row panel-row--action" onClick={() => setShowMemory(true)}><Brain size={16} aria-hidden /> {channel ? 'Channel' : 'Agent'} memory</button></div><CompactionPanel path={path.replace(/\/turns$/, '/compaction')} request={api} /></section><section ref={filesSection}><ConversationFiles pastedFiles={pastedFiles} onPasteSettled={() => setPastedFiles([])} path={path.replace(/\/turns$/, '/files')} archived={archived} attached={pending?.files ?? attached} onAttach={attach} locked={blocked || !!pending || busy} open={filesOpen} onOpenChange={setFilesOpen} /></section>{sourceControl ?? (!channel && (agent as Agent).workspace_connected && <SourceControl key={agent.id} agent={agent.id} request={api} />)}{detailsExtra?.library}</div></TabPanel>
+            <TabPanel value="library"><div className="details__sections">{attachments.library}<section><div className="section-label">Memory and context</div><div className="panel-card"><button ref={memoryButton} type="button" className="panel-row panel-row--action" onClick={() => setShowMemory(true)}><Brain size={16} aria-hidden /> {channel ? 'Channel' : 'Agent'} memory</button></div><CompactionPanel path={path.replace(/\/turns$/, '/compaction')} request={api} /></section>{sourceControl ?? (!channel && (agent as Agent).workspace_connected && <SourceControl key={agent.id} agent={agent.id} request={api} />)}{detailsExtra?.library}</div></TabPanel>
           </Tabs>
         </div>
       </div>

@@ -63,8 +63,14 @@ for (const family of ['openai-compatible', 'anthropic', 'gemini'] as ProviderFam
     const scopes = [`/api/agents/${a.id}`, `/api/channels/${room.id}`, `/api/threads/${thread.id}`], files: string[] = [];
     for (const scope of scopes) {
       const image = await upload(scope), note = await upload(scope, Buffer.from('NOTE_DATA'), 'note.txt'); files.push(image);
+      assert.equal((await request(`${scope}/files/${image}?metadata=1`)).image, true);
+      assert.equal((await request(`${scope}/files/${note}?metadata=1`)).image, false);
+      assert.equal((await request(`${scope}/files`)).find((file: any) => file.id === image).image, true);
+      assert.equal((await request(`${scope}/panel/files`)).find((file: any) => file.id === image).image, true);
       const id = randomUUID(), command = { id, text: 'Describe selected image', files: [image, note], ...(scope.includes('channels') ? { automatic: true } : {}) }, start = payloads.length;
-      await request(scope + '/turns', command); assert.equal((await until(scope, id)).status, 'done');
+      await request(scope + '/turns', command); const settled = await until(scope, id); assert.equal(settled.status, 'done');
+      assert.equal(settled.files.find((file: any) => file.id === image).image, true);
+      assert.equal(settled.files.find((file: any) => file.id === note).image, false);
       for (const payload of payloads.slice(start)) { assert.equal(images(payload).length, 1); exactImage(images(payload)[0]); assert(JSON.stringify(payload).includes('NOTE_DATA')); }
       const count = payloads.length; await request(scope + '/turns', command); assert.equal(payloads.length, count);
       await request(scope + '/turns', { ...command, files: [image] }, 409);

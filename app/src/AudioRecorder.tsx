@@ -23,9 +23,8 @@ export function AudioRecorder({ disabled, onReady, onRecording }: { disabled: bo
   }
   // ponytail: active CSP blocks blob media; add in-panel playback after an approved media policy.
   return <section className="k-stack bs-root" aria-label="Record audio">
-    <p>Record audio in the browser, up to 5 minutes and 10 MiB. The recording is not uploaded or sent to a provider. Download a copy before closing the panel, changing pages, or reloading so it is not lost.</p>
     {error && <Alert tone="error">{error}</Alert>}
-    <p role="status">{state === 'requesting' ? 'Waiting for microphone permission...' : state === 'recording' ? 'Microphone is recording.' : state === 'stopping' ? 'Finishing recording...' : file ? 'Recording ready.' : 'Microphone inactive.'}</p>
+    <p className={state === 'idle' && !file ? 'sr-only' : undefined} role="status">{state === 'requesting' ? 'Waiting for microphone permission...' : state === 'recording' ? 'Microphone is recording.' : state === 'stopping' ? 'Finishing recording...' : file ? 'Recording ready.' : 'Microphone inactive.'}</p>
     <Button size="sm" disabled={disabled || state !== 'idle' || !!file} onClick={start}>Start recording</Button>
     {state === 'recording' && <Button size="sm" onClick={() => session.current?.stop()}>Finish recording</Button>}
     {state !== 'idle' && <Button size="sm" onClick={() => session.current?.cancel()}>Cancel recording</Button>}

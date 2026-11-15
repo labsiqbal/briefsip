@@ -65,10 +65,10 @@ export function ChatComposer({ label, input, inputRef, onSubmit, onSendKey, onAt
     element.style.height = `${Math.min(element.scrollHeight, 200)}px`;
     element.style.overflowY = element.scrollHeight > 200 ? 'auto' : 'hidden';
   }, [input.value, ref]);
-  return <form className={`composer${(multiline ?? String(input.value ?? '').includes('\n')) ? ' is-multiline' : ''}`} onSubmit={onSubmit}>
+  return <form className={`composer${(multiline ?? String(input.value ?? '').includes('\n')) ? ' is-multiline' : ''}`} onSubmit={onSubmit} onDragOver={event => { if (onPasteFiles && !input.readOnly && !input.disabled && Array.from(event.dataTransfer.types).includes('Files')) event.preventDefault(); }} onDrop={event => { if (!onPasteFiles || input.readOnly || input.disabled || !event.dataTransfer.files.length) return; event.preventDefault(); onPasteFiles(Array.from(event.dataTransfer.files)); }}>
     {!!candidates.length && <div id={listId} className="mention-list" role="listbox" aria-label="Mention a room member">{candidates.map((member, index) => <button id={`${listId}-${index}`} type="button" role="option" aria-selected={index === current} key={member.id} tabIndex={-1} onMouseDown={event => event.preventDefault()} onClick={() => choose(index)}><AgentAvatar agent={member} size={22} /><span><strong>{member.name}</strong><small>{member.role}</small></span></button>)}</div>}
     <div className="composer__left">
-      <span className="composer__plus-anchor" title={attachmentDisabledReason}><button type="button" className="composer__btn" onClick={onAttach} disabled={!onAttach} aria-label="Attach conversation file" title={attachmentDisabledReason ?? 'Attach file'}><Paperclip size={14} aria-hidden /></button></span>
+      <span className="composer__plus-anchor" title={attachmentDisabledReason}><button type="button" className="composer__btn" onClick={onAttach} disabled={!onAttach || !!attachmentDisabledReason} aria-label="Attach conversation file" title={attachmentDisabledReason ?? 'Attach file'}><Paperclip size={14} aria-hidden /></button></span>
       {recipient}
       <label className="sr-only" htmlFor={input.id}>{label}</label>
       <textarea ref={ref} className="composer__input" rows={1} placeholder={label} maxLength={16000} {...input} aria-autocomplete={mentions.length ? 'list' : undefined} aria-controls={candidates.length ? listId : undefined} aria-activedescendant={candidates.length ? `${listId}-${current}` : undefined} onPaste={event => {
