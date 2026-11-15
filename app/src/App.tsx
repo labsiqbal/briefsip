@@ -23,7 +23,7 @@ import { useConversationAttachments } from './ConversationAttachments';
 import { Attachments } from './Attachments';
 import { TurnActivity } from './ui/TurnActivity';
 import { AgentMessage, ChatComposer, ChatEmptyState, ChatHeader, ChatTranscript, HumanMessage, TurnStatus } from './ui/ChatPrimitives';
-import { livePartial, streamIdentity, turnPollDelay, type TurnActivityData } from './ui/transcript';
+import { liveTurn, livePartial, streamIdentity, turnPollDelay, type TurnActivityData } from './ui/transcript';
 import { EventConnection } from './EventConnection';
 import { applyPresentation, presentationKey, readPresentation } from '../presentation';
 import { CreateProject, HelpPage, HowBriefsipWorks, ProjectHome, ProjectSidebar, ProjectSourceControl, useProjects } from './Projects';
@@ -360,6 +360,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
                       {turn.reply && <SpeechPlayback key={`${path}:${turn.id}`} owner={`${path}:${turn.id}`} text={turn.reply} />}
                       {turn.status === 'done' && turn.reply && <ForkAnswer path={path} turn={turn} onOpen={onOpenAgent} />}
                       {turn.dispatch_mode !== 'steer' && <TaskControls key={`${turn.id}:${turn.revision}`} turn={turn} path={path} members={channel ? members : []} archived={archived || !!turn.editing} />}
+                      {turn.reply && !liveTurn(turn) && <time className="message-time" dateTime={turn.activity?.calls.at(-1)?.finished ?? turn.created} title={new Date(turn.activity?.calls.at(-1)?.finished ?? turn.created).toLocaleString('en-US')}>{time(turn.activity?.calls.at(-1)?.finished ?? turn.created)}</time>}
                       {(!['done','cancelled'].includes(turn.status)) && <IconButton label={turn.waiting_for ? 'Cancel task and delegation' : turn.status === 'running' ? 'Stop' : turn.status === 'queued' && !turn.paused ? 'Cancel queued task' : 'Cancel task'} onClick={() => void cancel(turn)}><Square size={14} aria-hidden /></IconButton>}
                     </div>
                     <div className="turn-extras k-stack">

@@ -1342,5 +1342,209 @@
       "adaptation": "Adapt rounded image tiles with hover/focus removal, compact typed file chips with size, wrapped attachment strips, sent/Library galleries and keyboard-accessible image expansion to Briefsip Radix kit and tokens. Adapt classification and boundary-test patterns; only existing PNG/JPEG/WebP image previews admitted. Existing byte detection supplies an additive image boolean on scoped metadata/receipts and sent-file references, including extensionless images. Original upload journal, scope URLs, provider checks and sandboxed HTML/text previews retained. No T3 upload store, asset URL service, runtime or new dependency copied.",
       "compatibilityCheck": "app/attachments.test.ts; app/image-attachment.test.ts; work/rebuild/ui-smoke/smoke.mjs (AT1)"
     }
+  ],
+  "chatLikeT3SourceEntries": [
+    {
+      "sourcePath": "apps/web/src/components/chat/TimelineUserMessageRow.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "9866b29c13e1850eb7112e69ba2933dcefe04be9b79d2bddba8a0668ba463357",
+      "symbols": [
+        "UserMessageRow",
+        "ACTIONS_REVEAL_CLASS_NAME"
+      ],
+      "localPaths": [
+        "app/src/ui/ChatPrimitives.tsx",
+        "app/src/ui/chat.css",
+        "app/src/ui/briefsip.css",
+        "app/src/ui/density.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "80% right-aligned user lane, 16px rounded bubble, 12px padding, hover/focus metadata; preserved Briefsip attachments and command controls.",
+      "compatibilityCheck": "app/markdown.test.ts; work/rebuild/chat-like-t3/capture.mjs; work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/TimelineAssistantRows.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "5b00daeafabfee1ae64965b71dd553b41d253afbb64ac5fb3579ed40e07e0793",
+      "symbols": [
+        "AssistantTimelineRow",
+        "AssistantMessageMeta"
+      ],
+      "localPaths": [
+        "app/src/ui/chat.css",
+        "app/src/ui/briefsip.css",
+        "app/src/App.tsx"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Unboxed answers with 4px horizontal/2px vertical inset, 12px metadata, 24px icon actions and 200ms reveal. Briefsip room speaker headers retained.",
+      "compatibilityCheck": "app/markdown.test.ts; work/rebuild/chat-like-t3/capture.mjs; work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/MessagesTimeline.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "424113972c3053173506fc4d069e05b75e5f8ecde2c5bc283af2e4e154c902f4",
+      "symbols": [
+        "TimelineRowContent",
+        "TurnFoldTimelineRow"
+      ],
+      "localPaths": [
+        "app/src/ui/TurnActivity.tsx",
+        "app/src/ui/briefsip.css",
+        "app/src/ui/density.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "16px message-row spacing and quiet work-log disclosure; provider-ledger duration and existing Briefsip activity semantics retained. Borderless work summary retained from #28.",
+      "compatibilityCheck": "app/markdown.test.ts; work/rebuild/chat-like-t3/capture.mjs; work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/WorkLog.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "3e88c0968a662b113269f9a96c8ff38f5e56b03071ead6fb10ead18144a14083",
+      "symbols": [
+        "WorkLogList",
+        "WorkLogLine"
+      ],
+      "localPaths": [
+        "app/src/ui/TurnActivity.tsx",
+        "app/src/ui/briefsip.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Unnumbered 24px tool rows with 24px icon lane, 6px label gap, 14px relaxed text and neutral color roles; existing ordered event data retained.",
+      "compatibilityCheck": "app/markdown.test.ts; work/rebuild/chat-like-t3/capture.mjs; work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/TimelineWorkEntryRow.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "b0d5d4e72bd30c0cfaed48bc1de56dd2c4b15bc6cf91438722aae515a2bb3172",
+      "symbols": [],
+      "localPaths": [
+        "app/src/ui/TurnActivity.tsx"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Tool/commentary row visual hierarchy translated to Briefsip tool names and safe Markdown; original routing, approvals and task links retained.",
+      "compatibilityCheck": "app/markdown.test.ts; work/rebuild/chat-like-t3/capture.mjs; work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/ChatComposer.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "f2e29feb0cb0c1bca53ed74ef5e51cbbd848a055313111ce51cd0ed0b7dd8116",
+      "symbols": [
+        "ChatComposer"
+      ],
+      "localPaths": [
+        "app/src/ui/ChatPrimitives.tsx",
+        "app/src/ui/chat.css",
+        "app/src/attachments.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Separate 16px-inset prompt body and 8px-inset footer; attach plus, existing microphone and 32px send. Native textarea, paste/drop, mentions, exact retry and queue/steer retained.",
+      "compatibilityCheck": "app/markdown.test.ts; work/rebuild/chat-like-t3/capture.mjs; work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/ComposerSurface.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "b755fdd199464310b49313c59837d546e1af3af281afe0dd0636fc25db15a0be",
+      "symbols": [
+        "Shell",
+        "Host",
+        "Main"
+      ],
+      "localPaths": [
+        "app/src/ui/chat.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "16px surface radius, 1px outline and small light-mode shadow; neutral Briefsip surfaces instead of upstream glass/theme runtime.",
+      "compatibilityCheck": "app/markdown.test.ts; work/rebuild/chat-like-t3/capture.mjs; work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/ComposerPromptEditorTiptap.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "d25b92fc5f83d1f05b42f2fa6c4649ad0e2eb036549cbea5ba29f93f164b7ce5",
+      "symbols": [],
+      "localPaths": [
+        "app/src/ui/chat.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "14px relaxed prompt and two-line-plus-8px minimum, expressed with native textarea; no Tiptap dependency.",
+      "compatibilityCheck": "app/markdown.test.ts; work/rebuild/chat-like-t3/capture.mjs; work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/ComposerPrimaryActions.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "ed785744facd53946ee76cf88e6c6ac40984e4392e09ca28b2555b465ca74b43",
+      "symbols": [],
+      "localPaths": [
+        "app/src/ui/chat.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "32px round primary send control; existing native Briefsip button behavior retained.",
+      "compatibilityCheck": "app/markdown.test.ts; work/rebuild/chat-like-t3/capture.mjs; work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/ChatMarkdown.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "efabeb0557e5d10c80e7f97a79f82e4608e0a02addf05d791a8c965ea5133941",
+      "symbols": [
+        "markdownHeadingRenderer"
+      ],
+      "localPaths": [
+        "app/src/Markdown.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Visual h1-h6 hierarchy with separate aria-level preserving conversation heading structure. Existing trust-boundary validation and literal raw HTML retained.",
+      "compatibilityCheck": "app/markdown.test.ts; work/rebuild/chat-like-t3/capture.mjs; work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/MarkdownCodeBlock.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "0c27e4dabc6f8602c442dc533406969bb394f21894ab283679b8791586e10ed4",
+      "symbols": [
+        "MarkdownCodeBlockFrame"
+      ],
+      "localPaths": [
+        "app/src/Markdown.ts",
+        "app/src/ui/chat.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Rounded code frame with small language/header copy row; existing plain safe code renderer retained without syntax-highlighting dependency.",
+      "compatibilityCheck": "app/markdown.test.ts; work/rebuild/chat-like-t3/capture.mjs; work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/index.css",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "d723ccee7571f98bc1bc931a880d7d856b5c5f660703845e4f5b66d7f56310ef",
+      "symbols": [],
+      "localPaths": [
+        "app/src/ui/chat.css",
+        "app/src/ui/tokens.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "46rem default lane mapped to fixed 736px across text preferences; 14px relaxed prose (1.625), heading scale, .65rem block rhythm, inline code, quote and row-separated table metrics. Colors map to Briefsip semantic tokens; no Tailwind dependency.",
+      "compatibilityCheck": "app/markdown.test.ts; work/rebuild/chat-like-t3/capture.mjs; work/rebuild/ui-smoke/smoke.mjs"
+    }
   ]
 }

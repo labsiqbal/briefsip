@@ -94,35 +94,37 @@
 }
 .activity-chip.is-working { color: var(--color-success-text); }
 
-.transcript__col { gap: 36px; }
-.turn-block { display: flex; flex-direction: column; gap: 12px; width: 100%; outline: none; border-radius: 8px; }
+.transcript__col { gap: 16px; }
+.turn-block { display: flex; flex-direction: column; gap: 16px; width: 100%; outline: none; border-radius: 8px; }
 .turn-block:focus { outline: 2px solid var(--color-border-focus); outline-offset: 4px; }
-.human-message { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; align-self: flex-end; max-width: 75%; min-width: 0; border-radius: 18px; outline-offset: 4px; }
-.human-bubble { padding: 11px 16px; border-radius: 18px; background: var(--color-bubble-user); color: var(--color-text-primary); font-size: var(--text-message); line-height: 1.6; }
+.human-message { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; align-self: flex-end; max-width: 80%; min-width: 0; border-radius: 16px; outline-offset: 4px; }
+.human-bubble { padding: 12px; border-radius: 16px; background: var(--color-bubble-user); color: var(--color-text-primary); font-size: var(--text-message); line-height: 1.625; }
 .human-message .chip-list { justify-content: flex-end; }
 .human-message .cite-chip { max-width: 100%; overflow-wrap: anywhere; }
-.human-meta { justify-content: flex-end; opacity: 0; transition: opacity 120ms var(--ease-out); }
+.human-meta { justify-content: flex-end; opacity: 0; transition: opacity 200ms var(--ease-out); }
 .human-message:hover .human-meta, .human-message:focus-within .human-meta { opacity: 1; }
 @media (hover: none) { .human-meta { opacity: 1; } }
-.agent-message { width: 100%; min-width: 0; }
+.agent-message { width: 100%; min-width: 0; padding: 2px 4px; }
 .agent-identity { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .agent-meta { margin-top: 8px; }
 .agent-meta .turn-model { padding: 0; background: none; }
 .turn-activity { margin-bottom: 8px; }
-.turn-activity .k-collapsible__trigger { width: fit-content; max-width: 100%; margin-left: 0; padding: 2px 0; gap: 6px; color: var(--color-text-secondary); font-weight: 400; font-variant-numeric: tabular-nums; }
-.turn-activity .k-collapsible__content { gap: 8px; padding: 8px 0 4px; }
+.turn-activity .k-collapsible__trigger:hover { background: none; color: var(--color-text-primary); }
+.turn-activity .k-collapsible__trigger { font-size: 14px; line-height: 1.625; border-radius: 6px; width: fit-content; max-width: 100%; margin-left: 0; padding: 2px; gap: 6px; color: var(--color-text-secondary); font-weight: 400; font-variant-numeric: tabular-nums; }
+.turn-activity .k-collapsible__content { gap: 0; padding: 0 0 4px; }
 .activity-timing { margin: 0; color: var(--color-text-tertiary); font-size: 12px; line-height: 18px; }
-.activity-list { margin: 0; padding-left: 22px; font-size: 13px; line-height: 21px; color: var(--color-text-secondary); }
-.activity-list li { padding: 3px 0 3px 2px; overflow-wrap: anywhere; }
+.activity-list { list-style: none; margin: 0; padding: 0 2px; font-size: 14px; line-height: 1.625; color: var(--color-text-secondary); }
+.activity-list li { min-height: 24px; padding: 0 2px 0 30px; position: relative; overflow-wrap: anywhere; }
+.activity-step-icon { position: absolute; left: 6px; top: 4px; width: 16px; height: 16px; }
 .activity-list .link-btn, .activity-list .k-badge { margin-left: 8px; }
 .stream-caret { display: inline-block; width: 6px; height: 15px; margin-top: 6px; border-radius: 2px; background: var(--color-text-tertiary); animation: stream-caret 1s steps(2, start) infinite; }
 @keyframes stream-caret { 50% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .stream-caret { animation: none; } .human-meta { transition: none; } }
 .message-column { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .message-name { font-size: 14px; font-weight: 600; line-height: 20px; overflow-wrap: anywhere; }
-.message-time, .message-origin { color: var(--color-text-tertiary); font-size: 11px; line-height: 16px; }
+.message-time, .message-origin { color: var(--color-text-tertiary); font-size: 12px; line-height: 16px; }
 .message-time { white-space: nowrap; font-variant-numeric: tabular-nums; }
-.message-body { width: 100%; font-size: var(--text-message); line-height: 1.6; overflow-wrap: anywhere; }
+.message-body { width: 100%; font-size: var(--text-message); line-height: 1.625; overflow-wrap: anywhere; }
 .message-body .legacy { font-size: inherit; line-height: inherit; color: inherit; }
 .message-plain { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .message-muted, .message-error { margin: 0; white-space: pre-wrap; }
@@ -145,7 +147,7 @@
 .turn-status.is-error i { background: var(--color-danger); }
 .turn-model { max-width: 220px; padding: 0 6px; border-radius: 5px; background: var(--color-bg-tertiary); font-family: var(--font-mono-stack); font-size: 11px; line-height: 16px; color: var(--color-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.turn-controls { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 4px 8px; max-width: 760px; }
+.turn-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 6px; max-width: 100%; }
 .turn-controls:empty { display: none; }
 .turn-task-controls { display: contents; }
 .turn-task-controls > .k-collapsible { max-width: 100%; }
@@ -161,7 +163,7 @@
 .history-navigation:empty { display: none; }
 
 /* ---------- composer ---------- */
-.composer__note, .composer__foot { max-width: 960px; margin: 0 auto; }
+.composer__note, .composer__foot { max-width: var(--chat-content-max-width); margin: 0 auto; }
 .composer__note { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; padding: 6px 12px; border-radius: 12px; background: var(--color-bg-tertiary); font-size: 13px; line-height: 18px; color: var(--color-text-secondary); }
 .composer__foot { margin-top: 6px; text-align: center; font-size: 11.5px; line-height: 16px; color: var(--color-text-tertiary); }
 .composer__recipient { display: inline-flex; padding: 7px 0; flex-shrink: 0; }
