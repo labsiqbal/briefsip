@@ -47,7 +47,7 @@ test('release refuses claimed branch tip omitted from release, then records merg
 for (const [name, comments, message] of [
   ['missing claim', [{ body: 'Ready for release' }], /#31.*no claim.*Add/],
   ['missing local branch', [{ body: 'Claimed by RG1, branch t3/missing' }], /#31.*t3\/missing.*missing.*Restore/],
-  ['conflicting claims', [{ body: 'Claimed by RG1, branch t3/shipped' }, { body: 'Claimed by RG2, branch t3/other' }], /#31.*conflicting.*Resolve/],
+  ['any claimed branch unmerged', [{ body: 'Claimed by RG1, branch t3/missing' }, { body: 'Claimed by RG2, branch t3/shipped' }], /#31.*t3\/missing.*missing.*Restore/],
 ] as const) test(`release fails before publication on ${name}`, () => {
   const f = fixture();
   try {

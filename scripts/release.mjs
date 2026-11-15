@@ -25,12 +25,13 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
     if (!Array.isArray(comments) || comments.some(comment => typeof comment?.body !== 'string')) throw new Error(`Issue #${issue}: invalid comments. Fix the issue reader and retry.`);
     const branches = [...new Set(comments.flatMap(comment => [...comment.body.matchAll(/^Claimed by [^\r\n]+, branch (t3\/\S+)[ \t]*\r?$/gm)].map(match => match[1])))];
     if (!branches.length) throw new Error(`Issue #${issue}: no claim comment. Add "Claimed by <agent>, branch t3/<slug>" and retry.`);
-    if (branches.length > 1) throw new Error(`Issue #${issue}: conflicting claims (${branches.join(', ')}). Resolve comments to one claimed branch and retry.`);
-    const branch = branches[0], ref = `refs/heads/${branch}`;
-    try { git(['show-ref', '--verify', '--quiet', ref]); }
-    catch { throw new Error(`Issue #${issue}: local branch ${branch} is missing. Restore the task branch locally and retry.`); }
-    try { git(['merge-base', '--is-ancestor', ref, commit]); }
-    catch { throw new Error(`Issue #${issue}: ${branch} is not an ancestor of ${commit}. Merge the branch tip and retry.`); }
+    for (const branch of branches) {
+      const ref = `refs/heads/${branch}`;
+      try { git(['show-ref', '--verify', '--quiet', ref]); }
+      catch { throw new Error(`Issue #${issue}: local branch ${branch} is missing. Restore the task branch locally and retry.`); }
+      try { git(['merge-base', '--is-ancestor', ref, commit]); }
+      catch { throw new Error(`Issue #${issue}: ${branch} is not an ancestor of ${commit}. Merge the branch tip and retry.`); }
+    }
   }
   const id = `${version}-${commit.slice(0, 8)}`;
   const target = join(releases, id);
