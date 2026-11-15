@@ -36,7 +36,7 @@ test('question cards persist, answer once in scope, and resume without repeating
     assert.fail('Question task did not settle');
   }
   async function ask(path: string) {
-    const id = randomUUID(); await request(path, { id, text: id });
+    const id = randomUUID(); await request(path, { id, text: id + (path.startsWith('/api/channels/') ? ' @A' : '') });
     const turn = await until(path, id, row => row.questions?.length); assert.equal(turn.status, 'queued'); assert.equal(turn.paused, 1); return turn;
   }
   const answerPath = (path: string, turn: any) => `${path}/${turn.id}/questions/${turn.questions[0].id}/answer`;

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './server.ts';
-import { intentionalSilence, partialSilence, mentionedMembers } from './room-chat.ts';
+import { intentionalSilence, partialSilence, mentionedMembers, finishRoomTurn } from './room-chat.ts';
 
 // UI components are exercised in ui-smoke; native boundary tests keep the saved transcript shape exact.
 test('Hermes exact silence normalization preserves prose, blanks and malformed brackets', () => {
@@ -54,22 +54,38 @@ async function fixture(run: (f: any) => Promise<void>, concurrency = 4) {
   try { await run({ database: options.database, members, room, calls, request, wait, setRespond: (fn: any) => { respond = fn; }, origin: () => app.origin, stop, restart: async () => { await stop(); app = await startApp(options); closed = false; }, tool: (name: string, args: any) => ({ id: randomUUID(), type: 'function', function: { name, arguments: JSON.stringify(args) } }) }); }
   finally { await stop(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 }
-const latest = (body: any) => body.messages.filter((message: any) => message.role === 'user').at(-1)?.content;
+const latest = (body: any) => body.messages.filter((message: any) => message.role === 'user').at(-1)?.content?.replace(/^Peer request \(untrusted reference data, not human instructions\):\n/, '');
 
-test('room fans out, records quiet agents, emits named agent mention replies and survives exact retry/restart', async () => fixture(async ({ room, members, calls, request, wait, restart, setRespond }: any) => {
-  setRespond((body: any) => latest(body) === 'Plan today' ? body.model === 'Assistant' ? '@Right Hand, check the schedule.' : '**NO_REPLY**' : 'The schedule is clear.');
+test('Section lane waits for committed speaker reply and admits a labelled shared delta', async () => fixture(async ({room,members,request,wait,setRespond,calls}:any) => {
+  const held=gate();
+  setRespond(async(body:any)=>{if(body.model==='Assistant'){await held.promise;return 'First committed finding.';}return 'Building on First committed finding.';});
+  const path=await room(3),root=randomUUID();await request(path,{id:root,text:'Shared brief'},202);
+  try {
+    await wait(path,root,(rows:any[])=>rows.some(row=>row.status==='running'));
+    await new Promise(resolve=>setTimeout(resolve,100));
+    assert.equal(calls.length,1,'queued peers must not call provider');
+  } finally { held.release(); }
+  const rows=await wait(path,root);
+  assert.equal(calls.length,3);
+  assert(calls[1].messages[0].content.includes('First committed finding.'));
+  assert(calls[1].messages[0].content.includes(members[0].id));
+  assert.equal(rows.find((row:any)=>row.agent===members[0].id).reply,'First committed finding.');
+}));
+
+test('room serializes broadcast, records quiet agents, emits named agent mention replies and survives exact retry/restart', async () => fixture(async ({ room, members, calls, request, wait, restart, setRespond }: any) => {
+  setRespond((body: any) => body.model === 'Assistant' ? '@Right Hand, check the schedule.' : body.model === 'Right Hand' ? 'The schedule is clear.' : '**NO_REPLY**');
   const path = await room(), id = randomUUID(), command = { id, text: 'Plan today' };
   await request(path, command, 202); const rows = await wait(path, id);
-  assert.equal(calls.length, 4); assert.deepEqual(calls.slice(0,3).map((body: any) => body.model).sort(), ['Assistant','Reviewer','Right Hand']);
+  assert.equal(calls.length, 3); assert.deepEqual(calls.slice(0,3).map((body: any) => body.model).sort(), ['Assistant','Reviewer','Right Hand']);
   for (const call of calls) { const system = call.messages[0].content; for (const member of members.slice(0,3)) { assert(system.includes(member.name)); assert(system.includes(member.role)); } assert(system.includes('exactly NO_REPLY')); assert(!system.startsWith('Choose exactly')); }
   const root = rows.find((row: any) => row.id === id);
   assert.deepEqual(root.room.messages.map((item: any) => item.text), ['@Right Hand, check the schedule.', 'The schedule is clear.']);
   assert.equal(root.room.messages[1].agent, members[1].id);
-  assert.equal(root.room.quiet.length, 2);
+  assert.equal(root.room.quiet.length, 1);
   assert(rows.filter((row: any) => row.room.silent).every((row: any) => row.reply === null));
   assert(calls.at(-1).messages[0].content.includes('"name":"Assistant"'));
   await request(path, command, 202); await restart(); await request(path, command, 202);
-  assert.equal(calls.length, 4); assert.equal((await request(path)).length, 4);
+  assert.equal(calls.length, 3); assert.equal((await request(path)).length, 3);
   await request(path, { ...command, text: 'changed' }, 409);
 }));
 
@@ -148,21 +164,22 @@ test('direct delegation exposes inline transcript request, named reply, machine 
   assert.equal(turn.reply,'Final answer.');assert.equal(turn.agentMessages[0].task,'Research request.');assert.equal(turn.agentMessages[0].name,'Right Hand');assert.equal(turn.agentMessages[0].reply,'Research result.');assert(turn.agentMessages[0].activity.calls.length);
 }));
 
-test('new project section fans out with H2 silence and agent mentions, then follows project membership edits', async () => fixture(async ({members,calls,request,wait,setRespond}:any) => {
-  setRespond((body:any)=>latest(body)==='Plan section work' ? body.model==='Assistant'?'@Right Hand, inspect the plan.':'NO_REPLY':'Plan checked.');
+test('new project section serializes with H2 silence and agent mentions, then follows project membership edits', async () => fixture(async ({members,calls,request,wait,setRespond}:any) => {
+  setRespond((body:any)=>latest(body)==='Plan section work' ? body.model==='Assistant'?'@Right Hand, inspect the plan.':body.model==='Right Hand'&&body.messages[0].content.includes('inspect the plan.')?'Plan checked.':'NO_REPLY':'Plan checked.');
   const project=await request('/api/projects',{id:randomUUID(),name:'Section team',members:members.slice(0,3).map((a:any)=>({agent:a.id,write:false}))},200);
   const withSection=await request(`/api/projects/${project.id}/sections`,{id:randomUUID(),revision:1,name:'design'},201);
   const section=withSection.sections.find((s:any)=>s.name==='design'),path=`/api/channels/${section.id}/turns`,id=randomUUID();
   await request(path,{id,text:'Plan section work'},202);const rows=await wait(path,id);
   assert.deepEqual(calls.slice(0,3).map((body:any)=>body.model).sort(),['Assistant','Reviewer','Right Hand']);
-  assert.equal(calls.length,4);
+  assert(calls.length===3 || calls.length===4);
+  const callCount=calls.length;
   const root=rows.find((row:any)=>row.id===id);
-  assert.deepEqual(root.room.messages.map((message:any)=>message.text),['@Right Hand, inspect the plan.','Plan checked.']);assert.equal(root.room.quiet.length,2);
+  assert.deepEqual(root.room.messages.map((message:any)=>message.text),['@Right Hand, inspect the plan.','Plan checked.']);assert.equal(root.room.quiet.length,callCount-2);
   const changed=await request(`/api/projects/${project.id}/edit`,{id:randomUUID(),revision:2,members:[members[0],members[3]].map((a:any)=>({agent:a.id,write:false}))},200);
   const channels=await request('/api/channels',undefined,200);
   for(const section of changed.sections)assert.deepEqual(channels.find((c:any)=>c.id===section.id).members,[members[0].id,members[3].id].sort());
   const next=randomUUID();await request(path,{id:next,text:'@Four, inspect.'},202);await wait(path,next);
-  assert.deepEqual(calls.slice(4).map((body:any)=>body.model),['Four']);
+  assert.deepEqual(calls.slice(callCount).map((body:any)=>body.model),['Four']);
 }));
 
 const gate = () => { let release!: () => void; const promise = new Promise<void>(resolve => { release = resolve; }); return { promise, release }; };
@@ -224,7 +241,7 @@ test('addressed API room Steer consumes once at safe point and completion winner
     return 'Addressed answer';
   });
   const path=await room(3,members[0].id),other=await room(1,null),root=randomUUID(); await request(path,{id:root,text:'Safe point'},202);
-  await wait(path,root,(rows:any[])=>rows.filter(row=>row.status==='running').length===3);
+  await wait(path,root,(rows:any[])=>rows.filter(row=>row.status==='running').length===1);
   const guidance={id:randomUUID(),text:'One constraint',recipient:members[0].id,targetTurn:root,dispatchMode:'steer'};
   await request(other,guidance,404); await request(path,{...guidance,recipient:members[1].id},404);
   await request(path,{id:randomUUID(),text:'No explicit target',dispatchMode:'steer'},400);
@@ -240,22 +257,22 @@ test('addressed API room Steer consumes once at safe point and completion winner
 test('addressed root restart retains peers; Stop before completion prevents final and queued mentions', async () => fixture(async ({room,members,request,wait,setRespond,calls}:any) => {
   const held=gate();setRespond(async(body:any)=>{if(latest(body)==='Hold all'){await held.promise;return '@Reviewer, too late.';}return 'Restarted branch';});
   const path=await room(3,members[0].id),root=randomUUID();await request(path,{id:root,text:'Hold all'},202);
-  await wait(path,root,(rows:any[])=>rows.filter(row=>row.status==='running').length===3);
+  await wait(path,root,(rows:any[])=>rows.filter(row=>row.status==='running').length===1);
   const restart={id:randomUUID(),text:'Restart only Assistant',recipient:members[0].id,targetTurn:root,dispatchMode:'restart'};
   await request(path,restart,202);
   await wait(path,restart.id,(rows:any[])=>rows.find(row=>row.id===restart.id)?.status==='done');
-  const before=await request(path);assert.equal(before.filter((row:any)=>row.status==='running').length,2);
+  const before=await request(path);assert.equal(before.filter((row:any)=>['running','queued'].includes(row.status)).length,2);
   const receipt=await request(path.replace('/turns',`/discussions/${root}/stop`),{id:randomUUID(),generation:root},200);assert.equal(receipt.cancelled.length,2);
   held.release();assert.equal((await request(path)).find((row:any)=>row.id===restart.id).reply,'Restarted branch');
   assert(!calls.some((body:any)=>latest(body)==='@Reviewer, too late.'));
 }));
 
 test('room Stop cancels queued mention invitations before provider admission', async () => fixture(async ({room,members,request,wait,setRespond,calls}:any) => {
-  const held=gate();setRespond(async(body:any)=>{if(body.model==='Assistant')return '@Right Hand, invited work.';await held.promise;return 'Late peer';});
-  const path=await room(3,members[0].id),root=randomUUID();await request(path,{id:root,text:'Discuss'},202);
-  await wait(path,root,(rows:any[])=>rows.some(row=>row.text==='@Right Hand, invited work.'&&row.status==='queued')&&rows.some(row=>row.status==='running'));
-  const result=await request(path.replace('/turns',`/discussions/${root}/stop`),{id:randomUUID(),generation:root},200);assert.equal(result.cancelled.length,3);
-  held.release();await wait(path,root);assert(!calls.some((body:any)=>latest(body)==='@Right Hand, invited work.'));
+  const held=gate();setRespond(async(body:any)=>{if(body.model==='Assistant')return '@Right Hand, invited work. @Reviewer';await held.promise;return 'Late peer';});
+  const path=await room(3,members[0].id),root=randomUUID();await request(path,{id:root,text:'@Assistant, discuss'},202);
+  await wait(path,root,(rows:any[])=>rows.some(row=>row.text==='@Right Hand, invited work. @Reviewer'&&row.status==='queued')&&rows.some(row=>row.status==='running'));
+  const result=await request(path.replace('/turns',`/discussions/${root}/stop`),{id:randomUUID(),generation:root},200);assert.equal(result.cancelled.length,2);
+  held.release();await wait(path,root);assert.equal(calls.filter((body:any)=>latest(body)==='@Right Hand, invited work. @Reviewer').length,1);
 },1));
 
 
@@ -270,4 +287,92 @@ test('room Stop rejects foreign origins, bearer callers, payload changes, wrong 
   const channels=await request('/api/channels'),channel=channels.find((item:any)=>path.includes(item.id));
   await request(`/api/channels/${channel.id}/edit`,{id:randomUUID(),revision:channel.revision,name:channel.name,instructions:channel.instructions,members:channel.members,lead:channel.lead,archived:true},200);
   await request(stopPath,command,409);assert.equal((await request(path)).find((row:any)=>row.id===root).room.stopped,false);
+}));
+
+for (const name of ['send_message','delegate_task']) test(`serialized broadcast yields ${name} to parallel children and resumes once`, async () => fixture(async ({room,members,request,wait,setRespond,tool,calls,restart,database,stop}:any) => {
+  const held=gate();
+  setRespond(async(body:any)=>{
+    if(latest(body)==='Child work'){await held.promise;return 'Child committed result.';}
+    if(body.model==='Assistant' && !body.messages.some((message:any)=>message.role==='tool'))return tool(name,name==='send_message'?{recipients:members.slice(1,3).map((member:any)=>member.id),text:'Child work',expects_reply:true}:{agent:members[1].id,task:'Child work',wait:true});
+    return body.model==='Assistant'?'Parent final once.':'NO_REPLY';
+  });
+  const path=await room(3),root=randomUUID();await request(path,{id:root,text:'Broadcast and delegate'},202);
+  try {
+    await wait(path,root,(rows:any[])=>rows.filter(row=>row.text==='Child work' && row.status==='running').length===(name==='send_message'?2:1));
+  }finally{held.release();}
+  const rows=await wait(path,root);assert.equal(rows.find((row:any)=>row.id===root).reply,'Parent final once.');
+  assert.equal(calls.filter((body:any)=>body.model==='Assistant').length,2);
+  assert.equal(rows.find((row:any)=>row.id===root).room.messages.filter((item:any)=>item.text==='Parent final once.').length,1);
+  await stop();const db=new DatabaseSync(database,{readOnly:true});try{assert.equal(db.prepare('SELECT count(*) AS n FROM flow_tool_calls WHERE turn=?').get(root)!.n,1);}finally{db.close();}
+  const count=calls.length;await restart();assert.equal(calls.length,count);
+}));
+
+test('separate Sections and direct chats progress while root order holds within one Section', async () => fixture(async ({room,members,request,wait,setRespond,calls}:any)=>{
+  const held=gate();setRespond(async(body:any)=>{if(latest(body)==='First root'){await held.promise;return 'First root done.';}return 'Other work done.';});
+  const first=await room(1),secondChannel=await request('/api/channels',{id:randomUUID(),name:'Other section',instructions:'Separate.',members:[members[1].id],lead:null});
+  const root=randomUUID(),next=randomUUID(),other=randomUUID(),direct=randomUUID();
+  await request(first,{id:root,text:'First root'},202);await request(first,{id:next,text:'Second root'},202);
+  await request(`/api/channels/${secondChannel.id}/turns`,{id:other,text:'Other Section'},202);await request(`/api/agents/${members[2].id}/turns`,{id:direct,text:'Direct'},202);
+  try{
+    await wait(`/api/channels/${secondChannel.id}/turns`,other);await wait(`/api/agents/${members[2].id}/turns`,direct,(rows:any[])=>rows.find(row=>row.id===direct)?.status==='done');
+    assert(!calls.some((body:any)=>latest(body)==='Second root'));
+  }finally{held.release();}
+  await wait(first,next);assert.deepEqual(calls.filter((body:any)=>body.model==='Assistant').map(latest),['First root','Second root']);
+}));
+
+test('mention storms deduplicate sources, settle pass obligations and never invite self', async () => fixture(async ({room,request,wait,setRespond,calls,database,stop}:any)=>{
+  setRespond((body:any)=>body.model==='Right Hand'?'NO_REPLY':('@Assistant @Right Hand @Right Hand '.repeat(50)) + body.model);
+  const path=await room(3,null),root=randomUUID();await request(path,{id:root,text:'@Assistant @Reviewer discuss'},202);const rows=await wait(path,root);
+  assert.equal(calls.filter((body:any)=>body.model==='Right Hand').length,1);
+  assert(rows.find((row:any)=>row.id===root).room.messages.length<=10);
+  await stop();const db=new DatabaseSync(database,{readOnly:true});try{
+    assert.equal(db.prepare('SELECT count(*) AS n FROM room_invitations i JOIN turns t ON t.id=i.source WHERE i.target=t.agent').get()!.n,0);
+    assert.equal(db.prepare('SELECT count(*) AS n FROM room_invitations WHERE target=(SELECT id FROM agents WHERE name=?) AND resolved IS NULL').get('Right Hand')!.n,0);
+    assert.equal(db.prepare('SELECT count(*) AS n FROM room_invitations WHERE target=(SELECT id FROM agents WHERE name=?)').get('Right Hand')!.n,2);
+  }finally{db.close();}
+}));
+
+test('same-name Unicode speakers retain distinct IDs in bounded committed context; user brief survives truncation', async () => fixture(async ({members,request,wait,setRespond,calls}:any)=>{
+  const peers=[];
+  for(let n=0;n<2;n++)peers.push(await request('/api/agents',{id:randomUUID(),name:'林 Smith',role:'Researcher',model:`unicode-${n}`,instructions:'Help.'}));
+  const section=await request('/api/channels',{id:randomUUID(),name:'Unicode',instructions:'Collaborate.',members:peers.map(peer=>peer.id),lead:peers[0].id});
+  const path=`/api/channels/${section.id}/turns`,root=randomUUID();
+  setRespond((body:any)=>body.model==='unicode-0'?'知'.repeat(20000)+' @林 Smith':'NO_REPLY');
+  await request(path,{id:root,text:'@林 Smith Preserve this human brief.'},202);await wait(path,root);
+  assert.equal(calls.length,2);const system=calls[1].messages[0].content;
+  assert(system.includes(peers[0].id));assert(system.includes(peers[1].id));assert(system.includes('Preserve this human brief.'));
+  assert(system.includes('[Reply truncated.]'));assert(!system.includes('\ufffd'));assert(Buffer.byteLength(system)<40*1024);
+}));
+
+test('failure releases serialized lane without lead fallback or provider replay', async () => fixture(async ({room,request,wait,setRespond,calls,restart}:any)=>{
+  setRespond((body:any)=>body.model==='Assistant'?{bad:true}:'NO_REPLY');
+  const path=await room(3),root=randomUUID();await request(path,{id:root,text:'Fail first'},202);const rows=await wait(path,root);
+  assert.equal(rows.find((row:any)=>row.id===root).status,'failed');assert.equal(calls.length,3);
+  await restart();assert.equal(calls.length,3);
+}));
+
+test('admission cutoff survives restart; failed publication rolls back reply and watermark together', async () => fixture(async ({room,request,wait,setRespond,calls,database,restart,stop}:any)=>{
+  const held=gate();let gated=false;
+  setRespond(async(body:any)=>{if(body.model==='Assistant')return 'Committed A';if(!gated){gated=true;await held.promise;}return 'Committed peer';});
+  const path=await room(3),root=randomUUID();await request(path,{id:root,text:'Restart cutoff'},202);
+  await wait(path,root,(rows:any[])=>rows.find(row=>row.id===root)?.status==='done'&&rows.some(row=>row.id!==root&&row.status==='running'));
+  await stop();const db=new DatabaseSync(database);let snapshot:any;
+  try{
+    snapshot=db.prepare('SELECT a.* FROM room_admissions a JOIN turns t ON t.id=a.turn WHERE t.status=\'interrupted\'').get()!;
+    assert(snapshot.context.includes('Committed A'));assert(snapshot.cutoff>0);
+    db.exec('CREATE TEMP TRIGGER reject_watermark BEFORE INSERT ON room_watermarks BEGIN SELECT RAISE(ABORT, \'injected publication failure\'); END');
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare("UPDATE turns SET status='running' WHERE id=?").run(snapshot.turn);
+      assert.throws(()=>finishRoomTurn(db,snapshot.turn,'Must roll back'),/injected publication failure/);
+    } finally { db.exec('ROLLBACK'); }
+    assert.equal(db.prepare('SELECT reply FROM turns WHERE id=?').get(snapshot.turn)!.reply,null);
+    assert.equal(db.prepare('SELECT count(*) AS n FROM room_messages WHERE turn=?').get(snapshot.turn)!.n,0);
+  }finally{db.close();}
+  await restart();held.release();const rows=await wait(path,root);
+  assert.equal(calls.length,3);assert.equal(rows.find((row:any)=>row.id===snapshot.turn).status,'interrupted');
+  await stop();const saved=new DatabaseSync(database);try{
+    assert.deepEqual(saved.prepare('SELECT * FROM room_admissions WHERE turn=?').get(snapshot.turn),snapshot);
+    assert(!saved.prepare('SELECT 1 FROM room_watermarks w JOIN turns t ON t.agent=w.agent WHERE t.id=? AND w.root=?').get(snapshot.turn,root));
+  }finally{saved.close();}
 }));

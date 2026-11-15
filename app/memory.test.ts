@@ -32,7 +32,7 @@ test('memory CRUD, exact retry, isolated provider search and bounded context sur
   const command = (text: string, essential = false) => ({ id: randomUUID(), entry: randomUUID(), revision: 0, text, essential, remove: false });
   async function run(path: string, status = 'done') {
     contexts.length = 0; results.length = 0; const id = randomUUID(); await request(path, { id, text: 'Recall' });
-    for (let n = 0; n < 150; n++) { const turn = (await request(path)).find((t: any) => t.id === id); if (['done', 'failed'].includes(turn.status)) { assert.equal(turn.status, status, turn.error); return; } await new Promise(resolve => setTimeout(resolve, 10)); }
+    for (let n = 0; n < 150; n++) { const turns = await request(path), turn = turns.find((t: any) => t.id === id); if (['done', 'failed'].includes(turn.status) && !turns.some((t: any) => t.room?.root === id && ['queued','running'].includes(t.status))) { assert.equal(turn.status, status, turn.error); return; } await new Promise(resolve => setTimeout(resolve, 10)); }
     assert.fail('Task did not settle');
   }
   try {

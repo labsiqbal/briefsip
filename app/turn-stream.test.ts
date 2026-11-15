@@ -104,8 +104,8 @@ test('room polling retains active members beyond full history and orders prose/t
     for (const id of [channel, other]) await request('/api/channels', { id, name: id, members: agents, lead: null, instructions: 'Help' });
     const path = `/api/channels/${channel}/turns`, root = randomUUID();
     await request(path, { id: root, text: 'Gated room' });
-    let rows = await until(path, rows => rows.length === 3 && rows.every(row => row.partial?.text === 'Before tool.'));
-    assert.equal(calls, 3); assert(rows.every(row => row.status === 'running' && row.reply === null));
+    let rows = await until(path, rows => rows.length === 3 && rows.filter(row => row.partial?.text === 'Before tool.').length === 1);
+    assert.equal(calls, 1); assert.equal(rows.filter(row => row.status === 'running').length, 1); assert.equal(rows.filter(row => row.status === 'queued' && !row.partial).length, 2);
     for (let n = 0; n < 35; n++) await request(path, { id: randomUUID(), text: `Queued ${n}` });
     rows = await request(path);
     assert.equal(rows.length, 108); assert.equal(rows.filter((row: any) => row.room?.root === root).length, 3);

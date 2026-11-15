@@ -71,9 +71,12 @@
           "MAX_DISCUSSION_ROUNDS",
           "MAX_DISCUSSION_MESSAGES",
           "plan_next_task",
-          "plan_publication"
+          "plan_publication",
+          "_unaddressed_member_mentions",
+          "_build_prompt",
+          "_effective_watermarks"
         ],
-        "adaptation": "SQLite room discussion ledger with six-member, three-round and ten-message bounds. Immutable human-root generations and stopped-generation admission/publication fencing; addressed dispatch retains original scope. New human sends use separate roots."
+        "adaptation": "SQLite room discussion ledger with six-member, three-round and ten-message bounds. Immutable human-root generations and stopped-generation admission/publication fencing; addressed dispatch retains original scope. New human sends use separate roots. HRB: deterministic Section speaker lane ordered by saved human-root queue position, admission-pinned committed reply delta with stable speaker IDs, member watermarks and explicit truncation, and unresolved peer invitations deduplicated by source/member. Explicit child deliveries remain parallel and waiting parents yield through existing durable receipts."
       },
       {
         "path": "agent/prompt_builder.py",
@@ -106,7 +109,8 @@
       "app/agent-delegation.ts",
       "app/room-chat.ts",
       "app/server.ts",
-      "app/dispatch.ts"
+      "app/dispatch.ts",
+      "app/agent-messages.ts"
     ]
   },
   "remote": {

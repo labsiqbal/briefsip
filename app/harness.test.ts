@@ -141,23 +141,25 @@ for(const runtime of ['codex','claude'] as const) {
       await f.request(path,{id:root,text:'APPROVE'});
       const read=async()=>f.request(path);
       let rows:any[]=[];
-      for(let n=0;n<600;n++){rows=await read();if(rows.filter(row=>row.harnessApprovals?.some((a:any)=>a.state==='approval')).length===2)break;await delay(15);}
-      assert.equal(rows.filter(row=>row.harnessApprovals?.length).length,2,JSON.stringify(rows));
-      const selected=rows.find(row=>row.agent===f.agent),other=rows.find(row=>row.agent===peer.id);
-      const command={id:randomUUID(),text:'RESTART_FINISH',dispatchMode:'steer',targetTurn:selected.id,recipient:f.agent};
+      for(let n=0;n<600;n++){rows=await read();if(rows.filter(row=>row.harnessApprovals?.some((a:any)=>a.state==='approval')).length===1)break;await delay(15);}
+      assert.equal(rows.filter(row=>row.harnessApprovals?.length).length,1,JSON.stringify(rows));
+      const selected=rows.find(row=>row.status==='running'),other=rows.find(row=>row.status==='queued');
+      assert(other, 'Peer waits in serialized lane');
+      const command={id:randomUUID(),text:'RESTART_FINISH',dispatchMode:'steer',targetTurn:selected.id,recipient:selected.agent};
       const receipt=await f.request(path,command);assert.equal(receipt.dispatch_mode,'restart');
       for(let n=0;n<600;n++){rows=await read();if(rows.find(row=>row.id===command.id)?.harnessApprovals?.length)break;await delay(15);}
       const restarted=rows.find(row=>row.id===command.id),approval=restarted.harnessApprovals[0];
       await f.request(`${path}/${command.id}/harness-approvals/${approval.id}`,{id:randomUUID(),revision:approval.revision,decision:'allow'});
       for(let n=0;n<600;n++){rows=await read();if(rows.find(row=>row.id===command.id)?.status==='done')break;await delay(15);}
       assert.equal(rows.find(row=>row.id===command.id)?.status,'done',JSON.stringify(rows));
+      for(let n=0;n<600;n++){rows=await read();if(rows.find(row=>row.id===other.id)?.harnessApprovals?.length)break;await delay(15);}
       assert.equal(rows.find(row=>row.id===other.id)?.status,'running');
       assert.equal(rows.find(row=>row.id===other.id)?.harnessApprovals[0].state,'approval');
       const stopPath=path.replace('/turns',`/discussions/${root}/stop`),stop={id:randomUUID(),generation:root};
       const stopped=await f.request(stopPath,stop);assert(stopped.cancelled.includes(other.id));
       for(let n=0;n<200;n++){rows=await read();if(rows.find(row=>row.id===other.id)?.harnessApprovals[0].state==='expired')break;await delay(15);}
       assert.equal(rows.find(row=>row.id===other.id)?.harnessApprovals[0].state,'expired');
-      const card=other.harnessApprovals[0];await f.request(`${path}/${other.id}/harness-approvals/${card.id}`,{id:randomUUID(),revision:card.revision,decision:'allow'},409);
+      const card=rows.find(row=>row.id===other.id).harnessApprovals[0];await f.request(`${path}/${other.id}/harness-approvals/${card.id}`,{id:randomUUID(),revision:card.revision,decision:'allow'},409);
       const count=f.minted.length;await f.restart();assert.deepEqual(await f.request(stopPath,stop),stopped);assert.deepEqual(await f.request(path,command),receipt);assert.equal(f.minted.length,count);
     }finally{await f.close();}
   });
