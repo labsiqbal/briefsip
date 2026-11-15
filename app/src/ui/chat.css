@@ -332,7 +332,6 @@
 .queued-run__line { display: flex; align-items: flex-start; gap: 8px; }
 .queued-run__text { flex: 1; min-width: 0; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; font-size: 13px; padding-top: 8px; }
 .queued-run__actions { display: flex; align-items: flex-start; gap: 4px; }
-.queued-run__actions > section:has(textarea) { position: absolute; z-index: 5; bottom: 100%; left: 0; right: 0; max-height: 60vh; overflow: auto; padding: 16px; background: var(--color-bg-elevated); border: 1px solid var(--color-border-primary); border-radius: 14px; box-shadow: var(--shadow-composer); }
 .queued-run__status { color: var(--color-text-secondary); font-size: 12px; }
 .composer-stop, .queue-remove, .voice-input { display: inline-flex; align-items: center; }
 .composer-stop:has([role="alert"]), .voice-input:has([role="alert"]) { flex-wrap: wrap; }
@@ -354,3 +353,17 @@
 .chat.is-finding .transcript { padding-top: 116px; scroll-padding-top: 116px; }
 ::highlight(message-find) { background: var(--color-brand-soft); color: var(--color-text-primary); }
 ::highlight(message-find-current) { background: var(--color-brand); color: var(--color-on-primary); }
+
+.queue-editor.is-open, .queued-run__actions:has(.queue-editor.is-open) { width: 100%; }
+.queued-run__line:has(.queue-editor.is-open) > .queued-run__text,
+.queued-run__actions:has(.queue-editor.is-open) > :not(.queue-editor) { display: none; }
+.queue-editor__form { display: grid; gap: 8px; padding: 4px 0; }
+.queue-editor__form textarea { min-height: 72px; resize: vertical; }
+.queued-run__actions > .k-btn { order: -1; }
+.composer-attachments:empty { display: none; }
+.composer > .composer-attachments { align-self: stretch; margin: 0; padding: 10px 12px 0; }
+.composer > .composer-attachments:not(:has(> :not(input))) { display: none; }
+.composer__drop-target { position: absolute; inset: 4px; z-index: 10; display: grid; place-items: center; border: 2px dashed var(--color-brand); border-radius: 12px; background: var(--color-bg-pane); color: var(--color-text-primary); pointer-events: none; }
+.voice-input__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-danger-text); animation: recording-pulse 1.2s ease-in-out infinite; }
+@keyframes recording-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .voice-input__dot { animation: none; } }

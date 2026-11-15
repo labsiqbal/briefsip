@@ -38,7 +38,7 @@ test('microphone lifecycle stops tracks, rejects oversized data and drops late p
     const session = startAudioRecording(state => states.push(state), file => files.push(file), error => errors.push(error));
     resolvePermission(stream); await tick(); assert.equal(states.at(-1),'recording');
     Recorder.last.ondataavailable?.({data:new Blob(['first'])}); session.stop(); await tick();
-    assert.equal(files.length,1); assert.equal(await files[0].text(),'firstfinal'); assert.match(files[0].name,/\.webm$/); assert.equal(states.at(-1),'idle'); assert(trackStops >= 2);
+    assert.equal(files.length,1); assert.equal(await files[0].text(),'firstfinal'); assert.match(files[0].name,/^Voice note \d+:\d{2}\.webm$/); assert.equal(states.at(-1),'idle'); assert(trackStops >= 2);
     startAudioRecording(state => states.push(state), file => files.push(file), error => errors.push(error)); resolvePermission(stream); await tick();
     Recorder.last.ondataavailable?.({data:new Blob([new Uint8Array(10*1024*1024+1)])}); await tick();
     assert.equal(files.length,1); assert.match(errors.at(-1)!,/10 MiB/); assert.equal(Recorder.last.state,'inactive');

@@ -1,6 +1,6 @@
 export type RecordingState = 'requesting' | 'recording' | 'stopping' | 'idle';
 export function startAudioRecording(onState: (state: RecordingState) => void, onFile: (file: File) => void, onError: (message: string) => void) {
-  let cancelled = false, recorder: MediaRecorder | undefined, stream: MediaStream | undefined;
+  let started = 0, cancelled = false, recorder: MediaRecorder | undefined, stream: MediaStream | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined, size = 0;
   const chunks: Blob[] = [];
   const release = () => { clearTimeout(timer); stream?.getTracks().forEach(track => track.stop()); };
@@ -33,9 +33,9 @@ export function startAudioRecording(onState: (state: RecordingState) => void, on
         cancelled = true; onState('idle');
         if (!size) { onError('Recording is empty. Check the microphone and try again.'); return; }
         const type = recorder!.mimeType || mimeType, extension = type.includes('webm') ? 'webm' : type.includes('ogg') ? 'ogg' : 'm4a';
-        onFile(new File(chunks, `recording-${crypto.randomUUID()}.${extension}`, { type })); chunks.length = 0;
+        onFile(new File(chunks, `Voice note ${Math.floor((Date.now() - started) / 60000)}:${String(Math.floor((Date.now() - started) / 1000) % 60).padStart(2, '0')}.${extension}`, { type })); chunks.length = 0;
       };
-      recorder.start(1000); onState('recording');
+      recorder.start(1000); started = Date.now(); onState('recording');
       // ponytail: five-minute capture; longer sessions need streamed durable storage.
       timer = setTimeout(stop, 5 * 60 * 1000);
     } catch { fail('Microphone unavailable or permission denied. Use HTTPS/localhost and check browser microphone permissions.'); }

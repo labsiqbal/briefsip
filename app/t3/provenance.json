@@ -1846,5 +1846,59 @@
       "adaptation": "Search-first modal palette, grouped destinations, arrow selection, Escape and focus return using existing Radix dialog and native input. Briefsip navigation and conversation fetching; no Zustand or cmdk dependency.",
       "compatibilityCheck": "work/rebuild/ux-navigation/check.mjs"
     }
+  ],
+  "r3ComposerSourceEntries": [
+    {
+      "sourcePath": "apps/web/src/components/chat/QueuedRunsControl.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "7094c8b3d85d696be4450a52621b9c51c21f900fb5c7dbff4857bd241fbc4c05",
+      "symbols": [
+        "QueuedRunsControl"
+      ],
+      "localPaths": [
+        "app/src/ui/RunControls.tsx",
+        "app/src/QueueEditor.tsx",
+        "app/src/ui/chat.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt compact ghost Send now, pencil and remove actions, tooltips, bounded queue expansion and inline editing; Briefsip uses expiring fenced edit leases and existing durable restart dispatch.",
+      "compatibilityCheck": "app/optimistic-turns.test.ts; app/queue-edits.test.ts; app/audio-recording.test.ts; work/rebuild/ui-smoke/run-controls-smoke.mjs; work/rebuild/ux-r3-composer/check.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/optimisticUserMessages.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "ad5fdd663c6f3304d0b68469aca3f585a3337622db492c692aa1c003dc39627b",
+      "symbols": [
+        "reconcileOptimisticUserMessages"
+      ],
+      "localPaths": [
+        "app/src/hooks/useOptimisticTurns.ts",
+        "app/src/App.tsx"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt immediate local insertion and reconciliation by message id to Briefsip turn snapshots; retain pending turns across stale polls, preserve queue placement, and show Working immediately.",
+      "compatibilityCheck": "app/optimistic-turns.test.ts; app/queue-edits.test.ts; app/audio-recording.test.ts; work/rebuild/ui-smoke/run-controls-smoke.mjs; work/rebuild/ux-r3-composer/check.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/VoiceInputPill.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "6922e2d72ee85430b79907d501811643b1bf2e58cd9c9ccfc2b535381be3ce40",
+      "symbols": [
+        "VoiceInputPill"
+      ],
+      "localPaths": [
+        "app/src/AudioRecorder.tsx",
+        "app/src/ui/chat.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Retain inline recording pill and timer; add recording dot with reduced-motion support and readable voice-note attachment names.",
+      "compatibilityCheck": "app/optimistic-turns.test.ts; app/queue-edits.test.ts; app/audio-recording.test.ts; work/rebuild/ui-smoke/run-controls-smoke.mjs; work/rebuild/ux-r3-composer/check.mjs"
+    }
   ]
 }
