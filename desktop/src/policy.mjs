@@ -20,6 +20,9 @@ export function isAllowedExternal(value) {
   const { protocol } = new URL(value);
   return protocol === 'http:' || protocol === 'https:';
 }
+export function canGrantPermission(permission, requestingUrl, configuredUrl, details) {
+  return details?.isMainFrame === true && ['notifications', 'clipboard-read', 'clipboard-sanitized-write'].includes(permission) && isAllowedNavigation(requestingUrl, configuredUrl);
+}
 export function canNotify(permission, requestingUrl, configuredUrl) {
   return permission === 'notifications' && isAllowedNavigation(requestingUrl, configuredUrl);
 }

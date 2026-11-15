@@ -941,6 +941,24 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "compatibilityCheck": "app/agent-browser.test.ts"
+    },
+    {
+      "sourcePath": "apps/web/src/hooks/useCopyToClipboard.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "bace6a3c5adefd5c680f8ae3e88cef7f33ec1240eb1c551b22205ef1be693e99",
+      "symbols": [
+        "writeTextWithExecCommand",
+        "writeTextToClipboard",
+        "readTextFromClipboard"
+      ],
+      "localPaths": [
+        "app/src/ui/clipboard.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Reduce text Clipboard API / textarea execCommand fallback to shared native helper; also fallback on denied writes. Restore selection and focus, keep fallback inside Radix dialog focus trap, and use existing CSP-safe sr-only class. Native read errors direct to manual Paste text. No rich/custom clipboard flavors or Effect/React hook dependency.",
+      "compatibilityCheck": "app/clipboard.test.ts; work/rebuild/ui-smoke/copy-paste-smoke.mjs"
     }
   ],
   "streamActionsSourceEntries": [
@@ -985,7 +1003,7 @@
         "MessageCopyButton"
       ],
       "localPaths": [
-        "app/src/ui/MessageCopyButton.tsx"
+        "app/src/ui/MessageCopyButton.ts"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",

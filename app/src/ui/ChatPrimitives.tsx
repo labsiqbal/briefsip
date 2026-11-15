@@ -38,7 +38,8 @@ export function TurnStatus({ tone, label, model }: { tone: string; label: string
   return <div className="turn-meta agent-meta"><span className={`turn-status is-${tone}`}><i aria-hidden />{label}</span>{model && <span className="turn-model" title="Answering model">{model}</span>}</div>;
 }
 
-export function ChatComposer({ label, input, inputRef, onSubmit, onSendKey, onAttach, attachmentDisabledReason, recipient, busy, retry, sendDisabled, sendLabel, sendTitle, multiline, mentions = [], onMention }: {
+export function ChatComposer({ label, input, inputRef, onSubmit, onSendKey, onAttach, attachmentDisabledReason, recipient, busy, retry, sendDisabled, sendLabel, sendTitle, multiline, mentions = [], onMention, onPasteFiles }: {
+  onPasteFiles?: (files: File[]) => void;
   mentions?: { id: string; name: string; role: string }[]; onMention?: (value: string) => void;
   label: string; input: ComponentProps<'textarea'>; inputRef?: RefObject<HTMLTextAreaElement | null>; onSubmit: (event: FormEvent) => void; onSendKey: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onAttach?: () => void; attachmentDisabledReason?: string; recipient?: ReactNode; busy: boolean; retry: boolean; sendDisabled: boolean; sendLabel: string; sendTitle: string; multiline?: boolean;
@@ -70,7 +71,16 @@ export function ChatComposer({ label, input, inputRef, onSubmit, onSendKey, onAt
       <span className="composer__plus-anchor" title={attachmentDisabledReason}><button type="button" className="composer__btn" onClick={onAttach} disabled={!onAttach} aria-label="Attach conversation file" title={attachmentDisabledReason ?? 'Attach file'}><Paperclip size={14} aria-hidden /></button></span>
       {recipient}
       <label className="sr-only" htmlFor={input.id}>{label}</label>
-      <textarea ref={ref} className="composer__input" rows={1} placeholder={label} maxLength={16000} {...input} aria-autocomplete={mentions.length ? 'list' : undefined} aria-controls={candidates.length ? listId : undefined} aria-activedescendant={candidates.length ? `${listId}-${current}` : undefined} onSelect={event => setCaret(event.currentTarget.selectionStart)} onChange={event => { setCaret(event.currentTarget.selectionStart); setSelected(0); setDismissed(false); input.onChange?.(event); }} onKeyDown={event => {
+      <textarea ref={ref} className="composer__input" rows={1} placeholder={label} maxLength={16000} {...input} aria-autocomplete={mentions.length ? 'list' : undefined} aria-controls={candidates.length ? listId : undefined} aria-activedescendant={candidates.length ? `${listId}-${current}` : undefined} onPaste={event => {
+        input.onPaste?.(event);
+        if (event.defaultPrevented || input.readOnly || input.disabled) return;
+        const files = Array.from(event.clipboardData.files);
+        if (files.length && onPasteFiles) {
+          onPasteFiles(files);
+          // Let Chromium insert text from mixed/rich clipboards normally.
+          if (!event.clipboardData.getData('text/plain')) event.preventDefault();
+        }
+      }} onSelect={event => setCaret(event.currentTarget.selectionStart)} onChange={event => { setCaret(event.currentTarget.selectionStart); setSelected(0); setDismissed(false); input.onChange?.(event); }} onKeyDown={event => {
         if (event.nativeEvent.isComposing) return;
         if (candidates.length) {
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setSelected((current + (event.key === 'ArrowDown' ? 1 : candidates.length - 1)) % candidates.length); return; }

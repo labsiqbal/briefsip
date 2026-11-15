@@ -115,6 +115,20 @@
       "revision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "935d8f2af0c703f9c39517ee57cc4930b19d02d533be930b63f0e82f93614b43",
       "adaptation": "Unmodified upstream MIT notice, included in packaged app."
+    },
+    {
+      "sourcePath": "apps/desktop/src/window/DesktopWindow.ts",
+      "localPath": "desktop/src/context-menu.mjs",
+      "revision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "5752874777777661c7bc55aedd0d7efb117939543056f8654e2cf06b5bbc3fdb",
+      "adaptation": "Adapt focused WebContents native context-menu template, editFlags, safe HTTP(S) Copy Link, five spelling suggestions and Menu popup to standalone Electron; reject subframes/foreign documents and recheck custom click targets."
+    },
+    {
+      "sourcePath": "apps/desktop/src/window/ContextMenuImage.ts",
+      "localPath": "desktop/src/context-menu.mjs",
+      "revision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "4642686099d3abfa2c57710d113b604c9f2c7abe8a9a7060e31729c76975f4b9",
+      "adaptation": "Adapt main-frame copyImageAt branch only. Subframe image copy is denied, so no image fetch, isolated-world decode, guest or network bridge is added."
     }
   ],
   "originalFiles": [

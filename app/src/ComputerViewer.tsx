@@ -1,3 +1,5 @@
+import { readClipboardText } from './ui/clipboard';
+import { MessageCopyButton } from './ui/MessageCopyButton';
 import { useEffect, useRef, useState } from 'react';
 import RFB from '@novnc/novnc';
 import { ClipboardType, Ellipsis, ExternalLink, Monitor, Plus, RefreshCw, X } from 'lucide-react';
@@ -132,7 +134,16 @@ export function ComputerViewer({ agent, name, request, popout = false, onClose }
   }
   useEffect(() => {
     const escape = (event: globalThis.KeyboardEvent) => {
-      if (!desktop || !running || !user || controls.locked || event.key !== 'Escape' || !(event.target instanceof Node) || !screen.current?.contains(event.target)) return;
+      if (!desktop || !running || !user || controls.locked || !(event.target instanceof Node) || !screen.current?.contains(event.target)) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'v') {
+        event.preventDefault(); event.stopImmediatePropagation();
+        void readClipboardText().then(value => {
+          if (value.length > 4000) { controls.setError('Clipboard text exceeds 4000 characters. Copy a smaller selection.'); return; }
+          if (value) void input('computer_type', { text: value });
+        }).catch(error => controls.setError(error.message));
+        return;
+      }
+      if (event.key !== 'Escape') return;
       event.preventDefault(); event.stopImmediatePropagation();
       if (event.shiftKey) { rfb.current?.blur(); handBack.current?.focus(); }
       else rfb.current?.sendKey(0xff1b, 'Escape');
@@ -175,7 +186,7 @@ export function ComputerViewer({ agent, name, request, popout = false, onClose }
         {running && user && <ActionPopover label="Paste text into computer" trigger={<Button size="sm" disabled={locked} icon={<ClipboardType size={14} aria-hidden />}>Paste text</Button>}>
           <form className="computer-viewer__text" onSubmit={async event => { event.preventDefault(); if (!text || sendingText || !running || locked) return; setSendingText(true); const sent = text; try { const accepted = desktop ? await input('computer_type', { text: sent }) : await browserActions.act('type', { text: sent }, true); if (accepted) setText(current => current === sent ? '' : current); } finally { setSendingText(false); } }}>
             <Field label="Type or paste text"><Input value={text} maxLength={4000} onChange={event => setText(event.target.value)} disabled={locked} /></Field>
-            <div className="k-row-actions">{desktop && <Button size="sm" disabled={!connected || locked} onClick={() => rfb.current?.clipboardPasteFrom(text)}>Set clipboard</Button>}<Button size="sm" variant="primary" type="submit" busy={sendingText} disabled={!text || locked || !desktop && browserActions.locked}>Send text</Button></div>
+            <div className="k-row-actions">{desktop && <><Button size="sm" disabled={!connected || locked} onClick={() => rfb.current?.clipboardPasteFrom(text)}>Set clipboard</Button><MessageCopyButton text={text} label="Copy computer clipboard" /></>}<Button size="sm" variant="primary" type="submit" busy={sendingText} disabled={!text || locked || !desktop && browserActions.locked}>Send text</Button></div>
           </form>
         </ActionPopover>}
         {running && !popout && <IconButton label="Pop out" onClick={() => window.open(`/?computer=${encodeURIComponent(agent)}`, '_blank', 'popup,width=1280,height=960,noopener')}><ExternalLink size={14} aria-hidden /></IconButton>}

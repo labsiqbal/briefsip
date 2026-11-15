@@ -1,3 +1,4 @@
+import { MessageCopyButton } from './ui/MessageCopyButton.ts';
 import { createElement as h, memo, type ReactNode } from 'react';
 import { marked, type Token, type Tokens } from 'marked';
 import { decodeHTML } from 'entities';
@@ -31,7 +32,7 @@ export const Markdown = memo(function Markdown({ text, scope, origin }: { text: 
         case 'blockquote': return h('blockquote', { key }, child());
         case 'br': case 'hr': return h(token.type, { key });
         case 'codespan': return h('code', { key }, token.text);
-        case 'code': return h('pre', { key, tabIndex: 0, role: 'region', 'aria-label': 'Code block' }, h('code', null, token.text));
+        case 'code': return h('div', { key, className: 'markdown-code' }, h('div', { className: 'markdown-code__actions bs-root' }, h(MessageCopyButton, { text: token.text, label: 'Copy code' })), h('pre', { tabIndex: 0, role: 'region', 'aria-label': 'Code block' }, h('code', null, token.text)));
         case 'checkbox': return h('span', { key, role: 'img', 'aria-label': token.checked ? 'Done' : 'Not done' }, token.checked ? '[x] ' : '[ ] ');
         case 'list': return h(token.ordered ? 'ol' : 'ul', { key, ...(token.ordered ? { start: token.start } : {}) }, token.items.map((item: Tokens.ListItem, index: number) => h('li', { key: index }, render(item.tokens, depth + 1))));
         case 'link': {
