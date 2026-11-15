@@ -1,4 +1,6 @@
 import { usePolling } from './hooks/usePolling';
+import { useNextFrame } from './hooks/useNextFrame';
+import { MessageFind } from './ui/MessageFind';
 import { AgentActions, HiddenAgentBanner, useDeleteAgent } from './AgentActions';
 import { RightPanel, useRightPanel } from './RightPanel';
 import { restoreThreadCommand, type ThreadCommand } from '../thread-command';
@@ -24,7 +26,6 @@ import { useTurnStream } from './ui/useTurnStream';
 import { SpeechPlayback } from './SpeechPlayback';
 import { useConversationAttachments } from './ConversationAttachments';
 import { Attachments } from './Attachments';
-import { attachmentSize } from './attachments';
 import { ProvidersPanel } from './ProvidersPanel';
 import { TurnActivity } from './ui/TurnActivity';
 import { AgentMessage, ChatComposer, ChatEmptyState, ChatHeader, ChatTranscript, ChatTurn, HumanMessage, TurnStatus } from './ui/ChatPrimitives';
@@ -40,7 +41,7 @@ import { QuestionCard, type Question } from './QuestionCard';
 import { ApprovalCard, type AppApproval } from './ApprovalCard';
 import { CompactionPanel } from './CompactionPanel';
 import { lazy, Suspense, useEffect, useRef, useState, useId, type FormEvent, type ReactNode } from 'react';
-import { Link as LinkIcon, Archive, BarChart3, BookOpen, Database, Download, KeyRound, Palette, Plug, SlidersHorizontal, Bell, BellOff, Brain, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, GitFork, ListRestart, Square, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
+import { Link as LinkIcon, Archive, BarChart3, BookOpen, Database, Download, KeyRound, Palette, Plug, SlidersHorizontal, Bell, BellOff, Brain, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, GitFork, Square, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
 import { PanelResizeHandle, sidebarPanel, useResizablePanel } from './ui/resizable';
@@ -86,9 +87,11 @@ const SkillsPanel = lazy(() => import('./SkillsPanel').then(module => ({ default
 import type { Agent } from './AgentProfileDialog';
 type Channel = { project?: string | null; activity: number; read_position: number; revision: number; archived: number; id: string; name: string; instructions: string; members: string[]; lead: string | null };
 type Thread = { delivery?: boolean; active?: boolean; activity?: number; id: string; agent: string; name: string; revision: number; archived: number; deleted: number; fork?: { source_name: string; source_id: string; source_kind: 'agent' | 'channel' | 'thread'; source_agent: string; cutoff_turn: string; created: string } | null };
+type ForkContext = { summary?: string; inherited?: string; turns: { id: string; text: string; reply: string | null }[] };
 type AgentMessage = Exchange & { taskId?: string; task?: string; wait?: boolean; generatedFiles?: { id: string; name: string; size: number; thread: string }[]; paused: number; request: string; expects_reply: number; settled: number; id: string; agent: string; thread: string; name: string; status: string; error: string | null; reply: string | null; truncated: boolean };
 
 type Turn = { history_page?: number; routineReport?: { run: string; name: string; agent: string; thread: string; destination: string; status: string } | null; room?: RoomView | null; harnessApprovals?: HarnessApproval[]; computerWait?: ComputerWait; checkpoint?: { turn: string; restorable: boolean } | null; approvals?: AppApproval[]; recipient?: string | null; dispatch_mode?: 'queue' | 'steer' | 'restart'; dispatch_target?: string | null; dispatch_label?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { kind?: 'peer'; name: string; agent: string | null; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string; seq: number } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number; image?: boolean }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
+const mergeHistory = (history: Turn[], page: Turn[]) => [...new Map([...history, ...page].map(turn => [turn.id, turn])).values()].sort((a, b) => a.seq - b.seq);
 type Directory = { agents: Agent[]; configured: boolean; defaultModel: string };
 type Environment = { id: string; name: string; origin: string; version: string };
 /** One-line sidebar preview: strip Markdown markers so rows read as plain text. */
@@ -160,13 +163,11 @@ function TaskControls({ turn, path, members, archived, overflow = false, onChang
 }
 
 function ForkAnswer({ path, turn, onOpen }: { path: string; turn: Turn; onOpen?: (agent: string, thread: string) => void }) {
-  const confirm = useConfirm();
   const key = `briefsip:fork:${turn.id}`;
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const flight = useRef(false);
   async function fork() {
     if (flight.current) return;
-    if (!await confirm({ title: 'Fork from here?', description: 'Include context through this reply in a new conversation.', confirm: 'Fork conversation' })) return;
     flight.current = true; setBusy(true); setError('');
     try {
       const saved = sessionStorage.getItem(key), id = saved ?? crypto.randomUUID();
@@ -181,6 +182,16 @@ function ForkAnswer({ path, turn, onOpen }: { path: string; turn: Turn; onOpen?:
   return <><IconButton label="Fork from here" disabled={busy || !onOpen} aria-busy={busy || undefined} onClick={() => void fork()}><GitFork size={14} aria-hidden /></IconButton>{error && <span className="message-error" role="alert">{error} Retry uses the same fork request.</span>}</>;
 }
 
+function ForkHistory({ context, scope, depth = 0 }: { context: ForkContext; scope: string; depth?: number }) {
+  let earlier: ForkContext | null = null;
+  if (context.inherited && depth < 8) { try { earlier = JSON.parse(context.inherited); } catch { /* Older nested snapshots may end at the transfer byte limit. */ } }
+  return <section className="fork-history" aria-label="Inherited messages">
+    {earlier && <ForkHistory context={earlier} scope={scope} depth={depth + 1} />}
+    {context.summary && <div className="message-body legacy"><Markdown text={context.summary} scope={scope} origin={window.location.origin} /></div>}
+    {context.turns.map(turn => <div className="turn-block" key={turn.id}><HumanMessage text={turn.text}>{null}</HumanMessage>{turn.reply && <div className="agent-message message-body legacy"><Markdown text={turn.reply} scope={scope} origin={window.location.origin} /></div>}</div>)}
+  </section>;
+}
+
 type DetailsContent = { chats: ReactNode; onManageRoutines?: () => void; library?: ReactNode };
 function Chat({ agent, configured, channel, thread, members = [], onRead, onRestored, onEdit, onComputerSettings, onOpenAgent, onOpenChannel, menuItems = [], detailsExtra, sourceControl }: { sourceControl?: (onOpenDiff: () => void) => ReactNode; onComputerSettings?: () => void; menuItems?: MenuItem[]; detailsExtra?: DetailsContent; onOpenChannel?: (channel: string) => void; onOpenAgent?: (agent: string, thread: string) => void; onRead?: () => Promise<void>; onRestored?: () => Promise<void>; onEdit?: () => void; agent: Agent | Channel; configured: boolean; channel?: Channel; thread?: Thread; members?: Agent[] }) {
   const confirm = useConfirm();
@@ -189,21 +200,26 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
   const path = thread ? `/api/threads/${thread.id}/turns` : `/api/${channel ? 'channels' : 'agents'}/${agent.id}/turns`;
   const [showMemory, setShowMemory] = useState(false);
   const memoryButton = useRef<HTMLButtonElement>(null);
+  const nextFrame = useNextFrame();
   const [focusedTask, setFocusedTask] = useState(() => { try { const key = `briefsip:focus:${scope}`, id = sessionStorage.getItem(key) ?? ''; sessionStorage.removeItem(key); return /^[a-f0-9-]{36}$/i.test(id) ? id : ''; } catch { return ''; } });
   const [searchText, setSearchText] = useState('');
   const [query, setQuery] = useState('');
+  const [finding, setFinding] = useState(false);
   const [historyPages, setHistoryPages] = useState<number[]>([]);
   const before = historyPages.at(-1);
   const historyTop = useRef<HTMLDivElement>(null);
   const focusHistory = useRef(false);
   const focusedOnce = useRef('');
   const loadedTask = useRef<string | null>(null);
+  const findHistory = useRef<Turn[] | null>(null);
+  const inheritedLoaded = useRef(false);
   const [pastedFiles, setPastedFiles] = useState<File[]>([]);
   const attachmentKey = `briefsip:attachments:${scope}`;
   const [attached, setAttached] = useState<string[]>(() => { try { const ids = JSON.parse(sessionStorage.getItem(attachmentKey) ?? '[]'); return Array.isArray(ids) && ids.length <= 4 && ids.every(id => typeof id === 'string') ? ids : []; } catch { return []; } });
   function attach(ids: string[]) { try { sessionStorage.setItem(attachmentKey, JSON.stringify(ids)); setAttached(ids); } catch { setError('Attachment selection was not saved. Check browser storage.'); } }
   const storageKey = `briefsip:pending:${scope}`;
   const [turns, setTurns] = useState<Turn[] | null>(null);
+  const [inheritedContext, setInheritedContext] = useState<ForkContext | null>(null);
   const [queueTurns, setQueueTurns] = useState<Turn[]>([]);
   const [activeTurns, setActiveTurns] = useState<{ id: string; agent: string; capabilities: { steer: boolean; queue: boolean; restart: boolean } }[]>([]);
   const [addressedTurn, setAddressedTurn] = useState('');
@@ -222,30 +238,54 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
   const [readError, setReadError] = useState('');
   const [markingRead, setMarkingRead] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
-  const { transcript, nearBottom, onScroll, jumpToLatest, showJump } = useTimelineFollow(bottom, !focusedTask && !before && !query);
-  const mergeStream = useTurnStream<Turn>(path, setTurns, !focusedTask && !before && !query);
+  const { transcript, nearBottom, onScroll, jumpToLatest, showJump } = useTimelineFollow(bottom, !focusedTask && !before && !finding);
+  const mergeStream = useTurnStream<Turn>(path, setTurns, !focusedTask && !before && !finding);
   const requestActive = useRef(false);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  useEffect(() => { loadedTask.current = null; setTurns(null); }, [path, focusedTask, before, query]);
+  useEffect(() => { loadedTask.current = null; inheritedLoaded.current = false; if (!finding && !findHistory.current) setTurns(null); }, [path, focusedTask, before, finding]);
   usePolling(async signal => {
     let delay = 1200;
-    try { const [active, data, latest] = await Promise.all([api<typeof activeTurns>(path.replace(/\/turns$/, '/dispatch'), undefined, signal), api<Turn[]>(focusedTask ? `${path}?focus=${focusedTask}` : `${path}?${new URLSearchParams({ ...(before ? { before: String(before) } : {}), ...(query ? { q: query } : {}) })}`, undefined, signal), !channel && (focusedTask || before || query) ? api<Turn[]>(path, undefined, signal) : null]); if (!signal.aborted) { setActiveTurns(active); setQueueTurns(latest ?? data); loadedTask.current = focusedTask; setTurns(mergeStream(data)); setReadError(''); delay = turnPollDelay(latest ?? data); } }
+    try {
+      const [active, page, latest] = await Promise.all([api<typeof activeTurns>(path.replace(/\/turns$/, '/dispatch'), undefined, signal), api<Turn[]>(focusedTask ? `${path}?focus=${focusedTask}` : `${path}?${new URLSearchParams({ ...(before ? { before: String(before) } : {}) })}`, undefined, signal), !channel && (focusedTask || before) ? api<Turn[]>(path, undefined, signal) : null]);
+      if (!inheritedLoaded.current && thread?.fork) {
+        const context = await api<ForkContext>(`/api/threads/${thread.id}/fork-context`, undefined, signal);
+        if (signal.aborted) return;
+        setInheritedContext(context); inheritedLoaded.current = true;
+      }
+      if (signal.aborted) return;
+      let data = page;
+      if (finding) {
+        if (findHistory.current) data = mergeHistory(findHistory.current, page);
+        else {
+          let older = page.filter(turn => turn.history_page !== 0);
+          while (!signal.aborted && older.length >= 100) {
+            older = await api<Turn[]>(`${path}?before=${older[0].seq}`, undefined, signal);
+            data = mergeHistory(older, data);
+          }
+        }
+        if (signal.aborted) return;
+        findHistory.current = data;
+      } else if (findHistory.current && !focusedTask && !before) {
+        data = mergeHistory(findHistory.current, page);
+        findHistory.current = data;
+      }
+      if (!signal.aborted) { setActiveTurns(active); setQueueTurns(latest ?? page); loadedTask.current = focusedTask; setTurns(mergeStream(data)); setReadError(''); delay = turnPollDelay(latest ?? page); }
+    }
     catch (error) { if (!signal.aborted) setReadError(message(error)); }
-
     return delay;
-  }, { interval: 1200 }, [path, focusedTask, before, query]);
+  }, { interval: 1200 }, [path, focusedTask, before, finding]);
   useEffect(() => {
     if (focusedTask && loadedTask.current === focusedTask && turns && focusedOnce.current !== focusedTask) {
       const target = document.getElementById(`turn-${focusedTask}`);
       if (target) { target.focus({ preventScroll: true }); target.scrollIntoView({ block: 'start' }); focusedOnce.current = focusedTask; }
     }
     if (!focusedTask && loadedTask.current === '' && turns && focusHistory.current) {
-      const target = !query && !before && turns.length ? document.getElementById(`turn-${turns.at(-1)!.id}`) : historyTop.current;
+      const target = !finding && !before && turns.length ? document.getElementById(`turn-${turns.at(-1)!.id}`) : historyTop.current;
       if (target) { target.focus({ preventScroll: true }); target.scrollIntoView({ block: before ? 'start' : 'end' }); focusHistory.current = false; }
     }
-    if (!focusedTask && !before && !query && nearBottom.current) jumpToLatest();
-  }, [focusedTask, turns, before, query]);
+    if (!focusedTask && !before && !finding && nearBottom.current) jumpToLatest();
+  }, [focusedTask, turns, before, finding]);
   useEffect(() => {
     if (!requestActive.current && pending && turns?.some(turn => turn.id === pending.id)) {
       try { sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); } catch { /* The same ID remains safe to retry. */ }
@@ -266,7 +306,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
       // A remounted conversation owns recovery and any newer draft after navigation.
       if (!mounted.current) return;
       setAddressedTurn('');
-      sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); setPending(null); setDraft(''); setAttached([]); setFocusedTask(''); setHistoryPages([]); setQuery('');
+      sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); setPending(null); setDraft(''); setAttached([]); setFocusedTask(''); setHistoryPages([]); setQuery(''); setFinding(false);
     } catch (error) {
       if (!mounted.current) return;
       if (error instanceof HttpError && (error.status < 500 || error.status === 503)) {
@@ -292,6 +332,13 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
   const rightPanel = useRightPanel(scope);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
+      if (!document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')) {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+          event.preventDefault(); nearBottom.current = false; setFinding(true); setFocusedTask(''); setHistoryPages([]);
+          nextFrame(() => document.querySelector<HTMLInputElement>('.message-find input')?.select()); return;
+        }
+        if (finding && event.key === 'Escape') { event.preventDefault(); setFinding(false); setQuery(''); composer.current?.focus(); return; }
+      }
       if (event.key === 'F6' && !document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')) { event.preventDefault(); composer.current?.focus(); return; }
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'b' && !document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')) {
         event.preventDefault(); event.stopImmediatePropagation(); setDetailsOpen(!detailsOpen);
@@ -299,13 +346,12 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
     };
     window.addEventListener('keydown', key, true);
     return () => window.removeEventListener('keydown', key, true);
-  }, [detailsOpen, setDetailsOpen]);
+  }, [detailsOpen, setDetailsOpen, finding]);
   const attachments = useConversationAttachments({ path: path.replace(/\/turns$/, '/files'), archived, attached: pending?.files ?? attached, onAttach: attach, locked: blocked || !!pending || busy, pastedFiles, onPasteSettled: () => setPastedFiles([]), onFiles: setPastedFiles, libraryOpen: detailsOpen && rightPanel.tab === 'details' && detailsTab === 'library', api });
-  if (showMemory) return <PageView><Suspense fallback={<p className="empty" role="status">Loading memory...</p>}><MemoryPanel key={scope} path={`/api/${channel ? 'channels' : 'agents'}/${agent.id}/memory`} channel={!!channel} archived={!!channel?.archived} request={api} onClose={() => { setShowMemory(false); requestAnimationFrame(() => memoryButton.current?.focus()); }} /></Suspense></PageView>;
-  const refreshTurns = () => { void Promise.all([api<Turn[]>(path), api<typeof activeTurns>(path.replace(/\/turns$/, '/dispatch'))]).then(([data, active]) => { setQueueTurns(data); if (!focusedTask && !before && !query) setTurns(mergeStream(data)); setActiveTurns(active); }).catch(error => setError(message(error))); };
+  if (showMemory) return <PageView><Suspense fallback={<p className="empty" role="status">Loading memory...</p>}><MemoryPanel key={scope} path={`/api/${channel ? 'channels' : 'agents'}/${agent.id}/memory`} channel={!!channel} archived={!!channel?.archived} request={api} onClose={() => { setShowMemory(false); nextFrame(() => memoryButton.current?.focus()); }} /></Suspense></PageView>;
+  const refreshTurns = () => { void Promise.all([api<Turn[]>(path), api<typeof activeTurns>(path.replace(/\/turns$/, '/dispatch'))]).then(([data, active]) => { setQueueTurns(data); if (!focusedTask && !before && !finding) setTurns(mergeStream(findHistory.current ? mergeHistory(findHistory.current, data) : data)); setActiveTurns(active); }).catch(error => setError(message(error))); };
   const queued = (turn: Turn) => !channel && turn.status === 'queued' && !turn.paused && !turn.questions?.some(question => question.answer === null) && !turn.events?.some(event => event.status === 'waiting') && !turn.parent && !turn.waiting_for && !turn.routineReport && !turn.workflow_run && !turn.activity?.calls.length && !turn.agentMessages?.length;
   const runningTurn = !channel ? activeTurns[0] : undefined;
-  const active = turns?.filter(turn => turn.status === 'queued' || turn.status === 'running').length ?? 0;
   const title = thread?.name ?? agent.name;
   const editLabel = channel ? 'Section settings' : thread ? 'Conversation settings' : 'Edit profile';
   const items: MenuItem[] = [
@@ -317,36 +363,36 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
   const statusLabel = (turn: Turn) => turn.computerWait ? 'Waiting for you' : (turn.approvals?.some(approval => approval.state === 'approval') || turn.harnessApprovals?.some(approval => approval.state === 'approval')) && !['done','cancelled'].includes(turn.status) ? 'Waiting for approval' : turn.editing ? 'Editing' : turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) ? 'Waiting for your answer' : turn.no_update ? 'No updates' : turn.paused && !['done','cancelled'].includes(turn.status) ? 'Paused' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) && turn.status === 'queued' ? 'Waiting for agent reply' : turn.waiting_for && turn.status === 'queued' ? 'Waiting for delegation' : turn.routing === 'pending' && turn.status === 'running' ? 'Selecting recipient' : turn.routing === 'clarify' ? 'Needs clarification' : turn.routing === 'none' ? 'No task needed' : turn.status === 'running' ? 'Running' : statusNames[turn.status] ?? turn.status;
   const tone = (turn: Turn) => turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) || turn.paused && !['done','cancelled'].includes(turn.status) ? 'attention' : ['failed','interrupted'].includes(turn.status) ? 'error' : ['queued','running'].includes(turn.status) ? 'working' : 'done';
   const time = (value: string) => new Date(value).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-  const openFocused = (id: string) => { focusedOnce.current = ''; setQuery(''); setFocusedTask(id); };
+  const openFocused = (id: string) => { findHistory.current = null; focusedOnce.current = ''; setQuery(''); setFinding(false); setFocusedTask(id); };
   const delegated = turns?.filter(turn => turn.coordination?.length || turn.agentMessages?.length || turn.parent) ?? [];
   const waiting = turns?.flatMap(turn => turn.events?.filter(event => event.status === 'waiting').map(event => ({ turn, event })) ?? []) ?? [];
-  const openDiff = () => { rightPanel.select('diff'); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.right-panel > .k-tabs > .k-tabs__list > [data-state="active"]')?.focus()); };
+  const openDiff = () => { rightPanel.select('diff'); nextFrame(() => document.querySelector<HTMLButtonElement>('.right-panel > .k-tabs > .k-tabs__list > [data-state="active"]')?.focus()); };
   return <div className="chat-row bs-root">
-    <main className="chat" aria-label={`Conversation ${title}`}>
-      <ChatTranscript ref={transcript} onScroll={onScroll} minimap={<TimelineMinimap key={`${path}:${before}:${query}:${focusedTask}`} items={deriveTimelineMinimapItems(turns ?? [])} viewport={transcript} onNavigate={() => { nearBottom.current = false; }} />} jump={showJump && !focusedTask && !before && !query ? <IconButton className="jump-btn" label="Jump to latest" onClick={jumpToLatest}><ChevronDown size={16} aria-hidden /></IconButton> : null}>
-            {(focusedTask || before || query) && <div className="history-banner" role="status"><span>{focusedTask ? channel ? 'Task family' : 'Selected message' : query ? `Search results: ${query}` : 'Older history'}</span><button type="button" className="link-btn" onClick={() => { focusHistory.current = true; setTurns(null); setFocusedTask(''); setHistoryPages([]); setQuery(''); focusedOnce.current = ''; nearBottom.current = true; }}>Back to latest messages</button></div>}
+    <main className={`chat${finding ? ' is-finding' : ''}`} aria-label={`Conversation ${title}`}>
+      {finding && <MessageFind query={query} onQuery={setQuery} viewport={transcript} content={turns} onClose={() => { setFinding(false); setQuery(''); composer.current?.focus(); }} />}
+      <ChatTranscript ref={transcript} onScroll={onScroll} minimap={<TimelineMinimap key={`${path}:${before}:${finding}:${focusedTask}`} items={deriveTimelineMinimapItems(turns ?? [])} viewport={transcript} onNavigate={() => { nearBottom.current = false; }} />} jump={showJump && !focusedTask && !before && !finding ? <IconButton className="jump-btn" label="Jump to latest" onClick={jumpToLatest}><ChevronDown size={16} aria-hidden /></IconButton> : null}>
+            {(focusedTask || before) && <div className="history-banner" role="status"><span>{focusedTask ? channel ? 'Task family' : 'Selected message' : 'Older history'}</span><button type="button" className="link-btn" onClick={() => { focusHistory.current = true; setTurns(null); setFocusedTask(''); setHistoryPages([]); setQuery(''); setFinding(false); focusedOnce.current = ''; nearBottom.current = true; }}>Back to latest messages</button></div>}
             {!focusedTask && <div ref={historyTop} tabIndex={-1} className="history-navigation" aria-label="History navigation">
-              {!!turns && turns.filter(turn => turn.history_page !== 0).length >= 100 && <button type="button" className="link-btn" onClick={() => { if (turns?.length) { focusHistory.current = true; setTurns(null); setHistoryPages([...historyPages, turns.find(turn => turn.history_page !== 0)!.seq]); } }}>Older messages</button>}
+              {!finding && !findHistory.current && !!turns && turns.filter(turn => turn.history_page !== 0).length >= 100 && <button type="button" className="link-btn" onClick={() => { if (turns?.length) { focusHistory.current = true; setTurns(null); setHistoryPages([...historyPages, turns.find(turn => turn.history_page !== 0)!.seq]); } }}>Older messages</button>}
               {!!before && <button type="button" className="link-btn" onClick={() => { focusHistory.current = true; setTurns(null); setHistoryPages(historyPages.slice(0, -1)); nearBottom.current = true; }}>Newer messages</button>}
             </div>}
+            {inheritedContext && <ForkHistory context={inheritedContext} scope={path.slice(0, -6)} />}
             {thread?.fork && <div className="fork-origin" aria-label="Fork origin"><span>Forked from <a className="link-btn" href={`#turn-${thread.fork.cutoff_turn}`} onClick={event => { event.preventDefault(); const origin = thread.fork!; try { sessionStorage.setItem(`briefsip:focus:${origin.source_kind === 'channel' ? `channel:${origin.source_id}` : origin.source_kind === 'thread' ? `thread:${origin.source_id}` : origin.source_agent}`, origin.cutoff_turn); } catch { /* Conversation link remains usable without focus recovery. */ } if (origin.source_kind === 'channel') onOpenChannel?.(origin.source_id); else onOpenAgent?.(origin.source_agent, origin.source_kind === 'thread' ? origin.source_id : ''); }}>{thread.fork.source_name}</a> at <time dateTime={thread.fork.created}>{new Date(thread.fork.created).toLocaleString('en-US')}</time></span></div>}
             {readError && <p role="alert" className="chat-notice is-error">{readError} History will be retried.</p>}
             {turns === null ? <p className="empty-chat__sub" role="status">Loading conversation...</p>
-              : turns.length === 0 && query ? <p className="empty-chat__sub" role="status">No results on this page. Change your search term or return to the previous page.</p>
               : turns.length === 0 && before ? <p className="empty-chat__sub" role="status">Start of history reached. Select Newer messages to return.</p>
+              : turns.length === 0 && thread?.fork ? null
               : turns.length === 0 ? <ChatEmptyState agent={agent} title={thread?.fork ? `Continue with ${agent.name}` : undefined}>{'role' in agent ? agent.role : null}</ChatEmptyState>
               : turns.filter(turn => !queued(turn) && !(turn.status === 'cancelled' && !turn.error?.startsWith('Stopped') && !turn.activity?.calls.length && !turn.room) && (!turn.room || turn.room.root === turn.id || !turns.some(root => root.id === turn.room!.root))).map(turn => <ChatTurn key={turn.id} id={`turn-${turn.id}`} className={`turn-block${turn.id === turns.at(-1)?.id ? ' is-latest' : ''}`}>
-                {query && <button type="button" className="link-btn" onClick={() => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(turn.id); }}>Open this message</button>}
                 {turn.routineReport ? <section className="routine-report" aria-label={`Routine report: ${turn.routineReport.name}`}><div className="routine-report__meta"><CalendarClock size={16} aria-hidden /><strong>Routine report</strong><time dateTime={turn.created}>{time(turn.created)}</time></div><div className="legacy routine-report__body"><Markdown text={turn.reply ?? ''} scope={path.slice(0, -6)} origin={window.location.origin} /></div><a className="k-link" href={`#routine-run-${turn.routineReport.run}`} onClick={event=>{event.preventDefault();onOpenAgent?.(turn.routineReport!.agent,turn.routineReport!.thread);}}>Open full run</a></section> : <><HumanMessage text={turn.text} label={turn.messageOrigin?.kind === 'peer' ? `Message from ${turn.messageOrigin.name}` : 'Your message'} attachments={!!turn.files?.length && <Attachments files={turn.files} path={path.replace(/\/turns$/, '/files')} />}>
                     <time className="message-time" dateTime={turn.created} title={new Date(turn.created).toLocaleString('en-US')}>{time(turn.created)}</time>
                     {turn.messageOrigin?.kind === 'peer' ? <span className="message-origin">From {turn.messageOrigin.name}</span> : turn.workflow_run ? <span className="message-origin">Workflow</span> : turn.parent ? <span className="message-origin">Subtask</span> : null}
                     {turn.room && <RoomStop room={turn.room} path={path} archived={archived} onStopped={() => composer.current?.focus()} />}
                     <MessageCopyButton text={turn.text} label="Copy message" />
-                    <IconButton label="View task" onClick={() => openFocused(turn.id)}><ListRestart size={14} aria-hidden /></IconButton>
                     {turn.parent && !turn.messageOrigin && <a className="link-btn link-btn--small" href={`#turn-${turn.parent}`} onClick={event => { event.preventDefault(); openFocused(turn.parent!); }}>View parent task</a>}
                     {turn.messageOrigin && turn.messageOrigin.kind !== 'peer' && <button type="button" className="link-btn link-btn--small" onClick={() => turn.messageOrigin!.channel ? onOpenChannel?.(turn.messageOrigin!.channel) : onOpenAgent?.(turn.messageOrigin!.agent!, turn.messageOrigin!.thread ?? '')}>Open requester conversation</button>}
                 </HumanMessage>
-                {turn.room ? <><RoomMessages room={turn.room} members={members} scope={path.slice(0, -6)} turns={turns} controls={id => { const item = turns.find(item => item.id === id); return item && <><TaskControls key={`${item.id}:${item.revision}`} turn={item} path={path} members={members} archived={archived} />{!['done','cancelled'].includes(item.status) && <IconButton label="Stop" onClick={() => void cancel(item)}><Square size={14} aria-hidden /></IconButton>}{item.reply && <MessageCopyButton text={item.reply} />}</>; }} pending={turns.filter(item => item.room?.root === turn.room!.root && !item.room.silent && !turn.room!.messages.some(message => message.kind === 'reply' && message.turn === item.id))} details={id => { const item = turns.find(item => item.id === id); return item && <TurnActivity scope={path.slice(0, -6)} logOnly turn={item} agentName={members.find(member => member.id === item.agent)?.name ?? agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} />; }} extras={id => { const item = turns.find(item => item.id === id); return item && <>{item.questions?.map(question => <QuestionCard key={question.id} question={question} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}{item.approvals?.map(approval => <ApprovalCard key={approval.id} approval={approval} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}{item.computerWait && <ComputerRequestCard agent={item.agent} name={item.agent_name ?? agent.name} wait={item.computerWait} request={api} />}{item.generatedFiles?.map(file => <p key={file.id}><a className="k-link" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}>{file.name}</a><span className="message-role"> {attachmentSize(file.size)}</span></p>)}{item.harnessApprovals?.map(approval => <HarnessApprovalCard key={approval.id} approval={approval} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}</>; }} /></> : <AgentMessage identity={channel && members.length > 1 && <div className="agent-identity"><AgentAvatar agent={members.find(member => member.id === turn.agent) ?? { id: turn.agent, name: turn.agent_name ?? agent.name }} size={24} /><strong className="message-name">{turn.agent_name ?? agent.name}</strong></div>}>
+                {turn.room ? <><RoomMessages room={turn.room} members={members} scope={path.slice(0, -6)} turns={turns} controls={id => { const item = turns.find(item => item.id === id); return item && <><TaskControls key={`${item.id}:${item.revision}`} turn={item} path={path} members={members} archived={archived} />{!['done','cancelled'].includes(item.status) && <IconButton label="Stop" onClick={() => void cancel(item)}><Square size={14} aria-hidden /></IconButton>}{item.reply && <MessageCopyButton text={item.reply} />}</>; }} pending={turns.filter(item => item.room?.root === turn.room!.root && !item.room.silent && !turn.room!.messages.some(message => message.kind === 'reply' && message.turn === item.id))} details={id => { const item = turns.find(item => item.id === id); return item && <TurnActivity scope={path.slice(0, -6)} logOnly turn={item} agentName={members.find(member => member.id === item.agent)?.name ?? agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} />; }} extras={id => { const item = turns.find(item => item.id === id); return item && <>{item.questions?.map(question => <QuestionCard key={question.id} question={question} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}{item.approvals?.map(approval => <ApprovalCard key={approval.id} approval={approval} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}{item.computerWait && <ComputerRequestCard agent={item.agent} name={item.agent_name ?? agent.name} wait={item.computerWait} request={api} />}{!!item.generatedFiles?.length && <Attachments files={item.generatedFiles} path={path.replace(/\/turns$/, '/files')} label="Agent output files" />}{item.harnessApprovals?.map(approval => <HarnessApprovalCard key={approval.id} approval={approval} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}</>; }} /></> : <AgentMessage identity={channel && members.length > 1 && <div className="agent-identity"><AgentAvatar agent={members.find(member => member.id === turn.agent) ?? { id: turn.agent, name: turn.agent_name ?? agent.name }} size={24} /><strong className="message-name">{turn.agent_name ?? agent.name}</strong></div>}>
                     <TurnActivity scope={path.slice(0, -6)} turn={turn} agentName={agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} actions={turn.dispatch_mode !== 'steer' && !['done','cancelled','failed','interrupted'].includes(turn.status) && !turn.paused ? <TaskControls key={`${turn.id}:${turn.revision}`} turn={turn} path={path} members={channel ? members : []} archived={archived || !!turn.editing} overflow /> : undefined} />
                     {!channel && (!!turn.agentMessages?.length || !!turn.receivedAgentReplies?.length) && <AgentConversation items={[...(turn.agentMessages ?? []), ...(turn.receivedAgentReplies ?? []).filter(item => !turn.agentMessages?.some(sent => sent.id === item.id))]} sender={turn.agent_name ?? agent.name} scope={path.slice(0, -6)} onOpen={onOpenAgent} />}
                     <div className="message-body">
@@ -372,7 +418,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
                       {turn.approvals?.map(approval => <ApprovalCard key={approval.id} approval={approval} path={`${path}/${turn.id}`} status={turn.status} archived={archived} request={api} />)}
                       {turn.computerWait && <ComputerRequestCard agent={turn.agent} name={turn.agent_name ?? agent.name} wait={turn.computerWait} request={api} />}
                       {turn.questions?.map(question => <QuestionCard key={question.id} question={question} path={`${path}/${turn.id}`} status={turn.status} archived={archived} request={api} />)}
-                      {!!turn.generatedFiles?.length && <section aria-label="Agent output files"><Card>{turn.generatedFiles.map(file => <Row key={file.id} title={<a className="k-link" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}>{file.name}</a>} meta={attachmentSize(file.size)}><HtmlPreview path={`${path.replace(/\/turns$/, '/files')}/${file.id}`} name={file.name} request={api} /></Row>)}</Card></section>}
+                      {!!turn.generatedFiles?.length && <section aria-label="Agent output files"><Attachments files={turn.generatedFiles} path={path.replace(/\/turns$/, '/files')} label="Agent output files" />{turn.generatedFiles.map(file => <HtmlPreview key={file.id} path={`${path.replace(/\/turns$/, '/files')}/${file.id}`} name={file.name} request={api} />)}</section>}
                       {!!turn.coordination?.length && <Collapsible title={`Task coordination (${turn.coordination.length})`}>{turn.coordination.map((action, index) => <div className="k-stack" key={index}><div className="k-section__title">{action.owner_name} {action.kind === 'delegate_task' ? 'delegated to' : 'reassigned to'} {action.target_name}.</div><div className="message-plain">{action.prompt}</div>{action.child && <div className="k-row-actions"><Button size="sm" variant="ghost" onClick={() => openFocused(action.child!)}>View subtask</Button></div>}</div>)}</Collapsible>}
                       {turn.dispatch_mode !== 'steer' && !turn.approvals?.length && <QueueEditor turn={{ ...turn, files: turn.files ?? [] }} path={path} archived={archived} request={api} />}
                     </div>
@@ -384,7 +430,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
         {!channel && (agent as Agent).hidden ? <HiddenAgentBanner agent={agent as Agent} request={api} onChanged={onRestored} /> : archived && <p className="composer__note">Archived</p>}
         {!configured && <p className="composer__note">{!channel && 'provider_account' in agent && !!agent.provider_account && agent.provider_available === false ? 'Provider account unavailable. Choose a provider in the agent profile.' : 'Provider not configured. Check Settings > Providers.'}</p>}
         {error && <div className="composer__error" role="alert"><span>{error} {pending && 'Use Retry send to check the same request without creating a duplicate message.'}</span></div>}
-        {blocked && <div className="composer__error" role="alert"><span>Message recovery data could not be read. Sending is blocked. Check history to confirm the previous message was not sent.</span><Button size="sm" variant="ghost" onClick={async () => { if (!await confirm({ title: 'Discard recovery data?', description: 'The previous message may already have been received. Check history before sending another message.', confirm: 'Discard message recovery', danger: true })) return; try { sessionStorage.removeItem(storageKey); setBlocked(false); setError(''); requestAnimationFrame(() => composer.current?.focus()); } catch { setError('Recovery data could not be deleted. Check site storage.'); } }}>Discard message recovery</Button></div>}
+        {blocked && <div className="composer__error" role="alert"><span>Message recovery data could not be read. Sending is blocked. Check history to confirm the previous message was not sent.</span><Button size="sm" variant="ghost" onClick={async () => { if (!await confirm({ title: 'Discard recovery data?', description: 'The previous message may already have been received. Check history before sending another message.', confirm: 'Discard message recovery', danger: true })) return; try { sessionStorage.removeItem(storageKey); setBlocked(false); setError(''); nextFrame(() => composer.current?.focus()); } catch { setError('Recovery data could not be deleted. Check site storage.'); } }}>Discard message recovery</Button></div>}
         {attachments.composer}
         <QueuedRunsControl turns={queueTurns.filter(queued)} path={path} target={dispatchTarget} request={api} archived={archived} onChanged={refreshTurns} />
         <ChatComposer onPasteFiles={files => { if (pastedFiles.length) { setError('Wait for pasted files to finish uploading.'); return; } setPastedFiles(files); }} mentions={channel ? members : []} onMention={value => { setDraft(value); try { sessionStorage.setItem(draftKey, value); } catch { setError('Draft was not saved. Copy your message before leaving.'); } }} label={`Message ${agent.name}`} inputRef={composer} multiline={draft.includes('\n')} onSubmit={send} onSendKey={event => { void send(event, (event.ctrlKey || event.metaKey) && canSteer ? 'steer' : 'queue'); }} onAttach={attachments.choose} attachmentDisabledReason={archived || blocked || !!pending || busy || attachments.uploading ? 'Attachments unavailable' : undefined} actions={attachments.recordingAction}
@@ -395,11 +441,11 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
           sendDisabled={!!pastedFiles.length || attachments.uploading || blocked || archived || !configured || busy || (!pending && !draft.trim())}
           sendLabel={busy ? 'Sending...' : pending ? 'Retry send' : dispatchTarget ? 'Queue message' : 'Send message'}
           sendTitle={pending ? 'Retry send' : dispatchTarget ? `Queue message (Enter to queue${canSteer ? ', Ctrl/Cmd+Enter to steer' : ''})` : 'Send (Enter)'} />
-        {(focusedTask || query || before) && <p className="composer__foot">{focusedTask ? channel ? 'Task family shown' : 'Selected message shown' : query ? 'Search results · 100 per page' : 'Older messages · 100 per page'}</p>}
+        {(focusedTask || before) && <p className="composer__foot">{focusedTask ? channel ? 'Task family shown' : 'Selected message shown' : 'Older messages · 100 per page'}</p>}
       </footer>
       <ChatHeader agent={agent} title={title} onToggle={() => setMenuOpen(!menuOpen)} expanded={menuOpen}
         menu={menuOpen && <Menu align="center" label={`Menu ${title}`} onClose={() => setMenuOpen(false)} items={items} />}
-        right={<><span className={`activity-chip${active ? ' is-working' : ''}`} role="status">{active ? `${active} ${active === 1 ? 'message' : 'messages'} processing` : channel ? 'Section' : 'Direct conversation'}</span>
+        right={<>
           {!detailsOpen && <button type="button" className="icon-btn icon-btn--bordered" onClick={() => setDetailsOpen(true)} aria-label="Show details" title="Show details (Ctrl/Cmd+Shift+B)" aria-keyshortcuts="Control+Shift+B Meta+Shift+B"><PanelRight size={16} aria-hidden /></button>}</>} />
     </main>
     {detailsOpen && <RightPanel path={path.replace(/\/turns$/, '')} name={agent.name} state={rightPanel} request={api} onClose={() => setDetailsOpen(false)} settings={onEdit && <IconButton label={editLabel} onClick={onEdit}><Settings size={16} aria-hidden /></IconButton>} details={
@@ -420,7 +466,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
         <div className="details__tabs">
           <Tabs value={detailsTab} onChange={selectDetailsTab} label="Details sections" tabs={[{ value: 'chats', label: 'Chats' }, { value: 'activity', label: 'Activity' }, { value: 'library', label: 'Library' }]}>
             <TabPanel value="chats"><div className="details__sections">
-              <form className="details-search" role="search" onSubmit={event => { event.preventDefault(); if (!searchText.trim()) return; focusHistory.current = true; nearBottom.current = false; setQuery(searchText); setFocusedTask(''); setHistoryPages([]); focusedOnce.current = ''; }}><Search size={15} aria-hidden /><label className="sr-only" htmlFor="history-search">Search this conversation</label><input id="history-search" type="search" maxLength={200} value={searchText} onChange={event => setSearchText(event.target.value)} placeholder="Search messages" /></form>
+              <form className="details-search" role="search" onSubmit={event => { event.preventDefault(); if (!searchText.trim()) return; nearBottom.current = false; setFinding(true); setQuery(searchText.trim()); setFocusedTask(''); setHistoryPages([]); focusedOnce.current = ''; }}><Search size={15} aria-hidden /><label className="sr-only" htmlFor="history-search">Search this conversation</label><input id="history-search" type="search" maxLength={200} value={searchText} onChange={event => setSearchText(event.target.value)} placeholder="Search messages" /></form>
               {detailsExtra?.chats}
             </div></TabPanel>
             <TabPanel value="activity"><div className="details__sections details-activity">
@@ -862,6 +908,7 @@ function AgentConversations({ agent, onRestored, configured, onEdit, onComputerS
   const flight = useRef(false), actionFlight = useRef(false);
   const [showWorkspace, setShowWorkspace] = useState(false);
   const workspaceButton = useRef<HTMLButtonElement>(null);
+  const nextFrame = useNextFrame();
   const [showWorkflows, setShowWorkflows] = useState(false);
   const loadVersion = useRef(0);
   const navigation = useRef(0);
@@ -891,7 +938,7 @@ function AgentConversations({ agent, onRestored, configured, onEdit, onComputerS
   const openWorkflows = () => { leave(); setShowWorkspace(false); setShowWorkflows(true); };
   const openWorkspace = () => { leave(); setShowWorkflows(false); setForm(null); setShowWorkspace(true); };
   const errorBanner = error && <p className="error" role="alert">{error} <button className="secondary" onClick={() => void load().catch(() => {})}>Reload conversation</button></p>;
-  if (showWorkspace) return <PageView>{errorBanner}<Suspense fallback={<p className="empty" role="status">Loading workspace files...</p>}><WorkspacePanel key={agent.id} agent={agent} request={api} onClose={() => { setShowWorkspace(false); requestAnimationFrame(() => workspaceButton.current?.focus()); }} /></Suspense></PageView>;
+  if (showWorkspace) return <PageView>{errorBanner}<Suspense fallback={<p className="empty" role="status">Loading workspace files...</p>}><WorkspacePanel key={agent.id} agent={agent} request={api} onClose={() => { setShowWorkspace(false); nextFrame(() => workspaceButton.current?.focus()); }} /></Suspense></PageView>;
   if (showWorkflows) return <PageView wide>{errorBanner}<Suspense fallback={<p className="empty" role="status">Loading workflows...</p>}><WorkflowPanel owner={agent} agents={workflowAgents} request={api} onNavigate={leave} onBack={() => { leave(); setShowWorkflows(false); }} renderConversation={(id, owner) => <WorkflowConversation key={id} onComputerSettings={onComputerSettings} agent={workflowAgents.find(item => item.id === owner)} threadId={id} configured={configured} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />} /></Suspense></PageView>;
 
   if (!loaded) return <PageView>{errorBanner}<p className="empty" role="status">Loading conversation...</p></PageView>;
@@ -907,7 +954,7 @@ function AgentConversations({ agent, onRestored, configured, onEdit, onComputerS
       if (version === navigation.current) {
         const hidden = result.deleted || result.archived && !showArchived;
         await load(command.path === `/api/agents/${agent.id}/threads` ? result.id : selected === result.id && hidden ? '' : selected, true);
-        requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`[data-conversation-id="${hidden ? 'main' : result.id}"] > button`)?.focus());
+        nextFrame(() => document.querySelector<HTMLButtonElement>(`[data-conversation-id="${hidden ? 'main' : result.id}"] > button`)?.focus());
       }
     } catch (error) {
       if (error instanceof HttpError && error.status < 500) { sessionStorage.removeItem(commandKey); setPending(null); }
@@ -1077,7 +1124,7 @@ function MachineGroup({ name, subtitle, count, status, expanded, onExpandedChang
 
 
 function App() {
-  const deleteAgent = useDeleteAgent(api, async id => {
+  const { deleteAgent, deleting } = useDeleteAgent(api, async id => {
     setDialog(null); setComputerSettings(null); setAgentContent(null);
     setSelected(current => current === id ? '' : current); setOpenedThread(current => current?.agent === id ? null : current);
     setProjectThread(current => current?.agent === id ? null : current);
@@ -1206,6 +1253,7 @@ function App() {
   let content: ReactNode;
   if (error) content = <PageView><div className="empty"><h1>Workspace is not open</h1><p role="alert">{error}</p><button onClick={() => void load()}>Try again</button></div></PageView>;
   else if (!directory) content = <main className="chat chat--empty bs-root"><p className="empty-chat__sub" role="status">Loading workspace...</p></main>;
+  else if (deleting) content = <main className="chat chat--empty bs-root"><p className="empty-chat__sub" role="status">Deleting agent...</p></main>;
   else if (view === 'remote') { const machine = remoteMachinesState.machines.find(item => item.id === remoteSelection?.machine); content = <RemoteAgentDetail key={`${machine?.id}:${remoteSelection?.agent}`} request={api} machine={machine} agent={machine?.agents.find(item => item.id === remoteSelection?.agent)} />; }
   else if (view === 'workflows') content = <PageView wide><Suspense fallback={<p className="empty" role="status">Loading workflow directory...</p>}><WorkflowDirectory agents={directory.agents} request={api} onClose={() => setView('chat')} renderConversation={(id, owner) => <WorkflowConversation key={id} onComputerSettings={setComputerSettings} agent={directory.agents.find(item => item.id === owner)} threadId={id} configured={directory.configured} onOpenAgent={openThread} onOpenChannel={openChannel} />} /></Suspense></PageView>;
   else if (view === 'routines') content = <PageView wide><RoutinesHub key={routineAgent} initialAgent={routineAgent} agents={directory.agents.filter(agent => !agent.hidden)} projects={projectState.projects} onClose={() => setView('chat')} onOpen={openThread} /></PageView>;

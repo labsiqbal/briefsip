@@ -113,9 +113,6 @@
   "src/App.tsx": {
     "briefsip-lifecycle/no-component-effects": {
       "count": 26
-    },
-    "no-restricted-globals": {
-      "count": 5
     }
   },
   "src/ApprovalCard.tsx": {

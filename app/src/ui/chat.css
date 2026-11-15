@@ -8,7 +8,7 @@
 .chat__header {
   position: absolute; left: 0; right: 0; top: 0; height: 60px; z-index: 5;
   display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 0 12px 0 8px;
-  background: linear-gradient(180deg, var(--color-bg-chrome) 0%, transparent 100%);
+  background: linear-gradient(180deg, var(--color-bg-chrome) 70%, transparent 100%);
   pointer-events: none;
 }
 .chat__header > * { pointer-events: auto; }
@@ -31,7 +31,7 @@
 
 /* ---------- transcript ---------- */
 .transcript-wrap { position: relative; flex: 1 1 0; min-height: 0; }
-.transcript { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; padding: 60px 16px 16px; overflow-anchor: none; }
+.transcript { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; padding: 60px 16px 16px; scroll-padding-top: 60px; overflow-anchor: none; }
 .transcript__col { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; max-width: var(--chat-content-max-width); margin: 0 auto; min-height: 100%; justify-content: flex-end; }
 .transcript__col > * { max-width: 100%; }
 
@@ -180,13 +180,13 @@
 @keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-1.5px); } }
 
 /* ---------- jump to bottom ---------- */
-.jump-btn {
+.chat .jump-btn {
   position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 4;
   width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-  background: var(--color-bg-pane); border: 0.5px solid var(--color-border-tertiary); box-shadow: var(--shadow-composer);
+  background: var(--color-bg-pane); border: 0.5px solid var(--color-border-tertiary); box-shadow: var(--shadow-pill);
   animation: rise 160ms var(--ease-out);
 }
-.jump-btn:hover { background: var(--color-bg-elevated-hover); }
+.chat .jump-btn:hover { background: var(--color-bg-elevated-hover); }
 
 /* ---------- empty chat ---------- */
 .empty-chat { display: flex; flex-direction: column; align-items: center; gap: 10px; margin: auto; padding: 40px 24px; text-align: center; align-self: center; }
@@ -233,7 +233,7 @@
 .composer-dispatch .k-select { width: auto; min-width: 112px; }
 .composer-dispatch__hint, .dispatch-receipt { color: var(--color-text-secondary); font-size: 12px; line-height: 18px; }
 .dispatch-receipt { margin: 0 0 8px; }
-.fork-origin { padding: 10px 0; margin-bottom: 16px; border-bottom: 0.5px solid var(--color-border-secondary); color: var(--color-text-secondary); font-size: 12px; line-height: 20px; overflow-wrap: anywhere; }
+.fork-origin { width: 100%; padding: 10px 0; margin-bottom: 16px; border-bottom: 0.5px solid var(--color-border-secondary); color: var(--color-text-secondary); font-size: 12px; line-height: 20px; overflow-wrap: anywhere; }
 .fork-origin .link-btn { display: inline; font-size: inherit; }
 
 /* Room and teammate exchanges keep the transcript's unboxed agent style. */
@@ -276,8 +276,7 @@
 .transcript-jump .jump-btn { position: static; transform: none; }
 
 /* T3 minimap: 8px pitch, fisheye ticks and a preview outside the scroll surface. */
-.timeline-minimap { position: absolute; inset: 0 auto 0 0; z-index: 4; width: 72px; pointer-events: none; opacity: 0; transition: opacity 150ms var(--ease-out); }
-.timeline-minimap[data-persistent-gutter="true"], .timeline-minimap:hover, .timeline-minimap:focus-within { opacity: 1; }
+.timeline-minimap { position: absolute; inset: 0 auto 0 0; z-index: 4; width: 72px; pointer-events: none; opacity: 1; transition: opacity 150ms var(--ease-out); }
 .timeline-minimap__rail { position: absolute; top: 50%; left: 12px; transform: translateY(-50%); pointer-events: auto; user-select: none; }
 .timeline-minimap__hit { position: absolute; inset: 0; width: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--color-text-primary); cursor: pointer; }
 .timeline-minimap__hit::before { content: ''; position: absolute; inset: -4px 0; }
@@ -344,3 +343,14 @@
 .turn-activity { display: flex; align-items: flex-start; gap: 4px; }
 .turn-activity > .k-collapsible { min-width: 0; flex: 1; }
 .composer__toolbar > .k-select { width: auto; max-width: 180px; }
+
+.fork-history { width: 100%; opacity: .72; }
+.fork-history .fork-history { opacity: 1; }
+.fork-history .turn-block + .turn-block { margin-top: 24px; }
+.message-find { position: absolute; top: 60px; left: 16px; right: 16px; z-index: 5; display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 12px; background: var(--color-bg-pane); box-shadow: var(--shadow-pill); }
+.message-find input { min-width: 0; flex: 1; border: 0; background: transparent; color: var(--color-text-primary); font: inherit; outline: none; }
+.message-find:focus-within { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.message-find__count { flex-shrink: 0; color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.chat.is-finding .transcript { padding-top: 116px; scroll-padding-top: 116px; }
+::highlight(message-find) { background: var(--color-brand-soft); color: var(--color-text-primary); }
+::highlight(message-find-current) { background: var(--color-brand); color: var(--color-on-primary); }

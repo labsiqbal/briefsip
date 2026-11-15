@@ -31,7 +31,7 @@ export function TimelineMinimap({ items, viewport, onNavigate }: {
         if (!found && visible) { current = index; found = true; }
         else if (!found && rect && rect.top < bounds.top) current = index;
       }
-      const next = { width: Math.max(0, Math.min(40, Math.floor(gutter) - 12)), persistent: gutter >= 48, current, atEnd: timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight <= 1 };
+      const next = { width: Math.max(8, Math.min(40, Math.floor(gutter) - 12)), persistent: gutter >= 48, current, atEnd: timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight <= 1 };
       setMetrics(old => old.width === next.width && old.persistent === next.persistent && old.current === next.current && old.atEnd === next.atEnd ? old : next);
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(refresh); };
@@ -47,7 +47,7 @@ export function TimelineMinimap({ items, viewport, onNavigate }: {
     const timeline = viewport.current, row = item && document.getElementById(`turn-${item.id}`);
     if (!timeline || !row) return;
     onNavigate();
-    timeline.scrollTop += row.getBoundingClientRect().top - timeline.getBoundingClientRect().top - 16;
+    timeline.scrollTop += row.getBoundingClientRect().top - timeline.getBoundingClientRect().top - parseFloat(getComputedStyle(timeline).scrollPaddingTop);
   };
   const pointerIndex = (event: MouseEvent<HTMLElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
