@@ -16,7 +16,10 @@ import { AgentAvatar, AvatarEditor } from './AgentAvatar';
 import { QueuePanel } from './QueuePanel';
 import { QueueEditor } from './QueueEditor';
 import { AgentVisibility } from './AgentVisibility';
-import { Markdown } from './Markdown';
+import { Markdown, StreamingMarkdown } from './Markdown';
+import { MessageCopyButton } from './ui/MessageCopyButton';
+import { useTimelineFollow } from './ui/useTimelineFollow';
+import { useTurnStream } from './ui/useTurnStream';
 import { SpeechPlayback } from './SpeechPlayback';
 import { AudioRecorder } from './AudioRecorder';
 import { TranscriptionPanel } from './TranscriptionPanel';
@@ -32,7 +35,7 @@ import { QuestionCard, type Question } from './QuestionCard';
 import { ApprovalCard, type AppApproval } from './ApprovalCard';
 import { CompactionPanel } from './CompactionPanel';
 import { lazy, Suspense, useEffect, useRef, useState, useId, type FormEvent, type ReactNode } from 'react';
-import { Bell, BellOff, Brain, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
+import { Bell, BellOff, Brain, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, GitFork, ListRestart, Square, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
 import { PanelResizeHandle, sidebarPanel, useResizablePanel } from './ui/resizable';
@@ -76,7 +79,7 @@ type Channel = { project?: string | null; activity: number; read_position: numbe
 type Thread = { delivery?: boolean; active?: boolean; activity?: number; id: string; agent: string; name: string; revision: number; archived: number; deleted: number; fork?: { source_name: string; source_id: string; source_kind: 'agent' | 'channel' | 'thread'; source_agent: string; cutoff_turn: string; created: string } | null };
 type AgentMessage = Exchange & { taskId?: string; task?: string; wait?: boolean; generatedFiles?: { id: string; name: string; size: number; thread: string }[]; paused: number; request: string; expects_reply: number; settled: number; id: string; agent: string; thread: string; name: string; status: string; error: string | null; reply: string | null; truncated: boolean };
 
-type Turn = { routineReport?: { run: string; name: string; agent: string; thread: string; destination: string; status: string } | null; room?: RoomView | null; harnessApprovals?: HarnessApproval[]; computerWait?: ComputerWait; checkpoint?: { turn: string; restorable: boolean } | null; approvals?: AppApproval[]; recipient?: string | null; dispatch_mode?: 'queue' | 'steer' | 'restart'; dispatch_target?: string | null; dispatch_label?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { kind?: 'peer'; name: string; agent: string | null; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
+type Turn = { routineReport?: { run: string; name: string; agent: string; thread: string; destination: string; status: string } | null; room?: RoomView | null; harnessApprovals?: HarnessApproval[]; computerWait?: ComputerWait; checkpoint?: { turn: string; restorable: boolean } | null; approvals?: AppApproval[]; recipient?: string | null; dispatch_mode?: 'queue' | 'steer' | 'restart'; dispatch_target?: string | null; dispatch_label?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { kind?: 'peer'; name: string; agent: string | null; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string; seq: number } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; generatedFiles?: { id: string; name: string; size: number }[]; seq: number; files?: { id: string; name: string; size: number }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
 type Directory = { agents: Agent[]; configured: boolean; defaultModel: string };
 type Environment = { id: string; name: string; origin: string; version: string };
 /** One-line sidebar preview: strip Markdown markers so rows read as plain text. */
@@ -204,6 +207,7 @@ function ConversationFiles({ path, archived, attached, onAttach, locked, open, o
 function TaskControls({ turn, path, members, archived }: { turn: Turn; path: string; members: Agent[]; archived: boolean }) {
   const [recipient, setRecipient] = useState(''), [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [resumeOpen, setResumeOpen] = useState(false);
   const pending = useRef<{ action: string; data: { id: string; revision: number; recipient?: string; acknowledgeUncertain?: boolean } } | null>(null);
   if (turn.computerWait || turn.approvals?.some(approval => approval.state === 'approval' || approval.state === 'ready' && !['failed','interrupted'].includes(turn.status)) || ['done','cancelled'].includes(turn.status) || turn.questions?.some(question => question.answer === null)) return null;
   const resumable = !!turn.paused || ['failed','interrupted'].includes(turn.status);
@@ -216,24 +220,26 @@ function TaskControls({ turn, path, members, archived }: { turn: Turn; path: str
     finally { setBusy(false); }
   }
   return <div className="turn-task-controls bs-root">
-    {pending.current ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => void control(pending.current!.action)}>Retry control</Button> : resumable ? <Collapsible title="Resume or reassign">
+    {pending.current ? <IconButton label="Retry control" disabled={busy} onClick={() => void control(pending.current!.action)}><RefreshCw size={14} aria-hidden /></IconButton> : resumable ? <><IconButton label="Resume or reassign" onClick={() => setResumeOpen(true)}><Play size={14} aria-hidden /></IconButton><Dialog open={resumeOpen} onOpenChange={setResumeOpen} title="Resume or reassign">
       <div className="k-stack">
         <p className="k-field__hint">Check previous results and effects in the provider. Resuming may resend steps that are not confirmed yet.</p>
         <Checkbox checked={confirmed} onChange={setConfirmed} label="I have checked previous results and effects" />
         <div><Button size="sm" variant="ghost" disabled={busy || archived || !confirmed} onClick={() => void control('resume')}>Resume task</Button></div>
         {members.length > 0 && !turn.approvals?.some(approval => approval.state === 'ready') && <><Field label="New owner"><Select value={recipient} onChange={setRecipient} options={[{ value: '', label: 'Select agent' }, ...members.map(member => ({ value: member.id, label: member.name }))]} /></Field><div><Button size="sm" variant="ghost" disabled={busy || archived || !confirmed || !recipient} onClick={() => void control('reassign')}>Reassign task</Button></div></>}
       </div>
-    </Collapsible> : <div><Button size="sm" variant="ghost" disabled={busy || archived} onClick={() => void control('pause')}>Pause task</Button></div>}
+    </Dialog></> : <IconButton label="Pause task" disabled={busy || archived} onClick={() => void control('pause')}><Pause size={14} aria-hidden /></IconButton>}
     {error && <Alert tone="error">{error}</Alert>}
   </div>;
 }
 
 function ForkAnswer({ path, turn, onOpen }: { path: string; turn: Turn; onOpen?: (agent: string, thread: string) => void }) {
+  const confirm = useConfirm();
   const key = `briefsip:fork:${turn.id}`;
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const flight = useRef(false);
   async function fork() {
     if (flight.current) return;
+    if (!await confirm({ title: 'Fork from here?', description: 'Create a side thread with this conversation’s context through this reply. New messages stay in that thread.', confirm: 'Fork conversation' })) return;
     flight.current = true; setBusy(true); setError('');
     try {
       const saved = sessionStorage.getItem(key), id = saved ?? crypto.randomUUID();
@@ -245,7 +251,7 @@ function ForkAnswer({ path, turn, onOpen }: { path: string; turn: Turn; onOpen?:
     } catch (error) { setError(message(error)); }
     finally { flight.current = false; setBusy(false); }
   }
-  return <><Button size="sm" variant="ghost" disabled={busy || !onOpen} busy={busy} onClick={() => void fork()}>Fork from here</Button>{error && <span className="message-error" role="alert">{error} Retry uses the same fork request.</span>}</>;
+  return <><IconButton label="Fork from here" disabled={busy || !onOpen} aria-busy={busy || undefined} onClick={() => void fork()}><GitFork size={14} aria-hidden /></IconButton>{error && <span className="message-error" role="alert">{error} Retry uses the same fork request.</span>}</>;
 }
 
 type DetailsContent = { chats: ReactNode; activity?: ReactNode; library?: ReactNode };
@@ -287,7 +293,8 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   const [readError, setReadError] = useState('');
   const [markingRead, setMarkingRead] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
-  const nearBottom = useRef(true);
+  const { transcript, nearBottom, onScroll, jumpToLatest, showJump } = useTimelineFollow(bottom, !focusedTask && !before && !query);
+  const mergeStream = useTurnStream<Turn>(path, setTurns, !focusedTask && !before && !query);
   const requestActive = useRef(false);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -298,7 +305,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     let timer: ReturnType<typeof setTimeout>;
     async function refresh() {
       let delay = 1200;
-      try { const [active, data] = await Promise.all([api<typeof activeTurns>(path.replace(/\/turns$/, '/dispatch')), api<Turn[]>(focusedTask ? `${path}?focus=${focusedTask}` : `${path}?${new URLSearchParams({ ...(before ? { before: String(before) } : {}), ...(query ? { q: query } : {}) })}`)]); if (!stopped) { setActiveTurns(active); loadedTask.current = focusedTask; setTurns(data); setReadError(''); delay = turnPollDelay(data); } }
+      try { const [active, data] = await Promise.all([api<typeof activeTurns>(path.replace(/\/turns$/, '/dispatch')), api<Turn[]>(focusedTask ? `${path}?focus=${focusedTask}` : `${path}?${new URLSearchParams({ ...(before ? { before: String(before) } : {}), ...(query ? { q: query } : {}) })}`)]); if (!stopped) { setActiveTurns(active); loadedTask.current = focusedTask; setTurns(mergeStream(data)); setReadError(''); delay = turnPollDelay(data); } }
       catch (error) { if (!stopped) setReadError(message(error)); }
       if (!stopped) timer = setTimeout(refresh, delay);
     }
@@ -314,7 +321,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
       const target = !query && !before && turns.length ? document.getElementById(`turn-${turns.at(-1)!.id}`) : historyTop.current;
       if (target) { target.focus({ preventScroll: true }); target.scrollIntoView({ block: before ? 'start' : 'end' }); focusHistory.current = false; }
     }
-    if (!focusedTask && !before && !query && nearBottom.current) bottom.current?.scrollIntoView({ block: 'end' });
+    if (!focusedTask && !before && !query && nearBottom.current) jumpToLatest();
   }, [focusedTask, turns, before, query]);
   useEffect(() => {
     if (!requestActive.current && pending && turns?.some(turn => turn.id === pending.id)) {
@@ -349,6 +356,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     finally { requestActive.current = false; setBusy(false); }
   }
   async function cancel(turn: Turn) {
+    if (!await confirm({ title: 'Stop this task?', description: 'Steps already sent may have taken effect. Provider usage may still be counted.', confirm: 'Stop task', danger: true })) return;
     try { await api(`${path}/${turn.id}/cancel`, { id: crypto.randomUUID() }); setError(''); }
     catch (error) { setError(message(error)); }
   }
@@ -388,7 +396,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   const openFocused = (id: string) => { focusedOnce.current = ''; setQuery(''); setFocusedTask(id); };
   return <div className="chat-row bs-root">
     <main className="chat" aria-label={`Conversation ${title}`}>
-      <ChatTranscript onScroll={event => { const el = event.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }}>
+      <ChatTranscript ref={transcript} onScroll={onScroll} jump={showJump && !focusedTask && !before && !query ? <IconButton className="jump-btn" label="Jump to latest" onClick={jumpToLatest}><ChevronDown size={16} aria-hidden /></IconButton> : null}>
             {(focusedTask || before || query) && <div className="history-banner" role="status"><span>{focusedTask ? channel ? 'Task family' : 'Selected message' : query ? `Search results: ${query}` : 'Older history'}</span><button type="button" className="link-btn" onClick={() => { focusHistory.current = true; setTurns(null); setFocusedTask(''); setHistoryPages([]); setQuery(''); focusedOnce.current = ''; nearBottom.current = true; }}>Back to latest messages</button></div>}
             {!focusedTask && <div ref={historyTop} tabIndex={-1} className="history-navigation" aria-label="History navigation">
               {!!turns && turns.length >= 100 && <button type="button" className="link-btn" onClick={() => { if (turns?.length) { focusHistory.current = true; setTurns(null); setHistoryPages([...historyPages, turns[0].seq]); } }}>Older messages</button>}
@@ -400,34 +408,34 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
               : turns.length === 0 && query ? <p className="empty-chat__sub" role="status">No results on this page. Change your search term or return to the previous page.</p>
               : turns.length === 0 && before ? <p className="empty-chat__sub" role="status">Start of history reached. Select Newer messages to return.</p>
               : turns.length === 0 ? <ChatEmptyState agent={agent} title={thread?.fork ? `Continue with ${agent.name}` : undefined}>{thread?.fork ? 'Earlier context is included through the selected answer. New messages stay in this conversation.' : 'Send your first task or question. The conversation is saved on this computer.'}</ChatEmptyState>
-              : turns.filter(turn => !turn.room || turn.room.root === turn.id || !turns.some(root => root.id === turn.room!.root)).map(turn => <article key={turn.id} id={`turn-${turn.id}`} tabIndex={-1} className="turn-block">
+              : turns.filter(turn => !turn.room || turn.room.root === turn.id || !turns.some(root => root.id === turn.room!.root)).map(turn => <article key={turn.id} id={`turn-${turn.id}`} tabIndex={-1} className={`turn-block${turn.id === turns.at(-1)?.id ? ' is-latest' : ''}`}>
                 {query && <button type="button" className="link-btn" onClick={() => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(turn.id); }}>Open this message</button>}
                 {turn.routineReport ? <section className="routine-report" aria-label={`Routine report: ${turn.routineReport.name}`}><div className="routine-report__meta"><CalendarClock size={16} aria-hidden /><strong>Routine report</strong><time dateTime={turn.created}>{time(turn.created)}</time></div><div className="legacy routine-report__body"><Markdown text={turn.reply ?? ''} scope={path.slice(0, -6)} origin={window.location.origin} /></div><a className="k-link" href={`#routine-run-${turn.routineReport.run}`} onClick={event=>{event.preventDefault();onOpenAgent?.(turn.routineReport!.agent,turn.routineReport!.thread);}}>Open full run</a></section> : <><HumanMessage text={turn.text} label={turn.messageOrigin?.kind === 'peer' ? `Message from ${turn.messageOrigin.name}` : 'Your message'} attachments={!!turn.files?.length && <ul className="chip-list" aria-label="Message attachments">{turn.files.map(file => <li key={file.id}><a className="cite-chip" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}><Paperclip size={12} aria-hidden /> {file.name}</a></li>)}</ul>}>
                     <time className="message-time" dateTime={turn.created} title={new Date(turn.created).toLocaleString('en-US')}>{time(turn.created)}</time>
                     {turn.messageOrigin?.kind === 'peer' ? <span className="message-origin">From {turn.messageOrigin.name}</span> : turn.workflow_run ? <span className="message-origin">Workflow</span> : turn.parent ? <span className="message-origin">Subtask</span> : null}
-                    <button type="button" className="link-btn link-btn--small" onClick={async () => { try { await navigator.clipboard.writeText(turn.text); } catch { setError('Message could not be copied. Select the text to copy it.'); } }}>Copy</button>
-                    <a className="link-btn link-btn--small" href={`#turn-${turn.id}`} onClick={event => { event.preventDefault(); openFocused(turn.id); }}>View task</a>
+                    <MessageCopyButton text={turn.text} label="Copy message" />
+                    <IconButton label="View task" onClick={() => openFocused(turn.id)}><ListRestart size={14} aria-hidden /></IconButton>
                     {turn.parent && !turn.messageOrigin && <a className="link-btn link-btn--small" href={`#turn-${turn.parent}`} onClick={event => { event.preventDefault(); openFocused(turn.parent!); }}>View parent task</a>}
                     {turn.messageOrigin && turn.messageOrigin.kind !== 'peer' && <button type="button" className="link-btn link-btn--small" onClick={() => turn.messageOrigin!.channel ? onOpenChannel?.(turn.messageOrigin!.channel) : onOpenAgent?.(turn.messageOrigin!.agent!, turn.messageOrigin!.thread ?? '')}>Open requester conversation</button>}
                 </HumanMessage>
-                {turn.room ? <><TurnActivity turn={turn} agentName={agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} /><RoomMessages room={turn.room} members={members} scope={path.slice(0, -6)} pending={turns.filter(item => item.room?.root === turn.room!.root && !item.room.silent && !turn.room!.messages.some(message => message.kind === 'reply' && message.turn === item.id))} details={id => { const item = turns.find(item => item.id === id); return item && <><TurnActivity turn={{ ...item, room: { quiet: [] } }} agentName={members.find(member => member.id === item.agent)?.name ?? agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} /><TaskControls key={`${item.id}:${item.revision}`} turn={item} path={path} members={members} archived={archived} />{!['done','cancelled'].includes(item.status) && <Button size="sm" variant="ghost" onClick={() => void cancel(item)}>Stop</Button>}{item.questions?.map(question => <QuestionCard key={question.id} question={question} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}{item.approvals?.map(approval => <ApprovalCard key={approval.id} approval={approval} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}{item.computerWait && <ComputerRequestCard agent={item.agent} name={item.agent_name ?? agent.name} wait={item.computerWait} request={api} />}{item.generatedFiles?.map(file => <p key={file.id}><a className="k-link" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}>{file.name}</a><span className="message-role"> {file.size} bytes</span></p>)}{item.harnessApprovals?.map(approval => <HarnessApprovalCard key={approval.id} approval={approval} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}</>; }} /></> : <AgentMessage identity={channel && members.length > 1 && <div className="agent-identity"><AgentAvatar agent={members.find(member => member.id === turn.agent) ?? { id: turn.agent, name: turn.agent_name ?? agent.name }} size={24} /><strong className="message-name">{turn.agent_name ?? agent.name}</strong></div>}>
+                {turn.room ? <><RoomMessages room={turn.room} members={members} scope={path.slice(0, -6)} turns={turns} controls={id => { const item = turns.find(item => item.id === id); return item && <><TaskControls key={`${item.id}:${item.revision}`} turn={item} path={path} members={members} archived={archived} />{!['done','cancelled'].includes(item.status) && <IconButton label="Stop" onClick={() => void cancel(item)}><Square size={14} aria-hidden /></IconButton>}{item.reply && <MessageCopyButton text={item.reply} />}</>; }} pending={turns.filter(item => item.room?.root === turn.room!.root && !item.room.silent && !turn.room!.messages.some(message => message.kind === 'reply' && message.turn === item.id))} details={id => { const item = turns.find(item => item.id === id); return item && <TurnActivity logOnly turn={item} agentName={members.find(member => member.id === item.agent)?.name ?? agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} />; }} extras={id => { const item = turns.find(item => item.id === id); return item && <>{item.questions?.map(question => <QuestionCard key={question.id} question={question} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}{item.approvals?.map(approval => <ApprovalCard key={approval.id} approval={approval} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}{item.computerWait && <ComputerRequestCard agent={item.agent} name={item.agent_name ?? agent.name} wait={item.computerWait} request={api} />}{item.generatedFiles?.map(file => <p key={file.id}><a className="k-link" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}>{file.name}</a><span className="message-role"> {file.size} bytes</span></p>)}{item.harnessApprovals?.map(approval => <HarnessApprovalCard key={approval.id} approval={approval} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}</>; }} /></> : <AgentMessage identity={channel && members.length > 1 && <div className="agent-identity"><AgentAvatar agent={members.find(member => member.id === turn.agent) ?? { id: turn.agent, name: turn.agent_name ?? agent.name }} size={24} /><strong className="message-name">{turn.agent_name ?? agent.name}</strong></div>}>
                     <TurnActivity turn={turn} agentName={agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} />
-                    {!channel && turn.checkpoint?.restorable && ['done', 'failed', 'cancelled', 'interrupted'].includes(turn.status) && <RestoreCheckpoint agent={turn.agent} turn={turn.id} request={api} />}
                     {!channel && (!!turn.agentMessages?.length || !!turn.receivedAgentReplies?.length) && <AgentConversation items={[...(turn.agentMessages ?? []), ...(turn.receivedAgentReplies ?? []).filter(item => !turn.agentMessages?.some(sent => sent.id === item.id))]} sender={turn.agent_name ?? agent.name} scope={path.slice(0, -6)} onOpen={onOpenAgent} />}
                     <div className="message-body">
                       {channel && turn.parent && <div className="room-request"><strong>{turn.messageOrigin?.name ?? turn.agent_name ?? agent.name}</strong><p>{turn.text}</p></div>}
                       {turn.dispatch_label && <p className="dispatch-receipt">{turn.dispatch_label}{turn.dispatch_target && <> · <button type="button" className="link-btn link-btn--small" onClick={() => openFocused(turn.dispatch_target!)}>{turn.dispatch_mode === 'steer' ? 'View target turn' : 'View interrupted turn'}</button></>}</p>}
-                      {turn.status === 'done' && !turn.reply && turn.dispatch_label ? null : turn.reply ? <div className="legacy"><Markdown text={turn.reply} scope={path.slice(0, -6)} origin={window.location.origin} /></div>
-                        : livePartial(turn) ? <div className="live-answer" aria-label="Streaming answer"><div className="legacy"><Markdown text={turn.partial!.text} scope={path.slice(0, -6)} origin={window.location.origin} /></div><span className="stream-caret" aria-hidden /></div>
+                      {turn.status === 'done' && !turn.reply && turn.dispatch_label ? null : (turn.reply || livePartial(turn)) ? <div className={livePartial(turn) ? "live-answer" : "reply-answer"} aria-label={livePartial(turn) ? "Streaming answer" : "Agent reply"}><div className="legacy"><StreamingMarkdown text={turn.reply ?? turn.partial!.text} scope={path.slice(0, -6)} origin={window.location.origin} /></div>{livePartial(turn) && <span className="stream-caret" aria-hidden />}</div>
                         : <p className={turn.error ? 'message-error' : 'message-muted'}>{turn.error && <CircleAlert size={14} aria-hidden />}{turn.error ?? <span>{(turn.approvals?.some(approval => approval.state === 'approval') || turn.harnessApprovals?.some(approval => approval.state === 'approval')) ? 'Review the connected app action to continue.' : turn.questions?.some(question => question.answer === null) ? 'Answer the question to continue the task.' : turn.workflow_run ? 'Workflow finished without a text result.' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) ? 'Results will be combined after all recipients finish. New messages include results already available.' : turn.events?.some(event => event.status === 'waiting') ? 'Waiting for a signed event.' : turn.waiting_for ? 'Waiting for child task results.' : turn.status === 'queued' ? 'Waiting for turn.' : 'Waiting for provider response...'}</span>}</p>}
-                      {!turn.reply && turn.partial?.text && !livePartial(turn) && <div className="message-partial"><p className="message-muted">Text from a previous attempt from {turn.partial.model}. Not a final result.</p><div className="legacy"><Markdown text={turn.partial.text} scope={path.slice(0, -6)} origin={window.location.origin} /></div></div>}
+                      {!turn.reply && turn.partial?.text && !livePartial(turn) && <div className="message-partial"><span className="message-muted">Partial reply</span><div className="legacy"><Markdown text={turn.partial.text} scope={path.slice(0, -6)} origin={window.location.origin} /></div></div>}
                     </div>
-                    <TurnStatus tone={tone(turn)} label={statusLabel(turn)} model={turn.answer_model ?? turn.partial?.model} />
-                    <div className="turn-controls">
+                    {((turn.status !== 'done' && !['Running', 'Queued'].includes(statusLabel(turn))) || turn.activity?.fallback_model) && <TurnStatus tone={tone(turn)} label={turn.activity?.fallback_model ? `${statusLabel(turn)} · Fallback model used` : statusLabel(turn)} />}
+                    <div className="turn-controls" role="group" aria-label="Message actions">
+                      {!channel && turn.checkpoint?.restorable && ['done', 'failed', 'cancelled', 'interrupted'].includes(turn.status) && <RestoreCheckpoint agent={turn.agent} turn={turn.id} request={api} />}
+                      {turn.reply && <MessageCopyButton text={turn.reply} />}
                       {turn.reply && <SpeechPlayback key={`${path}:${turn.id}`} owner={`${path}:${turn.id}`} text={turn.reply} />}
                       {turn.status === 'done' && turn.reply && <ForkAnswer path={path} turn={turn} onOpen={onOpenAgent} />}
                       {turn.dispatch_mode !== 'steer' && <TaskControls key={`${turn.id}:${turn.revision}`} turn={turn} path={path} members={channel ? members : []} archived={archived || !!turn.editing} />}
-                      {(!['done','cancelled'].includes(turn.status)) && <Button size="sm" variant="ghost" onClick={() => void cancel(turn)}>{turn.waiting_for ? 'Cancel task and delegation' : turn.status === 'running' ? 'Stop' : turn.status === 'queued' && !turn.paused ? 'Cancel queued task' : 'Cancel task'}</Button>}
+                      {(!['done','cancelled'].includes(turn.status)) && <IconButton label={turn.waiting_for ? 'Cancel task and delegation' : turn.status === 'running' ? 'Stop' : turn.status === 'queued' && !turn.paused ? 'Cancel queued task' : 'Cancel task'} onClick={() => void cancel(turn)}><Square size={14} aria-hidden /></IconButton>}
                     </div>
                     <div className="turn-extras k-stack">
                       {turn.events?.map(event => <section className="k-stack" key={event.id}><Row title={`Event ${event.event}: ${event.status === 'waiting' ? 'Waiting' : event.status === 'received' ? 'Received' : event.status === 'expired' ? 'Expired' : 'Closed'}`} meta={new Date(event.deadline).toLocaleString('en-US')} />{event.status === 'waiting' && !archived && <EventConnection path={`/api/turn-waits/${event.id}`} request={api} />}</section>)}

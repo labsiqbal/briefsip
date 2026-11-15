@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Square, Volume2 } from 'lucide-react';
-import { Button, Card, Row, Section, Select, Switch, Tooltip } from './ui/kit';
+import { Button, Card, Row, Section, Select, Switch, IconButton } from './ui/kit';
 import { createSpeechPlayer, voiceKey } from '../speech';
 import { speechPreferenceStore } from '../speech-preference';
 import './SpeechPlayback.css';
@@ -43,7 +43,7 @@ function SpeechButton({ owner, text, voice }: { owner: string; text: string; voi
     } catch { setNotice('Voice unavailable. Pick a voice in Settings > Appearance.'); }
   }
   const label = playing ? 'Stop' : 'Listen';
-  return <span className="speech-playback"><Tooltip content={playing ? 'Stop reading' : 'Listen to answer'}><Button size="sm" variant="ghost" aria-label={label} icon={playing ? <Square size={14} aria-hidden /> : <Volume2 size={14} aria-hidden />} onClick={listen}>{label}</Button></Tooltip>{(notice || error) && <span className="k-field__error" role="status">{notice || error}</span>}</span>;
+  return <span className="speech-playback"><IconButton label={playing ? 'Stop reading' : 'Listen to answer'} aria-label={label} onClick={listen}>{playing ? <Square size={14} aria-hidden /> : <Volume2 size={14} aria-hidden />}</IconButton>{(notice || error) && <span className="k-field__error" role="status">{notice || error}</span>}</span>;
 }
 
 export function VoiceSettings() {

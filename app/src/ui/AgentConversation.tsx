@@ -1,9 +1,11 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { ChevronDown, ChevronRight, CircleAlert } from 'lucide-react';
+import { Collapsible as Disclosure } from 'radix-ui';
 import { AgentAvatar } from '../AgentAvatar';
-import { Markdown } from '../Markdown';
+import { Markdown, StreamingMarkdown } from '../Markdown';
 import { AgentMessage } from './ChatPrimitives';
-import { Collapsible } from './kit';
-import type { TurnActivityData } from './transcript';
+import { Collapsible, IconButton } from './kit';
+import { activityLabel, livePartial, liveTurn, type TurnActivityData } from './transcript';
 import { TurnActivity } from './TurnActivity';
 
 export type Exchange = { id: string; agent: string; name: string; role?: string; machine?: string; thread: string; task?: string; reply: string | null; detailReply?: string | null; error: string | null; status: string; paused: number; truncated: boolean; activity?: TurnActivityData; created?: string; generatedFiles?: { id: string; name: string; size: number; thread: string }[] };
@@ -17,13 +19,35 @@ export function AgentConversation({ items, sender, scope, onOpen }: { items: Exc
   </div>)}</section>;
 }
 export type RoomView = { root: string; round: number; silent: string | null; note: string | null; quiet: { agent: string; name: string; silent: string }[]; messages: { seq: number; turn: string; agent: string; name: string; role: string; target_name?: string; text: string; kind: string }[] };
-export function RoomMessages({ room, members, pending, scope, details }: { room: RoomView; members: { id: string; name: string; role: string; avatar_revision?: number }[]; pending: { id: string; agent: string; status: string; error: string | null }[]; scope: string; details: (turn: string) => ReactNode }) {
+type RoomTurn = { id: string; agent: string; status: string; paused: number; created: string; error: string | null; partial?: { text: string; status: string } | null; activity?: TurnActivityData; questions?: { answer: string | null }[] };
+type RoomMember = { id: string; name: string; role: string; avatar_revision?: number };
+function RoomReply({ turn, member, text, scope, details, controls, extras }: { turn: RoomTurn; member: RoomMember; text?: string; scope: string; details: ReactNode; controls: ReactNode; extras: ReactNode }) {
+  const [open, setOpen] = useState(false), [now, setNow] = useState(Date.now);
+  const live = liveTurn(turn), streaming = livePartial(turn);
+  useEffect(() => {
+    if (!live) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [live]);
+  useEffect(() => { if (turn.status === 'done') setOpen(false); }, [turn.status]);
+  const answer = text ?? (turn.status === 'running' && !turn.paused ? turn.partial?.text ?? '' : '');
+  return <Disclosure.Root open={open} onOpenChange={setOpen} asChild><section className="room-agent" aria-label={`Reply from ${member.name}`}>
+    <div className={`${text ? 'room-agent__line' : 'room-pending'}${live ? ' is-working' : ''}`}>
+      <AgentAvatar agent={member} size={20} /><strong className="room-agent__name message-name" title={member.name}>{member.name}</strong>
+      <span className="room-agent__status" title={activityLabel(turn, now)}>{live && turn.status !== 'queued' && <span className="activity-working" aria-hidden />}{activityLabel(turn, now)}{turn.activity?.fallback_model && <CircleAlert size={12} role="img" aria-label="Fallback model used" />}</span>
+      <div className="room-agent__actions"><Disclosure.Trigger asChild><IconButton label={`${open ? 'Hide' : 'Show'} activity for ${member.name}`}>{open ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}</IconButton></Disclosure.Trigger>{controls}</div>
+    </div>
+    {answer && <div className="message-body" aria-label={streaming ? `Streaming answer from ${member.name}` : `Answer from ${member.name}`}><div className="legacy"><StreamingMarkdown text={answer} scope={scope} origin={window.location.origin} /></div></div>}
+    {extras}
+    {turn.error && <p className="message-error">{turn.error}</p>}
+    <Disclosure.Content className="room-agent__activity">{details}</Disclosure.Content>
+  </section></Disclosure.Root>;
+}
+export function RoomMessages({ room, members, pending, turns, scope, details, controls, extras }: { room: RoomView; members: RoomMember[]; pending: RoomTurn[]; turns: RoomTurn[]; scope: string; details: (turn: string) => ReactNode; controls: (turn: string) => ReactNode; extras: (turn: string) => ReactNode }) {
+  const rows = [...room.messages.map(item => ({ key: `${item.kind}-${item.turn}`, item, turn: turns.find(turn => turn.id === item.turn) })), ...pending.map(turn => ({ key: `reply-${turn.id}`, item: undefined, turn }))];
   return <div className="room-conversation" aria-label="Room conversation">
-    {room.messages.map(item => <AgentMessage key={item.seq} identity={<div className="agent-identity"><AgentAvatar agent={members.find(member => member.id === item.agent) ?? { id: item.agent, name: item.name }} size={24} /><strong className="message-name">{item.name}</strong><span className="message-role">{item.role}</span>{item.target_name && <span className="message-role">to {item.target_name}</span>}</div>}>
-      <div className={item.kind === 'request' ? 'room-message-request' : 'message-body'}><div className="legacy"><Markdown text={item.text} scope={scope} origin={window.location.origin} /></div></div>
-      {item.kind === 'reply' && details(item.turn)}
-    </AgentMessage>)}
-    {pending.map(turn => <div className="room-pending" key={turn.id}><AgentAvatar agent={members.find(member => member.id === turn.agent) ?? { id: turn.agent, name: turn.agent }} size={20} /><span>{members.find(member => member.id === turn.agent)?.name} · {turn.error ?? (turn.status === 'running' ? 'Replying...' : turn.status === 'queued' ? 'Queued' : turn.status)}</span>{details(turn.id)}</div>)}
+    {rows.map(({ key, item, turn }) => item?.kind === 'request' ? <AgentMessage key={key} identity={<div className="agent-identity"><AgentAvatar agent={members.find(member => member.id === item.agent) ?? { id: item.agent, name: item.name }} size={24} /><strong className="message-name">{item.name}</strong>{item.target_name && <span className="message-role">to {item.target_name}</span>}</div>}><div className="room-message-request legacy"><Markdown text={item.text} scope={scope} origin={window.location.origin} /></div></AgentMessage>
+      : <RoomReply key={key} turn={turn ?? { id: item!.turn, agent: item!.agent, status: 'done', paused: 0, created: '', error: null }} member={members.find(member => member.id === (turn?.agent ?? item?.agent)) ?? { id: item?.agent ?? turn!.agent, name: item?.name ?? turn!.agent, role: '' }} text={item?.text} scope={scope} details={details(turn?.id ?? item!.turn)} controls={controls(turn?.id ?? item!.turn)} extras={extras(turn?.id ?? item!.turn)} />)}
     {room.note && <p className="room-system-note" role="status">{room.note}</p>}
   </div>;
 }

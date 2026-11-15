@@ -27,7 +27,17 @@ async function fixture(runtime: HarnessRuntime, write = true) {
 for(const runtime of ['codex','claude'] as const) {
   test(`${runtime}: stream, tool activity, MCP lifetime, follow-up and restart resume`,async()=>{
     const f=await fixture(runtime);try {
+      const streamController = new AbortController();
+      const stream = await fetch(f.app.origin + f.path + '/turns/stream', { signal: streamController.signal });
+      const reader = stream.body!.getReader();
       const first=await f.send('FIRST'),partial=await f.until(first,row=>row.partial?.text||row.status==='failed');assert.equal(partial.status,'running',partial.error);
+      try {
+        const frame = new TextDecoder().decode((await reader.read()).value);
+        assert(frame.startsWith('data: '));
+        const snapshot = JSON.parse(frame.split('\n\n')[0].slice(6));
+        assert.equal(snapshot.id, first); assert(snapshot.partial.text); assert.equal(snapshot.partial.seq, partial.partial.seq);
+      } finally { streamController.abort(); }
+
       const done=await f.until(first,row=>['done','failed'].includes(row.status));assert.equal(done.status,'done',done.error);assert.equal(done.reply,'Harness finished');assert(done.activity.harness.length);assert.equal(done.activity.harness[0].state,'completed');
       const second=await f.send('SECOND');assert.equal((await f.until(second,row=>['done','failed'].includes(row.status))).status,'done');
       await f.restart();const third=await f.send('THIRD');assert.equal((await f.until(third,row=>['done','failed'].includes(row.status))).status,'done');

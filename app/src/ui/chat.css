@@ -240,3 +240,38 @@
 .room-message-request { padding: 8px 12px; background: var(--color-bg-tertiary); border-radius: 12px; }
 .room-pending { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; color: var(--color-text-secondary); font-size: 12px; }
 .room-system-note { color: var(--color-text-secondary); font-size: 12px; text-align: center; margin: 4px 0; }
+
+/* Quiet, keyboard-reachable message actions; reserve space to avoid layout shifts. */
+.turn-controls { opacity: 0; transition: opacity 120ms var(--ease-out); }
+.turn-block:hover .turn-controls, .turn-block:focus-within .turn-controls,
+.turn-block.is-latest .turn-controls, .turn-controls:has([role="alert"]),
+.turn-controls:has([role="status"]:not(:empty)) { opacity: 1; }
+.turn-controls .k-icon-btn, .human-meta .k-icon-btn { width: 32px; height: 32px; }
+.turn-controls .checkpoint-action, .turn-controls .turn-task-controls { display: contents; }
+.stream-markdown { display: flex; flex-direction: column; gap: 12px; }
+.stream-markdown .markdown > :first-child { margin-top: 0; }
+.stream-markdown .markdown > :last-child { margin-bottom: 0; }
+.activity-label { display: inline-flex; align-items: center; gap: 7px; }
+.activity-working { flex-shrink: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--color-text-secondary); animation: stream-caret 1.5s ease-in-out infinite; }
+.transcript-jump { position: absolute; bottom: 12px; left: 50%; z-index: 3; transform: translateX(-50%); }
+.transcript-jump .jump-btn { position: static; transform: none; }
+@media (hover: none) { .turn-controls { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .turn-controls { transition: none; } .activity-working { animation: none; } }
+
+.room-agent { width: 100%; min-width: 0; display: grid; gap: 8px; }
+.room-agent .room-pending, .room-agent .room-agent__line { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; min-width: 0; min-height: 32px; white-space: nowrap; }
+.room-agent .room-pending > .agent-avatar, .room-agent .room-agent__line > .agent-avatar { flex-shrink: 0; }
+.room-agent__name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 13px; font-weight: 500; }
+.room-agent__status { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.room-agent__actions { display: flex; align-items: center; flex: 0 0 auto; margin-left: auto; }
+.room-agent__actions .turn-task-controls { display: contents; }
+.room-agent__actions .k-icon-btn { width: 30px; height: 30px; flex-shrink: 0; }
+.room-agent__activity { min-width: 0; }
+/* Keep long conversation names from clipping a second placeholder line. */
+.composer__input:placeholder-shown { white-space: nowrap; text-overflow: ellipsis; }
+
+.room-agent__actions { opacity: 0; transition: opacity 120ms var(--ease-out); }
+.room-agent:hover .room-agent__actions, .room-agent:focus-within .room-agent__actions,
+.room-agent:has(.room-pending) .room-agent__actions, .room-agent:last-of-type .room-agent__actions { opacity: 1; }
+@media (hover: none) { .room-agent__actions { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .room-agent__actions { transition: none; } }

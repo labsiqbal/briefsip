@@ -942,5 +942,162 @@
       "dependencies": [],
       "compatibilityCheck": "app/agent-browser.test.ts"
     }
+  ],
+  "streamActionsSourceEntries": [
+    {
+      "sourcePath": "apps/web/src/components/chat/markdownStreamBlocks.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "ba8e8c070e9c3bce8811d70b499e132aa967f9ad22d07d343fd1471fce30b236",
+      "symbols": [
+        "splitMarkdownBlocks"
+      ],
+      "localPaths": [
+        "app/src/ui/markdownStreamBlocks.ts",
+        "app/src/Markdown.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Copy conservative blank-line/fence splitter and preserve whole-document fallback; memoized completed blocks retain DOM through partial/final transitions.",
+      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; app/provider-stream.test.ts; app/harness.test.ts; work/rebuild/ui-smoke/stream-actions-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/markdownStreamBlocks.test.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "ce734cfd3e79f801847bae1d6382d36fb95e84cf0f3436647066e873d3af923e",
+      "symbols": [
+        "streamed-prefix equivalence"
+      ],
+      "localPaths": [
+        "app/markdown-stream-blocks.test.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt native every-prefix equivalence tests to Briefsip marked renderer; no upstream test framework dependency.",
+      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; app/provider-stream.test.ts; app/harness.test.ts; work/rebuild/ui-smoke/stream-actions-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/MessageCopyButton.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "ba8fb4ccb8b04ea920db0e60e849564a195f25b9937ed417db5e0efabb7ec356",
+      "symbols": [
+        "MessageCopyButton"
+      ],
+      "localPaths": [
+        "app/src/ui/MessageCopyButton.tsx"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt clipboard action, copied check feedback, accessible tooltip and failure state to native Clipboard API and Briefsip Radix kit.",
+      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; app/provider-stream.test.ts; app/harness.test.ts; work/rebuild/ui-smoke/stream-actions-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/TimelineAssistantRows.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "5b00daeafabfee1ae64965b71dd553b41d253afbb64ac5fb3579ed40e07e0793",
+      "symbols": [
+        "AssistantForkButton",
+        "AssistantMessageMeta"
+      ],
+      "localPaths": [
+        "app/src/App.tsx",
+        "app/src/ui/chat.css",
+        "app/src/SourceControl.tsx",
+        "app/src/SpeechPlayback.tsx"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt quiet icon actions revealed by message hover/focus, always visible on latest reply. Preserve restore journal and add fork/stop confirmation.",
+      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; app/provider-stream.test.ts; app/harness.test.ts; work/rebuild/ui-smoke/stream-actions-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/AgentElapsed.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "346204d67d7a9ada2d666bb0b2373ad2c1b3f3892d2e234bddd649afefa1e447",
+      "symbols": [
+        "AgentElapsed"
+      ],
+      "localPaths": [
+        "app/src/ui/TurnActivity.tsx",
+        "app/src/ui/AgentConversation.tsx",
+        "app/src/ui/transcript.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt live elapsed clock with tabular numerals to provider-ledger timing and one-line room-agent status.",
+      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; app/provider-stream.test.ts; app/harness.test.ts; work/rebuild/ui-smoke/stream-actions-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/TimelineWorkGroupRows.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "96098d9a8e0567aab54fab26f0ddd3fb3819802f89bfac1fac6c2550a3b082be",
+      "symbols": [
+        "WorkGroupSection"
+      ],
+      "localPaths": [
+        "app/src/ui/TurnActivity.tsx",
+        "app/src/ui/AgentConversation.tsx"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt compact work-log disclosure and terminal collapse to existing Radix Collapsible; room-agent logs use trailing chevron with streaming answer in place.",
+      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; app/provider-stream.test.ts; app/harness.test.ts; work/rebuild/ui-smoke/stream-actions-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/WorkLog.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "3e88c0968a662b113269f9a96c8ff38f5e56b03071ead6fb10ead18144a14083",
+      "symbols": [
+        "WorkLogButton",
+        "WorkLogList"
+      ],
+      "localPaths": [
+        "app/src/ui/TurnActivity.tsx",
+        "app/src/ui/chat.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt quiet inline work summary and grouped steps to Briefsip tokens, existing tool ledger and accessible disclosures.",
+      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; app/provider-stream.test.ts; app/harness.test.ts; work/rebuild/ui-smoke/stream-actions-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/useTimelineFollow.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "70eaea4076ae31fbe8a3b6f6c88a8485c79fee63ee308883352c4ff5a053dac8",
+      "symbols": [
+        "useTimelineFollow"
+      ],
+      "localPaths": [
+        "app/src/ui/useTimelineFollow.ts",
+        "app/src/App.tsx"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt following versus free-scroll and explicit jump-to-latest to native scroll container and ResizeObserver. No virtual-list dependency.",
+      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; app/provider-stream.test.ts; app/harness.test.ts; work/rebuild/ui-smoke/stream-actions-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/timelineScrollAnchoring.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "c7d5d0d843196987b718b67d58115fb4047c44f140a3a282bcd35f6f74f07dc2",
+      "symbols": [
+        "TimelineScrollMode"
+      ],
+      "localPaths": [
+        "app/src/ui/useTimelineFollow.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt follow/free-scroll separation and measured bottom position; native scrollTop updates stay within transcript and never scroll outer layout.",
+      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; app/provider-stream.test.ts; app/harness.test.ts; work/rebuild/ui-smoke/stream-actions-smoke.mjs"
+    }
   ]
 }

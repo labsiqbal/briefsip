@@ -1,5 +1,5 @@
 import { ArrowUp, ChevronDown, Paperclip } from 'lucide-react';
-import { useId, useLayoutEffect, useRef, useState, type ComponentProps, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { forwardRef, useId, useLayoutEffect, useRef, useState, type ComponentProps, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { AgentAvatar } from '../AgentAvatar';
 
 type ChatAgent = ComponentProps<typeof AgentAvatar>['agent'];
@@ -18,9 +18,9 @@ export function ChatHeader({ agent, title = agent.name, onToggle, expanded, menu
   </header>;
 }
 
-export function ChatTranscript({ children, ...props }: ComponentProps<'section'>) {
-  return <div className="transcript-wrap"><section className="transcript" aria-label="Conversation history" {...props}><div className="transcript__col">{children}</div></section></div>;
-}
+export const ChatTranscript = forwardRef<HTMLElement, ComponentProps<'section'> & { jump?: ReactNode }>(function ChatTranscript({ children, jump, ...props }, ref) {
+  return <div className="transcript-wrap"><section ref={ref} className="transcript" aria-label="Conversation history" {...props}><div className="transcript__col">{children}</div></section>{jump && <div className="transcript-jump">{jump}</div>}</div>;
+});
 
 export function ChatEmptyState({ agent, title = `Start with ${agent.name}`, children }: { agent: ChatAgent; title?: string; children: ReactNode }) {
   return <div className="empty-chat"><AgentAvatar agent={agent} size={64} /><div className="empty-chat__title">{title}</div><div className="empty-chat__sub">{children}</div></div>;
