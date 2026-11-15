@@ -45,3 +45,6 @@
 .computer-compact-info strong { font-size: 12px; font-weight: 500; }
 .right-panel__computer .computer-viewer__actions { gap: 4px; }
 .right-panel__computer .computer-viewer__actions .k-btn { padding-inline: 10px; }
+
+.computer-viewer__poll { position: absolute; width: 1px; height: 1px; }
+.computer-viewer__toolbar[hidden] { display: none; }
