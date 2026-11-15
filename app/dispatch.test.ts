@@ -236,3 +236,61 @@ test('room Stop seals gated SSE partial and effects across lost response, restar
     assert.equal(stopped.room.messages.length,0);const count=f.calls.length;await f.restart();assert.deepEqual(await f.request(stopPath,command),receipt);assert.equal(f.calls.length,count);
   }finally{await f.close();}
 });
+
+test('queued item promotes to steer once, uses safe point and retains original turn ID', async () => {
+  const f = await fixture(); try {
+    const root = randomUUID(), text = `LOOP:${root}`;
+    await f.request(f.path, { id: root, text }); await until(() => f.held.has(text), Boolean);
+    const queued = randomUUID(); await f.request(f.path, { id: queued, text: 'Promoted guidance' });
+    const command = { id: randomUUID(), revision: 1, mode: 'steer', targetTurn: root };
+    const promoted = await f.request(`${f.path}/${queued}/dispatch`, command);
+    assert.equal(promoted.id, queued); assert.equal(promoted.dispatch_mode, 'steer');
+    assert.deepEqual(await f.request(`${f.path}/${queued}/dispatch`, command), promoted);
+    await f.request(`${f.path}/${queued}/dispatch`, { ...command, mode: 'restart' }, 409);
+    f.held.get(text)!(); await f.turn(root, row => row.status === 'done'); await f.turn(queued, row => row.status === 'done');
+    assert.equal((await f.request(f.path)).length, 2);
+    for (const body of f.calls.slice(1)) assert.equal(body.messages.filter((row: any) => row.role === 'user' && row.content === 'Promoted guidance').length, 1);
+  } finally { await f.close(); }
+});
+
+test('queued dispatch rejects stale revision, held editor, cross-conversation target and started message', async () => {
+  const f = await fixture(); try {
+    const root = randomUUID(), text = `HOLD:${root}`;
+    await f.request(f.path, { id: root, text }); await until(() => f.held.has(text), Boolean);
+    const queued = randomUUID(); await f.request(f.path, { id: queued, text: 'Queue remains unchanged' });
+    const command = () => ({ id: randomUUID(), revision: 1, mode: 'steer', targetTurn: root });
+    await f.request(`${f.path}/${queued}/dispatch`, { ...command(), revision: 99 }, 409);
+    const other = await f.request('/api/agents', { id: randomUUID(), name: 'Other', instructions: 'Help.', model: 'fake' });
+    const wrong = randomUUID(); await f.request(`/api/agents/${other.id}/turns`, { id: wrong, text: `HOLD:${wrong}` });
+    await f.request(`${f.path}/${queued}/dispatch`, { ...command(), targetTurn: wrong }, 404);
+    const edit = { id: randomUUID(), editor: randomUUID(), action: 'hold', revision: 1 };
+    const held = await f.request(`${f.path}/${queued}/edit`, edit);
+    await f.request(`${f.path}/${queued}/dispatch`, { ...command(), revision: held.revision }, 409);
+    await f.request(`${f.path}/${root}/dispatch`, command(), 409);
+    assert.equal((await f.request(f.path)).find((row: any) => row.id === queued).dispatch_mode, 'queue');
+  } finally { await f.close(); }
+});
+
+test('queued restart cancels captured generation; late steering stays queued without duplicate turn', async () => {
+  const f = await fixture(); try {
+    const root = randomUUID(), text = `HOLD:${root}`;
+    await f.request(f.path, { id: root, text }); await until(() => f.held.has(text), Boolean);
+    const queued = randomUUID(); await f.request(f.path, { id: queued, text: 'NEW:promoted restart' });
+    const command = { id: randomUUID(), revision: 1, mode: 'restart', targetTurn: root };
+    await f.request(`${f.path}/${queued}/dispatch`, command);
+    await f.turn(root, row => row.status === 'cancelled'); await f.turn(queued, row => row.status === 'done');
+    await f.request(`${f.path}/${queued}/dispatch`, command);
+    assert.equal((await f.request(f.path)).length, 2);
+    const next = randomUUID(), hold = `HOLD:${next}`;
+    await f.request(f.path, { id: next, text: hold }); await until(() => f.held.has(hold), Boolean);
+    f.held.get(hold)!(); await f.turn(next, row => row.status === 'done');
+    const barrier = randomUUID(), barrierText = `HOLD:${barrier}`;
+    await f.request(f.path, { id: barrier, text: barrierText }); await until(() => f.held.has(barrierText), Boolean);
+    const late = randomUUID(); await f.request(f.path, { id: late, text: 'Late guidance' });
+    const response = await f.request(`${f.path}/${late}/dispatch`, { id: randomUUID(), revision: 1, mode: 'steer', targetTurn: next });
+    assert.equal(response.dispatch_mode, 'queue'); assert.equal(response.dispatch_label, 'Queued after active turn');
+    f.held.get(barrierText)!();
+    await f.turn(late, row => row.status === 'done');
+    assert.equal(f.calls.filter(body => body.messages.at(-1)?.content === 'Late guidance').length, 1);
+  } finally { await f.close(); }
+});

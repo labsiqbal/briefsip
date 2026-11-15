@@ -15,6 +15,7 @@ import { AgentForm } from './AgentProfileDialog';
 import { AgentAvatar } from './AgentAvatar';
 import { QueuePanel } from './QueuePanel';
 import { QueueEditor } from './QueueEditor';
+import { CancelTurn, QueuedRunsControl } from './ui/RunControls';
 import { Markdown, StreamingMarkdown } from './Markdown';
 import { MessageCopyButton } from './ui/MessageCopyButton';
 import { useTimelineFollow } from './ui/useTimelineFollow';
@@ -23,7 +24,7 @@ import { SpeechPlayback } from './SpeechPlayback';
 import { useConversationAttachments } from './ConversationAttachments';
 import { Attachments } from './Attachments';
 import { TurnActivity } from './ui/TurnActivity';
-import { AgentMessage, ChatComposer, ChatEmptyState, ChatHeader, ChatTranscript, HumanMessage, TurnStatus } from './ui/ChatPrimitives';
+import { AgentMessage, ChatComposer, ChatEmptyState, ChatHeader, ChatTranscript, ChatTurn, HumanMessage, TurnStatus } from './ui/ChatPrimitives';
 import { liveTurn, livePartial, streamIdentity, turnPollDelay, type TurnActivityData } from './ui/transcript';
 import { TimelineMinimap } from './ui/TimelineMinimap';
 import { deriveTimelineMinimapItems } from './ui/timelineMinimapItems';
@@ -114,7 +115,7 @@ function RoomStop({ room, path, archived, onStopped }: { room: RoomView; path: s
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   async function stop() {
     if (busy) return;
-    if (!pending && !await confirm({ title: 'Stop discussion?', description: 'Steps already sent may have taken effect. Provider usage may still be counted.', confirm: 'Stop discussion', danger: true })) return;
+    if (!pending && !await confirm({ title: 'Stop discussion?', description: 'Steps already sent may have taken effect.', confirm: 'Stop discussion', danger: true })) return;
     const request = pending ?? { id: crypto.randomUUID(), generation: room.generation };
     try {
       sessionStorage.setItem(key, JSON.stringify(request)); setPending(request); setBusy(true); setError('');
@@ -127,7 +128,7 @@ function RoomStop({ room, path, archived, onStopped }: { room: RoomView; path: s
   return <><IconButton label={pending ? 'Retry Stop discussion' : 'Stop discussion'} disabled={busy || archived} onClick={() => void stop()}><Square size={14} aria-hidden /></IconButton>{error && <span className="message-error" role="alert">{error}</span>}</>;
 }
 
-function TaskControls({ turn, path, members, archived }: { turn: Turn; path: string; members: Agent[]; archived: boolean }) {
+function TaskControls({ turn, path, members, archived, overflow = false, onChangeModel }: { onChangeModel?: () => void; overflow?: boolean; turn: Turn; path: string; members: Agent[]; archived: boolean }) {
   const [recipient, setRecipient] = useState(''), [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [resumeOpen, setResumeOpen] = useState(false);
@@ -143,14 +144,14 @@ function TaskControls({ turn, path, members, archived }: { turn: Turn; path: str
     finally { setBusy(false); }
   }
   return <div className="turn-task-controls bs-root">
-    {pending.current ? <IconButton label="Retry control" disabled={busy} onClick={() => void control(pending.current!.action)}><RefreshCw size={14} aria-hidden /></IconButton> : resumable ? <><IconButton label="Resume or reassign" onClick={() => setResumeOpen(true)}><Play size={14} aria-hidden /></IconButton><Dialog open={resumeOpen} onOpenChange={setResumeOpen} title="Resume or reassign">
+    {pending.current ? <IconButton label="Retry control" disabled={busy} onClick={() => void control(pending.current!.action)}><RefreshCw size={14} aria-hidden /></IconButton> : resumable ? <><Button size="sm" variant="ghost" onClick={() => setResumeOpen(true)}>{turn.status === 'failed' ? 'Retry' : 'Resume'}</Button><ActionMenu label="Recovery actions" trigger={<IconButton label="Recovery actions"><Ellipsis size={14} aria-hidden /></IconButton>} items={[...(onChangeModel ? [{ label: 'Change model', onSelect: onChangeModel }] : []), { label: 'Dismiss', onSelect: () => { void control('cancel'); } }]} /><Dialog open={resumeOpen} onOpenChange={setResumeOpen} title="Resume or reassign">
       <div className="k-stack">
         <p className="k-field__hint">Check previous results and effects in the provider. Resuming may resend steps that are not confirmed yet.</p>
         <Checkbox checked={confirmed} onChange={setConfirmed} label="I have checked previous results and effects" />
         <div><Button size="sm" variant="ghost" disabled={busy || archived || !confirmed} onClick={() => void control('resume')}>Resume task</Button></div>
         {members.length > 0 && !turn.approvals?.some(approval => approval.state === 'ready') && <><Field label="New owner"><Select value={recipient} onChange={setRecipient} options={[{ value: '', label: 'Select agent' }, ...members.map(member => ({ value: member.id, label: member.name }))]} /></Field><div><Button size="sm" variant="ghost" disabled={busy || archived || !confirmed || !recipient} onClick={() => void control('reassign')}>Reassign task</Button></div></>}
       </div>
-    </Dialog></> : <IconButton label="Pause task" disabled={busy || archived} onClick={() => void control('pause')}><Pause size={14} aria-hidden /></IconButton>}
+    </Dialog></> : overflow ? <ActionMenu label="Work log actions" trigger={<IconButton label="Work log actions"><Ellipsis size={14} aria-hidden /></IconButton>} items={[{ label: 'Pause', onSelect: () => void control('pause'), disabled: busy || archived }]} /> : <IconButton label="Pause task" disabled={busy || archived} onClick={() => void control('pause')}><Pause size={14} aria-hidden /></IconButton>}
     {error && <Alert tone="error">{error}</Alert>}
   </div>;
 }
@@ -200,8 +201,8 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   function attach(ids: string[]) { try { sessionStorage.setItem(attachmentKey, JSON.stringify(ids)); setAttached(ids); } catch { setError('Attachment selection was not saved. Check browser storage.'); } }
   const storageKey = `briefsip:pending:${scope}`;
   const [turns, setTurns] = useState<Turn[] | null>(null);
+  const [queueTurns, setQueueTurns] = useState<Turn[]>([]);
   const [activeTurns, setActiveTurns] = useState<{ id: string; agent: string; capabilities: { steer: boolean; queue: boolean; restart: boolean } }[]>([]);
-  const [dispatchMode, setDispatchMode] = useState<'queue' | 'steer' | 'restart'>('queue');
   const [addressedTurn, setAddressedTurn] = useState('');
   const dispatchTarget = activeTurns.find(turn => channel ? turn.id === addressedTurn : true);
   const canSteer = !!dispatchTarget?.capabilities.steer;
@@ -230,7 +231,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     let timer: ReturnType<typeof setTimeout>;
     async function refresh() {
       let delay = 1200;
-      try { const [active, data] = await Promise.all([api<typeof activeTurns>(path.replace(/\/turns$/, '/dispatch')), api<Turn[]>(focusedTask ? `${path}?focus=${focusedTask}` : `${path}?${new URLSearchParams({ ...(before ? { before: String(before) } : {}), ...(query ? { q: query } : {}) })}`)]); if (!stopped) { setActiveTurns(active); loadedTask.current = focusedTask; setTurns(mergeStream(data)); setReadError(''); delay = turnPollDelay(data); } }
+      try { const [active, data, latest] = await Promise.all([api<typeof activeTurns>(path.replace(/\/turns$/, '/dispatch')), api<Turn[]>(focusedTask ? `${path}?focus=${focusedTask}` : `${path}?${new URLSearchParams({ ...(before ? { before: String(before) } : {}), ...(query ? { q: query } : {}) })}`), !channel && (focusedTask || before || query) ? api<Turn[]>(path) : null]); if (!stopped) { setActiveTurns(active); setQueueTurns(latest ?? data); loadedTask.current = focusedTask; setTurns(mergeStream(data)); setReadError(''); delay = turnPollDelay(latest ?? data); } }
       catch (error) { if (!stopped) setReadError(message(error)); }
       if (!stopped) timer = setTimeout(refresh, delay);
     }
@@ -254,22 +255,20 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
       setPending(null); setDraft(''); setAttached([]); setError('');
     }
   }, [turns, pending, storageKey, draftKey, attachmentKey]);
-  useEffect(() => { setDispatchMode('queue'); }, [dispatchTarget?.id]);
   async function send(event: FormEvent, forcedMode?: 'queue' | 'steer') {
     event.preventDefault();
     if (requestActive.current || pastedFiles.length || attachments.uploading || blocked || (!pending && !draft.trim())) return;
     if (archived) { setError('Restore the conversation before sending a new message.'); return; }
-    const mode = dispatchTarget ? forcedMode ?? dispatchMode : 'queue';
-    const request = pending ?? { id: crypto.randomUUID(), text: draft.trim(), ...(mode !== 'queue' ? { dispatchMode: mode, targetTurn: dispatchTarget!.id, ...(channel ? { recipient: dispatchTarget!.agent } : {}) } : {}), ...(attached.length ? { files: attached } : {}),  };
+    const mode = dispatchTarget ? forcedMode ?? 'queue' : 'queue';
+    const request = pending ?? { id: crypto.randomUUID(), text: draft.trim(), ...(mode !== 'queue' ? { dispatchMode: mode, targetTurn: dispatchTarget!.id, ...(channel ? { recipient: dispatchTarget!.agent } : {}) } : {}), ...(channel && mode === 'queue' && dispatchTarget ? { recipient: dispatchTarget.agent } : {}), ...(attached.length ? { files: attached } : {}),  };
     try { sessionStorage.setItem(storageKey, JSON.stringify(request)); }
     catch { setError('The browser could not save send status. Enable site storage before sending.'); return; }
     requestActive.current = true; setBusy(true); setPending(request); setError(''); nearBottom.current = true;
     try {
-      const result = await api<Turn>(path, request);
-      if (result.dispatch_label?.startsWith('Steer used restart')) setDispatchMode('queue');
+      await api<Turn>(path, request);
       // A remounted conversation owns recovery and any newer draft after navigation.
       if (!mounted.current) return;
-      setDispatchMode('queue'); setAddressedTurn('');
+      setAddressedTurn('');
       sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); setPending(null); setDraft(''); setAttached([]); setFocusedTask(''); setHistoryPages([]); setQuery('');
     } catch (error) {
       if (!mounted.current) return;
@@ -282,7 +281,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     finally { requestActive.current = false; setBusy(false); }
   }
   async function cancel(turn: Turn) {
-    if (!await confirm({ title: 'Stop this task?', description: 'Steps already sent may have taken effect. Provider usage may still be counted.', confirm: 'Stop task', danger: true })) return;
+    if (!await confirm({ title: 'Stop this task?', description: 'Steps already sent may have taken effect.', confirm: 'Stop task', danger: true })) return;
     try { await api(`${path}/${turn.id}/cancel`, { id: crypto.randomUUID() }); setError(''); }
     catch (error) { setError(message(error)); }
   }
@@ -296,6 +295,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   const rightPanel = useRightPanel(scope);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
+      if (event.key === 'F6' && !document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')) { event.preventDefault(); composer.current?.focus(); return; }
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'b' && !document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')) {
         event.preventDefault(); event.stopImmediatePropagation(); setDetailsOpen(!detailsOpen);
       }
@@ -305,6 +305,9 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   }, [detailsOpen, setDetailsOpen]);
   const attachments = useConversationAttachments({ path: path.replace(/\/turns$/, '/files'), archived, attached: pending?.files ?? attached, onAttach: attach, locked: blocked || !!pending || busy, pastedFiles, onPasteSettled: () => setPastedFiles([]), onFiles: setPastedFiles, libraryOpen: detailsOpen && rightPanel.tab === 'details' && detailsTab === 'library', api });
   if (showMemory) return <PageView><Suspense fallback={<p className="empty" role="status">Loading memory...</p>}><MemoryPanel key={scope} path={`/api/${channel ? 'channels' : 'agents'}/${agent.id}/memory`} channel={!!channel} archived={!!channel?.archived} request={api} onClose={() => { setShowMemory(false); requestAnimationFrame(() => memoryButton.current?.focus()); }} /></Suspense></PageView>;
+  const refreshTurns = () => { void Promise.all([api<Turn[]>(path), api<typeof activeTurns>(path.replace(/\/turns$/, '/dispatch'))]).then(([data, active]) => { setQueueTurns(data); if (!focusedTask && !before && !query) setTurns(mergeStream(data)); setActiveTurns(active); }).catch(error => setError(message(error))); };
+  const queued = (turn: Turn) => !channel && turn.status === 'queued' && !turn.paused && !turn.questions?.some(question => question.answer === null) && !turn.events?.some(event => event.status === 'waiting') && !turn.parent && !turn.waiting_for && !turn.routineReport && !turn.workflow_run && !turn.activity?.calls.length && !turn.agentMessages?.length;
+  const runningTurn = !channel ? activeTurns[0] : undefined;
   const active = turns?.filter(turn => turn.status === 'queued' || turn.status === 'running').length ?? 0;
   const title = thread?.name ?? agent.name;
   const editLabel = channel ? 'Section settings' : thread ? 'Conversation settings' : 'Edit profile';
@@ -335,7 +338,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
               : turns.length === 0 && query ? <p className="empty-chat__sub" role="status">No results on this page. Change your search term or return to the previous page.</p>
               : turns.length === 0 && before ? <p className="empty-chat__sub" role="status">Start of history reached. Select Newer messages to return.</p>
               : turns.length === 0 ? <ChatEmptyState agent={agent} title={thread?.fork ? `Continue with ${agent.name}` : undefined}>{thread?.fork ? 'Earlier context is included through the selected answer. New messages stay in this conversation.' : 'Send your first task or question. The conversation is saved on this computer.'}</ChatEmptyState>
-              : turns.filter(turn => !turn.room || turn.room.root === turn.id || !turns.some(root => root.id === turn.room!.root)).map(turn => <article key={turn.id} id={`turn-${turn.id}`} tabIndex={-1} className={`turn-block${turn.id === turns.at(-1)?.id ? ' is-latest' : ''}`}>
+              : turns.filter(turn => !queued(turn) && !(turn.status === 'cancelled' && !turn.error?.startsWith('Stopped') && !turn.activity?.calls.length && !turn.room) && (!turn.room || turn.room.root === turn.id || !turns.some(root => root.id === turn.room!.root))).map(turn => <ChatTurn key={turn.id} id={`turn-${turn.id}`} className={`turn-block${turn.id === turns.at(-1)?.id ? ' is-latest' : ''}`}>
                 {query && <button type="button" className="link-btn" onClick={() => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(turn.id); }}>Open this message</button>}
                 {turn.routineReport ? <section className="routine-report" aria-label={`Routine report: ${turn.routineReport.name}`}><div className="routine-report__meta"><CalendarClock size={16} aria-hidden /><strong>Routine report</strong><time dateTime={turn.created}>{time(turn.created)}</time></div><div className="legacy routine-report__body"><Markdown text={turn.reply ?? ''} scope={path.slice(0, -6)} origin={window.location.origin} /></div><a className="k-link" href={`#routine-run-${turn.routineReport.run}`} onClick={event=>{event.preventDefault();onOpenAgent?.(turn.routineReport!.agent,turn.routineReport!.thread);}}>Open full run</a></section> : <><HumanMessage text={turn.text} label={turn.messageOrigin?.kind === 'peer' ? `Message from ${turn.messageOrigin.name}` : 'Your message'} attachments={!!turn.files?.length && <Attachments files={turn.files} path={path.replace(/\/turns$/, '/files')} />}>
                     <time className="message-time" dateTime={turn.created} title={new Date(turn.created).toLocaleString('en-US')}>{time(turn.created)}</time>
@@ -347,24 +350,24 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
                     {turn.messageOrigin && turn.messageOrigin.kind !== 'peer' && <button type="button" className="link-btn link-btn--small" onClick={() => turn.messageOrigin!.channel ? onOpenChannel?.(turn.messageOrigin!.channel) : onOpenAgent?.(turn.messageOrigin!.agent!, turn.messageOrigin!.thread ?? '')}>Open requester conversation</button>}
                 </HumanMessage>
                 {turn.room ? <><RoomMessages room={turn.room} members={members} scope={path.slice(0, -6)} turns={turns} controls={id => { const item = turns.find(item => item.id === id); return item && <><TaskControls key={`${item.id}:${item.revision}`} turn={item} path={path} members={members} archived={archived} />{!['done','cancelled'].includes(item.status) && <IconButton label="Stop" onClick={() => void cancel(item)}><Square size={14} aria-hidden /></IconButton>}{item.reply && <MessageCopyButton text={item.reply} />}</>; }} pending={turns.filter(item => item.room?.root === turn.room!.root && !item.room.silent && !turn.room!.messages.some(message => message.kind === 'reply' && message.turn === item.id))} details={id => { const item = turns.find(item => item.id === id); return item && <TurnActivity scope={path.slice(0, -6)} logOnly turn={item} agentName={members.find(member => member.id === item.agent)?.name ?? agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} />; }} extras={id => { const item = turns.find(item => item.id === id); return item && <>{item.questions?.map(question => <QuestionCard key={question.id} question={question} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}{item.approvals?.map(approval => <ApprovalCard key={approval.id} approval={approval} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}{item.computerWait && <ComputerRequestCard agent={item.agent} name={item.agent_name ?? agent.name} wait={item.computerWait} request={api} />}{item.generatedFiles?.map(file => <p key={file.id}><a className="k-link" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}>{file.name}</a><span className="message-role"> {file.size} bytes</span></p>)}{item.harnessApprovals?.map(approval => <HarnessApprovalCard key={approval.id} approval={approval} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}</>; }} /></> : <AgentMessage identity={channel && members.length > 1 && <div className="agent-identity"><AgentAvatar agent={members.find(member => member.id === turn.agent) ?? { id: turn.agent, name: turn.agent_name ?? agent.name }} size={24} /><strong className="message-name">{turn.agent_name ?? agent.name}</strong></div>}>
-                    <TurnActivity scope={path.slice(0, -6)} turn={turn} agentName={agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} />
+                    <TurnActivity scope={path.slice(0, -6)} turn={turn} agentName={agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} actions={turn.dispatch_mode !== 'steer' && !['done','cancelled','failed','interrupted'].includes(turn.status) && !turn.paused ? <TaskControls key={`${turn.id}:${turn.revision}`} turn={turn} path={path} members={channel ? members : []} archived={archived || !!turn.editing} overflow /> : undefined} />
                     {!channel && (!!turn.agentMessages?.length || !!turn.receivedAgentReplies?.length) && <AgentConversation items={[...(turn.agentMessages ?? []), ...(turn.receivedAgentReplies ?? []).filter(item => !turn.agentMessages?.some(sent => sent.id === item.id))]} sender={turn.agent_name ?? agent.name} scope={path.slice(0, -6)} onOpen={onOpenAgent} />}
                     <div className="message-body">
                       {channel && turn.parent && <div className="room-request"><strong>{turn.messageOrigin?.name ?? turn.agent_name ?? agent.name}</strong><p>{turn.text}</p></div>}
-                      {turn.dispatch_label && <p className="dispatch-receipt">{turn.dispatch_label}{turn.dispatch_target && <> · <button type="button" className="link-btn link-btn--small" onClick={() => openFocused(turn.dispatch_target!)}>{turn.dispatch_mode === 'steer' ? 'View target turn' : 'View interrupted turn'}</button></>}</p>}
-                      {turn.status === 'done' && !turn.reply && turn.dispatch_label ? null : (turn.reply || livePartial(turn)) ? <div className={livePartial(turn) ? "live-answer" : "reply-answer"} aria-label={livePartial(turn) ? "Streaming answer" : "Agent reply"}><div className="legacy"><StreamingMarkdown key={streamIdentity(turn)} text={turn.reply ?? turn.partial!.text} scope={path.slice(0, -6)} origin={window.location.origin} /></div>{livePartial(turn) && <span className="stream-caret" aria-hidden />}</div>
+                      {turn.dispatch_label && ['queued', 'running'].includes(turn.status) && <p className="dispatch-receipt">{turn.dispatch_label}{turn.dispatch_target && <> · <button type="button" className="link-btn link-btn--small" onClick={() => openFocused(turn.dispatch_target!)}>{turn.dispatch_mode === 'steer' ? 'View target turn' : 'View interrupted turn'}</button></>}</p>}
+                      {turn.status === 'cancelled' ? null : turn.status === 'done' && !turn.reply && turn.dispatch_label ? null : (turn.reply || livePartial(turn)) ? <div className={livePartial(turn) ? "live-answer" : "reply-answer"} aria-label={livePartial(turn) ? "Streaming answer" : "Agent reply"}><div className="legacy"><StreamingMarkdown key={streamIdentity(turn)} text={turn.reply ?? turn.partial!.text} scope={path.slice(0, -6)} origin={window.location.origin} /></div>{livePartial(turn) && <span className="stream-caret" aria-hidden />}</div>
                         : <p className={turn.error ? 'message-error' : 'message-muted'}>{turn.error && <CircleAlert size={14} aria-hidden />}{turn.error ?? <span>{(turn.approvals?.some(approval => approval.state === 'approval') || turn.harnessApprovals?.some(approval => approval.state === 'approval')) ? 'Review the connected app action to continue.' : turn.questions?.some(question => question.answer === null) ? 'Answer the question to continue the task.' : turn.workflow_run ? 'Workflow finished without a text result.' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) ? 'Results will be combined after all recipients finish. New messages include results already available.' : turn.events?.some(event => event.status === 'waiting') ? 'Waiting for a signed event.' : turn.waiting_for ? 'Waiting for child task results.' : turn.status === 'queued' ? 'Waiting for turn.' : 'Waiting for provider response...'}</span>}</p>}
-                      {!turn.reply && turn.partial?.text && !livePartial(turn) && <div className="message-partial"><span className="message-muted">Partial reply</span><div className="legacy"><Markdown text={turn.partial.text} scope={path.slice(0, -6)} origin={window.location.origin} /></div></div>}
+                      {!turn.reply && turn.partial?.text && !livePartial(turn) && turn.status !== 'cancelled' && <div className="message-partial"><span className="message-muted">Partial reply</span><div className="legacy"><Markdown text={turn.partial.text} scope={path.slice(0, -6)} origin={window.location.origin} /></div></div>}
                     </div>
-                    {((turn.status !== 'done' && !['Running', 'Queued'].includes(statusLabel(turn))) || turn.activity?.fallback_model) && <TurnStatus tone={tone(turn)} label={turn.activity?.fallback_model ? `${statusLabel(turn)} · Fallback model used` : statusLabel(turn)} />}
+                    {(!['failed','cancelled'].includes(turn.status) && ((turn.status !== 'done' && !['Running', 'Queued'].includes(statusLabel(turn))) || turn.activity?.fallback_model)) && <TurnStatus tone={tone(turn)} label={turn.activity?.fallback_model ? `${statusLabel(turn)} · Fallback model used` : statusLabel(turn)} />}
                     <div className="turn-controls" role="group" aria-label="Message actions">
                       {!channel && turn.checkpoint?.restorable && ['done', 'failed', 'cancelled', 'interrupted'].includes(turn.status) && <RestoreCheckpoint agent={turn.agent} turn={turn.id} request={api} />}
                       {turn.reply && <MessageCopyButton text={turn.reply} />}
                       {turn.reply && <SpeechPlayback key={`${path}:${turn.id}`} owner={`${path}:${turn.id}`} text={turn.reply} />}
                       {turn.status === 'done' && turn.reply && <ForkAnswer path={path} turn={turn} onOpen={onOpenAgent} />}
-                      {turn.dispatch_mode !== 'steer' && <TaskControls key={`${turn.id}:${turn.revision}`} turn={turn} path={path} members={channel ? members : []} archived={archived || !!turn.editing} />}
+                      {turn.dispatch_mode !== 'steer' && (turn.paused || ['failed','interrupted'].includes(turn.status)) && <TaskControls key={`${turn.id}:${turn.revision}`} turn={turn} path={path} members={channel ? members : []} archived={archived || !!turn.editing} onChangeModel={onEdit} />}
                       {turn.reply && !liveTurn(turn) && <time className="message-time" dateTime={turn.activity?.calls.at(-1)?.finished ?? turn.created} title={new Date(turn.activity?.calls.at(-1)?.finished ?? turn.created).toLocaleString('en-US')}>{time(turn.activity?.calls.at(-1)?.finished ?? turn.created)}</time>}
-                      {(!['done','cancelled'].includes(turn.status)) && <IconButton label={turn.waiting_for ? 'Cancel task and delegation' : turn.status === 'running' ? 'Stop' : turn.status === 'queued' && !turn.paused ? 'Cancel queued task' : 'Cancel task'} onClick={() => void cancel(turn)}><Square size={14} aria-hidden /></IconButton>}
+                      {turn.status === 'queued' && !queued(turn) && <IconButton label={turn.waiting_for ? 'Cancel task and delegation' : !turn.paused ? 'Cancel queued task' : 'Cancel task'} onClick={() => void cancel(turn)}><Square size={14} aria-hidden /></IconButton>}
                     </div>
                     <div className="turn-extras k-stack">
                       {turn.events?.map(event => <section className="k-stack" key={event.id}><Row title={`Event ${event.event}: ${event.status === 'waiting' ? 'Waiting' : event.status === 'received' ? 'Received' : event.status === 'expired' ? 'Expired' : 'Closed'}`} meta={new Date(event.deadline).toLocaleString('en-US')} />{event.status === 'waiting' && !archived && <EventConnection path={`/api/turn-waits/${event.id}`} request={api} />}</section>)}
@@ -377,7 +380,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
                       {turn.dispatch_mode !== 'steer' && !turn.approvals?.length && <QueueEditor turn={{ ...turn, files: turn.files ?? [] }} path={path} archived={archived} request={api} />}
                     </div>
                 </AgentMessage>}</>}
-              </article>)}
+              </ChatTurn>)}
             <div ref={bottom} />
       </ChatTranscript>
       <footer className="composer-area">
@@ -386,20 +389,15 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
         {error && <div className="composer__error" role="alert"><span>{error} {pending && 'Use Retry send to check the same request without creating a duplicate message.'}</span></div>}
         {blocked && <div className="composer__error" role="alert"><span>Message recovery data could not be read. Sending is blocked. Check history to confirm the previous message was not sent.</span><Button size="sm" variant="ghost" onClick={async () => { if (!await confirm({ title: 'Discard recovery data?', description: 'The previous message may already have been received. Check history before sending another message.', confirm: 'Discard message recovery', danger: true })) return; try { sessionStorage.removeItem(storageKey); setBlocked(false); setError(''); requestAnimationFrame(() => composer.current?.focus()); } catch { setError('Recovery data could not be deleted. Check site storage.'); } }}>Discard message recovery</Button></div>}
         {attachments.composer}
-        {channel && activeTurns.length > 0 && <div className="composer-dispatch bs-root"><Select size="sm" label="Addressed member" value={dispatchTarget?.id ?? ''} disabled={busy || !!pending || blocked} onChange={setAddressedTurn} options={[{ value: '', label: 'Everyone' }, ...activeTurns.map(turn => ({ value: turn.id, label: members.find(member => member.id === turn.agent)?.name ?? turn.agent }))]} /></div>}
-        {dispatchTarget && <div className="composer-dispatch bs-root">
-          <Select size="sm" label="Message mode" value={pending?.dispatchMode ?? dispatchMode} disabled={busy || !!pending || blocked} onChange={value => setDispatchMode(value as typeof dispatchMode)} options={[
-            { value: 'queue', label: 'Queue' },
-            { value: 'steer', label: canSteer ? 'Steer' : 'Steer (restarts turn)' },
-            { value: 'restart', label: 'Restart' },
-          ]} />
-        </div>}
+        <QueuedRunsControl turns={queueTurns.filter(queued)} path={path} target={dispatchTarget} request={api} archived={archived} onChanged={refreshTurns} />
         <ChatComposer onPasteFiles={files => { if (pastedFiles.length) { setError('Wait for pasted files to finish uploading.'); return; } setPastedFiles(files); }} mentions={channel ? members : []} onMention={value => { setDraft(value); try { sessionStorage.setItem(draftKey, value); } catch { setError('Draft was not saved. Copy your message before leaving.'); } }} label={`Message ${agent.name}`} inputRef={composer} multiline={draft.includes('\n')} onSubmit={send} onSendKey={event => { void send(event, (event.ctrlKey || event.metaKey) && canSteer ? 'steer' : 'queue'); }} onAttach={attachments.choose} attachmentDisabledReason={archived || blocked || !!pending || busy || attachments.uploading ? 'Attachments unavailable' : undefined} actions={attachments.recordingAction}
+          recipient={channel && activeTurns.length > 0 ? <Select size="sm" label="Addressed member" value={dispatchTarget?.id ?? ''} disabled={busy || !!pending || blocked} onChange={setAddressedTurn} options={[{ value: '', label: 'Everyone' }, ...activeTurns.map(turn => ({ value: turn.id, label: members.find(member => member.id === turn.agent)?.name ?? turn.agent }))]} /> : undefined}
+          stopAction={runningTurn && !archived ? <CancelTurn key={runningTurn.id} primary turn={runningTurn.id} path={path} request={api} onCancelled={() => { refreshTurns(); composer.current?.focus(); }} /> : undefined}
           input={{ id: 'message', value: pending?.text ?? draft, readOnly: blocked || !!pending || busy, onChange: event => { setDraft(event.target.value); try { sessionStorage.setItem(draftKey, event.target.value); } catch { setError('Draft was not saved in the browser. Copy the message before switching agents.'); } } }}
           busy={busy} retry={!!pending}
           sendDisabled={!!pastedFiles.length || attachments.uploading || blocked || archived || !configured || busy || (!pending && !draft.trim())}
-          sendLabel={busy ? 'Sending...' : pending ? 'Retry send' : dispatchTarget ? dispatchMode === 'queue' ? 'Queue message' : dispatchMode === 'steer' ? canSteer ? 'Steer turn' : 'Steer by restarting turn' : 'Restart turn' : 'Send message'}
-          sendTitle={pending ? 'Retry send' : dispatchTarget ? `${dispatchMode === 'queue' ? 'Queue' : dispatchMode === 'steer' ? 'Steer' : 'Restart'} message (Enter to queue${canSteer ? ', Ctrl/Cmd+Enter to steer' : ''})` : 'Send (Enter)'} />
+          sendLabel={busy ? 'Sending...' : pending ? 'Retry send' : dispatchTarget ? 'Queue message' : 'Send message'}
+          sendTitle={pending ? 'Retry send' : dispatchTarget ? `Queue message (Enter to queue${canSteer ? ', Ctrl/Cmd+Enter to steer' : ''})` : 'Send (Enter)'} />
         {(focusedTask || query || before) && <p className="composer__foot">{focusedTask ? channel ? 'Task family shown' : 'Selected message shown' : query ? 'Search results · 100 per page' : 'Older messages · 100 per page'}</p>}
       </footer>
       <ChatHeader agent={agent} title={title} onToggle={() => setMenuOpen(!menuOpen)} expanded={menuOpen}

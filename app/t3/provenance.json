@@ -113,7 +113,14 @@
     "app/src/SourceControl.tsx": "e57ee243489ac4811838ee2a9ca8e85fa0aed73b34346d20fd49d7323b00f4b8",
     "app/src/ui/source-control.css": "8b85c9f079aec8cb46ec8136a154baeb43dfe89efe08735bb476bc1553936053",
     "app/machines.ts": "85f9b1584f8fa641c3e9d8c079e3c9b23097722e49e61179a3bcc9c8cc1d5cc9",
-    "app/remote-agents.ts": "9fde5d74d0d91c5d8f0b7f7c129e311eadd7d59d3ba1494405d60f9d1ef6d288"
+    "app/remote-agents.ts": "9fde5d74d0d91c5d8f0b7f7c129e311eadd7d59d3ba1494405d60f9d1ef6d288",
+    "app/src/ui/RunControls.tsx": "292b23ead5c53738d9fe421540714f297f4872d572d011276904f74ac6ad14bd",
+    "app/src/ui/ChatPrimitives.tsx": "d1b6f1d3f521fcacb8099aa6bc701109b73c601c6cc81ce244f311fcaf11412f",
+    "app/src/AudioRecorder.tsx": "f8f683939d3f1b8e57b41826c704ec57ce4586f4c1994e639b8ea9942af815d9",
+    "app/src/QueueEditor.tsx": "508d96afb77d09b58ded09e60be53d7921eef54cc4f44c5b8156f865c002da63",
+    "app/src/App.tsx": "8b3c4a08fb472ca26412664ca37394f08235f390ee0aa6ab765f1a3b584bd59b",
+    "app/src/ConversationAttachments.tsx": "5a6ad328876edf98c3b9182464c53ba03d1cbbdfd230d020026ed53c939af1d1",
+    "app/src/ui/chat.css": "bc21abfc6b27a7538937300db7fcb71587442b42d130fe47c6e6ed7a2b142d8e"
   },
   "typeSubstitutions": {
     "HttpServerRequest.HttpServerRequest": "LinkRequest with originalUrl and lowercase scalar headers",
@@ -185,6 +192,77 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "compatibilityCheck": "app/transcript.test.ts"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/QueuedRunsControl.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "7094c8b3d85d696be4450a52621b9c51c21f900fb5c7dbff4857bd241fbc4c05",
+      "symbols": [
+        "QueuedRunsControl"
+      ],
+      "localPaths": [
+        "app/src/ui/RunControls.tsx",
+        "app/src/QueueEditor.tsx",
+        "app/src/App.tsx",
+        "app/src/ui/chat.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Compact queue stack with Edit, Steer, Remove and Restart overflow; Briefsip durable APIs and held editor retained.",
+      "compatibilityCheck": "app/dispatch.test.ts; work/rebuild/ui-smoke/run-controls-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/ComposerPrimaryActions.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "ed785744facd53946ee76cf88e6c6ac40984e4392e09ca28b2555b465ca74b43",
+      "symbols": [
+        "ComposerPrimaryActions"
+      ],
+      "localPaths": [
+        "app/src/ui/ChatPrimitives.tsx",
+        "app/src/App.tsx",
+        "app/src/ui/chat.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Primary Stop while running; queued Send with content and Stop fixed at right; Briefsip CSS and API retained.",
+      "compatibilityCheck": "app/dispatch.test.ts; work/rebuild/ui-smoke/run-controls-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/ComposerPrimaryActions.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "ed785744facd53946ee76cf88e6c6ac40984e4392e09ca28b2555b465ca74b43",
+      "symbols": [
+        "ComposerPrimaryActions"
+      ],
+      "localPaths": [
+        "app/src/ui/RunControls.tsx"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Generation-scoped Stop targets captured Briefsip turn ID, with exact retry identity.",
+      "compatibilityCheck": "app/dispatch.test.ts; work/rebuild/ui-smoke/run-controls-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/VoiceInputPill.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "6922e2d72ee85430b79907d501811643b1bf2e58cd9c9ccfc2b535381be3ce40",
+      "symbols": [
+        "VoiceInputPill"
+      ],
+      "localPaths": [
+        "app/src/AudioRecorder.tsx",
+        "app/src/ConversationAttachments.tsx",
+        "app/src/ui/chat.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Inline recording pill with elapsed timer and Stop/Cancel; existing native capture and upload to attachment chip retained.",
+      "compatibilityCheck": "app/dispatch.test.ts; work/rebuild/ui-smoke/run-controls-smoke.mjs"
     }
   ],
   "machineSourceEntries": [

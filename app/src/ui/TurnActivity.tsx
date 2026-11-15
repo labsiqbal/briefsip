@@ -1,12 +1,12 @@
 import { MessageSquare, Wrench } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Badge, Collapsible } from './kit';
 import { Markdown } from '../Markdown';
 import type { StreamPartial } from '../../turn-stream';
 import { activityLabel, liveTurn, streamWork, type TurnActivityData } from './transcript';
 
 type Props = {
-  logOnly?: boolean;
+  logOnly?: boolean; actions?: ReactNode;
   scope?: string;
   turn: {
     partial?: StreamPartial | null;
@@ -25,7 +25,7 @@ type Props = {
   onOpenAgent?: (agent: string, thread: string) => void;
 };
 
-export function TurnActivity({ turn, agentName, onOpenTask, onOpenAgent, remote, logOnly, scope = '' }: Props) {
+export function TurnActivity({ turn, agentName, onOpenTask, onOpenAgent, remote, logOnly, actions: controls, scope = '' }: Props) {
   const [now, setNow] = useState(Date.now);
   const live = liveTurn(turn);
   const [open, setOpen] = useState(false);
@@ -72,5 +72,5 @@ export function TurnActivity({ turn, agentName, onOpenTask, onOpenAgent, remote,
       {steps.length ? <ol className="activity-list" aria-label="Turn activity">{steps.map(step => { const item = (turn.agentMessages ?? []).find(row => row.taskId === step.task); return <li key={step.id}>{step.prose ? <MessageSquare className="activity-step-icon" aria-hidden /> : <Wrench className="activity-step-icon" aria-hidden />}{step.prose ? <div className="legacy"><Markdown text={step.text} scope={scope} origin={window.location.origin} /></div> : <span>{step.text}</span>}{item?.taskId && <Badge tone={['done'].includes(item.status) ? 'success' : ['failed','cancelled','uncertain'].includes(item.status) ? 'warn' : 'brand'}>{item.status === 'queued' && item.wait ? 'Waiting' : item.status.charAt(0).toUpperCase() + item.status.slice(1)}</Badge>}{step.task && <button type="button" className="link-btn link-btn--small" onClick={() => item?.agent && item.thread ? onOpenAgent?.(item.agent, item.thread) : onOpenTask(step.task!)}>{item ? 'Open conversation' : 'View subtask'}</button>}</li>; })}</ol> : null}
   </>;
   if (logOnly) return <div className="turn-activity-log">{contents}</div>;
-  return <div className="turn-activity"><Collapsible open={open} onOpenChange={setOpen} title={<span className="activity-label">{live && turn.status === 'running' && <span className="activity-working" aria-hidden />}{activityLabel(turn, now)}</span>}>{contents}</Collapsible></div>;
+  return <div className="turn-activity"><Collapsible open={open} onOpenChange={setOpen} title={<span className="activity-label">{live && turn.status === 'running' && <span className="activity-working" aria-hidden />}{activityLabel(turn, now)}</span>}>{contents}</Collapsible>{controls}</div>;
 }

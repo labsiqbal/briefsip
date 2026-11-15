@@ -32,11 +32,11 @@ export function activityLabel(turn: ActivityTurn, now: number) {
   // ponytail: provider ledger bounds elapsed time; exact terminal/paused timestamps need a turn lifecycle journal.
   const end = liveTurn(turn) ? now : calls.at(-1)?.finished;
   const elapsed = start && end ? Math.max(0, Math.floor((new Date(end).getTime() - Date.parse(start)) / 1000)) : null;
-  const duration = elapsed !== null && Number.isFinite(elapsed) ? elapsed >= 60 ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : `${elapsed}s` : null;
+  const duration = elapsed !== null && Number.isFinite(elapsed) ? elapsed >= 60 ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : elapsed === 0 ? '<1s' : `${elapsed}s` : null;
   if (turn.status === 'done') return duration ? `Worked for ${duration}` : 'Worked';
   if (turn.status === 'failed') return duration ? `Failed after ${duration}` : 'Failed';
   if (turn.status === 'interrupted') return duration ? `Interrupted after ${duration}` : 'Interrupted';
-  if (turn.status === 'cancelled') return duration ? `Stopped after ${duration}` : 'Cancelled';
+  if (turn.status === 'cancelled') return `Stopped after ${duration ?? '<1s'}`;
   if (turn.status === 'queued') return 'Queued';
   return duration ? `Working… ${duration}` : 'Working…';
 }

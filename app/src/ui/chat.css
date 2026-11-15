@@ -323,3 +323,24 @@
 
 :root[data-theme="dark"] .composer { box-shadow: none; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .composer { box-shadow: none; } }
+
+/* T3 queue/voice patterns, using Briefsip surfaces and controls. */
+.queued-runs { max-width: var(--chat-content-max-width); margin: 0 auto 8px; max-height: 240px; overflow: auto; border: 1px solid var(--color-border-tertiary); border-radius: 14px; background: var(--color-bg-pane); padding: 8px 12px; }
+.queued-runs__heading { color: var(--color-text-secondary); font-size: 12px; display: flex; gap: 8px; }
+.queued-runs ol { list-style: none; padding: 0; margin: 0; }
+.queued-run + .queued-run { border-top: 1px solid var(--color-border-tertiary); }
+.queued-run { padding: 4px 0; }
+.queued-run__line { display: flex; align-items: flex-start; gap: 8px; }
+.queued-run__text { flex: 1; min-width: 0; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; font-size: 13px; padding-top: 8px; }
+.queued-run__actions { display: flex; align-items: flex-start; gap: 4px; }
+.queued-run__actions > section:has(textarea) { position: absolute; z-index: 5; bottom: 100%; left: 0; right: 0; max-height: 60vh; overflow: auto; padding: 16px; background: var(--color-bg-elevated); border: 1px solid var(--color-border-primary); border-radius: 14px; box-shadow: var(--shadow-composer); }
+.queued-run__status { color: var(--color-text-secondary); font-size: 12px; }
+.composer-stop, .queue-remove, .voice-input { display: inline-flex; align-items: center; }
+.composer-stop:has([role="alert"]), .voice-input:has([role="alert"]) { flex-wrap: wrap; }
+.composer__cta--stop { background: var(--color-text-primary); color: var(--color-bg-pane); }
+.voice-input__pill { display: flex; align-items: center; gap: 4px; height: 32px; }
+.voice-input__timer { min-width: 44px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.voice-input__error { max-width: 280px; font-size: 12px; }
+.turn-activity { display: flex; align-items: flex-start; gap: 4px; }
+.turn-activity > .k-collapsible { min-width: 0; flex: 1; }
+.composer__toolbar > .k-select { width: auto; max-width: 180px; }
