@@ -18,7 +18,7 @@ export function AgentConversation({ items, sender, scope, onOpen }: { items: Exc
     </div></div>
   </div>)}</section>;
 }
-export type RoomView = { root: string; round: number; silent: string | null; note: string | null; quiet: { agent: string; name: string; silent: string }[]; messages: { seq: number; turn: string; agent: string; name: string; role: string; target_name?: string; text: string; kind: string }[] };
+export type RoomView = { root: string; generation: string; active: boolean; stopped: boolean; round: number; silent: string | null; note: string | null; quiet: { agent: string; name: string; silent: string }[]; messages: { seq: number; turn: string; agent: string; name: string; role: string; target_name?: string; text: string; kind: string }[] };
 type RoomTurn = { id: string; agent: string; status: string; paused: number; created: string; error: string | null; partial?: { text: string; status: string } | null; activity?: TurnActivityData; questions?: { answer: string | null }[] };
 type RoomMember = { id: string; name: string; role: string; avatar_revision?: number };
 function RoomReply({ turn, member, text, scope, details, controls, extras }: { turn: RoomTurn; member: RoomMember; text?: string; scope: string; details: ReactNode; controls: ReactNode; extras: ReactNode }) {

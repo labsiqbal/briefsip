@@ -11,10 +11,11 @@ process.env.BRIEFSIP_HARNESS_CANARY = 'never-inherit-this-canary';
 const fakeSource = readFileSync(new URL('./fixtures/fake-harness.mjs', import.meta.url), 'utf8');
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 function executable(directory: string) { const path = join(directory,'fake-harness'); writeFileSync(path, `#!${process.execPath}\n` + fakeSource.split('\n').slice(1).join('\n')); chmodSync(path,0o700); return path; }
-async function fixture(runtime: HarnessRuntime, write = true) {
-  const directory = mkdtempSync(join(tmpdir(),'briefsip-harness-')), workspace = join(directory,'workspace'); mkdirSync(workspace);
+async function fixture(runtime: HarnessRuntime, write = true, room = false) {
+  const directory = mkdtempSync(join(room ? join(import.meta.dirname,'node_modules') : tmpdir(),'briefsip-harness-')), workspace = join(directory,'workspace'); mkdirSync(workspace);
   const binary = executable(directory), agent = randomUUID(), minted: {agent: string;turn: string;id: string}[] = [], revoked: string[] = [];
-  const options = { database:join(directory,'db.sqlite'), port:0, timeout:10_000, workspaces:[{agent,directory:workspace,write}], harness: { executables:{codex:binary,claude:binary}, issuer:{ mintAgentSession(input: {agent:string;turn:string}) { const id=randomUUID(); minted.push({...input,id});return {id,token:'test-mcp-session-token'}; }, revokeAgentSession(id:string) { revoked.push(id); } } } };
+  if(room)mkdirSync(join(directory,'state'));
+  const options = { database:join(directory,room?'state/db.sqlite':'db.sqlite'), port:0, timeout:10_000, workspaces:[{agent,directory:workspace,write}], harness: { executables:{codex:binary,claude:binary}, issuer:{ mintAgentSession(input: {agent:string;turn:string}) { const id=randomUUID(); minted.push({...input,id});return {id,token:'test-mcp-session-token'}; }, revokeAgentSession(id:string) { revoked.push(id); } } } };
   let app = await startApp(options);
   const request = async (path:string, body?:unknown, expected=200) => { const response=await fetch(app.origin+path,{method:body?'POST':'GET',headers:{Origin:app.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const data=await response.json();assert(expected===200?response.ok:response.status===expected,JSON.stringify(data));return data; };
   const profile = { name:'Coder', model:'saved-api-model', instructions:'Help with coding.' };
@@ -66,6 +67,35 @@ for(const runtime of ['codex','claude'] as const) {
       assert.notEqual(turns.at(-1).session, turns[0].session);
       assert.equal(later.filter(row => runtime === 'codex' ? row.method === 'thread/resume' : row.type === 'init' && row.resume).length, 1);
     } finally { await f.close(); }
+  });
+  test(`${runtime}: addressed room Steer restarts only selected member; room Stop expires approval and fences restart`, async () => {
+    const f=await fixture(runtime,true,true);try {
+      const peer=await f.request('/api/agents',{id:randomUUID(),name:'Peer',model:'fake',instructions:'Help.'});
+      const project=await f.request('/api/projects',{id:randomUUID(),name:'Harness room',folders:[{mode:'existing',path:f.workspace}],members:[{agent:f.agent,write:true},{agent:peer.id,write:true}],confirmWrite:true});
+      await f.request(`/api/agents/${peer.id}/edit`,{id:randomUUID(),revision:1,name:'Peer',model:'fake',instructions:'Help.',runtime,confirmRuntime:true});
+      const path=`/api/channels/${project.sections[0].id}/turns`,root=randomUUID();
+      await f.request(path,{id:root,text:'APPROVE'});
+      const read=async()=>f.request(path);
+      let rows:any[]=[];
+      for(let n=0;n<600;n++){rows=await read();if(rows.filter(row=>row.harnessApprovals?.some((a:any)=>a.state==='approval')).length===2)break;await delay(15);}
+      assert.equal(rows.filter(row=>row.harnessApprovals?.length).length,2,JSON.stringify(rows));
+      const selected=rows.find(row=>row.agent===f.agent),other=rows.find(row=>row.agent===peer.id);
+      const command={id:randomUUID(),text:'RESTART_FINISH',dispatchMode:'steer',targetTurn:selected.id,recipient:f.agent};
+      const receipt=await f.request(path,command);assert.equal(receipt.dispatch_mode,'restart');
+      for(let n=0;n<600;n++){rows=await read();if(rows.find(row=>row.id===command.id)?.harnessApprovals?.length)break;await delay(15);}
+      const restarted=rows.find(row=>row.id===command.id),approval=restarted.harnessApprovals[0];
+      await f.request(`${path}/${command.id}/harness-approvals/${approval.id}`,{id:randomUUID(),revision:approval.revision,decision:'allow'});
+      for(let n=0;n<600;n++){rows=await read();if(rows.find(row=>row.id===command.id)?.status==='done')break;await delay(15);}
+      assert.equal(rows.find(row=>row.id===command.id)?.status,'done',JSON.stringify(rows));
+      assert.equal(rows.find(row=>row.id===other.id)?.status,'running');
+      assert.equal(rows.find(row=>row.id===other.id)?.harnessApprovals[0].state,'approval');
+      const stopPath=path.replace('/turns',`/discussions/${root}/stop`),stop={id:randomUUID(),generation:root};
+      const stopped=await f.request(stopPath,stop);assert(stopped.cancelled.includes(other.id));
+      for(let n=0;n<200;n++){rows=await read();if(rows.find(row=>row.id===other.id)?.harnessApprovals[0].state==='expired')break;await delay(15);}
+      assert.equal(rows.find(row=>row.id===other.id)?.harnessApprovals[0].state,'expired');
+      const card=other.harnessApprovals[0];await f.request(`${path}/${other.id}/harness-approvals/${card.id}`,{id:randomUUID(),revision:card.revision,decision:'allow'},409);
+      const count=f.minted.length;await f.restart();assert.deepEqual(await f.request(stopPath,stop),stopped);assert.deepEqual(await f.request(path,command),receipt);assert.equal(f.minted.length,count);
+    }finally{await f.close();}
   });
   test(`${runtime}: durable approval allow, deny, prefix grant and scoped receipt`,async()=>{
     const f=await fixture(runtime);try {

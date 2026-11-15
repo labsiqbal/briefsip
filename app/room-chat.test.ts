@@ -51,7 +51,7 @@ async function fixture(run: (f: any) => Promise<void>, concurrency = 4) {
     for (let n = 0; n < 500; n++) { const rows = await request(path); if (rows.some((row: any) => row.id === id) && predicate(rows)) return rows; await new Promise(resolve => setTimeout(resolve, 10)); }
     assert.fail(`Room timed out: ${JSON.stringify(await request(path))}`);
   };
-  try { await run({ database: options.database, members, room, calls, request, wait, setRespond: (fn: any) => { respond = fn; }, stop, restart: async () => { await stop(); app = await startApp(options); closed = false; }, tool: (name: string, args: any) => ({ id: randomUUID(), type: 'function', function: { name, arguments: JSON.stringify(args) } }) }); }
+  try { await run({ database: options.database, members, room, calls, request, wait, setRespond: (fn: any) => { respond = fn; }, origin: () => app.origin, stop, restart: async () => { await stop(); app = await startApp(options); closed = false; }, tool: (name: string, args: any) => ({ id: randomUUID(), type: 'function', function: { name, arguments: JSON.stringify(args) } }) }); }
   finally { await stop(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 }
 const latest = (body: any) => body.messages.filter((message: any) => message.role === 'user').at(-1)?.content;
@@ -163,4 +163,111 @@ test('new project section fans out with H2 silence and agent mentions, then foll
   for(const section of changed.sections)assert.deepEqual(channels.find((c:any)=>c.id===section.id).members,[members[0].id,members[3].id].sort());
   const next=randomUUID();await request(path,{id:next,text:'@Four, inspect.'},202);await wait(path,next);
   assert.deepEqual(calls.slice(4).map((body:any)=>body.model),['Four']);
+}));
+
+const gate = () => { let release!: () => void; const promise = new Promise<void>(resolve => { release = resolve; }); return { promise, release }; };
+
+test('room Stop fences a completed root with live/queued invited members; exact lost-response retry survives restart and new generation', async () => fixture(async ({room,members,request,wait,setRespond,restart,calls}:any) => {
+  const held=gate();
+  setRespond(async (body:any) => {
+    if (latest(body)==='Old generation') return body.model==='Assistant' ? '@Right Hand, investigate.' : 'NO_REPLY';
+    if (latest(body)==='@Right Hand, investigate.') { await held.promise; return '@Reviewer, late invitation must not publish.'; }
+    return 'Fresh reply.';
+  });
+  const path=await room(3,members[0].id), other=await room(1,null), root=randomUUID();
+  await request(path,{id:root,text:'Old generation'},202);
+  const rows=await wait(path,root,(rows:any[])=>rows.find(row=>row.id===root)?.status==='done' && rows.some(row=>row.parent===root && row.status==='running'));
+  const stopPath=path.replace('/turns',`/discussions/${root}/stop`), command={id:randomUUID(),generation:root};
+  const receipt=await request(stopPath,command,200); // Treat first response as lost.
+  assert(receipt.cancelled.length); assert.deepEqual(await request(stopPath,command,200),receipt);
+  await request(stopPath,{...command,generation:randomUUID()},409);
+  await request(other.replace('/turns',`/discussions/${root}/stop`),{id:randomUUID(),generation:root},404);
+  const stopped=await request(path), saved=stopped.find((row:any)=>row.id===root);
+  assert.equal(saved.status,'done'); assert.equal(saved.room.stopped,true); assert.equal(saved.room.active,false);
+  assert.deepEqual(saved.room.messages.map((row:any)=>row.text),['@Right Hand, investigate.']);
+  const child=stopped.find((row:any)=>receipt.cancelled.includes(row.id));
+  await request(path,{id:randomUUID(),text:'Stale steer',recipient:child.agent,dispatchMode:'steer',targetTurn:child.id},409);
+  const next=randomUUID(), elsewhere=randomUUID();
+  await request(path,{id:next,text:'Fresh generation'},202); await request(other,{id:elsewhere,text:'Unrelated root'},202);
+  held.release(); await wait(path,next); await wait(other,elsewhere);
+  const after=await request(path); assert.equal(after.find((row:any)=>row.id===next).room.generation,next);
+  assert.deepEqual(after.find((row:any)=>row.id===root).room.messages,saved.room.messages);
+  assert(!calls.some((body:any)=>latest(body)==='@Reviewer, late invitation must not publish.'));
+  await restart(); assert.deepEqual(await request(stopPath,command,200),receipt);
+  assert.equal((await request(path)).find((row:any)=>row.id===root).room.stopped,true);
+}));
+
+test('room Stop cancels fan-out, delegated descendants and pending addressed guidance; other roots and direct tasks continue', async () => fixture(async ({room,members,request,wait,setRespond,tool}:any) => {
+  const held=gate(); let delegated=false;
+  setRespond(async (body:any) => {
+    if (latest(body)==='@Assistant, delegate.' && !delegated) { delegated=true; return tool('delegate_task',{agent:members[1].id,task:'Held child',wait:true}); }
+    if (latest(body)==='Held child') { await held.promise; return 'Late child result'; }
+    return 'Other work finished';
+  });
+  const path=await room(3,members[0].id),root=randomUUID(); await request(path,{id:root,text:'@Assistant, delegate.'},202);
+  const rows=await wait(path,root,(rows:any[])=>rows.some(row=>row.text==='Held child' && row.status==='running'));
+  const child=rows.find((row:any)=>row.text==='Held child');
+  await request(path,{id:randomUUID(),text:'Pending guidance',recipient:child.agent,targetTurn:child.id,dispatchMode:'steer'},202);
+  const result=await request(path.replace('/turns',`/discussions/${root}/stop`),{id:randomUUID(),generation:root},200);
+  assert(result.cancelled.includes(root)); assert(result.cancelled.includes(child.id)); assert.equal(result.cancelled.length,3);
+  held.release();
+  const direct=`/api/agents/${members[2].id}/turns`,id=randomUUID(); await request(direct,{id,text:'Unrelated direct'},202);
+  await wait(direct,id,(rows:any[])=>rows.find(row=>row.id===id)?.status==='done');
+  assert((await request(path)).filter((row:any)=>result.cancelled.includes(row.id)).every((row:any)=>row.status==='cancelled' && !row.reply));
+}));
+
+test('addressed API room Steer consumes once at safe point and completion winner queues once; cross-room targets fail', async () => fixture(async ({room,members,request,wait,setRespond,tool,calls}:any) => {
+  const held=gate();let steps=0;
+  setRespond(async (body:any) => {
+    if (body.model!=='Assistant') { await held.promise; return 'Peer finished'; }
+    if (latest(body)==='Safe point') { if(steps++===0) { await held.promise; return tool('read_provider_settings',{}); } }
+    return 'Addressed answer';
+  });
+  const path=await room(3,members[0].id),other=await room(1,null),root=randomUUID(); await request(path,{id:root,text:'Safe point'},202);
+  await wait(path,root,(rows:any[])=>rows.filter(row=>row.status==='running').length===3);
+  const guidance={id:randomUUID(),text:'One constraint',recipient:members[0].id,targetTurn:root,dispatchMode:'steer'};
+  await request(other,guidance,404); await request(path,{...guidance,recipient:members[1].id},404);
+  await request(path,{id:randomUUID(),text:'No explicit target',dispatchMode:'steer'},400);
+  const receipt=await request(path,guidance,202);assert.deepEqual(await request(path,guidance,202),receipt);
+  held.release(); await wait(path,root); await wait(path,guidance.id,(rows:any[])=>rows.find(row=>row.id===guidance.id)?.status==='done');
+  const consumed=calls.filter((body:any)=>body.messages.some((message:any)=>message.role==='user' && message.content===guidance.text));
+  assert.equal(consumed.length,1);assert.equal(consumed[0].model,'Assistant');
+  const late={...guidance,id:randomUUID(),text:'Late guidance'};await request(path,late,202);
+  await wait(path,late.id,(rows:any[])=>rows.find(row=>row.id===late.id)?.status==='done');
+  await request(path,late,202);assert.equal(calls.filter((body:any)=>latest(body)===late.text).length,1);
+}));
+
+test('addressed root restart retains peers; Stop before completion prevents final and queued mentions', async () => fixture(async ({room,members,request,wait,setRespond,calls}:any) => {
+  const held=gate();setRespond(async(body:any)=>{if(latest(body)==='Hold all'){await held.promise;return '@Reviewer, too late.';}return 'Restarted branch';});
+  const path=await room(3,members[0].id),root=randomUUID();await request(path,{id:root,text:'Hold all'},202);
+  await wait(path,root,(rows:any[])=>rows.filter(row=>row.status==='running').length===3);
+  const restart={id:randomUUID(),text:'Restart only Assistant',recipient:members[0].id,targetTurn:root,dispatchMode:'restart'};
+  await request(path,restart,202);
+  await wait(path,restart.id,(rows:any[])=>rows.find(row=>row.id===restart.id)?.status==='done');
+  const before=await request(path);assert.equal(before.filter((row:any)=>row.status==='running').length,2);
+  const receipt=await request(path.replace('/turns',`/discussions/${root}/stop`),{id:randomUUID(),generation:root},200);assert.equal(receipt.cancelled.length,2);
+  held.release();assert.equal((await request(path)).find((row:any)=>row.id===restart.id).reply,'Restarted branch');
+  assert(!calls.some((body:any)=>latest(body)==='@Reviewer, too late.'));
+}));
+
+test('room Stop cancels queued mention invitations before provider admission', async () => fixture(async ({room,members,request,wait,setRespond,calls}:any) => {
+  const held=gate();setRespond(async(body:any)=>{if(body.model==='Assistant')return '@Right Hand, invited work.';await held.promise;return 'Late peer';});
+  const path=await room(3,members[0].id),root=randomUUID();await request(path,{id:root,text:'Discuss'},202);
+  await wait(path,root,(rows:any[])=>rows.some(row=>row.text==='@Right Hand, invited work.'&&row.status==='queued')&&rows.some(row=>row.status==='running'));
+  const result=await request(path.replace('/turns',`/discussions/${root}/stop`),{id:randomUUID(),generation:root},200);assert.equal(result.cancelled.length,3);
+  held.release();await wait(path,root);assert(!calls.some((body:any)=>latest(body)==='@Right Hand, invited work.'));
+},1));
+
+
+test('room Stop rejects foreign origins, bearer callers, payload changes, wrong generation and archived scope', async () => fixture(async ({room,members,request,wait,origin}:any) => {
+  const path=await room(1,members[0].id),root=randomUUID();await request(path,{id:root,text:'Complete first'},202);await wait(path,root);
+  const stopPath=path.replace('/turns',`/discussions/${root}/stop`),command={id:randomUUID(),generation:root};
+  for(const bearer of [false,true]) {
+    const headers=new Headers({'Content-Type':'application/json',Origin:bearer?origin():'https://foreign.invalid'});if(bearer)headers.set('Authorization','Bearer untrusted');
+    const response=await fetch(origin()+stopPath,{method:'POST',headers,body:JSON.stringify(command)});assert.equal(response.status,403);await response.arrayBuffer();
+  }
+  await request(stopPath,{...command,extra:true},400);await request(stopPath,{...command,generation:randomUUID()},409);
+  const channels=await request('/api/channels'),channel=channels.find((item:any)=>path.includes(item.id));
+  await request(`/api/channels/${channel.id}/edit`,{id:randomUUID(),revision:channel.revision,name:channel.name,instructions:channel.instructions,members:channel.members,lead:channel.lead,archived:true},200);
+  await request(stopPath,command,409);assert.equal((await request(path)).find((row:any)=>row.id===root).room.stopped,false);
 }));
