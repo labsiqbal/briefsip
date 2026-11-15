@@ -204,6 +204,27 @@ function ConversationFiles({ path, archived, attached, onAttach, locked, open, o
   </Collapsible></div>;
 }
 
+function RoomStop({ room, path, archived, onStopped }: { room: RoomView; path: string; archived: boolean; onStopped: () => void }) {
+  const confirm = useConfirm(), key = `briefsip:room-stop:${path}:${room.root}`;
+  const [pending, setPending] = useState<{ id: string; generation: string } | null>(() => {
+    try { const value = JSON.parse(sessionStorage.getItem(key) ?? 'null'); return value && typeof value.id === 'string' && value.generation === room.generation ? value : null; } catch { return null; }
+  });
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  async function stop() {
+    if (busy) return;
+    if (!pending && !await confirm({ title: 'Stop discussion?', description: 'Steps already sent may have taken effect. Provider usage may still be counted.', confirm: 'Stop discussion', danger: true })) return;
+    const request = pending ?? { id: crypto.randomUUID(), generation: room.generation };
+    try {
+      sessionStorage.setItem(key, JSON.stringify(request)); setPending(request); setBusy(true); setError('');
+      await api(`${path.replace(/\/turns$/, '')}/discussions/${room.root}/stop`, request);
+      sessionStorage.removeItem(key); setPending(null); onStopped();
+    } catch (error) { setError(message(error)); }
+    finally { setBusy(false); }
+  }
+  if (!room.active && !pending && !error) return null;
+  return <><IconButton label={pending ? 'Retry Stop discussion' : 'Stop discussion'} disabled={busy || archived} onClick={() => void stop()}><Square size={14} aria-hidden /></IconButton>{error && <span className="message-error" role="alert">{error}</span>}</>;
+}
+
 function TaskControls({ turn, path, members, archived }: { turn: Turn; path: string; members: Agent[]; archived: boolean }) {
   const [recipient, setRecipient] = useState(''), [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
@@ -278,7 +299,8 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   const [turns, setTurns] = useState<Turn[] | null>(null);
   const [activeTurns, setActiveTurns] = useState<{ id: string; agent: string; capabilities: { steer: boolean; queue: boolean; restart: boolean } }[]>([]);
   const [dispatchMode, setDispatchMode] = useState<'queue' | 'steer' | 'restart'>('queue');
-  const dispatchTarget = activeTurns.find(turn => !channel);
+  const [addressedTurn, setAddressedTurn] = useState('');
+  const dispatchTarget = activeTurns.find(turn => channel ? turn.id === addressedTurn : true);
   const canSteer = !!dispatchTarget?.capabilities.steer;
   const draftKey = `briefsip:draft:${scope}`;
   const [draft, setDraft] = useState(() => { try { return sessionStorage.getItem(draftKey) ?? ''; } catch { return ''; } });
@@ -335,7 +357,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     if (requestActive.current || blocked || (!pending && !draft.trim())) return;
     if (archived) { setError('Restore the conversation before sending a new message.'); return; }
     const mode = dispatchTarget ? forcedMode ?? dispatchMode : 'queue';
-    const request = pending ?? { id: crypto.randomUUID(), text: draft.trim(), ...(mode !== 'queue' ? { dispatchMode: mode, targetTurn: dispatchTarget!.id } : {}), ...(attached.length ? { files: attached } : {}),  };
+    const request = pending ?? { id: crypto.randomUUID(), text: draft.trim(), ...(mode !== 'queue' ? { dispatchMode: mode, targetTurn: dispatchTarget!.id, ...(channel ? { recipient: dispatchTarget!.agent } : {}) } : {}), ...(attached.length ? { files: attached } : {}),  };
     try { sessionStorage.setItem(storageKey, JSON.stringify(request)); }
     catch { setError('The browser could not save send status. Enable site storage before sending.'); return; }
     requestActive.current = true; setBusy(true); setPending(request); setError(''); nearBottom.current = true;
@@ -344,6 +366,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
       if (result.dispatch_label?.startsWith('Steer used restart')) setDispatchMode('queue');
       // A remounted conversation owns recovery and any newer draft after navigation.
       if (!mounted.current) return;
+      setDispatchMode('queue'); setAddressedTurn('');
       sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); setPending(null); setDraft(''); setAttached([]); setFocusedTask(''); setHistoryPages([]); setQuery('');
     } catch (error) {
       if (!mounted.current) return;
@@ -413,6 +436,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
                 {turn.routineReport ? <section className="routine-report" aria-label={`Routine report: ${turn.routineReport.name}`}><div className="routine-report__meta"><CalendarClock size={16} aria-hidden /><strong>Routine report</strong><time dateTime={turn.created}>{time(turn.created)}</time></div><div className="legacy routine-report__body"><Markdown text={turn.reply ?? ''} scope={path.slice(0, -6)} origin={window.location.origin} /></div><a className="k-link" href={`#routine-run-${turn.routineReport.run}`} onClick={event=>{event.preventDefault();onOpenAgent?.(turn.routineReport!.agent,turn.routineReport!.thread);}}>Open full run</a></section> : <><HumanMessage text={turn.text} label={turn.messageOrigin?.kind === 'peer' ? `Message from ${turn.messageOrigin.name}` : 'Your message'} attachments={!!turn.files?.length && <ul className="chip-list" aria-label="Message attachments">{turn.files.map(file => <li key={file.id}><a className="cite-chip" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}><Paperclip size={12} aria-hidden /> {file.name}</a></li>)}</ul>}>
                     <time className="message-time" dateTime={turn.created} title={new Date(turn.created).toLocaleString('en-US')}>{time(turn.created)}</time>
                     {turn.messageOrigin?.kind === 'peer' ? <span className="message-origin">From {turn.messageOrigin.name}</span> : turn.workflow_run ? <span className="message-origin">Workflow</span> : turn.parent ? <span className="message-origin">Subtask</span> : null}
+                    {turn.room && <RoomStop room={turn.room} path={path} archived={archived} onStopped={() => composer.current?.focus()} />}
                     <MessageCopyButton text={turn.text} label="Copy message" />
                     <IconButton label="View task" onClick={() => openFocused(turn.id)}><ListRestart size={14} aria-hidden /></IconButton>
                     {turn.parent && !turn.messageOrigin && <a className="link-btn link-btn--small" href={`#turn-${turn.parent}`} onClick={event => { event.preventDefault(); openFocused(turn.parent!); }}>View parent task</a>}
@@ -457,11 +481,12 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
         {error && <div className="composer__error" role="alert"><span>{error} {pending && 'Use Retry send to check the same request without creating a duplicate message.'}</span></div>}
         {blocked && <div className="composer__error" role="alert"><span>Message recovery data could not be read. Sending is blocked. Check history to confirm the previous message was not sent.</span><Button size="sm" variant="ghost" onClick={async () => { if (!await confirm({ title: 'Discard recovery data?', description: 'The previous message may already have been received. Check history before sending another message.', confirm: 'Discard message recovery', danger: true })) return; try { sessionStorage.removeItem(storageKey); setBlocked(false); setError(''); requestAnimationFrame(() => composer.current?.focus()); } catch { setError('Recovery data could not be deleted. Check site storage.'); } }}>Discard message recovery</Button></div>}
         {(pending?.files ?? attached).length > 0 && <p className="composer__note"><Paperclip size={12} aria-hidden /> {(pending?.files ?? attached).length} attachments will be sent to the provider with the message.</p>}
+        {channel && activeTurns.length > 0 && <div className="composer-dispatch bs-root"><Select size="sm" label="Addressed member" value={dispatchTarget?.id ?? ''} disabled={busy || !!pending || blocked} onChange={setAddressedTurn} options={[{ value: '', label: 'Everyone' }, ...activeTurns.map(turn => ({ value: turn.id, label: members.find(member => member.id === turn.agent)?.name ?? turn.agent }))]} /></div>}
         {dispatchTarget && <div className="composer-dispatch bs-root">
           <Select size="sm" label="Message mode" value={pending?.dispatchMode ?? dispatchMode} disabled={busy || !!pending || blocked} onChange={value => setDispatchMode(value as typeof dispatchMode)} options={[
-            { value: 'queue', label: 'Queue', hint: 'Send after the running turn finishes.' },
-            { value: 'steer', label: canSteer ? 'Steer' : 'Steer (restarts turn)', hint: canSteer ? 'Add guidance before the next provider call.' : 'This runtime cannot steer. Stops the current turn and starts another with its partial context.' },
-            { value: 'restart', label: 'Restart', hint: 'Stop this turn and start another with its partial context. Effects may already have happened.' },
+            { value: 'queue', label: 'Queue' },
+            { value: 'steer', label: canSteer ? 'Steer' : 'Steer (restarts turn)' },
+            { value: 'restart', label: 'Restart' },
           ]} />
         </div>}
         <ChatComposer mentions={channel ? members : []} onMention={value => { setDraft(value); try { sessionStorage.setItem(draftKey, value); } catch { setError('Draft was not saved. Copy your message before leaving.'); } }} label={`Message ${agent.name}`} inputRef={composer} multiline={draft.includes('\n')} onSubmit={send} onSendKey={event => { void send(event, (event.ctrlKey || event.metaKey) && canSteer ? 'steer' : 'queue'); }} onAttach={openFiles}

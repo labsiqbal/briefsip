@@ -221,3 +221,18 @@ test('restart during uncertain MCP effect keeps its receipt and never replays ex
     await Promise.all([new Promise<void>(resolve => external.close(() => resolve())), new Promise<void>(resolve => provider.close(() => resolve()))]); rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('room Stop seals gated SSE partial and effects across lost response, restart and new generation', async () => {
+  const f=await fixture(true);try {
+    const channel=await f.request('/api/channels',{id:randomUUID(),name:'Stream control',instructions:'Help.',members:[f.agent.id],lead:f.agent.id});
+    const path=`/api/channels/${channel.id}/turns`,root=randomUUID(),text=`PARTIAL:${root}`;
+    await f.request(path,{id:root,text});await until(()=>f.held.has(text),Boolean);f.held.get(text)!();
+    const partial=await f.turn(root,row=>!!row.partial?.text,path);assert.equal(partial.generatedFiles.length,1);
+    const stopPath=`/api/channels/${channel.id}/discussions/${root}/stop`,command={id:randomUUID(),generation:root};
+    const receipt=await f.request(stopPath,command);assert.deepEqual(await f.request(stopPath,command),receipt);
+    f.held.get(text)!();
+    const next=randomUUID();await f.request(path,{id:next,text:`NEW:${root}`});await f.turn(next,row=>row.status==='done',path);
+    const stopped=await f.turn(root,row=>row.status==='cancelled',path);assert.equal(stopped.partial.text,partial.partial.text);assert.equal(stopped.reply,null);assert.equal(stopped.generatedFiles.length,1);
+    assert.equal(stopped.room.messages.length,0);const count=f.calls.length;await f.restart();assert.deepEqual(await f.request(stopPath,command),receipt);assert.equal(f.calls.length,count);
+  }finally{await f.close();}
+});

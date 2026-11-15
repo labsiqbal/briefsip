@@ -275,3 +275,9 @@
 .room-agent:has(.room-pending) .room-agent__actions, .room-agent:last-of-type .room-agent__actions { opacity: 1; }
 @media (hover: none) { .room-agent__actions { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .room-agent__actions { transition: none; } }
+
+/* Room controls and approvals must fit beside the two desktop panels. */
+.room-conversation, .room-agent { grid-template-columns: minmax(0, 1fr); }
+.room-agent .k-row { flex-wrap: wrap; }
+.room-agent .k-row-actions .k-btn { max-width: 100%; height: auto; min-height: 28px; white-space: normal; }
+.human-message:has([aria-label="Stop discussion"], [aria-label="Retry Stop discussion"]) .human-meta { opacity: 1; }

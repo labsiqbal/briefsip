@@ -29,6 +29,5 @@ export function HarnessApprovalCard({ approval, path, status, archived, request 
     {approval.prefix && <Collapsible title="Always allow scope"><p className="k-field__hint">Applies to this agent, runtime, workspace, and literal command prefix: <code>{approval.prefix}</code>. Switching runtime clears these grants.</p></Collapsible>}
     {error && <Alert tone="error" actions={pending.current && <Button size="sm" disabled={disabled} onClick={() => void decide(pending.current!.decision)}>Retry saved decision</Button>}>{error} Retry keeps the original decision and request ID.</Alert>}
     {open && <div className="k-row-actions"><Button size="sm" disabled={disabled || !!pending.current} onClick={() => void decide('deny')}>Don't allow</Button>{approval.prefix && <Button size="sm" disabled={disabled || !!pending.current} onClick={() => void decide('always')}>Always allow for this agent + command prefix</Button>}<Button size="sm" variant="primary" disabled={disabled || !!pending.current} onClick={() => void decide('allow')}>Allow once</Button></div>}
-    {approval.state === 'expired' && <p className="k-field__hint" style={{ margin: 0 }}>This request cannot run after a restart or stopped turn. Send a new message to ask again.</p>}
   </div></Card></section>;
 }

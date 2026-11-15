@@ -70,9 +70,10 @@
           "MAX_DISCUSSION_MEMBERS",
           "MAX_DISCUSSION_ROUNDS",
           "MAX_DISCUSSION_MESSAGES",
-          "plan_next_task"
+          "plan_next_task",
+          "plan_publication"
         ],
-        "adaptation": "SQLite room discussion ledger with six-member, three-round and ten-message bounds."
+        "adaptation": "SQLite room discussion ledger with six-member, three-round and ten-message bounds. Immutable human-root generations and stopped-generation admission/publication fencing; addressed dispatch retains original scope. New human sends use separate roots."
       },
       {
         "path": "agent/prompt_builder.py",
@@ -90,12 +91,22 @@
           "first reply wins"
         ],
         "adaptation": "Durable room delivery identity and restart-safe first-result handling."
+      },
+      {
+        "path": "tui_gateway/hosted_room_service.py",
+        "sourceSha256": "29d24ee40e8ff463016a09a8d1d99e32c437641852e584e2266b9268c7d3ec8a",
+        "symbols": [
+          "HostedRoomService.stop_room"
+        ],
+        "adaptation": "Persist room-root stop fence before aborting active members and cancelling queued descendants; exact immutable control receipts in Briefsip SQLite. No hosted driver, leases or Hermes runtime."
       }
     ],
     "localPath": "app/agent-delegation.ts",
     "localPaths": [
       "app/agent-delegation.ts",
-      "app/room-chat.ts"
+      "app/room-chat.ts",
+      "app/server.ts",
+      "app/dispatch.ts"
     ]
   },
   "remote": {

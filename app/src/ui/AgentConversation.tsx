@@ -19,7 +19,7 @@ export function AgentConversation({ items, sender, scope, onOpen }: { items: Exc
     </div></div>
   </div>)}</section>;
 }
-export type RoomView = { root: string; round: number; silent: string | null; note: string | null; quiet: { agent: string; name: string; silent: string }[]; messages: { seq: number; turn: string; agent: string; name: string; role: string; target_name?: string; text: string; kind: string }[] };
+export type RoomView = { root: string; generation: string; active: boolean; stopped: boolean; round: number; silent: string | null; note: string | null; quiet: { agent: string; name: string; silent: string }[]; messages: { seq: number; turn: string; agent: string; name: string; role: string; target_name?: string; text: string; kind: string }[] };
 type RoomTurn = { id: string; agent: string; status: string; paused: number; created: string; error: string | null; partial?: StreamPartial | null; activity?: TurnActivityData; questions?: { answer: string | null }[] };
 type RoomMember = { id: string; name: string; role: string; avatar_revision?: number };
 function RoomReply({ turn, member, text, scope, details, controls, extras }: { turn: RoomTurn; member: RoomMember; text?: string; scope: string; details: ReactNode; controls: ReactNode; extras: ReactNode }) {
@@ -41,7 +41,7 @@ function RoomReply({ turn, member, text, scope, details, controls, extras }: { t
     <Disclosure.Content className="room-agent__activity">{details}</Disclosure.Content>
     {answer && <div className="message-body" aria-label={streaming ? `Streaming answer from ${member.name}` : `Answer from ${member.name}`}>{!text && !streaming && <span className="message-muted">Partial reply</span>}<div className="legacy"><StreamingMarkdown key={streamIdentity(turn)} text={answer} scope={scope} origin={window.location.origin} /></div></div>}
     {extras}
-    {turn.error && <p className="message-error">{turn.error}</p>}
+    {turn.error && turn.status !== 'cancelled' && <p className="message-error">{turn.error}</p>}
   </section></Disclosure.Root>;
 }
 export function RoomMessages({ room, members, pending, turns, scope, details, controls, extras }: { room: RoomView; members: RoomMember[]; pending: RoomTurn[]; turns: RoomTurn[]; scope: string; details: (turn: string) => ReactNode; controls: (turn: string) => ReactNode; extras: (turn: string) => ReactNode }) {
