@@ -15,6 +15,7 @@ import { startApp } from './server.ts';
 import { signedNodeMessage, verifiedNodeMessage } from './hub/node-link.ts';
 import { initializeHubSchema } from './hub/schema.ts';
 import { createHubAuthority, type ParticipationPolicy, type InvocationPolicy } from './hub/project-authority.ts';
+import { createHubWebApi } from './hub/web.ts';
 import { createHubRouting, type RoutingFrame } from './hub/routing.ts';
 import { canonicalJson, ProtocolError, sha256 } from './protocol.ts';
 type App = Awaited<ReturnType<typeof startApp>>;
@@ -112,6 +113,7 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
         await browser(accountsHost, '/api/nodes/enrollment/approve', { humanCode: started.humanCode, fingerprint: '0'.repeat(64) }, undefined, undefined, 401);
         const { data: inspected } = await browser(accountsHost, `/api/nodes/enrollment?humanCode=${started.humanCode}`, undefined, session);
         assert.equal(inspected.nodeId, started.nodeId);
+        assert.equal(inspected.fingerprint, started.fingerprint);
         assert.equal(inspected.accountId, account);
         await browser(accountsHost, '/api/nodes/enrollment/approve', { humanCode: started.humanCode, fingerprint: inspected.fingerprint }, session);
         await api(app, '/api/hub-link/enrollment/poll', {});
@@ -140,7 +142,7 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
         return (await browser(project.host, '/api/messages', { requestId: randomUUID(), sectionId: project.sectionId, text: 'Mention from authenticated project browser', mentions }, session)).data;
     }
     const post = (account: string, mentions: string[]) => r.post(ctx(account), { requestId: randomUUID(), sectionId: project.sectionId, text: 'Explain transport', mentions });
-    return { dir, a, r, ctx, alice, bob, eve, project, node, post, browserPost, projectSession, request: localFetch, transport, keys, origin, localOrigin, hubFetch, browser, login, accountsHost, signer, hubKey, loseEnrollmentResponse() { loseEnrollmentResponse = true; }, get calls() { return providerCalls; }, advance(ms: number) { clock += ms; }, async done(turnId: string, account = alice) { await until(() => { const state = r.turn(ctx(account), turnId).state; assert(!['failed', 'unknown', 'revoked'].includes(String(state)), `Unexpected hub turn state: ${state}`); return state === 'done'; }, 'hub final'); return r.history(ctx(account), project.sectionId).results.filter(f => f.turnId === turnId); } };
+    return { dir, a, r, ctx, alice, bob, eve, project, node, post, browserPost, projectSession, request: localFetch, transport, keys, origin, localOrigin, hubFetch, browser, login, accountsHost, signer, hubKey, loseEnrollmentResponse() { loseEnrollmentResponse = true; }, get calls() { return providerCalls; }, now: () => clock, advance(ms: number) { clock += ms; }, async done(turnId: string, account = alice) { await until(() => { const state = r.turn(ctx(account), turnId).state; assert(!['failed', 'unknown', 'revoked'].includes(String(state)), `Unexpected hub turn state: ${state}`); return state === 'done'; }, 'hub final'); return r.history(ctx(account), project.sectionId).results.filter(f => f.turnId === turnId); } };
 }
 test('signed envelopes reject forged payloads, keys and directions', () => {
     const pair = generateKeyPairSync('ed25519'), key = pair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url'), body = { kind: 'heartbeat' };
@@ -248,14 +250,14 @@ test('foreign project and forged signed hub frames never reach local engine', as
     assert.equal(f.calls, 0);
 });
 test('local owner endpoints require exact Origin and refuse bearer callers; unenrolled app stays idle', async (t) => { const f = await fixture(t), node = await f.node('Boundary', f.alice); const r = await fetch(node.app.origin + '/api/hub-link', { headers: { Origin: 'https://foreign.test', Connection: 'close' } }); assert.equal(r.status, 403); const bearer = await fetch(node.app.origin + '/api/hub-link', { headers: { Origin: node.app.origin, Authorization: 'Bearer rejected', Connection: 'close' } }); assert.equal(bearer.status, 403); assert.equal(f.calls, 0); await api(node.app, '/api/hub-link/revoke', {}); await until(() => f.a.one('SELECT status FROM nodes WHERE id=?', node.nodeId)!.status === 'revoked'); assert.equal(node.app.hubLink!.status().disabled, true); });
-async function childApp(options: Record<string, unknown>, keys: Map<string, string>, localOrigin: string) {
+async function childApp(options: Record<string, unknown>, keys: Map<string, string>, localOrigin: string, clock: number) {
     const code = `import {request} from 'node:http'; import WebSocket from 'ws'; import {startApp} from ${JSON.stringify(new URL('./server.ts', import.meta.url).href)};process.on('message',async message=>{try{const keys=new Map(message.keys), origin=message.options.hubLink.origin, host=new URL(origin).host;
 const hubFetch=(url,init)=>new Promise((resolve,reject)=>{const req=request(message.localOrigin+new URL(url).pathname,{method:init.method,headers:{...init.headers,Host:host}},res=>{const chunks=[];res.on('data',c=>chunks.push(c));res.on('end',()=>resolve(new Response(Buffer.concat(chunks),{status:res.statusCode})));});req.on('error',reject);req.end(init.body);});
 const webSocket=(url,settings)=>new WebSocket(url.replace(origin.replace('https','wss'),message.localOrigin.replace('http','ws')),{...settings,headers:{...settings.headers,Host:host}});
-const app=await startApp({...message.options,hubLink:{...message.options.hubLink,fetch:hubFetch,webSocket,entry:(service,name)=>({getPassword:()=>keys.get(service+'/'+name)??null,setPassword:value=>keys.set(service+'/'+name,value)})}});process.send({kind:'ready',origin:app.origin});}catch{process.send({kind:'failed'});process.exitCode=1;}});`;
+const app=await startApp({...message.options,hubLink:{...message.options.hubLink,now:()=>message.clock,fetch:hubFetch,webSocket,entry:(service,name)=>({getPassword:()=>keys.get(service+'/'+name)??null,setPassword:value=>keys.set(service+'/'+name,value)})}});process.send({kind:'ready',origin:app.origin});}catch{process.send({kind:'failed'});process.exitCode=1;}});`;
     const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', code], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
     const ready = once(child, 'message', { signal: AbortSignal.timeout(10000) });
-    child.send({ options, keys: [...keys], localOrigin });
+    child.send({ options, keys: [...keys], localOrigin, clock });
     const [message] = await ready;
     assert.equal(message.kind, 'ready');
     return child;
@@ -267,7 +269,7 @@ async function killChild(child: ChildProcess) {
     child.kill('SIGKILL');
     await exited;
 }
-test('SIGKILL after dispatch and before result ACK keeps durable uncertainty without replay', async (t) => { let release: () => void = () => { }; const f = await fixture(t, () => new Promise<string>(resolve => { release = () => resolve('Effect already happened'); })), node = await f.node('Crash', f.alice), p = await node.participate(); await node.app.close(); const { entry: unused, now: unusedClock, ...linkOptions } = node.options.hubLink; const options = { ...node.options, hubLink: linkOptions }; let child = await childApp(options, f.keys, f.localOrigin); t.after(async () => { await killChild(child); }); await until(() => f.a.one('SELECT status FROM nodes WHERE id=?', node.nodeId)!.status === 'ready'); const post = f.post(f.alice, [p.participationId]); await until(() => f.calls === 1, 'provider dispatched'); await killChild(child); release(); await until(() => f.r.turn(f.ctx(f.alice), post.turnIds[0]).state === 'unknown'); child = await childApp(options, f.keys, f.localOrigin); await until(() => f.a.one('SELECT status FROM nodes WHERE id=?', node.nodeId)!.status === 'ready'); await sleep(500); assert.equal(f.calls, 1); assert.equal(f.r.turn(f.ctx(f.alice), post.turnIds[0]).state, 'unknown'); });
+test('SIGKILL after dispatch and before result ACK keeps durable uncertainty without replay', async (t) => { let release: () => void = () => { }; const f = await fixture(t, () => new Promise<string>(resolve => { release = () => resolve('Effect already happened'); })), node = await f.node('Crash', f.alice), p = await node.participate(); await node.app.close(); const { entry: unused, now: unusedClock, ...linkOptions } = node.options.hubLink; const options = { ...node.options, hubLink: linkOptions }; let child = await childApp(options, f.keys, f.localOrigin, f.now()); t.after(async () => { await killChild(child); }); await until(() => f.a.one('SELECT status FROM nodes WHERE id=?', node.nodeId)!.status === 'ready'); const post = f.post(f.alice, [p.participationId]); await until(() => f.calls === 1, 'provider dispatched'); await killChild(child); release(); await until(() => f.r.turn(f.ctx(f.alice), post.turnIds[0]).state === 'unknown'); child = await childApp(options, f.keys, f.localOrigin, f.now()); await until(() => f.a.one('SELECT status FROM nodes WHERE id=?', node.nodeId)!.status === 'ready'); await sleep(500); assert.equal(f.calls, 1); assert.equal(f.r.turn(f.ctx(f.alice), post.turnIds[0]).state, 'unknown'); });
 test('provider partial snapshots stream over real WebSockets before final', async (t) => { const f = await fixture(t, () => ({ streamText: 'Streamed local answer' }), true), node = await f.node('Stream', f.alice), p = await node.participate(), post = f.post(f.alice, [p.participationId]); const results = await f.done(post.turnIds[0]); assert(results.some(frame => frame.kind === 'turn.partial' && frame.payload.text === 'Streamed local answer')); assert.equal(results.at(-1)!.kind, 'turn.final'); assert.equal(results.at(-1)!.payload.text, 'Streamed local answer'); assert.equal(f.calls, 1); });
 test('browser code alone cannot redeem enrollment; node upgrade rejects browser credentials', async (t) => {
     const f = await fixture(t);
@@ -637,4 +639,49 @@ test('human post rate leaves capacity for withdrawal controls', async t => {
     await api(node.app, '/api/hub-link/grants/revoke', { projectId: f.project.projectId, participationId: p.participationId });
     assert.equal(f.a.one('SELECT state FROM participations WHERE id=?', p.participationId)!.state, 'revoked');
     assert.equal(f.calls, 0);
+});
+
+test('signed pending requests stay node-scoped; approval, stale revision, offline decline and reconnect preserve consent', async t => {
+    const f = await fixture(t), bob = await f.node('Pending Bob', f.bob), alice = await f.node('Other Alice', f.alice), web = createHubWebApi(f.a);
+    web.registerAgent(f.bob, { agentId: bob.agent.id, nodeId: bob.nodeId, name: 'Bob local' });
+    const policy: ParticipationPolicy = { sectionIds: [f.project.sectionId], scopes: ['read','invoke'], invocation: { mode: 'all-members' }, payerBindingRef: 'local', localPolicyDigest: bob.app.hubLink!.localPolicyDigest(bob.agent.id), maxCostMicros: 10000 };
+    const propose = () => web.propose(f.ctx(f.bob), { agentId: bob.agent.id, policy, providerMaxCostMicros: 100 });
+    assert.throws(() => web.propose(f.ctx(f.bob), { agentId: bob.agent.id, policy, providerMaxCostMicros: 10001 }));
+    const first = propose();
+    await until(() => bob.app.hubLink!.requests().length === 1, 'pending request delivered');
+    const pending = bob.app.hubLink!.requests()[0];
+    assert.equal(pending.projectName, 'Alpha'); assert.equal(pending.requesterAccountId, f.bob);
+    assert.equal(pending.sections[0].id, f.project.sectionId); assert.equal(pending.grant.providerMaxCostMicros, 100);
+    assert.equal(alice.app.hubLink!.requests().length, 0); assert.equal(f.calls, 0);
+    const changed = propose(); assert(changed.revision > first.revision);
+    await until(() => bob.app.hubLink!.requests()[0]?.grant.revision === changed.revision, 'new revision delivered');
+    await api(bob.app, '/api/hub-link/grants/approve', pending.grant, 409);
+    const current = bob.app.hubLink!.requests()[0].grant;
+    await api(bob.app, '/api/hub-link/grants/approve', current);
+    assert.equal(f.a.one('SELECT state FROM participations WHERE id=?', changed.participationId)!.state, 'proposed');
+    assert.equal(bob.app.hubLink!.requests().length, 0); assert.equal(f.calls, 0);
+    f.a.consent(f.ctx(f.alice), changed.participationId, changed.revision, changed.policyDigest, 'project');
+    assert.equal(f.a.one('SELECT state FROM participations WHERE id=?', changed.participationId)!.state, 'active');
+    const declined = propose();
+    await until(() => bob.app.hubLink!.requests()[0]?.grant.revision === declined.revision);
+    await bob.app.hubLink!.close();
+    await api(bob.app, '/api/hub-link/grants/revoke', { projectId: f.project.projectId, participationId: declined.participationId });
+    assert.equal(bob.app.hubLink!.status().pendingWithdrawals, 1); assert.equal(bob.app.hubLink!.requests().length, 0);
+    await bob.restart();
+    await until(() => bob.app.hubLink!.status().pendingWithdrawals === 0, 'offline decline reconciled');
+    assert.equal(f.a.one('SELECT state FROM participations WHERE id=?', declined.participationId)!.state, 'revoked');
+    assert.equal(bob.app.hubLink!.requests().length, 0); assert.equal(f.calls, 0);
+    const original = WebSocket.prototype.send; let chunked = false;
+    WebSocket.prototype.send = function(data: any, ...args: any[]) {
+        const body = JSON.parse(String(data)).body;
+        if (body?.kind === 'participation.requests') { assert(Buffer.byteLength(String(data)) <= 65536); if (!body.complete) chunked = true; }
+        return Reflect.apply(original, this, [data, ...args]);
+    };
+    t.after(() => { WebSocket.prototype.send = original; });
+    for (let index = 0; index < 90; index++) {
+        const agentId = randomUUID(); web.registerAgent(f.bob, { agentId, nodeId: bob.nodeId, name: `Pending ${index}` });
+        web.propose(f.ctx(f.bob), { agentId, policy, providerMaxCostMicros: 100 });
+    }
+    await until(() => bob.app.hubLink!.requests().length === 90, 'bounded multi-frame snapshot');
+    assert(chunked); assert.equal(bob.app.hubLink!.status().connected, true);
 });

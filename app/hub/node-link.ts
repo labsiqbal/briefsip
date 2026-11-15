@@ -46,6 +46,7 @@ export function attachNodeLink(hub: { mountNodeUpgrade(handler: (req: IncomingMe
         throw new Error('Hub signer must be Ed25519.');
     db.exec(`CREATE TABLE IF NOT EXISTS node_link_codes (digest TEXT PRIMARY KEY,human_digest TEXT UNIQUE NOT NULL,candidate TEXT NOT NULL,account_id TEXT,expires_at INTEGER NOT NULL,next_poll INTEGER NOT NULL,consumed INTEGER NOT NULL DEFAULT 0) STRICT;
     CREATE TABLE IF NOT EXISTS node_link_sessions (digest TEXT PRIMARY KEY,node_id TEXT NOT NULL,account_id TEXT NOT NULL,node_generation INTEGER NOT NULL,authority_generation TEXT NOT NULL,expires_at INTEGER NOT NULL) STRICT;
+    CREATE TABLE IF NOT EXISTS node_link_profiles (account_id TEXT PRIMARY KEY,name TEXT NOT NULL) STRICT;
     CREATE TABLE IF NOT EXISTS node_link_replays (digest TEXT PRIMARY KEY,expires_at INTEGER NOT NULL) STRICT;`);
     const sockets = new Map<string, {
         ws: WebSocket;
@@ -54,6 +55,7 @@ export function attachNodeLink(hub: { mountNodeUpgrade(handler: (req: IncomingMe
         seen: number;
         reconciled: boolean;
         grants: string;
+        requests: string;
         delivered: Map<string, number>;
     }>();
     const buckets = new Map<string, {
@@ -127,9 +129,10 @@ export function attachNodeLink(hub: { mountNodeUpgrade(handler: (req: IncomingMe
         const c = JSON.parse(String(row.candidate)) as Enrollment;
         return { nodeId: c.nodeId, installationId: c.installationId, label: c.label, capabilities: c.capabilities, fingerprint: sha256(c.signingPublicKey), accountId, expiresAt: Number(row.expires_at) };
     }
-    function approveEnrollment(accountId: string, humanCode: string) {
+    function approveEnrollment(accountId: string, humanCode: string, accountName?: string) {
         inspectEnrollment(accountId, humanCode);
         db.prepare('UPDATE node_link_codes SET account_id=? WHERE human_digest=? AND consumed=0').run(accountId, sha256(humanCode));
+        if (accountName) db.prepare('INSERT OR REPLACE INTO node_link_profiles VALUES(?,?)').run(accountId, accountName);
         return { approved: true };
     }
     function poll(value: unknown) {
@@ -209,6 +212,26 @@ export function attachNodeLink(hub: { mountNodeUpgrade(handler: (req: IncomingMe
             throw deny();
         return a.resolveProject(String(host.host), principal.accountId, project);
     }
+    function participationRequests(principal: NodePrincipal) {
+        a.node(principal);
+        if (!a.one("SELECT 1 FROM sqlite_schema WHERE name='hub_web_requests'")) return [];
+        return a.all(`SELECT p.id,p.project_id,p.agent_id,p.revision,p.policy_json,pr.name AS projectName,h.host,
+          ac.subject AS requesterName,q.requester_account_id,q.provider_max_cost_micros
+          FROM participations p JOIN agents ag ON ag.id=p.agent_id JOIN projects pr ON pr.id=p.project_id
+          JOIN host_bindings h ON h.project_id=p.project_id AND h.active=1
+          JOIN hub_web_requests q ON q.participation_id=p.id AND q.revision=p.revision
+          JOIN accounts ac ON ac.id=q.requester_account_id
+          WHERE ag.home_node_id=? AND ag.owner_account_id=? AND p.state='proposed'
+          AND p.owner_consent_revision IS NOT p.revision LIMIT 100`, principal.nodeId, principal.accountId).flatMap(row => {
+            try {
+                const ctx = ownerContext(principal, row.project_id); a.member(ctx, 'propose');
+                const policy = JSON.parse(String(row.policy_json));
+                const sections = policy.sectionIds.map((sectionId: string) => { a.section(ctx, sectionId); return { id: sectionId, name: String(a.one('SELECT name FROM sections WHERE project_id=? AND id=?', row.project_id, sectionId)!.name) }; });
+                return [{ projectName: row.projectName, projectHost: row.host, sections, requesterName: row.requesterName, requesterAccountId: row.requester_account_id,
+                  grant: { projectId: row.project_id, participationId: row.id, agentId: row.agent_id, localAgentId: row.agent_id, revision: row.revision, policy, providerMaxCostMicros: row.provider_max_cost_micros } }];
+            } catch { return []; }
+        });
+    }
     function pump(link: ReturnType<typeof sockets.get>) {
         if (!link)
             return;
@@ -242,6 +265,19 @@ export function attachNodeLink(hub: { mountNodeUpgrade(handler: (req: IncomingMe
         for (const f of pending.filter(f => f.kind === 'grant.revoked' || f.kind === 'turn.cancel'))
             send(link.ws, f);
         if (controlsPending) return;
+        const requests = participationRequests(link.principal), encodedRequests = canonicalJson(requests);
+        if (encodedRequests !== link.requests) {
+            link.requests = encodedRequests;
+            const accountName = String(a.one('SELECT name FROM node_link_profiles WHERE account_id=?', link.principal.accountId)?.name ?? a.account(link.principal.accountId).subject);
+            const snapshot = sha256(encodedRequests);
+            let offset = 0, batch: typeof requests = [];
+            const publish = (complete: boolean) => { send(link.ws, { kind: 'participation.requests', requests: batch, snapshot, offset, complete, accountName, principal: link.principal, authorityGeneration: a.generation() }); offset += batch.length; batch = []; };
+            for (const request of requests) {
+                if (Buffer.byteLength(canonicalJson([...batch, request])) > NODE_FRAME_LIMIT - 4096) publish(false);
+                batch.push(request);
+            }
+            publish(true);
+        }
         const grants = r.grants(link.principal), encoded = canonicalJson(grants);
         if (encoded !== link.grants) {
             link.grants = encoded;
@@ -276,7 +312,7 @@ export function attachNodeLink(hub: { mountNodeUpgrade(handler: (req: IncomingMe
             const principal = a.connectNode(String(row.account_id), String(n.id), Number(n.generation));
             sockets.get(principal.nodeId)?.ws.close(4409, 'Connection replaced');
             wss.handleUpgrade(req, socket, head, ws => {
-                const link = { ws, principal, expiresAt: Number(row.expires_at), seen: now(), reconciled: false, grants: '', delivered: new Map<string, number>() };
+                const link = { ws, principal, expiresAt: Number(row.expires_at), seen: now(), reconciled: false, grants: '', requests: '', delivered: new Map<string, number>() };
                 sockets.set(principal.nodeId, link);
                 send(ws, { kind: 'connection.ready', principal, authorityGeneration: a.generation(), expiresAt: link.expiresAt });
                 const requests = new Map<string, string>();
