@@ -1,0 +1,32 @@
+.bs-root.set4-page { min-width: 0; max-width: 100%; gap: 24px; }
+.bs-root.set4-page .k-page-head { padding-right: 40px; }
+.bs-root.set4-page .k-section__head { padding-left: 0; }
+.bs-root.machines-page .k-card > .k-row { align-items: center; flex-wrap: nowrap; padding: 0; }
+.bs-root.machines-page .k-card > .k-row > .k-row__main { flex-basis: 0; }
+.bs-root.machines-page .k-row__trailing { width: auto; padding: 0 8px 0 0; }
+.bs-root .set4-detail .k-row__trailing { max-width: 65%; overflow-wrap: anywhere; text-align: right; font-variant-numeric: tabular-nums; }
+.bs-root.set4-page .k-row__title, .bs-root .set4-detail .k-row__title { white-space: normal; overflow-wrap: anywhere; }
+.bs-root.set4-page .k-table-wrap { min-width: 0; max-width: 100%; }
+.bs-root.set4-page .k-tabs, .bs-root.set4-page .k-tabs__panel { min-width: 0; }
+.bs-root.set4-page .k-tabs__panel { display: flex; flex-direction: column; gap: 24px; }
+.bs-root.set4-page .k-tabs__panel[data-state='inactive'] { display: none; }
+.bs-root.set4-page .k-table { font-variant-numeric: tabular-nums; }
+.bs-root.set4-page .k-table td { overflow-wrap: anywhere; }
+.bs-root.set4-page .set4-totals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.bs-root.set4-page .set4-totals .k-row__trailing { font-variant-numeric: tabular-nums; }
+.bs-root.set4-page .set4-totals .k-row__meta { font-size: 12px; }
+.bs-root.set4-page .set4-schema { padding: 0 14px 10px; }
+.bs-root.set4-transcription .set4-transcription__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+@media (max-width: 1100px) {
+  .bs-root.set4-page .set4-totals { grid-template-columns: minmax(0, 1fr); }
+}
+
+.bs-root.updates-page .updates-notes { margin-bottom: 12px; }
+.bs-root.updates-page .updates-release { padding: 0 14px 14px; }
+.bs-root .updates-table-scroll { max-width: 100%; min-width: 0; }
+.bs-root .machine-install .machines-form-actions { flex-wrap: wrap; }
+
+.bs-root.set4-tooltip { display: block; max-width: min(320px, calc(100vw - 40px)); white-space: normal; overflow-wrap: anywhere; }
+
+.bs-root.set4-page :is(.k-btn, .k-icon-btn), .bs-root.set4-transcription :is(.k-btn, .k-icon-btn), .bs-root.k-dialog:has(.set4-detail) :is(.k-btn, .k-icon-btn) { min-height: 40px; min-width: 40px; }
+.bs-root .set4-detail .k-switch::after { content: ''; position: absolute; inset: -10px -3px; }
