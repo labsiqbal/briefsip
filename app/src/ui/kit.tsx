@@ -18,13 +18,13 @@ export const IconButton = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTM
 });
 
 // ---------- fields ----------
-type FieldContext = { id: string; hintId: string; errorId: string; describedBy?: string };
+type FieldContext = { id: string; hintId: string; errorId: string; describedBy?: string; invalid?: boolean };
 const FieldCtx = createContext<FieldContext | null>(null);
 export function useField() { return useContext(FieldCtx); }
 export function Field({ label, hint, error, children, optional }: { label: ReactNode; hint?: ReactNode; error?: ReactNode; children: ReactNode; optional?: boolean }) {
   const base = useId(), id = `${base}-input`, hintId = `${base}-hint`, errorId = `${base}-error`;
   const describedBy = [hint && hintId, error && errorId].filter(Boolean).join(' ') || undefined;
-  return <FieldCtx.Provider value={{ id, hintId, errorId, describedBy }}>
+  return <FieldCtx.Provider value={{ id, hintId, errorId, describedBy, invalid: !!error }}>
     <div className={cx('k-field', !!error && 'is-invalid')}>
       <label className="k-field__label" htmlFor={id}>{label}{optional && <span className="k-field__optional">Optional</span>}</label>
       {children}
@@ -35,11 +35,11 @@ export function Field({ label, hint, error, children, optional }: { label: React
 }
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input({ className, id, ...rest }, ref) {
   const field = useField();
-  return <input ref={ref} id={id ?? field?.id} aria-describedby={field?.describedBy} className={cx('k-input', className)} {...rest} />;
+  return <input ref={ref} id={id ?? field?.id} aria-describedby={field?.describedBy} aria-invalid={field?.invalid || undefined} className={cx('k-input', className)} {...rest} />;
 });
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(function Textarea({ className, id, ...rest }, ref) {
   const field = useField();
-  return <textarea ref={ref} id={id ?? field?.id} aria-describedby={field?.describedBy} className={cx('k-input', 'k-textarea', className)} {...rest} />;
+  return <textarea ref={ref} id={id ?? field?.id} aria-describedby={field?.describedBy} aria-invalid={field?.invalid || undefined} className={cx('k-input', 'k-textarea', className)} {...rest} />;
 });
 
 export type SelectOption = { value: string; label: ReactNode; hint?: ReactNode; disabled?: boolean };
@@ -48,7 +48,7 @@ export function Select({ value, onChange, options, disabled, placeholder, name, 
   const field = useField();
   const encode = (v: string) => v === '' ? '\u0000' : v, decode = (v: string) => v === '\u0000' ? '' : v;
   return <RadixSelect.Root value={encode(value)} onValueChange={next => onChange(decode(next))} disabled={disabled} name={name}>
-    <RadixSelect.Trigger id={field?.id} aria-describedby={field?.describedBy} aria-label={label} className={cx('k-input', 'k-select', size === 'sm' && 'k-select--sm')}>
+    <RadixSelect.Trigger id={field?.id} aria-describedby={field?.describedBy} aria-invalid={field?.invalid || undefined} aria-label={label} className={cx('k-input', 'k-select', size === 'sm' && 'k-select--sm')}>
       <RadixSelect.Value placeholder={placeholder} />
       <RadixSelect.Icon className="k-select__chev"><ChevronDown size={14} aria-hidden /></RadixSelect.Icon>
     </RadixSelect.Trigger>
@@ -77,7 +77,7 @@ export function Combobox({ value, onChange, suggestions, name, placeholder, read
   return <Popover.Root open={open && !readOnly && (items.length > 0 || !!emptyText)} onOpenChange={setOpen}>
     <Popover.Anchor asChild>
       <input id={field?.id} name={name} className="k-input" value={value} placeholder={placeholder} readOnly={readOnly} required={required} maxLength={maxLength} autoComplete="off"
-        role="combobox" aria-expanded={open} aria-controls={listId} aria-autocomplete="list" aria-describedby={field?.describedBy}
+        role="combobox" aria-expanded={open} aria-controls={listId} aria-autocomplete="list" aria-describedby={field?.describedBy} aria-invalid={field?.invalid || undefined}
         aria-activedescendant={open && items[active] ? `${listId}-${active}` : undefined}
         onFocus={() => setOpen(true)} onClick={() => setOpen(true)} onChange={event => { onChange(event.target.value); setOpen(true); }}
         onKeyDown={event => {
@@ -204,21 +204,21 @@ export function ActionPopover({ trigger, children, label }: { trigger: ReactNode
 }
 
 // ---------- dialogs ----------
-export function Dialog({ open, onOpenChange, title, description, children, footer, size = 'md', hideHeader = false }: { open: boolean; onOpenChange: (open: boolean) => void; title: ReactNode; description?: ReactNode; children: ReactNode; footer?: ReactNode; size?: 'md' | 'lg'; hideHeader?: boolean }) {
+export function Dialog({ open, onOpenChange, title, description, actions, children, footer, size = 'md', hideHeader = false }: { open: boolean; onOpenChange: (open: boolean) => void; title: ReactNode; description?: ReactNode; actions?: ReactNode; children: ReactNode; footer?: ReactNode; size?: 'md' | 'lg'; hideHeader?: boolean }) {
   // Code-opened dialogs remember the opener and restore focus on close.
   const opener = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => { if (open) opener.current = document.activeElement instanceof HTMLElement && !document.activeElement.closest('.k-dialog') ? document.activeElement : opener.current ?? null; }, [open]);
   return <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
     <RadixDialog.Portal>
       <RadixDialog.Overlay className="k-overlay" />
-      <RadixDialog.Content className={cx('k-dialog', 'bs-root', `k-dialog--${size}`)} onCloseAutoFocus={event => { const target = opener.current; opener.current = null; if (target?.isConnected) { event.preventDefault(); target.focus(); } }} onOpenAutoFocus={event => {
+      <RadixDialog.Content {...(!description ? { 'aria-describedby': undefined } : {})} className={cx('k-dialog', 'bs-root', `k-dialog--${size}`)} onCloseAutoFocus={event => { const target = opener.current; opener.current = null; if (target?.isConnected) { event.preventDefault(); target.focus(); } }} onOpenAutoFocus={event => {
         const body = (event.currentTarget as HTMLElement).querySelector('.k-dialog__body');
         const first = body?.querySelector<HTMLElement>(':is(input:not([type=hidden]):not([type=number]), textarea):not([readonly]):not(:disabled)') ?? body?.querySelector<HTMLElement>('button:not(:disabled), [tabindex="0"]');
-        if (first) { event.preventDefault(); first.focus(); }
+        event.preventDefault(); (first ?? (event.currentTarget as HTMLElement)).focus();
       }}>
-        {hideHeader ? <><RadixDialog.Title className="sr-only">{title}</RadixDialog.Title><RadixDialog.Description className="sr-only">{description ?? title}</RadixDialog.Description></> : <div className="k-dialog__head">
-          <div><RadixDialog.Title className="k-dialog__title">{title}</RadixDialog.Title>{description ? <RadixDialog.Description className="k-dialog__desc">{description}</RadixDialog.Description> : <RadixDialog.Description className="sr-only">{title}</RadixDialog.Description>}</div>
-          <RadixDialog.Close asChild><button type="button" className="k-icon-btn" aria-label="Close"><X size={16} aria-hidden /></button></RadixDialog.Close>
+        {hideHeader ? <><RadixDialog.Title className="sr-only">{title}</RadixDialog.Title>{description && <RadixDialog.Description className="sr-only">{description}</RadixDialog.Description>}</> : <div className="k-dialog__head">
+          <div><RadixDialog.Title className="k-dialog__title">{title}</RadixDialog.Title>{description ? <RadixDialog.Description className="k-dialog__desc">{description}</RadixDialog.Description> : null}</div>
+          {actions}<RadixDialog.Close asChild><IconButton label="Close"><X size={16} aria-hidden /></IconButton></RadixDialog.Close>
         </div>}
         <div className="k-dialog__body">{children}</div>
         {footer && <div className="k-dialog__foot">{footer}</div>}

@@ -1,3 +1,4 @@
+import { attachmentSize } from './attachments';
 import { Alert, Button, Checkbox, Collapsible, IconButton, Tooltip } from './ui/kit';
 import { RefreshCw } from 'lucide-react';
 import './machines-data.css';
@@ -53,7 +54,7 @@ function TranscriptionControls({ path, request }: { path: string; request: <T>(p
     {operation?.status === 'cancelled' && <p role="status">Cancelled in Briefsip. Provider may still process or bill this request. New attempts may incur another charge.</p>}
     {operation?.status === 'uncertain' && <Alert tone="warn">The previous result is uncertain. Check the provider before retrying. A new request may incur another charge.</Alert>}
     {operation && <p className="k-field__hint">{operation.usage?.type === 'duration' ? `Duration: ${operation.usage.seconds} seconds.` : operation.usage?.type === 'tokens' ? `Tokens: input ${operation.usage.input_tokens ?? 'unknown'}, output ${operation.usage.output_tokens ?? 'unknown'}, total ${operation.usage.total_tokens ?? 'unknown'}.` : 'Usage unknown ·'} Cost unknown.</p>}
-    {operation?.result && <a className="k-link" href={`${path.slice(0, path.lastIndexOf('/'))}/${operation.result.id}`} download={operation.result.name}>Download transcript ({operation.result.size} bytes)</a>}
+    {operation?.result && <a className="k-link" href={`${path.slice(0, path.lastIndexOf('/'))}/${operation.result.id}`} download={operation.result.name}>Download transcript ({attachmentSize(operation.result.size)})</a>}
     {ready && <><p className="k-field__hint">{info.provider!.origin} · {info.provider!.model} · Cost unknown</p><Checkbox checked={consent} disabled={busy} onChange={setConsent} label={`Send this file to ${info.provider!.origin}${info.format === 'mp4' || info.format === 'webm' ? ' (including any video)' : ''}${operation ? ' and accept a possible additional charge' : ''}.`} /><Button size="sm" variant="primary" disabled={busy || !consent} onClick={() => void send()}>Transcribe</Button></>}
   </section>;
 }

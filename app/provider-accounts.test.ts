@@ -50,7 +50,7 @@ test('agents bind isolated provider accounts across channels, side threads, edit
   }
   try {
     const publicAccounts = await request('/api/provider-accounts');
-    assert.equal(publicAccounts.length, 5); assert(!JSON.stringify(publicAccounts).includes('key-')); assert(!JSON.stringify(publicAccounts).includes('baseURL'));
+    assert.equal(publicAccounts.length, 5); assert.equal(publicAccounts.find((account: { id: string }) => account.id === 'openai').host, new URL(accounts[0].baseURL).host); assert(!JSON.stringify(publicAccounts).includes('key-')); assert(!JSON.stringify(publicAccounts).includes('baseURL'));
     for (const account of accounts) assert.deepEqual((await request(`/api/models?account=${account.id}`)).models, ['fixture']);
     await request('/api/models?account=missing', undefined, 503);
     const agents = [];
