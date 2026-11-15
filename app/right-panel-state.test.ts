@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseComputerView } from './src/computer-view.ts';
 import { createRightPanelStore, parseRightPanelState, rightPanelWidthKey } from './src/right-panel-state.ts';
 test('panel preferences parse defensively and constrain widths', () => {
   for (const raw of [null, 'null', '{}', '[]', 'true', '"../files"', 'broken']) assert.equal(parseRightPanelState(raw, null).tab, 'details');
@@ -14,8 +13,3 @@ test('panel state stays isolated across conversations and recreated stores', () 
   assert.deepEqual(createRightPanelStore(storage).read('thread:a'), { tab: 'diff', width: 480 }); assert.deepEqual(createRightPanelStore(storage).read('channel:a'), { tab: 'files', width: 320 }); assert.deepEqual(store.read('agent:a'), { tab: 'details', width: 360 });
 });
 test('unavailable browser storage leaves panel usable', () => { const store = createRightPanelStore({ getItem() { throw new Error('Blocked'); }, setItem() { throw new Error('Full'); } }); assert.deepEqual(store.read('a'), { tab: 'details', width: 360 }); assert.doesNotThrow(() => store.select('a','files')); });
-
-test('computer view preferences accept only explicit browser or desktop choices', () => {
-  for (const raw of [null, 'broken', '{}', '[]', 'true', '"Browser"', '"off"']) assert.equal(parseComputerView(raw), null);
-  assert.equal(parseComputerView('"browser"'), 'browser'); assert.equal(parseComputerView('"desktop"'), 'desktop');
-});

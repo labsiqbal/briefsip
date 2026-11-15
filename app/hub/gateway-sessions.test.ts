@@ -196,7 +196,7 @@ test('logout: host-only versus global, browser sessions/codes/streams revoked, d
 
 test('hub routes: local-owner APIs denied on all hosts, no CORS, cache isolation and callback fragment policy', async t => {
   const f = await fixture(t);
-  for (const host of [accounts, f.alpha.host, f.beta.host]) for (const path of ['/mcp', '/api/agents', '/api/settings', '/api/files', '/api/computer', '/api/browser', '/api/releases', '/api/providers', '/api/update', '/api/machines', '/node', '/']) {
+  for (const host of [accounts, f.alpha.host, f.beta.host]) for (const path of ['/mcp', '/api/agents', '/api/settings', '/api/files', '/api/computer', '/api/releases', '/api/providers', '/api/update', '/api/machines', '/node', '/']) {
     const response = await f.request(host, path); assert.equal(response.status, 404, `${host}${path}`); assert.equal(response.headers['cache-control'], 'no-store'); assert.equal(response.headers['access-control-allow-origin'], undefined);
   }
   assert.equal((await f.request(f.alpha.host, '/api/project', { method: 'OPTIONS', origin: origin(f.beta.host) })).status, 404);

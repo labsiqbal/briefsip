@@ -37,7 +37,7 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
   } finally { rmSync(stage, { recursive: true, force: true }); }
 }
 // Every relative import reachable from a runtime entry point must resolve to a staged file.
-export function assertRelativeImports(stage, entries = ['server.ts', 'cli.ts', 'hub/server.ts', 'update-release.mjs', 'agent-desktop-host.mjs', 'browser-pipe.mjs']) {
+export function assertRelativeImports(stage, entries = ['server.ts', 'cli.ts', 'hub/server.ts', 'update-release.mjs', 'agent-desktop-host.mjs']) {
   const missing = [], seen = new Set();
   const pattern = /(?:^|\n)\s*(?:import|export)\b[^'"`;]*?from\s*['"](\.{1,2}\/[^'"]+)['"]|\bimport\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)/g;
   const visit = path => {

@@ -2,12 +2,10 @@ import { readClipboardText } from './ui/clipboard';
 import { MessageCopyButton } from './ui/MessageCopyButton';
 import { useEffect, useRef, useState } from 'react';
 import RFB from '@novnc/novnc';
-import { ClipboardType, Ellipsis, ExternalLink, Monitor, Plus, RefreshCw, X } from 'lucide-react';
-import { ActionMenu, ActionPopover, Alert, Badge, Button, Card, Field, IconButton, Input, useConfirm, RecoveryAlert, Segmented } from './ui/kit';
+import { ClipboardType, Ellipsis, ExternalLink, Monitor, RefreshCw, X } from 'lucide-react';
+import { ActionMenu, ActionPopover, Alert, Badge, Button, Card, Field, IconButton, Input, useConfirm, RecoveryAlert } from './ui/kit';
 import type { ComputerWait } from '../agent-computer';
 import type { ComputerRequest, ComputerStatus } from './AgentComputerPanel';
-import { AgentBrowserViewer, useBrowserActions, useBrowserView } from './AgentBrowserViewer';
-import { useComputerView } from './computer-view';
 import './computer-viewer.css';
 
 type ControlCommand = { id: string; revision: number; operation: 'take' | 'hand-back' | 'dismiss'; turn?: string };
@@ -85,12 +83,8 @@ export function ComputerViewer({ agent, name, request, popout = false, onClose }
   const [connected, setConnected] = useState(false), [connection, setConnection] = useState(0), [stopping, setStopping] = useState(false);
   const screen = useRef<HTMLDivElement>(null), canvas = useRef<HTMLDivElement>(null), rfb = useRef<RFB | null>(null), handBack = useRef<HTMLButtonElement>(null), inputFlight = useRef(0);
   const user = status?.control.mode === 'user', running = !!status && ['running','idle'].includes(status.state);
-  const browser = useBrowserView(agent, request, running, 500);
-  const selection = useComputerView(agent, !!browser.status?.tabs.length), browserActions = useBrowserActions(agent, request, controls, browser);
-  const viewReady = selection.hasChoice || browser.status !== null || !!browser.error;
-  const desktop = selection.view === 'desktop' && viewReady;
   useEffect(() => {
-    if (!desktop || !running || !visible || !canvas.current) return;
+    if (!running || !visible || !canvas.current) return;
     let stopped = false, disconnected = false, client: RFB | undefined;
     let clipboard: EventListener | undefined;
     setConnected(false); setScreenError(false);
@@ -118,7 +112,7 @@ export function ComputerViewer({ agent, name, request, popout = false, onClose }
       if (client && clipboard) client.removeEventListener('clipboard', clipboard);
       rfb.current = null; element.replaceChildren();
     };
-  }, [agent, desktop, running, visible, connection, user, controls.locked, status?.control.revision, request]);
+  }, [agent, running, visible, connection, user, controls.locked, status?.control.revision, request]);
   useEffect(() => {
     const change = () => setVisible(!document.hidden);
     document.addEventListener('visibilitychange', change);
@@ -134,7 +128,7 @@ export function ComputerViewer({ agent, name, request, popout = false, onClose }
   }
   useEffect(() => {
     const escape = (event: globalThis.KeyboardEvent) => {
-      if (!desktop || !running || !user || controls.locked || !(event.target instanceof Node) || !screen.current?.contains(event.target)) return;
+      if (!running || !user || controls.locked || !(event.target instanceof Node) || !screen.current?.contains(event.target)) return;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'v') {
         event.preventDefault(); event.stopImmediatePropagation();
         void readClipboardText().then(value => {
@@ -150,7 +144,7 @@ export function ComputerViewer({ agent, name, request, popout = false, onClose }
     };
     window.addEventListener('keydown', escape, true);
     return () => window.removeEventListener('keydown', escape, true);
-  }, [desktop, running, user, controls.locked]);
+  }, [running, user, controls.locked]);
   async function start() {
     if (starting) return; setStarting(true);
     try { controls.setStatus(await request<ComputerStatus>(`/api/agents/${agent}/computer/start`, {})); }
@@ -169,10 +163,8 @@ export function ComputerViewer({ agent, name, request, popout = false, onClose }
   const statusTone = statusLabel === 'Live' ? 'success' : statusLabel === 'Starting' ? 'warn' : 'neutral';
   const waits = running ? status?.requests ?? [] : [];
   const locked = controls.locked || starting || stopping;
-  const activeTab = browser.status?.tabs.find(tab => tab.id === browser.status?.activeTab);
-  const refreshView = () => { browser.refresh(); setConnection(value => value + 1); };
-  const placeholder = running && !viewReady ? 'Loading computer view...' : !visible ? 'Viewer paused while window is hidden.' : running && screenError ? 'Live screen unavailable.' : !status ? 'Loading computer status...' : !status.available ? 'Computer is disabled on this server.' : !status.enabled ? 'No computer assigned.' : starting || status.state === 'starting' ? 'Starting computer...' : running ? 'Connecting to computer...' : 'Computer is off.';
-  return <div ref={browser.root} className="computer-viewer bs-root" data-view={selection.view}>
+  const placeholder = !visible ? 'Viewer paused while window is hidden.' : running && screenError ? 'Live screen unavailable.' : !status ? 'Loading computer status...' : !status.available ? 'Computer is disabled on this server.' : !status.enabled ? 'No computer assigned.' : starting || status.state === 'starting' ? 'Starting computer...' : running ? 'Connecting to computer...' : 'Computer is off.';
+  return <div className="computer-viewer bs-root">
     <header className="computer-viewer__toolbar">
       <div className="computer-viewer__identity">
         <div className="computer-viewer__heading"><h2 className="computer-viewer__title" title={`${name}'s computer`}>{name}'s computer</h2>
@@ -184,36 +176,31 @@ export function ComputerViewer({ agent, name, request, popout = false, onClose }
       </div>
       <div className="computer-viewer__actions">
         {running && user && <ActionPopover label="Paste text into computer" trigger={<Button size="sm" disabled={locked} icon={<ClipboardType size={14} aria-hidden />}>Paste text</Button>}>
-          <form className="computer-viewer__text" onSubmit={async event => { event.preventDefault(); if (!text || sendingText || !running || locked) return; setSendingText(true); const sent = text; try { const accepted = desktop ? await input('computer_type', { text: sent }) : await browserActions.act('type', { text: sent }, true); if (accepted) setText(current => current === sent ? '' : current); } finally { setSendingText(false); } }}>
+          <form className="computer-viewer__text" onSubmit={async event => { event.preventDefault(); if (!text || sendingText || !running || locked) return; setSendingText(true); const sent = text; try { const accepted = await input('computer_type', { text: sent }); if (accepted) setText(current => current === sent ? '' : current); } finally { setSendingText(false); } }}>
             <Field label="Type or paste text"><Input value={text} maxLength={4000} onChange={event => setText(event.target.value)} disabled={locked} /></Field>
-            <div className="k-row-actions">{desktop && <><Button size="sm" disabled={!connected || locked} onClick={() => rfb.current?.clipboardPasteFrom(text)}>Set clipboard</Button><MessageCopyButton text={text} label="Copy computer clipboard" /></>}<Button size="sm" variant="primary" type="submit" busy={sendingText} disabled={!text || locked || !desktop && browserActions.locked}>Send text</Button></div>
+            <div className="k-row-actions"><Button size="sm" disabled={!connected || locked} onClick={() => rfb.current?.clipboardPasteFrom(text)}>Set clipboard</Button><MessageCopyButton text={text} label="Copy computer clipboard" /><Button size="sm" variant="primary" type="submit" busy={sendingText} disabled={!text || locked}>Send text</Button></div>
           </form>
         </ActionPopover>}
         {running && !popout && <IconButton label="Pop out" onClick={() => window.open(`/?computer=${encodeURIComponent(agent)}`, '_blank', 'popup,width=1280,height=960,noopener')}><ExternalLink size={14} aria-hidden /></IconButton>}
         {running && (user ? <Button ref={handBack} size="sm" variant="primary" busy={controls.busy} disabled={locked} onClick={() => void controls.control('hand-back')}>Hand back to agent</Button> : <Button size="sm" variant="primary" busy={controls.busy} disabled={!status?.enabled || !status.available || locked} onClick={() => void controls.control('take')}>Take control</Button>)}
         {running && <ActionMenu label="More computer actions" trigger={<IconButton label="More computer actions" disabled={stopping} aria-busy={stopping || undefined}>{stopping ? <span className="k-spinner" aria-hidden /> : <Ellipsis size={16} aria-hidden />}</IconButton>} items={[
-          { label: 'Reconnect', icon: <RefreshCw size={14} aria-hidden />, disabled: locked, onSelect: refreshView },
-          { label: 'Refresh view', icon: <RefreshCw size={14} aria-hidden />, onSelect: refreshView },
-          ...(!desktop ? [
-            { label: 'New tab', icon: <Plus size={14} aria-hidden />, disabled: locked || browserActions.locked, onSelect: () => void browserActions.act('new') },
-            { label: 'Close tab', icon: <X size={14} aria-hidden />, disabled: locked || browserActions.locked || !activeTab, onSelect: () => activeTab && void browserActions.act('close', { tab: activeTab.id }) },
-          ] : []),
+          { label: 'Reconnect', icon: <RefreshCw size={14} aria-hidden />, disabled: locked, onSelect: () => setConnection(value => value + 1) },
+          { label: 'Refresh view', icon: <RefreshCw size={14} aria-hidden />, onSelect: () => setConnection(value => value + 1) },
           'separator', { label: 'Stop computer', danger: true, icon: <Monitor size={14} aria-hidden />, disabled: locked, onSelect: () => void stopComputer() },
         ]} />}
         {onClose && <IconButton label="Close" onClick={onClose}><X size={16} aria-hidden /></IconButton>}
       </div>
     </header>
-    {running && <div className="computer-viewer__switch"><Segmented label="Computer view" value={selection.view} onChange={selection.select} options={[{ value: 'browser', label: 'Browser' }, { value: 'desktop', label: 'Desktop' }]} /></div>}
     {!!waits.length && <div className="computer-viewer__requests">{waits.map(wait => <div className="computer-viewer__request" key={wait.turn}><span>{name} needs you to take over: {wait.reason || 'Computer access is waiting for you.'}</span>{!user && <Button size="sm" variant="ghost" disabled={locked} onClick={() => void controls.control('dismiss', wait.turn)}>Dismiss</Button>}</div>)}</div>}
     {controls.recovery}
     {!running && user && <p className="computer-viewer__idle-control">You still hold control. <Button size="sm" variant="ghost" busy={controls.busy} disabled={locked} onClick={() => void controls.control('hand-back')}>Hand back</Button></p>}
-    {running && viewReady && !desktop ? <AgentBrowserViewer controls={controls} view={browser} actions={browserActions} /> : <div ref={screen} className={`computer-viewer__screen${running && user ? ' is-controlled' : ''}`} title={running && user ? 'Shift+Escape returns to controls' : undefined} role={running ? 'application' : undefined} aria-label={running ? `${name}'s computer. Click to send keys. Shift+Escape returns to controls.` : undefined}>
-      {running && desktop && <div ref={canvas} className="computer-viewer__canvas" aria-label={`${name}'s live computer screen`} />}
+    <div ref={screen} className={`computer-viewer__screen${running && user ? ' is-controlled' : ''}`} title={running && user ? 'Shift+Escape returns to controls' : undefined} role={running ? 'application' : undefined} aria-label={running ? `${name}'s computer. Click to send keys. Shift+Escape returns to controls.` : undefined}>
+      {running && <div ref={canvas} className="computer-viewer__canvas" aria-label={`${name}'s live computer screen`} />}
       {(!running || !visible || !connected) && <div className="computer-viewer__empty" role="status" aria-live="polite">
         {(starting || status?.state === 'starting' || running && visible && !screenError) ? <span className="k-spinner computer-viewer__spinner" aria-hidden /> : <Monitor size={28} strokeWidth={1.5} aria-hidden />}
         <p>{placeholder}</p>
         {screenError && running ? <><span className="computer-viewer__empty-hint">Close another viewer if three are already open.</span><Button size="sm" onClick={() => setConnection(value => value + 1)}>Reconnect</Button></> : !running && status?.enabled && status.available && !starting && status.state !== 'starting' && <Button size="sm" variant="primary" disabled={locked} onClick={() => void start()}>Start computer</Button>}
       </div>}
-    </div>}
+    </div>
   </div>;
 }
