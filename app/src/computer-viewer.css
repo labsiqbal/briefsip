@@ -1,12 +1,10 @@
 /* noVNC measures transformed bounds once; keep the live viewer at its final size. */
 .k-dialog:has(.computer-viewer) { animation: none; }
-/* Browser chrome and desktop share one bounded shell. */
+/* Desktop viewer uses one bounded shell. */
 .k-dialog:has(.computer-viewer), .computer-window { width: min(calc(100vw - 32px), 1440px); max-width: 1440px; height: calc(100dvh - 32px); max-height: calc(100dvh - 32px); }
 .k-dialog:has(.computer-viewer) > .k-dialog__body { display: flex; flex: 1; min-height: 0; padding: 14px 16px 16px; }
 .k-dialog .computer-viewer, .computer-window > .computer-viewer { flex: 1; min-height: 0; }
 .k-dialog .computer-viewer__screen, .computer-window .computer-viewer__screen { flex: 1; min-height: 120px; aspect-ratio: auto; }
-.k-dialog .agent-browser-viewer, .computer-window .agent-browser-viewer { flex: 1; }
-.k-dialog .agent-browser-viewport, .computer-window .agent-browser-viewport { flex: 1; min-height: 120px; aspect-ratio: auto; }
 .computer-window { display: flex; }
 .computer-viewer { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .computer-viewer__toolbar { display: flex; gap: 20px; align-items: center; min-height: 46px; }
@@ -41,16 +39,9 @@
 
 .computer-viewer__toolbar { flex-wrap: wrap; gap: 10px; }
 .computer-viewer__actions { flex-wrap: wrap; }
-.computer-viewer__switch { align-self: flex-start; }
-.computer-viewer__switch .k-choice { display: flex; gap: 3px; padding: 3px; border: .5px solid var(--color-border-secondary); border-radius: 10px; background: var(--color-bg-pane); }
-.computer-viewer__switch .k-choice__opt { flex: 1; min-width: 90px; padding: 6px 14px; border: 0; border-radius: 7px; background: transparent; }
-.computer-viewer__switch .k-choice__opt.is-active { background: var(--color-bg-active); }
 .computer-viewer__idle-control, .computer-card-note { margin: 0; font-size: 12px; line-height: 18px; color: var(--color-text-tertiary); }
 .computer-card-note .k-btn { padding-inline: 3px; height: auto; vertical-align: baseline; }
 .computer-compact-info strong, .computer-compact-info > span:not(.k-badge) { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .computer-compact-info strong { font-size: 12px; font-weight: 500; }
 .right-panel__computer .computer-viewer__actions { gap: 4px; }
 .right-panel__computer .computer-viewer__actions .k-btn { padding-inline: 10px; }
-.right-panel__computer .agent-browser-tab-row .k-tabs__tab { max-width: 150px; }
-
-.right-panel__computer .agent-browser-navigation .k-icon-btn { flex: none; width: 32px; }

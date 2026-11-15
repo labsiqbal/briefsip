@@ -930,22 +930,6 @@
   ],
   "browserSourceEntries": [
     {
-      "sourcePath": "apps/web/src/components/preview/PreviewChromeRow.tsx",
-      "symbols": [
-        "PreviewChromeRow"
-      ],
-      "adaptation": "Use browser navigation row ideas for Briefsip Browser dialog: tab/address/navigation hierarchy translated into Briefsip kit and owner-control states; no T3 component, CSS, assets or runtime dependency copied.",
-      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
-      "sourceSha256": "b21c76b5038ec0b63b0248d826024d083e10dc3d4c3aa4c2a954f83be8c29f06",
-      "localPaths": [
-        "app/src/AgentBrowserViewer.tsx"
-      ],
-      "license": "MIT",
-      "notice": "app/t3/NOTICE",
-      "dependencies": [],
-      "compatibilityCheck": "app/agent-browser.test.ts"
-    },
-    {
       "sourcePath": "apps/web/src/hooks/useCopyToClipboard.ts",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "bace6a3c5adefd5c680f8ae3e88cef7f33ec1240eb1c551b22205ef1be693e99",
