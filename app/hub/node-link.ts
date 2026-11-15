@@ -1,5 +1,5 @@
 import { createPublicKey, randomBytes, randomUUID, sign, verify, type KeyObject } from 'node:crypto';
-import type { IncomingMessage, Server, ServerResponse } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { digest, base64url, canonicalJson, closedObject, existingRevision, id, parseJson, ProtocolError, publicKey, sha256 } from '../protocol.ts';
 import type { HubAuthority, NodePrincipal } from './project-authority.ts';
@@ -38,7 +38,7 @@ export type NodeLinkDeps = {
 };
 const deny = () => new ProtocolError(403, 'node_link_denied', 'Node link is unavailable.');
 /** Mount once on the dedicated hub server; never the member's local listener. */
-export function attachNodeLink(server: Server, deps: NodeLinkDeps) {
+export function attachNodeLink(hub: { mountNodeUpgrade(handler: (req: IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) => void): () => void }, deps: NodeLinkDeps) {
     const { authority: a, routing: r } = deps, db = a.db, now = deps.now ?? Date.now, origin = new URL(deps.origin);
     if (origin.origin !== deps.origin || origin.username || origin.password || origin.protocol !== 'https:' && !(deps.development && origin.protocol === 'http:' && ['127.0.0.1', '[::1]'].includes(origin.hostname)))
         throw new Error('Hub node origin must be HTTPS.');
@@ -217,7 +217,7 @@ export function attachNodeLink(server: Server, deps: NodeLinkDeps) {
             throw new ProtocolError(401, 'node_expired', 'Node session expired.');
         if (!link.reconciled)
             return;
-        const pending = r.pending(link.principal).filter(f => {
+        const available = r.pending(link.principal).filter(f => {
             if (f.kind === 'grant.revoked') {
                 const current = a.one('SELECT state,revision FROM participations WHERE project_id=? AND id=?', f.projectId, f.participationId);
                 if (current?.state === 'active' && Number(current.revision) >= f.revision) {
@@ -226,7 +226,10 @@ export function attachNodeLink(server: Server, deps: NodeLinkDeps) {
                 }
             }
             return true;
-        }).filter(f => {
+        });
+        const controlsPending = available.some(f => f.kind === 'grant.revoked' || f.kind === 'turn.cancel');
+        const pending = available.filter(f => {
+            if (controlsPending && f.kind !== 'grant.revoked' && f.kind !== 'turn.cancel') return false;
             const previous = link.delivered.get(f.eventId);
             if (previous !== undefined && previous + 1000 > now())
                 return false;
@@ -238,6 +241,7 @@ export function attachNodeLink(server: Server, deps: NodeLinkDeps) {
                 link.delivered.delete(key);
         for (const f of pending.filter(f => f.kind === 'grant.revoked' || f.kind === 'turn.cancel'))
             send(link.ws, f);
+        if (controlsPending) return;
         const grants = r.grants(link.principal), encoded = canonicalJson(grants);
         if (encoded !== link.grants) {
             link.grants = encoded;
@@ -297,12 +301,14 @@ export function attachNodeLink(server: Server, deps: NodeLinkDeps) {
                             throw new ProtocolError(429, 'rate_limited', 'Connection request budget reached.');
                         let result: unknown = {};
                         if (kind === 'connection.reconcile') {
-                            closedObject(b, ['kind', 'requestId', 'principal', 'receipts']);
+                            closedObject(b, ['kind', 'requestId', 'principal', 'receipts', 'withdrawals', 'complete']);
+                            if (!Array.isArray(b.withdrawals) || b.withdrawals.length > 100 || typeof b.complete !== 'boolean') throw deny();
+                            for (const value of b.withdrawals as unknown[]) { const w = closedObject(value, ['projectId', 'participationId', 'revision']); a.withdrawNode(principal, id(w.projectId), id(w.participationId), existingRevision(w.revision)); }
                             if (!Array.isArray(b.receipts) || b.receipts.length > 100)
                                 throw deny();
                             const outcomes = b.receipts.map(value => { const receipt = closedObject(value, ['projectId', 'turnId', 'sequence', 'digest']); const turn = a.one('SELECT state,result_sequence,request_json FROM turns WHERE project_id=? AND id=? AND node_id=?', id(receipt.projectId), id(receipt.turnId), principal.nodeId); digest(receipt.digest); if (!Number.isSafeInteger(receipt.sequence) || Number(receipt.sequence) < 0 || turn && receipt.digest !== sha256(String(turn.request_json)))
                                 throw deny(); return { projectId: receipt.projectId, turnId: receipt.turnId, state: turn?.state ?? 'unknown', sequence: turn?.result_sequence ?? 0 }; });
-                            link.reconciled = true;
+                            link.reconciled = b.complete;
                             result = { outcomes };
                         }
                         else {
@@ -338,8 +344,8 @@ export function attachNodeLink(server: Server, deps: NodeLinkDeps) {
                                 result = { grants: r.grants(principal).filter(g => g.projectId === b.projectId && g.participationId === b.participationId) };
                             }
                             else if (kind === 'participation.withdraw') {
-                                closedObject(b, ['kind', 'requestId', 'principal', 'projectId', 'participationId']);
-                                a.withdraw(ownerContext(principal, b.projectId), id(b.participationId));
+                                closedObject(b, ['kind', 'requestId', 'principal', 'projectId', 'participationId', 'revision']);
+                                a.withdrawNode(principal, id(b.projectId), id(b.participationId), existingRevision(b.revision));
                             }
                             else if (kind === 'node.revoke') {
                                 closedObject(b, ['kind', 'requestId', 'principal']);
@@ -373,7 +379,7 @@ export function attachNodeLink(server: Server, deps: NodeLinkDeps) {
             socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
         }
     }
-    server.on('upgrade', upgrade);
+    const unmount = hub.mountNodeUpgrade(upgrade);
     const timer = setInterval(() => {
         for (const link of sockets.values())
             try {
@@ -397,7 +403,7 @@ export function attachNodeLink(server: Server, deps: NodeLinkDeps) {
                 return;
             closed = true;
             clearInterval(timer);
-            server.off('upgrade', upgrade);
+            unmount();
             for (const link of sockets.values())
                 link.ws.terminate();
             await new Promise<void>(resolve => wss.close(() => resolve()));

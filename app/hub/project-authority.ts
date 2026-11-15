@@ -346,6 +346,16 @@ export function createHubAuthority(db: DatabaseSync, options: { domain: string; 
         change(ctx.projectId, 'participation.changed', participationId, revision);
       });
     },
+    withdrawNode(principal: NodePrincipal, projectId: string, participationId: string, revision: number) {
+      transaction(db, () => {
+        node(principal);
+        const p = one('SELECT p.*,a.owner_account_id,a.home_node_id FROM participations p JOIN agents a ON a.id=p.agent_id WHERE p.project_id=? AND p.id=?', id(projectId), id(participationId));
+        if (!p || p.home_node_id !== principal.nodeId || p.owner_account_id !== principal.accountId) throw denied();
+        // Exact old revision is idempotent after revocation/reproposal; never revoke new consent.
+        if (Number(p.revision) < existingRevision(revision)) throw stale();
+        if (p.revision === revision && p.state !== 'revoked') invalidateParticipation(projectId, participationId);
+      });
+    },
     withdraw(ctx: ProjectContext, participationId: string) {
       transaction(db, () => { const m = member(ctx, 'withdraw'), p = one('SELECT p.id,a.owner_account_id FROM participations p JOIN agents a ON a.id=p.agent_id WHERE p.project_id=? AND p.id=?', ctx.projectId, id(participationId));
         if (!p) throw missing(); if (p.owner_account_id !== ctx.accountId && !['owner','admin'].includes(String(m.role))) throw denied();

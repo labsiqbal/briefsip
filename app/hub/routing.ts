@@ -48,7 +48,7 @@ export function createHubRouting(authority: HubAuthority) {
     a.node(principal);
     if (row.node_id !== principal.nodeId) throw denied();
     const f = JSON.parse(String(row.frame_json)) as HubFrame;
-    if (Number(row.expires_at) <= a.now() || 'authorityGeneration' in f && f.authorityGeneration !== a.generation()) throw stale();
+    if (('fence' in f && Number(row.expires_at) <= a.now()) || ('authorityGeneration' in f && f.authorityGeneration !== a.generation())) throw stale();
     if ('fence' in f) {
       current(f);
       if (f.turnId) {
@@ -74,6 +74,8 @@ export function createHubRouting(authority: HubAuthority) {
           return JSON.parse(String(receipt.result_json)) as { messageId: string; turnIds: string[] };
         }
         for (const p of mentions) if (a.authorize(ctx, sectionId, p, true).node.status !== 'ready') throw new ProtocolError(503, 'node_offline', 'Waiting for member node.', true);
+        const queued = Number(one("SELECT count(*) AS n FROM turns WHERE project_id=? AND state IN ('pending','admitted') AND json_extract(request_json,'$.expiresAt')>?", ctx.projectId, a.now())!.n);
+        if (mentions.length && queued + mentions.length > 100) throw new ProtocolError(429, 'project_queue_full', 'Project queue is full. Retry later.', true);
         const messageId = randomUUID(), turnIds: string[] = [];
         run('INSERT INTO messages(id,project_id,section_id,requester_account_id,text,created_at) VALUES(?,?,?,?,?,?)', messageId, ctx.projectId, sectionId, ctx.accountId, text, a.now());
         for (const p of all('SELECT participation_id FROM participation_sections WHERE project_id=? AND section_id=?', ctx.projectId, sectionId)) {
@@ -96,7 +98,7 @@ export function createHubRouting(authority: HubAuthority) {
     pending(principal: NodePrincipal): HubFrame[] {
       a.node(principal);
       const frames: HubFrame[] = [];
-      for (const row of all('SELECT * FROM outbox WHERE node_id=? AND acked=0 ORDER BY rowid LIMIT 100', principal.nodeId)) {
+      for (const row of all("SELECT * FROM outbox WHERE node_id=? AND acked=0 ORDER BY CASE WHEN kind IN ('grant.revoked','turn.cancel') THEN 0 ELSE 1 END,rowid LIMIT 100", principal.nodeId)) {
         try { frames.push(checkOutbox(principal, row)); }
         catch (error) { if (!(error instanceof ProtocolError)) throw error; run('DELETE FROM outbox WHERE event_id=?', row.event_id); }
       }
