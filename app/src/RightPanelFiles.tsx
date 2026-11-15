@@ -55,7 +55,7 @@ export function PanelFiles({ base, files, workspace, loading, request }: { base:
     {selected && <InlineFile key={selected.path} file={selected} request={request} onClose={() => { setSelected(null); requestAnimationFrame(() => opener.current?.focus()); }} />}
     <div className="k-stack" hidden={!!selected}>
       <Section title="Conversation files">
-        {loading ? <SkeletonRows /> : rows.length ? <div className="attachments__list">{rows.map(file => <Attachment key={file.id} file={file} path={`${base}/files/${file.id}`} onOpen={() => open({ name: file.name, image: file.image, path: `${base}/files/${file.id}` })} />)}</div> : <EmptyState title="No files yet">Attachments and agent results appear here.</EmptyState>}
+        {loading ? <SkeletonRows /> : rows.length ? <>{rows.some(file => file.image) && <div className="attachments attachments--grid">{rows.filter(file => file.image).map(file => <Attachment key={file.id} file={file} path={`${base}/files/${file.id}`} onOpen={() => open({ name: file.name, image: file.image, path: `${base}/files/${file.id}` })} />)}</div>}{rows.some(file => !file.image) && <div className="attachments__list">{rows.filter(file => !file.image).map(file => <Attachment key={file.id} file={file} path={`${base}/files/${file.id}`} onOpen={() => open({ name: file.name, image: file.image, path: `${base}/files/${file.id}` })} />)}</div>}</> : <EmptyState title="No files yet">Attachments and agent results appear here.</EmptyState>}
         {error && <Alert tone="error">{error}</Alert>}
         {files.length === 100 && more && <Button size="sm" busy={busy} onClick={() => void loadMore()}>Earlier files</Button>}
       </Section>

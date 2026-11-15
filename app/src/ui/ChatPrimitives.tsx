@@ -38,11 +38,11 @@ export function TurnStatus({ tone, label, model }: { tone: string; label: string
   return <div className="turn-meta agent-meta"><span className={`turn-status is-${tone}`}><i aria-hidden />{label}</span>{model && <span className="turn-model" title="Answering model">{model}</span>}</div>;
 }
 
-export function ChatComposer({ label, input, inputRef, onSubmit, onSendKey, onAttach, attachmentDisabledReason, recipient, busy, retry, sendDisabled, sendLabel, sendTitle, multiline, mentions = [], onMention, onPasteFiles }: {
+export function ChatComposer({ label, input, inputRef, onSubmit, onSendKey, onAttach, attachmentDisabledReason, recipient, actions, busy, retry, sendDisabled, sendLabel, sendTitle, multiline, mentions = [], onMention, onPasteFiles }: {
   onPasteFiles?: (files: File[]) => void;
   mentions?: { id: string; name: string; role: string }[]; onMention?: (value: string) => void;
   label: string; input: ComponentProps<'textarea'>; inputRef?: RefObject<HTMLTextAreaElement | null>; onSubmit: (event: FormEvent) => void; onSendKey: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
-  onAttach?: () => void; attachmentDisabledReason?: string; recipient?: ReactNode; busy: boolean; retry: boolean; sendDisabled: boolean; sendLabel: string; sendTitle: string; multiline?: boolean;
+  onAttach?: () => void; attachmentDisabledReason?: string; recipient?: ReactNode; actions?: ReactNode; busy: boolean; retry: boolean; sendDisabled: boolean; sendLabel: string; sendTitle: string; multiline?: boolean;
 }) {
   const ownRef = useRef<HTMLTextAreaElement>(null), ref = inputRef ?? ownRef;
   const listId = useId();
@@ -92,6 +92,7 @@ export function ChatComposer({ label, input, inputRef, onSubmit, onSendKey, onAt
     </div>
     <div className="composer__right">
       {retry && !busy && <span className="composer__retry">Retry send</span>}
+      {actions}
       <button type="submit" className="composer__cta" disabled={sendDisabled} aria-label={sendLabel} title={sendTitle}>{busy ? <span className="step__spin" aria-hidden /> : <ArrowUp size={16} aria-hidden />}</button>
     </div>
   </form>;

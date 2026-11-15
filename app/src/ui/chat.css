@@ -190,6 +190,8 @@
 .composer:focus-within { border-color: var(--color-border-primary); }
 .composer__left { display: flex; align-items: flex-end; gap: 8px; flex: 1 1 0; min-width: 0; }
 .composer__right { display: flex; align-items: center; gap: 8px; padding: 8px 0; }
+.composer__right .k-icon-btn { width: 28px; height: 28px; border-radius: 50%; color: var(--color-text-secondary); }
+.composer__right .k-icon-btn:hover:not(:disabled) { color: var(--color-text-primary); }
 .composer__plus-anchor { position: relative; display: inline-flex; padding: 8px 0; }
 .composer__btn {
   display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%;
