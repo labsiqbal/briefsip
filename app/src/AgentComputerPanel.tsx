@@ -1,16 +1,21 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Alert, Badge, Button, Card, Dialog, Section } from './ui/kit';
-import { Expand } from 'lucide-react';
+import { Expand, Monitor } from 'lucide-react';
+import { useBrowserView } from './AgentBrowserViewer';
+import { useComputerView } from './computer-view';
 import { ComputerViewer } from './ComputerViewer';
 import type { DesktopStatus } from '../agent-desktop';
 import type { ComputerControl, ComputerWait } from '../agent-computer';
 export type ComputerStatus = DesktopStatus & { enabled: boolean; revision: number; control: ComputerControl; requests: ComputerWait[] };
 export type ComputerRequest = <T>(path: string, body?: unknown) => Promise<T>;
-export function AgentComputerPanel({ agent, name, request, compact = false }: { agent: string; name: string; request: ComputerRequest; compact?: boolean }) {
+export function AgentComputerPanel({ agent, name, request, onSettings }: { agent: string; name: string; request: ComputerRequest; onSettings?: () => void }) {
   const titleId = useId();
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<ComputerStatus | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false), [frame, setFrame] = useState('');
-  const root = useRef<HTMLDivElement>(null), locked = useRef(false), active = useRef(true);
+  const running = !!status && ['running','idle'].includes(status.state);
+  const browser = useBrowserView(agent, request, running && !open, 5000);
+  const { view } = useComputerView(agent, !!browser.status?.tabs.length);
+  const root = browser.root, locked = useRef(false), active = useRef(true);
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => {
     let mounted = true, visible = true, timer: ReturnType<typeof setTimeout>;
@@ -19,10 +24,10 @@ export function AgentComputerPanel({ agent, name, request, compact = false }: { 
     if (root.current) observer.observe(root.current);
     async function refresh() {
       try {
-        if (visible && !document.hidden && !locked.current) {
+        if (visible && !document.hidden && !open && !locked.current) {
           const next = await request<ComputerStatus>(`/api/agents/${agent}/computer`);
           if (!mounted || locked.current) return; setStatus(next);
-          if (next.enabled && ['running','idle'].includes(next.state)) {
+          if (next.enabled && ['running','idle'].includes(next.state) && view === 'desktop') {
             const response = await fetch(`/api/agents/${agent}/computer/screenshot`, { signal: controller.signal });
             if (!response.ok) throw new Error('Screen not updated. Check computer status.');
             const bytes = new Uint8Array(await response.arrayBuffer());
@@ -37,29 +42,26 @@ export function AgentComputerPanel({ agent, name, request, compact = false }: { 
     }
     void refresh();
     return () => { mounted = false; controller.abort(); clearTimeout(timer); observer.disconnect(); };
-  }, [agent, request]);
-  async function control(operation: 'start' | 'stop') {
+  }, [agent, request, open, view]);
+  async function start() {
     if (locked.current) return; locked.current = true; setBusy(true); setError('');
-    if (operation === 'start') setStatus(current => current && { ...current, state: 'starting' });
-    try { const next = await request<ComputerStatus>(`/api/agents/${agent}/computer/${operation}`, {}); if (active.current) setStatus(next); }
+    setStatus(current => current && { ...current, state: 'starting' });
+    try { const next = await request<ComputerStatus>(`/api/agents/${agent}/computer/start`, {}); if (active.current) setStatus(next); }
     catch (error) { if (active.current) setError(error instanceof Error ? error.message : 'Computer state not confirmed. Check status before retrying.'); }
     finally { locked.current = false; if (active.current) setBusy(false); }
   }
   const state = status?.state ?? 'off';
-  const controls = <>
-    <p className="k-field__hint">{status?.control.mode === 'user' ? 'You are in control' : 'Agent in control'}{status?.stopsInMs != null ? ` · Stops in ${Math.max(1, Math.ceil(status.stopsInMs / 60000))} min` : ''}</p>
-    {status && !status.available && <p className="k-field__hint">Computer is disabled on this server.</p>}
-    {status?.available && !status.enabled && <p className="k-field__hint">Enable Computer in agent settings.</p>}
-    {error && <Alert tone="error">{error}</Alert>}
-    <div className="k-inline">{!compact && <Button size="sm" disabled={!status?.available || !status.enabled || busy || state !== 'off'} busy={busy && state === 'starting'} onClick={() => void control('start')}>Start computer</Button>}<Button size="sm" disabled={!status || busy || state === 'off'} onClick={() => void control('stop')}>Stop computer</Button></div>
-  </>;
-  const label = error ? 'Unavailable' : status?.requests.length ? 'Waiting for you' : status === null ? 'Loading...' : !status.available ? 'Unavailable' : !status.enabled ? 'Disabled' : state === 'starting' ? 'Starting' : state === 'running' ? 'Live' : state === 'idle' ? 'Idle' : 'Off';
+  const label = error ? 'Unavailable' : running && status?.requests.length ? 'Waiting for you' : status === null ? 'Loading...' : !status.available ? 'Unavailable' : !status.enabled ? 'Disabled' : state === 'starting' ? 'Starting' : state === 'running' ? 'Live' : state === 'idle' ? 'Idle' : 'Off';
   const pill = <Badge tone={label === 'Live' || label === 'Idle' ? 'success' : label === 'Starting' ? 'warn' : 'neutral'}>{label}</Badge>;
-  return <div ref={root} className={`bs-root k-stack${compact ? ' computer-hero' : ''}`}><Section id={titleId} title="Computer" actions={!compact && <>{pill}<Button size="sm" icon={<Expand size={14} aria-hidden />} onClick={() => setOpen(true)}>Open</Button></>}>
-    {compact ? <Card className="computer-compact-card"><div className="computer-compact-row">
-      {frame && ['running','idle'].includes(state) ? <img src={frame} alt="Agent computer screen" className="computer-compact-thumb" /> : <span className="computer-compact-placeholder"><Expand size={16} aria-hidden /></span>}
-      <div className="computer-compact-info">{pill}<span>{status && ['running','idle'].includes(state) ? status.control.mode === 'user' ? "You're in control" : 'Agent in control' : status?.available && !status.enabled ? 'Enable in agent settings' : 'Desktop preview'}</span></div>
-      <Button size="sm" onClick={() => setOpen(true)}>Open</Button>
-    </div></Card> : <>{frame && ['running','idle'].includes(state) && <img src={frame} width={960} height={600} alt="Agent computer screen" style={{ display: 'block', width: '100%', height: 'auto', borderRadius: 'var(--radius-md)' }} />}{controls}</>}
+  const page = browser.status?.tabs.find(tab => tab.id === browser.status?.activeTab);
+  let host = ''; try { host = page ? new URL(page.url).host : ''; } catch { /* Internal Chrome pages have no host. */ }
+  const thumbnail = view === 'browser' ? browser.frame : frame;
+  return <div ref={root} className="bs-root k-stack computer-hero"><Section id={titleId} title="Computer">
+    {!status ? <p className="computer-card-note" role="status">Loading computer...</p> : !status.available ? <p className="computer-card-note">Computer unavailable on this server.</p> : !status.enabled ? <p className="computer-card-note">Give this agent a computer in <Button size="sm" variant="ghost" onClick={onSettings}>agent settings</Button></p> : <Card className="computer-compact-card"><div className="computer-compact-row">
+      {running && (thumbnail ? <img src={thumbnail} alt={view === 'browser' ? 'Agent browser page' : 'Agent computer screen'} className="computer-compact-thumb" /> : <span className="computer-compact-placeholder"><Monitor size={16} aria-hidden /></span>)}
+      <div className="computer-compact-info">{pill}{running && <><strong title={page?.title}>{page?.title || (view === 'browser' ? 'Browser' : 'Desktop')}</strong>{host && <span title={host}>{host}</span>}</>}</div>
+      {running ? <Button size="sm" icon={<Expand size={14} aria-hidden />} onClick={() => setOpen(true)}>Open</Button> : <Button size="sm" variant="primary" busy={busy || state === 'starting'} disabled={busy || state === 'starting'} onClick={() => void start()}>Start computer</Button>}
+    </div></Card>}
+    {error && <Alert tone="error">{error}</Alert>}
   </Section><Dialog open={open} onOpenChange={setOpen} title={`${name}'s computer`} size="lg" hideHeader><ComputerViewer agent={agent} name={name} request={request} onClose={() => setOpen(false)} /></Dialog></div>;
 }

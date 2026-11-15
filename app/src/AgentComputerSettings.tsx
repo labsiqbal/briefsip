@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Card, Progress, Row, Section, Switch, useConfirm, RecoveryAlert } from './ui/kit';
 import type { ComputerRequest, ComputerStatus } from './AgentComputerPanel';
 type Command = { id: string; revision: number; enabled: boolean };
-export function AgentComputerSettings({ agent, request }: { agent: string; request: ComputerRequest }) {
+export function AgentComputerSettings({ agent, request, autoFocus = false }: { agent: string; request: ComputerRequest; autoFocus?: boolean }) {
+  const section = useRef<HTMLDivElement>(null);
   const key = `briefsip-computer:${agent}`;
   const [status, setStatus] = useState<ComputerStatus | null>(null), [pending, setPending] = useState<Command | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false), [invalid, setInvalid] = useState(false);
+  useEffect(() => { if (!autoFocus) return; const frame = requestAnimationFrame(() => { section.current?.scrollIntoView({ block: 'center' }); section.current?.querySelector<HTMLButtonElement>('[role="switch"]')?.focus(); }); return () => cancelAnimationFrame(frame); }, [autoFocus, status?.available]);
   const mounted = useRef(true), flight = useRef(false), confirm = useConfirm();
   useEffect(() => {
     mounted.current = true;
@@ -34,7 +36,7 @@ export function AgentComputerSettings({ agent, request }: { agent: string; reque
   }
   const target = pending?.enabled ?? status?.enabled ?? false;
   const action = target ? 'Turning on computer...' : 'Stopping computer...';
-  return <div className="bs-root k-stack"><Section title="Computer"><Card><Row title="Agent computer" meta={<>{status?.available ? 'Give this agent its own browser and desktop. You can watch in conversation details.' : 'Disabled on this server.'}{busy && <Progress>{pending ? action : 'Loading computer status...'}</Progress>}</>} trailing={<Switch label="Computer" checked={target} disabled={!status?.available || busy || !!pending || invalid} onChange={value => void save(value)} />} /></Card>
+  return <div ref={section} className="bs-root k-stack"><Section title="Computer"><Card><Row title="Agent computer" meta={<>{status?.available ? null : 'Unavailable on this server.'}{busy && <Progress>{pending ? action : 'Loading computer status...'}</Progress>}</>} trailing={<Switch label="Computer" checked={target} disabled={!status?.available || busy || !!pending || invalid} onChange={value => void save(value)} />} /></Card>
     {pending && <RecoveryAlert inFlight={busy} progress={false} tone="warn" title="Couldn't confirm the change" actions={<><Button size="sm" variant="primary" onClick={() => void save(pending.enabled)}>Retry change</Button><Button size="sm" onClick={() => void reload()}>Load latest status</Button></>}>Retry to finish it, or load the latest status.</RecoveryAlert>}
     {invalid && <Alert tone="error" actions={<Button size="sm" disabled={busy} onClick={() => void reload()}>Load latest status</Button>}>Saved computer request is invalid. Load latest status before continuing.</Alert>}
     {error && !pending && !invalid && <Alert tone="error" actions={<Button size="sm" disabled={busy} onClick={() => void reload()}>Load latest status</Button>}>{error}</Alert>}

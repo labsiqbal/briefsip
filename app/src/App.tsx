@@ -9,7 +9,6 @@ import { SourceControl, RestoreCheckpoint } from './SourceControl';
 import { ComputerViewer, ComputerRequestCard } from './ComputerViewer';
 import type { ComputerWait } from '../agent-computer';
 import { AgentComputerPanel } from './AgentComputerPanel';
-import { AgentBrowserPanel } from './AgentBrowserPanel';
 import { AgentComputerSettings } from './AgentComputerSettings';
 import { restoreChatCommand, restoreChannelCommand, type ChatCommand, type ChannelCommand } from '../conversation-command';
 import { restoreAgentCreation, type AgentCreation } from '../agent-create';
@@ -250,7 +249,7 @@ function ForkAnswer({ path, turn, onOpen }: { path: string; turn: Turn; onOpen?:
 }
 
 type DetailsContent = { chats: ReactNode; activity?: ReactNode; library?: ReactNode };
-function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit, onOpenAgent, onOpenChannel, menuItems = [], detailsExtra, sourceControl }: { sourceControl?: ReactNode; menuItems?: MenuItem[]; detailsExtra?: DetailsContent; onOpenChannel?: (channel: string) => void; onOpenAgent?: (agent: string, thread: string) => void; onRead?: () => Promise<void>; onEdit?: () => void; agent: Agent | Channel; configured: boolean; channel?: Channel; thread?: Thread; members?: Agent[] }) {
+function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit, onComputerSettings, onOpenAgent, onOpenChannel, menuItems = [], detailsExtra, sourceControl }: { sourceControl?: ReactNode; onComputerSettings?: () => void; menuItems?: MenuItem[]; detailsExtra?: DetailsContent; onOpenChannel?: (channel: string) => void; onOpenAgent?: (agent: string, thread: string) => void; onRead?: () => Promise<void>; onEdit?: () => void; agent: Agent | Channel; configured: boolean; channel?: Channel; thread?: Thread; members?: Agent[] }) {
   const confirm = useConfirm();
   const archived = !!(channel?.archived || thread?.archived || (!channel && (agent as Agent).hidden));
   const scope = thread ? `thread:${thread.id}` : channel ? `channel:${agent.id}` : agent.id;
@@ -479,7 +478,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
           <div className="details__who-sub" title={!channel ? (agent as Agent).role || 'Agent' : undefined}>{channel ? `Section${channel.archived ? ' · Archived' : ''}` : (agent as Agent).role || 'Agent'}</div>
           {!channel && <span className="details__model" title={(agent as Agent).runtime && (agent as Agent).runtime !== 'api' ? `${(agent as Agent).runtime} runtime` : (agent as Agent).model}>{(agent as Agent).runtime && (agent as Agent).runtime !== 'api' ? `${(agent as Agent).runtime} runtime` : (agent as Agent).model}</span>}
         </div>
-        {!channel && <div className="details__computer details__computer-row"><AgentComputerPanel key={`computer:${agent.id}`} agent={agent.id} name={agent.name} request={api} compact /><AgentBrowserPanel key={`browser:${agent.id}`} agent={agent.id} name={agent.name} request={api} compact /></div>}
+        {!channel && <div className="details__computer"><AgentComputerPanel key={`computer:${agent.id}`} agent={agent.id} name={agent.name} request={api} onSettings={onComputerSettings} /></div>}
         {channel && <div className="details__channel-meta">
           <div className="section-label">{members.length} members</div>
           <div className="details__members" aria-label={`${members.length} channel members`}>{members.map(member => <span key={member.id} role="img" aria-label={`${member.name}${member.id === channel.lead ? ", lead" : ""}`} title={member.name}><AgentAvatar agent={member} size={24} /></span>)}</div>
@@ -507,7 +506,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   </div>;
 }
 
-function WorkflowConversation({ agent, threadId, configured, onOpenAgent, onOpenChannel }: { agent?: Agent; threadId: string; configured: boolean; onOpenAgent: (agent: string, thread: string) => void; onOpenChannel: (channel: string) => void }) {
+function WorkflowConversation({ agent, threadId, configured, onOpenAgent, onOpenChannel, onComputerSettings }: { onComputerSettings: (agent: Agent) => void; agent?: Agent; threadId: string; configured: boolean; onOpenAgent: (agent: string, thread: string) => void; onOpenChannel: (channel: string) => void }) {
   const [thread, setThread] = useState<Thread | null>(null), [error, setError] = useState(''), [reload, setReload] = useState(0);
   useEffect(() => {
     if (!agent) return;
@@ -522,7 +521,7 @@ function WorkflowConversation({ agent, threadId, configured, onOpenAgent, onOpen
   if (!agent) return <p className="error" role="alert">Step agent is no longer available.</p>;
   if (error) return <p className="error" role="alert">{error} <button className="secondary" onClick={() => setReload(value => value + 1)}>Reload step conversation</button></p>;
   if (!thread) return <p className="empty" role="status">Loading step conversation...</p>;
-  return <Chat key={thread.id} agent={agent} thread={thread} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />;
+  return <Chat key={thread.id} agent={agent} thread={thread} onComputerSettings={() => onComputerSettings(agent)} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />;
 }
 
 type Routine = { trigger: 'schedule' | 'webhook' | 'manual' | 'script'; id: string; agent: string; name: string; prompt: string; next_at: number; interval_ms: number | null; enabled: number; revision: number; project?: string | null; project_name?: string | null; report_to?: string; report_section?: string | null; schedule?: import('../schedule-spec').Spec | null; schedule_zone?: string | null; routineReport?: { run: string; status: string; thread: string }; owner_name?: string; flow_agents?: number; last_source?: string | null; last_scheduled_at?: number | null; last_status?: string | null; last_paused?: number | null; last_no_update?: number | null; last_created?: string | null; last_thread?: string | null };
@@ -933,7 +932,7 @@ function RoutineForm({ owner, agents, projects, routine, onBack, onSaved }: { ow
   </Dialog>;
 }
 
-function AgentConversations({ agent, configured, onEdit, workflowAgents, initialThread, onOpenAgent, onOpenChannel, onThreadOpened, onManageRoutines }: { onManageRoutines: (agent: string) => void; onOpenChannel: (channel: string) => void; agent: Agent; workflowAgents: Agent[]; configured: boolean; onEdit: () => void; initialThread?: string; onThreadOpened: () => void; onOpenAgent: (owner: string, thread: string) => void }) {
+function AgentConversations({ agent, configured, onEdit, onComputerSettings, workflowAgents, initialThread, onOpenAgent, onOpenChannel, onThreadOpened, onManageRoutines }: { onManageRoutines: (agent: string) => void; onOpenChannel: (channel: string) => void; agent: Agent; workflowAgents: Agent[]; configured: boolean; onEdit: () => void; onComputerSettings: (agent: Agent) => void; initialThread?: string; onThreadOpened: () => void; onOpenAgent: (owner: string, thread: string) => void }) {
   const [threads, setThreads] = useState<Thread[]>([]), [error, setError] = useState('');
   const storageKey = `briefsip:thread:${agent.id}`;
   const [selected, setSelected] = useState(() => { if (initialThread) return initialThread; try { return sessionStorage.getItem(storageKey) ?? ''; } catch { return ''; } });
@@ -976,7 +975,7 @@ function AgentConversations({ agent, configured, onEdit, workflowAgents, initial
   const openWorkspace = () => { leave(); setShowWorkflows(false); setForm(null); setShowWorkspace(true); };
   const errorBanner = error && <p className="error" role="alert">{error} <button className="secondary" onClick={() => void load().catch(() => {})}>Reload conversation</button></p>;
   if (showWorkspace) return <PageView>{errorBanner}<Suspense fallback={<p className="empty" role="status">Loading workspace files...</p>}><WorkspacePanel key={agent.id} agent={agent} request={api} onClose={() => { setShowWorkspace(false); requestAnimationFrame(() => workspaceButton.current?.focus()); }} /></Suspense></PageView>;
-  if (showWorkflows) return <PageView wide>{errorBanner}<Suspense fallback={<p className="empty" role="status">Loading workflows...</p>}><WorkflowPanel owner={agent} agents={workflowAgents} request={api} onNavigate={leave} onBack={() => { leave(); setShowWorkflows(false); }} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={workflowAgents.find(item => item.id === owner)} threadId={id} configured={configured} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />} /></Suspense></PageView>;
+  if (showWorkflows) return <PageView wide>{errorBanner}<Suspense fallback={<p className="empty" role="status">Loading workflows...</p>}><WorkflowPanel owner={agent} agents={workflowAgents} request={api} onNavigate={leave} onBack={() => { leave(); setShowWorkflows(false); }} renderConversation={(id, owner) => <WorkflowConversation key={id} onComputerSettings={onComputerSettings} agent={workflowAgents.find(item => item.id === owner)} threadId={id} configured={configured} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />} /></Suspense></PageView>;
 
   if (!loaded) return <PageView>{errorBanner}<p className="empty" role="status">Loading conversation...</p></PageView>;
   const locked = busy || !!pending || invalid;
@@ -1050,7 +1049,7 @@ function AgentConversations({ agent, configured, onEdit, workflowAgents, initial
   const activity = <><UpcomingRoutines agent={agent.id} onManage={openRoutines} /><Collapsible variant="section" title="Automation"><div className="panel-card"><button type="button" className="panel-row panel-row--action" onClick={openWorkflows}><WorkflowIcon size={16} aria-hidden /> Workflows</button></div></Collapsible></>;
   const library = agent.workspace_connected && <section aria-label="Workspace library"><div className="section-label">Workspace</div><div className="panel-card"><button ref={workspaceButton} type="button" className="panel-row panel-row--action" onClick={openWorkspace}><FolderOpen size={16} aria-hidden /> Workspace files</button></div></section>;
   return <><Chat onOpenChannel={onOpenChannel} onOpenAgent={onOpenAgent} key={thread?.id ?? agent.id} agent={agent} thread={thread} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)}
-    onEdit={thread ? () => setForm(thread) : onEdit}
+    onEdit={thread ? () => setForm(thread) : onEdit} onComputerSettings={() => onComputerSettings(agent)}
     menuItems={[...(thread ? actions(thread) : []), { label: 'New conversation', onSelect: openForm, disabled: locked }, { label: 'Routines', onSelect: openRoutines }, { label: 'Workflows', onSelect: openWorkflows }, { label: 'Workspace files', onSelect: openWorkspace }]}
     detailsExtra={{ chats: conversations, activity, library }} />{form && <ThreadForm key={form === 'new' ? 'new' : `${form.id}:${form.revision}`} agent={agent} thread={form === 'new' ? undefined : form} busy={busy} locked={!!pending || invalid} onCancel={() => setForm(null)} onSave={command => void execute(command)} error={error} pending={pending} onRetry={() => pending && void execute(pending)} onReload={() => void reloadForm()} />}</>;
 }
@@ -1065,7 +1064,7 @@ function ThreadForm({ agent, thread, busy, locked, onCancel, onSave, error, pend
   </Dialog>;
 }
 
-function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload, onVisibilityChanged }: { model: string; profile?: Agent; onCreated: (agent: Agent) => void; onCancel: () => void; onReload?: () => Promise<void>; onVisibilityChanged?: () => Promise<void> }) {
+function AgentForm({ model, focusComputer = false, profile: liveProfile, onCreated, onCancel, onReload, onVisibilityChanged }: { model: string; focusComputer?: boolean; profile?: Agent; onCreated: (agent: Agent) => void; onCancel: () => void; onReload?: () => Promise<void>; onVisibilityChanged?: () => Promise<void> }) {
   const confirm = useConfirm();
   const [look, setLook] = useState<import('./ui/avatar-shapes').AvatarLook | null>(null);
   const [LookPicker] = useState(() => lazy(() => import('./ui/avatar-shapes').then(module => ({ default: module.AvatarPicker }))));
@@ -1213,7 +1212,7 @@ function AgentForm({ model, profile: liveProfile, onCreated, onCancel, onReload,
       {error && <Alert tone="error">{error}</Alert>}
     </form>
     {profile && <div className="legacy k-legacy-block">
-      <AgentComputerSettings agent={profile.id} request={api} />
+      <AgentComputerSettings agent={profile.id} request={api} autoFocus={focusComputer} />
       {onVisibilityChanged && <AgentVisibility agent={liveProfile!} request={api} onChanged={onVisibilityChanged} />}
       <Suspense fallback={<p role="status">Loading local sites...</p>}><SitesPanel key={`sites:${profile.id}`} agent={profile.id} request={api} /></Suspense>
       <Suspense fallback={<p className="empty" role="status">Loading agent export...</p>}><AgentTemplateExport key={profile.id} id={profile.id} request={api} /></Suspense>
@@ -1337,6 +1336,7 @@ function App() {
   const [selectedProject, setSelectedProject] = useState('');
   const [projectThread, setProjectThread] = useState<{project:string;thread:string;agent:string;conversation?:Thread & {folder?:string}} | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
+  const [computerSettings, setComputerSettings] = useState<Agent | null>(null);
   const [notificationsMuted, setNotificationsMuted] = useState(() => { try { return localStorage.getItem('briefsip:workflow-notifications-muted') === '1'; } catch { return false; } });
   const [notificationError, setNotificationError] = useState('');
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() => { try { return localStorage.getItem(sidebarTabKey) === 'projects' ? 'projects' : 'agents'; } catch { return 'agents'; } });
@@ -1436,12 +1436,12 @@ function App() {
   if (error) content = <PageView><div className="empty"><h1>Workspace is not open</h1><p role="alert">{error}</p><button onClick={() => void load()}>Try again</button></div></PageView>;
   else if (!directory) content = <main className="chat chat--empty bs-root"><p className="empty-chat__sub" role="status">Loading workspace...</p></main>;
   else if (view === 'remote') { const machine = remoteMachinesState.machines.find(item => item.id === remoteSelection?.machine); content = <RemoteAgentDetail key={`${machine?.id}:${remoteSelection?.agent}`} request={api} machine={machine} agent={machine?.agents.find(item => item.id === remoteSelection?.agent)} />; }
-  else if (view === 'workflows') content = <PageView wide><Suspense fallback={<p className="empty" role="status">Loading workflow directory...</p>}><WorkflowDirectory agents={directory.agents} request={api} onClose={() => setView('chat')} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={directory.agents.find(item => item.id === owner)} threadId={id} configured={directory.configured} onOpenAgent={openThread} onOpenChannel={openChannel} />} /></Suspense></PageView>;
+  else if (view === 'workflows') content = <PageView wide><Suspense fallback={<p className="empty" role="status">Loading workflow directory...</p>}><WorkflowDirectory agents={directory.agents} request={api} onClose={() => setView('chat')} renderConversation={(id, owner) => <WorkflowConversation key={id} onComputerSettings={setComputerSettings} agent={directory.agents.find(item => item.id === owner)} threadId={id} configured={directory.configured} onOpenAgent={openThread} onOpenChannel={openChannel} />} /></Suspense></PageView>;
   else if (view === 'routines') content = <PageView wide><RoutinesHub key={routineAgent} initialAgent={routineAgent} agents={directory.agents.filter(agent => !agent.hidden)} projects={projectState.projects} onClose={() => setView('chat')} onOpen={openThread} /></PageView>;
   else if (project) content = <PageView wide><ProjectHome project={project} agents={directory.agents} state={projectState} request={api} onChat={id => { void load(true).then(() => openChannel(id)); }} onThread={(agent,thread) => { setProjectThread({project:project.id,agent,thread}); setSelectedProject(''); }} onDeleted={() => { setSelectedProject(''); void load(); }} /></PageView>;
-  else if (projectThread && directory.agents.find(agent => agent.id === projectThread.agent)) { const owner = directory.agents.find(agent => agent.id === projectThread.agent)!; const thread = projectState.projects.find(project => project.id === projectThread.project)?.threads.find(thread => thread.id === projectThread.thread) ?? projectThread.conversation; content = thread ? <Chat key={thread.id} sourceControl={thread.folder ? <ProjectSourceControl project={projectThread.project} folder={thread.folder} request={api}/> : undefined} agent={owner} thread={{...thread,revision:1,archived:0,deleted:0}} configured={directory.configured} menuItems={[{label:'Back to project',onSelect:()=>openProject(projectThread.project)}]} /> : <PageView><EmptyState title="Project thread unavailable" /></PageView>; }
+  else if (projectThread && directory.agents.find(agent => agent.id === projectThread.agent)) { const owner = directory.agents.find(agent => agent.id === projectThread.agent)!; const thread = projectState.projects.find(project => project.id === projectThread.project)?.threads.find(thread => thread.id === projectThread.thread) ?? projectThread.conversation; content = thread ? <Chat key={thread.id} sourceControl={thread.folder ? <ProjectSourceControl project={projectThread.project} folder={thread.folder} request={api}/> : undefined} agent={owner} onComputerSettings={() => setComputerSettings(owner)} thread={{...thread,revision:1,archived:0,deleted:0}} configured={directory.configured} menuItems={[{label:'Back to project',onSelect:()=>openProject(projectThread.project)}]} /> : <PageView><EmptyState title="Project thread unavailable" /></PageView>; }
   else if (channel) content = <Chat onOpenAgent={openThread} key={`channel:${channel.id}`} agent={channel} channel={{ ...channel, lead: directory.agents.find(agent => agent.id === channel.lead)?.hidden ? null : channel.lead }} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id) && !agent.hidden)} onEdit={channel.project ? undefined : () => setDialog('edit')} menuItems={channel.project ? [{label:'Back to project',onSelect:()=>openProject(channel.project!)}] : []} configured={directory.configured} />;
-  else if (agent) content = <AgentConversations onManageRoutines={id => { setRoutineAgent(id); setView('routines'); }} onOpenChannel={openChannel} key={agent.id} agent={agent} workflowAgents={directory.agents} configured={directory.configured} initialThread={openedThread?.agent === agent.id ? openedThread.thread : undefined} onThreadOpened={() => setOpenedThread(null)} onOpenAgent={openThread} onEdit={() => setDialog('edit')} />;
+  else if (agent) content = <AgentConversations onManageRoutines={id => { setRoutineAgent(id); setView('routines'); }} onOpenChannel={openChannel} key={agent.id} agent={agent} workflowAgents={directory.agents} configured={directory.configured} initialThread={openedThread?.agent === agent.id ? openedThread.thread : undefined} onThreadOpened={() => setOpenedThread(null)} onOpenAgent={openThread} onEdit={() => setDialog('edit')} onComputerSettings={setComputerSettings} />;
   else content = <main className="chat chat--empty bs-root"><div className="empty-chat"><div className="empty-chat__title">Create your first agent</div><div className="empty-chat__sub">Name it, choose a model, then explain how it should work. The agent and its history are saved on this computer.</div><button type="button" className="btn btn--primary" onClick={() => setDialog('agent')}><Plus size={16} aria-hidden /> New agent</button><HowBriefsipWorks action={<Button variant="ghost" onClick={() => setSettings('help')}>Read quick guide</Button>} /></div></main>;
   const created = (item: Agent) => { setDirectory(current => current && { ...current, agents: [...current.agents.filter(agent => agent.id !== item.id), item] }); openAgent(item.id); };
   return <RadixDialog.Root modal open={!!settings} onOpenChange={open => setSettings(current => open ? current ?? 'skills' : null)}><div className={`app bs-root${collapsed ? ' is-sidebar-collapsed' : ''}`}>
@@ -1519,6 +1519,7 @@ function App() {
       <PanelResizeHandle panel={sidebar} />
     </aside>}
     {content}
+    {computerSettings && directory && <AgentForm key={`${computerSettings.id}:${editReload}`} model={directory.defaultModel} profile={directory.agents.find(item => item.id === computerSettings.id) ?? computerSettings} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} focusComputer onCancel={() => setComputerSettings(null)} onCreated={() => { void load(); setComputerSettings(null); }} />}
     {dialog === 'agent' && directory && <AgentForm model={directory.defaultModel} onCancel={() => setDialog(null)} onCreated={item => { created(item); setDialog(null); }} />}
     {dialog === 'project' && directory && <CreateProject state={projectState} agents={directory.agents} request={api} onClose={() => setDialog(null)} onCreated={item => { openProject(item.id); void load(); }} />}
     {dialog === 'edit' && directory && channel && <ChannelForm key={`${channel.id}:${channel.revision}:${editReload}`} agents={directory.agents} channel={channel} onCancel={() => setDialog(null)} onReload={() => { void load().then(() => setEditReload(value => value + 1)); }} onCreated={() => { void load(); setDialog(null); }} />}
