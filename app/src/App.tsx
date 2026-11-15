@@ -9,6 +9,7 @@ import { SourceControl, RestoreCheckpoint } from './SourceControl';
 import { ComputerViewer, ComputerRequestCard } from './ComputerViewer';
 import type { ComputerWait } from '../agent-computer';
 import { AgentComputerPanel } from './AgentComputerPanel';
+import { AgentBrowserPanel } from './AgentBrowserPanel';
 import { AgentComputerSettings } from './AgentComputerSettings';
 import { restoreChatCommand, restoreChannelCommand, type ChatCommand, type ChannelCommand } from '../conversation-command';
 import { restoreAgentCreation, type AgentCreation } from '../agent-create';
@@ -478,7 +479,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
           <div className="details__who-sub" title={!channel ? (agent as Agent).role || 'Agent' : undefined}>{channel ? `Section${channel.archived ? ' · Archived' : ''}` : (agent as Agent).role || 'Agent'}</div>
           {!channel && <span className="details__model" title={(agent as Agent).runtime && (agent as Agent).runtime !== 'api' ? `${(agent as Agent).runtime} runtime` : (agent as Agent).model}>{(agent as Agent).runtime && (agent as Agent).runtime !== 'api' ? `${(agent as Agent).runtime} runtime` : (agent as Agent).model}</span>}
         </div>
-        {!channel && <div className="details__computer"><AgentComputerPanel key={agent.id} agent={agent.id} name={agent.name} request={api} compact /></div>}
+        {!channel && <div className="details__computer details__computer-row"><AgentComputerPanel key={`computer:${agent.id}`} agent={agent.id} name={agent.name} request={api} compact /><AgentBrowserPanel key={`browser:${agent.id}`} agent={agent.id} name={agent.name} request={api} compact /></div>}
         {channel && <div className="details__channel-meta">
           <div className="section-label">{members.length} members</div>
           <div className="details__members" aria-label={`${members.length} channel members`}>{members.map(member => <span key={member.id} role="img" aria-label={`${member.name}${member.id === channel.lead ? ", lead" : ""}`} title={member.name}><AgentAvatar agent={member} size={24} /></span>)}</div>

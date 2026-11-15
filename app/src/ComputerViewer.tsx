@@ -7,7 +7,7 @@ import type { ComputerRequest, ComputerStatus } from './AgentComputerPanel';
 import './computer-viewer.css';
 
 type ControlCommand = { id: string; revision: number; operation: 'take' | 'hand-back' | 'dismiss'; turn?: string };
-function useComputerControl(agent: string, request: ComputerRequest) {
+export function useComputerControl(agent: string, request: ComputerRequest) {
   const key = `briefsip-computer-control:${agent}`;
   const [status, setStatus] = useState<ComputerStatus | null>(null), [error, setError] = useState('');
   const [pending, setPending] = useState<ControlCommand | null>(null), [busy, setBusy] = useState(false), [invalid, setInvalid] = useState(false);
