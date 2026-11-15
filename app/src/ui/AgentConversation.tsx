@@ -5,8 +5,9 @@ import { AgentAvatar } from '../AgentAvatar';
 import { Markdown, StreamingMarkdown } from '../Markdown';
 import { AgentMessage } from './ChatPrimitives';
 import { Collapsible, IconButton } from './kit';
-import { activityLabel, livePartial, liveTurn, type TurnActivityData } from './transcript';
+import { activityLabel, livePartial, liveTurn, streamIdentity, type TurnActivityData } from './transcript';
 import { TurnActivity } from './TurnActivity';
+import type { StreamPartial } from '../../turn-stream';
 
 export type Exchange = { id: string; agent: string; name: string; role?: string; machine?: string; thread: string; task?: string; reply: string | null; detailReply?: string | null; error: string | null; status: string; paused: number; truncated: boolean; activity?: TurnActivityData; created?: string; generatedFiles?: { id: string; name: string; size: number; thread: string }[] };
 export function AgentConversation({ items, sender, scope, onOpen }: { items: Exchange[]; sender: string; scope: string; onOpen?: (agent: string, thread: string) => void }) {
@@ -19,7 +20,7 @@ export function AgentConversation({ items, sender, scope, onOpen }: { items: Exc
   </div>)}</section>;
 }
 export type RoomView = { root: string; round: number; silent: string | null; note: string | null; quiet: { agent: string; name: string; silent: string }[]; messages: { seq: number; turn: string; agent: string; name: string; role: string; target_name?: string; text: string; kind: string }[] };
-type RoomTurn = { id: string; agent: string; status: string; paused: number; created: string; error: string | null; partial?: { text: string; status: string } | null; activity?: TurnActivityData; questions?: { answer: string | null }[] };
+type RoomTurn = { id: string; agent: string; status: string; paused: number; created: string; error: string | null; partial?: StreamPartial | null; activity?: TurnActivityData; questions?: { answer: string | null }[] };
 type RoomMember = { id: string; name: string; role: string; avatar_revision?: number };
 function RoomReply({ turn, member, text, scope, details, controls, extras }: { turn: RoomTurn; member: RoomMember; text?: string; scope: string; details: ReactNode; controls: ReactNode; extras: ReactNode }) {
   const [open, setOpen] = useState(false), [now, setNow] = useState(Date.now);
@@ -30,17 +31,17 @@ function RoomReply({ turn, member, text, scope, details, controls, extras }: { t
     return () => clearInterval(timer);
   }, [live]);
   useEffect(() => { if (turn.status === 'done') setOpen(false); }, [turn.status]);
-  const answer = text ?? (turn.status === 'running' && !turn.paused ? turn.partial?.text ?? '' : '');
+  const answer = text ?? turn.partial?.text ?? '';
   return <Disclosure.Root open={open} onOpenChange={setOpen} asChild><section className="room-agent" aria-label={`Reply from ${member.name}`}>
     <div className={`${text ? 'room-agent__line' : 'room-pending'}${live ? ' is-working' : ''}`}>
       <AgentAvatar agent={member} size={20} /><strong className="room-agent__name message-name" title={member.name}>{member.name}</strong>
       <span className="room-agent__status" title={activityLabel(turn, now)}>{live && turn.status !== 'queued' && <span className="activity-working" aria-hidden />}{activityLabel(turn, now)}{turn.activity?.fallback_model && <CircleAlert size={12} role="img" aria-label="Fallback model used" />}</span>
       <div className="room-agent__actions"><Disclosure.Trigger asChild><IconButton label={`${open ? 'Hide' : 'Show'} activity for ${member.name}`}>{open ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}</IconButton></Disclosure.Trigger>{controls}</div>
     </div>
-    {answer && <div className="message-body" aria-label={streaming ? `Streaming answer from ${member.name}` : `Answer from ${member.name}`}><div className="legacy"><StreamingMarkdown text={answer} scope={scope} origin={window.location.origin} /></div></div>}
+    <Disclosure.Content className="room-agent__activity">{details}</Disclosure.Content>
+    {answer && <div className="message-body" aria-label={streaming ? `Streaming answer from ${member.name}` : `Answer from ${member.name}`}>{!text && !streaming && <span className="message-muted">Partial reply</span>}<div className="legacy"><StreamingMarkdown key={streamIdentity(turn)} text={answer} scope={scope} origin={window.location.origin} /></div></div>}
     {extras}
     {turn.error && <p className="message-error">{turn.error}</p>}
-    <Disclosure.Content className="room-agent__activity">{details}</Disclosure.Content>
   </section></Disclosure.Root>;
 }
 export function RoomMessages({ room, members, pending, turns, scope, details, controls, extras }: { room: RoomView; members: RoomMember[]; pending: RoomTurn[]; turns: RoomTurn[]; scope: string; details: (turn: string) => ReactNode; controls: (turn: string) => ReactNode; extras: (turn: string) => ReactNode }) {
