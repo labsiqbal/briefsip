@@ -7,7 +7,7 @@
 .cfg-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-shrink: 0;
   height: 30px; padding: 0 12px; border-radius: var(--radius-full); white-space: nowrap;
-  font-size: 13px; line-height: 18px; letter-spacing: 0.1px; transition: background-color 120ms var(--ease-out), opacity 120ms;
+  font-size: 13px; line-height: 18px; letter-spacing: 0; transition: background-color 120ms var(--ease-out), opacity 120ms;
 }
 .cfg-btn:disabled { opacity: 0.45; cursor: default; }
 .cfg-btn--primary { background: var(--color-primary); color: var(--color-on-primary); font-weight: 500; }
@@ -28,7 +28,7 @@
 /* fields */
 .cfg-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .cfg-field__label { font-size: 13px; font-weight: 500; line-height: 18px; color: var(--color-text-primary); }
-.cfg-field__hint { font-size: 12px; line-height: 16px; letter-spacing: 0.12px; color: var(--color-text-tertiary); }
+.cfg-field__hint { font-size: 12px; line-height: 16px; letter-spacing: 0; color: var(--color-text-tertiary); }
 .cfg-textarea { height: auto; min-height: 56px; resize: vertical; line-height: 19px; padding: 8px 10px; font-family: inherit; }
 .cfg-textarea--tall { min-height: 132px; }
 .text-input[aria-invalid='true'] { border-color: var(--color-danger); }
@@ -42,7 +42,7 @@
 .cfg-error--inset { margin: 0 8px 8px; }
 .cfg-empty { padding: 18px 14px; border-radius: 12px; border: 0.5px dashed var(--color-border-secondary); color: var(--color-text-tertiary); font-size: 13px; line-height: 19px; text-align: center; }
 .cfg-empty--flat { border: 0; }
-.cfg-chip { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: var(--radius-full); background: var(--bot-action-soft, var(--color-bg-tertiary)); color: var(--bot-action-text, var(--color-text-secondary)); font-size: 11px; font-weight: 500; line-height: 14px; letter-spacing: 0.1px; white-space: nowrap; }
+.cfg-chip { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: var(--radius-full); background: var(--bot-action-soft, var(--color-bg-tertiary)); color: var(--bot-action-text, var(--color-text-secondary)); font-size: 11px; font-weight: 500; line-height: 14px; letter-spacing: 0; white-space: nowrap; }
 .cfg-chip--muted { background: var(--color-bg-tertiary); color: var(--color-text-tertiary); }
 .cfg-code { font-family: var(--font-mono-stack); font-size: 11px; color: var(--color-text-tertiary); }
 
@@ -53,7 +53,7 @@
 .cfg-nav { display: flex; flex-direction: column; gap: 2px; width: 176px; flex-shrink: 0; padding: 12px 8px; border-right: 0.5px solid var(--color-border-tertiary); background: var(--color-bg-chrome); }
 .cfg-nav__item {
   display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 32px; padding: 0 10px; border-radius: 8px; width: 100%;
-  font-size: 13px; line-height: 18px; letter-spacing: 0.195px; color: var(--color-text-secondary); transition: background-color 120ms;
+  font-size: 13px; line-height: 18px; letter-spacing: 0; color: var(--color-text-secondary); transition: background-color 120ms;
 }
 .cfg-nav__item:hover { background: var(--color-bg-hover); color: var(--color-text-primary); }
 .cfg-nav__item.is-active { background: var(--color-bg-active); color: var(--color-text-primary); font-weight: 500; }
@@ -64,7 +64,7 @@
 .cfg-page__title { font-size: 15px; font-weight: 600; line-height: 22px; color: var(--color-text-primary); }
 .cfg-page__sub { margin-top: 2px; font-size: 13px; line-height: 18px; color: var(--color-text-tertiary); max-width: 440px; }
 .cfg-section { display: flex; flex-direction: column; gap: 14px; }
-.cfg-section__label { font-size: 12px; font-weight: 500; line-height: 16px; letter-spacing: 0.3px; text-transform: uppercase; color: var(--color-text-tertiary); }
+.cfg-section__label { font-size: 12px; font-weight: 500; line-height: 16px; letter-spacing: 0; text-transform: uppercase; color: var(--color-text-tertiary); }
 .cfg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 
 .cfg-look { display: flex; align-items: center; gap: 16px; }
@@ -88,7 +88,7 @@
 .cfg-row + .cfg-row { box-shadow: var(--color-border-tertiary) 0 -0.5px 0; border-radius: 0; }
 .cfg-row__text { display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; gap: 1px; }
 .cfg-row__title { font-size: 13px; font-weight: 500; line-height: 18px; color: var(--color-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cfg-row__sub { font-size: 12px; line-height: 16px; letter-spacing: 0.12px; color: var(--color-text-tertiary); }
+.cfg-row__sub { font-size: 12px; line-height: 16px; letter-spacing: 0; color: var(--color-text-tertiary); }
 .cfg-row__ph { width: 28px; height: 28px; border-radius: 50%; background: var(--color-bg-tertiary); flex-shrink: 0; }
 
 .cfg-list { display: flex; flex-direction: column; gap: 8px; }

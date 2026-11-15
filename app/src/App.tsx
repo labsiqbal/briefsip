@@ -395,8 +395,8 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
           busy={busy} retry={!!pending}
           sendDisabled={!!pastedFiles.length || attachments.uploading || blocked || archived || !configured || busy || (!pending && !draft.trim())}
           sendLabel={busy ? 'Sending...' : pending ? 'Retry send' : dispatchTarget ? dispatchMode === 'queue' ? 'Queue message' : dispatchMode === 'steer' ? canSteer ? 'Steer turn' : 'Steer by restarting turn' : 'Restart turn' : 'Send message'}
-          sendTitle={pending ? 'Retry send' : dispatchTarget ? `${dispatchMode === 'queue' ? 'Queue' : dispatchMode === 'steer' ? 'Steer' : 'Restart'} message` : 'Send (Enter)'} />
-        <p className="composer__foot" title="Provider receives up to 40 previous conversations.">{focusedTask ? channel ? 'Task family shown · ' : 'Selected message shown · ' : query ? 'Up to 100 results per page · ' : before ? 'Up to 100 older messages per page · ' : ''}{dispatchTarget ? `Enter to queue${canSteer ? ', Ctrl/Cmd+Enter to steer' : ''}` : 'Enter to send'}, Shift+Enter for a new line</p>
+          sendTitle={pending ? 'Retry send' : dispatchTarget ? `${dispatchMode === 'queue' ? 'Queue' : dispatchMode === 'steer' ? 'Steer' : 'Restart'} message (Enter to queue${canSteer ? ', Ctrl/Cmd+Enter to steer' : ''})` : 'Send (Enter)'} />
+        {(focusedTask || query || before) && <p className="composer__foot">{focusedTask ? channel ? 'Task family shown' : 'Selected message shown' : query ? 'Search results · 100 per page' : 'Older messages · 100 per page'}</p>}
       </footer>
       <ChatHeader agent={agent} title={title} onToggle={() => setMenuOpen(!menuOpen)} expanded={menuOpen}
         menu={menuOpen && <Menu align="center" label={`Menu ${title}`} onClose={() => setMenuOpen(false)} items={items} />}

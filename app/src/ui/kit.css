@@ -1,7 +1,6 @@
 /* Briefsip component kit on Bot HQ tokens. Behavior comes from Radix; every visual value comes from tokens.css. */
 
 /* ---------- type ---------- */
-:root { --font-stack: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; font-feature-settings: 'cv11', 'ss01'; }
 ::selection { background: var(--color-brand-soft); color: inherit; }
 * { scrollbar-width: thin; scrollbar-color: var(--color-border-primary) transparent; }
 input, textarea { caret-color: var(--color-brand); }
@@ -9,7 +8,7 @@ input, textarea { caret-color: var(--color-brand); }
 /* ---------- buttons ---------- */
 .k-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-shrink: 0;
-  border-radius: var(--radius-full); font-weight: 500; white-space: nowrap; letter-spacing: 0.1px;
+  border-radius: var(--radius-full); font-weight: 500; white-space: nowrap; letter-spacing: 0;
   transition: background-color 140ms var(--ease-out), box-shadow 140ms var(--ease-out), transform 100ms var(--ease-out), opacity 140ms;
 }
 .k-btn--md { height: 32px; padding: 0 14px; font-size: 13px; line-height: 18px; }
@@ -158,7 +157,7 @@ button.k-row__main:disabled { cursor: default; }
 .k-collapsible__title { min-width: 0; display: inline-flex; align-items: center; gap: 6px; overflow-wrap: anywhere; }
 .k-collapsible__chev { flex-shrink: 0; transition: transform 160ms ease-out; }
 .k-collapsible__trigger[data-state='open'] .k-collapsible__chev { transform: rotate(180deg); }
-.k-collapsible__trigger--section { width: 100%; justify-content: space-between; min-height: 36px; padding: 8px 12px; margin: 0; font-weight: 400; letter-spacing: .195px; }
+.k-collapsible__trigger--section { width: 100%; justify-content: space-between; min-height: 36px; padding: 8px 12px; margin: 0; font-weight: 400; letter-spacing: 0; }
 .k-collapsible__content { display: flex; flex-direction: column; gap: 16px; padding-top: 12px; }
 .k-collapsible__trigger--section + .k-collapsible__content { padding: 8px 0 2px; }
 .k-progress { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; line-height: 18px; color: var(--color-text-secondary); }

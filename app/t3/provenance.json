@@ -160,14 +160,17 @@
       "symbols": [
         "TurnFoldTimelineRow"
       ],
-      "adaptation": "Single muted activity disclosure above answer, using existing Radix Collapsible and Briefsip ordered activity list.",
+      "adaptation": "Single muted activity disclosure above answer, using existing Radix Collapsible and Briefsip ordered activity list. Typography polish retains T3 muted text, compact gap and tabular duration; omits upstream full-width divider per #28.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "424113972c3053173506fc4d069e05b75e5f8ecde2c5bc283af2e4e154c902f4",
-      "localPath": "app/src/ui/TurnActivity.tsx",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "compatibilityCheck": "app/transcript.test.ts"
+      "compatibilityCheck": "app/transcript.test.ts",
+      "localPaths": [
+        "app/src/ui/TurnActivity.tsx",
+        "app/src/ui/briefsip.css"
+      ]
     },
     {
       "sourcePath": "apps/web/src/components/chat/MessagesTimeline.logic.ts",
