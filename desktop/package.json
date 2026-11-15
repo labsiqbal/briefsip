@@ -1,6 +1,6 @@
 {
   "name": "briefsip-desktop",
-  "version": "0.7.0",
+  "version": "0.10.3",
   "private": true,
   "description": "Briefsip desktop client shell",
   "type": "module",
