@@ -2,9 +2,23 @@ import { useRef, useState, type ReactNode } from 'react';
 import { DropdownMenu } from 'radix-ui';
 import { Ellipsis, Eye, EyeOff, Pencil, Trash2 } from 'lucide-react';
 import type { Agent } from './AgentProfileDialog';
-import { IconButton, useConfirm } from './ui/kit';
+import { Button, IconButton, useConfirm } from './ui/kit';
 
 type Request = <T>(path: string, body?: unknown) => Promise<T>;
+
+export function HiddenAgentBanner({ agent, request, onChanged }: { agent: Agent; request: Request; onChanged?: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  async function restore() {
+    if (busy) return;
+    setBusy(true); setError('');
+    try {
+      await request(`/api/agents/${agent.id}/visibility`, { id: crypto.randomUUID(), revision: agent.visibility_revision ?? 0, hidden: false });
+      await onChanged?.();
+    } catch (error) { setError(error instanceof Error ? error.message : 'Restore failed. Try again.'); }
+    finally { setBusy(false); }
+  }
+  return <div className="composer__note">Hidden <Button size="sm" variant="ghost" busy={busy} onClick={() => void restore()}>Restore</Button>{error && <span role="alert">{error}</span>}</div>;
+}
 
 export function useDeleteAgent(request: Request, onDeleted: (id: string) => Promise<void>) {
   const confirm = useConfirm(), flight = useRef(false);

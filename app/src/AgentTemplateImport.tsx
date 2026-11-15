@@ -59,7 +59,7 @@ export function AgentTemplateImport({ request, onCreated }: { request: <T>(path:
             <Field label="Fallback model" optional><Input maxLength={160} value={draft.backupModel ?? ''} onChange={event => setDraft({ ...draft, backupModel: event.target.value })} /></Field>
             <p className="k-field__hint">Models use the provider configured on this computer. Model IDs from another computer may be unavailable.</p>
             <Field label="Instructions"><Textarea required maxLength={8000} rows={8} value={draft.instructions} onChange={event => setDraft({ ...draft, instructions: event.target.value })} /></Field>
-            <Field label="Concurrent side threads"><Input type="number" required min={1} max={32} step={1} value={draft.threadLimit} onChange={event => setDraft({ ...draft, threadLimit: Number(event.target.value) })} /></Field>
+            <Field label="Parallel chats"><Input type="number" required min={1} max={32} step={1} value={draft.threadLimit} onChange={event => setDraft({ ...draft, threadLimit: Number(event.target.value) })} /></Field>
           </fieldset></Card>
           <div className="k-row-actions"><Button type="submit" variant="primary" busy={busy} disabled={busy}>{pending ? 'Retry creation' : 'Create agent'}</Button>{pending && <Button type="button" disabled={busy} onClick={() => void discard()}>Ignore import recovery</Button>}</div>
         </Section>

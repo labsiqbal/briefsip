@@ -22,8 +22,8 @@ export const ChatTranscript = forwardRef<HTMLElement, ComponentProps<'section'> 
   return <div className="transcript-wrap"><section ref={ref} className="transcript" aria-label="Conversation history" {...props}><div className="transcript__col">{children}</div></section>{minimap}{jump && <div className="transcript-jump">{jump}</div>}</div>;
 });
 
-export function ChatEmptyState({ agent, title = `Start with ${agent.name}`, children }: { agent: ChatAgent; title?: string; children: ReactNode }) {
-  return <div className="empty-chat"><AgentAvatar agent={agent} size={64} /><div className="empty-chat__title">{title}</div><div className="empty-chat__sub">{children}</div></div>;
+export function ChatEmptyState({ agent, title = agent.name, children }: { agent: ChatAgent; title?: string; children?: ReactNode }) {
+  return <div className="empty-chat"><AgentAvatar agent={agent} size={64} /><div className="empty-chat__title">{title}</div>{children && <div className="empty-chat__sub">{children}</div>}</div>;
 }
 
 export function HumanMessage({ text, label = 'Your message', attachments, children }: { text: string; label?: string; attachments?: ReactNode; children: ReactNode }) {
@@ -66,7 +66,7 @@ export function ChatComposer({ label, input, inputRef, onSubmit, onSendKey, onAt
     element.style.overflowY = element.scrollHeight > 200 ? 'auto' : 'hidden';
   }, [input.value, ref]);
   return <form className={`composer${(multiline ?? String(input.value ?? '').includes('\n')) ? ' is-multiline' : ''}`} onSubmit={onSubmit} onDragOver={event => { if (onPasteFiles && !input.readOnly && !input.disabled && Array.from(event.dataTransfer.types).includes('Files')) event.preventDefault(); }} onDrop={event => { if (!onPasteFiles || input.readOnly || input.disabled || !event.dataTransfer.files.length) return; event.preventDefault(); onPasteFiles(Array.from(event.dataTransfer.files)); }}>
-    {!!candidates.length && <div id={listId} className="mention-list" role="listbox" aria-label="Mention a room member">{candidates.map((member, index) => <button id={`${listId}-${index}`} type="button" role="option" aria-selected={index === current} key={member.id} tabIndex={-1} onMouseDown={event => event.preventDefault()} onClick={() => choose(index)}><AgentAvatar agent={member} size={22} /><span><strong>{member.name}</strong><small>{member.role}</small></span></button>)}</div>}
+    {!!candidates.length && <div id={listId} className="mention-list" role="listbox" aria-label="Mention a section member">{candidates.map((member, index) => <button id={`${listId}-${index}`} type="button" role="option" aria-selected={index === current} key={member.id} tabIndex={-1} onMouseDown={event => event.preventDefault()} onClick={() => choose(index)}><AgentAvatar agent={member} size={22} /><span><strong>{member.name}</strong><small>{member.role}</small></span></button>)}</div>}
     <div className="composer__left">
       <label className="sr-only" htmlFor={input.id}>{label}</label>
       <textarea ref={ref} className="composer__input" rows={1} placeholder={label} maxLength={16000} {...input} aria-autocomplete={mentions.length ? 'list' : undefined} aria-controls={candidates.length ? listId : undefined} aria-activedescendant={candidates.length ? `${listId}-${current}` : undefined} onPaste={event => {

@@ -1,9 +1,9 @@
 // Machine summary and restart confirmation adapted from T3 UpdateEverythingDialog (MIT).
 import { useEffect, useRef, useState } from 'react';
-import { Download, Monitor, RefreshCw } from 'lucide-react';
+import { Download, Monitor } from 'lucide-react';
 import type { PairedMachine } from '../machines';
 import type { UpdateState } from '../updates';
-import { Alert, Badge, Button, Card, Checkbox, Dialog, EmptyState, IconButton, PageHeader, Row, Section, SkeletonRows, Tooltip, useConfirm } from './ui/kit';
+import { Alert, Badge, Button, Card, Dialog, EmptyState, PageHeader, Row, Section, SkeletonRows, Switch, useConfirm } from './ui/kit';
 import './ui/updates.css';
 import './machines-data.css';
 type Request = <T>(path: string, body?: unknown) => Promise<T>;
@@ -13,7 +13,7 @@ const terminal = (status?: string) => !!status && ['done','rolled-back','failed'
 const message = (error: unknown) => error instanceof Error ? error.message : 'Update status is unavailable.';
 export function useUpdateBadge(request: Request) {
   const [available, setAvailable] = useState(false);
-  useEffect(() => { let alive = true, timer: ReturnType<typeof setTimeout>; async function read() { try { const state = await request<UpdateState>('/api/updates'); if (alive) setAvailable(!!state.available); } catch {} if (alive) timer = setTimeout(() => void read(), 15000); } void read(); return () => { alive = false; clearTimeout(timer); }; }, [request]);
+  useEffect(() => { let alive = true, timer: ReturnType<typeof setTimeout>; async function read() { try { const state = await request<UpdateState>('/api/updates'); if (alive) setAvailable(state.launcherAvailable && !!state.available); } catch {} if (alive) timer = setTimeout(() => void read(), 15000); } void read(); return () => { alive = false; clearTimeout(timer); }; }, [request]);
   return available;
 }
 export function UpdatesPanel({ request }: { request: Request }) {
@@ -29,14 +29,14 @@ export function UpdatesPanel({ request }: { request: Request }) {
   }, [request]);
   useEffect(() => { let alive = true, timer: ReturnType<typeof setTimeout>; async function poll() { try { const [list, statuses] = await Promise.all([request<{machines:PairedMachine[]}>('/api/machines'),request<{machines:PeerState[]}>('/api/updates/machines')]); if (alive) { setMachines(list.machines); setPeers(statuses.machines); } } catch (error) { if (alive) setError(message(error)); } if (alive) timer = setTimeout(() => void poll(),5000); } void poll(); return () => { alive = false; clearTimeout(timer); }; }, [request]);
   async function apply() {
-    if (!state?.available || busy) return;
+    if (!state?.launcherAvailable || !state.available || busy) return;
     if (!pending.current && !await confirm({ title: `Update to ${state.available.version}?`, description: `Briefsip backs up your workspace database before restarting. If health checks fail, the previous version and database return automatically. ${state.runningTurns} running ${state.runningTurns === 1 ? 'turn will' : 'turns will'} be interrupted and can resume after restart. Files and external actions are outside database rollback.`, confirm: 'Update now' })) return;
     const command = pending.current ?? { id: crypto.randomUUID(), version: state.available.version }; pending.current = command; setBusy(true); setError('');
     try { sessionStorage.setItem('briefsip:update',JSON.stringify(command)); await request('/api/updates/apply',command); } catch (error) { setError(message(error)); } finally { setBusy(false); }
   }
   const feed = state?.feed ?? state?.available;
-  const eligible = (machine: PairedMachine) => { const peer = peers.find(row=>row.machine===machine.id); return machine.allowUpdates && ['online','version-mismatch'].includes(machine.status) && peer?.available && peer.launcherAvailable && peer.current?.version !== feed?.version; };
-  const chosen = machines.filter(machine=>selected.includes(machine.id));
+  const eligible = (machine: PairedMachine) => { const peer = peers.find(row=>row.machine===machine.id); return !!feed && machine.allowUpdates && ['online','version-mismatch'].includes(machine.status) && peer?.available && peer.launcherAvailable && peer.current?.version !== feed?.version; };
+  const chosen = machines.filter(machine=>selected.includes(machine.id) && (dialog || eligible(machine)));
   async function fanOut() {
     if (!feed || fanBusy) return;
     const command = fanPending.current ?? { id: crypto.randomUUID(), version: feed.version, machines: chosen.map(machine=>machine.id) }; fanPending.current = command; setFanBusy(true); setError('');
@@ -44,19 +44,18 @@ export function UpdatesPanel({ request }: { request: Request }) {
   }
   const attempt = state?.lastAttempt, inFlight = busy || !!attempt && !terminal(attempt.status);
   return <div className="k-page bs-root updates-page set4-page">
-    <PageHeader headingRef={heading} title="Updates" actions={<IconButton label="Reload update status" onClick={()=>void request<UpdateState>('/api/updates').then(setState).catch(error=>setError(message(error)))}><RefreshCw size={15} aria-hidden /></IconButton>} />
+    <PageHeader headingRef={heading} title="Updates" />
     {error&&<Alert tone="error">{error}</Alert>}
     {reconnecting&&<Alert title="Waiting for server restart">Reconnecting to check whether the update succeeded or rolled back. Keep this window open.</Alert>}
     {!state?<SkeletonRows/>:<>
       <Section title="This computer"><Card>
         <Row leading={<Monitor size={17} aria-hidden/>} title="Current version" meta={state.current.id==='development'?'Development':state.current.commit.slice(0,8)} trailing={<Badge>{state.current.version}</Badge>}/>
-        {state.previous&&<Row title="Previous version" trailing={<Badge>{state.previous.version}</Badge>}/>}
-        {!state.launcherAvailable && <Row title={<Tooltip content={<span className="bs-root set4-tooltip">{"Start Briefsip through its launcher to enable database backups, in-app updates and automatic rollback."}</span>}><span tabIndex={0}>Updates unavailable</span></Tooltip>} />}
-        {state.available?<><Row leading={<Download size={17} aria-hidden/>} title={`Briefsip ${state.available.version}`} meta={`Published ${new Date(state.available.created).toLocaleDateString()}`} trailing={<Badge tone="brand">Update available</Badge>}/><div className="updates-release"><p className="updates-notes">{state.available.notes}</p><div className="updates-actions"><span className="k-field__hint">{state.runningTurns} running {state.runningTurns===1?'turn':'turns'}</span><Button variant="primary" disabled={!state.launcherAvailable||inFlight} busy={busy} onClick={()=>void apply()}>{pending.current?'Retry update':'Update now'}</Button></div></div></>:<Row title="No newer release available" />}
+        {state.launcherAvailable && state.previous&&<Row title="Previous version" trailing={<Badge>{state.previous.version}</Badge>}/>}
+        {state.launcherAvailable && (state.available?<><Row leading={<Download size={17} aria-hidden/>} title={`Briefsip ${state.available.version}`} meta={`Published ${new Date(state.available.created).toLocaleDateString()}`} trailing={<Badge tone="brand">Update available</Badge>}/><div className="updates-release"><p className="updates-notes">{state.available.notes}</p><div className="updates-actions"><span className="k-field__hint">{state.runningTurns} running {state.runningTurns===1?'turn':'turns'}</span><Button variant="primary" disabled={inFlight} busy={busy} onClick={()=>void apply()}>{pending.current?'Retry update':'Update now'}</Button></div></div></>:<Row title="Up to date" />)}
       </Card></Section>
       {attempt&&<Section title="Last update"><Alert tone={['rolled-back','failed'].includes(attempt.status)?'warn':'info'} title={phases[attempt.status]??attempt.status}><span role="status">Version {attempt.version}{attempt.reason?` - ${attempt.reason}`:''}</span></Alert><ol className="updates-steps" aria-label="Update progress">{['backing-up','starting','verifying','done'].map((step,index)=><li key={step} aria-current={attempt.status===step?'step':undefined}><span>{index+1}</span>{phases[step]}</li>)}</ol></Section>}
-      <Section title="Paired machines" actions={selected.length > 0 ? <Button disabled={!feed} onClick={()=>{setResults([]);fanPending.current=null;setDialog(true);}}>Update selected ({selected.length})</Button> : undefined}>
-        {!machines.length?<EmptyState title="No paired machines" />:<Card>{machines.map(machine=>{const peer=peers.find(row=>row.machine===machine.id);return <Row key={machine.id} leading={<Checkbox label={<span className="sr-only">Select {machine.name}</span>} checked={selected.includes(machine.id)} disabled={!feed||!eligible(machine)} onChange={checked=>setSelected(ids=>checked?[...ids,machine.id]:ids.filter(id=>id!==machine.id))}/>} title={machine.name} meta={<>{peer?.reason??(!machine.allowUpdates?'Remote updates off':!['online','version-mismatch'].includes(machine.status)?machine.status==='unauthorized'?'Access revoked':'Machine offline':eligible(machine)?'Ready to update':peer?.current?.version===feed?.version?'Up to date':!peer?.launcherAvailable?'Launcher unavailable':'Updates unavailable')}<span>{peer?.runningTurns??machine.agents.filter(agent=>agent.status==='running').length} running turns</span></>} trailing={<Badge>{peer?.current?.version??machine.version}</Badge>}/>;})}</Card>}
+      <Section title="Paired machines" actions={chosen.length > 0 ? <Button onClick={()=>{setSelected(chosen.map(machine=>machine.id));setResults([]);fanPending.current=null;setDialog(true);}}>Update selected ({chosen.length})</Button> : undefined}>
+        {!machines.length?<EmptyState title="No paired machines" />:<Card>{machines.map(machine=>{const peer=peers.find(row=>row.machine===machine.id);return <Row key={machine.id} title={machine.name} meta={<>{peer?.reason??(!machine.allowUpdates?'Remote updates off':!['online','version-mismatch'].includes(machine.status)?machine.status==='unauthorized'?'Access revoked':'Machine offline':eligible(machine)?'Ready to update':peer?.current?.version===feed?.version?'Up to date':!peer?.launcherAvailable?'Launcher unavailable':'Updates unavailable')}<span>{peer?.runningTurns??machine.agents.filter(agent=>agent.status==='running').length} running turns</span></>} trailing={<><Badge>{peer?.current?.version??machine.version}</Badge>{eligible(machine) && <label className="k-inline"><span>Also update {machine.name}</span><Switch label={`Also update ${machine.name}`} checked={selected.includes(machine.id)} onChange={checked=>setSelected(ids=>checked?[...ids,machine.id]:ids.filter(id=>id!==machine.id))}/></label>}</>}/>;})}</Card>}
       </Section>
     </>}
     <Dialog open={dialog} onOpenChange={open=>{if(!fanBusy)setDialog(open);}} title={`Update ${chosen.length} ${chosen.length===1?'machine':'machines'}?`} description={`Briefsip ${feed?.version??''}. Each machine backs up its database and rolls back automatically if health checks fail.`} size="lg" footer={<><Button disabled={fanBusy} onClick={()=>setDialog(false)}>{results.length?'Close':'Cancel'}</Button><Button variant="primary" busy={fanBusy} disabled={fanBusy||!!results.length||!chosen.length} onClick={()=>void fanOut()}>Update {chosen.length} {chosen.length===1?'machine':'machines'}</Button></>}>

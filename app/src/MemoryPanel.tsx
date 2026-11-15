@@ -65,11 +65,11 @@ export function MemoryPanel({ path, channel, archived, request, onClose }: { pat
     } finally { sending.current = false; if (mounted.current) setBusy(false); }
   }
   return <div className="k-page bs-root">
-    <PageHeader headingRef={heading} title={`Memory for this ${channel ? 'channel' : 'agent'}`}
-      description={channel ? 'Used by members when replying in this channel. Private agent memory is excluded.' : 'Used by the agent in Main chat and all its side threads. Excluded from channels.'}
+    <PageHeader headingRef={heading} title={`Memory for this ${channel ? 'section' : 'agent'}`}
+      description={channel ? 'Used by members when replying in this section. Private agent memory is excluded.' : 'Used by the agent in Main chat and all its conversations. Excluded from sections.'}
       actions={<><Button variant="ghost" onClick={async () => { if (draftStored || await confirm({ title: 'Leave and discard changes?', description: 'Draft has not been saved in the browser.', confirm: 'Leave', danger: true })) onClose(); }}>Back</Button><IconButton label="Reload" disabled={busy} onClick={() => setRefresh(n => n + 1)}><RefreshCw size={15} aria-hidden /></IconButton></>} />
     <p className="k-field__hint" style={{ margin: 0 }}>Notes are sent to the provider when included or searched. Agents can add or edit note contents, but cannot delete notes. Context selection stays under your control unless delegated to the agent. Saved changes remain even if the task is canceled. Reload to see the latest changes.</p>
-    {archived && <Alert>Channel archived. Restore the channel to change memory.</Alert>}
+    {archived && <Alert>Section archived. Restore the section to change memory.</Alert>}
     {(blocked || error) && <Alert tone="error">{blocked || error}</Alert>}{notice && <Alert>{notice}</Alert>}
     {(blocked || pending) && <RecoveryAlert inFlight={busy} tone="warn" title="Changes await confirmation" actions={<>{pending && <Button size="sm" disabled={busy} onClick={() => void save()}>Retry save</Button>}<Button size="sm" disabled={busy} onClick={() => void discard()}>Discard recovery and reload</Button></>}>
       Retrying uses the same data.{pending && <p style={{ whiteSpace: 'pre-wrap' }}>{pending.remove ? 'Delete note' : pending.text}</p>}

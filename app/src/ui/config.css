@@ -171,8 +171,6 @@
 /* ---------- App settings page ---------- */
 .app-settings { position: fixed; inset: 0; z-index: 90; display: flex; background: var(--color-bg-chrome); animation: fade 140ms ease-out; }
 .app-settings__nav { display: flex; flex-direction: column; gap: 2px; width: 260px; flex-shrink: 0; padding: 16px 12px; background: var(--color-bg-sidebar); border-right: 0.5px solid var(--color-border-tertiary); }
-.app-settings__back { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; height: 30px; padding: 0 10px; margin-bottom: 18px; border-radius: var(--radius-full); font-size: 13px; color: var(--color-text-secondary); }
-.app-settings__back:hover { background: var(--color-bg-hover); color: var(--color-text-primary); }
 .app-settings__heading { padding: 0 10px 8px; font-size: 13px; font-weight: 600; line-height: 18px; color: var(--color-text-tertiary); }
 .app-settings__main { position: relative; flex: 1 1 0; min-width: 0; overflow-y: auto; background: var(--color-bg-pane); }
 .app-settings__close { position: absolute; top: 14px; right: 16px; }
@@ -212,8 +210,7 @@
 
 /* SET1: grouped settings shell and preference pages. Other panels keep their layout. */
 .app-settings__nav { width: 240px; padding: 0 12px 16px; overflow-y: auto; gap: 0; }
-.app-settings__back { min-height: 40px; margin: 8px 0 0; }
-.app-settings__heading { height: 24px; padding: 0 10px; }
+.app-settings__heading { display: flex; align-items: center; min-height: 72px; padding: 0 10px; }
 .app-settings__groups { display: flex; flex-direction: column; gap: 8px; }
 .app-settings__group { display: flex; flex-direction: column; }
 .app-settings__group h2 { margin: 0; padding: 8px 10px 4px; font-size: 12px; font-weight: 500; line-height: 16px; color: var(--color-text-tertiary); }

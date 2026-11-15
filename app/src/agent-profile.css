@@ -20,9 +20,4 @@
 .bs-root .agent-profile .k-field:has(.agent-profile__count) { position: relative; }
 .bs-root .agent-profile__count { position: absolute; top: 0; right: 0; color: var(--color-text-tertiary); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
 .bs-root .agent-profile--edit > .k-alert { flex-shrink: 0; }
-.bs-root.k-dialog:has(.agent-profile--edit) .k-dialog__head > div { display: flex; align-items: center; justify-content: space-between; flex: 1; min-width: 0; gap: 24px; }
-.bs-root.k-dialog:has(.agent-profile--edit) .k-dialog__title { flex-shrink: 0; }
-.bs-root.k-dialog:has(.agent-profile--edit) .k-dialog__desc { margin: 0; min-width: 0; max-width: 60%; }
-.bs-root .agent-profile__context { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.bs-root .agent-profile__context > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bs-root .agent-profile__context .k-icon-btn { flex-shrink: 0; width: 40px; height: 40px; }
+.bs-root.k-dialog:has(.agent-profile--edit) .k-dialog__head > div { flex: 1; min-width: 0; }

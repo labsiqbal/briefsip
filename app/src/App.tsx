@@ -1,4 +1,4 @@
-import { AgentActions, useDeleteAgent } from './AgentActions';
+import { AgentActions, HiddenAgentBanner, useDeleteAgent } from './AgentActions';
 import { RightPanel, useRightPanel } from './RightPanel';
 import { restoreThreadCommand, type ThreadCommand } from '../thread-command';
 import './Conversations.css';
@@ -22,6 +22,8 @@ import { useTurnStream } from './ui/useTurnStream';
 import { SpeechPlayback } from './SpeechPlayback';
 import { useConversationAttachments } from './ConversationAttachments';
 import { Attachments } from './Attachments';
+import { attachmentSize } from './attachments';
+import { ProvidersPanel } from './ProvidersPanel';
 import { TurnActivity } from './ui/TurnActivity';
 import { AgentMessage, ChatComposer, ChatEmptyState, ChatHeader, ChatTranscript, HumanMessage, TurnStatus } from './ui/ChatPrimitives';
 import { liveTurn, livePartial, streamIdentity, turnPollDelay, type TurnActivityData } from './ui/transcript';
@@ -29,7 +31,7 @@ import { TimelineMinimap } from './ui/TimelineMinimap';
 import { deriveTimelineMinimapItems } from './ui/timelineMinimapItems';
 import { EventConnection } from './EventConnection';
 import { applyPresentation, presentationKey, readPresentation } from '../presentation';
-import { CreateProject, HelpPage, HowBriefsipWorks, ProjectHome, ProjectSidebar, ProjectSourceControl, useProjects } from './Projects';
+import { CreateProject, HelpPage, ProjectHome, ProjectSidebar, ProjectSourceControl, useProjects } from './Projects';
 import { MachinesPanel, RemoteAgentDetail, useMachines } from './MachinesPanel';
 import { HtmlPreview } from './HtmlPreview';
 import { QuestionCard, type Question } from './QuestionCard';
@@ -114,7 +116,7 @@ function RoomStop({ room, path, archived, onStopped }: { room: RoomView; path: s
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   async function stop() {
     if (busy) return;
-    if (!pending && !await confirm({ title: 'Stop discussion?', description: 'Steps already sent may have taken effect. Provider usage may still be counted.', confirm: 'Stop discussion', danger: true })) return;
+    if (!pending && !await confirm({ title: 'Stop replies?', description: 'Steps already sent may have taken effect.', confirm: 'Stop replies', danger: true })) return;
     const request = pending ?? { id: crypto.randomUUID(), generation: room.generation };
     try {
       sessionStorage.setItem(key, JSON.stringify(request)); setPending(request); setBusy(true); setError('');
@@ -124,7 +126,7 @@ function RoomStop({ room, path, archived, onStopped }: { room: RoomView; path: s
     finally { setBusy(false); }
   }
   if (!room.active && !pending && !error) return null;
-  return <><IconButton label={pending ? 'Retry Stop discussion' : 'Stop discussion'} disabled={busy || archived} onClick={() => void stop()}><Square size={14} aria-hidden /></IconButton>{error && <span className="message-error" role="alert">{error}</span>}</>;
+  return <><IconButton label={pending ? 'Retry Stop replies' : 'Stop replies'} disabled={busy || archived} onClick={() => void stop()}><Square size={14} aria-hidden /></IconButton>{error && <span className="message-error" role="alert">{error}</span>}</>;
 }
 
 function TaskControls({ turn, path, members, archived }: { turn: Turn; path: string; members: Agent[]; archived: boolean }) {
@@ -162,7 +164,7 @@ function ForkAnswer({ path, turn, onOpen }: { path: string; turn: Turn; onOpen?:
   const flight = useRef(false);
   async function fork() {
     if (flight.current) return;
-    if (!await confirm({ title: 'Fork from here?', description: 'Create a side thread with this conversation’s context through this reply. New messages stay in that thread.', confirm: 'Fork conversation' })) return;
+    if (!await confirm({ title: 'Fork from here?', description: 'Include context through this reply in a new conversation.', confirm: 'Fork conversation' })) return;
     flight.current = true; setBusy(true); setError('');
     try {
       const saved = sessionStorage.getItem(key), id = saved ?? crypto.randomUUID();
@@ -178,7 +180,7 @@ function ForkAnswer({ path, turn, onOpen }: { path: string; turn: Turn; onOpen?:
 }
 
 type DetailsContent = { chats: ReactNode; onManageRoutines?: () => void; library?: ReactNode };
-function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit, onComputerSettings, onOpenAgent, onOpenChannel, menuItems = [], detailsExtra, sourceControl }: { sourceControl?: (onOpenDiff: () => void) => ReactNode; onComputerSettings?: () => void; menuItems?: MenuItem[]; detailsExtra?: DetailsContent; onOpenChannel?: (channel: string) => void; onOpenAgent?: (agent: string, thread: string) => void; onRead?: () => Promise<void>; onEdit?: () => void; agent: Agent | Channel; configured: boolean; channel?: Channel; thread?: Thread; members?: Agent[] }) {
+function Chat({ agent, configured, channel, thread, members = [], onRead, onRestored, onEdit, onComputerSettings, onOpenAgent, onOpenChannel, menuItems = [], detailsExtra, sourceControl }: { sourceControl?: (onOpenDiff: () => void) => ReactNode; onComputerSettings?: () => void; menuItems?: MenuItem[]; detailsExtra?: DetailsContent; onOpenChannel?: (channel: string) => void; onOpenAgent?: (agent: string, thread: string) => void; onRead?: () => Promise<void>; onRestored?: () => Promise<void>; onEdit?: () => void; agent: Agent | Channel; configured: boolean; channel?: Channel; thread?: Thread; members?: Agent[] }) {
   const confirm = useConfirm();
   const archived = !!(channel?.archived || thread?.archived || (!channel && (agent as Agent).hidden));
   const scope = thread ? `thread:${thread.id}` : channel ? `channel:${agent.id}` : agent.id;
@@ -282,7 +284,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
     finally { requestActive.current = false; setBusy(false); }
   }
   async function cancel(turn: Turn) {
-    if (!await confirm({ title: 'Stop this task?', description: 'Steps already sent may have taken effect. Provider usage may still be counted.', confirm: 'Stop task', danger: true })) return;
+    if (!await confirm({ title: 'Stop this task?', description: 'Steps already sent may have taken effect.', confirm: 'Stop task', danger: true })) return;
     try { await api(`${path}/${turn.id}/cancel`, { id: crypto.randomUUID() }); setError(''); }
     catch (error) { setError(message(error)); }
   }
@@ -311,7 +313,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
   const items: MenuItem[] = [
     ...menuItems,
     ...(onEdit ? [{ label: editLabel, onSelect: onEdit }] : []),
-    { label: `${channel ? 'Channel' : 'Agent'} memory`, onSelect: () => setShowMemory(true) },
+    { label: `${channel ? 'Section' : 'Agent'} memory`, onSelect: () => setShowMemory(true) },
     { label: detailsOpen ? 'Hide details' : 'Show details', onSelect: () => setDetailsOpen(!detailsOpen) },
   ];
   const statusLabel = (turn: Turn) => turn.computerWait ? 'Waiting for you' : (turn.approvals?.some(approval => approval.state === 'approval') || turn.harnessApprovals?.some(approval => approval.state === 'approval')) && !['done','cancelled'].includes(turn.status) ? 'Waiting for approval' : turn.editing ? 'Editing' : turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) ? 'Waiting for your answer' : turn.no_update ? 'No updates' : turn.paused && !['done','cancelled'].includes(turn.status) ? 'Paused' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) && turn.status === 'queued' ? 'Waiting for agent reply' : turn.waiting_for && turn.status === 'queued' ? 'Waiting for delegation' : turn.routing === 'pending' && turn.status === 'running' ? 'Selecting recipient' : turn.routing === 'clarify' ? 'Needs clarification' : turn.routing === 'none' ? 'No task needed' : turn.status === 'running' ? 'Running' : statusNames[turn.status] ?? turn.status;
@@ -334,7 +336,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
             {turns === null ? <p className="empty-chat__sub" role="status">Loading conversation...</p>
               : turns.length === 0 && query ? <p className="empty-chat__sub" role="status">No results on this page. Change your search term or return to the previous page.</p>
               : turns.length === 0 && before ? <p className="empty-chat__sub" role="status">Start of history reached. Select Newer messages to return.</p>
-              : turns.length === 0 ? <ChatEmptyState agent={agent} title={thread?.fork ? `Continue with ${agent.name}` : undefined}>{thread?.fork ? 'Earlier context is included through the selected answer. New messages stay in this conversation.' : 'Send your first task or question. The conversation is saved on this computer.'}</ChatEmptyState>
+              : turns.length === 0 ? <ChatEmptyState agent={agent} title={thread?.fork ? `Continue with ${agent.name}` : undefined}>{'role' in agent ? agent.role : null}</ChatEmptyState>
               : turns.filter(turn => !turn.room || turn.room.root === turn.id || !turns.some(root => root.id === turn.room!.root)).map(turn => <article key={turn.id} id={`turn-${turn.id}`} tabIndex={-1} className={`turn-block${turn.id === turns.at(-1)?.id ? ' is-latest' : ''}`}>
                 {query && <button type="button" className="link-btn" onClick={() => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(turn.id); }}>Open this message</button>}
                 {turn.routineReport ? <section className="routine-report" aria-label={`Routine report: ${turn.routineReport.name}`}><div className="routine-report__meta"><CalendarClock size={16} aria-hidden /><strong>Routine report</strong><time dateTime={turn.created}>{time(turn.created)}</time></div><div className="legacy routine-report__body"><Markdown text={turn.reply ?? ''} scope={path.slice(0, -6)} origin={window.location.origin} /></div><a className="k-link" href={`#routine-run-${turn.routineReport.run}`} onClick={event=>{event.preventDefault();onOpenAgent?.(turn.routineReport!.agent,turn.routineReport!.thread);}}>Open full run</a></section> : <><HumanMessage text={turn.text} label={turn.messageOrigin?.kind === 'peer' ? `Message from ${turn.messageOrigin.name}` : 'Your message'} attachments={!!turn.files?.length && <Attachments files={turn.files} path={path.replace(/\/turns$/, '/files')} />}>
@@ -346,7 +348,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
                     {turn.parent && !turn.messageOrigin && <a className="link-btn link-btn--small" href={`#turn-${turn.parent}`} onClick={event => { event.preventDefault(); openFocused(turn.parent!); }}>View parent task</a>}
                     {turn.messageOrigin && turn.messageOrigin.kind !== 'peer' && <button type="button" className="link-btn link-btn--small" onClick={() => turn.messageOrigin!.channel ? onOpenChannel?.(turn.messageOrigin!.channel) : onOpenAgent?.(turn.messageOrigin!.agent!, turn.messageOrigin!.thread ?? '')}>Open requester conversation</button>}
                 </HumanMessage>
-                {turn.room ? <><RoomMessages room={turn.room} members={members} scope={path.slice(0, -6)} turns={turns} controls={id => { const item = turns.find(item => item.id === id); return item && <><TaskControls key={`${item.id}:${item.revision}`} turn={item} path={path} members={members} archived={archived} />{!['done','cancelled'].includes(item.status) && <IconButton label="Stop" onClick={() => void cancel(item)}><Square size={14} aria-hidden /></IconButton>}{item.reply && <MessageCopyButton text={item.reply} />}</>; }} pending={turns.filter(item => item.room?.root === turn.room!.root && !item.room.silent && !turn.room!.messages.some(message => message.kind === 'reply' && message.turn === item.id))} details={id => { const item = turns.find(item => item.id === id); return item && <TurnActivity scope={path.slice(0, -6)} logOnly turn={item} agentName={members.find(member => member.id === item.agent)?.name ?? agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} />; }} extras={id => { const item = turns.find(item => item.id === id); return item && <>{item.questions?.map(question => <QuestionCard key={question.id} question={question} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}{item.approvals?.map(approval => <ApprovalCard key={approval.id} approval={approval} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}{item.computerWait && <ComputerRequestCard agent={item.agent} name={item.agent_name ?? agent.name} wait={item.computerWait} request={api} />}{item.generatedFiles?.map(file => <p key={file.id}><a className="k-link" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}>{file.name}</a><span className="message-role"> {file.size} bytes</span></p>)}{item.harnessApprovals?.map(approval => <HarnessApprovalCard key={approval.id} approval={approval} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}</>; }} /></> : <AgentMessage identity={channel && members.length > 1 && <div className="agent-identity"><AgentAvatar agent={members.find(member => member.id === turn.agent) ?? { id: turn.agent, name: turn.agent_name ?? agent.name }} size={24} /><strong className="message-name">{turn.agent_name ?? agent.name}</strong></div>}>
+                {turn.room ? <><RoomMessages room={turn.room} members={members} scope={path.slice(0, -6)} turns={turns} controls={id => { const item = turns.find(item => item.id === id); return item && <><TaskControls key={`${item.id}:${item.revision}`} turn={item} path={path} members={members} archived={archived} />{!['done','cancelled'].includes(item.status) && <IconButton label="Stop" onClick={() => void cancel(item)}><Square size={14} aria-hidden /></IconButton>}{item.reply && <MessageCopyButton text={item.reply} />}</>; }} pending={turns.filter(item => item.room?.root === turn.room!.root && !item.room.silent && !turn.room!.messages.some(message => message.kind === 'reply' && message.turn === item.id))} details={id => { const item = turns.find(item => item.id === id); return item && <TurnActivity scope={path.slice(0, -6)} logOnly turn={item} agentName={members.find(member => member.id === item.agent)?.name ?? agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} />; }} extras={id => { const item = turns.find(item => item.id === id); return item && <>{item.questions?.map(question => <QuestionCard key={question.id} question={question} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}{item.approvals?.map(approval => <ApprovalCard key={approval.id} approval={approval} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}{item.computerWait && <ComputerRequestCard agent={item.agent} name={item.agent_name ?? agent.name} wait={item.computerWait} request={api} />}{item.generatedFiles?.map(file => <p key={file.id}><a className="k-link" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}>{file.name}</a><span className="message-role"> {attachmentSize(file.size)}</span></p>)}{item.harnessApprovals?.map(approval => <HarnessApprovalCard key={approval.id} approval={approval} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}</>; }} /></> : <AgentMessage identity={channel && members.length > 1 && <div className="agent-identity"><AgentAvatar agent={members.find(member => member.id === turn.agent) ?? { id: turn.agent, name: turn.agent_name ?? agent.name }} size={24} /><strong className="message-name">{turn.agent_name ?? agent.name}</strong></div>}>
                     <TurnActivity scope={path.slice(0, -6)} turn={turn} agentName={agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} />
                     {!channel && (!!turn.agentMessages?.length || !!turn.receivedAgentReplies?.length) && <AgentConversation items={[...(turn.agentMessages ?? []), ...(turn.receivedAgentReplies ?? []).filter(item => !turn.agentMessages?.some(sent => sent.id === item.id))]} sender={turn.agent_name ?? agent.name} scope={path.slice(0, -6)} onOpen={onOpenAgent} />}
                     <div className="message-body">
@@ -372,7 +374,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
                       {turn.approvals?.map(approval => <ApprovalCard key={approval.id} approval={approval} path={`${path}/${turn.id}`} status={turn.status} archived={archived} request={api} />)}
                       {turn.computerWait && <ComputerRequestCard agent={turn.agent} name={turn.agent_name ?? agent.name} wait={turn.computerWait} request={api} />}
                       {turn.questions?.map(question => <QuestionCard key={question.id} question={question} path={`${path}/${turn.id}`} status={turn.status} archived={archived} request={api} />)}
-                      {!!turn.generatedFiles?.length && <section aria-label="Agent output files"><Card>{turn.generatedFiles.map(file => <Row key={file.id} title={<a className="k-link" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}>{file.name}</a>} meta={`${file.size} byte`}><HtmlPreview path={`${path.replace(/\/turns$/, '/files')}/${file.id}`} name={file.name} request={api} /></Row>)}</Card></section>}
+                      {!!turn.generatedFiles?.length && <section aria-label="Agent output files"><Card>{turn.generatedFiles.map(file => <Row key={file.id} title={<a className="k-link" href={`${path.replace(/\/turns$/, '/files')}/${file.id}`} download={file.name}>{file.name}</a>} meta={attachmentSize(file.size)}><HtmlPreview path={`${path.replace(/\/turns$/, '/files')}/${file.id}`} name={file.name} request={api} /></Row>)}</Card></section>}
                       {!!turn.coordination?.length && <Collapsible title={`Task coordination (${turn.coordination.length})`}>{turn.coordination.map((action, index) => <div className="k-stack" key={index}><div className="k-section__title">{action.owner_name} {action.kind === 'delegate_task' ? 'delegated to' : 'reassigned to'} {action.target_name}.</div><div className="message-plain">{action.prompt}</div>{action.child && <div className="k-row-actions"><Button size="sm" variant="ghost" onClick={() => openFocused(action.child!)}>View subtask</Button></div>}</div>)}</Collapsible>}
                       {turn.dispatch_mode !== 'steer' && !turn.approvals?.length && <QueueEditor turn={{ ...turn, files: turn.files ?? [] }} path={path} archived={archived} request={api} />}
                     </div>
@@ -381,8 +383,8 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
             <div ref={bottom} />
       </ChatTranscript>
       <footer className="composer-area">
-        {archived && <p className="composer__note">{!channel && (agent as Agent).hidden ? 'Agent is hidden. Restore it through Edit profile to resume the queue and receive new messages.' : 'Conversation is archived. History remains available. Restore it through the conversation menu to send new messages.'}</p>}
-        {!configured && <p className="composer__note">{!channel && 'provider_account' in agent && !!agent.provider_account && agent.provider_available === false ? 'This agent provider account is unavailable. Select a connected account in the agent profile, or restore the account configuration on the server.' : 'Provider not connected. Check provider account configuration on the server, then restart the app.'} Agent and history remain saved.</p>}
+        {!channel && (agent as Agent).hidden ? <HiddenAgentBanner agent={agent as Agent} request={api} onChanged={onRestored} /> : archived && <p className="composer__note">Archived</p>}
+        {!configured && <p className="composer__note">{!channel && 'provider_account' in agent && !!agent.provider_account && agent.provider_available === false ? 'Provider account unavailable. Choose a provider in the agent profile.' : 'Provider not configured. Check Settings > Providers.'}</p>}
         {error && <div className="composer__error" role="alert"><span>{error} {pending && 'Use Retry send to check the same request without creating a duplicate message.'}</span></div>}
         {blocked && <div className="composer__error" role="alert"><span>Message recovery data could not be read. Sending is blocked. Check history to confirm the previous message was not sent.</span><Button size="sm" variant="ghost" onClick={async () => { if (!await confirm({ title: 'Discard recovery data?', description: 'The previous message may already have been received. Check history before sending another message.', confirm: 'Discard message recovery', danger: true })) return; try { sessionStorage.removeItem(storageKey); setBlocked(false); setError(''); requestAnimationFrame(() => composer.current?.focus()); } catch { setError('Recovery data could not be deleted. Check site storage.'); } }}>Discard message recovery</Button></div>}
         {attachments.composer}
@@ -404,7 +406,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
       </footer>
       <ChatHeader agent={agent} title={title} onToggle={() => setMenuOpen(!menuOpen)} expanded={menuOpen}
         menu={menuOpen && <Menu align="center" label={`Menu ${title}`} onClose={() => setMenuOpen(false)} items={items} />}
-        right={<><span className={`activity-chip${active ? ' is-working' : ''}`} role="status">{active ? `${active} ${active === 1 ? 'message' : 'messages'} processing` : channel ? 'Shared section' : 'Direct conversation'}</span>
+        right={<><span className={`activity-chip${active ? ' is-working' : ''}`} role="status">{active ? `${active} ${active === 1 ? 'message' : 'messages'} processing` : channel ? 'Section' : 'Direct conversation'}</span>
           {!detailsOpen && <button type="button" className="icon-btn icon-btn--bordered" onClick={() => setDetailsOpen(true)} aria-label="Show details" title="Show details (Ctrl/Cmd+Shift+B)" aria-keyshortcuts="Control+Shift+B Meta+Shift+B"><PanelRight size={16} aria-hidden /></button>}</>} />
     </main>
     {detailsOpen && <RightPanel path={path.replace(/\/turns$/, '')} name={agent.name} state={rightPanel} request={api} onClose={() => setDetailsOpen(false)} settings={onEdit && <IconButton label={editLabel} onClick={onEdit}><Settings size={16} aria-hidden /></IconButton>} details={
@@ -437,7 +439,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onEdit
               {detailsExtra?.onManageRoutines && <UpcomingRoutines agent={agent.id} onManage={detailsExtra.onManageRoutines} />}
               <div className="activity-empty" role="status"><Clock size={20} aria-hidden /><span>No activity</span></div>
             </div></TabPanel>
-            <TabPanel value="library"><div className="details__sections details-library">{attachments.library}<section><div className="section-label">Memory and context</div><div className="details-list"><button ref={memoryButton} type="button" className="panel-row panel-row--link" onClick={() => setShowMemory(true)}><Brain size={16} aria-hidden /><span className="panel-row__title">{channel ? 'Channel' : 'Agent'} memory</span><ChevronRight size={14} aria-hidden /></button><CompactionPanel path={path.replace(/\/turns$/, '/compaction')} request={api} /></div></section>{sourceControl?.(openDiff) ?? (!channel && (agent as Agent).workspace_connected && <SourceControl key={agent.id} agent={agent.id} request={api} onOpenDiff={openDiff} />)}{detailsExtra?.library}</div></TabPanel>
+            <TabPanel value="library"><div className="details__sections details-library">{attachments.library}<section><div className="section-label">Memory and context</div><div className="details-list"><button ref={memoryButton} type="button" className="panel-row panel-row--link" onClick={() => setShowMemory(true)}><Brain size={16} aria-hidden /><span className="panel-row__title">{channel ? 'Section' : 'Agent'} memory</span><ChevronRight size={14} aria-hidden /></button><CompactionPanel path={path.replace(/\/turns$/, '/compaction')} request={api} /></div></section>{sourceControl?.(openDiff) ?? (!channel && (agent as Agent).workspace_connected && <SourceControl key={agent.id} agent={agent.id} request={api} onOpenDiff={openDiff} />)}{detailsExtra?.library}</div></TabPanel>
           </Tabs>
         </div>
       </div>
@@ -545,7 +547,7 @@ function ScriptAccess({ agent }: { agent: string }) {
     } finally { if (mounted.current) setBusy(false); }
   }
   return <Section title="Local script">
-    <p className="k-field__hint">A script with a server token can read and run routines, create side threads, send direct or side messages, read results, answer questions, approve or reject workflow approvals, and change this agent’s model and provider account. Turning off access does not stop work already accepted.</p>
+    <p className="k-field__hint">A script with a server token can read and run routines, create conversations, send direct messages, read results, answer questions, approve or reject workflow approvals, and change this agent’s model and provider account. Turning off access does not stop work already accepted.</p>
     {access && <Alert>{access.enabled ? 'Script access is active.' : 'Script access is inactive.'}{!access.configured && ' Script token is not configured on the server.'}</Alert>}
     {pending && <RecoveryAlert inFlight={busy} tone="warn" title="Permission change is not confirmed yet">Save again to check the same request.</RecoveryAlert>}
     {error && <Alert tone="error">{error}</Alert>}
@@ -775,13 +777,16 @@ function RoutinesHub({ agents, projects, initialAgent, onClose, onOpen }: { agen
     try { sessionStorage.removeItem(key); setPending(null); setBlocked(false); setReload(value => value + 1); } catch (error) { setError(message(error)); }
   }
   const recovery = <>{blocked && <Alert tone="error" title="Routine recovery could not be read" actions={<Button disabled={busy} onClick={() => void discard()}>Discard recovery</Button>}>Check routine settings and run history before discarding.</Alert>}{pending && <RecoveryAlert inFlight={busy} tone="warn" title="Request is not confirmed yet" actions={<><Button disabled={busy} busy={busy} onClick={() => void command(pending)}>Retry request</Button><Button disabled={busy} onClick={() => void discard()}>Discard recovery</Button></>}>Retry the original request to check its result without duplicating work.</RecoveryAlert>}{error && <Alert tone="error" actions={<Button size="sm" onClick={() => { setError(''); setReload(value => value + 1); }}>Reload routines</Button>}>{error}</Alert>}{notice && <p role="status" className="k-field__hint">{notice}</p>}</>;
+  const hasFilters = Object.values(filters).some(Boolean) || !!after;
+  const showFilters = !!page?.routines.length || hasFilters;
+  const newRoutine = agents.length > 0 && <Button disabled={locked} variant="primary" icon={<Plus size={14} aria-hidden />} onClick={() => setEditing(null)}>{agents.some(agent => pendingRoutine(agent.id)) ? 'Resume saving' : 'New routine'}</Button>;
   const editingOwner = editing ? owner(editing.agent) : agents.find(agent => pendingRoutine(agent.id)) ?? owner(filters.agent) ?? agents[0];
   return <>
     {webhook ? <WebhookSettings key={webhook.id} routine={webhook} onBack={() => setWebhook(null)} /> : detail ? <RoutineDetail routine={detail} locked={locked} recovery={recovery} onBack={() => { setDetail(null); setReload(value => value + 1); }} onEdit={() => setEditing(detail)} onRun={() => run(detail)} onToggle={() => toggle(detail)} onDelete={() => void remove(detail)} onWebhook={() => setWebhook(detail)} onOpen={onOpen} /> : <div className="k-page bs-root routines-hub">
-      <PageHeader headingRef={heading} title="Routines" description="Scheduled work and event triggers across your local agents." actions={<><Button variant="ghost" onClick={onClose}>Back</Button><IconButton label="Reload routines" onClick={() => { setError(''); setReload(value => value + 1); }}><RefreshCw size={15} aria-hidden /></IconButton><Button disabled={locked || !agents.length} variant="primary" icon={<Plus size={14} aria-hidden />} onClick={() => setEditing(null)}>{agents.some(agent => pendingRoutine(agent.id)) ? 'Resume saving' : 'New routine'}</Button></>} />
-      <div className="routine-filters"><Field label="Search routines"><Input type="search" maxLength={80} value={filters.search} onChange={event => filter('search', event.target.value)} placeholder="Search by name" /></Field><Field label="Agent"><Select value={filters.agent} onChange={value => filter('agent', value)} options={[{ value: '', label: 'All agents' }, ...agents.map(agent => ({ value: agent.id, label: agent.name }))]} /></Field><Field label="Status"><Select value={filters.enabled} onChange={value => filter('enabled', value)} options={[{ value: '', label: 'All statuses' }, { value: '1', label: 'Enabled' }, { value: '0', label: 'Disabled' }]} /></Field><Field label="Project"><Select value={filters.project} onChange={value => filter('project', value)} options={[{ value: '', label: 'All projects' }, { value: 'none', label: 'No project' }, ...projects.map(project => ({ value: project.id, label: project.name }))]} /></Field><Field label="Trigger"><Select value={filters.trigger} onChange={value => filter('trigger', value)} options={[{ value: '', label: 'All triggers' }, { value: 'once', label: 'Once' }, { value: 'recurring', label: 'Recurring schedule' }, { value: 'webhook', label: 'Webhook' }, { value: 'manual', label: 'Manual' }, { value: 'script', label: 'Local script' }]} /></Field></div>
+      <PageHeader headingRef={heading} title="Routines" actions={<><Button variant="ghost" onClick={onClose}>Back</Button>{showFilters && newRoutine}</>} />
+      {showFilters && <div className="routine-filters"><Field label="Search routines"><Input type="search" maxLength={80} value={filters.search} onChange={event => filter('search', event.target.value)} placeholder="Search by name" /></Field><Field label="Agent"><Select value={filters.agent} onChange={value => filter('agent', value)} options={[{ value: '', label: 'All agents' }, ...agents.map(agent => ({ value: agent.id, label: agent.name }))]} /></Field><Field label="Status"><Select value={filters.enabled} onChange={value => filter('enabled', value)} options={[{ value: '', label: 'All statuses' }, { value: '1', label: 'Enabled' }, { value: '0', label: 'Disabled' }]} /></Field><Field label="Project"><Select value={filters.project} onChange={value => filter('project', value)} options={[{ value: '', label: 'All projects' }, { value: 'none', label: 'No project' }, ...projects.map(project => ({ value: project.id, label: project.name }))]} /></Field><Field label="Trigger"><Select value={filters.trigger} onChange={value => filter('trigger', value)} options={[{ value: '', label: 'All triggers' }, { value: 'once', label: 'Once' }, { value: 'recurring', label: 'Recurring schedule' }, { value: 'webhook', label: 'Webhook' }, { value: 'manual', label: 'Manual' }, { value: 'script', label: 'Local script' }]} /></Field></div>}
       {recovery}
-      {!page ? <><span className="sr-only" role="status">Loading routines...</span><SkeletonRows /></> : !page.routines.length ? <EmptyState icon={<CalendarClock size={20} aria-hidden />} title={Object.values(filters).some(Boolean) || after ? 'No matching routines' : 'No routines yet'}>{Object.values(filters).some(Boolean) || after ? <Button onClick={() => { setFilters({ search: '', agent: '', enabled: '', trigger: '', project: '' }); setCursors(['']); }}>Clear filters</Button> : <><p>Create a routine for work you want an agent to repeat.</p><Button disabled={locked || !agents.length} onClick={() => setEditing(null)}>New routine</Button>{!agents.length && <p>Create a local agent first.</p>}</>}</EmptyState> : <div className="k-table-wrap"><table className="k-table routine-table"><thead><tr><th>Routine</th><th>Owner</th><th>Project</th><th>Report to</th><th>Trigger</th><th>Last run</th><th>Next run</th><th>Enabled</th></tr></thead><tbody>{page.routines.map(row => <tr key={row.id}><td><button type="button" className="routine-name k-link" onClick={() => { setNotice(''); setDetail(row); }}>{row.name}</button>{Number(row.flow_agents) > 1 && <Badge>{row.flow_agents} agents</Badge>}</td><td><span className="routine-owner">{owner(row.agent) && <AgentAvatar agent={owner(row.agent)!} size={24} />}<span>{row.owner_name}</span></span></td><td>{row.project_name ?? <span className="k-field__hint">No project</span>}</td><td>{routineReportLabel(row)}</td><td>{routineTriggerLabel(row)}</td><td>{row.last_status && row.last_thread ? <button type="button" className="routine-run k-link" onClick={() => onOpen(row.agent, row.last_thread!)}><span>{runStatus({ status: row.last_status, paused: row.last_paused, no_update: row.last_no_update })}</span><time dateTime={row.last_created!}>{relativeRun(row.last_created!)}</time></button> : <span className="k-field__hint">Never run</span>}</td><td>{row.enabled && row.trigger === 'schedule' ? <time title={new Date(row.next_at).toLocaleString('en-US')} dateTime={new Date(row.next_at).toISOString()}>{relativeRun(row.next_at)}</time> : <span className="k-field__hint">{row.enabled ? 'On demand' : 'Paused'}</span>}</td><td><Switch checked={!!row.enabled} disabled={locked} label={`Enable ${row.name}`} onChange={() => toggle(row)} /></td></tr>)}</tbody></table></div>}
+      {!page ? <><span className="sr-only" role="status">Loading routines...</span><SkeletonRows /></> : !page.routines.length ? <EmptyState icon={<CalendarClock size={20} aria-hidden />} title={hasFilters ? 'No matching routines' : 'No routines yet'} action={hasFilters ? <Button onClick={() => { setFilters({ search: '', agent: '', enabled: '', trigger: '', project: '' }); setCursors(['']); }}>Clear filters</Button> : newRoutine}></EmptyState> : <div className="k-table-wrap"><table className="k-table routine-table"><thead><tr><th>Routine</th><th>Owner</th><th>Project</th><th>Report to</th><th>Trigger</th><th>Last run</th><th>Next run</th><th>Enabled</th></tr></thead><tbody>{page.routines.map(row => <tr key={row.id}><td><button type="button" className="routine-name k-link" onClick={() => { setNotice(''); setDetail(row); }}>{row.name}</button>{Number(row.flow_agents) > 1 && <Badge>{row.flow_agents} agents</Badge>}</td><td><span className="routine-owner">{owner(row.agent) && <AgentAvatar agent={owner(row.agent)!} size={24} />}<span>{row.owner_name}</span></span></td><td>{row.project_name ?? <span className="k-field__hint">No project</span>}</td><td>{routineReportLabel(row)}</td><td>{routineTriggerLabel(row)}</td><td>{row.last_status && row.last_thread ? <button type="button" className="routine-run k-link" onClick={() => onOpen(row.agent, row.last_thread!)}><span>{runStatus({ status: row.last_status, paused: row.last_paused, no_update: row.last_no_update })}</span><time dateTime={row.last_created!}>{relativeRun(row.last_created!)}</time></button> : <span className="k-field__hint">Never run</span>}</td><td>{row.enabled && row.trigger === 'schedule' ? <time title={new Date(row.next_at).toLocaleString('en-US')} dateTime={new Date(row.next_at).toISOString()}>{relativeRun(row.next_at)}</time> : <span className="k-field__hint">{row.enabled ? 'On demand' : 'Paused'}</span>}</td><td><Switch checked={!!row.enabled} disabled={locked} label={`Enable ${row.name}`} onChange={() => toggle(row)} /></td></tr>)}</tbody></table></div>}
       {(cursors.length > 1 || !!page?.next_after) && <div className="k-pager"><IconButton label="Previous routines" disabled={cursors.length < 2} onClick={() => setCursors(values => values.slice(0, -1))}><ChevronLeft size={16} aria-hidden /></IconButton><IconButton label="Next routines" disabled={!page?.next_after} onClick={() => { if (page?.next_after) setCursors(values => [...values, page.next_after!]); }}><ChevronRight size={16} aria-hidden /></IconButton></div>}
     </div>}
     {editing !== undefined && editingOwner && <RoutineForm key={editing?.id ?? 'new'} owner={editingOwner} agents={agents} projects={projects} routine={editing} onSaved={updated => { setDetail(current => current?.id === updated.id ? { ...current, ...updated } : current); setEditing(undefined); setReload(value => value + 1); }} onBack={() => { setEditing(undefined); setReload(value => value + 1); }} />}
@@ -805,8 +810,7 @@ function RoutineDetail({ routine, locked, recovery, onBack, onEdit, onRun, onTog
       <TabPanel value="overview"><div className="k-stack"><Card><Row title="Trigger" meta={routineTriggerLabel(routine)} trailing={<Badge>{routine.enabled ? 'Enabled' : 'Paused'}</Badge>} /><Row title="Project" meta={routine.project_name ?? 'No project'} /><Row title="Report to" meta={routineReportLabel(routine)} /><Row title="Next run" meta={routine.enabled && routine.trigger === 'schedule' ? new Date(routine.next_at).toLocaleString('en-US') : routine.enabled ? 'On demand' : 'Paused'} /><Row title="Last run" meta={routine.last_created ? <>{runStatus({ status: routine.last_status, paused: routine.last_paused, no_update: routine.last_no_update })} · {relativeRun(routine.last_created)}</> : 'Never run'} trailing={routine.last_thread && <Button size="sm" onClick={() => onOpen(routine.agent, routine.last_thread!)}>Open last run</Button>} /><Row title="Flow" meta={Number(routine.flow_agents ?? 1) > 1 ? `${routine.flow_agents} agents` : 'Single agent'} /></Card>
       <Section title="Instructions"><p className="routine-instructions">{routine.prompt}</p></Section>
       <div className="k-row-actions">{routine.trigger === 'webhook' && <Button onClick={onWebhook}>Webhook settings</Button>}<a className="k-link" href={`/api/agents/${routine.agent}/routines/calendar.ics`} download="briefsip-routines.ics">Download agent calendar</a></div>
-      <p className="k-field__hint">Run now uses the saved instructions even while paused. Provider usage still counts; the schedule stays unchanged.</p>
-      <Section title="Run history">{error && <Alert tone="error">{error}</Alert>}{runs === null ? <SkeletonRows /> : !runs.length ? <EmptyState title="No runs yet">Run this routine to create its first conversation.</EmptyState> : <Card>{runs.map(run => <Row key={run.turn} title={new Date(run.scheduled_at ?? run.created).toLocaleString('en-US')} meta={<><Badge>{runStatus(run)}</Badge><span>{run.source === 'webhook' ? 'Webhook' : run.source === 'script' ? 'Local script' : run.scheduled_at === null ? 'Manual' : 'Schedule'} · {relativeRun(run.created)}</span></>} trailing={<Button size="sm" onClick={() => onOpen(routine.agent, run.thread)}>Open run</Button>}>{run.missed > 0 && <p className="k-field__hint">{run.missed} missed schedules were combined into this run.</p>}{run.error && <Alert tone="error">{run.error}</Alert>}</Row>)}</Card>}</Section>
+      <Section title="Run history">{error && <Alert tone="error">{error}</Alert>}{runs === null ? <SkeletonRows /> : !runs.length ? <EmptyState title="No runs yet" /> : <Card>{runs.map(run => <Row key={run.turn} title={new Date(run.scheduled_at ?? run.created).toLocaleString('en-US')} meta={<><Badge>{runStatus(run)}</Badge><span>{run.source === 'webhook' ? 'Webhook' : run.source === 'script' ? 'Local script' : run.scheduled_at === null ? 'Manual' : 'Schedule'} · {relativeRun(run.created)}</span></>} trailing={<Button size="sm" onClick={() => onOpen(routine.agent, run.thread)}>Open run</Button>}>{run.missed > 0 && <p className="k-field__hint">{run.missed} missed schedules were combined into this run.</p>}{run.error && <Alert tone="error">{run.error}</Alert>}</Row>)}</Card>}</Section>
       <Collapsible title="Local script access"><ScriptAccess key={routine.agent} agent={routine.agent} /></Collapsible>
       </div></TabPanel>
       <TabPanel value="flow"><FlowEditor key={routine.id} routine={routine} onOpen={async (thread, owner) => onOpen(owner, thread)} /></TabPanel>
@@ -876,7 +880,7 @@ function RoutineForm({ owner, agents, projects, routine, onBack, onSaved }: { ow
   </Dialog>;
 }
 
-function AgentConversations({ agent, configured, onEdit, onComputerSettings, onSites, onExport, workflowAgents, initialThread, onOpenAgent, onOpenChannel, onThreadOpened, onManageRoutines }: { onSites: () => void; onExport: () => void; onManageRoutines: (agent: string) => void; onOpenChannel: (channel: string) => void; agent: Agent; workflowAgents: Agent[]; configured: boolean; onEdit: () => void; onComputerSettings: (agent: Agent) => void; initialThread?: string; onThreadOpened: () => void; onOpenAgent: (owner: string, thread: string) => void }) {
+function AgentConversations({ agent, onRestored, configured, onEdit, onComputerSettings, onSites, onExport, workflowAgents, initialThread, onOpenAgent, onOpenChannel, onThreadOpened, onManageRoutines }: { onRestored: () => Promise<void>; onSites: () => void; onExport: () => void; onManageRoutines: (agent: string) => void; onOpenChannel: (channel: string) => void; agent: Agent; workflowAgents: Agent[]; configured: boolean; onEdit: () => void; onComputerSettings: (agent: Agent) => void; initialThread?: string; onThreadOpened: () => void; onOpenAgent: (owner: string, thread: string) => void }) {
   const [threads, setThreads] = useState<Thread[]>([]), [error, setError] = useState('');
   const storageKey = `briefsip:thread:${agent.id}`;
   const [selected, setSelected] = useState(() => { if (initialThread) return initialThread; try { return sessionStorage.getItem(storageKey) ?? ''; } catch { return ''; } });
@@ -954,7 +958,7 @@ function AgentConversations({ agent, configured, onEdit, onComputerSettings, onS
         item = latest;
         if (item.active) { await confirm({ title: 'Stop work first', description: 'This conversation has running or queued work. Open it and stop unfinished turns before deleting it.', confirm: 'Got it' }); return; }
       }
-      if (action !== 'restore' && !await confirm({ title: `${action === 'delete' ? 'Delete' : 'Archive'} conversation?`, description: action === 'delete' ? `“${item.name}” and its history will no longer be available. This cannot be undone.` : `“${item.name}” will be hidden. History stays saved; use Show archived to restore it. Unfinished work will be stopped. Earlier requests may still be billed.`, confirm: action === 'delete' ? 'Delete conversation' : 'Archive conversation', danger: true })) return;
+      if (action !== 'restore' && !await confirm({ title: `${action === 'delete' ? 'Delete' : 'Archive'} conversation?`, description: action === 'delete' ? `“${item.name}” and its history will no longer be available. This cannot be undone.` : `“${item.name}” will be hidden. History stays saved; use Show archived to restore it. Unfinished work will be stopped.`, confirm: action === 'delete' ? 'Delete conversation' : 'Archive conversation', danger: true })) return;
       if (version !== navigation.current) return;
       await execute({ path: `/api/threads/${item.id}/${action === 'delete' ? 'delete' : 'edit'}`, data: { id: crypto.randomUUID(), revision: item.revision, ...(action === 'delete' ? {} : { name: item.name, archived: action === 'archive' }) } });
     } catch (error) { if (version === navigation.current) setError(message(error)); }
@@ -990,14 +994,14 @@ function AgentConversations({ agent, configured, onEdit, onComputerSettings, onS
     </section>
   </>;
   const library = <section aria-label="Resources"><div className="section-label">Resources</div><div className="details-list"><button type="button" className="panel-row panel-row--link" onClick={onSites}><LinkIcon size={16} aria-hidden /><span className="panel-row__title">Agent sites</span><ChevronRight size={14} aria-hidden /></button>{agent.workspace_connected && <button ref={workspaceButton} type="button" className="panel-row panel-row--link" onClick={openWorkspace}><FolderOpen size={16} aria-hidden /><span className="panel-row__title">Workspace files</span><ChevronRight size={14} aria-hidden /></button>}</div></section>;
-  return <><Chat onOpenChannel={onOpenChannel} onOpenAgent={onOpenAgent} key={thread?.id ?? agent.id} agent={agent} thread={thread} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)}
+  return <><Chat onRestored={onRestored} onOpenChannel={onOpenChannel} onOpenAgent={onOpenAgent} key={thread?.id ?? agent.id} agent={agent} thread={thread} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)}
     onEdit={thread ? () => setForm(thread) : onEdit} onComputerSettings={() => onComputerSettings(agent)}
     menuItems={[...(thread ? actions(thread) : []), { label: 'Export template', onSelect: onExport }, { label: 'New conversation', onSelect: openForm, disabled: locked }, { label: 'Routines', onSelect: openRoutines }, { label: 'Workflows', onSelect: openWorkflows }, { label: 'Workspace files', onSelect: openWorkspace }]}
     detailsExtra={{ chats: conversations, onManageRoutines: openRoutines, library }} />{form && <ThreadForm key={form === 'new' ? 'new' : `${form.id}:${form.revision}`} agent={agent} thread={form === 'new' ? undefined : form} busy={busy} locked={!!pending || invalid} onCancel={() => setForm(null)} onSave={command => void execute(command)} error={error} pending={pending} onRetry={() => pending && void execute(pending)} onReload={() => void reloadForm()} />}</>;
 }
 
 function ThreadForm({ agent, thread, busy, locked, onCancel, onSave, error, pending, onRetry, onReload }: { onReload: () => void; error: string; pending: ThreadCommand | null; onRetry: () => void; agent: Agent; thread?: Thread; busy: boolean; locked: boolean; onCancel: () => void; onSave: (command: ThreadCommand) => void }) {
-  return <Dialog open onOpenChange={next => { if (!next && !busy) onCancel(); }} title={thread ? 'Rename conversation' : 'New side thread'} description={`Agent ${agent.name}, with history and a queue separate from the main chat.`}
+  return <Dialog open onOpenChange={next => { if (!next && !busy) onCancel(); }} title={thread ? 'Rename conversation' : 'New conversation'}
     footer={<><Button onClick={onCancel} disabled={busy}>Cancel</Button><Button type="submit" form="thread-form" variant="primary" busy={busy} disabled={locked}>{thread ? 'Save conversation' : 'Create conversation'}</Button></>}>
     <form id="thread-form" className="k-fieldset bs-root" onSubmit={event => { event.preventDefault(); if (busy || locked) return; const name = String(new FormData(event.currentTarget).get('name')).trim(); if (!name) return; onSave({ path: thread ? `/api/threads/${thread.id}/edit` : `/api/agents/${agent.id}/threads`, data: { id: crypto.randomUUID(), name, ...(thread ? { revision: thread.revision, archived: !!thread.archived } : {}) } }); }}>
       <Field label="Conversation name"><Input name="name" required maxLength={80} defaultValue={thread?.name} readOnly={locked} autoFocus /></Field>
@@ -1023,7 +1027,7 @@ function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agent
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const locked = busy || !!pending || blocked;
   async function discard() {
-    if (!await confirm({ title: 'Discard channel recovery data?', description: 'Changes may already be saved. Check the list and channel settings before creating a new request.', confirm: 'Discard', danger: true })) return;
+    if (!await confirm({ title: 'Discard section recovery data?', description: 'Changes may already be saved. Check the list and section settings before creating a new request.', confirm: 'Discard', danger: true })) return;
     try { sessionStorage.removeItem(storageKey); setPending(null); setBlocked(false); setError(''); nameInput.current?.focus(); }
     catch { setError('Recovery data could not be deleted. Check site storage.'); }
   }
@@ -1031,7 +1035,7 @@ function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agent
     event.preventDefault(); if (sending.current || blocked) return;
     const data = pending ?? { id: crypto.randomUUID(), ...(channel ? { revision: channel.revision, archived } : {}), name: name.trim(), instructions: instructions.trim(), members, lead: lead || null };
     try { sessionStorage.setItem(storageKey, JSON.stringify(data)); }
-    catch { setError('Channel request was not saved in the browser. Check site storage before trying again.'); return; }
+    catch { setError('Section request was not saved in the browser. Check site storage before trying again.'); return; }
     sending.current = true; setPending(data); setBusy(true); setError('');
     try {
       const saved = await api<Channel>(channel ? `/api/channels/${channel.id}/edit` : '/api/channels', data);
@@ -1048,35 +1052,35 @@ function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agent
     }
     finally { sending.current = false; if (mounted.current) setBusy(false); }
   }
-  return <Dialog open onOpenChange={next => { if (!next && !busy) onCancel(); }} title={channel ? 'Channel settings' : 'New channel'} description="Bring agents into one conversation. Everyone can contribute, or you can address someone with @mentions."
+  return <Dialog open onOpenChange={next => { if (!next && !busy) onCancel(); }} title={channel ? 'Section settings' : 'New section'}
     footer={<>
       {channel && <Button variant="ghost" className="k-dialog__foot-start" disabled={locked} onClick={async () => {
-        if (!await confirm({ title: archived ? 'Restore channel?' : 'Archive channel?', description: archived ? 'Save changes to restore this channel.' : 'Archive channel and cancel unfinished work when you save changes.', confirm: archived ? 'Restore' : 'Archive', danger: !archived })) return;
+        if (!await confirm({ title: archived ? 'Restore section?' : 'Archive section?', description: archived ? 'Save changes to restore this section.' : 'Archive section and cancel unfinished work when you save changes.', confirm: archived ? 'Restore' : 'Archive', danger: !archived })) return;
         setArchived(!archived);
-      }}>{archived ? 'Restore channel' : 'Archive channel'}</Button>}
-      {(pending || blocked) && <Button variant="ghost" disabled={busy} onClick={() => void discard()}>Discard channel recovery</Button>}
+      }}>{archived ? 'Restore section' : 'Archive section'}</Button>}
+      {(pending || blocked) && <Button variant="ghost" disabled={busy} onClick={() => void discard()}>Discard section recovery</Button>}
       {channel && error && !pending && !blocked && onReload && <Button variant="ghost" onClick={onReload}>Discard changes and reload</Button>}
-      <Button onClick={onCancel}>Cancel</Button><Button type="submit" form="channel-form" variant="primary" busy={busy} disabled={busy || blocked || !members.length}>{busy ? 'Saving...' : pending ? 'Retry saving channel' : channel ? 'Save channel' : 'Create channel'}</Button>
+      <Button onClick={onCancel}>Cancel</Button><Button type="submit" form="channel-form" variant="primary" busy={busy} disabled={busy || blocked || !members.length}>{busy ? 'Saving...' : pending ? 'Retry saving section' : channel ? 'Save section' : 'Create section'}</Button>
     </>}>
-    {blocked && <Alert tone="error" title="Channel recovery data could not be read">Check the list and channel settings before discarding recovery.</Alert>}
-    {pending && <RecoveryAlert inFlight={busy} tone="warn" title="Request result is not confirmed yet">Try the same request to check the result without creating a duplicate channel.</RecoveryAlert>}
+    {blocked && <Alert tone="error" title="Section recovery data could not be read">Check the list and section settings before discarding recovery.</Alert>}
+    {pending && <RecoveryAlert inFlight={busy} tone="warn" title="Request result is not confirmed yet">Try the same request to check the result without creating a duplicate section.</RecoveryAlert>}
     <form id="channel-form" className="k-fieldset bs-root" onSubmit={create}>
-      <Field label="Channel name"><Input ref={nameInput} name="name" required maxLength={80} readOnly={locked} value={name} onChange={event => setName(event.target.value)} autoFocus /></Field>
+      <Field label="Section name"><Input ref={nameInput} name="name" required maxLength={80} readOnly={locked} value={name} onChange={event => setName(event.target.value)} autoFocus /></Field>
       <Field label="Purpose"><Textarea name="instructions" required maxLength={8000} rows={3} readOnly={locked} value={instructions} onChange={event => setInstructions(event.target.value)} /></Field>
       <fieldset disabled={locked} className="k-fieldset"><legend className="k-field__label">Members</legend>{agents.map(agent => <Checkbox key={agent.id} label={agent.name} disabled={locked} checked={members.includes(agent.id)} onChange={checked => { setMembers(checked ? [...members, agent.id] : members.filter(id => id !== agent.id)); if (!checked && lead === agent.id) setLead(''); }} />)}</fieldset>
       <Field label="Lead" hint="Optional. Gives a short reply when everyone stays quiet."><Select value={lead} disabled={locked} onChange={setLead} options={[{ value: '', label: 'No lead' }, ...agents.filter(agent => members.includes(agent.id)).map(agent => ({ value: agent.id, label: agent.name }))]} /></Field>
-      {channel && archived !== !!channel.archived && <Alert>{archived ? 'Channel will be archived and unfinished work cancelled when you save changes.' : 'Channel will be restored when you save changes.'}</Alert>}
+      {channel && archived !== !!channel.archived && <Alert>{archived ? 'Section will be archived and unfinished work cancelled when you save changes.' : 'Section will be restored when you save changes.'}</Alert>}
       {error && <Alert tone="error">{error}</Alert>}
     </form>
   </Dialog>;
 }
 
 
-type SettingsSection = 'general' | 'appearance' | 'skills' | 'connected-apps' | 'hub' | 'mcp' | 'machines' | 'updates' | 'usage' | 'data' | 'backup' | 'mcp-server';
+type SettingsSection = 'general' | 'appearance' | 'providers' | 'skills' | 'connected-apps' | 'hub' | 'mcp' | 'machines' | 'updates' | 'usage' | 'data' | 'backup' | 'mcp-server';
 const settingsGroups: { label: string; items: { id: SettingsSection; label: string; icon: typeof Settings }[] }[] = [
   { label: 'Preferences', items: [{ id: 'general', icon: SlidersHorizontal, label: 'General' }, { id: 'appearance', icon: Palette, label: 'Appearance' }] },
   { label: 'Agents', items: [{ id: 'skills', icon: BookOpen, label: 'Skills' }] },
-  { label: 'Connections', items: [{ id: 'hub', icon: LinkIcon, label: 'briefsip.com' }, { id: 'connected-apps', icon: Plug, label: 'Connected apps' }, { id: 'mcp', icon: Server, label: 'MCP connections' }] },
+  { label: 'Connections', items: [{ id: 'providers', icon: Server, label: 'Providers' }, { id: 'hub', icon: LinkIcon, label: 'briefsip.com' }, { id: 'connected-apps', icon: Plug, label: 'Connected apps' }, { id: 'mcp', icon: Server, label: 'MCP connections' }] },
   { label: 'System', items: [{ id: 'machines', icon: Monitor, label: 'Machines' }, { id: 'updates', icon: Download, label: 'Updates' }] },
   { label: 'Data', items: [{ id: 'usage', icon: BarChart3, label: 'Usage' }, { id: 'data', icon: Database, label: 'Shared data' }, { id: 'backup', icon: Archive, label: 'Backup & restore' }] },
   { label: 'Advanced', items: [{ id: 'mcp-server', icon: KeyRound, label: 'External access' }] },
@@ -1223,7 +1227,8 @@ function App() {
   const summaryByAgent = new Map(summaries.map(item => [item.agent, item]));
   const summaryFor = (id: string) => summaryByAgent.get(id);
   const matches = (name: string, preview = '', role = '') => !query || `${name} ${role} ${preview}`.toLocaleLowerCase().includes(query);
-  const localAgents = (directory?.agents ?? []).filter(item => showHidden || !item.hidden).filter(item => matches(item.name, summaryFor(item.id)?.preview, item.role));
+  const retainedAgent = view === 'chat' && !selectedProject && !projectThread && !selectedChannel ? selected : '';
+  const localAgents = (directory?.agents ?? []).filter(item => showHidden || !item.hidden || item.id === retainedAgent).filter(item => matches(item.name, summaryFor(item.id)?.preview, item.role));
   const agentRow = (id: string) => {
     const item = directory?.agents.find(agent => agent.id === id);
     if (!item) return null;
@@ -1243,16 +1248,16 @@ function App() {
   else if (view === 'workflows') content = <PageView wide><Suspense fallback={<p className="empty" role="status">Loading workflow directory...</p>}><WorkflowDirectory agents={directory.agents} request={api} onClose={() => setView('chat')} renderConversation={(id, owner) => <WorkflowConversation key={id} onComputerSettings={setComputerSettings} agent={directory.agents.find(item => item.id === owner)} threadId={id} configured={directory.configured} onOpenAgent={openThread} onOpenChannel={openChannel} />} /></Suspense></PageView>;
   else if (view === 'routines') content = <PageView wide><RoutinesHub key={routineAgent} initialAgent={routineAgent} agents={directory.agents.filter(agent => !agent.hidden)} projects={projectState.projects} onClose={() => setView('chat')} onOpen={openThread} /></PageView>;
   else if (project) content = <PageView wide><ProjectHome project={project} agents={directory.agents} state={projectState} request={api} onChat={id => { void load(true).then(() => openChannel(id)); }} onThread={(agent,thread) => { setProjectThread({project:project.id,agent,thread}); setSelectedProject(''); }} onDeleted={() => { setSelectedProject(''); void load(); }} /></PageView>;
-  else if (projectThread && directory.agents.find(agent => agent.id === projectThread.agent)) { const owner = directory.agents.find(agent => agent.id === projectThread.agent)!; const thread = projectState.projects.find(project => project.id === projectThread.project)?.threads.find(thread => thread.id === projectThread.thread) ?? projectThread.conversation; content = thread ? <Chat key={thread.id} sourceControl={thread.folder ? onOpenDiff => <ProjectSourceControl project={projectThread.project} folder={thread.folder!} request={api} onOpenDiff={onOpenDiff}/> : undefined} agent={owner} onComputerSettings={() => setComputerSettings(owner)} thread={{...thread,revision:1,archived:0,deleted:0}} configured={directory.configured} menuItems={[{label:'Back to project',onSelect:()=>openProject(projectThread.project)}]} /> : <PageView><EmptyState title="Project thread unavailable" /></PageView>; }
+  else if (projectThread && directory.agents.find(agent => agent.id === projectThread.agent)) { const owner = directory.agents.find(agent => agent.id === projectThread.agent)!; const thread = projectState.projects.find(project => project.id === projectThread.project)?.threads.find(thread => thread.id === projectThread.thread) ?? projectThread.conversation; content = thread ? <Chat key={thread.id} sourceControl={thread.folder ? onOpenDiff => <ProjectSourceControl project={projectThread.project} folder={thread.folder!} request={api} onOpenDiff={onOpenDiff}/> : undefined} agent={owner} onComputerSettings={() => setComputerSettings(owner)} thread={{...thread,revision:1,archived:0,deleted:0}} configured={directory.configured} menuItems={[{label:'Back to project',onSelect:()=>openProject(projectThread.project)}]} /> : <PageView><EmptyState title="Project conversation unavailable" /></PageView>; }
   else if (channel) content = <Chat onOpenAgent={openThread} key={`channel:${channel.id}`} agent={channel} channel={{ ...channel, lead: directory.agents.find(agent => agent.id === channel.lead)?.hidden ? null : channel.lead }} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id) && !agent.hidden)} onEdit={channel.project ? undefined : () => setDialog('edit')} menuItems={channel.project ? [{label:'Back to project',onSelect:()=>openProject(channel.project!)}] : []} configured={directory.configured} />;
-  else if (agent) content = <AgentConversations onSites={() => setAgentContent({ agent, kind: 'sites' })} onExport={() => setAgentContent({ agent, kind: 'export' })} onManageRoutines={id => { setRoutineAgent(id); setView('routines'); }} onOpenChannel={openChannel} key={agent.id} agent={agent} workflowAgents={directory.agents} configured={directory.configured} initialThread={openedThread?.agent === agent.id ? openedThread.thread : undefined} onThreadOpened={() => setOpenedThread(null)} onOpenAgent={openThread} onEdit={() => setDialog('edit')} onComputerSettings={setComputerSettings} />;
-  else content = <main className="chat chat--empty bs-root"><div className="empty-chat"><div className="empty-chat__title">Create your first agent</div><div className="empty-chat__sub">Name it, choose a model, then explain how it should work. The agent and its history are saved on this computer.</div><button type="button" className="btn btn--primary" onClick={() => setDialog('agent')}><Plus size={16} aria-hidden /> New agent</button><HowBriefsipWorks action={<Button variant="ghost" onClick={() => setWorkspaceDialog('help')}>Read quick guide</Button>} /></div></main>;
+  else if (agent) content = <AgentConversations onRestored={() => load(true)} onSites={() => setAgentContent({ agent, kind: 'sites' })} onExport={() => setAgentContent({ agent, kind: 'export' })} onManageRoutines={id => { setRoutineAgent(id); setView('routines'); }} onOpenChannel={openChannel} key={agent.id} agent={agent} workflowAgents={directory.agents} configured={directory.configured} initialThread={openedThread?.agent === agent.id ? openedThread.thread : undefined} onThreadOpened={() => setOpenedThread(null)} onOpenAgent={openThread} onEdit={() => setDialog('edit')} onComputerSettings={setComputerSettings} />;
+  else content = <main className="chat chat--empty bs-root"><div className="empty-chat"><div className="empty-chat__title">Create your first agent</div><button type="button" className="btn btn--primary" onClick={() => setDialog('agent')}><Plus size={16} aria-hidden /> New agent</button></div></main>;
   const created = (item: Agent) => { setDirectory(current => current && { ...current, agents: [...current.agents.filter(agent => agent.id !== item.id), item] }); openAgent(item.id); };
   return <RadixDialog.Root modal open={!!settings} onOpenChange={open => setSettings(current => open ? current ?? 'general' : null)}><div className={`app bs-root${collapsed ? ' is-sidebar-collapsed' : ''}`}>
     {collapsed && <button type="button" className="icon-btn icon-btn--bordered sidebar-reveal" onClick={() => setCollapsed(false)} aria-label="Expand sidebar" title="Sidebar (Ctrl/Cmd+B)"><PanelLeft size={16} aria-hidden /></button>}
     {!collapsed && <aside ref={sidebar.ref} className="sidebar" style={{ width: `${sidebar.width}px` }} aria-label="Workspace navigation">
       <div className="sidebar__titlebar">
-        <span className="sidebar__bots-label">Bots</span>
+        <span className="sidebar__bots-label">Briefsip</span>
         <nav className="sidebar__controls" aria-label="Automation">
           <IconButton label="Routines" aria-current={view === 'routines' ? 'page' : undefined} disabled={!directory} onClick={() => { setRoutineAgent(''); setView('routines'); setDialog(null); }}><CalendarClock size={16} aria-hidden /></IconButton>
           <IconButton label="Workflows" aria-current={view === 'workflows' ? 'page' : undefined} disabled={!directory} onClick={() => { setView('workflows'); setDialog(null); }}><WorkflowIcon size={16} aria-hidden /></IconButton>
@@ -1267,7 +1272,7 @@ function App() {
       </div>
       <div className="sidebar__tabs">
       <Tabs<SidebarTab> label="Sidebar" value={sidebarTab} onChange={setSidebarTab} tabs={[
-        { value: 'agents', label: 'Agents', count: (directory?.agents ?? []).filter(item => showHidden || !item.hidden).length + remoteMachinesState.machines.reduce((count, machine) => count + machine.agents.length, 0) },
+        { value: 'agents', label: 'Agents', count: (directory?.agents ?? []).filter(item => showHidden || !item.hidden || item.id === retainedAgent).length + remoteMachinesState.machines.reduce((count, machine) => count + machine.agents.length, 0) },
         { value: 'projects', label: 'Projects', count: projectState.projects.length },
       ]}>
       <div className="sidebar__search">
@@ -1284,11 +1289,11 @@ function App() {
       <div className="sidebar__scroll">
         <TabPanel value="agents">
         <nav className="machine-groups" aria-label="Machines">
-        <MachineGroup name="This device" subtitle={environment?.name} count={(directory?.agents ?? []).filter(item => showHidden || !item.hidden).length} expanded={query ? searchMachineGroups.local !== false : machineGroups.local !== false} onExpandedChange={expanded => setMachineExpanded('local', expanded)} local>
+        <MachineGroup name="This device" subtitle={environment?.name} count={(directory?.agents ?? []).filter(item => showHidden || !item.hidden || item.id === retainedAgent).length} expanded={query ? searchMachineGroups.local !== false : machineGroups.local !== false} onExpandedChange={expanded => setMachineExpanded('local', expanded)} local>
           <div className="bot-list sidebar-agents">
             <nav className="bot-list" aria-label="Choose agent">{localAgents.map(item => agentRow(item.id))}
             {!!directory?.agents.length && !localAgents.length && <p className="machine-group__note">No matching agents.</p>}
-            {directory && !directory.agents.length && <button type="button" className="bot-list__empty" onClick={() => setDialog('agent')}><span className="bot-list__empty-plus"><Plus size={14} aria-hidden /></span><span><span className="bot-row__name">New agent</span><span className="bot-row__preview">Assign a task, such as research or a summary</span></span></button>}
+            {directory && !directory.agents.length && <button type="button" className="bot-list__empty" onClick={() => setDialog('agent')}><span className="bot-list__empty-plus"><Plus size={14} aria-hidden /></span><span><span className="bot-row__name">New agent</span></span></button>}
             </nav>
           </div>
 
@@ -1307,7 +1312,7 @@ function App() {
           </nav>
         </MachineGroup>)}
         {remoteMachinesState.error && <p className="machine-group__note" role="status">Machines could not be refreshed.</p>}
-        {!remoteMachinesState.machines.length && <button type="button" className="bot-list__empty" onClick={() => setSettings('machines')}><Monitor size={16} aria-hidden /><span><span className="bot-row__name">Pair a machine</span><span className="bot-row__preview">See agents on your other computers</span></span></button>}
+        {!remoteMachinesState.machines.length && <button type="button" className="bot-list__empty" onClick={() => setSettings('machines')}><Monitor size={16} aria-hidden /><span><span className="bot-row__name">Pair a machine</span></span></button>}
         </nav>
         </TabPanel>
         <TabPanel value="projects">
@@ -1318,9 +1323,9 @@ function App() {
       </div>
       <div className="sidebar__footer">
         <div className="sidebar__fade" />
-        {!collapsed && <div className="provider-status" role="status"><i className={directory?.configured ? 'is-on' : ''} aria-hidden /><span>{activityError ? 'Status not updated. Trying again.' : directory?.configured ? 'Provider configured' : 'Provider not connected'}</span></div>}
+        {!collapsed && <button type="button" className="provider-status" onClick={() => setSettings('providers')}><i className={directory?.configured ? 'is-on' : ''} aria-hidden /><span>{activityError ? 'Status not updated. Trying again.' : directory?.configured ? 'Provider configured' : 'Provider not configured'}</span></button>}
         {updateAvailable && <button type="button" className="update-available-badge" onClick={() => setSettings('updates')}>Update available</button>}
-        <ActionMenu label="Workspace menu" trigger={<IconButton label="Workspace menu"><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: 'Help', onSelect: () => setWorkspaceDialog('help') }]} />
+        <IconButton label="Help" onClick={() => setWorkspaceDialog('help')}><BookOpen size={16} aria-hidden /></IconButton>
         <RadixDialog.Trigger asChild><button type="button" className="icon-btn icon-btn--bordered" aria-label="Settings" title="Settings (Ctrl/Cmd+,)"><Settings size={16} aria-hidden /></button></RadixDialog.Trigger>
       </div>
       <PanelResizeHandle panel={sidebar} />
@@ -1339,7 +1344,6 @@ function App() {
       (page?.querySelector<HTMLElement>('h1[tabindex], button:not(:disabled), input:not([type="hidden"]):not(:disabled), [tabindex="0"]') ?? page)?.focus();
     }}>
       <aside className="app-settings__nav">
-        <button type="button" className="app-settings__back" aria-label="Back to workspace" onClick={() => setSettings(null)}><ChevronDown size={14} aria-hidden style={{ transform: 'rotate(90deg)' }} /> Back</button>
         <RadixDialog.Title asChild><div className="app-settings__heading">Settings</div></RadixDialog.Title>
         <div className="app-settings__search"><Search size={14} aria-hidden /><input ref={settingsSearch} type="search" aria-label="Search settings" aria-keyshortcuts="/" placeholder="Search" value={settingsQuery} onChange={event => setSettingsQuery(event.target.value)} onKeyDown={event => {
           if (event.key === 'Escape' && settingsQuery) { event.preventDefault(); event.stopPropagation(); setSettingsQuery(''); }
@@ -1363,6 +1367,7 @@ function App() {
         <div className={`app-settings__page legacy${settings === 'general' || settings === 'appearance' ? ' app-settings__page--preferences' : settings === 'usage' || settings === 'data' ? ' app-settings__page--wide' : ''}`} tabIndex={-1}>
           {!directory ? <p className="empty" role="status">Loading workspace...</p>
             : settings === 'skills' ? <Suspense fallback={<p className="empty" role="status">Loading skill library...</p>}><SkillsPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
+            : settings === 'providers' ? <ProvidersPanel request={api} />
             : settings === 'updates' ? <UpdatesPanel request={api} />
             : settings === 'machines' ? <MachinesPanel request={api} onChanged={() => { void remoteMachinesState.reload(); void api<Environment>('/api/environment').then(setEnvironment).catch(() => setActivityError(true)); }} />
             : settings === 'hub' ? <Suspense fallback={<p className="empty" role="status">Loading hub connection...</p>}><HubConnection agents={directory.agents} request={api} /></Suspense>

@@ -75,6 +75,8 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
     }).catch(error => { if (!stopped) setCatalogStatus(message(error)); });
     return () => { stopped = true; };
   }, [account, accountReload, runtime]);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [advancedOpen, setAdvancedOpen] = useState(!!recovery.command?.backupModel);
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   const [modelValue, setModelValue] = useState(profile?.model ?? recovery.command?.model ?? model);
   const [backupValue, setBackupValue] = useState(profile?.backup_model ?? recovery.command?.backupModel ?? '');
@@ -92,7 +94,7 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (busy || invalid) return;
     const form = new FormData(event.currentTarget);
-    const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision } : setup ? { setup: true } : {}), providerAccount: account, name: String(form.get('name')).trim() || (setup ? 'New agent' : ''), role: String(form.get('role')).trim(), model: String(form.get('model')).trim(), backupModel: String(form.get('backupModel')).trim(), instructions: String(form.get('instructions')).trim(), threadLimit: Number(form.get('threadLimit')), toolBudget: Number(form.get('toolBudget')) };
+    const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision } : setup ? { setup: true } : {}), providerAccount: account, name: String(form.get('name')).trim() || (setup ? 'New agent' : ''), role: String(form.get('role')).trim(), model: String(form.get('model')).trim(), backupModel: String(form.get('backupModel')).trim(), instructions: String(form.get('instructions')).trim() || 'Help the user complete their tasks.', threadLimit: Number(form.get('threadLimit')), toolBudget: Number(form.get('toolBudget')) };
     if (profile && runtime !== (profile.runtime ?? 'api') && !pending.current) {
       if (!await confirm({ title: 'Change agent runtime?', description: 'Future turns use the selected runtime and its host login. Existing history remains in Briefsip; the new runtime starts a fresh conversation. Workspace edits can persist after a turn stops.', confirm: 'Change runtime' })) return;
       Object.assign(data, { runtime, confirmRuntime: true });
@@ -142,24 +144,24 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
       {profile ? <AgentAvatar agent={liveProfile!} size={40} /> : <span className="agent-profile__initials">{look ? <MascotAvatar look={look} size={40} /> : 'Aa'}</span>}<span className="agent-profile__name">{profile?.name ?? 'Avatar'}</span>
       <Button ref={avatarChange} onClick={() => setAvatarOpen(true)}>Change</Button>
     </div>}
-    <Field label={!profile && setup ? 'Temporary name' : 'Name'} optional={!profile && setup}>
+    <Field label={!profile && setup ? 'Temporary name' : 'Name'} optional={!profile && setup} error={fieldErrors.name}>
       <Input ref={nameInput} name="name" required={!setup} maxLength={80} readOnly={locked} defaultValue={profile?.name ?? recovery.command?.name} placeholder="For example: Research partner" />
     </Field>
     <Field label="Role" optional><Input name="role" maxLength={60} readOnly={locked} defaultValue={profile?.role ?? recovery.command?.role ?? ''} /></Field>
-    <Field label={!profile && setup ? 'Brief' : 'Instructions'}>
-      <Textarea name="instructions" required maxLength={8000} readOnly={locked} defaultValue={profile?.instructions ?? recovery.command?.instructions} rows={6} onChange={event => setInstructionCount(event.target.value.length)} placeholder={!profile && setup ? 'Describe the work this agent should help with.' : undefined} />{profile && <span aria-hidden className="agent-profile__count">{instructionCount}/8000</span>}
+    <Field label={!profile && setup ? 'Brief' : 'Instructions'} optional={!profile && !setup} error={fieldErrors.instructions}>
+      <Textarea name="instructions" required={!!profile || setup} maxLength={8000} readOnly={locked} defaultValue={profile?.instructions ?? recovery.command?.instructions} rows={6} onChange={event => setInstructionCount(event.target.value.length)} placeholder={!profile && setup ? 'Describe the work this agent should help with.' : undefined} />{profile && <span aria-hidden className="agent-profile__count">{instructionCount}/8000</span>}
     </Field>
   </>;
   const modelFields = <>
     <Field label="Run with" error={runtimeError}>
       <Tooltip content={profile ? 'Uses host login and project folder. No image attachments.' : 'Requires an agent in a project'}>
-        <span className="agent-profile__runtime"><Select label="Run with" value={runtime} onChange={value => setRuntime(value as typeof runtime)} disabled={locked || busy} options={[{ value: 'api', label: 'API model' }, ...(['codex','claude'] as const).map(value => { const choice = runtimeChoices.find(item => item.runtime === value); return { value, label: value === 'codex' ? 'Codex' : 'Claude Code', disabled: !choice?.enabled, hint: choice?.reason ?? choice?.version ?? 'Requires an agent in a project' }; })]} /></span>
+        <span className="agent-profile__runtime"><Select label="Run with" value={runtime} onChange={value => setRuntime(value as typeof runtime)} disabled={locked || busy} options={[{ value: 'api', label: 'API model' }, ...(['codex','claude'] as const).filter(value => runtimeChoices.some(choice => choice.runtime === value && choice.enabled) || runtime === value).map(value => { const choice = runtimeChoices.find(item => item.runtime === value); return { value, label: value === 'codex' ? 'Codex' : 'Claude Code', disabled: !choice?.enabled, hint: choice?.reason ?? choice?.version ?? 'Requires an agent in a project' }; })]} /></span>
       </Tooltip>
     </Field>
     <Field label="Provider" error={accountError && <>{accountError} <button type="button" className="k-link" onClick={() => setAccountReload(value => value + 1)}>Reload</button></>}>
       <Select value={account} onChange={setAccount} disabled={locked || runtime !== 'api'} options={accountOptions} />
     </Field>
-    <Field label="Model" hint={runtime === 'api' ? catalogStatus : 'Host default'}>
+    <Field label="Model" error={fieldErrors.model} hint={runtime === 'api' ? catalogStatus : 'Host default'}>
       <Combobox name="model" value={modelValue} onChange={setModelValue} suggestions={models} required maxLength={160} readOnly={locked || runtime !== 'api'} placeholder="Enter model ID" />
     </Field>
     {profile && <Collapsible title="Fallback model" defaultOpen={!!profile.backup_model}>
@@ -168,14 +170,13 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
   </>;
   const advancedFields = <>
     {!profile && <Field label="Fallback model" optional><Combobox name="backupModel" value={backupValue} onChange={setBackupValue} suggestions={models} maxLength={160} readOnly={locked || runtime !== 'api'} placeholder="Enter model ID" /></Field>}
-    <Field label="Parallel chats"><Tooltip content="Excludes main chat"><Input name="threadLimit" type="number" min={1} max={32} step={1} required readOnly={locked} defaultValue={profile?.thread_limit ?? recovery.command?.threadLimit ?? 2} /></Tooltip></Field>
-    <Field label="Tool step limit"><Tooltip content={runtime === 'api' ? 'Stops with summary at limit. Continue to resume.' : 'API tasks only'}><Input name="toolBudget" type="number" min={10} max={200} step={1} required readOnly={locked || runtime !== 'api'} defaultValue={profile?.tool_budget ?? recovery.command?.toolBudget ?? 90} /></Tooltip></Field>
+    <Field label="Parallel chats" error={fieldErrors.threadLimit}><Tooltip content="Excludes main chat"><Input name="threadLimit" type="number" min={1} max={32} step={1} required readOnly={locked} defaultValue={profile?.thread_limit ?? recovery.command?.threadLimit ?? 2} /></Tooltip></Field>
+    <Field label="Tool step limit" error={fieldErrors.toolBudget}><Tooltip content={runtime === 'api' ? 'Stops with summary at limit. Continue to resume.' : 'API tasks only'}><Input name="toolBudget" type="number" min={10} max={200} step={1} required readOnly={locked || runtime !== 'api'} defaultValue={profile?.tool_budget ?? recovery.command?.toolBudget ?? 90} /></Tooltip></Field>
   </>;
   return <>
     <Dialog open size={profile ? 'lg' : 'md'} onOpenChange={next => { if (!next && !busy) onCancel(); }} title={profile ? 'Agent profile' : 'New agent'}
-      description={profile && <span className="agent-profile__context"><span>{profile.name}</span><ActionMenu label="Agent profile actions" trigger={<IconButton ref={exportTrigger} label="Agent profile actions"><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: 'Export template', onSelect: () => setExportOpen(true) }]} /></span>}
+      actions={profile && <ActionMenu label="Agent profile actions" trigger={<IconButton ref={exportTrigger} label="Agent profile actions"><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: 'Export template', onSelect: () => setExportOpen(true) }, ...(onDelete ? [{ label: 'Delete agent', danger: true, disabled: busy, onSelect: () => void onDelete(profile).catch(error => setError(message(error))) }] : [])]} />}
       footer={<>
-        {profile && onDelete && <Button variant="danger" className="k-dialog__foot-start" disabled={busy} onClick={() => void onDelete(profile).catch(error => setError(message(error)))}>Delete agent</Button>}
         {!profile && pending.current && <Button variant="ghost" disabled={busy} onClick={() => void discardPending()} className="k-dialog__foot-start">Discard recovery</Button>}
         {profile && error && onReload && <Button variant="ghost" onClick={onReload} className="k-dialog__foot-start">Discard changes and reload</Button>}
         {profile && tab === 'access' && !dirty && !pending.current ? <Button onClick={onCancel}>Done</Button> : <>
@@ -187,14 +188,18 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
       {!profile && pending.current && <RecoveryAlert inFlight={busy} tone="warn" title="Creation is not confirmed yet">Try again with the same request to avoid creating a duplicate agent.</RecoveryAlert>}
       <div className={`agent-profile${profile ? ' agent-profile--edit' : ''}`}>
         <Tabs value={tab} onChange={setTab} label="Agent profile" tabs={profile ? [{ value: 'profile', label: 'Profile' }, { value: 'model', label: 'Model' }, { value: 'access', label: 'Access' }, { value: 'advanced', label: 'Advanced' }] : []}>
-          <form ref={formRef} id="agent-form" className="k-fieldset" noValidate={!!profile} onChange={updateDirty} onSubmit={event => {
-            // Validate once before revealing the first invalid tab; native submission cannot focus hidden fields.
-            if (profile && !event.currentTarget.checkValidity()) {
+          <form ref={formRef} id="agent-form" className="k-fieldset" noValidate onChange={event => { setFieldErrors(current => { const next = { ...current }; if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) delete next[event.target.name]; return next; }); updateDirty(); }} onSubmit={event => {
+            const inputs = Array.from(event.currentTarget.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input, textarea'));
+            const invalid = inputs.filter(input => !input.validity.valid || input.required && !input.value.trim());
+            setFieldErrors(Object.fromEntries(invalid.map(input => [input.name, input.validity.rangeUnderflow || input.validity.rangeOverflow ? `Use ${input.getAttribute('min')}-${input.getAttribute('max')}.` : input.validity.badInput || input.validity.stepMismatch ? 'Enter a whole number.' : 'Required.'])));
+            if (invalid.length) {
               event.preventDefault();
-              const input = event.currentTarget.querySelector<HTMLInputElement>(':invalid');
-              const name = input?.name;
-              flushSync(() => setTab(name && ['model', 'backupModel'].includes(name) ? 'model' : name && ['threadLimit', 'toolBudget'].includes(name) ? 'advanced' : 'profile'));
-              input?.reportValidity(); return;
+              const input = invalid[0];
+              flushSync(() => {
+                if (profile) setTab(['model', 'backupModel'].includes(input.name) ? 'model' : ['threadLimit', 'toolBudget'].includes(input.name) ? 'advanced' : 'profile');
+                else if (['threadLimit', 'toolBudget'].includes(input.name)) setAdvancedOpen(true);
+              });
+              input.focus(); return;
             }
             void create(event);
           }}>
@@ -206,7 +211,7 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
             </> : <>
               <Segmented label="How to create an agent" value={setup ? 'describe' : 'manual'} disabled={busy || locked || invalid} onChange={value => setSetup(value === 'describe')} options={[{ value: 'manual', label: 'Manual' }, { value: 'describe', label: 'Draft with AI' }]} />
               {profileFields}{modelFields}
-              <Collapsible title="Advanced settings" defaultOpen={!!recovery.command?.backupModel}>{advancedFields}</Collapsible>
+              <Collapsible title="Advanced settings" open={advancedOpen} onOpenChange={setAdvancedOpen}>{advancedFields}</Collapsible>
             </>}
           </form>
           {profile && <RadixTabs.Content forceMount value="access" hidden={tab !== 'access'} className="k-tabs__panel">
