@@ -86,7 +86,7 @@ test('release CLI demonstrates passing and failing --issues using a fixture gh r
     mkdirSync(join(f.dir, 'scripts'));
     for (const name of ['release.mjs', 'install-machine.sh', 'uninstall-machine.sh', 'briefsip-launcher.mjs']) cpSync(new URL(`../scripts/${name}`, import.meta.url), join(f.dir, 'scripts', name));
     cpSync(new URL('./update-release.mjs', import.meta.url), join(f.dir, 'app/update-release.mjs'));
-    const pkg = { name: 'release-gate-fixture', version: '1.0.0', type: 'module', scripts: { build: 'node -e "0"' } };
+    const pkg = { name: 'release-gate-fixture', version: '1.0.0', type: 'module', scripts: { lint: 'node -e "0"', test: 'node -e "0"', build: 'node -e "0"' } };
     writeFileSync(join(f.dir, 'app/package.json'), JSON.stringify(pkg));
     writeFileSync(join(f.dir, 'app/package-lock.json'), JSON.stringify({ name: pkg.name, version: pkg.version, lockfileVersion: 3, packages: { '': pkg } }));
     f.git('add', '.');
