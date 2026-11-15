@@ -9,7 +9,7 @@ export type Workflow = { id: string; agent: string; name: string; revision: numb
 export type WorkflowDraft = { name: string; graph: WorkflowGraph; revision: number };
 type Agent = { id: string; name: string; model: string };
 
-// ponytail: kit Select omits required and encodes empty choices as nonempty values; keep native validation until both are supported.
+// ponytail: native validation until kit Select supports required and empty values.
 function RequiredSelect(props: SelectHTMLAttributes<HTMLSelectElement>) {
   const field = useField();
   return <select id={field?.id} aria-describedby={field?.describedBy} className="k-input" {...props} />;

@@ -50,16 +50,51 @@ export const clientServerBoundary = {
   },
 };
 
+export const comments = {
+  meta: {
+    type: 'suggestion', schema: [],
+    messages: {
+      shape: 'Keep comments on one line, at most 120 characters including delimiters; move rationale to an issue or commit.',
+      justification: 'Fix the root cause, or open a GitHub issue and reference it with TODO(#123).',
+    },
+  },
+  create(context) {
+    return {
+      Program() {
+        const source = context.sourceCode, all = source.getAllComments();
+        const firstToken = source.getFirstToken(source.ast)?.range[0] ?? source.text.length;
+        const headers = all.filter(comment => comment.range[1] <= firstToken);
+        if (headers.some(comment => /(?:@generated\b|\bauto-generated\b|\bCode generated\b.*\bDO NOT EDIT\b)/i.test(comment.value))) return;
+        for (const comment of all) {
+          const header = headers.includes(comment) && /\b(?:copyright|SPDX-License-Identifier|MIT|provenance|adapted from T3)\b/i.test(comment.value);
+          if (!header && (comment.loc.start.line !== comment.loc.end.line || [...source.getText(comment)].length > 120))
+            context.report({ node: comment, messageId: 'shape' });
+          const text = comment.value.replace(/\bTODO\(#[1-9]\d*\)/g, '');
+          if (/\b(?:workaround|for\s+now|temporary|hack|in\s+case|quick\s+fix|TODO|FIXME)\b/i.test(text))
+            context.report({ node: comment, messageId: 'justification' });
+        }
+      },
+    };
+  },
+};
+
 export default [
   { ignores: ['**/dist/**', '**/node_modules/**'] },
   {
     files: ['**/*.{ts,tsx,mjs,js}'],
     languageOptions: { parser: tseslint.parser },
+    plugins: { briefsip: { rules: { 'client-server-boundary': clientServerBoundary, comments } } },
     rules: { 'no-debugger': 'error', 'no-unreachable': 'error' },
+  },
+  // #39: product comments; test bodies and lint fixtures remain outside product scope.
+  {
+    files: ['**/*.{ts,tsx,mjs,js}'],
+    ignores: ['**/*.test.{ts,tsx,mjs,js}', 'test.ts', 'lint/check.mjs', '**/generated/**', '**/*.generated.{ts,tsx,mjs,js}'],
+    rules: { 'briefsip/comments': 'error' },
   },
   {
     files: ['src/**/*.{ts,tsx,mjs,js}', ...browserSafeModules],
-    plugins: { '@typescript-eslint': tseslint.plugin, briefsip: { rules: { 'client-server-boundary': clientServerBoundary } } },
+    plugins: { '@typescript-eslint': tseslint.plugin },
     rules: {
       '@typescript-eslint/no-restricted-imports': ['error', { patterns: [{ regex: builtinPattern, allowTypeImports: true, message: nodeMessage }] }],
       'briefsip/client-server-boundary': 'error',
