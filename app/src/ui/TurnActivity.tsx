@@ -3,7 +3,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Badge, Collapsible } from './kit';
 import { Markdown } from '../Markdown';
 import type { StreamPartial } from '../../turn-stream';
-import { activityLabel, liveTurn, streamWork, type TurnActivityData } from './transcript';
+import { activityLabel, liveTurn, streamWork, toolTitle, type TurnActivityData } from './transcript';
 
 type Props = {
   logOnly?: boolean; actions?: ReactNode;
@@ -45,17 +45,17 @@ export function TurnActivity({ turn, agentName, onOpenTask, onOpenAgent, remote,
       const toolId = segment.id.slice(5); streamedTools.add(toolId);
       const native = turn.activity?.harness?.find(tool => tool.id === toolId);
       const tool = turn.activity?.tools.find(tool => tool.id === toolId);
-      steps.push({ id, text: `${segment.text} · ${native?.state ?? (tool ? tool.failed ? 'Error recorded' : 'Result recorded' : segment.state)}` });
+      steps.push({ id, text: `${tool?.title ?? toolTitle(tool?.name ?? native?.name ?? segment.text)}${native ? ` · ${native.state}` : tool?.failed ? ' · Failed' : !tool && segment.state !== 'done' ? ` · ${segment.state}` : ''}` });
     }
   }
   for (const item of turn.room?.quiet ?? []) steps.push({ id: `quiet-${item.name}`, text: `${item.name} stayed quiet${item.silent === 'not_mentioned' ? ' (not mentioned)' : ''}` });
   if (!turn.room && (turn.routing || turn.recipient)) steps.push({ id: 'routing', text: turn.routing === 'pending' ? 'Selecting recipient' : turn.routing === 'clarify' ? 'Requested routing clarification' : turn.routing === 'none' ? 'No task needed' : turn.routing === 'released' ? 'Waiting for an available recipient' : `Recipient selected: ${turn.agent_name ?? agentName}` });
-  for (const step of turn.activity?.harness ?? []) if (!streamedTools.has(step.id)) steps.push({ id: `harness-${step.id}`, text: `${step.name} · ${step.state}` });
+  for (const step of turn.activity?.harness ?? []) if (!streamedTools.has(step.id)) steps.push({ id: `harness-${step.id}`, text: `${toolTitle(step.name)} · ${step.state}` });
   for (const link of turn.activity?.dispatch ?? []) steps.push({ id: `dispatch-${link.target_turn}`, text: link.mode === 'steer' ? 'Guidance linked to running turn' : 'Restart linked to interrupted turn', task: link.source_turn });
   const actions = turn.coordination ?? [];
   const tools = turn.activity?.tools ?? [];
   for (let index = 0; index <= actions.length; index++) {
-    for (const tool of tools.filter(tool => tool.after_action === index && !streamedTools.has(tool.id))) steps.push({ id: `tool-${tool.id}`, text: `${tool.name}${tool.failed ? ' · Error recorded' : ' · Result recorded'}` });
+    for (const tool of tools.filter(tool => tool.after_action === index && !streamedTools.has(tool.id))) steps.push({ id: `tool-${tool.id}`, text: `${tool.title ?? toolTitle(tool.name)}${tool.failed ? ' · Failed' : ''}` });
     const action = actions[index];
     if (action) steps.push({ id: `coordination-${index}`, text: `${action.owner_name} ${action.kind === 'delegate_task' ? 'delegated to' : 'transferred to'} ${action.target_name}`, task: action.child });
   }
@@ -68,7 +68,6 @@ export function TurnActivity({ turn, agentName, onOpenTask, onOpenAgent, remote,
   if (turn.activity?.budget_stopped) steps.push({ id: 'budget', text: `Stopped after ${turn.activity.budget_stopped} tool steps` });
   if (turn.activity?.fallback_model) steps.push({ id: 'fallback', text: `Fallback model used: ${turn.activity.fallback_model}` });
   const contents = <>
-      {!!turn.activity?.calls.length && <p className="activity-timing">{[...new Set(turn.activity?.calls.map(call => call.model))].join(' · ')}</p>}
       {steps.length ? <ol className="activity-list" aria-label="Turn activity">{steps.map(step => { const item = (turn.agentMessages ?? []).find(row => row.taskId === step.task); return <li key={step.id}>{step.prose ? <MessageSquare className="activity-step-icon" aria-hidden /> : <Wrench className="activity-step-icon" aria-hidden />}{step.prose ? <div className="legacy"><Markdown text={step.text} scope={scope} origin={window.location.origin} /></div> : <span>{step.text}</span>}{item?.taskId && <Badge tone={['done'].includes(item.status) ? 'success' : ['failed','cancelled','uncertain'].includes(item.status) ? 'warn' : 'brand'}>{item.status === 'queued' && item.wait ? 'Waiting' : item.status.charAt(0).toUpperCase() + item.status.slice(1)}</Badge>}{step.task && <button type="button" className="link-btn link-btn--small" onClick={() => item?.agent && item.thread ? onOpenAgent?.(item.agent, item.thread) : onOpenTask(step.task!)}>{item ? 'Open conversation' : 'View subtask'}</button>}</li>; })}</ol> : null}
   </>;
   if (logOnly) return <div className="turn-activity-log">{contents}</div>;

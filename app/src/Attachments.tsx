@@ -9,7 +9,8 @@ export function Attachment({ file, path, onOpen, onRemove, disabled }: { file: A
   const name = file.name.replace(/^Voice note (\d+):(\d{2})\.(?:webm|ogg|m4a)$/, 'Voice note $1:$2');
   const image = isAttachmentImage(file), [expanded, setExpanded] = useState(false), [failed, setFailed] = useState(false);
   const Icon = /\.(zip|gz|tar|7z)$/i.test(file.name) ? FileArchive : /\.(mp3|wav|ogg|m4a|webm)$/i.test(file.name) ? FileAudio : /\.(mp4|mov)$/i.test(file.name) ? FileVideo : /\.(tsx?|jsx?|json|html?|css|py|sh)$/i.test(file.name) ? FileCode : /\.(txt|md|pdf|csv)$/i.test(file.name) ? FileText : File;
-  const content = image ? failed ? <ImageOff size={20} aria-label="Image unavailable" /> : <img src={`${path}?preview=image`} alt={file.name} loading="lazy" onError={() => setFailed(true)} /> : <><Icon size={18} aria-hidden /><span className="attachment__identity"><span className="attachment__name">{name}</span><span className="attachment__size">{attachmentSize(file.size)}</span></span></>;
+  const thumbnail = image ? failed ? <ImageOff size={20} aria-label="Image unavailable" /> : <img src={`${path}?preview=image`} alt={file.name} loading="lazy" onError={() => setFailed(true)} /> : <Icon size={18} aria-hidden />;
+  const content = <>{thumbnail}<span className="attachment__identity"><span className="attachment__name">{name}</span><span className="attachment__size">{attachmentSize(file.size)}</span></span></>;
   const className = `attachment__open${image ? ' attachment__image' : ' attachment__file'}`;
   return <div className={`attachment${image ? ' is-image' : ''}${onRemove ? ' is-removable' : ''}`}>
     {image || onOpen ? <button type="button" className={className} aria-label={`Preview ${file.name}`} title={file.name} onClick={() => onOpen ? onOpen() : setExpanded(true)}>{content}</button> : <a className={className} href={path} download={file.name} title={file.name}>{content}</a>}

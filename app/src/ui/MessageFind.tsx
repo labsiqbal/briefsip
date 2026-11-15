@@ -65,7 +65,7 @@ export function MessageFind({ query, onQuery, viewport, content, onClose }: {
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); }
     if (event.key === 'Enter' && event.shiftKey) { event.preventDefault(); select(index.current - 1); }
   }}>
-    <Search size={15} aria-hidden /><input autoFocus aria-label="Find in conversation" type="search" maxLength={200} value={query} onChange={event => onQuery(event.target.value)} />
+    <Search size={15} aria-hidden /><input autoFocus aria-label="Find in conversation" type="text" role="searchbox" maxLength={200} value={query} onChange={event => onQuery(event.target.value)} />
     <span className="message-find__count" role="status">{position.total ? `${position.index + 1} of ${position.total}` : '0 of 0'}</span>
     <IconButton label="Previous match" disabled={!position.total} onClick={() => select(index.current - 1)}><ChevronUp size={15} aria-hidden /></IconButton>
     <IconButton label="Next match" disabled={!position.total} onClick={() => select(index.current + 1)}><ChevronDown size={15} aria-hidden /></IconButton>

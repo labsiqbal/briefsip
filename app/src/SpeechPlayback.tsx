@@ -61,8 +61,9 @@ export function VoiceSettings({ scope }: { scope?: ReactNode }) {
   }, []);
   const voice = voices.find(item => voiceKey(item) === preference.voice);
   const unavailable = !engine ? 'This browser does not support speech playback.' : !voices.length ? 'No local voices available. Install a device voice or use a supported browser.' : '';
+  if (unavailable) return null;
   return <Section title="Voice" id="voice-settings"><Card>
-    <Row title="Read aloud" trailing={<>{unavailable && <Tooltip content={unavailable}><span tabIndex={0}><Badge>{!engine ? 'Unavailable' : 'No local voices'}</Badge></span></Tooltip>}<IconButton label="Adds Listen to replies. Local voices only." aria-label="About read aloud"><Info size={14} aria-hidden /></IconButton>{scope}<Switch label="Read aloud" checked={preference.enabled} disabled={!!unavailable} onChange={speechPreferenceStore.setEnabled} /></>} />
+    <Row title="Read aloud" trailing={<><IconButton label="Adds Listen to replies. Local voices only." aria-label="About read aloud"><Info size={14} aria-hidden /></IconButton>{scope}<Switch label="Read aloud" checked={preference.enabled} onChange={speechPreferenceStore.setEnabled} /></>} />
     {preference.enabled && <Row title="Voice" meta={preference.voice && !voice ? 'Saved voice unavailable.' : undefined} trailing={<span className="k-row-actions"><Select size="sm" label="Voice" value={voice ? preference.voice : ''} onChange={speechPreferenceStore.setVoice} disabled={!voices.length} placeholder="Choose voice" options={voices.map(item => ({ value: voiceKey(item), label: `${item.name} (${item.lang})` }))} /><Button size="sm" variant="ghost" aria-label={playing ? 'Stop voice test' : 'Test voice'} disabled={!voice} icon={<Volume2 size={14} aria-hidden />} onClick={() => playing ? player?.stop('settings-voice-test') : player?.play('settings-voice-test', 'This is your selected voice in Briefsip.', preference.voice)}>{playing ? 'Stop' : 'Test'}</Button></span>} />}
   </Card>{(preference.error || error) && <p className="k-field__error" role="status">{preference.error || error}</p>}</Section>;
 }

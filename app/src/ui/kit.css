@@ -239,3 +239,7 @@ button.k-row__main:disabled { cursor: default; }
 
 .mcp-scope-group { border: 0; padding: 0; margin: 24px 0 0; min-width: 0; }
 .mcp-scope-group legend { padding: 0; margin-bottom: 12px; font-size: 13px; font-weight: 600; color: var(--color-text-primary); }
+
+.k-combobox { position: relative; min-width: 0; width: 100%; }
+.k-combobox > input { padding-right: 38px; }
+.k-combobox > .k-combobox__toggle { position: absolute; inset: 0 0 0 auto; height: 100%; width: 36px; border: 0; background: transparent; }

@@ -1,15 +1,22 @@
-import { PageHeader, Section } from './ui/kit';
+import { Card, PageHeader, Row, Section } from './ui/kit';
 
-export function HelpPage(){return <div className="k-page bs-root help-page"><PageHeader title="How Briefsip works" description="Chat with an agent. Bring a team together in a project."/>
-  <Section title="Sidebar"><p>Switch between Agents and Projects with the tabs or Ctrl/Cmd+1 and Ctrl/Cmd+2. Each tab has its own search. Open Routines, Workflows, or the New menu from the header; notification preferences live in Settings &gt; General.</p></Section>
-  <Section title="Machines"><p>A machine is a computer running Briefsip. This device holds local agents and projects. Pair another machine in Settings to reach its agents.</p></Section>
-  <Section title="Agents"><p>Agents are your direct chats. Give each agent a role, instructions, and runtime. Choose the Agents tab for direct chats grouped by machine. Collapse a machine to keep the sidebar tidy.</p><p>API model uses your configured provider. Codex and Claude Code need a project folder or a host workspace binding.</p></Section>
-  <Section title="Projects"><p>A project brings a team of agents together for one piece of work, such as a website or a launch. Choose New project, name it, and add members. Folders are optional and can be added later from Members &amp; folders.</p><p>Each project starts with a general section. Opening a project's name shows members, folders, sections, conversations, and source control when folders are attached.</p></Section>
-  <Section title="Sections"><p>Sections organize one project for different kinds of work: design, backend, or research. Every section uses the project's members. Type @ to address an agent. Agents reply when relevant, can ask teammates, and stay silent when they have nothing to add.</p><p>Use a project's menu to create a section. Use a section's menu to rename, reorder, or archive it. Archived sections keep their history, memory, and files in project home. Earlier agent-label sections stay saved but are no longer shown or edited.</p></Section>
-  <Section title="Folder access"><p>Members have read-only or confirmed read-and-write access to attached folders. Grants apply only in this project's sections and conversations. Sections use the first folder by default; conversations can choose a folder. Direct chats use separate host bindings. Archiving a project keeps folder contents.</p></Section>
-  <Section title="Computer"><p>An agent's computer is a separate desktop for browser work, when supported by the host. Enable it in agent details, then view it, take control, or hand it back.</p></Section>
-  <Section title="Routines"><p>Open Routines in the sidebar to manage scheduled work, webhooks, manual runs, and local script triggers across local agents. Search by name or filter by agent, project, status, and trigger. Choose an owner, optional project, and Report to destination: a project section, the owner agent’s direct chat, or only the run’s conversation. The owner must be a project member.</p><p>Open a routine for Overview and run history, or use the Flow tab to connect agents. Project runs open a project conversation with its folder and access grants. Reports include the status, a short summary, and an Open full run link. They never start replies from section members. Choose Once, Every day, Weekdays, or Weekly with local time and an editable time zone; the next three times appear before saving. Advanced choices offer elapsed hours/minutes and validated cron. Existing intervals keep their timing. Run now starts a separate conversation; Pause stops scheduled and webhook runs; explicit Run now and script requests can still run paused routines. Delete requires confirmation and retains earlier run conversations. The Activity tab's Manage link opens this hub for that agent.</p></Section>
-  <Section title="Connected apps"><p>Each project has separate Composio accounts, grants, and approval choices. Connect GitHub, Gmail, or another app here; direct chats keep installation-wide accounts. Installation apps stay hidden until you enable the project setting.</p></Section>
-  <Section title="Environment and MCP"><p>Project environment values are encrypted and shown only as set with their update time. They enter project coding harnesses and routines, then get redacted from saved output. Project values stay out of the agent computer unless you explicitly expose them and accept the warning.</p><p>MCP connections and grants belong to this project and are offered only to its member agents. Project folders remain the cwd for workspace and harness tools.</p></Section>
-  <Section title="Updates"><p>Settings &gt; Updates shows installed and available versions. Review before applying. Updating a paired machine needs that machine's permission.</p></Section>
-</div>;}
+const shortcuts = [
+  ['Ctrl/Cmd + K', 'Quick switcher'],
+  ['Ctrl/Cmd + F', 'Find in conversation'],
+  ['Ctrl/Cmd + ,', 'Settings'],
+  ['Ctrl/Cmd + B', 'Toggle sidebar'],
+  ['Ctrl/Cmd + Shift + B', 'Toggle conversation panel'],
+  ['Ctrl/Cmd + 1', 'Agents'],
+  ['Ctrl/Cmd + 2', 'Projects'],
+  ['F6', 'Focus message composer'],
+  ['Enter', 'Send or queue message'],
+  ['Shift + Enter', 'New line'],
+  ['Esc', 'Close search or dialog'],
+];
+
+export function HelpPage() {
+  return <div className="k-page bs-root help-page">
+    <PageHeader title="Keyboard shortcuts" />
+    <Section title="Workspace"><Card>{shortcuts.map(([keys, action]) => <Row key={keys} title={action} trailing={<kbd>{keys}</kbd>} />)}</Card></Section>
+  </div>;
+}

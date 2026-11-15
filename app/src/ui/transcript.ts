@@ -4,7 +4,7 @@ export type TurnActivityData = {
   budget_stopped?: number;
   dispatch?: { source_turn: string; target_turn: string; mode: 'steer' | 'restart' }[];
   calls: { seq: number; model: string; purpose: string; phase: string; status: string; created: string; finished: string | null }[];
-  tools: { id: string; name: string; after_action: number; failed: number }[];
+  tools: { id: string; name: string; title?: string; after_action: number; failed: number }[];
   harness?: { id: string; name: string; state: string }[];
   stream?: StreamSegment[];
   fallback_model: string | null;
@@ -45,4 +45,8 @@ export function matchOffsets(text: string, query: string) {
   if (!query.trim()) return [];
   return [...text.matchAll(new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu'))]
     .map(match => ({ start: match.index, end: match.index + match[0].length }));
+}
+
+export function toolTitle(name: string) {
+  return name.split('__').at(-1)!.replace(/[_-]+/g, ' ').replace(/^./, char => char.toUpperCase());
 }

@@ -69,14 +69,14 @@ export function Select({ value, onChange, options, disabled, placeholder, name, 
 export function Combobox({ value, onChange, suggestions, name, placeholder, readOnly, required, maxLength, emptyText }: { value: string; onChange: (value: string) => void; suggestions: string[]; name?: string; placeholder?: string; readOnly?: boolean; required?: boolean; maxLength?: number; emptyText?: string }) {
   const field = useField();
   const [open, setOpen] = useState(false), [active, setActive] = useState(0);
-  const listId = useId();
+  const listId = useId(), input = useRef<HTMLInputElement>(null);
   const query = value.trim().toLowerCase();
   const items = (query && !suggestions.includes(value) ? suggestions.filter(item => item.toLowerCase().includes(query)) : suggestions).slice(0, 50);
   useEffect(() => { setActive(0); }, [value, open]);
   const choose = (item: string) => { onChange(item); setOpen(false); };
   return <Popover.Root open={open && !readOnly && (items.length > 0 || !!emptyText)} onOpenChange={setOpen}>
     <Popover.Anchor asChild>
-      <input id={field?.id} name={name} className="k-input" value={value} placeholder={placeholder} readOnly={readOnly} required={required} maxLength={maxLength} autoComplete="off"
+      <div className="k-combobox"><input ref={input} id={field?.id} name={name} className="k-input" value={value} placeholder={placeholder} readOnly={readOnly} required={required} maxLength={maxLength} autoComplete="off"
         role="combobox" aria-expanded={open} aria-controls={listId} aria-autocomplete="list" aria-describedby={field?.describedBy} aria-invalid={field?.invalid || undefined}
         aria-activedescendant={open && items[active] ? `${listId}-${active}` : undefined}
         onFocus={() => setOpen(true)} onClick={() => setOpen(true)} onChange={event => { onChange(event.target.value); setOpen(true); }}
@@ -85,7 +85,7 @@ export function Combobox({ value, onChange, suggestions, name, placeholder, read
           else if (event.key === 'ArrowUp') { event.preventDefault(); setActive(index => Math.max(index - 1, 0)); }
           else if (event.key === 'Enter' && open && items[active]) { event.preventDefault(); choose(items[active]); }
           else if (event.key === 'Escape' && open) { event.preventDefault(); event.stopPropagation(); setOpen(false); }
-        }} />
+        }} />{!readOnly && <IconButton label={`Show ${name === 'backupModel' ? 'fallback' : name ?? 'options'} suggestions`} className="k-combobox__toggle" onClick={() => { setOpen(true); input.current?.focus(); }}><ChevronDown size={14} aria-hidden /></IconButton>}</div>
     </Popover.Anchor>
     <Popover.Portal>
       <Popover.Content className="k-pop k-combobox__content" align="start" sideOffset={6} onOpenAutoFocus={event => event.preventDefault()} onInteractOutside={event => { if ((event.target as HTMLElement | null)?.id === field?.id) event.preventDefault(); }}>
@@ -187,7 +187,7 @@ export function Collapsible({ title, children, defaultOpen = false, open, onOpen
 }
 
 export function Tooltip({ content, children }: { content: ReactNode; children: ReactNode }) {
-  return <RadixTooltip.Provider delayDuration={400}><RadixTooltip.Root><RadixTooltip.Trigger asChild>{children}</RadixTooltip.Trigger><RadixTooltip.Portal><RadixTooltip.Content className="k-tooltip" sideOffset={6}>{content}</RadixTooltip.Content></RadixTooltip.Portal></RadixTooltip.Root></RadixTooltip.Provider>;
+  return <RadixTooltip.Provider delayDuration={400}><RadixTooltip.Root><RadixTooltip.Trigger asChild onFocus={event => { if (!(event.target as HTMLElement).matches(':focus-visible')) event.preventDefault(); }}>{children}</RadixTooltip.Trigger><RadixTooltip.Portal><RadixTooltip.Content className="k-tooltip" sideOffset={6}>{content}</RadixTooltip.Content></RadixTooltip.Portal></RadixTooltip.Root></RadixTooltip.Provider>;
 }
 
 export type MenuEntry = { label: string; onSelect: () => void; danger?: boolean; disabled?: boolean; icon?: ReactNode } | 'separator';
@@ -213,7 +213,7 @@ export function Dialog({ open, onOpenChange, title, description, actions, childr
       <RadixDialog.Overlay className="k-overlay" />
       <RadixDialog.Content {...(!description ? { 'aria-describedby': undefined } : {})} className={cx('k-dialog', 'bs-root', `k-dialog--${size}`)} onCloseAutoFocus={event => { const target = opener.current; opener.current = null; if (target?.isConnected) { event.preventDefault(); target.focus(); } }} onOpenAutoFocus={event => {
         const body = (event.currentTarget as HTMLElement).querySelector('.k-dialog__body');
-        const first = body?.querySelector<HTMLElement>(':is(input:not([type=hidden]):not([type=number]), textarea):not([readonly]):not(:disabled)') ?? body?.querySelector<HTMLElement>('button:not(:disabled), [tabindex="0"]');
+        const first = body?.querySelector<HTMLElement>(':is(input:not([type=hidden]):not([type=number]), textarea):not([readonly]):not(:disabled)') ?? body?.querySelector<HTMLElement>('[role=tab][data-state=active]');
         event.preventDefault(); (first ?? (event.currentTarget as HTMLElement)).focus();
       }}>
         {hideHeader ? <><RadixDialog.Title className="sr-only">{title}</RadixDialog.Title>{description && <RadixDialog.Description className="sr-only">{description}</RadixDialog.Description>}</> : <div className="k-dialog__head">
