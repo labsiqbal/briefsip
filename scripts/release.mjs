@@ -36,7 +36,7 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
   const id = `${version}-${commit.slice(0, 8)}`;
   const target = join(releases, id);
   if (existsSync(target)) throw new Error(`Release already exists: ${id}`);
-  if (build) for (const script of ['lint', 'test', 'build']) execFileSync('npm', ['run', script], { cwd: source, stdio: 'inherit' });
+  if (build) for (const script of ['lint', 'build', 'test']) execFileSync('npm', ['run', script], { cwd: source, stdio: 'inherit' });
   mkdirSync(releases, { recursive: true, mode: 0o700 });
   const stage = mkdtempSync(join(releases, '.staging-'));
   try {
