@@ -1807,5 +1807,44 @@
       "adaptation": "Adapt compact find bar, native CSS Highlight ranges, match count, previous/next and Escape. Briefsip uses its existing history pages, Markdown DOM and kit controls; no T3 store or virtualizer.",
       "compatibilityCheck": "app/message-find.test.ts; work/rebuild/ui-smoke/smoke.mjs"
     }
+  ],
+  "quickSwitcherSourceEntries": [
+    {
+      "sourcePath": "apps/web/src/components/CommandPaletteContent.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "654ad286b39a56484f56fdef9aefaf591c97df0a8d5744fe8d96363344a293c7",
+      "symbols": [
+        "CommandPaletteContent"
+      ],
+      "localPaths": [
+        "app/src/ui/QuickSwitcher.tsx",
+        "app/src/hooks/useQuickSwitcher.ts",
+        "app/src/ui/quick-switcher.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Search-first modal palette, grouped destinations, arrow selection, Escape and focus return using existing Radix dialog and native input. Briefsip navigation and conversation fetching; no Zustand or cmdk dependency.",
+      "compatibilityCheck": "work/rebuild/ux-navigation/check.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/commandPaletteStore.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "8309f7a55ea022abb71228e59bd338bf4f49c6e9804dc7d65c1908f64e01d9d0",
+      "symbols": [
+        "dispatchCommandPalette",
+        "getCommandPaletteReturnFocus"
+      ],
+      "localPaths": [
+        "app/src/ui/QuickSwitcher.tsx",
+        "app/src/hooks/useQuickSwitcher.ts",
+        "app/src/ui/quick-switcher.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Search-first modal palette, grouped destinations, arrow selection, Escape and focus return using existing Radix dialog and native input. Briefsip navigation and conversation fetching; no Zustand or cmdk dependency.",
+      "compatibilityCheck": "work/rebuild/ux-navigation/check.mjs"
+    }
   ]
 }

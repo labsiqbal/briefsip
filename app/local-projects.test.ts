@@ -430,3 +430,18 @@ test('standalone migration cannot merge a channel whose ID collides with an exis
     initializeLocalProjects(f.db);assert.deepEqual(f.projects.list(),projects);
   } finally {f.close();}
 });
+
+test('project members retain added order through reload and edit', () => {
+  const f = store();
+  try {
+    const ids = ['ffffffff-ffff-4fff-8fff-ffffffffffff', '11111111-1111-4111-8111-111111111111', f.agent];
+    for (const id of ids.slice(0, 2)) f.db.prepare('INSERT INTO agents VALUES (?)').run(id);
+    const members = ids.map(agent => ({ agent, write: false }));
+    f.projects.create({ id: randomUUID(), name: 'Ordered members', members, folders: [] });
+    const project = f.projects.list()[0];
+    assert.deepEqual(project.members, members);
+    const reordered = members.toReversed();
+    f.projects.edit(project.id, 'edit', { id: randomUUID(), revision: project.revision, members: reordered });
+    assert.deepEqual(f.projects.list()[0].members, reordered);
+  } finally { f.close(); }
+});

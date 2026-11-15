@@ -80,7 +80,6 @@
 .sidebar__search .k-icon-btn[aria-pressed="true"] { color: var(--color-brand-text); background: var(--color-brand-soft); }
 
 .provider-status { display: flex; align-items: center; gap: 8px; flex: 1 1 0; min-width: 0; padding-left: 8px; font-size: 13px; line-height: 18px; color: var(--color-text-secondary); }
-.provider-status span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .provider-status i { width: 8px; height: 8px; flex-shrink: 0; border-radius: 50%; background: var(--color-warn); }
 .provider-status i.is-on { background: var(--color-success); }
 
