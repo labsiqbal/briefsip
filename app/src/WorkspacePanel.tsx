@@ -6,7 +6,7 @@ import { Alert, Button, Card, CodeBlock, EmptyState, IconButton, PageHeader, Row
 type Location = { path: string; file: boolean; after?: string; offset?: number; digest?: string };
 type Page = { path: string; entries?: { name: string; kind: string }[]; next_after?: string | null; text?: string; digest?: string; next_offset?: number | null };
 
-export function WorkspacePanel({ agent, request, onClose }: { agent: { id: string; name: string }; request: <T>(path: string) => Promise<T>; onClose: () => void }) {
+export function WorkspacePanel({ agent, request, onClose, basePath = `/api/agents/${agent.id}/workspace`, compact = false, onOpenFile }: { agent: { id: string; name: string }; request: <T>(path: string) => Promise<T>; onClose: () => void; basePath?: string; compact?: boolean; onOpenFile?: (path: string) => void }) {
   const [locations,setLocations] = useState<Location[]>([{path:'',file:false}]);
   const [page,setPage] = useState<Page | null>(null), [error,setError] = useState(''), [reload,setReload] = useState(0);
   const [downloading,setDownloading] = useState(false), [downloadError,setDownloadError] = useState('');
@@ -18,18 +18,18 @@ export function WorkspacePanel({ agent, request, onClose }: { agent: { id: strin
     if(location.after !== undefined)params.set('after',location.after);
     if(location.offset !== undefined)params.set('offset',String(location.offset));
     if(location.digest !== undefined)params.set('digest',location.digest);
-    void request<Page>(`/api/agents/${agent.id}/workspace/${location.file?'file':'entries'}?${params}`).then(value => {
+    void request<Page>(`${basePath}/${location.file?'file':'entries'}?${params}`).then(value => {
       if(current === generation.current)setPage(value);
     }).catch(reason => {if(current === generation.current)setError(reason instanceof Error ? reason.message : 'Workspace could not load. Try again.');});
     return () => {generation.current++;};
-  },[agent.id,location,reload,request]);
-  function open(next:Location){generation.current++;setPage(null);setError('');setLocations(value=>[...value,next]);}
+  },[agent.id,basePath,location,reload,request]);
+  function open(next:Location){if(next.file && onOpenFile){onOpenFile(next.path);return;}generation.current++;setPage(null);setError('');setLocations(value=>[...value,next]);}
   function back(){generation.current++;setPage(null);setError('');setLocations(value=>value.slice(0,-1));}
   async function download() {
     if(downloading)return;
     const current=generation.current;setDownloading(true);setDownloadError('');
     try {
-      const response=await fetch(`/api/agents/${agent.id}/workspace/download?${new URLSearchParams({path:location.path})}`);
+      const response=await fetch(`${basePath}/download?${new URLSearchParams({path:location.path})}`);
       if(!response.ok)throw new Error((await response.json()).error);
       const blob=await response.blob();if(current!==generation.current)return;
       const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=location.path.split('/').pop()!;
@@ -37,10 +37,11 @@ export function WorkspacePanel({ agent, request, onClose }: { agent: { id: strin
     } catch(reason) {if(current===generation.current)setDownloadError(reason instanceof TypeError?'Download interrupted. Check the connection and try again.':reason instanceof Error?reason.message:'Download failed. Try again.');}
     finally {if(current===generation.current)setDownloading(false);}
   }
-  return <div className="k-page bs-root">
-    <PageHeader headingRef={heading} title={`Workspace files for ${agent.name}`}
+  return <div className={`${compact ? "k-stack" : "k-page"} bs-root`}>
+    {!compact && <PageHeader headingRef={heading} title={`Workspace files for ${agent.name}`}
       description="Local files linked by the host owner. Previews are read-only; opening files here does not send their contents to the model."
-      actions={<><Button variant="ghost" onClick={onClose}>Back</Button><IconButton label="Reload from start" onClick={()=>{generation.current++;setPage(null);setError('');setLocations(value=>[...value.slice(0,-1),{path:location.path,file:location.file}]);setReload(value=>value+1);}}><RefreshCw size={15} aria-hidden /></IconButton></>} />
+      actions={<><Button variant="ghost" onClick={onClose}>Back</Button><IconButton label="Reload from start" onClick={()=>{generation.current++;setPage(null);setError('');setLocations(value=>[...value.slice(0,-1),{path:location.path,file:location.file}]);setReload(value=>value+1);}}><RefreshCw size={15} aria-hidden /></IconButton></>} />}
+    {compact && <Section title="Project workspace" actions={<IconButton label="Reload workspace" onClick={()=>setReload(value=>value+1)}><RefreshCw size={15} aria-hidden /></IconButton>}>{null}</Section>}
     <div className="k-row-actions">
       <Button disabled={locations.length<2} onClick={back} icon={<ChevronLeft size={14} aria-hidden />}>Previous</Button>
       <Button onClick={()=>{generation.current++;setPage(null);setError('');setLocations([{path:'',file:false}]);}} icon={<Folder size={14} aria-hidden />}>Root directory</Button>

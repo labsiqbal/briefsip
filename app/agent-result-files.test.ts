@@ -39,6 +39,7 @@ for(const pdf of [false,true]) test(`requester reads returned teammate ${pdf?'PD
   for(const path of [`/api/agents/${owner}/turns`,`/api/threads/${side.id}/turns`,`/api/channels/${channel.id}/turns`]){
    created='';const id=randomUUID();await ui(path,{id,text:'Return file',...(path.includes('/channels/')?{recipient:owner}:{})});await wait(path,id,'done');
    assert.equal(results.at(-1).text.trim(),'REQUESTED_OUTPUT');assert.equal(returned.at(-1).replies[0].generatedFiles[0].id,created);otherOutput=created;
+   const panel=path.replace('/turns','/panel');assert((await ui(panel+'/files')).some((file:any)=>file.id===created));assert.equal((await ui(panel+'/files/'+created+'?preview=text')).text.trim(),'REQUESTED_OUTPUT');assert.equal((await fetch(app.origin+panel+'/files/'+privateFile+'?preview=text')).status,404);
   }
   const path=`/api/agents/${owner}/turns`;
   target=otherOutput;created='';let id=randomUUID();await ui(path,{id,text:'Read unrelated output'});await wait(path,id,'done');assert(results.at(-1).error);

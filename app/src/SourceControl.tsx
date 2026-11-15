@@ -1,3 +1,5 @@
+import { diffLines } from '../diff-lines';
+export { diffLines } from '../diff-lines';
 // Branch and diff-status patterns adapted from T3 (MIT); see ../t3/provenance.json.
 import { useEffect, useRef, useState } from 'react';
 import { GitBranch, GitPullRequest, RefreshCw } from 'lucide-react';
@@ -53,22 +55,7 @@ export function SourceControl({ agent, request, showEmpty = false }: { agent: st
   </Dialog></div>;
 }
 
-export function diffLines(text: string) {
-  let old = 0, next = 0;
-  let inHunk = false;
-  return text.replace(/\n$/, '').split('\n').map(text => {
-    if (text.startsWith('diff --git ')) inHunk = false;
-    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(text);
-    if (hunk) { old = Number(hunk[1]); next = Number(hunk[2]); inHunk = true; return { text, kind: 'hunk', old: '', next: '' }; }
-    if (!inHunk) return { text, kind: 'meta', old: '', next: '' };
-    if (text.startsWith('\\')) return { text, kind: 'meta', old: '', next: '' };
-    if (text.startsWith('+')) return { text, kind: 'add', old: '', next: String(next++) };
-    if (text.startsWith('-')) return { text, kind: 'remove', old: String(old++), next: '' };
-    if (text.startsWith(' ')) return { text, kind: 'context', old: String(old++), next: String(next++) };
-    return { text, kind: 'meta', old: '', next: '' };
-  });
-}
-function UnifiedDiff({ text }: { text: string }) {
+export function UnifiedDiff({ text }: { text: string }) {
   return <div className="git-diff" role="region" aria-label="Unified diff" tabIndex={0}><div className="git-diff__lines">{diffLines(text).map((line, index) => <div key={index} className={`git-diff__line is-${line.kind}`}><span className="git-diff__number" aria-label={line.old ? `Old line ${line.old}` : undefined}>{line.old}</span><span className="git-diff__number" aria-label={line.next ? `New line ${line.next}` : undefined}>{line.next}</span><code>{line.text || ' '}</code></div>)}</div></div>;
 }
 
