@@ -1,4 +1,4 @@
-.bs-root { --surface-inset: 22px; }
+:root, .bs-root { --surface-inset: 22px; }
 /* Briefsip component kit on Bot HQ tokens. Behavior comes from Radix; every visual value comes from tokens.css. */
 
 /* ---------- type ---------- */
