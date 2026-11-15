@@ -175,7 +175,7 @@ export function PageHeader({ title, description, actions, headingRef }: { title:
   return <header className="k-page-head"><div className="k-page-head__text"><h1 ref={headingRef} tabIndex={-1}>{title}</h1>{description && <p>{description}</p>}</div>{actions && <div className="k-page-head__actions">{actions}</div>}</header>;
 }
 
-/** Disclosure. Uncontrolled by default; pass `open` and `onOpenChange` to control it (for example to load data only while open). */
+/** Disclosure. Pass `open` and `onOpenChange` for controlled state. */
 export function Collapsible({ title, children, defaultOpen = false, open, onOpenChange, variant = 'inline' }: { title: ReactNode; children: ReactNode; defaultOpen?: boolean; open?: boolean; onOpenChange?: (open: boolean) => void; variant?: 'inline' | 'section' }) {
   return <RadixCollapsible.Root className="k-collapsible" defaultOpen={defaultOpen} open={open} onOpenChange={onOpenChange}>
     <RadixCollapsible.Trigger className={cx('k-collapsible__trigger', variant === 'section' && 'k-collapsible__trigger--section')}>
@@ -205,7 +205,7 @@ export function ActionPopover({ trigger, children, label }: { trigger: ReactNode
 
 // ---------- dialogs ----------
 export function Dialog({ open, onOpenChange, title, description, children, footer, size = 'md', hideHeader = false }: { open: boolean; onOpenChange: (open: boolean) => void; title: ReactNode; description?: ReactNode; children: ReactNode; footer?: ReactNode; size?: 'md' | 'lg'; hideHeader?: boolean }) {
-  // Dialogs open from code, not from a Radix trigger: remember the opener before focus moves in and return to it on close.
+  // Code-opened dialogs remember the opener and restore focus on close.
   const opener = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => { if (open) opener.current = document.activeElement instanceof HTMLElement && !document.activeElement.closest('.k-dialog') ? document.activeElement : opener.current ?? null; }, [open]);
   return <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
