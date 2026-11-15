@@ -1,32 +1,20 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Separator } from 'radix-ui';
+import { clampPanelWidth, maxPanelWidth } from '../../panel-width';
 
 /** A side panel whose width the user drags, kept per browser. `edge` is where the handle sits. */
-export type PanelSpec = { key: string; label: string; edge: 'left' | 'right'; defaultWidth: number; minWidth: number; maxWidth: number; maxFraction: number };
+export type PanelSpec = { key: string; label: string; edge: 'left' | 'right'; defaultWidth: number; minWidth: number };
 
-export const sidebarPanel: PanelSpec = { key: 'briefsip:sidebar-width', label: 'Resize sidebar', edge: 'right', defaultWidth: 350, minWidth: 240, maxWidth: 480, maxFraction: 0.45 };
-export const detailsPanel: PanelSpec = { key: 'briefsip:details-width', label: 'Resize details', edge: 'left', defaultWidth: 360, minWidth: 280, maxWidth: 560, maxFraction: 0.4 };
+export const sidebarPanel: PanelSpec = { key: 'briefsip:sidebar-width', label: 'Resize sidebar', edge: 'right', defaultWidth: 300, minWidth: 240 };
+export const detailsPanel: PanelSpec = { key: 'briefsip:details-width', label: 'Resize details', edge: 'left', defaultWidth: 360, minWidth: 280 };
 
-function viewportWidth() {
-  return typeof window === 'undefined' ? 1280 : window.innerWidth;
-}
-
-function maxPanelWidth(spec: PanelSpec, viewport: number) {
-  return Math.min(spec.maxWidth, Math.floor(viewport * spec.maxFraction));
-}
-
-function clampWidth(spec: PanelSpec, value: number, max: number) {
-  // On narrow windows the viewport cap takes precedence over the preferred minimum.
-  return Math.min(max, Math.max(Math.min(spec.minWidth, max), Math.round(value)));
-}
-
-function readWidth(spec: PanelSpec, max: number) {
+function readWidth(spec: PanelSpec) {
   try {
     const saved = localStorage.getItem(spec.key);
     const value = saved?.trim() ? Number(saved) : NaN;
-    return clampWidth(spec, Number.isFinite(value) ? value : spec.defaultWidth, max);
+    return Number.isFinite(value) ? value : spec.defaultWidth;
   } catch {
-    return clampWidth(spec, spec.defaultWidth, max);
+    return spec.defaultWidth;
   }
 }
 
@@ -34,32 +22,32 @@ function saveWidth(spec: PanelSpec, width: number) {
   try { localStorage.setItem(spec.key, String(width)); } catch { /* The width still applies to this page. */ }
 }
 
-export function useResizablePanel(spec: PanelSpec) {
-  const [viewport, setViewport] = useState(viewportWidth);
-  const maxWidth = maxPanelWidth(spec, viewport);
-  const [width, setWidthState] = useState(() => readWidth(spec, maxPanelWidth(spec, viewportWidth())));
-
+export function useResizablePanel(spec: PanelSpec, reservedWidth = 0) {
+  const [element, ref] = useState<HTMLElement | null>(null);
+  const [available, setAvailable] = useState(() => typeof window === 'undefined' ? 1280 : window.innerWidth);
+  const maxWidth = maxPanelWidth(available, reservedWidth);
+  const [saved, setSaved] = useState(() => ({ key: spec.key, width: readWidth(spec) }));
+  // Read each conversation's preference on navigation, even if this hook stays mounted.
+  if (saved.key !== spec.key) setSaved({ key: spec.key, width: readWidth(spec) });
+  const width = clampPanelWidth(saved.key === spec.key ? saved.width : readWidth(spec), spec.minWidth, maxWidth);
   const setWidth = useCallback((value: number) => {
-    const next = clampWidth(spec, value, maxWidth);
-    setWidthState(next);
+    const next = clampPanelWidth(value, spec.minWidth, maxWidth);
+    setSaved({ key: spec.key, width: next });
     saveWidth(spec, next);
   }, [spec, maxWidth]);
 
-  useEffect(() => {
-    const resize = () => {
-      setViewport(window.innerWidth);
-      const nextMax = maxPanelWidth(spec, window.innerWidth);
-      setWidthState(current => {
-        const next = clampWidth(spec, current, nextMax);
-        if (next !== current) saveWidth(spec, next);
-        return next;
-      });
-    };
-    window.addEventListener('resize', resize);
-    return () => window.removeEventListener('resize', resize);
-  }, [spec]);
+  useLayoutEffect(() => {
+    const parent = element?.parentElement;
+    if (!parent) return;
+    const measure = () => setAvailable(parent.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(parent);
+    return () => observer.disconnect();
+  }, [element]);
 
-  return { spec, width, maxWidth, setWidth };
+  // Viewport clamping never overwrites the preferred width; growing the window restores it.
+  return { ref, spec, width, maxWidth, setWidth };
 }
 
 /** While any panel drags, the document carries `is-panel-resizing` so text selection and transitions pause. */

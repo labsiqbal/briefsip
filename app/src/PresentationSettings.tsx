@@ -31,7 +31,7 @@ export function PresentationSettings() {
       <span className="color-theme-card__name">{theme.label}<span aria-hidden="true">{state.value.colorTheme === theme.id ? 'Selected' : ''}</span></span>
     </button>)}</div></Section>
     <Card><Row title="Mode" trailing={<Segmented<Presentation['theme']> label="Mode" value={state.value.theme} onChange={theme => change({ ...state.value, theme })} options={[{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }, { value: 'system', label: 'System' }]} />} />
-    <Row title="Text size" trailing={<Segmented<Presentation['textSize']> label="Text size" value={state.value.textSize} onChange={textSize => change({ ...state.value, textSize })} options={[{ value: 'standard', label: 'Default' }, { value: 'large', label: 'Large' }, { value: 'larger', label: 'Larger' }]} />} /></Card>
+    <Row title="Text size" trailing={<Segmented<Presentation['textSize']> label="Text size" value={state.value.textSize} onChange={textSize => change({ ...state.value, textSize })} options={[{ value: 'compact', label: 'Compact' }, { value: 'standard', label: 'Default' }, { value: 'large', label: 'Large' }, { value: 'larger', label: 'Larger' }]} />} /></Card>
     {state.error && <Alert tone="error">{state.error}</Alert>}{notice && <span className="sr-only" role="status">{notice}</span>}
   </div>;
 }

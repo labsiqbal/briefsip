@@ -33,7 +33,7 @@ import { QuestionCard, type Question } from './QuestionCard';
 import { ApprovalCard, type AppApproval } from './ApprovalCard';
 import { CompactionPanel } from './CompactionPanel';
 import { lazy, Suspense, useEffect, useRef, useState, useId, type FormEvent, type ReactNode } from 'react';
-import { Bell, BellOff, Brain, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, GitFork, ListRestart, Square, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
+import { Archive, BarChart3, BookOpen, Database, Download, KeyRound, Palette, Plug, SlidersHorizontal, Bell, BellOff, Brain, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, GitFork, ListRestart, Square, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
 import { PanelResizeHandle, sidebarPanel, useResizablePanel } from './ui/resizable';
@@ -51,6 +51,7 @@ import './ui/config.css';
 import './ui/legacy.css';
 import './ui/briefsip.css';
 import './ui/kit.css';
+import './ui/density.css';
 import './Routines.css';
 import { RoutineSchedule, scheduleLabel, type RoutineTiming } from './RoutineSchedule';
 import '@fontsource-variable/inter';
@@ -1163,13 +1164,13 @@ function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agent
 
 
 type SettingsSection = 'general' | 'appearance' | 'skills' | 'connected-apps' | 'mcp' | 'machines' | 'updates' | 'usage' | 'data' | 'backup' | 'mcp-server';
-const settingsGroups: { label: string; items: { id: SettingsSection; label: string }[] }[] = [
-  { label: 'Preferences', items: [{ id: 'general', label: 'General' }, { id: 'appearance', label: 'Appearance' }] },
-  { label: 'Agents', items: [{ id: 'skills', label: 'Skills' }] },
-  { label: 'Connections', items: [{ id: 'connected-apps', label: 'Connected apps' }, { id: 'mcp', label: 'MCP connections' }] },
-  { label: 'System', items: [{ id: 'machines', label: 'Machines' }, { id: 'updates', label: 'Updates' }] },
-  { label: 'Data', items: [{ id: 'usage', label: 'Usage' }, { id: 'data', label: 'Shared data' }, { id: 'backup', label: 'Backup & restore' }] },
-  { label: 'Advanced', items: [{ id: 'mcp-server', label: 'External access' }] },
+const settingsGroups: { label: string; items: { id: SettingsSection; label: string; icon: typeof Settings }[] }[] = [
+  { label: 'Preferences', items: [{ id: 'general', icon: SlidersHorizontal, label: 'General' }, { id: 'appearance', icon: Palette, label: 'Appearance' }] },
+  { label: 'Agents', items: [{ id: 'skills', icon: BookOpen, label: 'Skills' }] },
+  { label: 'Connections', items: [{ id: 'connected-apps', icon: Plug, label: 'Connected apps' }, { id: 'mcp', icon: Server, label: 'MCP connections' }] },
+  { label: 'System', items: [{ id: 'machines', icon: Monitor, label: 'Machines' }, { id: 'updates', icon: Download, label: 'Updates' }] },
+  { label: 'Data', items: [{ id: 'usage', icon: BarChart3, label: 'Usage' }, { id: 'data', icon: Database, label: 'Shared data' }, { id: 'backup', icon: Archive, label: 'Backup & restore' }] },
+  { label: 'Advanced', items: [{ id: 'mcp-server', icon: KeyRound, label: 'External access' }] },
 ];
 type Dialog = 'agent' | 'project' | 'edit' | null;
 const collapsedKey = 'briefsip:sidebar-collapsed';
@@ -1205,6 +1206,19 @@ function App() {
   const [workspaceDialog, setWorkspaceDialog] = useState<'import' | 'help' | null>(null);
   const [agentContent, setAgentContent] = useState<{ agent: Agent; kind: 'sites' | 'export' } | null>(null);
   const [settings, setSettings] = useState<SettingsSection | null>(null);
+  const [settingsQuery, setSettingsQuery] = useState('');
+  const settingsSearch = useRef<HTMLInputElement>(null);
+  const filteredSettings = settingsGroups.map(group => ({ ...group, items: group.items.filter(item => settingsQuery.trim().toLocaleLowerCase().split(/\s+/).every(term => `${group.label} ${item.label}`.toLocaleLowerCase().includes(term))) })).filter(group => group.items.length);
+  useEffect(() => {
+    if (!settings) { setSettingsQuery(''); return; }
+    const searchShortcut = (event: globalThis.KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.target instanceof HTMLElement && event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
+      event.preventDefault(); settingsSearch.current?.focus();
+    };
+    window.addEventListener('keydown', searchShortcut);
+    return () => window.removeEventListener('keydown', searchShortcut);
+  }, [settings]);
   const projectState = useProjects(api);
   const [selectedProject, setSelectedProject] = useState('');
   const [projectThread, setProjectThread] = useState<{project:string;thread:string;agent:string;conversation?:Thread & {folder?:string}} | null>(null);
@@ -1219,7 +1233,8 @@ function App() {
   const [onlyOnline, setOnlyOnline] = useState(false), [showHidden, setShowHidden] = useState(false), [filterMenu, setFilterMenu] = useState(false);
   const [machineGroups, setMachineGroups] = useState<Record<string, boolean>>(() => { try { const value: unknown = JSON.parse(localStorage.getItem(machineGroupsKey) ?? '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).filter(([, expanded]) => typeof expanded === 'boolean')) as Record<string, boolean> : {}; } catch { return {}; } });
   const [collapsed, setCollapsedState] = useState(() => { try { return localStorage.getItem(collapsedKey) === '1'; } catch { return false; } });
-  const sidebar = useResizablePanel(sidebarPanel);
+  const [detailsVisible] = useDetailsOpen();
+  const sidebar = useResizablePanel(sidebarPanel, detailsVisible ? 280 : 0);
   const [openedThread, setOpenedThread] = useState<{ agent: string; thread: string } | null>(null);
   const [activityError, setActivityError] = useState(false);
   const [editReload, setEditReload] = useState(0);
@@ -1319,7 +1334,7 @@ function App() {
   const created = (item: Agent) => { setDirectory(current => current && { ...current, agents: [...current.agents.filter(agent => agent.id !== item.id), item] }); openAgent(item.id); };
   return <RadixDialog.Root modal open={!!settings} onOpenChange={open => setSettings(current => open ? current ?? 'general' : null)}><div className={`app bs-root${collapsed ? ' is-sidebar-collapsed' : ''}`}>
     {collapsed && <button type="button" className="icon-btn icon-btn--bordered sidebar-reveal" onClick={() => setCollapsed(false)} aria-label="Expand sidebar" title="Sidebar (Ctrl/Cmd+B)"><PanelLeft size={16} aria-hidden /></button>}
-    {!collapsed && <aside className="sidebar" style={{ width: `${sidebar.width}px` }} aria-label="Workspace navigation">
+    {!collapsed && <aside ref={sidebar.ref} className="sidebar" style={{ width: `${sidebar.width}px` }} aria-label="Workspace navigation">
       <div className="sidebar__titlebar">
         <span className="sidebar__bots-label">Bots</span>
         <nav className="sidebar__controls" aria-label="Automation">
@@ -1401,7 +1416,7 @@ function App() {
     {dialog === 'edit' && directory && !channel && agent && <AgentForm request={api} isClientError={error => error instanceof HttpError && error.status < 500} key={`${agent.id}:${editReload}`} model={directory.defaultModel} profile={agent} onCancel={() => setDialog(null)} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} onCreated={() => { void load(); setDialog(null); }} />}
     {workspaceDialog && <Dialog open size="lg" title={workspaceDialog === 'help' ? 'Help' : 'Import template'} onOpenChange={open => { if (!open) setWorkspaceDialog(null); }}><div className="legacy"><Suspense fallback={<p role="status">Loading...</p>}>{workspaceDialog === 'help' ? <HelpPage /> : <AgentTemplateImport request={api} onClose={() => setWorkspaceDialog(null)} onCreated={item => { created(item); setWorkspaceDialog(null); }} />}</Suspense></div></Dialog>}
     {agentContent && <Dialog open size="lg" title={`${agentContent.agent.name} · ${agentContent.kind === 'sites' ? 'Agent sites' : 'Export template'}`} onOpenChange={open => { if (!open) setAgentContent(null); }}><div className="legacy"><Suspense fallback={<p role="status">Loading...</p>}>{agentContent.kind === 'sites' ? <SitesPanel agent={agentContent.agent.id} request={api} /> : <AgentTemplateExport id={agentContent.agent.id} request={api} />}</Suspense></div></Dialog>}
-    <RadixDialog.Portal><RadixDialog.Content className="app-settings bs-root" aria-describedby={undefined} onOpenAutoFocus={event => {
+    <RadixDialog.Portal><RadixDialog.Content className="app-settings bs-root" aria-describedby={undefined} onEscapeKeyDown={event => { if (settingsQuery && document.activeElement === settingsSearch.current) { event.preventDefault(); setSettingsQuery(''); } }} onOpenAutoFocus={event => {
       event.preventDefault();
       const page = (event.currentTarget as HTMLElement).querySelector<HTMLElement>('.app-settings__page');
       (page?.querySelector<HTMLElement>('h1[tabindex], button:not(:disabled), input:not([type="hidden"]):not(:disabled), [tabindex="0"]') ?? page)?.focus();
@@ -1409,7 +1424,22 @@ function App() {
       <aside className="app-settings__nav">
         <button type="button" className="app-settings__back" aria-label="Back to workspace" onClick={() => setSettings(null)}><ChevronDown size={14} aria-hidden style={{ transform: 'rotate(90deg)' }} /> Back</button>
         <RadixDialog.Title asChild><div className="app-settings__heading">Settings</div></RadixDialog.Title>
-        <nav aria-label="Settings" className="app-settings__groups">{settingsGroups.map(group => <div key={group.label} role="group" aria-labelledby={`settings-${group.label}`} className="app-settings__group"><h2 id={`settings-${group.label}`}>{group.label}</h2>{group.items.map(section => <button key={section.id} type="button" className={`cfg-nav__item${settings === section.id ? ' is-active' : ''}`} aria-current={settings === section.id ? 'page' : undefined} onClick={event => { if (settings === section.id) event.currentTarget.closest('[role="dialog"]')?.querySelector<HTMLElement>('.app-settings__page h1')?.focus(); else setSettings(section.id); }}>{section.label}</button>)}</div>)}</nav>
+        <div className="app-settings__search"><Search size={14} aria-hidden /><input ref={settingsSearch} type="search" aria-label="Search settings" aria-keyshortcuts="/" placeholder="Search" value={settingsQuery} onChange={event => setSettingsQuery(event.target.value)} onKeyDown={event => {
+          if (event.key === 'Escape' && settingsQuery) { event.preventDefault(); event.stopPropagation(); setSettingsQuery(''); }
+          if (event.key === 'ArrowDown' || event.key === 'Enter') { event.preventDefault(); event.currentTarget.closest('aside')?.querySelector<HTMLButtonElement>('nav button')?.focus(); }
+        }} /><kbd aria-hidden>/</kbd></div>
+        <nav aria-label="Settings" className="app-settings__groups" onKeyDown={event => {
+          if (!(event.target instanceof HTMLButtonElement)) return;
+          const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button'));
+          const index = buttons.indexOf(event.target);
+          let next: number;
+          if (event.key === 'ArrowDown') next = (index + 1) % buttons.length;
+          else if (event.key === 'ArrowUp') next = (index - 1 + buttons.length) % buttons.length;
+          else if (event.key === 'Home') next = 0;
+          else if (event.key === 'End') next = buttons.length - 1;
+          else return;
+          event.preventDefault(); buttons[next]?.focus();
+        }}>{filteredSettings.map(group => <div key={group.label} role="group" aria-labelledby={`settings-${group.label}`} className="app-settings__group"><h2 id={`settings-${group.label}`}>{group.label}</h2>{group.items.map(section => <button key={section.id} type="button" className={`cfg-nav__item${settings === section.id ? ' is-active' : ''}`} aria-current={settings === section.id ? 'page' : undefined} onClick={event => { if (settings === section.id) event.currentTarget.closest('[role="dialog"]')?.querySelector<HTMLElement>('.app-settings__page h1')?.focus(); else setSettings(section.id); }}><section.icon size={16} aria-hidden /><span>{section.label}</span></button>)}</div>)}{!filteredSettings.length && <p className="app-settings__no-results" role="status">No settings found</p>}</nav>
       </aside>
       <IconButton className="app-settings__close" label="Close settings" onClick={() => setSettings(null)}><X size={16} aria-hidden /></IconButton>
       <div className="app-settings__main">

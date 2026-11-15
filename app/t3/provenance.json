@@ -1111,7 +1111,7 @@
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
-      "adaptation": "Adapt grouped navigation and active parent selection conventions to existing in-memory settings IDs, semantic nav/groups and aria-current. No router, search or tree navigation copied.",
+      "adaptation": "Adapt grouped icon-and-label navigation, filled active row, slash-to-search and keyboard result navigation to Briefsip in-memory settings IDs and semantic groups. Search filters existing destinations by all query words; no router or deep settings index copied.",
       "dependencies": [],
       "compatibilityCheck": "work/rebuild/ui-smoke/smoke.mjs"
     },
@@ -1131,6 +1131,49 @@
       "adaptation": "Retain full-window navigation/content relationship and compact preference rows, composed with Briefsip Radix kit, tokens and existing preference logic. No app API, assets or CSS copied.",
       "dependencies": [],
       "compatibilityCheck": "work/rebuild/ui-smoke/smoke.mjs"
+    }
+  ],
+  "resizeAndSearchSourceEntries": [
+    {
+      "sourcePath": "apps/web/src/components/settings/settingsSearch.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "2b19c16515f1dc238b46126f4b31d495be99eb0927f62c31b5f9a79aa46a0a90",
+      "localPaths": [
+        "app/src/App.tsx"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt all-query-word, case-insensitive matching to section/group labels; retain existing destinations.",
+      "compatibilityCheck": "app/presentation.test.ts; app/right-panel-state.test.ts; work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/hooks/useResizableWidth.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "c0edea409280f93b81646a3effb1544baf96c498d735273c14b9df7185602d59",
+      "localPaths": [
+        "app/src/ui/resizable.tsx",
+        "app/panel-width.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt preferred stored width, edge-aware drag, and live bounds; native ResizeObserver measures remaining width, keeping 360px main chat. No fixed right-panel cap.",
+      "compatibilityCheck": "app/presentation.test.ts; app/right-panel-state.test.ts; work/rebuild/ui-smoke/smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/ui/sidebar.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "cc98a6de4130f3528e24cf1dc40c3f7b33994462ea1378097c1621fef30bcae2",
+      "localPaths": [
+        "app/src/ui/resizable.tsx",
+        "app/src/ui/shell.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt generous sidebar maximum and bounded preferred width; reserve right-panel minimum when open. Keep Briefsip accessible keyboard resize and double-click reset.",
+      "compatibilityCheck": "app/presentation.test.ts; app/right-panel-state.test.ts; work/rebuild/ui-smoke/smoke.mjs"
     }
   ]
 }

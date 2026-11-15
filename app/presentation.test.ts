@@ -1,3 +1,4 @@
+import { clampPanelWidth, maxPanelWidth } from './panel-width.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -6,7 +7,7 @@ import { defaultPresentation, parsePresentation, presentationKey, readPresentati
 
 test('presentation settings validate persisted values and fail safely without overwriting storage', () => {
   assert.deepEqual(parsePresentation(null), defaultPresentation);
-  for (const { id: colorTheme } of colorThemes) for (const theme of ['dark', 'light', 'system']) for (const textSize of ['standard', 'large', 'larger']) {
+  for (const { id: colorTheme } of colorThemes) for (const theme of ['dark', 'light', 'system']) for (const textSize of ['compact', 'standard', 'large', 'larger']) {
     const value = { version: 1, colorTheme, theme, textSize }, raw = JSON.stringify(value);
     assert.deepEqual(parsePresentation(raw), value);
     assert.deepEqual(readPresentation({ getItem(key) { assert.equal(key, presentationKey); return raw; } }), { value, error: '' });
@@ -49,4 +50,20 @@ test('all six color themes in light and dark keep text, status, code, viewer and
       assert(ratio(palette[text], palette[surface]) >= 4.5, `${name}: ${text} on ${surface}: ${ratio(palette[text], palette[surface])}`);
     for (const surface of surfaces) for (const indicator of ['color-border-focus', 'color-border-primary']) assert(ratio(palette[indicator], palette[surface]) >= 3, `${name}: ${indicator} on ${surface}`);
   }
+});
+
+test('panel widths reserve main chat and clamp safely as available space shrinks', () => {
+  for (const viewport of [1440, 1024]) {
+    const sidebar = 240, available = viewport - sidebar;
+    const maximum = maxPanelWidth(available);
+    assert(maximum > 360);
+    assert.equal(clampPanelWidth(99999, 280, maximum), maximum);
+    assert.equal(available - maximum, 360);
+    assert.equal(maxPanelWidth(viewport, 280), viewport - 640);
+  }
+  assert.equal(maxPanelWidth(200), 0);
+  assert.equal(clampPanelWidth(360, 280, 200), 200);
+  assert.equal(clampPanelWidth(-100, 280, 730), 280);
+  assert.equal(clampPanelWidth(NaN, 280, 730), 280);
+  assert.equal(clampPanelWidth(500.7, 280, 730), 501);
 });

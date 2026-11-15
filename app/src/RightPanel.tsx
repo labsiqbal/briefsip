@@ -55,7 +55,7 @@ export function RightPanel({ path, name, state, request, onClose, details, setti
     ...extensions,
   ];
   const selected = tabs.some(tab => tab.value === state.tab) ? state.tab : 'details';
-  return <aside className="details right-panel bs-root" style={{ width: `${state.panel.width}px` }} aria-label="Conversation details">
+  return <aside ref={state.panel.ref} className="details right-panel bs-root" style={{ width: `${state.panel.width}px` }} aria-label="Conversation details">
     <PanelResizeHandle panel={state.panel} />
     <div className="right-panel__header"><span>Conversation</span><div>{settings}<IconButton label="Reload panel" onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton><IconButton label="Close details" onClick={onClose}><X size={16} aria-hidden /></IconButton></div></div>
     <Tabs label="Conversation panel" value={selected} onChange={state.select} tabs={tabs}>

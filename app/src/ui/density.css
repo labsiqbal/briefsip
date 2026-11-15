@@ -1,0 +1,43 @@
+/* Type follows the browser base size. Density changes space, never panel widths or icons. */
+:root { --density: 1; }
+:root[data-text-size='compact'] { font-size: 87.5%; --density: .875; }
+:root[data-text-size='large'] { --density: 1.125; }
+:root[data-text-size='larger'] { --density: 1.25; }
+
+.sidebar__bots-label { font-size: .8125rem; }
+.sidebar__tabs .k-tabs__tab { font-size: .8125rem; height: calc(34px * var(--density)); }
+.bot-row { height: max(40px, calc(44px * var(--density))); padding: calc(4px * var(--density)) calc(8px * var(--density)); gap: calc(8px * var(--density)); }
+.bot-list { gap: calc(4px * var(--density)); }
+.sidebar__scroll { padding: 0 calc(12px * var(--density)) calc(16px * var(--density)); }
+.sidebar__tabs .k-tabs__list { margin: 0 calc(16px * var(--density)) calc(10px * var(--density)); }
+.sidebar__search { min-height: calc(34px * var(--density)); margin: 0 calc(16px * var(--density)) calc(8px * var(--density)); gap: calc(6px * var(--density)); }
+.sidebar__search input { padding-block: calc(7px * var(--density)); }
+.machine-group__header { min-height: calc(32px * var(--density)); gap: calc(8px * var(--density)); }
+.machine-group__content { padding-bottom: calc(8px * var(--density)); }
+.project-navigation { gap: calc(4px * var(--density)); }
+.project-navigation__name { min-height: max(36px, calc(40px * var(--density))); }
+.project-navigation__room { min-height: calc(32px * var(--density)); padding-block: calc(4px * var(--density)); }
+
+.bs-root .k-page { gap: calc(28px * var(--density)); }
+.bs-root .k-section { gap: calc(10px * var(--density)); }
+.bs-root .k-row { min-height: max(44px, calc(52px * var(--density))); gap: calc(4px * var(--density)); }
+.bs-root .k-row__main { min-height: max(44px, calc(52px * var(--density))); padding: calc(8px * var(--density)) calc(10px * var(--density)); gap: calc(12px * var(--density)); }
+.bs-root .k-tabs__list { gap: calc(2px * var(--density)); }
+.bs-root .k-tabs__tab { padding-inline: calc(10px * var(--density)); }
+.right-panel__header { height: max(48px, calc(60px * var(--density))); padding: calc(10px * var(--density)) calc(12px * var(--density)); }
+.right-panel > .k-tabs > .k-tabs__list > .k-tabs__tab { height: max(36px, calc(42px * var(--density))); padding-inline: calc(10px * var(--density)); gap: calc(6px * var(--density)); }
+.right-panel__body { padding: calc(16px * var(--density)); }
+.right-panel__computer { padding: calc(12px * var(--density)); }
+.right-panel .details__scroll { padding-top: calc(16px * var(--density)); }
+.details__identity { gap: calc(6px * var(--density)); padding: calc(4px * var(--density)) calc(16px * var(--density)) calc(20px * var(--density)); }
+.details__sections { gap: calc(20px * var(--density)); }
+.details__sections > section { gap: calc(10px * var(--density)); }
+.transcript { padding: 60px calc(16px * var(--density)) calc(16px * var(--density)); }
+.transcript__col { gap: calc(32px * var(--density)); }
+.turn-block { gap: calc(20px * var(--density)); }
+.human-bubble { padding: calc(11px * var(--density)) calc(16px * var(--density)); }
+
+/* Narrow chat content wraps instead of imposing its intrinsic width on the layout. */
+.chat, .chat-row > .chat { min-width: 0; }
+.chat .transcript__col, .chat .agent-message, .chat .human-message, .chat .md { min-width: 0; overflow-wrap: anywhere; }
+.chat .md pre, .chat .md-table { max-width: 100%; }

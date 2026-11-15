@@ -11,7 +11,7 @@
   transition: width 0.2s var(--ease-out);
 }
 .sidebar.is-collapsed { width: 88px; }
-.sidebar:not(.is-collapsed) { max-width: 45vw; }
+.sidebar:not(.is-collapsed) { max-width: max(0px, calc(100% - 360px)); }
 .panel-resize-handle {
   position: absolute; z-index: 3; top: 0; width: 9px; height: 100%; padding: 0;
   border: 0; background: transparent; cursor: col-resize; touch-action: none;

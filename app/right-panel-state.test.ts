@@ -6,7 +6,7 @@ test('panel preferences parse defensively and constrain widths', () => {
   for (const raw of [null, 'null', '{}', '[]', 'true', '"../files"', 'broken']) assert.equal(parseRightPanelState(raw, null).tab, 'details');
   assert.deepEqual(parseRightPanelState('"diff"', '401.6'), { tab: 'diff', width: 402 });
   assert.deepEqual(parseRightPanelState('"browser"', 'Infinity'), { tab: 'computer', width: 360 });
-  assert.equal(parseRightPanelState(null, '-1').width, 280); assert.equal(parseRightPanelState(null, '99999').width, 560); assert.equal(parseRightPanelState(null, '  ').width, 360);
+  assert.equal(parseRightPanelState(null, '-1').width, 280); assert.equal(parseRightPanelState(null, '99999').width, 99999); assert.equal(parseRightPanelState(null, '  ').width, 360);
 });
 test('panel state stays isolated across conversations and recreated stores', () => {
   const values = new Map<string,string>(), storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key,value); } }, store = createRightPanelStore(storage);

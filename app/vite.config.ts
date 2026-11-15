@@ -1,6 +1,16 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  css: {
+    postcss: { plugins: [{
+      postcssPlugin: 'briefsip-relative-type',
+      Declaration(declaration) {
+        // SVG diagram coordinates and physical panel widths stay in pixels.
+        if (['font', 'font-size', 'line-height'].includes(declaration.prop) || declaration.prop.startsWith('--text-'))
+          declaration.value = declaration.value.replace(/(\d*\.?\d+)px\b/g, (_, pixels) => `${Number(pixels) / 16}rem`);
+      },
+    }] },
+  },
   build: {
     rollupOptions: {
       output: {

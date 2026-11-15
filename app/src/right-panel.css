@@ -1,5 +1,5 @@
-.right-panel { min-width: 0; max-width: min(40vw, max(0px, calc(100% - 320px))); animation: none; }
-.chat-row:has(> .right-panel) > .chat { min-width: min(320px, 100%); }
+.right-panel { min-width: 0; max-width: max(0px, calc(100% - 360px)); animation: none; }
+.chat-row:has(> .right-panel) > .chat { min-width: min(360px, 100%); }
 .right-panel__header { height: 60px; flex: none; display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: .5px solid var(--color-border-tertiary); }
 .right-panel__header > span { color: var(--color-text-tertiary); font-size: 12px; }
 .right-panel__header > div { display: flex; gap: 2px; }
