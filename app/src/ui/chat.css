@@ -274,6 +274,26 @@
 .activity-working { flex-shrink: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--color-text-secondary); animation: stream-caret 1.5s ease-in-out infinite; }
 .transcript-jump { position: absolute; bottom: 12px; left: 50%; z-index: 3; transform: translateX(-50%); }
 .transcript-jump .jump-btn { position: static; transform: none; }
+
+/* T3 minimap: 8px pitch, fisheye ticks and a preview outside the scroll surface. */
+.timeline-minimap { position: absolute; inset: 0 auto 0 0; z-index: 4; width: 72px; pointer-events: none; opacity: 0; transition: opacity 150ms var(--ease-out); }
+.timeline-minimap[data-persistent-gutter="true"], .timeline-minimap:hover, .timeline-minimap:focus-within { opacity: 1; }
+.timeline-minimap__rail { position: absolute; top: 50%; left: 12px; transform: translateY(-50%); pointer-events: auto; user-select: none; }
+.timeline-minimap__hit { position: absolute; inset: 0; width: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--color-text-primary); cursor: pointer; }
+.timeline-minimap__hit::before { content: ''; position: absolute; inset: -4px 0; }
+.timeline-minimap__hit:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.timeline-minimap__tick { position: absolute; left: 0; width: 24px; height: 2px; border-radius: 999px; background: color-mix(in srgb, var(--color-text-tertiary) 40%, transparent); transform-origin: left; pointer-events: none; transition: transform 150ms var(--ease-out); }
+.timeline-minimap__tick::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: var(--color-text-secondary); opacity: 0; transition: opacity 150ms var(--ease-out); }
+.timeline-minimap__tick[data-in-view="true"]::after { opacity: 1; }
+.timeline-minimap__preview { position: absolute; left: 32px; width: min(320px, calc(100vw - 80px)); transform: translateY(-50%); padding: 12px; border-radius: 12px; background: var(--color-bg-elevated); color: var(--color-text-primary); box-shadow: var(--shadow-popover); text-align: left; pointer-events: none; font-size: var(--text-message); line-height: 1.4286; }
+.timeline-minimap__preview strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.timeline-minimap__preview > span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; margin-top: 4px; color: var(--color-text-secondary); }
+.timeline-minimap__rail > .k-icon-btn { position: absolute; left: -8px; width: 24px; height: 24px; min-width: 24px; min-height: 24px; opacity: 0; }
+.timeline-minimap__rail > .k-icon-btn:hover, .timeline-minimap__rail > .k-icon-btn:focus-visible { opacity: 1; }
+.timeline-minimap__previous { bottom: calc(100% + 6px); }
+.timeline-minimap__next { top: calc(100% + 6px); }
+@media (max-width: 767px), (pointer: coarse) { .timeline-minimap { display: none; } }
+@media (prefers-reduced-motion: reduce) { .timeline-minimap, .timeline-minimap__tick, .timeline-minimap__tick::after { transition: none; } }
 @media (hover: none) { .turn-controls { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .turn-controls { transition: none; } .activity-working { animation: none; } }
 
