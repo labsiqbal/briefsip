@@ -1,13 +1,17 @@
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
+import { flushSync } from 'react-dom';
+import { Tabs as RadixTabs } from 'radix-ui';
+import { Ellipsis } from 'lucide-react';
 import { restoreAgentCreation, type AgentCreation } from '../agent-create';
-import { AvatarEditor } from './AgentAvatar';
+import { AgentAvatar, AvatarEditor } from './AgentAvatar';
+import { MascotAvatar } from './ui/avatar-shapes';
 import { AgentComputerSettings } from './AgentComputerSettings';
 import { AgentVisibility } from './AgentVisibility';
-import { Alert, Button, Collapsible, Combobox, Dialog, Field, Input, RecoveryAlert, Segmented, Select, Textarea, useConfirm, type SelectOption } from './ui/kit';
+import { ActionMenu, Alert, Button, Collapsible, Combobox, Dialog, Field, IconButton, Input, RecoveryAlert, Segmented, Select, Tabs, Textarea, Tooltip, useConfirm, type SelectOption } from './ui/kit';
 
-const panelLoadFailure = () => ({ default: () => <section className="empty"><h1>Panel could not be loaded</h1><p role="alert">Check your connection, then reload the app.</p><button onClick={() => window.location.reload()}>Reload app</button></section> });
-const AgentTemplateExport = lazy(() => import('./AgentTemplateImport').then(module => ({ default: module.AgentTemplateExport })).catch(panelLoadFailure));
-const SitesPanel = lazy(() => import('./SitesPanel').then(module => ({ default: module.SitesPanel })).catch(panelLoadFailure));
+import './agent-profile.css';
+
+const AgentTemplateExport = lazy(() => import('./AgentTemplateImport').then(module => ({ default: module.AgentTemplateExport })).catch(() => ({ default: () => <Alert tone="error" actions={<Button onClick={() => window.location.reload()}>Reload app</Button>}>Panel could not be loaded</Alert> })));
 const message = (error: unknown) => error instanceof Error ? error.message : 'Connection failed. Try again.';
 
 export type Agent = { workspace_connected?: boolean; runtime?: 'api' | 'codex' | 'claude'; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; thread_limit: number; tool_budget?: number; revision: number; id: string; name: string; role: string; model: string; instructions: string };
@@ -19,7 +23,24 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
   const [profile] = useState(liveProfile);
   const creationKey = 'briefsip-agent-creation';
   const nameInput = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const [tab, setTab] = useState(focusComputer ? 'access' : 'profile');
+  const [avatarOpen, setAvatarOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportTrigger = useRef<HTMLButtonElement>(null), exportWasOpen = useRef(false);
+  useEffect(() => {
+    if (exportWasOpen.current && !exportOpen) requestAnimationFrame(() => exportTrigger.current?.focus());
+    exportWasOpen.current = exportOpen;
+  }, [exportOpen]);
+  const avatarChange = useRef<HTMLButtonElement>(null);
+  const avatarWasOpen = useRef(false);
+  useEffect(() => {
+    if (avatarWasOpen.current && !avatarOpen) requestAnimationFrame(() => avatarChange.current?.focus());
+    avatarWasOpen.current = avatarOpen;
+  }, [avatarOpen]);
+  const [dirty, setDirty] = useState(false);
   const [recovery, setRecovery] = useState(() => { try { return { command: liveProfile ? null : restoreAgentCreation(sessionStorage.getItem(creationKey)), invalid: false }; } catch { return { command: null, invalid: true }; } });
+  const [instructionCount, setInstructionCount] = useState((profile?.instructions ?? recovery.command?.instructions ?? '').length);
   const [invalid, setInvalid] = useState(recovery.invalid);
   const [setup, setSetup] = useState(recovery.command?.setup ?? false);
   const active = useRef(true);
@@ -44,20 +65,30 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
     return () => { stopped = true; };
   }, [accountReload]);
   const [models, setModels] = useState<string[]>([]);
-  const [catalogStatus, setCatalogStatus] = useState('Loading model list. Wait for suggestions or enter a model ID.');
+  const [catalogStatus, setCatalogStatus] = useState('Loading models');
   useEffect(() => {
     if (runtime !== 'api') { setModels([]); return; }
     let stopped = false;
-    setModels([]); setCatalogStatus('Loading model list. Wait for suggestions or enter a model ID.');
+    setModels([]); setCatalogStatus('Loading models');
     void api<{ models: string[] }>(`/api/models?account=${encodeURIComponent(account)}`).then(data => {
-      if (!stopped) { setModels(data.models); setCatalogStatus(data.models.length ? `${data.models.length} models available. Select a suggestion or enter a model ID.` : 'Provider has not listed any models. Enter a model ID available in your account.'); }
-    }).catch(error => { if (!stopped) setCatalogStatus(`${message(error)} Model ID can still be entered manually.`); });
+      if (!stopped) { setModels(data.models); setCatalogStatus(data.models.length ? '' : 'Enter model ID'); }
+    }).catch(error => { if (!stopped) setCatalogStatus(message(error)); });
     return () => { stopped = true; };
   }, [account, accountReload, runtime]);
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   const [modelValue, setModelValue] = useState(profile?.model ?? recovery.command?.model ?? model);
   const [backupValue, setBackupValue] = useState(profile?.backup_model ?? recovery.command?.backupModel ?? '');
   const pending = useRef<(AgentCreation & { revision?: number }) | null>(recovery.command);
+  function updateDirty() {
+    if (!profile || !formRef.current) return;
+    const form = new FormData(formRef.current);
+    setDirty(runtime !== (profile.runtime ?? 'api') || account !== (profile.provider_account ?? '') ||
+      ['name', 'role', 'instructions'].some(key => String(form.get(key)) !== profile[key as 'name' | 'role' | 'instructions']) ||
+      String(form.get('model')) !== profile.model || String(form.get('backupModel')) !== (profile.backup_model ?? '') ||
+      Number(form.get('threadLimit')) !== profile.thread_limit || Number(form.get('toolBudget')) !== (profile.tool_budget ?? 90));
+  }
+  useEffect(updateDirty, [runtime, account, modelValue, backupValue]);
+
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (busy || invalid) return;
     const form = new FormData(event.currentTarget);
@@ -101,69 +132,92 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
     try { sessionStorage.removeItem(creationKey); pending.current = null; setRecovery({ command: null, invalid: false }); setError(''); nameInput.current?.focus(); } catch { setError('Recovery storage could not be cleared.'); }
   };
   const accountOptions: SelectOption[] = [
-    ...(!accounts.some(item => item.id === '') ? [{ value: '', label: 'Server default' }] : []),
-    ...(account && !accounts.some(item => item.id === account) ? [{ value: account, label: 'Account unavailable' }] : []),
+    ...(!accounts.some(item => item.id === '') ? [{ value: '', label: 'Default' }] : []),
+    ...(account && !accounts.some(item => item.id === account) ? [{ value: account, label: 'Unavailable account', hint: account }] : []),
     ...accounts.map(item => ({ value: item.id, label: item.name.slice(0, 40), hint: item.configured ? undefined : 'Not connected' })),
   ];
-  const submitLabel = profile ? 'Save profile' : pending.current ? 'Retry creation' : setup ? 'Create and draft' : 'Create agent';
-  return <Dialog open size={profile ? 'lg' : 'md'} onOpenChange={next => { if (!next && !busy) onCancel(); }}
-    title={profile ? 'Edit agent profile' : 'New agent'}
-    description={profile ? undefined : 'Name it, choose a model, then explain how it should work.'}
-    footer={<>
-      {!profile && pending.current && <Button variant="ghost" disabled={busy} onClick={() => void discardPending()} className="k-dialog__foot-start">Discard recovery</Button>}
-      {profile && error && onReload && <Button variant="ghost" onClick={onReload} className="k-dialog__foot-start">Discard changes and reload</Button>}
-      <Button disabled={busy} onClick={onCancel}>Cancel</Button>
-      <Button type="submit" form="agent-form" variant="primary" busy={busy} disabled={invalid}>{busy ? 'Saving...' : submitLabel}</Button>
-    </>}>
-    {invalid && <Alert tone="error" title="Recovery data could not be read" actions={<Button size="sm" onClick={() => void discardInvalid()}>Discard recovery data</Button>}>Check the agent list before discarding it.</Alert>}
-    {!profile && pending.current && <RecoveryAlert inFlight={busy} tone="warn" title="Creation is not confirmed yet">Try again with the same request to avoid creating a duplicate agent.</RecoveryAlert>}
-    {profile && onVisibilityChanged && <div className="legacy k-legacy-block agent-form__avatar"><AvatarEditor agent={profile.id} request={api} onChanged={onVisibilityChanged} /></div>}
-    <form id="agent-form" className="k-fieldset" onSubmit={create}>
-      {!profile && <Suspense fallback={<p role="status">Loading avatar picker...</p>}><LookPicker value={look} onChange={setLook} disabled={busy || locked || invalid} /></Suspense>}
-      {!profile && <Segmented label="How to create an agent" value={setup ? 'describe' : 'manual'} disabled={busy || locked || invalid} onChange={value => setSetup(value === 'describe')} options={[
-        { value: 'manual', label: 'Fill in yourself', description: 'Enter the name and instructions.' },
-        { value: 'describe', label: 'Draft from a description', description: 'The agent drafts its profile through chat.' },
-      ]} />}
-      <Field label={!profile && setup ? 'Temporary name' : 'Name'} optional={!profile && setup}>
-        <Input ref={nameInput} name="name" required={!setup} maxLength={80} readOnly={locked} defaultValue={profile?.name ?? recovery.command?.name} placeholder="For example: Research partner" />
-      </Field>
-      <Field label="Role" optional hint="Shown under the agent's name, e.g. Orchestration agent">
-        <Input name="role" maxLength={60} readOnly={locked} defaultValue={profile?.role ?? recovery.command?.role ?? ''} />
-      </Field>
-      <Field label="Runtime" hint={profile ? 'Coding runtimes use the host login and the current project folder. Direct chats need a host workspace binding. Steer restarts the running turn; image attachments are unavailable.' : 'Create the agent, add it to a project, then choose a coding runtime.'} error={runtimeError}>
-        <Select label="Runtime" value={runtime} onChange={value => setRuntime(value as typeof runtime)} disabled={locked || busy} options={[{ value: 'api', label: 'API model' }, ...(['codex','claude'] as const).map(value => { const choice = runtimeChoices.find(item => item.runtime === value); return { value, label: value === 'codex' ? 'Codex' : 'Claude Code', disabled: !choice?.enabled, hint: choice?.reason ?? choice?.version ?? 'Add this agent to a project first.' }; })]} />
-      </Field>
-      <div className="k-grid-2">
-        <Field label="Provider account" hint={accountError ? undefined : 'API keys stay on the server.'} error={accountError && <>{accountError} <button type="button" className="k-link" onClick={() => setAccountReload(value => value + 1)}>Reload</button></>}>
-          <Select value={account} onChange={setAccount} disabled={locked || runtime !== 'api'} options={accountOptions} />
-        </Field>
-        <Field label="Model" hint={runtime === 'api' ? catalogStatus : 'Saved API model. Coding runtimes use their host default model.'}>
-          <Combobox name="model" value={modelValue} onChange={setModelValue} suggestions={models} required maxLength={160} readOnly={locked || runtime !== 'api'} placeholder="Model ID from provider" />
-        </Field>
-      </div>
-      <Field label={!profile && setup ? 'Needs description' : 'Instructions'} hint={!profile && setup ? 'Uses the selected provider. The agent and drafting task are created together; results or questions appear in chat.' : undefined}>
-        <Textarea name="instructions" required maxLength={8000} readOnly={locked} defaultValue={profile?.instructions ?? recovery.command?.instructions} rows={5} placeholder={!profile && setup ? 'Describe the work this agent should help with.' : 'What should this agent do? How should it present results?'} />
-      </Field>
-      <Collapsible title="Advanced settings" defaultOpen={!!(profile?.backup_model || recovery.command?.backupModel)}>
-        <div className="k-grid-2">
-          <Field label="Fallback model" optional hint={runtime === 'api' ? 'Tried once if the main model rejects because of quota or is unavailable.' : 'API model fallback stays saved; coding runtimes do not use it.'}>
-            <Combobox name="backupModel" value={backupValue} onChange={setBackupValue} suggestions={models} maxLength={160} readOnly={locked || runtime !== 'api'} placeholder="Leave empty to disable" />
-          </Field>
-          <Field label="Concurrent side threads" hint="Main chat has its own queue.">
-            <Input name="threadLimit" type="number" min={1} max={32} step={1} required readOnly={locked} defaultValue={profile?.thread_limit ?? recovery.command?.threadLimit ?? 2} />
-          </Field>
-          <Field label="Tool steps per task" hint={runtime === 'api' ? '10-200 steps. Stops with a summary; reply “continue” for more.' : 'Saved for API tasks. Coding runtimes manage their own steps.'}>
-            <Input name="toolBudget" type="number" min={10} max={200} step={1} required readOnly={locked || runtime !== 'api'} defaultValue={profile?.tool_budget ?? recovery.command?.toolBudget ?? 90} />
-          </Field>
-        </div>
-      </Collapsible>
-      {error && <Alert tone="error">{error}</Alert>}
-    </form>
-    {profile && <div className="legacy k-legacy-block">
-      <AgentComputerSettings agent={profile.id} request={api} autoFocus={focusComputer} />
-      {onVisibilityChanged && <AgentVisibility agent={liveProfile!} request={api} onChanged={onVisibilityChanged} />}
-      <Suspense fallback={<p role="status">Loading local sites...</p>}><SitesPanel key={`sites:${profile.id}`} agent={profile.id} request={api} /></Suspense>
-      <Suspense fallback={<p className="empty" role="status">Loading agent export...</p>}><AgentTemplateExport key={profile.id} id={profile.id} request={api} /></Suspense>
+  const submitLabel = profile ? 'Save changes' : pending.current ? 'Retry creation' : setup ? 'Create and draft' : 'Create agent';
+  const profileFields = <>
+    {(!profile || onVisibilityChanged) && <div className="agent-profile__avatar">
+      {profile ? <AgentAvatar agent={liveProfile!} size={40} /> : <span className="agent-profile__initials">{look ? <MascotAvatar look={look} size={40} /> : 'Aa'}</span>}<span className="agent-profile__name">{profile?.name ?? 'Avatar'}</span>
+      <Button ref={avatarChange} onClick={() => setAvatarOpen(true)}>Change</Button>
     </div>}
-  </Dialog>;
+    <Field label={!profile && setup ? 'Temporary name' : 'Name'} optional={!profile && setup}>
+      <Input ref={nameInput} name="name" required={!setup} maxLength={80} readOnly={locked} defaultValue={profile?.name ?? recovery.command?.name} placeholder="For example: Research partner" />
+    </Field>
+    <Field label="Role" optional><Input name="role" maxLength={60} readOnly={locked} defaultValue={profile?.role ?? recovery.command?.role ?? ''} /></Field>
+    <Field label={!profile && setup ? 'Brief' : 'Instructions'}>
+      <Textarea name="instructions" required maxLength={8000} readOnly={locked} defaultValue={profile?.instructions ?? recovery.command?.instructions} rows={6} onChange={event => setInstructionCount(event.target.value.length)} placeholder={!profile && setup ? 'Describe the work this agent should help with.' : undefined} />{profile && <span aria-hidden className="agent-profile__count">{instructionCount}/8000</span>}
+    </Field>
+  </>;
+  const modelFields = <>
+    <Field label="Run with" error={runtimeError}>
+      <Tooltip content={profile ? 'Uses host login and project folder. No image attachments.' : 'Requires an agent in a project'}>
+        <span className="agent-profile__runtime"><Select label="Run with" value={runtime} onChange={value => setRuntime(value as typeof runtime)} disabled={locked || busy} options={[{ value: 'api', label: 'API model' }, ...(['codex','claude'] as const).map(value => { const choice = runtimeChoices.find(item => item.runtime === value); return { value, label: value === 'codex' ? 'Codex' : 'Claude Code', disabled: !choice?.enabled, hint: choice?.reason ?? choice?.version ?? 'Requires an agent in a project' }; })]} /></span>
+      </Tooltip>
+    </Field>
+    <Field label="Provider" error={accountError && <>{accountError} <button type="button" className="k-link" onClick={() => setAccountReload(value => value + 1)}>Reload</button></>}>
+      <Select value={account} onChange={setAccount} disabled={locked || runtime !== 'api'} options={accountOptions} />
+    </Field>
+    <Field label="Model" hint={runtime === 'api' ? catalogStatus : 'Host default'}>
+      <Combobox name="model" value={modelValue} onChange={setModelValue} suggestions={models} required maxLength={160} readOnly={locked || runtime !== 'api'} placeholder="Enter model ID" />
+    </Field>
+    {profile && <Collapsible title="Fallback model" defaultOpen={!!profile.backup_model}>
+      <Field label="Fallback model" optional><Tooltip content="Tried once for quota or availability failure"><span><Combobox name="backupModel" value={backupValue} onChange={setBackupValue} suggestions={models} maxLength={160} readOnly={locked || runtime !== 'api'} placeholder="Enter model ID" /></span></Tooltip></Field>
+    </Collapsible>}
+  </>;
+  const advancedFields = <>
+    {!profile && <Field label="Fallback model" optional><Combobox name="backupModel" value={backupValue} onChange={setBackupValue} suggestions={models} maxLength={160} readOnly={locked || runtime !== 'api'} placeholder="Enter model ID" /></Field>}
+    <Field label="Parallel chats"><Tooltip content="Excludes main chat"><Input name="threadLimit" type="number" min={1} max={32} step={1} required readOnly={locked} defaultValue={profile?.thread_limit ?? recovery.command?.threadLimit ?? 2} /></Tooltip></Field>
+    <Field label="Tool step limit"><Tooltip content={runtime === 'api' ? 'Stops with summary at limit. Continue to resume.' : 'API tasks only'}><Input name="toolBudget" type="number" min={10} max={200} step={1} required readOnly={locked || runtime !== 'api'} defaultValue={profile?.tool_budget ?? recovery.command?.toolBudget ?? 90} /></Tooltip></Field>
+  </>;
+  return <>
+    <Dialog open size={profile ? 'lg' : 'md'} onOpenChange={next => { if (!next && !busy) onCancel(); }} title={profile ? 'Agent profile' : 'New agent'}
+      description={profile && <span className="agent-profile__context"><span>{profile.name}</span><ActionMenu label="Agent profile actions" trigger={<IconButton ref={exportTrigger} label="Agent profile actions"><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: 'Export template', onSelect: () => setExportOpen(true) }]} /></span>}
+      footer={<>
+        {!profile && pending.current && <Button variant="ghost" disabled={busy} onClick={() => void discardPending()} className="k-dialog__foot-start">Discard recovery</Button>}
+        {profile && error && onReload && <Button variant="ghost" onClick={onReload} className="k-dialog__foot-start">Discard changes and reload</Button>}
+        {profile && tab === 'access' && !dirty && !pending.current ? <Button onClick={onCancel}>Done</Button> : <>
+          <Button disabled={busy} onClick={onCancel}>Cancel</Button>
+          <Button type="submit" form="agent-form" variant="primary" busy={busy} disabled={invalid}>{busy ? 'Saving...' : submitLabel}</Button>
+        </>}
+      </>}>
+      {invalid && <Alert tone="error" title="Recovery data could not be read" actions={<Button size="sm" onClick={() => void discardInvalid()}>Discard recovery data</Button>}>Check the agent list before discarding it.</Alert>}
+      {!profile && pending.current && <RecoveryAlert inFlight={busy} tone="warn" title="Creation is not confirmed yet">Try again with the same request to avoid creating a duplicate agent.</RecoveryAlert>}
+      <div className={`agent-profile${profile ? ' agent-profile--edit' : ''}`}>
+        <Tabs value={tab} onChange={setTab} label="Agent profile" tabs={profile ? [{ value: 'profile', label: 'Profile' }, { value: 'model', label: 'Model' }, { value: 'access', label: 'Access' }, { value: 'advanced', label: 'Advanced' }] : []}>
+          <form ref={formRef} id="agent-form" className="k-fieldset" noValidate={!!profile} onChange={updateDirty} onSubmit={event => {
+            // Validate once before revealing the first invalid tab; native submission cannot focus hidden fields.
+            if (profile && !event.currentTarget.checkValidity()) {
+              event.preventDefault();
+              const input = event.currentTarget.querySelector<HTMLInputElement>(':invalid');
+              const name = input?.name;
+              flushSync(() => setTab(name && ['model', 'backupModel'].includes(name) ? 'model' : name && ['threadLimit', 'toolBudget'].includes(name) ? 'advanced' : 'profile'));
+              input?.reportValidity(); return;
+            }
+            void create(event);
+          }}>
+            {profile ? <>
+              {/* Force-mounted panels keep all staged values in FormData, including coding-runtime API settings. */}
+              <RadixTabs.Content forceMount value="profile" hidden={tab !== 'profile'} className="k-tabs__panel">{profileFields}</RadixTabs.Content>
+              <RadixTabs.Content forceMount value="model" hidden={tab !== 'model'} className="k-tabs__panel">{modelFields}</RadixTabs.Content>
+              <RadixTabs.Content forceMount value="advanced" hidden={tab !== 'advanced'} className="k-tabs__panel">{advancedFields}</RadixTabs.Content>
+            </> : <>
+              <Segmented label="How to create an agent" value={setup ? 'describe' : 'manual'} disabled={busy || locked || invalid} onChange={value => setSetup(value === 'describe')} options={[{ value: 'manual', label: 'Manual' }, { value: 'describe', label: 'Draft with AI' }]} />
+              {profileFields}{modelFields}
+              <Collapsible title="Advanced settings" defaultOpen={!!recovery.command?.backupModel}>{advancedFields}</Collapsible>
+            </>}
+          </form>
+          {profile && <RadixTabs.Content forceMount value="access" hidden={tab !== 'access'} className="k-tabs__panel">
+            <AgentComputerSettings agent={profile.id} request={api} autoFocus={focusComputer && tab === 'access'} />
+            {onVisibilityChanged && <AgentVisibility agent={liveProfile!} request={api} onChanged={onVisibilityChanged} />}
+          </RadixTabs.Content>}
+        </Tabs>
+        {error && <Alert tone="error">{error}</Alert>}
+      </div>
+    </Dialog>
+    {profile && exportOpen && <Dialog open size="lg" title="Export template" description={profile.name} onOpenChange={setExportOpen} footer={<Button onClick={() => setExportOpen(false)}>Done</Button>}><Suspense fallback={<p role="status">Loading saved profile...</p>}><AgentTemplateExport id={profile.id} request={api} /></Suspense></Dialog>}
+    {!profile && <Dialog open={avatarOpen} size="md" title="Avatar" onOpenChange={setAvatarOpen} footer={<Button onClick={() => setAvatarOpen(false)}>Done</Button>}><Suspense fallback={<p role="status">Loading avatar picker...</p>}><LookPicker value={look} onChange={setLook} disabled={busy || locked || invalid} /></Suspense></Dialog>}
+    {profile && onVisibilityChanged && avatarOpen && <AvatarEditor agent={profile.id} request={api} onChanged={onVisibilityChanged} onClose={() => setAvatarOpen(false)} />}
+  </>;
 }

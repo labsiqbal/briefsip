@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+import { RefreshCw } from 'lucide-react';
 import { visibilityCommand } from '../agent-visibility';
-import { Alert, Badge, Button, Card, Row, Section, useConfirm, RecoveryAlert } from './ui/kit';
+import { Alert, Badge, Button, Card, Row, Section, IconButton, useConfirm, RecoveryAlert } from './ui/kit';
 
-export function AgentVisibility({ agent, request, onChanged }: { agent: { id: string; hidden?: boolean; visibility_revision?: number }; request: <T>(path: string, body?: unknown) => Promise<T>; onChanged: () => Promise<void> }) {
+export function AgentVisibility({ agent, request, onChanged }: { agent: { id: string; name: string; hidden?: boolean; visibility_revision?: number }; request: <T>(path: string, body?: unknown) => Promise<T>; onChanged: () => Promise<void> }) {
   const key = `briefsip-visibility:${agent.id}`;
   const [recovery, setRecovery] = useState(() => {
     try { const raw = sessionStorage.getItem(key); return { pending: raw ? visibilityCommand(JSON.parse(raw)) : null, invalid: false }; }
@@ -13,7 +14,7 @@ export function AgentVisibility({ agent, request, onChanged }: { agent: { id: st
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   async function save() {
     if (flight.current || recovery.invalid) return;
-    if (!recovery.pending && !await confirm(agent.hidden ? { title: 'Restore agent?', description: 'The held queue will resume. Missed schedules will not run again.', confirm: 'Restore agent' } : { title: 'Hide agent?', description: 'Running work can finish. The queue is held and new messages are rejected until the agent is restored.', confirm: 'Hide agent', danger: true })) return;
+    if (!recovery.pending && !await confirm(agent.hidden ? { title: `Restore ${agent.name}?`, description: 'The held queue will resume. Missed schedules will not run again.', confirm: 'Restore agent' } : { title: `Hide ${agent.name}?`, description: 'Running work can finish. The queue is held and new messages are rejected until the agent is restored.', confirm: 'Hide agent', danger: true })) return;
     const command = recovery.pending ?? { id: crypto.randomUUID(), revision: agent.visibility_revision ?? 0, hidden: !agent.hidden };
     try { sessionStorage.setItem(key, JSON.stringify(command)); } catch { setError('Status could not be saved in the browser. Check site storage before trying again.'); return; }
     flight.current = true; setBusy(true); setError(''); setRecovery({ pending: command, invalid: false });
@@ -34,15 +35,11 @@ export function AgentVisibility({ agent, request, onChanged }: { agent: { id: st
     finally { flight.current = false; if (mounted.current) setBusy(false); }
   }
   return <div className="k-stack bs-root">
-    <Section title="Visibility">
-      <Card><Row title={agent.hidden ? 'Agent hidden' : 'Agent visibility'} meta="History, files, memory, and sidebar sections remain saved." trailing={<Badge>{agent.hidden ? 'Hidden' : 'Visible'}</Badge>} /></Card>
-      {recovery.pending && <RecoveryAlert inFlight={busy} tone="warn" title="Changes are not confirmed yet">Retry with the same request.</RecoveryAlert>}
+    <Section title="Availability" actions={<IconButton label="Reload availability" disabled={busy} onClick={() => void reload()}><RefreshCw size={15} aria-hidden /></IconButton>}>
+      <Card><Row title={<Badge>{agent.hidden ? 'Hidden · queue paused' : 'Available'}</Badge>} trailing={<Button size="sm" busy={busy} disabled={busy || recovery.invalid} onClick={() => void save()}>{busy ? 'Saving...' : recovery.pending ? 'Try again' : agent.hidden ? 'Restore agent' : 'Hide agent'}</Button>} /></Card>
+      {recovery.pending && <RecoveryAlert inFlight={busy} tone="warn" title="Not confirmed" />}
       {recovery.invalid && <Alert tone="error">Saved request is invalid. Load the latest status before continuing.</Alert>}
       {error && <Alert tone="error">{error}</Alert>}
-      <div className="k-inline">
-        <Button size="sm" busy={busy} disabled={busy || recovery.invalid} onClick={() => void save()}>{busy ? 'Saving...' : recovery.pending ? 'Retry change' : agent.hidden ? 'Restore agent' : 'Hide agent'}</Button>
-        <Button size="sm" disabled={busy} onClick={() => void reload()}>Load latest status</Button>
-      </div>
     </Section>
   </div>;
 }
