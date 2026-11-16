@@ -1,7 +1,5 @@
 .bs-root .agent-profile [hidden] { display: none !important; }
 .bs-root .agent-profile__avatar { display: flex; align-items: center; gap: 12px; }
-.bs-root .agent-profile__avatar .avatar { flex-shrink: 0; overflow: hidden; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; }
-.bs-root .agent-profile__avatar .avatar img { width: 100%; height: 100%; object-fit: cover; }
 .bs-root .agent-profile__name { flex: 1; min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
 .bs-root .agent-profile__runtime { display: block; }
 .bs-root .agent-profile__runtime .k-select { width: 100%; }
@@ -16,7 +14,7 @@
 .bs-root .agent-profile--edit .k-tabs__list { flex-shrink: 0; }
 .bs-root .agent-profile--edit #agent-form, .bs-root .agent-profile--edit > .k-tabs > .k-tabs__panel { min-height: 0; overflow-y: auto; padding: 2px; }
 .bs-root .agent-profile--edit textarea[name='instructions'] { height: 200px; min-height: 160px; }
-.bs-root .agent-profile__initials { width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; background: var(--color-bg-tertiary); color: var(--color-text-secondary); }
+.bs-root .agent-profile__initials { width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; overflow: hidden; border-radius: 50%; }
 .bs-root .agent-profile .k-field:has(.agent-profile__count) { position: relative; }
 .bs-root .agent-profile__count { position: absolute; top: 0; right: 0; color: var(--color-text-tertiary); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
 .bs-root .agent-profile--edit > .k-alert { flex-shrink: 0; }

@@ -53,7 +53,7 @@ export function UpdatesPanel({ request }: { request: Request }) {
     {error&&<Alert tone="error">{error}</Alert>}
     {reconnecting&&<Alert title="Waiting for server restart">Reconnecting to check whether the update succeeded or rolled back. Keep this window open.</Alert>}
     {!state?<SkeletonRows/>:<>
-      <Section title="This computer"><Card>
+      <Section title="This device"><Card>
         <Row leading={<Monitor size={17} aria-hidden/>} title="Current version" meta={state.current.id==='development'?'Development':state.current.commit.slice(0,8)} trailing={<Badge>{state.current.version}</Badge>}/>
         {state.launcherAvailable && state.previous&&<Row title="Previous version" trailing={<Badge>{state.previous.version}</Badge>}/>}
         {state.launcherAvailable && (state.available?<><Row leading={<Download size={17} aria-hidden/>} title={`Briefsip ${state.available.version}`} meta={`Published ${new Date(state.available.created).toLocaleDateString()}`} trailing={<Badge tone="brand">Update available</Badge>}/><div className="updates-release"><p className="updates-notes">{state.available.notes}</p><div className="updates-actions"><span className="k-field__hint">{state.runningTurns} running {state.runningTurns===1?'turn':'turns'}</span><Button variant="primary" disabled={inFlight} busy={busy} onClick={()=>void apply()}>{pending.current?'Retry update':'Update now'}</Button></div></div></>:<Row title="Up to date" />)}

@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { startApp } from './server.ts';
 import { activityLabel, livePartial, turnPollDelay } from './src/ui/transcript.ts';
 
@@ -17,7 +18,7 @@ test('activity duration stops at recorded provider finish; live text and polling
   assert.equal(activityLabel(turn, now), 'Worked for 1m 54s');
   assert.equal(activityLabel({ ...turn, status: 'failed' }, now), 'Failed after 1m 54s');
   assert.equal(activityLabel({ ...turn, status: 'interrupted' }, now), 'Interrupted after 1m 54s');
-  assert.equal(activityLabel({ ...turn, status: 'cancelled' }, now), 'Stopped after 1m 54s');
+  assert.equal(activityLabel({ ...turn, status: 'cancelled' }, now), 'Stopped');
   assert.equal(activityLabel({ ...turn, status: 'running' }, Date.parse(created) + 12000), 'Working… 12s');
   assert.equal(activityLabel({ ...turn, status: 'running', activity: { ...activity, calls: [{ ...activity.calls[0], created: '2026-11-14T00:00:02.000Z' }] } }, Date.parse(created) + 3000), 'Working… 1s');
   assert.equal(activityLabel({ ...turn, status: 'queued', paused: 1 }, now), 'Paused');
@@ -83,6 +84,58 @@ test('turn list exposes scoped read-only activity metadata in direct, thread and
 test('subsecond and stopped turn labels remain terminal', () => {
   const turn = { status: 'done', paused: 0, created, activity: { ...activity, calls: [{ ...activity.calls[0], created, finished: created }] } };
   assert.equal(activityLabel(turn, Date.now()), 'Worked for <1s');
-  assert.equal(activityLabel({ ...turn, status: 'cancelled' }, Date.now()), 'Stopped after <1s');
-  assert.equal(activityLabel({ ...turn, status: 'cancelled', activity: undefined }, Date.now()), 'Stopped after <1s');
+  assert.equal(activityLabel({ ...turn, status: 'cancelled' }, Date.now()), 'Stopped');
+  assert.equal(activityLabel({ ...turn, status: 'cancelled', activity: undefined }, Date.now()), 'Stopped');
+});
+
+test('stopped duration uses run start and accepted Stop, independent of queue time and provider cleanup', () => {
+  const started_at = '2026-11-14T00:01:00.000Z', stopped_at = '2026-11-14T00:01:03.200Z';
+  const turn = { status: 'cancelled', paused: 0, created, activity: { ...activity, started_at, stopped_at } };
+  for (const finished of [null, '2026-11-14T00:01:05.000Z']) {
+    assert.equal(activityLabel({ ...turn, activity: { ...turn.activity, calls: [{ ...activity.calls[0], finished }] } }, Date.now()), 'Stopped after 3s');
+  }
+  assert.equal(activityLabel({ ...turn, activity: { ...turn.activity, stopped_at: started_at } }, Date.now()), 'Stopped after <1s');
+  assert.equal(activityLabel({ ...turn, activity: { ...turn.activity, started_at: null, calls: [] } }, Date.now()), 'Stopped');
+});
+
+test('Stop timestamps survive repeated cancellation and server restart', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'briefsip-stop-'));
+  const provider = createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'Synthetic partial reply.' }, finish_reason: null }] })}\n\n`);
+  });
+  await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+  const address = provider.address(); assert(address && typeof address !== 'string');
+  const options = { database: join(directory, 'db.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, stream: true, apiKey: 'synthetic-key' };
+  let app = await startApp(options);
+  async function request(path: string, body?: unknown) {
+    const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    assert(response.ok, await response.text().then(text => text || response.statusText));
+  }
+  try {
+    const agent = randomUUID(), turn = randomUUID();
+    await request('/api/agents', { id: agent, name: 'Stop check', model: 'synthetic', instructions: 'Test' });
+    const path = `/api/agents/${agent}/turns`;
+    await request(path, { id: turn, text: 'Hold reply' });
+    let running;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      [running] = await (await fetch(app.origin + path)).json();
+      if (running.partial?.text) break;
+      await delay(15);
+    }
+    assert(running.partial?.text, JSON.stringify(running)); assert(running.activity.started_at);
+    assert.equal(running.activity.stopped_at, null);
+    await delay(1100);
+    await request(`${path}/${turn}/cancel`, { id: randomUUID() });
+    const [stopped] = await (await fetch(app.origin + path)).json();
+    assert.equal(stopped.activity.started_at, running.activity.started_at);
+    assert(Date.parse(stopped.activity.stopped_at) - Date.parse(stopped.activity.started_at) >= 1100);
+    assert.match(activityLabel(stopped, Date.now()), /^Stopped after [1-9]\d*s$/);
+    await request(`${path}/${turn}/cancel`, { id: randomUUID() });
+    await app.close(); app = await startApp(options);
+    const [reloaded] = await (await fetch(app.origin + path)).json();
+    assert.equal(reloaded.activity.started_at, stopped.activity.started_at);
+    assert.equal(reloaded.activity.stopped_at, stopped.activity.stopped_at);
+    assert.equal(activityLabel(reloaded, Date.now() + 60000), activityLabel(stopped, Date.now()));
+  } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(directory, { recursive: true, force: true }); }
 });

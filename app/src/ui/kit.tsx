@@ -186,16 +186,16 @@ export function Collapsible({ title, children, defaultOpen = false, open, onOpen
   </RadixCollapsible.Root>;
 }
 
-export function Tooltip({ content, children }: { content: ReactNode; children: ReactNode }) {
-  return <RadixTooltip.Provider delayDuration={400}><RadixTooltip.Root><RadixTooltip.Trigger asChild onFocus={event => { if (!(event.target as HTMLElement).matches(':focus-visible')) event.preventDefault(); }}>{children}</RadixTooltip.Trigger><RadixTooltip.Portal><RadixTooltip.Content className="k-tooltip" sideOffset={6}>{content}</RadixTooltip.Content></RadixTooltip.Portal></RadixTooltip.Root></RadixTooltip.Provider>;
+export function Tooltip({ content, children, side, sideOffset = 6 }: { content: ReactNode; children: ReactNode; side?: 'top' | 'right' | 'bottom' | 'left'; sideOffset?: number }) {
+  return <RadixTooltip.Provider delayDuration={400}><RadixTooltip.Root><RadixTooltip.Trigger asChild onFocus={event => { if (!(event.target as HTMLElement).matches(':focus-visible')) event.preventDefault(); }}>{children}</RadixTooltip.Trigger><RadixTooltip.Portal><RadixTooltip.Content className="k-tooltip" side={side} sideOffset={sideOffset}>{content}</RadixTooltip.Content></RadixTooltip.Portal></RadixTooltip.Root></RadixTooltip.Provider>;
 }
 
-export type MenuEntry = { label: string; onSelect: () => void; danger?: boolean; disabled?: boolean; icon?: ReactNode } | 'separator';
+export type MenuEntry = { label: string; onSelect: () => void; danger?: boolean; disabled?: boolean; icon?: ReactNode; hint?: string } | 'separator';
 export function ActionMenu({ trigger, items, align = 'end', label, onCloseAutoFocus }: { onCloseAutoFocus?: (event: Event) => void; trigger: ReactNode; items: MenuEntry[]; align?: 'start' | 'center' | 'end'; label: string }) {
   return <DropdownMenu.Root>
     <DropdownMenu.Trigger asChild aria-label={label}>{trigger}</DropdownMenu.Trigger>
     <DropdownMenu.Portal><DropdownMenu.Content className="k-pop k-menu" align={align} sideOffset={6} onCloseAutoFocus={onCloseAutoFocus}>
-      {items.map((item, index) => item === 'separator' ? <DropdownMenu.Separator key={index} className="k-menu__sep" /> : <DropdownMenu.Item key={item.label} disabled={item.disabled} onSelect={item.onSelect} className={cx('k-menu__item', item.danger && 'is-danger')}>{item.icon}{item.label}</DropdownMenu.Item>)}
+      {items.map((item, index) => item === 'separator' ? <DropdownMenu.Separator key={index} className="k-menu__sep" /> : <DropdownMenu.Item key={item.label} disabled={item.disabled} onSelect={item.onSelect} className={cx('k-menu__item', item.danger && 'is-danger')}>{item.icon}{item.label}{item.hint && <span className="k-menu__hint">{item.hint}</span>}</DropdownMenu.Item>)}
     </DropdownMenu.Content></DropdownMenu.Portal>
   </DropdownMenu.Root>;
 }

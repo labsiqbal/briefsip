@@ -188,13 +188,14 @@ export function ComputerViewer({ agent, name, request, popout = false, onClose }
         </div>}
       </div>
       <div className="computer-viewer__actions">
+        {running && !popout && <IconButton label="Pop out" onClick={() => window.open(`/?computer=${encodeURIComponent(agent)}`, '_blank', 'popup,width=1280,height=960,noopener')}><ExternalLink size={14} aria-hidden /></IconButton>}
         {running && user && <ActionPopover label="Paste text into computer" trigger={<IconButton label="Paste text" disabled={locked}><ClipboardType size={14} aria-hidden /></IconButton>}>
           <form className="computer-viewer__text" onSubmit={async event => { event.preventDefault(); if (!text || sendingText || !running || locked) return; setSendingText(true); const sent = text; try { const accepted = await input('computer_type', { text: sent }); if (accepted) setText(current => current === sent ? '' : current); } finally { setSendingText(false); } }}>
             <Field label="Type or paste text"><Input value={text} maxLength={4000} onChange={event => setText(event.target.value)} disabled={locked} /></Field>
             <div className="k-row-actions"><Button size="sm" disabled={!connected || locked} onClick={() => rfb.current?.clipboardPasteFrom(text)}>Set clipboard</Button><MessageCopyButton text={text} label="Copy computer clipboard" /><Button size="sm" variant="primary" type="submit" busy={sendingText} disabled={!text || locked}>Send text</Button></div>
           </form>
         </ActionPopover>}
-        {running && !popout && (user ? <IconButton label="Pop out" onClick={() => window.open(`/?computer=${encodeURIComponent(agent)}`, '_blank', 'popup,width=1280,height=960,noopener')}><ExternalLink size={14} aria-hidden /></IconButton> : <Button size="sm" icon={<ExternalLink size={14} aria-hidden />} onClick={() => window.open(`/?computer=${encodeURIComponent(agent)}`, '_blank', 'popup,width=1280,height=960,noopener')}>Pop out</Button>)}
+
         {running && (user ? <Button ref={handBack} size="sm" variant="primary" busy={controls.busy} disabled={locked} onClick={() => void controls.control('hand-back')}>Hand back</Button> : <Button size="sm" variant="primary" busy={controls.busy} disabled={!status?.enabled || !status.available || locked} onClick={() => void controls.control('take')}>Take control</Button>)}
         {running && <ActionMenu label="More computer actions" trigger={<IconButton label="More computer actions" disabled={stopping} aria-busy={stopping || undefined}>{stopping ? <span className="k-spinner" aria-hidden /> : <Ellipsis size={16} aria-hidden />}</IconButton>} items={[
           { label: 'Reconnect', icon: <RefreshCw size={14} aria-hidden />, disabled: locked, onSelect: () => setConnection(value => value + 1) },
