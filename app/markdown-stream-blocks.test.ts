@@ -30,5 +30,5 @@ test('cross-block syntax keeps one renderer; completed block prefixes stay stabl
   const complete = 'First block.\n\n';
   for (const suffix of ['Second', 'Second grows', 'Second grows.\n\nThird']) assert.equal(splitMarkdownBlocks(complete + suffix)?.[0], complete);
   const html = renderToStaticMarkup(createElement(StreamingMarkdown, { text: '[reference][id]\n\n[id]: https://example.com', scope: '/api/agents/fixture', origin: 'http://localhost' }));
-  assert.match(html, /href="https:\/\/example.com\/"/);
+  assert.match(html, /title="https:\/\/example.com\/"/);
 });

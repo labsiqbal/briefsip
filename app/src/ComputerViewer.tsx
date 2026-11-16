@@ -79,7 +79,7 @@ export function ComputerRequestCard({ agent, name, wait, request }: { agent: str
   </Card>{controls.recovery}</div>;
 }
 
-export function ComputerViewer({ agent, name, request, popout = false, onClose }: { agent: string; name: string; request: ComputerRequest; popout?: boolean; onClose?: () => void }) {
+export function ComputerViewer({ agent, name, request, popout = false, onClose, url }: { url?: string; agent: string; name: string; request: ComputerRequest; popout?: boolean; onClose?: () => void }) {
   const [stopping, setStopping] = useState(false);
   const controls = useComputerControl(agent, request, stopping), { status } = controls;
   const settings = useComputerSettings(agent, request, controls.setStatus);
@@ -177,6 +177,7 @@ export function ComputerViewer({ agent, name, request, popout = false, onClose }
   const locked = controls.locked || settings.locked || starting || stopping;
   const placeholder = !visible ? 'Viewer paused while window is hidden.' : running && screenError ? 'Live screen unavailable.' : !status ? 'Loading computer status...' : !status.available ? 'Computer is disabled on this server.' : !status.enabled ? 'No computer assigned.' : starting || status.state === 'starting' ? 'Starting computer...' : running ? 'Connecting to computer...' : 'Computer is off.';
   return <div ref={controls.ref} className="computer-viewer bs-root">
+    {url && <div className="k-row-actions"><span className="right-panel__path">{url}</span><Button size="sm" disabled={!running || !user || controls.locked} onClick={() => void input('computer_open_url', { url })}>Open URL</Button></div>}
     <div ref={settings.section} className="computer-viewer__poll" />
     <header className="computer-viewer__toolbar" hidden={!running && !onClose}>
       <div className="computer-viewer__identity">
