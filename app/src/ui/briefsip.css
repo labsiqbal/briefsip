@@ -113,7 +113,7 @@
 /* T3 fold row (MessagesTimeline TurnFoldTimelineRow): muted label, right/down chevron, divider under the header (#33). */
 .turn-activity { margin-bottom: 8px; }
 .turn-activity .k-collapsible__trigger:hover { background: none; color: var(--color-text-primary); }
-.turn-activity .k-collapsible__trigger { font-size: 14px; line-height: 1.625; border-radius: 0; width: 100%; max-width: 100%; justify-content: flex-start; margin-left: 0; padding: 4px 4px 8px; gap: 4px; border-bottom: 1px solid var(--color-border-secondary); color: var(--color-text-secondary); font-weight: 400; font-variant-numeric: tabular-nums; }
+.turn-activity .k-collapsible__trigger { font-size: 14px; line-height: 1.625; border-radius: 0; width: 100%; max-width: 100%; justify-content: flex-start; margin-left: 0; padding: 4px 4px 8px; gap: 4px; color: var(--color-text-secondary); font-weight: 400; font-variant-numeric: tabular-nums; }
 .turn-activity .k-collapsible__trigger:focus-visible { outline-offset: -2px; border-radius: 6px; }
 .turn-activity .k-collapsible__chev { width: 14px; height: 14px; transform: rotate(-90deg); }
 .turn-activity .k-collapsible__trigger[data-state='open'] .k-collapsible__chev { transform: none; }

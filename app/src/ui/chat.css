@@ -339,8 +339,9 @@
 .voice-input__pill { display: flex; align-items: center; gap: 4px; height: 32px; }
 .voice-input__timer { min-width: 44px; font-size: 12px; font-variant-numeric: tabular-nums; }
 .voice-input__error { max-width: 280px; font-size: 12px; }
-.turn-activity { display: flex; align-items: flex-start; gap: 4px; }
-.turn-activity > .k-collapsible { min-width: 0; flex: 1; }
+.turn-activity { display: block; }
+.turn-activity__header { display: flex; align-items: center; border-bottom: 1px solid var(--color-border-secondary); }
+.turn-activity__header > .k-collapsible__trigger { flex: 1; min-width: 0; }
 .composer__toolbar > .k-select { width: auto; max-width: 180px; }
 
 .fork-history { width: 100%; opacity: .72; }

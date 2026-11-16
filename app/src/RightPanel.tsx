@@ -32,9 +32,9 @@ export function useRightPanel(scope: string) {
   return { tab, panel, select };
 }
 
-export function RightPanel({ path, name, state, request, onClose, details, activity, onOpenActivity, members, attached = [], attachedCount = attached.length, onAttach, attachDisabled = false, settings, extensions = [] }: {
+export function RightPanel({ path, name, state, request, onClose, details, activity, members, attached = [], attachedCount = attached.length, onAttach, attachDisabled = false, settings, extensions = [] }: {
   path: string; name: string; state: ReturnType<typeof useRightPanel>; request: PanelRequest; onClose: () => void;
-  details: ReactNode; activity: ReactNode; onOpenActivity: (id: string) => void; members?: { id: string; name: string; role?: string; lead?: boolean }[]; attached?: string[]; attachedCount?: number; onAttach?: (file: PanelFile) => void; attachDisabled?: boolean; settings?: ReactNode;
+  details: ReactNode; activity: ReactNode; members?: { id: string; name: string; role?: string; lead?: boolean }[]; attached?: string[]; attachedCount?: number; onAttach?: (file: PanelFile) => void; attachDisabled?: boolean; settings?: ReactNode;
   /** Extra tabs: extensions={[{ value, label, content }]}. */
   extensions?: RightPanelExtension[];
 }) {
@@ -78,7 +78,7 @@ export function RightPanel({ path, name, state, request, onClose, details, activ
     <Tabs label="Conversation panel" value={selected} onChange={state.select} tabs={tabs}>
       {error && <div className="right-panel__error"><Alert tone="error" actions={<Button size="sm" onClick={() => setRefresh(value => value + 1)}>Retry</Button>}>{error}</Alert></div>}
       <TabPanel value="chats">{members ? <div className="right-panel__body"><ul className="right-panel__members" aria-label="Section members">{members.map(member => <li key={member.id}><AgentAvatar agent={member} size={32} /><div><strong>{member.name}</strong><span>{[member.lead ? 'Lead' : 'Member', member.role].filter(Boolean).join(' · ')}</span></div></li>)}</ul></div> : details}</TabPanel>
-      <TabPanel value="activity"><PanelActivity base={path} request={request} onOpen={onOpenActivity} />{activity}</TabPanel>
+      <TabPanel value="activity"><PanelActivity members={members} />{activity}</TabPanel>
       <TabPanel value="files">
         {state.tab === 'diff' && git?.isRepo ? <><div className="right-panel__body"><Button size="sm" variant="ghost" onClick={() => state.select('files')}>Back to files</Button></div><PanelDiff base={base} status={git} request={request} refresh={refresh} /></> : state.tab === 'preview' ? <><div className="right-panel__body"><Button size="sm" variant="ghost" onClick={() => state.select('files')}>Back to files</Button></div><PanelPreview base={base} files={context?.previews ?? []} sites={context?.sites ?? []} request={request} /></> : <>
           {(git?.isRepo || !!context?.previews.length || !!context?.sites.length) && <div className="right-panel__body k-stack">

@@ -1,6 +1,8 @@
-import { MessageSquare, Wrench } from 'lucide-react';
+import { ChevronDown, MessageSquare, Wrench } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
-import { Badge, Collapsible } from './kit';
+import { Badge } from './kit';
+import { Collapsible as Disclosure } from 'radix-ui';
+import { useLiveClock } from '../hooks/useLiveClock';
 import { Markdown } from '../Markdown';
 import type { StreamPartial } from '../../turn-stream';
 import { activityLabel, liveTurn, streamWork, toolTitle, type TurnActivityData } from './transcript';
@@ -26,16 +28,9 @@ type Props = {
 };
 
 export function TurnActivity({ turn, agentName, onOpenTask, onOpenAgent, remote, logOnly, actions: controls, scope = '' }: Props) {
-  const [now, setNow] = useState(Date.now);
-  const live = liveTurn(turn);
+  const live = liveTurn(turn), now = useLiveClock(live);
   const [open, setOpen] = useState(false);
   useEffect(() => { if (!live) setOpen(false); }, [live]);
-  useEffect(() => {
-    if (!live) return;
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [live]);
   const steps: { id: string; text: string; prose?: boolean; task?: string | null }[] = [];
   const streamedTools = new Set<string>();
   for (const segment of streamWork(turn)) {
@@ -51,7 +46,7 @@ export function TurnActivity({ turn, agentName, onOpenTask, onOpenAgent, remote,
   for (const item of turn.room?.quiet ?? []) steps.push({ id: `quiet-${item.name}`, text: `${item.name} stayed quiet${item.silent === 'not_mentioned' ? ' (not mentioned)' : ''}` });
   if (!turn.room && (turn.routing || turn.recipient)) steps.push({ id: 'routing', text: turn.routing === 'pending' ? 'Selecting recipient' : turn.routing === 'clarify' ? 'Requested routing clarification' : turn.routing === 'none' ? 'No task needed' : turn.routing === 'released' ? 'Waiting for an available recipient' : `Recipient selected: ${turn.agent_name ?? agentName}` });
   for (const step of turn.activity?.harness ?? []) if (!streamedTools.has(step.id)) steps.push({ id: `harness-${step.id}`, text: `${toolTitle(step.name)} · ${step.state}` });
-  for (const link of turn.activity?.dispatch ?? []) steps.push({ id: `dispatch-${link.target_turn}`, text: link.mode === 'steer' ? 'Guidance linked to running turn' : 'Restart linked to interrupted turn', task: link.source_turn });
+  for (const link of (turn.activity?.dispatch ?? []).filter(link => link.mode === 'steer')) steps.push({ id: `dispatch-${link.target_turn}`, text: 'Guidance linked to running turn', task: link.source_turn });
   const actions = turn.coordination ?? [];
   const tools = turn.activity?.tools ?? [];
   for (let index = 0; index <= actions.length; index++) {
@@ -63,7 +58,6 @@ export function TurnActivity({ turn, agentName, onOpenTask, onOpenAgent, remote,
   for (const item of turn.receivedAgentReplies ?? []) steps.push({ id: `received-${item.id}`, text: `Result received from ${item.name} · ${item.status}` });
   for (const event of turn.events ?? []) steps.push({ id: `event-${event.id}`, text: `Event ${event.event} · ${event.status}` });
   for (const question of turn.questions ?? []) steps.push({ id: `question-${question.id}`, text: `${question.answer === null ? 'Asked' : 'Answered'}: ${question.prompt}` });
-  for (const file of turn.generatedFiles ?? []) steps.push({ id: `file-${file.id}`, text: `Generated ${file.name}` });
   for (const checkpoint of turn.activity?.checkpoints ?? []) steps.push({ id: `checkpoint-${checkpoint.turn}`, text: checkpoint.state === 'done' ? 'Git checkpoint captured' : `Git checkpoint ${checkpoint.state}` });
   if (turn.activity?.budget_stopped) steps.push({ id: 'budget', text: `Stopped after ${turn.activity.budget_stopped} tool steps` });
   if (turn.activity?.fallback_model) steps.push({ id: 'fallback', text: `Fallback model used: ${turn.activity.fallback_model}` });
@@ -71,5 +65,5 @@ export function TurnActivity({ turn, agentName, onOpenTask, onOpenAgent, remote,
       {steps.length ? <ol className="activity-list" aria-label="Turn activity">{steps.map(step => { const item = (turn.agentMessages ?? []).find(row => row.taskId === step.task); return <li key={step.id}>{step.prose ? <MessageSquare className="activity-step-icon" aria-hidden /> : <Wrench className="activity-step-icon" aria-hidden />}{step.prose ? <div className="legacy"><Markdown text={step.text} scope={scope} origin={window.location.origin} /></div> : <span>{step.text}</span>}{item?.taskId && <Badge tone={['done'].includes(item.status) ? 'success' : ['failed','cancelled','uncertain'].includes(item.status) ? 'warn' : 'brand'}>{item.status === 'queued' && item.wait ? 'Waiting' : item.status.charAt(0).toUpperCase() + item.status.slice(1)}</Badge>}{step.task && <button type="button" className="link-btn link-btn--small" onClick={() => item?.agent && item.thread ? onOpenAgent?.(item.agent, item.thread) : onOpenTask(step.task!)}>{item ? 'Open conversation' : 'View subtask'}</button>}</li>; })}</ol> : null}
   </>;
   if (logOnly) return <div className="turn-activity-log">{contents}</div>;
-  return <div className="turn-activity"><Collapsible open={open} onOpenChange={setOpen} title={<span className="activity-label">{live && turn.status === 'running' && <span className="activity-working" aria-hidden />}{activityLabel(turn, now)}</span>}>{contents}</Collapsible>{controls}</div>;
+  return <Disclosure.Root className="turn-activity" open={open} onOpenChange={setOpen}><div className="turn-activity__header"><Disclosure.Trigger className="k-collapsible__trigger"><span className="activity-label">{live && turn.status === 'running' && <span className="activity-working" aria-hidden />}{activityLabel(turn, now)}</span><ChevronDown size={14} aria-hidden className="k-collapsible__chev" /></Disclosure.Trigger>{controls}</div><Disclosure.Content className="k-collapsible__content">{contents}</Disclosure.Content></Disclosure.Root>;
 }
