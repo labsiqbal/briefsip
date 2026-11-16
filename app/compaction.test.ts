@@ -42,9 +42,9 @@ test('incremental compaction keeps source scopes, originals, provenance and fail
     assert.equal(rows.find((r: any) => r.id === id).status, 'done'); return id;
   }
   try {
-    const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
     channelRecipient = a.id;
-    const b = await request('/api/agents', { id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' });
+    const b = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' });
     const c = await request('/api/channels', { id: randomUUID(), name: 'Room', instructions: 'Help', lead: a.id, members: [a.id, b.id] });
     const thread = await request(`/api/agents/${a.id}/threads`, { id: randomUUID(), name: 'Side' });
     const scopes = [

@@ -57,10 +57,10 @@ test('backup model is opt-in, bounded, durable and never replays after activity 
   }
   try {
     const create = { id: randomUUID(), name: 'Fallback', model: 'primary', backupModel: 'backup', instructions: 'Test' };
-    let agent = await request('/api/agents', create);
-    assert.equal(agent.backup_model, 'backup'); assert.equal((await request('/api/agents', create)).id, agent.id);
-    await request('/api/agents', { ...create, backupModel: 'other' }, 409);
-    for (const backupModel of [null, 1, 'primary', ' primary ', 'x'.repeat(161), 'bad\nmodel']) await request('/api/agents', { ...create, id: randomUUID(), backupModel }, 400);
+    let agent = await request('/api/agents', { ...create, runtime: 'api' });
+    assert.equal(agent.backup_model, 'backup'); assert.equal((await request('/api/agents', { ...create, runtime: 'api' })).id, agent.id);
+    await request('/api/agents', { runtime: 'api', ...create, backupModel: 'other' }, 409);
+    for (const backupModel of [null, 1, 'primary', ' primary ', 'x'.repeat(161), 'bad\nmodel']) await request('/api/agents', { runtime: 'api', ...create, id: randomUUID(), backupModel }, 400);
     const path = `/api/agents/${agent.id}/turns`;
     for (const scenario of ['success', 'rate-limit', 'backup-tools', 'double-failure', 'forbidden', 'truncated', 'malformed', 'disconnect', 'timeout', 'after-tool']) {
       mode = scenario; const start = calls.length, id = randomUUID(), body = { id, text: scenario };
@@ -123,7 +123,7 @@ test('backup model is opt-in, bounded, durable and never replays after activity 
     assert.equal((await until(path, held)).answer_model, 'backup'); assert.deepEqual(calls.slice(heldResume).map(call => call.model), ['backup']);
     const exported = await request(`/api/agents/${agent.id}/template`);
     assert.equal(parseAgentTemplate(exported).backupModel, 'backup');
-    const imported = await request('/api/agents', templateCommand(exported, randomUUID())); assert.equal(imported.backup_model, 'backup');
+    const imported = await request('/api/agents', { ...templateCommand(exported, randomUUID()), runtime: 'api' }); assert.equal(imported.backup_model, 'backup');
     assert.throws(() => parseAgentTemplate({ ...exported, backupModel: 'primary' }));
     const edit = { id: randomUUID(), revision: agent.revision, name: agent.name, model: agent.model, instructions: agent.instructions, backupModel: '' };
     agent = await request(`/api/agents/${agent.id}/edit`, edit); assert.equal(agent.backup_model, '');

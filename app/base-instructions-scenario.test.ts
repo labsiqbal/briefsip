@@ -61,7 +61,7 @@ test('synthetic scenarios record panel without duplicate writes, inline links, w
   };
   const send = async (text: string) => { const id = randomUUID(); await request(path + '/turns', { id, text }); return id; };
   try {
-    await request('/api/agents', { id: agent, name: 'Scenario', model: 'fixture', instructions: 'Keep agent-specific guidance.' });
+    await request('/api/agents', { runtime: 'api', id: agent, name: 'Scenario', model: 'fixture', instructions: 'Keep agent-specific guidance.' });
     const first = await until(await send('save hello.html'), row => row.status === 'done');
     assert.match(first.reply, /^Open \[hello\.html\]\(\/api\/agents\/[a-f0-9-]+\/files\/[a-f0-9-]+\)\.$/);
     assert.equal(await (await fetch(app.origin + url)).text(), '<h1>Hello</h1>');
@@ -77,7 +77,7 @@ test('synthetic scenarios record panel without duplicate writes, inline links, w
     await request(`${path}/turns/${shellTurn}/harness-approvals/${approval.id}`, { id: randomUUID(), revision: approval.revision, decision: 'allow' });
     await until(shellTurn, row => row.status === 'done');
     assert.equal(readFileSync(join(workspace, 'checked.txt'), 'utf8'), 'verified\n');
-    const plain = await request('/api/agents', { id: randomUUID(), name: 'Plain', model: 'fixture', instructions: 'Help.' });
+    const plain = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Plain', model: 'fixture', instructions: 'Help.' });
     const turn = randomUUID(); await request(`/api/agents/${plain.id}/turns`, { id: turn, text: 'plain' });
     for (let i = 0; i < 300; i++) { const rows = await request(`/api/agents/${plain.id}/turns`); if (rows[0]?.status === 'done') break; assert.notEqual(rows[0]?.status, 'failed'); await new Promise(resolve => setTimeout(resolve, 10)); }
     assert(prompts.some(prompt => !prompt.includes('run_shell'))); assert.deepEqual(failures, []);

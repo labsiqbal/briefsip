@@ -17,7 +17,7 @@ test('script approval binds agent and revision, preserves receipts and refuses r
   }
   function streamed(path:string,body:Record<string,unknown>){let finish!:()=>void;const result=new Promise<number|undefined>((resolve,reject)=>{const req=httpRequest(app.origin+path,{method:'POST',headers:auth},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});req.on('error',reject);const raw=JSON.stringify(body);req.write(raw.slice(0,-1));finish=()=>req.end('}');});return {finish,result};}
   try {
-    const a=await request('/api/agents',{id:randomUUID(),name:'A',model:'fixture',instructions:'Help'}),b=await request('/api/agents',{id:randomUUID(),name:'B',model:'fixture',instructions:'Help'});
+    const a=await request('/api/agents',{runtime:'api', id:randomUUID(),name:'A',model:'fixture',instructions:'Help'}),b=await request('/api/agents',{runtime:'api', id:randomUUID(),name:'B',model:'fixture',instructions:'Help'});
     const list=`/api/scripts/agents/${a.id}/approvals`,permission=`/api/agents/${a.id}/scripts`;
     await request(list,undefined,403,auth);await request(permission,{id:randomUUID(),revision:0,enabled:true});await request(`/api/agents/${b.id}/scripts`,{id:randomUUID(),revision:0,enabled:true});
     const graph={entry:'first',maxSteps:3,nodes:[{id:'first',kind:'approval',prompt:'First?',yes:'second'},{id:'second',kind:'approval',prompt:'Second?',yes:'out'},{id:'out',kind:'output'}]};

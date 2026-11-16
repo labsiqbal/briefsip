@@ -28,8 +28,8 @@ for (const automatic of [true, false]) test(`channel context names lead for ${au
     return value;
   }
   try {
-    const assistant = await request('/api/agents', { id: randomUUID(), name: 'Assistant', model: 'assistant', instructions: 'Help.' });
-    const rightHand = await request('/api/agents', { id: randomUUID(), name: 'Right Hand', model: 'right-hand', instructions: 'Coordinate.' });
+    const assistant = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Assistant', model: 'assistant', instructions: 'Help.' });
+    const rightHand = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Right Hand', model: 'right-hand', instructions: 'Coordinate.' });
     let channel = await request('/api/channels', { id: randomUUID(), name: 'Owner team', instructions: 'Discuss channel work.', members: [assistant.id, rightHand.id], lead: rightHand.id });
     const path = `/api/channels/${channel.id}/turns`;
     async function send(lead: string, members: string[], route = automatic) {

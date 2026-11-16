@@ -110,7 +110,7 @@ test('ACP runtimes work through server: approvals, segments and runtime picker',
   const app = await startApp({ database: join(directory, 'db.sqlite'), port: 0, timeout: 15_000, workspaces: [{ agent, directory: f.workspace, write: true }], harness: { executables: Object.fromEntries(harnessRuntimes.map(runtime => [runtime, f.executable])), issuer: { mintAgentSession: () => ({ id: randomUUID(), token: 'test-session-secret' }), revokeAgentSession() {} } } });
   const request = async (path: string, body?: unknown) => { const res = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); const data = await res.json(); assert(res.ok, JSON.stringify(data)); return data; };
   try {
-    await request('/api/agents', { id: agent, name: 'ACP', model: 'saved-api-model', instructions: 'Help.' });
+    await request('/api/agents', { runtime: 'api', id: agent, name: 'ACP', model: 'saved-api-model', instructions: 'Help.' });
     let revision = 1;
     for (const runtime of ['hermes', 'grok', 'antigravity'] as const) {
       await request(`/api/agents/${agent}/edit`, { id: randomUUID(), revision: revision++, name: 'ACP', model: 'saved-api-model', instructions: 'Help.', runtime, confirmRuntime: true });
@@ -135,7 +135,7 @@ test('ACP room queue, checkpoints and stop preserve peer approvals', async () =>
   const request = async (path: string, body?: unknown) => { const res = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); const data = await res.json(); assert(res.ok, JSON.stringify(data)); return data; };
   try {
     const agents = [];
-    for (const name of ['First', 'Peer']) agents.push(await request('/api/agents', { id: randomUUID(), name, model: 'api-model', instructions: 'Help.' }));
+    for (const name of ['First', 'Peer']) agents.push(await request('/api/agents', { runtime: 'api', id: randomUUID(), name, model: 'api-model', instructions: 'Help.' }));
     const project = await request('/api/projects', { id: randomUUID(), name: 'ACP room', folders: [{ mode: 'existing', path: f.workspace }], members: agents.map(agent => ({ agent: agent.id, write: true })), confirmWrite: true });
     for (const agent of agents) await request(`/api/agents/${agent.id}/edit`, { id: randomUUID(), revision: 1, name: agent.name, model: 'api-model', instructions: 'Help.', runtime: 'hermes', confirmRuntime: true });
     const path = `/api/channels/${project.sections[0].id}/turns`, root = randomUUID();

@@ -149,7 +149,7 @@ async function fixture() {
     assert.equal(response.status, status, JSON.stringify(result));
     return result;
   };
-  await request('/api/agents', { id: agent, name: 'Coder', model: 'fixture', instructions: 'Help' }, 201);
+  await request('/api/agents', { runtime: 'api', id: agent, name: 'Coder', model: 'fixture', instructions: 'Help' }, 201);
   const project = await request('/api/projects', { id: randomUUID(), name: 'Project', folders: [{ mode: 'existing', path: workspace }], members: [{ agent, write: false }] });
   const send = async (path: string, text: string) => {
     const id = randomUUID();

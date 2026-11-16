@@ -92,8 +92,8 @@ test('PDF HTTP preview and messages preserve source, scope, retry, routing, tool
     assert.fail('Turn did not settle');
   }
   try {
-    const a = await request('/api/agents', { id: randomUUID(), name: 'PDF agent', model: 'fixture', instructions: 'Read supplied files.' }, 201);
-    const b = await request('/api/agents', { id: randomUUID(), name: 'Other', model: 'fixture', instructions: 'Read supplied files.' }, 201);
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'PDF agent', model: 'fixture', instructions: 'Read supplied files.' }, 201);
+    const b = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Other', model: 'fixture', instructions: 'Read supplied files.' }, 201);
     const thread = await request(`/api/agents/${a.id}/threads`, { id: randomUUID(), name: 'Side' });
     const channel = await request('/api/channels', { id: randomUUID(), name: 'PDF channel', instructions: 'Read supplied files.', members: [a.id, b.id], lead: a.id }, 201);
     const scopes = [`/api/agents/${a.id}`, `/api/threads/${thread.id}`, `/api/channels/${channel.id}`];

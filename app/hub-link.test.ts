@@ -104,7 +104,7 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
         const database = join(dir, `${name}.sqlite`), options = { ...extra, database, stream, baseURL: `http://127.0.0.1:${providerPort}/v1`, hubLink: { origin, hubSigningPublicKey: hubKey, fetch: hubFetch, webSocket, entry, reconnectMs: 10, now: () => clock } };
         let app = await startApp(options);
         apps.push(app);
-        const agent = await api(app, '/api/agents', { id: randomUUID(), name, model: name, instructions: 'Answer section requests.' }, 201);
+        const agent = await api(app, '/api/agents', { runtime: 'api', id: randomUUID(), name, model: name, instructions: 'Answer section requests.' }, 201);
         const started = await api(app, '/api/hub-link/enrollment/start', {});
         assert.match(started.humanCode, /^[A-F0-9]{12}$/);
         assert.equal(started.deviceCode, undefined);
@@ -689,7 +689,7 @@ test('signed pending requests stay node-scoped; approval, stale revision, offlin
 
 test('local owner deletes linked agent, withdraws hub participation and removes local transport journals', async t => {
     const f = await fixture(t), node = await f.node('Delete linked', f.alice), p = await node.participate();
-    await api(node.app, '/api/agents', { id: randomUUID(), name: 'Keep', model: 'fixture', instructions: 'Help' }, 201);
+    await api(node.app, '/api/agents', { runtime: 'api', id: randomUUID(), name: 'Keep', model: 'fixture', instructions: 'Help' }, 201);
     const post = f.post(f.alice, [p.participationId]); await f.done(post.turnIds[0]);
     await api(node.app, `/api/agents/${node.agent.id}/delete`, { id: randomUUID() });
     assert(!(await api(node.app, '/api/agents')).agents.some((agent: any) => agent.id === node.agent.id));

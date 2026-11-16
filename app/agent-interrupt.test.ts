@@ -56,10 +56,10 @@ test('caller interruption cancels only owned deliveries, journals notice and pre
   };
   const send = async (path: string, text: string, extra = {}) => { const id = randomUUID(); await post(path, { id, text, ...extra }, 202); return id; };
   try {
-    const alpha = await post('/api/agents', { id: randomUUID(), name: 'Alpha', model: 'alpha', instructions: 'Coordinate' }, 201);
+    const alpha = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Alpha', model: 'alpha', instructions: 'Coordinate' }, 201);
     callerId = alpha.id;
-    const beta = await post('/api/agents', { id: randomUUID(), name: 'Beta', model: 'beta', instructions: 'Work', threadLimit: 1 }, 201); recipient = beta.id;
-    const gamma = await post('/api/agents', { id: randomUUID(), name: 'Gamma', model: 'gamma', instructions: 'Coordinate' }, 201);
+    const beta = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Beta', model: 'beta', instructions: 'Work', threadLimit: 1 }, 201); recipient = beta.id;
+    const gamma = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Gamma', model: 'gamma', instructions: 'Coordinate' }, 201);
     nestedRecipient = gamma.id;
     const a = `/api/agents/${alpha.id}/turns`, b = `/api/agents/${beta.id}/turns`, g = `/api/agents/${gamma.id}/turns`;
     const user = await send(b, 'USER_TASK'); await until(b, user, r => r.status === 'running');

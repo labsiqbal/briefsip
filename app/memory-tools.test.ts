@@ -43,8 +43,8 @@ test('agent memory writes preserve scope, user selection, atomic errors and resu
   }
   const userEdit = (entry: string, revision: number, text: string, essential = false) => ({ id: randomUUID(), entry, revision, text, essential, remove: false });
   try {
-    const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
-    const b = await request('/api/agents', { id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' });
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
+    const b = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' });
     const channel = await request('/api/channels', { id: randomUUID(), name: 'C', instructions: 'Help', lead: a.id, members: [a.id, b.id] });
     const side = await request(`/api/agents/${a.id}/threads`, { id: randomUUID(), name: 'Side' });
     const path = `/api/agents/${a.id}/turns`, memory = `/api/agents/${a.id}/memory`, foreign = `/api/agents/${b.id}/memory`, shared = `/api/channels/${channel.id}/memory`;
@@ -122,8 +122,8 @@ test('memory and artifact order survives repeated delegation when parent continu
     const value = await response.json(); assert(response.ok, JSON.stringify(value)); return value;
   }
   try {
-    const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
-    const b = await request('/api/agents', { id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' }); peer = b.id;
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
+    const b = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' }); peer = b.id;
     const c = await request('/api/channels', { id: randomUUID(), name: 'Room', instructions: 'Help', lead: a.id, members: [a.id, b.id] });
     const path = `/api/channels/${c.id}/turns`, id = randomUUID(); await request(path, { id, text: 'root', recipient: a.id });
     let done = false;

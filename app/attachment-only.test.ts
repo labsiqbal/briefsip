@@ -24,7 +24,7 @@ test('attachment-only messages validate, recover and retry in direct chats, thre
     if (status) assert.equal(res.status, status); else assert(res.ok, await res.clone().text()); return res.json();
   };
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Files', model: 'fixture', instructions: 'Synthetic' });
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Files', model: 'fixture', instructions: 'Synthetic' });
     const thread = await request(`/api/agents/${agent.id}/threads`, { id: randomUUID(), name: 'Side' });
     const room = await request('/api/channels', { id: randomUUID(), name: 'Room', members: [agent.id], lead: agent.id, instructions: 'Synthetic' });
     for (const path of [`/api/agents/${agent.id}/turns`, `/api/threads/${thread.id}/turns`, `/api/channels/${room.id}/turns`]) {

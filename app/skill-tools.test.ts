@@ -42,8 +42,8 @@ test('skill tools page own enabled pins, reject foreign access and observe revoc
     assert.fail('Task did not settle');
   }
   try {
-    const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
-    const b = await request('/api/agents', { id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' });
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
+    const b = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' });
     const ids: string[] = [];
     for (let i = 0; i < 13; i++) {
       const skill = await request('/api/skills', { id: randomUUID(), revision: 0, name: `Skill ${i}`, description: 'Description', content: `Pinned ${i}` });

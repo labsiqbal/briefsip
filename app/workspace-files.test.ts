@@ -14,7 +14,7 @@ test('workspace browser API pages text and directories while enforcing host bind
   async function get(route:string,status=200,headers:Record<string,string>={}){const response=await fetch(app.origin+route,{headers});assert.equal(response.status,status);assert.equal(response.headers.get('cache-control'),'no-store');return response.json();}
   const path=`/api/agents/${agent}/workspace`;
   try {
-    for(const id of [agent,other]){const response=await fetch(app.origin+'/api/agents',{method:'POST',headers:{Origin:app.origin,'Content-Type':'application/json'},body:JSON.stringify({id,name:'Browser',model:'fixture',instructions:'Help'})});assert(response.ok);}
+    for(const id of [agent,other]){const response=await fetch(app.origin+'/api/agents',{ method:'POST',headers:{Origin:app.origin,'Content-Type':'application/json'},body:JSON.stringify({runtime:'api',id,name:'Browser',model:'fixture',instructions:'Help'})});assert(response.ok);}
     const directory = await get('/api/agents');
     assert.equal(directory.agents.find((row: any) => row.id === agent).workspace_connected, true);
     assert.equal(directory.agents.find((row: any) => row.id === other).workspace_connected, false);
@@ -94,7 +94,7 @@ for (const metadata of [false,true]) test(`workspace tools metadata=${metadata} 
   async function request(path:string,body?:unknown):Promise<any>{const res=await fetch(app.origin+path,{method:body?'POST':'GET',headers:{Origin:app.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const value=await res.json();assert(res.ok,JSON.stringify(value));return value;}
   async function send(path:string){const id=randomUUID();await request(path,{id,text:'Read workspace'});for(let n=0;n<200;n++){const turn=(await request(path)).find((row:any)=>row.id===id);if(['done','failed'].includes(turn.status))return turn;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Timed out');}
   try {
-    for(const id of [agent,other])await request('/api/agents',{id,name:id===agent?'Bound':'Unbound',model:'test',instructions:'Help'});
+    for(const id of [agent,other])await request('/api/agents',{runtime:'api', id,name:id===agent?'Bound':'Unbound',model:'test',instructions:'Help'});
     assert.equal((await send(`/api/agents/${agent}/turns`)).reply,expected);assert(advertised);
     const side=await request(`/api/agents/${agent}/threads`,{id:randomUUID(),name:'Side'});assert.equal((await send(`/api/threads/${side.id}/turns`)).reply,expected);
     assert.equal((await send(`/api/agents/${other}/turns`)).status,'failed');assert(!advertised);

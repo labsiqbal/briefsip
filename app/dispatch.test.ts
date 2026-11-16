@@ -55,7 +55,7 @@ async function fixture(stream = false) {
     const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const result = await response.json(); if (status) assert.equal(response.status, status, JSON.stringify(result)); else assert(response.ok, JSON.stringify(result)); return result;
   }
-  const agent = await request('/api/agents', { id: randomUUID(), name: 'Dispatch agent', model: 'fake', instructions: 'Help.' });
+  const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Dispatch agent', model: 'fake', instructions: 'Help.' });
   const path = `/api/agents/${agent.id}/turns`;
   async function turn(id: string, predicate: (row: any) => boolean, at = path) { return until(async () => (await request(at)).find((row: any) => row.id === id), row => !!row && predicate(row)); }
   return { request, turn, agent, path, calls, held, options, directory,
@@ -210,7 +210,7 @@ test('restart during uncertain MCP effect keeps its receipt and never replays ex
   let app = await startApp(options);
   async function request(path: string, body?: unknown): Promise<any> { const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); const result = await response.json(); assert(response.ok, JSON.stringify(result)); return result; }
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Uncertain restart', model: 'fake', instructions: 'Help.' });
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Uncertain restart', model: 'fake', instructions: 'Help.' });
     const tested = await request('/api/mcp/test', { id: randomUUID(), name: 'Effect fixture', url: `http://127.0.0.1:${ea.port}/mcp`, token: '' });
     connection = (await request('/api/mcp', { id: randomUUID(), test: tested.id })).id;
     await request(`/api/agents/${agent.id}/mcp/${connection}`, { id: randomUUID(), revision: 0, connectionRevision: 1, tools: ['effect'] });
@@ -268,7 +268,7 @@ test('queued dispatch rejects stale revision, held editor, cross-conversation ta
     const queued = randomUUID(); await f.request(f.path, { id: queued, text: 'Queue remains unchanged' });
     const command = () => ({ id: randomUUID(), revision: 1, mode: 'steer', targetTurn: root });
     await f.request(`${f.path}/${queued}/dispatch`, { ...command(), revision: 99 }, 409);
-    const other = await f.request('/api/agents', { id: randomUUID(), name: 'Other', instructions: 'Help.', model: 'fake' });
+    const other = await f.request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Other', instructions: 'Help.', model: 'fake' });
     const wrong = randomUUID(); await f.request(`/api/agents/${other.id}/turns`, { id: wrong, text: `HOLD:${wrong}` });
     await f.request(`${f.path}/${queued}/dispatch`, { ...command(), targetTurn: wrong }, 404);
     const edit = { id: randomUUID(), editor: randomUUID(), action: 'hold', revision: 1 };

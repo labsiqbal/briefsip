@@ -30,8 +30,8 @@ test('hidden agents finish active work, hold queue across restart, reject new wo
   }
   async function until(check: () => Promise<boolean>) { for (let n = 0; n < 150; n++) { if (await check()) return; await new Promise(resolve => setTimeout(resolve, 20)); } assert.fail('Timed out'); }
   try {
-    const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
-    const b = await request('/api/agents', { id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' });
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
+    const b = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' });
     const direct = `/api/agents/${a.id}/turns`, visibility = `/api/agents/${a.id}/visibility`;
     const side = await request(`/api/agents/${a.id}/threads`, { id: randomUUID(), name: 'Side' });
     const channel = await request('/api/channels', { id: randomUUID(), name: 'Team', instructions: 'Help', lead: a.id, members: [a.id, b.id] });
@@ -44,7 +44,7 @@ test('hidden agents finish active work, hold queue across restart, reject new wo
     await request(direct, { id: queued, text: 'QUEUED' });
     const channelQueued = randomUUID();
     await request(`/api/channels/${channel.id}/turns`, { id: channelQueued, text: 'CHANNEL QUEUED', recipient: a.id });
-    const c = await request('/api/agents', { id: randomUUID(), name: 'C', model: 'fixture', instructions: 'Help' });
+    const c = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'C', model: 'fixture', instructions: 'Help' });
     const group = await request('/api/channels', { id: randomUUID(), name: 'Group', instructions: 'Help', lead: a.id, members: [a.id, b.id, c.id] });
     const groupPath = `/api/channels/${group.id}/turns`, released = randomUUID();
     await request(groupPath, { id: released, text: 'REASSIGNED', recipient: a.id });

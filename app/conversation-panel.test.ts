@@ -19,7 +19,7 @@ test('conversation panel reads isolate files, previews, project folders and Git;
   }
   try {
     const agent = randomUUID(), other = randomUUID();
-    for (const id of [agent,other]) await request('/api/agents',{id,name:id,model:'fixture',instructions:'Help'});
+    for (const id of [agent,other]) await request('/api/agents',{runtime:'api', id,name:id,model:'fixture',instructions:'Help'});
     const firstFolder = join(home, 'first'), secondFolder = join(home, 'second'); mkdirSync(firstFolder); mkdirSync(secondFolder);
     execFileSync('git', ['init', '-q', '--initial-branch=main', '--template='], { cwd: firstFolder });
     const p = await request('/api/projects',{id:randomUUID(),name:'Panel project',folders:[{mode:'existing',path:firstFolder}],members:[{agent,write:false}]}), q = await request('/api/projects',{id:randomUUID(),name:'Other project',folders:[{mode:'existing',path:secondFolder}],members:[{agent:other,write:false}]});

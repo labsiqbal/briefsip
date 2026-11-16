@@ -48,14 +48,13 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
   const active = useRef(true);
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
 
-  const [runtime, setRuntime] = useState(profile?.runtime ?? 'api');
+  const [runtime, setRuntime] = useState(profile?.runtime ?? (recovery.command ? recovery.command.runtime ?? 'api' : 'codex'));
   const [runtimeChoices, setRuntimeChoices] = useState<{ runtime: HarnessRuntime; label: string; available: boolean; enabled: boolean; model?: string; models?: { id: string; label: string }[] }[]>([]);
   const [harnessModel, setHarnessModel] = useState<string | null>(null);
   const [runtimeError, setRuntimeError] = useState('');
   useEffect(() => {
-    if (!profile) return;
     let stopped = false;
-    void api<{ choices: typeof runtimeChoices }>(`/api/agents/${profile.id}/runtimes`).then(data => { if (!stopped) setRuntimeChoices(data.choices); }).catch(error => { if (!stopped) setRuntimeError(message(error)); });
+    void api<{ choices: typeof runtimeChoices }>(profile ? `/api/agents/${profile.id}/runtimes` : '/api/runtimes').then(data => { if (!stopped) setRuntimeChoices(data.choices); }).catch(error => { if (!stopped) setRuntimeError(message(error)); });
     return () => { stopped = true; };
   }, [profile]);
   const [account, setAccount] = useState(profile?.provider_account ?? recovery.command?.providerAccount ?? '');
@@ -70,7 +69,7 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
   const [models, setModels] = useState<string[]>([]);
   const [catalogStatus, setCatalogStatus] = useState('Loading models');
   useEffect(() => {
-    if (runtime !== 'api') { setModels([]); return; }
+    if (!['api', 'codex', 'claude'].includes(runtime)) { setModels([]); return; }
     let stopped = false;
     setModels([]); setCatalogStatus('Loading models');
     void api<{ models: string[] }>(`/api/models?account=${encodeURIComponent(account)}`).then(data => {
@@ -90,9 +89,9 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
     const form = new FormData(event.currentTarget);
     const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision } : setup ? { setup: true } : {}), providerAccount: account, name: String(form.get('name')).trim() || (setup ? 'New agent' : ''), role: String(form.get('role')).trim(), model: String(form.get('model')).trim(), backupModel: String(form.get('backupModel')).trim(), instructions: String(form.get('instructions')).trim() || 'Help the user complete their tasks.', threadLimit: Number(form.get('threadLimit')), toolBudget: Number(form.get('toolBudget')) };
     if (profile && runtime !== (profile.runtime ?? 'api') && !pending.current) {
-      if (!await confirm({ title: 'Change agent runtime?', description: 'Future turns use the selected runtime and its host login. Existing history remains in Briefsip; the new runtime starts a fresh conversation. Workspace edits can persist after a turn stops.', confirm: 'Change runtime' })) return;
       Object.assign(data, { runtime, confirmRuntime: true });
     }
+    if (!profile && !pending.current) Object.assign(data, { runtime });
     if (profile && runtime !== 'api' && runtime !== 'codex' && runtime !== 'claude') Object.assign(data, { harnessModel: harnessModel ?? runtimeChoices.find(choice => choice.runtime === runtime)?.model ?? '' });
     setBusy(true); setError('');
     function clearRecovery() { if (!profile && restoreAgentCreation(sessionStorage.getItem(creationKey))?.id === data.id) sessionStorage.removeItem(creationKey); }
@@ -148,17 +147,18 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
     </Field>
   </>;
   const modelFields = <>
+    {profile?.runtime === 'api' && <Button type="button" onClick={event => { flushSync(() => setRuntime('codex')); event.currentTarget.form?.requestSubmit(); }} disabled={locked || busy}>Use Codex</Button>}
     <Field label="Run with" error={runtimeError}>
       <span className="agent-profile__runtime"><Select label="Run with" valueLabel={runtime !== 'api' && !runtimeChoices.some(choice => choice.runtime === runtime && choice.available && choice.enabled) ? ({ codex: 'Codex', claude: 'Claude Code', hermes: 'Hermes', antigravity: 'Antigravity', grok: 'Grok', pi: 'Pi', opencode: 'OpenCode', gemini: 'Gemini', kiro: 'Kiro' })[runtime] : undefined} value={runtime} onChange={value => { setRuntime(value as Runtime); setHarnessModel(null); }} disabled={locked || busy} options={[{ value: 'api', label: <span className="agent-profile__runtime-label"><Globe size={16} aria-hidden />API model</span> }, ...runtimeChoices.filter(choice => choice.available && choice.enabled).map(choice => { const Icon = { codex: Terminal, claude: Sparkles, hermes: Wind, antigravity: Orbit, grok: Eclipse, pi: Circle, opencode: Code, gemini: Bot, kiro: Mountain }[choice.runtime]; return { value: choice.runtime, label: <span className="agent-profile__runtime-label"><Icon size={16} aria-hidden />{choice.label}</span> }; })]} /></span>
     </Field>
     <Field label="Provider" error={accountError && <>{accountError} <button type="button" className="k-link" onClick={() => setAccountReload(value => value + 1)}>Reload</button></>}>
-      <Select value={account} onChange={setAccount} disabled={locked || runtime !== 'api'} options={accountOptions} />
+      <Select value={account} onChange={setAccount} disabled={locked || !['api', 'codex', 'claude'].includes(runtime)} options={accountOptions} />
     </Field>
     {runtime !== 'api' && runtime !== 'codex' && runtime !== 'claude' && <Field label="Harness model">
       <Select label="Harness model" value={harnessModel ?? runtimeChoices.find(choice => choice.runtime === runtime)?.model ?? ''} onChange={setHarnessModel} disabled={locked || busy} options={[{ value: '', label: 'Host default' }, ...(runtimeChoices.find(choice => choice.runtime === runtime)?.models ?? []).map(model => ({ value: model.id, label: model.label }))]} />
     </Field>}
-    <Field label="Model" error={fieldErrors.model} hint={runtime === 'api' ? catalogStatus : 'Host default'}>
-      <Combobox name="model" value={modelValue} onChange={setModelValue} suggestions={models} required maxLength={160} readOnly={locked || runtime !== 'api'} placeholder="Enter model ID" />
+    <Field label="Model" error={fieldErrors.model} hint={['api', 'codex', 'claude'].includes(runtime) ? catalogStatus : undefined}>
+      <Combobox name="model" value={modelValue} onChange={setModelValue} suggestions={models} required maxLength={160} readOnly={locked || !['api', 'codex', 'claude'].includes(runtime)} placeholder="Enter model ID" />
     </Field>
     {profile && <Collapsible title="Fallback model" defaultOpen={!!profile.backup_model}>
       <Field label="Fallback model" optional><Tooltip content="Tried once for quota or availability failure"><span><Combobox name="backupModel" value={backupValue} onChange={setBackupValue} suggestions={models} maxLength={160} readOnly={locked || runtime !== 'api'} placeholder="Enter model ID" /></span></Tooltip></Field>

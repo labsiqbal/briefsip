@@ -32,8 +32,8 @@ test('shared data agent tools journal once across resume, user reads/drop and re
   };
   const query = async (path: string, text: string) => { const id = randomUUID(); await post(path, { id, text }, 202); return JSON.parse((await until(path, id, 'done')).reply); };
   try {
-    const a = await post('/api/agents', { id: randomUUID(), name: 'Creator', model: 'fixture', instructions: 'Use SQL' }, 201);
-    const b = await post('/api/agents', { id: randomUUID(), name: 'Writer', model: 'fixture', instructions: 'Use SQL' }, 201);
+    const a = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Creator', model: 'fixture', instructions: 'Use SQL' }, 201);
+    const b = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Writer', model: 'fixture', instructions: 'Use SQL' }, 201);
     const ap = `/api/agents/${a.id}/turns`, bp = `/api/agents/${b.id}/turns`;
     assert.equal((await query(ap, 'CREATE TABLE things(id INTEGER PRIMARY KEY, text TEXT)')).revision, 1);
     fail = true; const insertion = { id: randomUUID(), text: "INSERT INTO things(text) VALUES ('saved once')" };

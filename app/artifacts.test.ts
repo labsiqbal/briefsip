@@ -45,7 +45,7 @@ test('generated text artifacts persist across interruption without duplicate cre
     assert.fail(`Timed out waiting for ${status}`);
   }
   try {
-    const agent = await post('/api/agents', { id: randomUUID(), name: 'Writer', model: 'fixture', instructions: 'Help.' });
+    const agent = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Writer', model: 'fixture', instructions: 'Help.' });
     const room = await post('/api/channels', { id: randomUUID(), name: 'Room', instructions: 'Help.', members: [agent.id], lead: agent.id });
     const side = await post(`/api/agents/${agent.id}/threads`, { id: randomUUID(), name: 'Side' });
     const paths = [`/api/agents/${agent.id}`, `/api/channels/${room.id}`, `/api/threads/${side.id}`];

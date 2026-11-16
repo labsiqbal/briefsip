@@ -88,7 +88,7 @@ test('native Anthropic messages, catalog, tools, resume, cancellation and fallba
   try {
     assert.deepEqual((await request('/api/models')).models, ['first', 'second']); assert.equal(catalogCalls, 2);
     for (catalogMode of ['bad', 'cycle', 'redirect']) await assert.rejects(discoverModels(options.baseURL, options.apiKey, 'anthropic'), /model catalog/);
-    const a = await request('/api/agents', { id: randomUUID(), name: 'Native', model: 'primary', backupModel: 'backup', instructions: 'Use native tools' });
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Native', model: 'primary', backupModel: 'backup', instructions: 'Use native tools' });
     const path = `/api/agents/${a.id}/turns`;
     for (const scenario of ['text', 'artifact', 'partial', 'unknown', 'multiple', 'overloaded', 'redirect', 'malformed']) {
       mode = scenario; const id = randomUUID(), start = payloads.length, body = { id, text: scenario };
@@ -103,7 +103,7 @@ test('native Anthropic messages, catalog, tools, resume, cancellation and fallba
     await app.close(); app = await startApp(options);
     await request(`${path}/${id}/questions/${waiting.questions[0].id}/answer`, { id: randomUUID(), text: 'Yes' }); assert.equal((await until(path, id)).status, 'done');
     mode = 'text';
-    const b = await request('/api/agents', { id: randomUUID(), name: 'Other', model: 'other', instructions: 'Help' });
+    const b = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Other', model: 'other', instructions: 'Help' });
     const channel = await request('/api/channels', { id: randomUUID(), name: 'Room', instructions: 'Route', members: [a.id, b.id], lead: a.id });
     const workflow = await request(`/api/agents/${a.id}/workflows`, { id: randomUUID(), revision: 0, name: 'Empty output', graph: { entry: 'out', maxSteps: 1, nodes: [{ id: 'out', kind: 'output', channel: channel.id }] } });
     const emptyRun = await request(`/api/workflows/${workflow.id}/run`, { id: randomUUID(), revision: 1, input: '' });

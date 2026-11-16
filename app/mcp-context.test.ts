@@ -55,8 +55,8 @@ test('MCP resources and prompts require exact grants and remain untrusted journa
     assert.fail('MCP context turn did not finish');
   }
   try {
-    const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Read context' });
-    const b = await request('/api/agents', { id: randomUUID(), name: 'B', model: 'fixture', instructions: 'No grant' });
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Read context' });
+    const b = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'B', model: 'fixture', instructions: 'No grant' });
     const input = { id: randomUUID(), name: 'Contexts', url: `http://127.0.0.1:${ea.port}/mcp`, token };
     const tested = await request('/api/mcp/test', input); assert.equal(tested.tools.length, 3);
     const resource = tested.tools.find((tool: any) => tool._meta?.['briefsip.target'] === 'fixture://fixed');

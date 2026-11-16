@@ -36,7 +36,7 @@ test('a hostile MCP output schema cannot block HTTP, exceed the worker deadline 
       while (performance.now() < deadline) { if (await predicate()) return; await new Promise(resolve => setTimeout(resolve, 25)); }
       assert.fail(`${description} within ${timeout}ms`);
     }
-    const agent = await post('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
+    const agent = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
     const tested = await post('/api/mcp/test', { id: randomUUID(), name: 'Hostile schema', url: `http://127.0.0.1:${ea.port}/mcp`, token: '' });
     const saved = await post('/api/mcp', { id: randomUUID(), test: tested.id }); connection = saved.id;
     await post(`/api/agents/${agent.id}/mcp/${connection}`, { id: randomUUID(), revision: 0, connectionRevision: 1, tools: ['slow'] });

@@ -54,8 +54,8 @@ test('turn list exposes scoped read-only activity metadata in direct, thread and
     const value = await response.json(); assert.equal(response.ok, true, JSON.stringify(value)); return value;
   }
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Transcript', model: 'primary', backupModel: 'backup', instructions: 'Test' });
-    const foreign = await request('/api/agents', { id: randomUUID(), name: 'Other', model: 'backup', instructions: 'Test' });
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Transcript', model: 'primary', backupModel: 'backup', instructions: 'Test' });
+    const foreign = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Other', model: 'backup', instructions: 'Test' });
     const thread = await request(`/api/agents/${agent.id}/threads`, { id: randomUUID(), name: 'Side' });
     const channel = await request('/api/channels', { id: randomUUID(), name: 'Room', instructions: 'Test', members: [agent.id], lead: agent.id });
     for (const path of [`/api/agents/${agent.id}/turns`, `/api/threads/${thread.id}/turns`, `/api/channels/${channel.id}/turns`]) {
@@ -114,7 +114,7 @@ test('Stop timestamps survive repeated cancellation and server restart', async (
   }
   try {
     const agent = randomUUID(), turn = randomUUID();
-    await request('/api/agents', { id: agent, name: 'Stop check', model: 'synthetic', instructions: 'Test' });
+    await request('/api/agents', { runtime: 'api', id: agent, name: 'Stop check', model: 'synthetic', instructions: 'Test' });
     const path = `/api/agents/${agent}/turns`;
     await request(path, { id: turn, text: 'Hold reply' });
     let running;

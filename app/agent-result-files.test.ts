@@ -32,7 +32,7 @@ for(const pdf of [false,true]) test(`requester reads returned teammate ${pdf?'PD
  async function ui(path:string,body?:unknown):Promise<any>{const res=await fetch(app.origin+path,{method:body?'POST':'GET',headers:{Origin:app.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const value=await res.json();assert(res.ok,JSON.stringify(value));return value;}
  async function wait(path:string,id:string,status:string){for(let i=0;i<300;i++){const row=(await ui(path)).find((t:any)=>t.id===id);if(row?.status===status)return row;await new Promise(r=>setTimeout(r,10));}assert.fail('Task did not settle');}
  try{
-  const owner=randomUUID();worker=randomUUID();for(const id of [owner,worker])await ui('/api/agents',{id,name:id,model:id===owner?'owner':'worker',instructions:'Help'});
+  const owner=randomUUID();worker=randomUUID();for(const id of [owner,worker])await ui('/api/agents',{runtime:'api', id,name:id,model:id===owner?'owner':'worker',instructions:'Help'});
   const privateThread=await ui(`/api/agents/${worker}/threads`,{id:randomUUID(),name:'Private input'}),privateFile=randomUUID();
   const upload=await fetch(`${app.origin}/api/threads/${privateThread.id}/files/${privateFile}`,{method:'POST',headers:{Origin:app.origin,'Content-Type':'application/octet-stream','X-File-Name':'private.txt'},body:'PRIVATE_INPUT'});assert(upload.ok);
   const side=await ui(`/api/agents/${owner}/threads`,{id:randomUUID(),name:'Side'}),channel=await ui('/api/channels',{id:randomUUID(),name:'Room',instructions:'Help',members:[owner,worker],lead:owner});

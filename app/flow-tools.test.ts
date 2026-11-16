@@ -39,8 +39,8 @@ test('agent flow edits preserve ownership, revisions and ordered receipts across
     assert.fail('Flow tool state did not settle');
   }
   try {
-    const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help.' });
-    const b = await request('/api/agents', { id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help.' });
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help.' });
+    const b = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help.' });
     const input = { name: 'Flow', prompt: 'Synthetic', enabled: false, nextAt: Date.now() + 3600000, intervalSeconds: null };
     const own = await request(`/api/agents/${a.id}/routines`, { ...input, id: randomUUID() });
     const foreign = await request(`/api/agents/${b.id}/routines`, { ...input, id: randomUUID() });

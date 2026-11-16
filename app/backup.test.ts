@@ -94,7 +94,7 @@ test('live backup restores history while holding pending work and disabling auto
     const data = await response.json(); assert(response.ok, JSON.stringify(data)); return data;
   }
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Backup', role: 'Personal agent', model: 'fixture', instructions: 'Help.' });
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Backup', role: 'Personal agent', model: 'fixture', instructions: 'Help.' });
     await app.close();
     const seed = new DatabaseSync(options.database);
     seed.prepare('INSERT INTO routines(id,agent,name,prompt,next_at,enabled,revision) VALUES (?,?,?,?,?,1,1)').run(randomUUID(), agent.id, 'Future', 'Help', Date.now() + 3600000);

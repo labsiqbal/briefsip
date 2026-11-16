@@ -39,8 +39,8 @@ test('site tools bind sent files and owner, journal results and never replay old
   async function run(path:string,files:string[]=[],status='done') { const id=randomUUID(), command={id,text:'Manage local site',files}; await request(path+'/turns',command); await until(path,id,status); await request(path+'/turns',command); return id; }
   async function upload(path:string,source:string|Uint8Array,name='page.html') { const id=randomUUID(); const response=await fetch(app.origin+path+'/files/'+id,{method:'POST',headers:{Origin:app.origin,'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(name)},body:typeof source === 'string' ? source : Buffer.from(source)}); assert(response.ok); return id; }
   try {
-    const a=await request('/api/agents',{id:randomUUID(),name:'Publisher',model:'fixture',instructions:'Help'});
-    const b=await request('/api/agents',{id:randomUUID(),name:'Other',model:'fixture',instructions:'Help'});
+    const a=await request('/api/agents',{runtime:'api', id:randomUUID(),name:'Publisher',model:'fixture',instructions:'Help'});
+    const b=await request('/api/agents',{runtime:'api', id:randomUUID(),name:'Other',model:'fixture',instructions:'Help'});
     const path=`/api/agents/${a.id}`, other=`/api/agents/${b.id}`;
     const side=await request(path+'/threads',{id:randomUUID(),name:'Side'}), sidePath=`/api/threads/${side.id}`;
     const room=await request('/api/channels',{id:randomUUID(),name:'Room',members:[a.id],lead:a.id,instructions:'Help'});

@@ -18,7 +18,7 @@ test('packs pin members and apply lifecycle atomically without replacing manual 
     const data = await response.json(); assert.equal(response.status, expected, JSON.stringify(data)); return data;
   }
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'unused', instructions: 'Test' }, 201);
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'unused', instructions: 'Test' }, 201);
     const skills: { id: string }[] = [];
     for (let i = 0; i < 5; i++) skills.push(await request('/api/skills', { id: randomUUID(), revision: 0, name: `Skill ${i}`, description: 'Fixture', content: 'x'.repeat(16000) }));
     const members = skills.slice(0, 2).map(skill => ({ skill: skill.id, version: 1 }));

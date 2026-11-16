@@ -43,7 +43,7 @@ test('HTTP transcription requires consent, isolates files and never silently rep
   const post = (path: string, data: unknown, origin = app.origin) => fetch(app.origin + path, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
   const get = async (path: string) => { const response = await fetch(app.origin + path); assert.equal(response.status, 200); return response.json(); };
   try {
-    const agent = await (await post('/api/agents', { id: randomUUID(), name: 'Audio', model: 'fixture', instructions: 'Help.' })).json();
+    const agent = await (await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Audio', model: 'fixture', instructions: 'Help.' })).json();
     const channel = await (await post('/api/channels', { id: randomUUID(), name: 'Audio room', instructions: 'Help.', members: [agent.id], lead: agent.id })).json();
     const thread = await (await post(`/api/agents/${agent.id}/threads`, { id: randomUUID(), name: 'Audio side' })).json();
     const unsupported = `/api/agents/${agent.id}/files/${randomUUID()}`;
@@ -111,7 +111,7 @@ test('in-flight transcription deduplicates and cannot publish after archive or s
   let app = await startApp(options);
   const post = (path: string, data: unknown) => fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
   try {
-    const agent = await (await post('/api/agents', { id: randomUUID(), name: 'Held', model: 'fixture', instructions: 'Help.' })).json();
+    const agent = await (await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Held', model: 'fixture', instructions: 'Help.' })).json();
     for (const shutdown of [false, true]) {
       const thread = await (await post(`/api/agents/${agent.id}/threads`, { id: randomUUID(), name: 'Side' })).json();
       const files = `/api/threads/${thread.id}/files`, path = `${files}/${randomUUID()}`;
@@ -140,7 +140,7 @@ test('transcription is opt-in and validates request bodies', async () => {
   const app = await startApp({ database: join(dir, 'state.sqlite') });
   const post = (path: string, data: unknown) => fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
   try {
-    const agent = await (await post('/api/agents', { id: randomUUID(), name: 'Off', model: 'fixture', instructions: 'Help.' })).json();
+    const agent = await (await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Off', model: 'fixture', instructions: 'Help.' })).json();
     const path = `/api/agents/${agent.id}/files/${randomUUID()}`;
     await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/octet-stream', 'X-File-Name': 'audio.wav' }, body: 'RIFF0000WAVEfixture' });
     const endpoint = `${path}?transcription=1`;
@@ -173,7 +173,7 @@ test('transcription rejects redirects and oversized output, and script grants ca
   const app = await startApp({ database: join(dir, 'state.sqlite'), scriptToken: token, transcriptionProvider: { baseURL: `http://127.0.0.1:${address.port}/v1`, model: 'fixture' } });
   const post = (path: string, data: unknown) => fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
   try {
-    const agent = await (await post('/api/agents', { id: randomUUID(), name: 'Bounds', model: 'fixture', instructions: 'Help.' })).json();
+    const agent = await (await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Bounds', model: 'fixture', instructions: 'Help.' })).json();
     assert.equal((await post(`/api/agents/${agent.id}/scripts`, { id: randomUUID(), revision: 0, enabled: true })).status, 200);
     const thread = await (await post(`/api/agents/${agent.id}/threads`, { id: randomUUID(), name: 'Bounds' })).json();
     const file = randomUUID(), files = `/api/threads/${thread.id}/files`, path = `${files}/${file}`, endpoint = `${path}?transcription=1`;
@@ -239,7 +239,7 @@ test('cancelling streamed transcription persists without publication or replay',
   const options = { database: join(dir, 'state.sqlite'), transcriptionProvider: { baseURL: `http://127.0.0.1:${address.port}/v1`, model: 'fixture' } };
   app = await startApp(options);
   const post = (path: string, data: unknown) => fetch(app!.origin + path, { method: 'POST', headers: { Origin: app!.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-  const agent = await (await post('/api/agents', { id: randomUUID(), name: 'Cancel', model: 'fixture', instructions: 'Help.' })).json();
+  const agent = await (await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Cancel', model: 'fixture', instructions: 'Help.' })).json();
   const files = `/api/agents/${agent.id}/files`, file = randomUUID(), path = `${files}/${file}`, endpoint = `${path}?transcription=1`;
   const upload = (id: string) => fetch(app!.origin + `${files}/${id}`, { method: 'POST', headers: { Origin: app!.origin, 'Content-Type': 'application/octet-stream', 'X-File-Name': 'audio.wav' }, body: 'RIFF0000WAVEfixture' });
   assert.equal((await upload(file)).status, 200);

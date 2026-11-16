@@ -14,8 +14,8 @@ test('local sites retain URLs, isolate owners, reject stale writes and recover w
     const data = await response.json(); assert.equal(response.status, expected, JSON.stringify(data)); return data;
   }
   try {
-    const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' }, 201);
-    const b = await request('/api/agents', { id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' }, 201);
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' }, 201);
+    const b = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' }, 201);
     const path = `/api/agents/${a.id}/sites`, other = `/api/agents/${b.id}/sites`;
     const command = { id: randomUUID(), name: 'Report', source: '<h1 style="color:red">One</h1><script>fetch("/api/agents")</script><meta http-equiv="refresh" content="0;url=https://example.com"><form action="/api/agents"><input></form><iframe src="/api/agents"></iframe><img src="https://example.com">' };
     const site = await request(path, command); assert.equal(site.revision, 1);

@@ -35,8 +35,8 @@ test('profile tool preserves authority, revision conflicts, execution snapshot a
   async function until(path: string, id: string, status = 'done') { return waitFor(async () => (await request(path + '/turns')).find((row: any) => row.id === id && row.status === status)); }
   async function run(path: string, status = 'done') { const id = randomUUID(); const command = { id, text: 'Change your profile' }; await request(path + '/turns', command); await until(path, id, status); await request(path + '/turns', command); return id; }
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Original', model: 'fixture', instructions: 'Original instructions.' });
-    const other = await request('/api/agents', { id: randomUUID(), name: 'Other', model: 'fixture', instructions: 'Other instructions.' });
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Original', model: 'fixture', instructions: 'Original instructions.' });
+    const other = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Other', model: 'fixture', instructions: 'Other instructions.' });
     const path = `/api/agents/${agent.id}`;
     const profile = async () => (await request('/api/agents')).agents.find((item: any) => item.id === agent.id);
     const side = await request(path + '/threads', { id: randomUUID(), name: 'Side' });

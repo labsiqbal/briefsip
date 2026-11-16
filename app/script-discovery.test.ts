@@ -22,7 +22,7 @@ test('duplicate discovery startup cannot interrupt the owning server task', asyn
     const value = await res.json(); assert(res.ok, JSON.stringify(value)); return value;
   }
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'test', instructions: 'Help' });
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'test', instructions: 'Help' });
     const path = `/api/agents/${agent.id}/turns`, id = randomUUID();
     await request(path, { id, text: 'Hold' }); await started;
     await assert.rejects(startApp(options));
@@ -48,8 +48,8 @@ test('private script discovery follows live grants, rotates on restart and prese
   try {
     assert.equal(lstatSync(directory).mode & 0o777, 0o700);
     assert(!existsSync(file));
-    const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'test', instructions: 'Help' });
-    const b = await request('/api/agents', { id: randomUUID(), name: 'B', model: 'test', instructions: 'Help' });
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'test', instructions: 'Help' });
+    const b = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'B', model: 'test', instructions: 'Help' });
     const path = `/api/agents/${a.id}/scripts`;
     assert.equal((await request(path)).configured, true);
     const enable = { id: randomUUID(), revision: 0, enabled: true };

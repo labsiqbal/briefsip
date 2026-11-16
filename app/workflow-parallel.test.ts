@@ -20,7 +20,7 @@ test('parallel workflow joins once in branch order, retains failures and cancels
   const request=async(path:string,body?:unknown,status=200)=>{const response=await fetch(app!.origin+path,{method:body?'POST':'GET',headers:{Origin:app!.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const value=await response.json();assert.equal(response.status,status,JSON.stringify(value));return value;};
   const until=async(check:()=>Promise<boolean>)=>{for(let n=0;n<200;n++){if(await check())return;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Timed out');};
   const finish=(model:string,text:string,failed=false)=>{const res=held.get(model)!;assert(res);held.delete(model);res.statusCode=failed?500:200;res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content:text}}]}));};
-  const a=await request('/api/agents',{id:randomUUID(),name:'A',model:'a',instructions:'Help.',threadLimit:1},201),b=await request('/api/agents',{id:randomUUID(),name:'B',model:'b',instructions:'Help.'},201);
+  const a=await request('/api/agents',{runtime:'api', id:randomUUID(),name:'A',model:'a',instructions:'Help.',threadLimit:1},201),b=await request('/api/agents',{runtime:'api', id:randomUUID(),name:'B',model:'b',instructions:'Help.'},201);
   const graph={entry:'parallel',maxSteps:4,nodes:[{id:'parallel',kind:'parallel',branches:[{kind:'agent',agent:a.id,prompt:'A'},{kind:'model',model:'b',prompt:'B'}],next:'out'},{id:'out',kind:'output'}]};
   assert.throws(()=>validateWorkflow({...graph,nodes:[{...graph.nodes[0],branches:[]},graph.nodes[1]]},new Set([a.id,b.id])));
   const workflow=await request(`/api/agents/${b.id}/workflows`,{id:randomUUID(),revision:0,name:'Parallel',graph});

@@ -56,12 +56,12 @@ test('agents bind isolated provider accounts across channels, side threads, edit
     const agents = [];
     for (const account of accounts) {
       const command = { id: randomUUID(), name: account.id, model: 'fixture', instructions: 'Help', providerAccount: account.id };
-      const agent = await request('/api/agents', command); agents.push(agent); assert.deepEqual(await request('/api/agents', command), agent);
-      await request('/api/agents', { ...command, providerAccount: 'missing' }, 409);
+      const agent = await request('/api/agents', { ...command, runtime: 'api' }); agents.push(agent); assert.deepEqual(await request('/api/agents', { ...command, runtime: 'api' }), agent);
+      await request('/api/agents', { runtime: 'api', ...command, providerAccount: 'missing' }, 409);
       const side = await request(`/api/agents/${agent.id}/threads`, { id: randomUUID(), name: 'Side' });
       for (const path of [`/api/agents/${agent.id}/turns`, `/api/threads/${side.id}/turns`]) { const id = randomUUID(); await request(path, { id, text: `Use ${account.id}` }); assert.equal((await until(path, id)).reply, account.id); }
     }
-    await request('/api/agents', { id: randomUUID(), name: 'Invalid', model: 'fixture', instructions: 'Help', providerAccount: 'missing' }, 400);
+    await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Invalid', model: 'fixture', instructions: 'Help', providerAccount: 'missing' }, 400);
     const [a, b, c] = agents;
     const channel = await request('/api/channels', { id: randomUUID(), name: 'Mixed', instructions: 'Help', lead: a.id, members: agents.map(agent => agent.id) });
     const channelPath = `/api/channels/${channel.id}/turns`;

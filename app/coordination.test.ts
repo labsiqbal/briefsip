@@ -53,8 +53,8 @@ test('coordination: durable delegation, transfer, cancellation, rejection and re
     assert.fail(`Timed out waiting for ${status}`);
   }
   try {
-    const alpha = await post('/api/agents', { id: randomUUID(), name: 'Alpha', model: 'alpha', instructions: 'Coordinate.' });
-    const beta = await post('/api/agents', { id: randomUUID(), name: 'Beta', model: 'beta', instructions: 'Help.' });
+    const alpha = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Alpha', model: 'alpha', instructions: 'Coordinate.' });
+    const beta = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Beta', model: 'beta', instructions: 'Help.' });
     const channel = await post('/api/channels', { id: randomUUID(), name: 'Team', instructions: 'Collaborate.', members: [alpha.id, beta.id], lead: alpha.id });
     const path = `/api/channels/${channel.id}/turns`;
     const delegated = { id: randomUUID(), text: 'delegate', recipient: alpha.id };
@@ -78,7 +78,7 @@ test('coordination: durable delegation, transfer, cancellation, rejection and re
     assert.match((await waitTurn(path, outsider.id, 'done')).reply, /member/);
     assert.equal(calls.length, before + 2);
     // Keep the longer family-limit cycle separate from later rate-sensitive scenarios.
-    const cycleAgents = await Promise.all(['Cycle A', 'Cycle B'].map(name => post('/api/agents', { id: randomUUID(), name, model: 'cycle', instructions: 'Coordinate.' })));
+    const cycleAgents = await Promise.all(['Cycle A', 'Cycle B'].map(name => post('/api/agents', { runtime: 'api', id: randomUUID(), name, model: 'cycle', instructions: 'Coordinate.' })));
     const cycleRoom = await post('/api/channels', { id: randomUUID(), name: 'Cycle', instructions: 'Coordinate.', members: cycleAgents.map(agent => agent.id), lead: cycleAgents[0].id });
     const cyclePath = `/api/channels/${cycleRoom.id}/turns`, cycle = { id: randomUUID(), text: 'cycle', recipient: cycleAgents[0].id };
     await post(cyclePath, cycle);
@@ -154,7 +154,7 @@ test('coordination: durable delegation, transfer, cancellation, rejection and re
     assert.equal(grandchild.agent, alpha.id); assert.equal(grandchild.status, 'done');
     const parallel: { path: string; id: string }[] = [];
     for (let i = 0; i < 4; i++) {
-      const lead = await post('/api/agents', { id: randomUUID(), name: `Parallel ${i}`, model: `parallel-${i}`, instructions: 'Coordinate.' });
+      const lead = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: `Parallel ${i}`, model: `parallel-${i}`, instructions: 'Coordinate.' });
       const room = await post('/api/channels', { id: randomUUID(), name: `Parallel ${i}`, instructions: 'Work.', members: [lead.id, beta.id], lead: lead.id });
       const target = `/api/channels/${room.id}/turns`, id = randomUUID();
       parallel.push({ path: target, id });

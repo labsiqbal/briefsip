@@ -40,7 +40,7 @@ for (const [source, target] of [['openai-compatible', 'openai-compatible'], ['op
       assert.fail('Task did not settle');
     }
     try {
-      const agent = await request('/api/agents', { id: randomUUID(), name: 'Stable identity', model: 'fixture', instructions: 'Help' });
+      const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Stable identity', model: 'fixture', instructions: 'Help' });
       const side = await request(`/api/agents/${agent.id}/threads`, { id: randomUUID(), name: 'Private side' });
       const channel = await request('/api/channels', { id: randomUUID(), name: 'Shared', instructions: 'Help', members: [agent.id], lead: agent.id });
       const directPath = `/api/agents/${agent.id}/turns`, sidePath = `/api/threads/${side.id}/turns`;

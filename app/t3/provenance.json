@@ -881,6 +881,55 @@
       "dependencies": [],
       "adaptation": "Blocking Pi tool_call hook and session-scoped HTTP MCP bridge, using plain JSON Schema and native fetch; no installed extension or auth configuration changes.",
       "compatibilityCheck": "app/acp-harness.test.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/provider/CodexProvider.ts",
+      "symbols": [
+        "CodexRoutingConfig",
+        "routesToNativeOpenai"
+      ],
+      "adaptation": "Custom Responses model provider configuration adapted to saved Briefsip accounts and disposable session homes; credentials use env_key.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "56ba0de0010948a2ef57ca8b17ff963f23a5581acfbf0a96fa69f81d049ecf03",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/harness-default.test.ts",
+      "localPaths": [
+        "app/harness-session.ts"
+      ]
+    },
+    {
+      "sourcePath": "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts",
+      "symbols": [
+        "codexRuntimeModeTurnDefaults"
+      ],
+      "adaptation": "Workspace-write/on-request user approval policy; Briefsip retains its own JSON-RPC adapter and approval receipts.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "8571ac55de8200ba950e50d5cedce055ebb62ff16f14220d88335ca02cdc1ccf",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/harness-default.test.ts",
+      "localPaths": [
+        "app/harness.ts"
+      ]
+    },
+    {
+      "sourcePath": "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
+      "symbols": [
+        "permissionModeForClaudeRuntimePolicy"
+      ],
+      "adaptation": "Workspace edit auto-accept policy adapted through fail-closed Briefsip hooks; shell uses existing bwrap MCP runner, native Bash requires approval.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "4f7f7861cd7100cf2a504ed313639da1d6a77185c9284bbd0601ef3c69ffe746",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/harness-default.test.ts",
+      "localPaths": [
+        "app/harness.ts"
+      ]
     }
   ],
   "adaptedEntries": [

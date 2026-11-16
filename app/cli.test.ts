@@ -36,8 +36,8 @@ test('CLI routine lists and histories stay within the selected granted agent', a
     let output = ''; child.stdout.on('data', chunk => { output += chunk; }); child.stderr.resume(); child.on('error', reject);
     child.on('close', code => { try { const value = JSON.parse(output); assert.equal(value.exitCode, code); resolve(value); } catch (error) { reject(error); } });
   });
-  const a = await ui('/api/agents', { id: randomUUID(), name: 'Routine owner', model: 'fixture', instructions: 'Help' });
-  const b = await ui('/api/agents', { id: randomUUID(), name: 'Other', model: 'fixture', instructions: 'Help' });
+  const a = await ui('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Routine owner', model: 'fixture', instructions: 'Help' });
+  const b = await ui('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Other', model: 'fixture', instructions: 'Help' });
   for (const agent of [a,b]) await ui(`/api/agents/${agent.id}/scripts`, { id: randomUUID(), revision: 0, enabled: true });
   const settings = await terminal(['provider', a.id]);
   assert.equal(settings.exitCode, 0); assert.equal(settings.provider.model, 'fixture'); assert.equal(settings.provider.providerAccount, '');
@@ -131,8 +131,8 @@ test('CLI workflow discovery paginates and explicit approvals retain identity af
     child.on('close', code => { try { const result = JSON.parse(output); assert.equal(code, result.exitCode); resolve(result); } catch (error) { reject(error); } });
   });
   const useProxy = () => { const file = join(directory, 'connection.json'), saved = JSON.parse(readFileSync(file, 'utf8')); writeFileSync(file, JSON.stringify({ ...saved, url: `http://127.0.0.1:${address.port}` })); };
-  const owner = await ui('/api/agents', { id: randomUUID(), name: 'Approver', model: 'fixture', instructions: 'Help' });
-  const other = await ui('/api/agents', { id: randomUUID(), name: 'Other', model: 'fixture', instructions: 'Help' });
+  const owner = await ui('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Approver', model: 'fixture', instructions: 'Help' });
+  const other = await ui('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Other', model: 'fixture', instructions: 'Help' });
   for (const agent of [owner, other]) await ui(`/api/agents/${agent.id}/scripts`, { id: randomUUID(), revision: 0, enabled: true });
   const workflows: string[] = [], runs: string[] = [];
   for (let n = 0; n < 51; n++) {
@@ -256,8 +256,8 @@ test('script CLI discovers only grants, sends once, waits, preserves retry ID an
     const value = await res.json(); assert(res.ok, JSON.stringify(value)); return value;
   }
   try {
-    const a = await request('/api/agents', { id: randomUUID(), name: 'Alpha', model: 'test', instructions: 'Help' });
-    const b = await request('/api/agents', { id: randomUUID(), name: 'alpha', model: 'test', instructions: 'Help' });
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Alpha', model: 'test', instructions: 'Help' });
+    const b = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'alpha', model: 'test', instructions: 'Help' });
     await request(`/api/agents/${a.id}/scripts`, { id: randomUUID(), revision: 0, enabled: true });
     const list = await cli(['list'], directory); assert.equal(list.exitCode, 0); assert.deepEqual(list.agents?.map(row => row.id), [a.id]);
     const id = randomUUID(), args = ['run','ALPHA','Hello','--id',id,'--wait','--timeout','3'];
@@ -324,7 +324,7 @@ test('script CLI discovers only grants, sends once, waits, preserves retry ID an
       app = await startApp(options);
       const interrupted = await waiting; assert.equal(interrupted.exitCode, 1); assert.equal(interrupted.turn.status, 'interrupted'); assert.equal(calls, 7);
     } finally { proxy.closeAllConnections(); await new Promise<void>(resolve => proxy.close(() => resolve())); }
-    const collision = await request('/api/agents', { id: randomUUID(), name: a.id, model: 'test', instructions: 'Help' });
+    const collision = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: a.id, model: 'test', instructions: 'Help' });
     await request(`/api/agents/${collision.id}/scripts`, { id: randomUUID(), revision: 0, enabled: true });
     assert.equal((await cli(['status',a.id,id], directory)).exitCode, 0);
     assert.equal((await cli(['status',a.id.toUpperCase(),id], directory)).exitCode, 0);
@@ -334,7 +334,7 @@ test('script CLI discovers only grants, sends once, waits, preserves retry ID an
     assert.equal((await cli(['status',a.id,id], directory)).exitCode, 5);
     assert.equal((await cli(['cancel',a.id,held.id], directory)).exitCode, 5);
     for (let n = 0; n < 99; n++) {
-      const extra = await request('/api/agents', { id: randomUUID(), name: `Extra ${n}`, model: 'test', instructions: 'Help' });
+      const extra = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: `Extra ${n}`, model: 'test', instructions: 'Help' });
       await request(`/api/agents/${extra.id}/scripts`, { id: randomUUID(), revision: 0, enabled: true });
     }
     const catalog = await cli(['list'], directory); assert.equal(catalog.agents?.length, 101);
@@ -428,8 +428,8 @@ test('CLI answers retain receipt identity across lost replies and restart', asyn
     });
   }
   try {
-    const a = await ui('/api/agents', { id: randomUUID(), name: 'Answer agent', model: 'fixture', instructions: 'Help' });
-    const b = await ui('/api/agents', { id: randomUUID(), name: 'Other', model: 'fixture', instructions: 'Help' });
+    const a = await ui('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Answer agent', model: 'fixture', instructions: 'Help' });
+    const b = await ui('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Other', model: 'fixture', instructions: 'Help' });
     for (const agent of [a,b]) await ui(`/api/agents/${agent.id}/scripts`, { id: randomUUID(), revision: 0, enabled: true });
     useProxy();
     const ask = await terminal(['run',a.id,'ASK','--wait','--timeout','5']); assert.equal(ask.exitCode, 3);

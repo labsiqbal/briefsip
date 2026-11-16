@@ -99,7 +99,7 @@ test('room polling retains active members beyond full history and orders prose/t
   };
   try {
     const agents = [randomUUID(), randomUUID(), randomUUID()];
-    for (const [index, id] of agents.entries()) await request('/api/agents', { id, name: `Member ${index}`, model: `fixture-${index}`, instructions: 'Help' });
+    for (const [index, id] of agents.entries()) await request('/api/agents', { runtime: 'api', id, name: `Member ${index}`, model: `fixture-${index}`, instructions: 'Help' });
     const channel = randomUUID(), other = randomUUID();
     for (const id of [channel, other]) await request('/api/channels', { id, name: id, members: agents, lead: null, instructions: 'Help' });
     const path = `/api/channels/${channel}/turns`, root = randomUUID();
@@ -177,8 +177,8 @@ test('SSE delivers ordered persisted snapshots; reconnect repairs missed text wi
   }
   try {
     const id = randomUUID(), other = randomUUID(), thread = randomUUID(), channel = randomUUID();
-    await request('/api/agents', { id, name: 'Stream', model: 'fixture', instructions: 'Help' });
-    await request('/api/agents', { id: other, name: 'Other', model: 'fixture', instructions: 'Help' });
+    await request('/api/agents', { runtime: 'api', id, name: 'Stream', model: 'fixture', instructions: 'Help' });
+    await request('/api/agents', { runtime: 'api', id: other, name: 'Other', model: 'fixture', instructions: 'Help' });
     await request(`/api/agents/${id}/threads`, { id: thread, name: 'Side thread' });
     await request('/api/channels', { id: channel, name: 'Isolated channel', instructions: 'Help', members: [id, other], lead: null });
     const path = `/api/agents/${id}/turns`, turn = randomUUID();

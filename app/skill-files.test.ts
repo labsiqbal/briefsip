@@ -58,8 +58,8 @@ test('folder revisions, receipts and pinned file tools survive reload without fo
     assert.fail('Task did not settle');
   }
   try {
-    const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' }, 201);
-    const b = await request('/api/agents', { id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' }, 201);
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' }, 201);
+    const b = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' }, 201);
     const command = { id: randomUUID(), revision: 0, files };
     await request('/api/skills', { ...command, files: [{ path: 'SKILL.md', content: '---\nname: test\ndescription: Test\nmetadata: {version: 123}\n---\nBody' }] }, 400);
     assert.equal((await request('/api/skills')).skills.length, 0);

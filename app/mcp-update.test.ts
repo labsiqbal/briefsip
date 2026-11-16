@@ -28,8 +28,8 @@ test('tested MCP updates bind origin/revision, rotate credentials and invalidate
   const get = async (path: string) => { const response = await fetch(app.origin + path); assert(response.ok); return response.json(); };
   const probe = (connection: string, revision: number, extra: Record<string, unknown> = {}) => post('/api/mcp/test', { id: randomUUID(), connection, revision, name: 'Updated', ...extra });
   try {
-    const a = await post('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' }, 201);
-    const b = await post('/api/agents', { id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' }, 201);
+    const a = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' }, 201);
+    const b = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' }, 201);
     const initial = await post('/api/mcp/test', { id: randomUUID(), name: 'Original', url, token: oldToken });
     const row = await post('/api/mcp', { id: randomUUID(), test: initial.id }), path = `/api/mcp/${row.id}`, ag = `/api/agents/${a.id}/mcp/${row.id}`, bg = `/api/agents/${b.id}/mcp/${row.id}`;
     assert.equal((await get(path)).revision, 1);

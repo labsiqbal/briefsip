@@ -19,7 +19,7 @@ async function fixture(extra:Record<string,any>={}){
   async function request(path:string,data?:unknown,status=200){const response=await fetch(app.origin+path,data?{method:'POST',headers:{Origin:app.origin,'Content-Type':'application/json'},body:JSON.stringify(data)}:{});const raw=await response.text();responses.push(raw);assert.equal(response.status,status,`${path}: ${raw}`);return JSON.parse(raw);}
   async function until(path:string,id:string,predicate=(row:any)=>['done','failed'].includes(row.status)){for(let n=0;n<1000;n++){const row=(await request(path)).find((row:any)=>row.id===id);if(row&&predicate(row))return row;await new Promise(r=>setTimeout(r,15));}assert.fail('Turn timed out: '+id);}
   async function run(path:string,text:string,recipient?:string){const id=randomUUID();await request(path,{id,text,...(recipient?{recipient}:{})},202);const row=await until(path,id);assert.equal(row.status,'done',row.error);return row;}
-  async function agent(name='Member',id=randomUUID()){return request('/api/agents',{id,name,model:'fake',instructions:'Help.'},201);}
+  async function agent(name='Member',id=randomUUID()){return request('/api/agents',{runtime:'api', id,name,model:'fake',instructions:'Help.'},201);}
   async function project(agent:string,name:string,folder=false){return request('/api/projects',{id:randomUUID(),name,members:[{agent,write:false}],...(folder?{folders:[{mode:'new'}]}:{})});}
   return {directory,database,request,responses,until,run,agent,project,get app(){return app;},async restart(){await app.close();app=await startApp(options);},async shutdown(){if(!closed){await app.close();closed=true;}},async close(){if(!closed)await app.close();rmSync(directory,{recursive:true,force:true});}};
 }
@@ -38,7 +38,7 @@ for(const runtime of ['codex','claude'] as const)test(`${runtime}: project envir
   const source=readFileSync(new URL('./fixtures/fake-harness.mjs',import.meta.url),'utf8');
   writeFileSync(binary,`#!${process.execPath}\n`+source.split('\n').slice(1).join('\n').replace("import { spawn }", "import { spawn, execFileSync }").replace('prompt = text; log(',`prompt = text; if(text.slice(text.lastIndexOf('user:')).includes('ENV_PRESENT')) { assert.equal(process.env.PROJECT_TEST_TOKEN, '${secret}'); const output=execFileSync('/bin/sh',['-c','printf %s "$PROJECT_TEST_TOKEN"'],{encoding:'utf8'}); assert.equal(output,process.env.PROJECT_TEST_TOKEN); delta(output.slice(0,8)); delta(output.slice(8)); } else if(text.slice(text.lastIndexOf('user:')).includes('ENV_ABSENT')) assert.equal(process.env.PROJECT_TEST_TOKEN,undefined); log(`));chmodSync(binary,0o700);
   const direct=join(binaries,'direct');mkdirSync(direct);const agentId=randomUUID();
-  const f=await fixture({workspaces:[{agent:agentId,directory:direct,write:false}],harness:{executables:{[runtime]:binary}}});
+  const f=await fixture({baseURL:'http://127.0.0.1:1/v1',workspaces:[{agent:agentId,directory:direct,write:false}],harness:{executables:{[runtime]:binary}}});
   try{
     const a=await f.agent('Member',agentId),p=await f.project(a.id,'Environment A',true),b=await f.project(a.id,'Environment B',true),base=`/api/projects/${p.id}/environment`;
     for(const name of ['PATH','HOME','LD_LIBRARY_PATH','NODE_OPTIONS','BRIEFSIP_TOKEN'])await f.request(base,{id:randomUUID(),name,value:secret},400);

@@ -41,7 +41,7 @@ test('agent event waits release workers, survive restart, honor pause and accept
     const value = await res.json(); assert.equal(res.status, expected, JSON.stringify(value)); return value;
   }
   try {
-    const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
     const direct = `/api/agents/${a.id}/turns`;
     const first = await waiting(direct), connection = await request(`/api/turn-waits/${first.events[0].id}`);
     for (const [name, value] of [['Origin', 'https://foreign.test'], ['Sec-Fetch-Site', 'cross-site']]) {
@@ -138,7 +138,7 @@ test('routine waits preserve artifacts and reject events cancelled before upload
     return { 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': id, 'X-Briefsip-Signature': createHmac('sha256', secret).update(`${time}\n${id}\n${body}`).digest('hex') };
   }
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Routine', model: 'fixture', instructions: 'Help' });
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Routine', model: 'fixture', instructions: 'Help' });
     const routine = await request(`/api/agents/${agent.id}/routines`, { id: randomUUID(), name: 'Event routine', prompt: 'Wait for event', nextAt: Date.now() + 3600000, intervalSeconds: null, enabled: false });
     await request(`/api/routines/${routine.id}/test`, { id: randomUUID(), revision: routine.revision });
     const runsPath = `/api/routines/${routine.id}/runs`;
@@ -211,8 +211,8 @@ for (const boundary of ['workflow', 'channel', 'thread'] as const) test(`${bound
     assert.fail('Workflow child did not settle');
   }
   try {
-    const owner = await request('/api/agents', { id: randomUUID(), name: 'Owner', model: 'source', instructions: 'Help' });
-    const child = await request('/api/agents', { id: randomUUID(), name: 'Child', model: 'child', instructions: 'Help' }); recipient = child.id;
+    const owner = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Owner', model: 'source', instructions: 'Help' });
+    const child = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Child', model: 'child', instructions: 'Help' }); recipient = child.id;
     let cancel: () => Promise<unknown>, verifyRoot: () => Promise<void>, restore: (() => Promise<unknown>) | undefined;
     if (boundary === 'workflow') {
       const graph = { entry: 'agent', maxSteps: 4, nodes: [{ id: 'agent', kind: 'agent', agent: owner.id, prompt: 'Notify child', next: 'wait' }, { id: 'wait', kind: 'wait', event: 'workflow-ready', timeoutSeconds: 3600, next: 'out' }, { id: 'out', kind: 'output' }] };

@@ -44,7 +44,7 @@ test('Telegram inline approvals validate message ownership and persist the first
   async function start(){sequence++;recordTelegramUpdates(db,[{update_id:sequence,message:{message_id:sequence,chat:{id:4,type:'private'},from:{id:4,is_bot:false},text:`/workflow ${workflow.id} 1 Button result`}}],users);const row=db.prepare('SELECT * FROM telegram_inbox WHERE update_id=?').get(sequence)!;await telegramAgentStep(db,users,local,remote);const notice=db.prepare('SELECT notice FROM telegram_approvals WHERE run=?').get(row.turn)!;const delivered=sent.find(item=>item.reply_markup?.inline_keyboard[0][0].callback_data===`a:${notice.notice}:y`);assert(delivered);return {id:notice.notice,message_id:delivered.message_id,run:row.turn};}
   let workflow:any;
   try{
-    await ui('/api/agents',{id:agent,name:'Buttons',model:'fixture',instructions:'Help'});await ui(`/api/agents/${agent}/scripts`,{id:randomUUID(),revision:0,enabled:true});
+    await ui('/api/agents',{runtime:'api', id:agent,name:'Buttons',model:'fixture',instructions:'Help'});await ui(`/api/agents/${agent}/scripts`,{id:randomUUID(),revision:0,enabled:true});
     workflow=await ui(`/api/agents/${agent}/workflows`,{id:randomUUID(),revision:0,name:'Buttons',graph:{entry:'approve',maxSteps:2,nodes:[{id:'approve',kind:'approval',prompt:'Proceed?',yes:'out'},{id:'out',kind:'output'}]}});
     initializeTelegram(db);bindTelegram(db,123,agent);const notice=await start();
     for(const change of [
@@ -81,7 +81,7 @@ test('Telegram workflow approval binds requester and recovers lost run and decis
   const remote=async(_method:string,body:Record<string,unknown>)=>{sent.push(body);return {message_id:sent.length,chat:{id:body.chat_id}};};
   function incoming(user:number,text:string){sequence++;recordTelegramUpdates(db,[{update_id:sequence,message:{message_id:sequence,chat:{id:user,type:'private'},from:{id:user,is_bot:false},text}}],users);return db.prepare('SELECT * FROM telegram_inbox WHERE update_id=?').get(sequence)!;}
   try{
-    await ui('/api/agents',{id:agent,name:'Workflow',model:'fixture',instructions:'Help'});await ui(`/api/agents/${agent}/scripts`,{id:randomUUID(),revision:0,enabled:true});
+    await ui('/api/agents',{runtime:'api', id:agent,name:'Workflow',model:'fixture',instructions:'Help'});await ui(`/api/agents/${agent}/scripts`,{id:randomUUID(),revision:0,enabled:true});
     const workflow=await ui(`/api/agents/${agent}/workflows`,{id:randomUUID(),revision:0,name:'Approval',graph:{entry:'approve',maxSteps:2,nodes:[{id:'approve',kind:'approval',prompt:'Proceed?',yes:'out'},{id:'out',kind:'output'}]}});
     initializeTelegram(db);bindTelegram(db,123,agent);
     incoming(4,'/workflows');await telegramAgentStep(db,users,local,remote);assert(sent[0].text.includes(workflow.id));

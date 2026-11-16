@@ -17,8 +17,8 @@ test('avatar HTTP validates images, isolates agents, preserves receipts and surv
     const value = await response.json(); assert.equal(response.status, status, JSON.stringify(value)); return value;
   }
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Avatar', model: 'fixture', instructions: 'Help' }, 201);
-    const other = await request('/api/agents', { id: randomUUID(), name: 'Other', model: 'fixture', instructions: 'Help' }, 201);
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Avatar', model: 'fixture', instructions: 'Help' }, 201);
+    const other = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Other', model: 'fixture', instructions: 'Help' }, 201);
     const path = `/api/agents/${agent.id}/avatar`;
     assert.deepEqual(await request(path), { revision: 0, present: false });
     let revision = 0;

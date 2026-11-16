@@ -36,8 +36,8 @@ test('memory CRUD, exact retry, isolated provider search and bounded context sur
     assert.fail('Task did not settle');
   }
   try {
-    const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
-    const b = await request('/api/agents', { id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' });
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
+    const b = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' });
     const channel = await request('/api/channels', { id: randomUUID(), name: 'C', instructions: 'Help', lead: a.id, members: [a.id, b.id] });
     const side = await request(`/api/agents/${a.id}/threads`, { id: randomUUID(), name: 'Side' });
     const pa = `/api/agents/${a.id}/memory`, pb = `/api/agents/${b.id}/memory`, pc = `/api/channels/${channel.id}/memory`;

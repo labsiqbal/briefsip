@@ -59,7 +59,7 @@ test('usage records each provider call including tool loops, missing counts and 
     const data = await response.json(); assert(response.ok, JSON.stringify(data)); return data;
   }
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Usage', model: 'fixture', instructions: 'Test' });
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Usage', model: 'fixture', instructions: 'Test' });
     for (const value of ['known', 'missing', 'tools', 'reject', 'malformed', 'invalid']) {
       mode = value; const id = randomUUID(), body = { id, text: value };
       await request(`/api/agents/${agent.id}/turns`, body);
@@ -79,7 +79,7 @@ test('usage records each provider call including tool loops, missing counts and 
     assert.equal((await fetch(app.origin + '/api/usage?before=0')).status, 400);
     await app.close(); app = await startApp(options);
     assert.deepEqual(await request('/api/usage'), report);
-    const other = await request('/api/agents', { id: randomUUID(), name: 'Other', model: 'other-model', instructions: 'Test' });
+    const other = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Other', model: 'other-model', instructions: 'Test' });
     const room = await request('/api/channels', { id: randomUUID(), name: 'Routing', instructions: 'Route', lead: agent.id, members: [agent.id, other.id] });
     mode = 'known'; const routed = randomUUID();
     await request(`/api/channels/${room.id}/turns`, { id: routed, text: 'Route this', automatic: true });

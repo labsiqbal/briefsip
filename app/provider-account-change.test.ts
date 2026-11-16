@@ -25,7 +25,7 @@ test('provider account switch requires scoped browser consent and survives resta
   async function request(path:string,body?:unknown,status=200,script=false){const response=await fetch(app.origin+path,{method:body?'POST':'GET',headers:script?{Authorization:'Bearer script-secret-abcdefghijklmnopqrstuvwxyz','Content-Type':'application/json'}:{Origin:app.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const data=await response.json();assert(status===200 ? response.ok : response.status===status,JSON.stringify(data));return data;}
   async function until(path:string,id:string,predicate:(row:any)=>boolean){for(let n=0;n<300;n++){const row=(await request(path+'/turns')).find((item:any)=>item.id===id);if(row&&predicate(row))return row;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Timed out');}
   try {
-    const agent=await request('/api/agents',{id:randomUUID(),name:'Owner',instructions:'Help',model:'old',backupModel:'fallback',providerAccount:'a'}),path=`/api/agents/${agent.id}`;
+    const agent=await request('/api/agents',{runtime:'api', id:randomUUID(),name:'Owner',instructions:'Help',model:'old',backupModel:'fallback',providerAccount:'a'}),path=`/api/agents/${agent.id}`;
     const profile=async()=>(await request('/api/agents')).agents.find((row:any)=>row.id===agent.id);
     async function pending(revision:number,location=path){command={revision,providerAccount:'b',model:'new'};const id=randomUUID();await request(location+'/turns',{id,text:'Switch to B'});const row=await until(location,id,row=>row.questions?.length||row.status==='failed');return {id,row,answerPath:`${location}/turns/${id}/questions/${row.questions?.[0]?.id}/answer`};}
     const first=await pending(1);assert(advertised);assert.equal(first.row.paused,1);assert.match(first.row.questions[0].prompt,/Account B/);assert.match(first.row.questions[0].prompt,/History and attachments/);assert(!JSON.stringify(first.row.questions).includes('secret-b'));
@@ -93,7 +93,7 @@ test('provider account metadata tool redacts credentials and paths', async () =>
       }
       assert.fail('Account list timed out');
     }
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'List', model: 'fixture', instructions: 'Help', providerAccount: 'main' });
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'List', model: 'fixture', instructions: 'Help', providerAccount: 'main' });
     const path = `/api/agents/${agent.id}`;
     const expected = [{ id: '', name: 'Default server', provider: 'openai-compatible', origin: null, defaultModel: '', configured: false }, { id: 'main', name: 'Main', provider: 'openai-compatible', origin: base, defaultModel: 'fixture', configured: true }];
     await send(path); assert(advertised); assert.deepEqual(results.at(-1), expected);
@@ -145,7 +145,7 @@ test('private model discovery uses selected account, pages results and cancels w
       for (let n = 0; n < 300; n++) { const value = await check(); if (value) return value; await new Promise(resolve => setTimeout(resolve, 10)); }
       assert.fail('Model discovery timed out');
     }
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Catalog', model: 'fixture', instructions: 'Help', providerAccount: 'a' }), path = `/api/agents/${agent.id}`;
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Catalog', model: 'fixture', instructions: 'Help', providerAccount: 'a' }), path = `/api/agents/${agent.id}`;
     async function send(location = path, status = 'done') {
       const id = randomUUID(); await request(location + '/turns', { id, text: 'Find models' });
       const row = await until(async () => (await request(location + '/turns')).find((row: any) => row.id === id && ['done', 'failed'].includes(row.status)));
@@ -220,7 +220,7 @@ for (const source of ['openai-compatible', 'anthropic', 'gemini'] as const) for 
         }
         assert.fail('Confirmed family switch timed out');
       }
-      const agent = await request('/api/agents', { id: randomUUID(), name: 'Stable identity', model: 'source-model', instructions: 'Help', providerAccount: 'a' });
+      const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Stable identity', model: 'source-model', instructions: 'Help', providerAccount: 'a' });
       const direct = `/api/agents/${agent.id}`, side = await request(direct + '/threads', { id: randomUUID(), name: 'Private side' });
       const path = source === 'gemini' ? `/api/threads/${side.id}` : direct, other = source === 'gemini' ? direct : `/api/threads/${side.id}`;
       const foreign = randomUUID(), seed = randomUUID();

@@ -41,8 +41,8 @@ test('question cards persist, answer once in scope, and resume without repeating
   }
   const answerPath = (path: string, turn: any) => `${path}/${turn.id}/questions/${turn.questions[0].id}/answer`;
   try {
-    const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
-    const b = await request('/api/agents', { id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' });
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
+    const b = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' });
     const c = await request('/api/channels', { id: randomUUID(), name: 'C', instructions: 'Help', lead: a.id, members: [a.id, b.id] });
     const side = await request(`/api/agents/${a.id}/threads`, { id: randomUUID(), name: 'Side' });
     const direct = `/api/agents/${a.id}/turns`, channel = `/api/channels/${c.id}/turns`, thread = `/api/threads/${side.id}/turns`;

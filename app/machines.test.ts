@@ -50,7 +50,7 @@ test('two real instances pair mutually, expose scoped cached agents, survive res
     const initialA = await environment(a), initialB = await environment(b);
     assert.notEqual(initialA.id, initialB.id);
     const rename = { ...command(), name: 'Machine B' }; await call(b, '/api/environment', rename); await call(b, '/api/environment', rename); await call(b, '/api/environment', { ...rename, name: 'Other' }, 409);
-    const agentA = { id: randomUUID(), name: 'Alpha', role: 'Personal agent', model: 'fixture', instructions: 'Help.' }, agentB = { ...agentA, id: randomUUID(), name: 'Beta' };
+    const agentA = { runtime: 'api', id: randomUUID(), name: 'Alpha', role: 'Personal agent', model: 'fixture', instructions: 'Help.' }, agentB = { ...agentA, id: randomUUID(), name: 'Beta' };
     await call(a, '/api/agents', agentA, 201); await call(b, '/api/agents', agentB, 201);
     const { result, code, request } = await pair(a, b); assert.equal(result.id, initialB.id); assert.equal(result.pairingState, 'paired'); assert.equal(result.status, 'online'); assert.equal(result.agentCount, 1); assert.equal(result.agents[0].name, 'Beta'); assert.equal(result.agents[0].role, 'Personal agent');
     await call(a, '/api/machines', request); assert.equal(issuerA.issued.length, 1); assert.equal(issuerB.issued.length, 1);
@@ -178,7 +178,7 @@ test('default wiring issues pairing tokens from the Briefsip MCP token registry 
   const a = await startApp({ database: join(dir, 'a.sqlite') }), b = await startApp({ database: join(dir, 'b.sqlite') });
   try {
     await call(b, '/api/environment', { ...command(), name: 'Machine B' }); await call(a, '/api/environment', { ...command(), name: 'Machine A' });
-    await call(b, '/api/agents', { id: randomUUID(), name: 'Beta', role: 'Personal agent', model: 'fixture', instructions: 'Help.' }, 201);
+    await call(b, '/api/agents', { runtime: 'api', id: randomUUID(), name: 'Beta', role: 'Personal agent', model: 'fixture', instructions: 'Help.' }, 201);
     const { result } = await pair(a, b); assert.equal(result.pairingState, 'paired'); assert.equal(result.status, 'online'); assert.equal(result.agents[0].name, 'Beta'); assert.equal(result.agents[0].role, 'Personal agent');
     const tokensOnB = (await call(b, '/api/mcp-server/peer-tokens')).items; assert.equal(tokensOnB.length, 1); assert.equal(tokensOnB[0].name, 'Briefsip: Machine A'); assert.equal(tokensOnB[0].revoked, null);
     assert.deepEqual([...tokensOnB[0].scopes].sort(), ['agents:message', 'agents:read', 'history:read']);

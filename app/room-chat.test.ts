@@ -42,7 +42,7 @@ async function fixture(run: (f: any) => Promise<void>, concurrency = 4) {
     const value = await response.json(); assert.equal(response.status, status ?? (body ? 201 : 200), JSON.stringify(value)); return value;
   };
   const members: any[] = [];
-  for (const [name, role] of [['Assistant','Coordinator'],['Right Hand','Researcher'],['Reviewer','Reviewer'],['Four','Writer'],['Five','Designer'],['Six','Tester']]) members.push(await request('/api/agents', { id: randomUUID(), name, role, model: name, instructions: `Work as ${role}.` }));
+  for (const [name, role] of [['Assistant','Coordinator'],['Right Hand','Researcher'],['Reviewer','Reviewer'],['Four','Writer'],['Five','Designer'],['Six','Tester']]) members.push(await request('/api/agents', { runtime: 'api', id: randomUUID(), name, role, model: name, instructions: `Work as ${role}.` }));
   const room = async (n = 3, lead: string | null = members[0].id) => {
     const channel = await request('/api/channels', { id: randomUUID(), name: 'Team', instructions: 'Collaborate.', members: members.slice(0,n).map(member => member.id), lead });
     return `/api/channels/${channel.id}/turns`;
@@ -334,7 +334,7 @@ test('mention storms deduplicate sources, settle pass obligations and never invi
 
 test('same-name Unicode speakers retain distinct IDs in bounded committed context; user brief survives truncation', async () => fixture(async ({members,request,wait,setRespond,calls}:any)=>{
   const peers=[];
-  for(let n=0;n<2;n++)peers.push(await request('/api/agents',{id:randomUUID(),name:'林 Smith',role:'Researcher',model:`unicode-${n}`,instructions:'Help.'}));
+  for(let n=0;n<2;n++)peers.push(await request('/api/agents',{runtime:'api', id:randomUUID(),name:'林 Smith',role:'Researcher',model:`unicode-${n}`,instructions:'Help.'}));
   const section=await request('/api/channels',{id:randomUUID(),name:'Unicode',instructions:'Collaborate.',members:peers.map(peer=>peer.id),lead:peers[0].id});
   const path=`/api/channels/${section.id}/turns`,root=randomUUID();
   setRespond((body:any)=>body.model==='unicode-0'?'知'.repeat(20000)+' @林 Smith':'NO_REPLY');

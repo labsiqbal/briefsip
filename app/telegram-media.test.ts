@@ -29,7 +29,7 @@ test('Telegram media uploads once in requester thread and retries lost uploads/m
  function incoming(id:string,user=4,caption='Read attached',size?:number){sequence++;recordTelegramUpdates(db,[{update_id:sequence,message:{message_id:sequence,chat:{id:user,type:'private'},from:{id:user,is_bot:false},caption,document:{file_id:id,file_name:`${id}.dat`,...(size===undefined?{}:{file_size:size})}}}],users);return db.prepare('SELECT * FROM telegram_inbox WHERE update_id=?').get(sequence)!;}
  async function settle(turn:unknown){for(let n=0;n<200;n++){await telegramAgentStep(db,users,local,remote);if(db.prepare('SELECT status FROM telegram_inbox WHERE turn=?').get(String(turn))?.status==='done')return;await new Promise(r=>setTimeout(r,10));}assert.fail('Telegram task did not settle');}
  try{
-  for(const id of [agent,other])await ui('/api/agents',{id,name:id===agent?'Media':'Other',model:'fixture',instructions:'Help'});
+  for(const id of [agent,other])await ui('/api/agents',{runtime:'api', id,name:id===agent?'Media':'Other',model:'fixture',instructions:'Help'});
   for(const id of [agent,other])await ui(`/api/agents/${id}/scripts`,{id:randomUUID(),revision:0,enabled:true});initializeTelegram(db);bindTelegram(db,123,agent);
   const text=incoming('text');await assert.rejects(telegramAgentStep(db,users,local,remote),/Lost upload/);payloads.text=Buffer.from('CHANGED REMOTE');db.close();db=new DatabaseSync(join(root,'telegram.sqlite'));initializeTelegram(db);
   await assert.rejects(telegramAgentStep(db,users,local,remote),/Lost message/);await settle(text.turn);assert.equal(downloads.filter(x=>x==='text').length,1);assert.deepEqual(uploads[0],uploads[1]);assert.equal(captures.length,1);assert(JSON.stringify(captures[0]).includes('Exact attachment contents'));

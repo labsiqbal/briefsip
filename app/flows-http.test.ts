@@ -31,7 +31,7 @@ test('routine flow dispatch joins once, snapshots edits and recovers interrupted
   }
   try {
     const agents = [];
-    for (const model of ['a','b','c','d']) agents.push(await request('/api/agents', { id: randomUUID(), name: model, model, instructions: `${model} instruction` }, 201));
+    for (const model of ['a','b','c','d']) agents.push(await request('/api/agents', { runtime: 'api', id: randomUUID(), name: model, model, instructions: `${model} instruction` }, 201));
     const [a,b,c,d] = agents;
     const routine = await request(`/api/agents/${a.id}/routines`, { id: randomUUID(), name: 'Fan-in', prompt: 'Root job', nextAt: Date.now() + 3600000, intervalSeconds: null, enabled: false });
     const settings = `/api/routines/${routine.id}/flow`, runs = `/api/routines/${routine.id}/flow-runs`;

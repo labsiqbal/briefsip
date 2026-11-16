@@ -38,7 +38,7 @@ test('side threads isolate queues, history, controls and archive recovery', asyn
     assert.fail(`Timed out: ${status}`);
   }
   try {
-    const agent = await post('/api/agents', { id: randomUUID(), name: 'Same agent', threadLimit: 4, model: 'fixture', instructions: 'Help.' }, 201);
+    const agent = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Same agent', threadLimit: 4, model: 'fixture', instructions: 'Help.' }, 201);
     const list = `/api/agents/${agent.id}/threads`, main = `/api/agents/${agent.id}/turns`;
     const create = { id: randomUUID(), name: 'Side work' };
     const side = await post(list, create), path = `/api/threads/${side.id}/turns`;
@@ -133,7 +133,7 @@ test('configured concurrency limits side threads and validates before opening st
     assert(response.ok); return response.json();
   }
   try {
-    const agent = await post('/api/agents', { id: randomUUID(), name: 'One worker', model: 'fixture', instructions: 'Help.' });
+    const agent = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'One worker', model: 'fixture', instructions: 'Help.' });
     const main = `/api/agents/${agent.id}/turns`, hold = randomUUID();
     await post(main, { id: hold, text: 'hold' });
     for (let i = 0; i < 100 && calls.length === 0; i++) await new Promise(resolve => setTimeout(resolve, 10));
@@ -192,7 +192,7 @@ test('conversation commands protect Main chat, revisions, queued work and delete
   async function post(path: string, body: unknown, status = 200) { const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const result = await response.json(); assert.equal(response.status, status, JSON.stringify(result)); return result; }
   const get = async (path: string) => (await fetch(app.origin + path)).json();
   try {
-    const agent = await post('/api/agents', { id: randomUUID(), name: 'Owner agent', model: 'fixture', instructions: 'Help.' }, 201);
+    const agent = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Owner agent', model: 'fixture', instructions: 'Help.' }, 201);
     const list = `/api/agents/${agent.id}/threads`;
     const side = await post(list, { id: randomUUID(), name: 'Side task' });
     const edit = `/api/threads/${side.id}/edit`, remove = `/api/threads/${side.id}/delete`, turns = `/api/threads/${side.id}/turns`;

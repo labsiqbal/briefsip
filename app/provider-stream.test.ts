@@ -111,7 +111,7 @@ for (const family of ['openai-compatible', 'anthropic'] as ProviderFamily[]) tes
     assert.fail('Task did not settle');
   }
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Stream', model: 'primary', backupModel: 'backup', instructions: 'Help' }), path = `/api/agents/${agent.id}/turns`;
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Stream', model: 'primary', backupModel: 'backup', instructions: 'Help' }), path = `/api/agents/${agent.id}/turns`;
     for (const scenario of ['text', 'broken', 'tool', 'broken-tool', 'wrong-type']) {
       mode = scenario; const id = randomUUID(), before = calls;
       await request(path, { id, text: scenario }); const row = await until(path, id);
@@ -173,7 +173,7 @@ test('SIGKILL preserves committed stream text without automatic provider replay'
     async function request(path: string, body?: unknown) {
       const response = await fetch(origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); const result = await response.json(); assert(response.ok); return result;
     }
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Crash', model: 'fixture', instructions: 'Test' }), path = `/api/agents/${agent.id}/turns`, id = randomUUID();
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Crash', model: 'fixture', instructions: 'Test' }), path = `/api/agents/${agent.id}/turns`, id = randomUUID();
     await request(path, { id, text: 'Crash' }); let observed = false;
     for (let n = 0; n < 100; n++) { if ((await request(path))[0]?.partial?.text === 'Survives crash') { observed = true; break; } await new Promise(resolve => setTimeout(resolve, 15)); }
     assert(observed); child.kill('SIGKILL'); assert.equal((await exited)[1], 'SIGKILL');

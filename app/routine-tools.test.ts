@@ -41,8 +41,8 @@ test('routine tools recover from invalid arguments, preserve owner scope and kee
     assert.fail('Routine tool turn did not settle');
   }
   try {
-    const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help.' });
-    const b = await request('/api/agents', { id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help.' });
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help.' });
+    const b = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help.' });
     const input = { name: 'Routine', prompt: 'PRIVATE_PROMPT', enabled: false, nextAt: Date.now() + 3600000, intervalSeconds: null };
     const ids = [];
     for (let i = 0; i < 11; i++) ids.push((await request(`/api/agents/${a.id}/routines`, { ...input, id: randomUUID(), trigger: i === 0 ? 'webhook' : 'schedule' })).id);

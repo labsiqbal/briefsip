@@ -26,7 +26,7 @@ test('model conditions choose one branch without tools and reject ambiguous answ
     const data = await res.json(); assert(res.ok, JSON.stringify(data)); return data;
   }
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Condition', model: 'owner', instructions: 'Evaluate.' });
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Condition', model: 'owner', instructions: 'Evaluate.' });
     const graph = { entry: 'choose', maxSteps: 4, nodes: [
       { id: 'choose', kind: 'condition', operator: 'model', model: 'decision-model', value: 'Is the input acceptable?', yes: 'accepted', no: 'declined' },
       { id: 'accepted', kind: 'output' }, { id: 'declined', kind: 'output' },
@@ -102,7 +102,7 @@ test('workflow HTTP versions, model steps, approval receipts and cancellation su
     assert.fail('Workflow did not settle');
   }
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Owner', model: 'owner-model', instructions: 'Help.' }, 201);
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Owner', model: 'owner-model', instructions: 'Help.' }, 201);
     const graph = { entry: 'model', maxSteps: 4, nodes: [
       { id: 'model', kind: 'model', model: 'override-model', prompt: 'Process', next: 'approve' },
       { id: 'approve', kind: 'approval', prompt: 'Accept?', yes: 'out', no: 'model' }, { id: 'out', kind: 'output' },
@@ -197,7 +197,7 @@ test('provider-free workflows continue beyond one batch and configuration listin
     assert(res.ok); return res.json();
   }
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Local', model: 'unused', instructions: 'Help.' });
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Local', model: 'unused', instructions: 'Help.' });
     const list = `/api/agents/${agent.id}/workflows`, ids: string[] = [];
     for (let i = 0; i < 21; i++) {
       const saved = await request(list, { id: randomUUID(), revision: 0, name: `Loop ${i}`, graph: { entry: 'loop', maxSteps: 40, nodes: [
@@ -257,7 +257,7 @@ test('workflow webhooks authenticate, deduplicate, ignore busy runs and recover 
     const value = await response.json(); assert.equal(response.status, status, JSON.stringify(value)); return value;
   }
   try {
-    const owner = await request('/api/agents', { id: randomUUID(), name: 'Hook', model: 'fixture', instructions: 'Test' }, 201);
+    const owner = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Hook', model: 'fixture', instructions: 'Test' }, 201);
     const workflow = await request(`/api/agents/${owner.id}/workflows`, { id: randomUUID(), revision: 0, name: 'Hook', graph: { entry: 'review', maxSteps: 3, nodes: [
       { id: 'review', kind: 'approval', prompt: 'Accept?', yes: 'out' }, { id: 'out', kind: 'output' },
     ] } });
@@ -329,7 +329,7 @@ test('parallel webhook waits for provider before creating a receipt', async () =
       const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const value = await response.json(); assert.equal(response.status, status, JSON.stringify(value)); return value;
     };
-    const owner = await request('/api/agents', { id: randomUUID(), name: 'Parallel hook', model: 'fixture', instructions: 'Test' }, 201);
+    const owner = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Parallel hook', model: 'fixture', instructions: 'Test' }, 201);
     const workflow = await request(`/api/agents/${owner.id}/workflows`, { id: randomUUID(), revision: 0, name: 'Parallel hook', graph: { entry: 'fan', maxSteps: 4, nodes: [
       { id: 'fan', kind: 'parallel', branches: [{ kind: 'agent', agent: owner.id, prompt: 'A' }, { kind: 'model', model: 'fixture', prompt: 'B' }], next: 'out' }, { id: 'out', kind: 'output' },
     ] } });
@@ -366,7 +366,7 @@ test('workspace workflow directory pages across owners and keeps per-agent lists
   try {
     assert.deepEqual(await request('/api/workflows'), { workflows: [], next_after: null });
     const owners = [];
-    for (const name of ['Alpha', 'Beta']) owners.push(await request('/api/agents', { id: randomUUID(), name, model: 'fixture', instructions: 'Test' }, 201));
+    for (const name of ['Alpha', 'Beta']) owners.push(await request('/api/agents', { runtime: 'api', id: randomUUID(), name, model: 'fixture', instructions: 'Test' }, 201));
     const workflows = [];
     for (let index = 0; index < 21; index++) {
       const agent = owners[index % 2];
@@ -408,7 +408,7 @@ test('autosave stops after server canonicalizes condition property order', async
     const value = await response.json(); assert(response.ok, JSON.stringify(value)); return value;
   }
   try {
-    const agent = await post('/api/agents', { id: randomUUID(), name: 'Autosave', model: 'fixture', instructions: 'Test' });
+    const agent = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Autosave', model: 'fixture', instructions: 'Test' });
     const graph = { entry: 'check', maxSteps: 2, nodes: [
       { id: 'check', kind: 'condition' as const, operator: 'equals' as const, value: 'yes', yes: 'out', no: 'out' }, { id: 'out', kind: 'output' as const },
     ] };
@@ -430,7 +430,7 @@ test('workflow deletion revokes triggers, rejects stale commands and retains ter
     const value = await response.json(); assert.equal(response.status, status, JSON.stringify(value)); return value;
   }
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Delete', model: 'fixture', instructions: 'Test' }, 201);
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Delete', model: 'fixture', instructions: 'Test' }, 201);
     const list = `/api/agents/${agent.id}/workflows`;
     const create = { id: randomUUID(), revision: 0, name: 'Delete me', graph: { entry: 'review', maxSteps: 2, nodes: [
       { id: 'review', kind: 'approval', prompt: 'Accept?', yes: 'out' }, { id: 'out', kind: 'output' },
@@ -478,7 +478,7 @@ test('workflow output inbox survives restart with stable paging and idempotent r
     const data = await res.json(); assert.equal(res.status, status, JSON.stringify(data)); return data;
   }
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Inbox', model: 'fixture', instructions: 'Test' }, 201);
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Inbox', model: 'fixture', instructions: 'Test' }, 201);
     const workflow = await request(`/api/agents/${agent.id}/workflows`, { id: randomUUID(), name: 'Output', revision: 0, graph: { entry: 'out', maxSteps: 1, nodes: [{ id: 'out', kind: 'output' }] } });
     for (let index = 0; index < 21; index++) {
       const body = { id: randomUUID(), revision: 1, input: `Result ${index}` };
@@ -527,8 +527,8 @@ test('workflow channel outputs deliver once and recheck channel availability at 
     assert.fail(`Run did not reach ${status}`);
   }
   try {
-    const owner = await request('/api/agents', { id: randomUUID(), name: 'Owner', model: 'unused', instructions: 'Test' }, 201);
-    const other = await request('/api/agents', { id: randomUUID(), name: 'Other', model: 'unused', instructions: 'Test' }, 201);
+    const owner = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Owner', model: 'unused', instructions: 'Test' }, 201);
+    const other = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Other', model: 'unused', instructions: 'Test' }, 201);
     let room = await request('/api/channels', { id: randomUUID(), name: 'Results', instructions: 'Results', members: [owner.id, other.id], lead: owner.id }, 201);
     const graph = { entry: 'review', maxSteps: 2, nodes: [{ id: 'review', kind: 'approval', prompt: 'Publish?', yes: 'out' }, { id: 'out', kind: 'output', channel: room.id }] };
     const workflow = await request(`/api/agents/${owner.id}/workflows`, { id: randomUUID(), revision: 0, name: 'Publish', graph });
@@ -582,7 +582,7 @@ test('workflow run pages retain older approvals after restart and validate curso
     const data = await response.json(); assert.equal(response.status, expected, JSON.stringify(data)); return data;
   }
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Approvals', model: 'fixture', instructions: 'Help.' }, 201);
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Approvals', model: 'fixture', instructions: 'Help.' }, 201);
     const workflow = await request(`/api/agents/${agent.id}/workflows`, { id: randomUUID(), revision: 0, name: 'Review', graph: { entry: 'review', maxSteps: 2, nodes: [{ id: 'review', kind: 'approval', prompt: 'Accept?', yes: 'out', no: 'out' }, { id: 'out', kind: 'output' }] } });
     const ids: string[] = [];
     for (let i = 0; i < 22; i++) ids.push((await request(`/api/workflows/${workflow.id}/run`, { id: randomUUID(), revision: 1, input: String(i) })).id);

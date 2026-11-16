@@ -27,7 +27,7 @@ test('nine distinct tools complete before per-task budget requests a final answe
     const data = await response.json(); assert(response.ok, JSON.stringify(data)); return data;
   };
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Budget', model: 'fixture', instructions: 'Read.', toolBudget: 10 });
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Budget', model: 'fixture', instructions: 'Read.', toolBudget: 10 });
     const path = `/api/agents/${agent.id}/turns`, id = randomUUID();
     await request(path, { id, text: 'Perform more than nine steps.' });
     let turn: any;
@@ -72,7 +72,7 @@ async function fixture(answer: (body: any) => ProviderReply) {
   };
   const until = async (read: () => Promise<any>, ready: (row: any) => boolean) => { for (let n = 0; n < 600; n++) { const row = await read(); if (ready(row)) return row; await delay(10); } assert.fail('Budget task did not settle'); };
   const turn = (path: string, id: string) => until(async () => (await request(path)).find((row: any) => row.id === id), row => ['done','failed'].includes(row?.status));
-  const agent = await request('/api/agents', { id: randomUUID(), name: 'Budget', model: 'fixture', instructions: 'Help.', toolBudget: 10 });
+  const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Budget', model: 'fixture', instructions: 'Help.', toolBudget: 10 });
   return { agent, options, requests, request, until, turn, captures: () => captures, async restart() { await app.close(); app = await startApp(options); }, async close() { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); } };
 }
 const reads = (body: any) => body.messages.filter((row: any) => row.role === 'tool');
@@ -83,19 +83,19 @@ test('budget setting rejects malformed values, migrates legacy profiles, survive
   try {
     const profile = { name: 'Budget', model: 'fixture', instructions: 'Help.' };
     for (const toolBudget of [null, true, '90', 9, 201, 10.5]) {
-      await f.request('/api/agents', { id: randomUUID(), ...profile, toolBudget }, 400);
+      await f.request('/api/agents', { runtime: 'api', id: randomUUID(), ...profile, toolBudget }, 400);
       await f.request(`/api/agents/${f.agent.id}/edit`, { id: randomUUID(), revision: 1, ...profile, toolBudget }, 400);
       assert.throws(() => parseAgentTemplate({ format: 'briefsip-agent', version: 1, ...profile, threadLimit: 2, toolBudget }));
     }
     const create = { id: randomUUID(), ...profile, toolBudget: 200 };
-    const agent = await f.request('/api/agents', create); assert.equal(agent.tool_budget, 200);
-    assert.deepEqual(await f.request('/api/agents', create), agent);
-    await f.request('/api/agents', { ...create, toolBudget: 199 }, 409);
+    const agent = await f.request('/api/agents', { ...create, runtime: 'api' }); assert.equal(agent.tool_budget, 200);
+    assert.deepEqual(await f.request('/api/agents', { ...create, runtime: 'api' }), agent);
+    await f.request('/api/agents', { runtime: 'api', ...create, toolBudget: 199 }, 409);
     const edit = { id: randomUUID(), revision: 1, ...profile, toolBudget: 15 };
     const changed = await f.request(`/api/agents/${agent.id}/edit`, edit); assert.equal(changed.tool_budget, 15);
     await f.request(`/api/agents/${agent.id}/edit`, { ...edit, id: randomUUID() }, 409);
     const exported = await f.request(`/api/agents/${agent.id}/template`); assert.equal(exported.toolBudget, 15);
-    const imported = await f.request('/api/agents', templateCommand(exported, randomUUID())); assert.equal(imported.tool_budget, 15);
+    const imported = await f.request('/api/agents', { ...templateCommand(exported, randomUUID()), runtime: 'api' }); assert.equal(imported.tool_budget, 15);
     const recovery = { id: randomUUID(), ...profile, role: '', backupModel: '', threadLimit: 2, providerAccount: '', toolBudget: 35 };
     assert.equal(restoreAgentCreation(JSON.stringify(recovery))!.toolBudget, 35);
     await f.restart();
@@ -148,7 +148,7 @@ test('resume gets fresh budget without replay; desktop images retain latest thre
 test('legacy channel transfers share attempt budget beyond eight coordination steps', async () => {
   const f = await fixture(body => !body.tools?.length ? 'Transferred work. Reply "continue".' : { id: `transfer-${reads(body).length}`, name: 'transfer_task', args: { recipient: body.tools.find((tool: any) => tool.function.name === 'transfer_task').function.parameters.properties.recipient.enum[0], task: 'Continue work.' } });
   try {
-    const next = await f.request('/api/agents', { id: randomUUID(), name: 'Next', model: 'fixture', instructions: 'Help.', toolBudget: 10 });
+    const next = await f.request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Next', model: 'fixture', instructions: 'Help.', toolBudget: 10 });
     const room = await f.request('/api/channels', { id: randomUUID(), name: 'Transfers', instructions: 'Help.', lead: f.agent.id, members: [f.agent.id, next.id] });
     const path = `/api/channels/${room.id}/turns`, id = randomUUID();
     await f.request(path, { id, text: 'Transfer work.', recipient: f.agent.id });
@@ -198,7 +198,7 @@ test('reassign gets fresh budget while retaining recorded computer calls', async
   let summaries=0;
   const f=await fixture(body=>!body.tools?.length?++summaries===1?503:'Checked. Reply "continue".':{id:`shot-${reads(body).length}`,name:'computer_screenshot'});
   try {
-    const next=await f.request('/api/agents',{id:randomUUID(),name:'Next',model:'fixture',instructions:'Help.',toolBudget:10});
+    const next=await f.request('/api/agents',{runtime:'api', id:randomUUID(),name:'Next',model:'fixture',instructions:'Help.',toolBudget:10});
     for(const agent of [f.agent,next])await f.request(`/api/agents/${agent.id}/computer`,{id:randomUUID(),revision:0,enabled:true});
     const room=await f.request('/api/channels',{id:randomUUID(),name:'Budget room',instructions:'Help.',lead:f.agent.id,members:[f.agent.id,next.id]});
     const path=`/api/channels/${room.id}/turns`,id=randomUUID();await f.request(path,{id,text:'Inspect.',recipient:f.agent.id});

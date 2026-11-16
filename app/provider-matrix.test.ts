@@ -121,7 +121,7 @@ test('local provider discovery and execution matrix preserves errors, bounded di
       assert.equal(requests, before); scan();
     });
     mode = 'catalog';
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Matrix', model: 'primary', backupModel: 'backup', instructions: 'Synthetic provider checks' }, 201);
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Matrix', model: 'primary', backupModel: 'backup', instructions: 'Synthetic provider checks' }, 201);
     const path = `/api/agents/${agent.id}/turns`;
     const failures = [
       ['http-401', unauthorized],
@@ -153,7 +153,7 @@ test('local provider discovery and execution matrix preserves errors, bounded di
       assert.deepEqual(calls.slice(before).map(call => call.model), ['primary', 'backup']); scan();
     });
     await t.test('rate limit without fallback stays failed', async () => {
-      const plain = await request('/api/agents', { id: randomUUID(), name: 'No fallback', model: 'primary', instructions: 'Test' }, 201);
+      const plain = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'No fallback', model: 'primary', instructions: 'Test' }, 201);
       mode = 'http-429'; const before = calls.length, id = randomUUID(), plainPath = `/api/agents/${plain.id}/turns`;
       await request(plainPath, { id, text: mode }, 202); const row = await until(plainPath, id);
       assert.equal(row.status, 'failed'); assert.equal(row.error, 'The provider rate limit was reached (HTTP 429). Wait for quota to reset or choose another model.');

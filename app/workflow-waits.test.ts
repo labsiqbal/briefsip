@@ -42,7 +42,7 @@ test('signed workflow events are scoped, durable, once-only, expiring and cancel
     const result = await response.json(); assert.equal(response.status, expected, JSON.stringify(result)); return result;
   }
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Events', model: 'fixture', instructions: 'Process' }, 201);
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Events', model: 'fixture', instructions: 'Process' }, 201);
     const graph = { entry: 'event', maxSteps: 4, nodes: [{ id: 'event', kind: 'wait', event: 'invoice.paid', timeoutSeconds: 3600, next: 'process' }, { id: 'process', kind: 'agent', agent: agent.id, prompt: 'Read event', next: 'out' }, { id: 'out', kind: 'output' }] };
     const workflow = await request(`/api/agents/${agent.id}/workflows`, { id: randomUUID(), name: 'Events', revision: 0, graph });
     const run = await request(`/api/workflows/${workflow.id}/run`, { id: randomUUID(), revision: 1, input: 'Invoice' });

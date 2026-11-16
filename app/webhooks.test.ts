@@ -44,7 +44,7 @@ test('webhook receipts isolate, deduplicate, rotate and persist ignored events',
     return { finish, response };
   }
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Webhook', model: 'fixture', instructions: 'Help.' }, 201);
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Webhook', model: 'fixture', instructions: 'Help.' }, 201);
     const list = `/api/agents/${agent.id}/routines`;
     const create = { id: randomUUID(), name: 'Event handler', prompt: 'Saved task', nextAt: Date.now() - 1, intervalSeconds: null, enabled: true, trigger: 'webhook' };
     const routine = await request(list, create), settings = `/api/routines/${routine.id}/webhook`, events = `/api/routines/${routine.id}/webhook-events`, runs = `/api/routines/${routine.id}/runs`;

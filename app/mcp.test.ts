@@ -60,7 +60,7 @@ test('MCP tests before save, protects credentials/grants and journals success or
   }
   async function run(path: string, text: string, status = 'done') { const id = randomUUID(); await post(path, { id, text }, 202); return until(path, id, status); }
   try {
-    const a = await post('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Use MCP' }, 201), b = await post('/api/agents', { id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Use MCP' }, 201);
+    const a = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Use MCP' }, 201), b = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Use MCP' }, 201);
     const ap = `/api/agents/${a.id}/turns`, bp = `/api/agents/${b.id}/turns`;
     await post('/api/mcp', { id: randomUUID(), test: randomUUID() }, 409);
     for (const bad of ['http://example.com/mcp', url + '?token=secret', 'file:///etc/passwd', url.replace('127.0.0.1', 'user:pass@127.0.0.1')]) await post('/api/mcp/test', { id: randomUUID(), name: 'Bad', url: bad, token }, 400);

@@ -44,7 +44,7 @@ test('image generation preserves scope, uncertain receipts and exact artifacts t
   async function until(path: string, id: string, status: string) { for (let n = 0; n < 300; n++) { const row = (await request(path + '/turns')).find((row: any) => row.id === id); if (row?.status === status) return row; await new Promise(resolve => setTimeout(resolve, 10)); } assert.fail(`Missing ${status}`); }
   async function waitFor(check: () => boolean) { for (let n = 0; n < 300 && !check(); n++) await new Promise(resolve => setTimeout(resolve, 10)); assert(check()); }
   try {
-    const a = await request('/api/agents', { id: randomUUID(), name: 'Artist', model: 'chat', instructions: 'Generate' });
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Artist', model: 'chat', instructions: 'Generate' });
     const side = await request(`/api/agents/${a.id}/threads`, { id: randomUUID(), name: 'Side' });
     const room = await request('/api/channels', { id: randomUUID(), name: 'Room', members: [a.id], lead: a.id, instructions: 'Generate' });
     const scopes = [`/api/agents/${a.id}`, `/api/threads/${side.id}`, `/api/channels/${room.id}`];

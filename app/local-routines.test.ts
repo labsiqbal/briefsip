@@ -14,7 +14,7 @@ test('local routines require project membership and a report section belonging t
     const result = await response.json(); assert.equal(response.status, status, JSON.stringify(result)); return result;
   };
   try {
-    const agent = await post('/api/agents', { id: randomUUID(), name: 'Owner', model: 'test', instructions: 'Help.' }, 201);
+    const agent = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Owner', model: 'test', instructions: 'Help.' }, 201);
     const project = await post('/api/projects', { id: randomUUID(), name: 'Work', members: [] });
     const input = { id: randomUUID(), name: 'Briefing', prompt: 'Report.', nextAt: Date.now() + 3600000, enabled: false, project: project.id, reportTo: project.channel };
     await post(`/api/agents/${agent.id}/routines`, input, 403);
@@ -74,8 +74,8 @@ test('project routine runs use project folders and post one system report per ou
     assert.fail(`Timed out: ${path}`);
   };
   try {
-    await request('/api/agents', { id: agent, name: 'Owner', model: 'fixture', instructions: 'Help.' }, 201);
-    const other = await request('/api/agents', { id: randomUUID(), name: 'Teammate', model: 'fixture', instructions: 'Help.' }, 201);
+    await request('/api/agents', { runtime: 'api', id: agent, name: 'Owner', model: 'fixture', instructions: 'Help.' }, 201);
+    const other = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Teammate', model: 'fixture', instructions: 'Help.' }, 201);
     let project = await request('/api/projects', { id: randomUUID(), name: 'Acme', folders: [{ mode: 'existing', path: folder }], members: [{ agent, write: false }, { agent: other.id, write: false }] });
     project = await request(`/api/projects/${project.id}/sections`, { id: randomUUID(), revision: project.revision, name: 'reports' }, 201);
     const section = project.sections.find((s: any) => s.name === 'reports').id;
@@ -163,7 +163,7 @@ test('scheduled cron catches up once and unavailable project folders do not star
     const result = await response.json(); assert(response.ok,JSON.stringify(result)); return result;
   };
   try {
-    const agent = await request('/api/agents',{id:randomUUID(),name:'Scheduler',model:'fixture',instructions:'Help.'});
+    const agent = await request('/api/agents',{runtime:'api', id:randomUUID(),name:'Scheduler',model:'fixture',instructions:'Help.'});
     const project = await request('/api/projects',{id:randomUUID(),name:'Unavailable',folders:[{mode:'existing',path:folder}],members:[{agent:agent.id,write:false}]});
     const schedule = {kind:'cron' as const,expression:'0 9 * * *'}, zone = 'Asia/Jakarta';
     const input = {name:'Daily',prompt:'Run.',schedule,zone,enabled:true};

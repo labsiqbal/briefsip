@@ -28,8 +28,8 @@ test('script messages and answers share grants, scope, receipts, redaction and r
   }
   async function until(check:()=>Promise<boolean>){for(let n=0;n<200;n++){if(await check())return;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Timed out');}
   try {
-    const a=await request('/api/agents',{id:randomUUID(),name:'A',model:'fixture',instructions:'Help'});
-    const b=await request('/api/agents',{id:randomUUID(),name:'B',model:'fixture',instructions:'Help'});
+    const a=await request('/api/agents',{runtime:'api', id:randomUUID(),name:'A',model:'fixture',instructions:'Help'});
+    const b=await request('/api/agents',{runtime:'api', id:randomUUID(),name:'B',model:'fixture',instructions:'Help'});
     const path=`/api/scripts/agents/${a.id}/turns`, uiPath=`/api/agents/${a.id}/turns`, permission=`/api/agents/${a.id}/scripts`;
     const command={id:randomUUID(),text:'ASK'};
     await request(path,command,403,auth);

@@ -61,7 +61,7 @@ test('connected apps end to end: catalog, accounts, grants, tools, approvals, re
   try{
     const noConfig=await request('/api/connected-apps');assert.equal(noConfig.configured,false);assert.deepEqual(noConfig.items,[]);assert.equal(calls.length,0);
     await request('/api/connected-apps/connect/gmail',{id:randomUUID()},503);
-    const agent=await request('/api/agents',{id:randomUUID(),name:'Connected Apps Tester',model:'fake',instructions:'Use the offered app tool.'},201),other=await request('/api/agents',{id:randomUUID(),name:'No Apps',model:'fake',instructions:'No apps.'},201);
+    const agent=await request('/api/agents',{runtime:'api', id:randomUUID(),name:'Connected Apps Tester',model:'fake',instructions:'Use the offered app tool.'},201),other=await request('/api/agents',{runtime:'api', id:randomUUID(),name:'No Apps',model:'fake',instructions:'No apps.'},201);
     const turns=`/api/agents/${agent.id}/turns`,access=`/api/agents/${agent.id}/connected-apps/gmail`;
     const noKey=randomUUID();await request(turns,{id:noKey,text:'unconfigured'},202);await wait(turns,noKey,row=>row.status==='failed');assert(!providerBodies.at(-1).tools.some((tool:any)=>tool.function.name.startsWith('composio__')));assert.equal(calls.length,0);
     await app.close();process.env.COMPOSIO_API_KEY=canary;app=await startApp(options);origin=app.origin;

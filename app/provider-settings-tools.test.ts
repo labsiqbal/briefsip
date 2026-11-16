@@ -24,7 +24,7 @@ test('provider settings read stays private and excludes endpoint and credentials
   async function request(path:string,body?:unknown){const response=await fetch(app.origin+path,{method:body?'POST':'GET',headers:{Origin:app.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const data=await response.json();assert(response.ok,JSON.stringify(data));return data;}
   async function run(path:string,status='done'){const id=randomUUID();await request(path+'/turns',{id,text:'Read settings'});for(let n=0;n<200;n++){const row=(await request(path+'/turns')).find((entry:any)=>entry.id===id);if(row?.status===status)return;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Timed out');}
   try {
-    const agent=await request('/api/agents',{id:randomUUID(),name:'Reader',model:'fixture',backupModel:'backup',instructions:'Help'}),path=`/api/agents/${agent.id}`;
+    const agent=await request('/api/agents',{runtime:'api', id:randomUUID(),name:'Reader',model:'fixture',backupModel:'backup',instructions:'Help'}),path=`/api/agents/${agent.id}`;
     const side=await request(path+'/threads',{id:randomUUID(),name:'Side'}),room=await request('/api/channels',{id:randomUUID(),name:'Room',members:[agent.id],lead:agent.id,instructions:'Help'});
     for(const location of [path,`/api/threads/${side.id}`]){await run(location);assert(advertised);assert.deepEqual(result,{revision:1,providerAccount:'',model:'fixture',backupModel:'backup',configured:true});assert(!JSON.stringify(result).includes(secret));assert(!JSON.stringify(result).includes(baseURL));}
     args={agent:randomUUID()};await run(path);assert.deepEqual(result,{error:'Reading provider settings does not accept arguments.',status:400});args={};await run(`/api/channels/${room.id}`,'failed');assert.equal(advertised,false);
@@ -60,8 +60,8 @@ test('model changes preserve execution snapshot, scope and journal across restar
   async function until(path: string, id: string, status = 'done') { return wait(async () => (await request(path + '/turns')).find((row: any) => row.id === id && row.status === status)); }
   async function run(path: string, status = 'done') { const command = { id: randomUUID(), text: 'Set requested model' }; await request(path + '/turns', command); await until(path, command.id, status); await request(path + '/turns', command); return command.id; }
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Original', instructions: 'Help', model: 'first', backupModel: 'backup' });
-    const other = await request('/api/agents', { id: randomUUID(), name: 'Other', instructions: 'Help', model: 'other' });
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Original', instructions: 'Help', model: 'first', backupModel: 'backup' });
+    const other = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Other', instructions: 'Help', model: 'other' });
     const path = `/api/agents/${agent.id}`, profile = async () => (await request('/api/agents')).agents.find((row: any) => row.id === agent.id);
     const side = await request(path + '/threads', { id: randomUUID(), name: 'Side' });
     const room = await request('/api/channels', { id: randomUUID(), name: 'Room', members: [agent.id], lead: agent.id, instructions: 'Help' });
@@ -86,7 +86,7 @@ test('model changes preserve execution snapshot, scope and journal across restar
     const cancelled = randomUUID(); args = { revision: 5, model: 'cancelled' }; before = () => request(`${path}/turns/${cancelled}/cancel`, { id: randomUUID() });
     await request(path + '/turns', { id: cancelled, text: 'Cancel before mutation' }); await until(path, cancelled, 'cancelled'); assert.equal((await profile()).revision, 5);
     assert.equal((await request('/api/agents')).agents.find((row: any) => row.id === other.id).model, 'other');
-    const fallbackAgent = await request('/api/agents', { id: randomUUID(), name: 'Fallback', instructions: 'Help', model: 'unavailable', backupModel: 'backup' });
+    const fallbackAgent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Fallback', instructions: 'Help', model: 'unavailable', backupModel: 'backup' });
     const fallbackPath = `/api/agents/${fallbackAgent.id}`, fallbackTurn = randomUUID();
     args = { revision: 1, model: 'fresh' }; hold = true; continued = false;
     await request(fallbackPath + '/turns', { id: fallbackTurn, text: 'Change after fallback' }); await wait(async () => continued);

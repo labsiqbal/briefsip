@@ -30,8 +30,8 @@ test('skill revisions stay pinned, disable isolates agent context and receipts s
     assert.fail('Provider did not complete');
   }
   try {
-    const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Base' }, 201);
-    const b = await request('/api/agents', { id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Base' }, 201);
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Base' }, 201);
+    const b = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Base' }, 201);
     const command = { id: randomUUID(), revision: 0, name: 'Research', description: 'When researching', content: 'Unique version one' };
     await request('/api/skills/a', { ...command, id: randomUUID() }, 400);
     await request(`/api/skills/${randomUUID()}`, { ...command, id: randomUUID() }, 404);

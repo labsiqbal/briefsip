@@ -30,7 +30,7 @@ test('workflow SIGKILL preserves uncertain step without replay across two restar
       const response = await fetch(origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
       const data = await response.json(); assert(response.ok, JSON.stringify(data)); return data;
     }
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Crash workflow', model: 'fixture', instructions: 'Execute.' });
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Crash workflow', model: 'fixture', instructions: 'Execute.' });
     const workflow = await request(`/api/agents/${agent.id}/workflows`, { id: randomUUID(), name: 'Crash probe', revision: 0, graph: { entry: 'work', maxSteps: 3, nodes: [
       { id: 'work', kind: 'agent', agent: agent.id, prompt: 'Hold until cancelled.', next: 'approve' },
       { id: 'approve', kind: 'approval', prompt: 'Continue?', yes: 'out', no: 'out' }, { id: 'out', kind: 'output' },
@@ -94,8 +94,8 @@ test('SIGKILL after delegated provider acceptance does not replay parent or chil
       const response = await fetch(origin + path, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
       assert(response.ok); return response.json();
     }
-    const alpha = await post('/api/agents', { id: randomUUID(), name: 'Alpha', model: 'fixture', instructions: 'Delegate.' });
-    const beta = await post('/api/agents', { id: randomUUID(), name: 'Beta', model: 'fixture', instructions: 'Execute.' });
+    const alpha = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Alpha', model: 'fixture', instructions: 'Delegate.' });
+    const beta = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Beta', model: 'fixture', instructions: 'Execute.' });
     const channel = await post('/api/channels', { id: randomUUID(), name: 'Crash check', instructions: 'Coordinate.', members: [alpha.id, beta.id], lead: alpha.id });
     const path = `/api/channels/${channel.id}/turns`, id = randomUUID();
     await post(path, { id, text: 'root', recipient: alpha.id }); await childAccepted;

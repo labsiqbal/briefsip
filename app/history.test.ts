@@ -23,7 +23,7 @@ test('history pages preserve order and conversation boundaries across restart', 
   }
   async function get(path: string) { const response = await fetch(app.origin + path); assert.equal(response.status, 200); return response.json(); }
   try {
-    const agent = await post('/api/agents', { id: randomUUID(), name: 'Reader', model: 'fixture', instructions: 'Help.' });
+    const agent = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Reader', model: 'fixture', instructions: 'Help.' });
     const channel = await post('/api/channels', { id: randomUUID(), name: 'History', instructions: 'Help.', lead: agent.id, members: [agent.id] });
     const side = await post(`/api/agents/${agent.id}/threads`, { id: randomUUID(), name: 'Side' });
     const paths = [`/api/agents/${agent.id}/turns`, `/api/channels/${channel.id}/turns`, `/api/threads/${side.id}/turns`];

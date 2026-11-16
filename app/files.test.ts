@@ -16,7 +16,7 @@ test('files preserve bytes, scope, retry identity and archive boundaries', async
   };
   const upload = (path: string, bytes: Uint8Array, name = 'report.bin', origin = app.origin) => fetch(app.origin + path, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(name) }, body: Buffer.from(bytes) });
   try {
-    const agent = await post('/api/agents', { id: randomUUID(), name: 'Files', model: 'fixture', instructions: 'Help.' });
+    const agent = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Files', model: 'fixture', instructions: 'Help.' });
     const channel = await post('/api/channels', { id: randomUUID(), name: 'Files room', instructions: 'Help.', members: [agent.id], lead: agent.id });
     const thread = await post(`/api/agents/${agent.id}/threads`, { id: randomUUID(), name: 'Files side' });
     const direct = `/api/agents/${agent.id}/files`, room = `/api/channels/${channel.id}/files`, side = `/api/threads/${thread.id}/files`;
@@ -125,7 +125,7 @@ test('text attachments reach only selected conversation and retain retry identit
     assert.fail('Attachment response did not finish');
   }
   try {
-    const agent = await post('/api/agents', { id: randomUUID(), name: 'Reader', model: 'fixture', instructions: 'Help.' }, 201);
+    const agent = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Reader', model: 'fixture', instructions: 'Help.' }, 201);
     const channel = await post('/api/channels', { id: randomUUID(), name: 'Room', instructions: 'Help.', lead: agent.id, members: [agent.id] }, 201);
     const path = `/api/channels/${channel.id}/turns`, main = `/api/agents/${agent.id}/turns`;
     const ids: string[] = [];
@@ -153,7 +153,7 @@ test('text attachments reach only selected conversation and retain retry identit
     const direct = { id: randomUUID(), text: 'Direct chat' };
     await post(main, direct, 202); await wait(main, direct.id);
     assert(!calls[2].some(text => text.includes('PRIVATE_ROOM_NOTE')));
-    const worker = await post('/api/agents', { id: randomUUID(), name: 'Worker', model: 'fixture', instructions: 'Help.' }, 201);
+    const worker = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Worker', model: 'fixture', instructions: 'Help.' }, 201);
     await post(`/api/channels/${channel.id}/edit`, { id: randomUUID(), revision: channel.revision, name: channel.name, instructions: 'Help.', lead: agent.id, members: [agent.id, worker.id], archived: false });
     const routed = { id: randomUUID(), text: 'Route this file', automatic: true, files: [ids[0]] };
     await post(path, routed, 202);

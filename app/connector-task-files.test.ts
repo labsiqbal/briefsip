@@ -48,7 +48,7 @@ for(const platform of ['slack','telegram'])for(const mode of ['reply','notice','
   return db.prepare(`SELECT * FROM ${platform}_inbox ORDER BY rowid DESC LIMIT 1`).get()!;
  }
  try{
-  for(const id of [owner,worker,leaf,foreign])await ui('/api/agents',{id,name:id,model:id===owner?'owner':mode==='nested'&&id===worker?'nested':'worker',instructions:'Help'});
+  for(const id of [owner,worker,leaf,foreign])await ui('/api/agents',{runtime:'api', id,name:id,model:id===owner?'owner':mode==='nested'&&id===worker?'nested':'worker',instructions:'Help'});
   for(const id of [owner,foreign])await ui(`/api/agents/${id}/scripts`,{id:randomUUID(),revision:0,enabled:true});
   if(platform==='slack'){initializeSlack(db);bindSlack(db,'TTEAM','AAPP','UBOT',owner);}else{initializeTelegram(db);bindTelegram(db,123,owner);}
   let previousFile='';

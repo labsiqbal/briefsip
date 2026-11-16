@@ -40,7 +40,7 @@ test('manual routine runs keep schedule, deduplicate across restart and enforce 
   }
   async function get(path: string) { return (await fetch(app.origin + path)).json(); }
   try {
-    const agent = await post('/api/agents', { id: randomUUID(), name: 'Tester', model: 'fixture', instructions: 'Help.' }, 201);
+    const agent = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Tester', model: 'fixture', instructions: 'Help.' }, 201);
     const list = `/api/agents/${agent.id}/routines`;
     const create = { id: randomUUID(), name: 'Manual', prompt: 'TEST', nextAt: Date.now() + 3600000, intervalSeconds: 60, enabled: false };
     const routine = await post(list, create);
@@ -94,7 +94,7 @@ test('manual routine runs keep schedule, deduplicate across restart and enforce 
     const again = await post(holdPath, { id: randomUUID(), revision: hold.revision });
     assert.notEqual(again.turn, held.turn);
     await post(`/api/threads/${again.thread}/turns/${again.turn}/cancel`, { id: randomUUID() });
-    const fullAgent = await post('/api/agents', { id: randomUUID(), name: 'Full queue', model: 'fixture', instructions: 'Help.' }, 201);
+    const fullAgent = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Full queue', model: 'fixture', instructions: 'Help.' }, 201);
     const fullRoutine = await post(`/api/agents/${fullAgent.id}/routines`, { ...create, id: randomUUID() });
     for (let n = 0; n < 100; n++) await post(`/api/agents/${fullAgent.id}/turns`, { id: randomUUID(), text: 'HOLD' }, 202);
     await post(`/api/routines/${fullRoutine.id}/test`, { id: randomUUID(), revision: fullRoutine.revision }, 409);
@@ -148,7 +148,7 @@ test('routine occurrences persist once and isolate each run from main history', 
     const html = await (await fetch(app.origin)).text();
     const icon = html.match(/rel="icon"[^>]*href="([^"]+)"/)?.[1]; assert(icon);
     const iconResponse = await fetch(app.origin + icon); assert.equal(iconResponse.status, 200); assert.equal(iconResponse.headers.get('content-type'), 'image/svg+xml');
-    const agent = await post('/api/agents', { id: randomUUID(), name: 'Scheduler', model: 'fixture', instructions: 'Help.' }, 201);
+    const agent = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Scheduler', model: 'fixture', instructions: 'Help.' }, 201);
     const list = `/api/agents/${agent.id}/routines`;
     const create = { id: randomUUID(), name: 'Daily check', prompt: 'ROUTINE_ONLY', nextAt: Date.now() - 120001, intervalSeconds: 60, enabled: true };
     await post(list, { ...create, intervalSeconds: 0 }, 400);
@@ -231,9 +231,9 @@ test('routine hub pages visible local owners, filters safely and never returns s
   }
   async function get(path: string, status = 200) { const response = await fetch(app.origin + path); const value = await response.json(); assert.equal(response.status, status, JSON.stringify(value)); return value; }
   try {
-    const a = await post('/api/agents', { id: randomUUID(), name: 'Ada', model: 'fixture', instructions: 'Help.' }, 201);
-    const b = await post('/api/agents', { id: randomUUID(), name: 'Grace', model: 'fixture', instructions: 'Help.' }, 201);
-    const hidden = await post('/api/agents', { id: randomUUID(), name: 'Hidden', model: 'fixture', instructions: 'Help.' }, 201);
+    const a = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Ada', model: 'fixture', instructions: 'Help.' }, 201);
+    const b = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Grace', model: 'fixture', instructions: 'Help.' }, 201);
+    const hidden = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Hidden', model: 'fixture', instructions: 'Help.' }, 201);
     const base = { name: 'Review', prompt: 'Saved instructions', nextAt: Date.now() + 3600000, intervalSeconds: null, enabled: true };
     const first = await post(`/api/agents/${a.id}/routines`, { ...base, id: randomUUID(), trigger: 'webhook' });
     const hook = await post(`/api/routines/${first.id}/webhook`, { id: randomUUID(), revision: 0, rotate: true, eventName: '', filters: [] });
@@ -275,7 +275,7 @@ test('routine hub delete is revisioned and recoverable, retains runs, revokes we
   }
   async function get(path: string) { return (await fetch(app.origin + path)).json(); }
   try {
-    const agent = await post('/api/agents', { id: randomUUID(), name: 'Runner', model: 'fixture', instructions: 'Help.' },201);
+    const agent = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Runner', model: 'fixture', instructions: 'Help.' },201);
     const input = { id: randomUUID(), name: 'Webhook', prompt: 'Run', trigger: 'webhook', nextAt: Date.now() + 3600000, intervalSeconds: null, enabled: true };
     const routine = await post(`/api/agents/${agent.id}/routines`,input);
     const hook = await post(`/api/routines/${routine.id}/webhook`,{ id: randomUUID(),revision:0,rotate:true,eventName:'',filters:[] });

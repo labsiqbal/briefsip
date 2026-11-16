@@ -69,7 +69,7 @@ test('agent history tools retrieve old originals and reject foreign conversation
     assert.fail('Tool run did not settle');
   }
   try {
-    const agent = await post('/api/agents', { id: randomUUID(), name: 'Reader', model: 'fixture', instructions: 'Help.' });
+    const agent = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Reader', model: 'fixture', instructions: 'Help.' });
     const channel = await post('/api/channels', { id: randomUUID(), name: 'Room', instructions: 'Help.', lead: agent.id, members: [agent.id] });
     const a = await post(`/api/agents/${agent.id}/threads`, { id: randomUUID(), name: 'A' });
     const b = await post(`/api/agents/${agent.id}/threads`, { id: randomUUID(), name: 'B' });

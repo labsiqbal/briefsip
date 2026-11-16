@@ -44,8 +44,8 @@ test('avatar tool scopes files, journals atomic changes and preserves user chang
   }
   async function run(path: string, attachments: string[] = [], status = 'done') { const id = randomUUID(); await request(path + '/turns', { id, text: 'Use this as your avatar', files: attachments }); await until(path, id, status); return id; }
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Artist', model: 'fixture', instructions: 'Help' });
-    const other = await request('/api/agents', { id: randomUUID(), name: 'Other', model: 'fixture', instructions: 'Help' });
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Artist', model: 'fixture', instructions: 'Help' });
+    const other = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Other', model: 'fixture', instructions: 'Help' });
     const side = await request(`/api/agents/${agent.id}/threads`, { id: randomUUID(), name: 'Side' });
     const room = await request('/api/channels', { id: randomUUID(), name: 'Room', instructions: 'Help', members: [agent.id], lead: agent.id });
     const path = `/api/agents/${agent.id}`, avatar = path + '/avatar', sidePath = `/api/threads/${side.id}`;

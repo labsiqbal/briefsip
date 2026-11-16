@@ -54,7 +54,7 @@ test('Gemini HTTP streaming, signed tool recovery, models and cancellation', asy
   async function until(path: string, id: string, status: string) { for (let n = 0; n < 400; n++) { const row = (await request(path)).find((row: any) => row.id === id); if (row?.status === status) return row; await new Promise(resolve => setTimeout(resolve, 10)); } assert.fail(`Missing ${status}`); }
   try {
     assert.deepEqual((await request('/api/models')).models, ['fixture', 'second']);
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Gemini', model: 'fixture', instructions: 'Help' }), path = `/api/agents/${agent.id}/turns`;
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Gemini', model: 'fixture', instructions: 'Help' }), path = `/api/agents/${agent.id}/turns`;
     for (mode of ['text', 'tool', 'incomplete']) { const id = randomUUID(); await request(path, { id, text: mode }); const row = await until(path, id, mode === 'incomplete' ? 'failed' : 'done'); if (mode === 'tool') assert.equal(row.generatedFiles.length, 1); }
     mode = 'tool-hold'; const id = randomUUID(); await request(path, { id, text: 'Resume signed tool' });
     for (let n = 0; n < 400 && !held; n++) await new Promise(resolve => setTimeout(resolve, 10)); assert(held);

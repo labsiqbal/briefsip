@@ -15,10 +15,10 @@ async function fixture(runtime: HarnessRuntime, write = true, room = false) {
   const directory = mkdtempSync(join(room ? join(import.meta.dirname,'node_modules') : tmpdir(),'briefsip-harness-')), workspace = join(directory,'workspace'); mkdirSync(workspace);
   const binary = executable(directory), agent = randomUUID(), minted: {agent: string;turn: string;id: string}[] = [], revoked: string[] = [];
   if(room)mkdirSync(join(directory,'state'));
-  const options = { database:join(directory,room?'state/db.sqlite':'db.sqlite'), port:0, timeout:10_000, workspaces:[{agent,directory:workspace,write}], harness: { executables:{codex:binary,claude:binary}, issuer:{ mintAgentSession(input: {agent:string;turn:string}) { const id=randomUUID(); minted.push({...input,id});return {id,token:'test-mcp-session-token'}; }, revokeAgentSession(id:string) { revoked.push(id); } } } };
+  const options = { baseURL: 'http://127.0.0.1:1/v1', database:join(directory,room?'state/db.sqlite':'db.sqlite'), port:0, timeout:10_000, workspaces:[{agent,directory:workspace,write}], harness: { executables:{codex:binary,claude:binary}, issuer:{ mintAgentSession(input: {agent:string;turn:string}) { const id=randomUUID(); minted.push({...input,id});return {id,token:'test-mcp-session-token'}; }, revokeAgentSession(id:string) { revoked.push(id); } } } };
   let app = await startApp(options);
   const request = async (path:string, body?:unknown, expected=200) => { const response=await fetch(app.origin+path,{method:body?'POST':'GET',headers:{Origin:app.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const data=await response.json();assert(expected===200?response.ok:response.status===expected,JSON.stringify(data));return data; };
-  const profile = { name:'Coder', model:'saved-api-model', instructions:'Help with coding.' };
+  const profile = { runtime: 'api' as const, name:'Coder', model:'saved-api-model', instructions:'Help with coding.' };
   await request('/api/agents',{id:agent,...profile}); const path=`/api/agents/${agent}`;
   await request(path+'/edit',{id:randomUUID(),revision:1,...profile,runtime,confirmRuntime:true});
   const until = async (turn:string,predicate:(row:any)=>boolean) => { for(let i=0;i<600;i++){const row=(await request(path+'/turns')).find((row:any)=>row.id===turn);if(row&&predicate(row))return row;await delay(15);}assert.fail('Harness turn timed out'); };
@@ -109,7 +109,7 @@ for(const runtime of ['codex','claude'] as const) {
       const log=readFileSync(join(f.workspace,'fake-log.jsonl'),'utf8');assert(runtime==='codex'?log.includes('thread/resume'):log.includes('"resume":true'));assert.equal(f.minted.length,3);assert.deepEqual(f.revoked,f.minted.map(row=>row.id));
       const contexts = log.trim().split('\n').map(line => JSON.parse(line)).filter(row => row.context).map(row => typeof row.context === 'string' ? row.context : Object.values(row.context).map((entry: any) => entry.value).join(''));
       assert(contexts.length >= 3);
-      for (const context of contexts) { assert.match(context, /<runtime_info>/); assert.match(context, /open_file_in_panel/); assert.doesNotMatch(context, /computer_screenshot|run_shell/); }
+      for (const context of contexts) { assert.match(context, /<runtime_info>/); assert.match(context, /open_file_in_panel/); assert.doesNotMatch(context, /computer_screenshot/); assert.match(context, /run_shell/); }
       const usage=await f.request('/api/usage');assert(usage.calls.some((call:any)=>call.input_tokens===11&&call.output_tokens===7));
     } finally {await f.close();}
   });
@@ -130,14 +130,14 @@ for(const runtime of ['codex','claude'] as const) {
       const follow = await f.send('FOLLOW_RESTART_FINISH'); assert.equal((await f.until(follow, row => ['done','failed'].includes(row.status))).status, 'done');
       const later = readFileSync(join(f.workspace, 'fake-log.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
       const turns = later.filter(row => row.type === 'turn');
-      assert.equal(turns.at(-1).session, turns.at(-2).session);
+      assert.notEqual(turns.at(-1).session, turns.at(-2).session);
       assert.notEqual(turns.at(-1).session, turns[0].session);
-      assert.equal(later.filter(row => runtime === 'codex' ? row.method === 'thread/resume' : row.type === 'init' && row.resume).length, 1);
+      assert.equal(later.filter(row => runtime === 'codex' ? row.method === 'thread/resume' : row.type === 'init' && row.resume).length, 0);
     } finally { await f.close(); }
   });
   test(`${runtime}: addressed room Steer restarts only selected member; room Stop expires approval and fences restart`, async () => {
     const f=await fixture(runtime,true,true);try {
-      const peer=await f.request('/api/agents',{id:randomUUID(),name:'Peer',model:'fake',instructions:'Help.'});
+      const peer=await f.request('/api/agents',{runtime:'api', id:randomUUID(),name:'Peer',model:'fake',instructions:'Help.'});
       const project=await f.request('/api/projects',{id:randomUUID(),name:'Harness room',folders:[{mode:'existing',path:f.workspace}],members:[{agent:f.agent,write:true},{agent:peer.id,write:true}],confirmWrite:true});
       await f.request(`/api/agents/${peer.id}/edit`,{id:randomUUID(),revision:1,name:'Peer',model:'fake',instructions:'Help.',runtime,confirmRuntime:true});
       const path=`/api/channels/${project.sections[0].id}/turns`,root=randomUUID();
@@ -214,8 +214,8 @@ for(const runtime of ['codex','claude'] as const) {
 test('environment excludes credential and loader canaries; workspace symlink and prefix limits',()=>{
   const directory=mkdtempSync(join(tmpdir(),'briefsip-harness-boundary-'));try{mkdirSync(join(directory,'work'));symlinkSync('/tmp',join(directory,'work','escape'));const env=harnessEnv({PATH:'/usr/bin',HOME:'/fake',LANG:'C',OPENAI_API_KEY:'canary',COMPOSIO_API_KEY:'canary',NODE_OPTIONS:'canary'});assert.deepEqual(Object.keys(env).sort(),['HOME','LANG','PATH']);assert(insideWorkspace(join(directory,'work'),'new.txt'));assert(!insideWorkspace(join(directory,'work'),'escape/new.txt'));assert(!insideWorkspace(join(directory,'work'),'../outside'));assert.equal(commandPrefix('echo hello'),'echo hello');assert.equal(commandPrefix('echo hello; curl attacker'),null);}finally{rmSync(directory,{recursive:true,force:true});}
 });
-test('runtime changes require confirmation, revision and workspace; missing binary disabled',async()=>{
-  const f=await fixture('codex');try{await f.request(f.path+'/edit',{id:randomUUID(),revision:2,...f.profile,runtime:'api'},409);await f.request(f.path+'/edit',{id:randomUUID(),revision:1,...f.profile,runtime:'api',confirmRuntime:true},409);const command={id:randomUUID(),revision:2,...f.profile,runtime:'api',confirmRuntime:true};await f.request(f.path+'/edit',command);await f.request(f.path+'/edit',command);const directory=await f.request('/api/agents');assert.equal(directory.agents[0].runtime,'api');assert.equal(directory.agents[0].revision,3);const other=await f.request('/api/agents',{id:randomUUID(),...f.profile});const choices=await f.request(`/api/agents/${other.id}/runtimes`);assert(choices.choices.every((choice:any)=>!choice.enabled));await f.request(`/api/agents/${other.id}/edit`,{id:randomUUID(),revision:1,...f.profile,runtime:'codex',confirmRuntime:true},400);assert.equal((await harnessAvailability('codex',null)).available,false);}finally{await f.close();}
+test('runtime changes require confirmation and revision; missing workspaces are provisioned',async()=>{
+  const f=await fixture('codex');try{await f.request(f.path+'/edit',{id:randomUUID(),revision:2,...f.profile,runtime:'api'},409);await f.request(f.path+'/edit',{id:randomUUID(),revision:1,...f.profile,runtime:'api',confirmRuntime:true},409);const command={id:randomUUID(),revision:2,...f.profile,runtime:'api',confirmRuntime:true};await f.request(f.path+'/edit',command);await f.request(f.path+'/edit',command);const directory=await f.request('/api/agents');assert.equal(directory.agents[0].runtime,'api');assert.equal(directory.agents[0].revision,3);const other=await f.request('/api/agents',{id:randomUUID(),...f.profile});const choices=await f.request(`/api/agents/${other.id}/runtimes`);assert(choices.choices.every((choice:any)=>choice.enabled===choice.available));await f.request(`/api/agents/${other.id}/edit`,{id:randomUUID(),revision:1,...f.profile,runtime:'codex',confirmRuntime:true});assert.equal((await harnessAvailability('codex',null)).available,false);}finally{await f.close();}
 });
 
 test('codex MCP elicitations: only Briefsip form approvals are accepted once; others decline', () => {

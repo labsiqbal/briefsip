@@ -18,7 +18,7 @@ test('script provider settings keep identity and credentials isolated, reject bu
   async function request(path:string,body?:unknown,status?:number,headers?:Record<string,string>):Promise<any>{const res=await fetch(app.origin+path,{method:body?'POST':'GET',headers:headers??{Origin:app.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const result=await res.json();if(status)assert.equal(res.status,status,JSON.stringify(result));else assert(res.ok,JSON.stringify(result));assert(!JSON.stringify(result).includes(secret));return result;}
   async function until(check:()=>Promise<boolean>){for(let n=0;n<200;n++){if(await check())return;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Timed out');}
   try {
-    const a=await request('/api/agents',{id:randomUUID(),name:'Keep name',model:'old',instructions:'Keep instructions'});
+    const a=await request('/api/agents',{runtime:'api', id:randomUUID(),name:'Keep name',model:'old',instructions:'Keep instructions'});
     const path=`/api/scripts/agents/${a.id}/provider`,permission=`/api/agents/${a.id}/scripts`,turns=`/api/scripts/agents/${a.id}/turns`;
     await request(path,undefined,403,auth);await request(permission,{id:randomUUID(),revision:0,enabled:true});
     const current=await request(path,undefined,200,auth);assert.equal(current.model,'old');assert.equal(current.accounts.find((row:any)=>row.id==='chosen').configured,true);assert(!JSON.stringify(current).includes('baseURL'));

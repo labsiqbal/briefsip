@@ -16,7 +16,7 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, hub = fa
     const res = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type':'application/json', ...headers }, body: body ? JSON.stringify(body) : undefined });
     const data = await res.json(); assert.equal(res.status, status, JSON.stringify(data)); return data;
   }
-  const create = (name: string) => request('/api/agents', { id: randomUUID(), name, model:'fixture', instructions:'Help' }, 201);
+  const create = (name: string) => request('/api/agents', { runtime: 'api', id: randomUUID(), name, model:'fixture', instructions:'Help' }, 201);
   return { dir, database, request, create, async seed(fn: (db: DatabaseSync) => void) { await app.close(); const db = new DatabaseSync(database); db.exec('PRAGMA foreign_keys=ON'); try { fn(db); } finally { db.close(); app = await startApp(options); } } };
 }
 
@@ -68,7 +68,7 @@ test('delete cascades every agent FK, scoped data, workflows, desktop and journa
   await f.request(`/api/agents/${a.id}/turns`,undefined,404); await f.request(`/api/threads/${thread.id}`,undefined,404);
   const turns=await f.request(`/api/channels/${channel.id}/turns`);
   assert.equal(turns.length,1); assert.equal(turns[0].reply,'past answer');assert.equal(turns[0].agent_name,'Deleted agent');assert.equal(turns[0].room.messages[0].name,'Deleted agent');
-  await f.request('/api/agents',{id:a.id,name:'Revive',model:'fixture',instructions:'Help'},409);
+  await f.request('/api/agents',{runtime:'api', id:a.id,name:'Revive',model:'fixture',instructions:'Help'},409);
   await f.seed(db => {
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
     // Across every referencing FK, not just the known populated examples.
@@ -143,7 +143,7 @@ test('running provider work must settle before delete; transactional failure pre
   t.after(async()=>{release?.();await app.close();provider.closeAllConnections();await new Promise<void>(resolve=>provider.close(()=>resolve()));rmSync(dir,{recursive:true,force:true});});
   async function post(path:string,body:unknown,status=200){const res=await fetch(app.origin+path,{method:'POST',headers:{Origin:app.origin,'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await res.json();assert.equal(res.status,status,JSON.stringify(data));return data;}
   const agent=randomUUID(),other=randomUUID(),turn=randomUUID(),command={id:randomUUID()},path=`/api/agents/${agent}/delete`;
-  for(const id of [agent,other])await post('/api/agents',{id,name:'Agent',model:'fixture',instructions:'Help'},201);
+  for(const id of [agent,other])await post('/api/agents',{runtime:'api', id,name:'Agent',model:'fixture',instructions:'Help'},201);
   await post(`/api/agents/${agent}/turns`,{id:turn,text:'Hold'},202);
   for(let n=0;n<100&&!started;n++)await new Promise(resolve=>setTimeout(resolve,20));assert(started);
   await post(path,command,409);release!();
@@ -181,7 +181,7 @@ test('paired peer cannot delete owner agents; deletion on owner refreshes peer r
   const owner=await startApp({database:join(dir,'owner.sqlite'),peerTokenIssuer:issuer}),peer=await startApp({database:join(dir,'peer.sqlite'),peerTokenIssuer:fakePeerTokenIssuer()});
   t.after(async()=>{await owner.close();await peer.close();rmSync(dir,{recursive:true,force:true});});
   async function post(app:{origin:string},path:string,body:unknown,status=200,token?:string){const res=await fetch(app.origin+path,{method:'POST',headers:{Origin:app.origin,'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})},body:JSON.stringify(body)});assert.equal(res.status,status,await res.clone().text());return res.json();}
-  const agent=randomUUID();for(const id of [agent,randomUUID()])await post(owner,'/api/agents',{id,name:'Owner',model:'fixture',instructions:'Help'},201);
+  const agent=randomUUID();for(const id of [agent,randomUUID()])await post(owner,'/api/agents',{runtime:'api', id,name:'Owner',model:'fixture',instructions:'Help'},201);
   const code=await post(owner,'/api/pairing-codes',{id:randomUUID()});await post(peer,'/api/machines',{id:randomUUID(),origin:owner.origin,code:code.code});
   const token=issuer.issued[0];assert(token);
   await post(owner,`/api/agents/${agent}/delete`,{id:randomUUID()},403,token);

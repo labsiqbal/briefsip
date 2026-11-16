@@ -32,8 +32,8 @@ test('sidebar HTTP edits retain agents/history through delete, conflicts, retry,
     assert.deepEqual(await request('/api/sidebar/summary'), { summaries: [] });
     await request('/api/sidebar/summary?limit=1', undefined, 400);
     assert.equal((await fetch(app.origin + '/api/sidebar/summary', { headers: { Origin: 'https://foreign.test' } })).status, 403);
-    const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' }, 201);
-    const b = await request('/api/agents', { id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' }, 201);
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' }, 201);
+    const b = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' }, 201);
     const historyPath = `/api/agents/${a.id}/turns`;
     await request(historyPath, { id: randomUUID(), text: 'Retain this conversation' }, 202);
     let history;

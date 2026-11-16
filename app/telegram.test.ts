@@ -21,7 +21,7 @@ test('Telegram question buttons answer the owning task once across restart and l
   async function ask(){sequence++;recordTelegramUpdates(db,[{update_id:sequence,message:{message_id:sequence,chat:{id:4,type:'private'},from:{id:4,is_bot:false},text:`Ask ${sequence}`}}],users);const row=db.prepare('SELECT * FROM telegram_inbox WHERE update_id=?').get(sequence)!;
     for(let n=0;n<100;n++){await telegramAgentStep(db,users,local,remote);const q=db.prepare('SELECT * FROM telegram_questions WHERE turn=?').get(row.turn);if(q){const notice=sent.find(item=>item.text.includes(String(q.id)));if(notice)return {id:String(q.id),turn:String(q.turn),thread:String(q.thread),message:notice.message_id,notice};}await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Question not delivered');}
   try{
-    await ui('/api/agents',{id:agent,name:'Questions',model:'fixture',instructions:'Help'});await ui(`/api/agents/${agent}/scripts`,{id:randomUUID(),revision:0,enabled:true});initializeTelegram(db);bindTelegram(db,123,agent);
+    await ui('/api/agents',{runtime:'api', id:agent,name:'Questions',model:'fixture',instructions:'Help'});await ui(`/api/agents/${agent}/scripts`,{id:randomUUID(),revision:0,enabled:true});initializeTelegram(db);bindTelegram(db,123,agent);
     const q=await ask();assert.equal(q.notice.reply_markup.inline_keyboard.length,8);assert(q.notice.text.includes(choices[7]));assert(q.notice.reply_markup.inline_keyboard[7][0].text.endsWith('...'));assert(Buffer.byteLength(q.notice.reply_markup.inline_keyboard[7][0].callback_data)<=64);
     click(q,8);click(q,0,{from:{id:5,is_bot:false}});click(q,0,{data:`a:${q.id}:y`});click(q,0,{message:{message_id:q.message+1,chat:{id:4,type:'private'},from:{id:123,is_bot:true}}});await pollTelegram(db,users,remote);await telegramAgentStep(db,users,local,remote);assert.equal(answers.length,0);
     click(q,7);click(q,0);await pollTelegram(db,users,remote);assert.equal(db.prepare('SELECT selection FROM telegram_callbacks WHERE notice=?').get(q.id)!.selection,7);
@@ -160,7 +160,7 @@ test('Telegram bridge submits once through granted side-thread API and isolates 
   const remote = async (_method: string, body: Record<string,unknown>) => {sent.push(body);return {message_id:99,chat:{id:body.chat_id}};};
   async function ui(path: string, body?: unknown): Promise<any> {const res=await fetch(app.origin+path,{method:body?'POST':'GET',headers:{Origin:app.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});assert(res.ok);return res.json();}
   try {
-    await ui('/api/agents',{id:agent,name:'Telegram fixture',model:'fixture',instructions:'Help'});
+    await ui('/api/agents',{runtime:'api', id:agent,name:'Telegram fixture',model:'fixture',instructions:'Help'});
     await ui(`/api/agents/${agent}/scripts`,{id:randomUUID(),revision:0,enabled:true});
     initializeTelegram(db);bindTelegram(db,123,agent);
     const update={update_id:1,message:{message_id:2,chat:{id:4,type:'private'},from:{id:4,is_bot:false},text:'Hello'}};
@@ -259,7 +259,7 @@ for(const ask of [false,true])test(`Telegram runner ${ask?'answers a question':'
   const app=await startApp({database:join(root,'app.sqlite'),baseURL:`http://127.0.0.1:${pa.port}/v1`,scriptDirectory:join(root,'scripts')});
   const timeout=setTimeout(()=>controller.abort(),10000);
   try{
-    for(const [path,body]of [['/api/agents',{id:agent,name:'Runner',model:'fixture',instructions:'Help'}],[`/api/agents/${agent}/scripts`,{id:randomUUID(),revision:0,enabled:true}]]as const){const response=await fetch(app.origin+path,{method:'POST',headers:{Origin:app.origin,'Content-Type':'application/json'},body:JSON.stringify(body)});assert(response.ok);await response.json();}
+    for(const [path,body]of [['/api/agents',{runtime:'api', id:agent,name:'Runner',model:'fixture',instructions:'Help'}],[`/api/agents/${agent}/scripts`,{id:randomUUID(),revision:0,enabled:true}]]as const){const response=await fetch(app.origin+path,{method:'POST',headers:{Origin:app.origin,'Content-Type':'application/json'},body:JSON.stringify(body)});assert(response.ok);await response.json();}
     await runTelegram({directory:join(root,'state'),scriptDirectory:join(root,'scripts'),agent,token:'123:'+'x'.repeat(24),users:[4],origin:`http://127.0.0.1:${ta.port}`},controller.signal);
     assert.equal(modelCalls,ask?2:1);assert.equal(delivered,ask?3:1);assert(offsets.includes(8));assert(!existsSync(join(root,'state','owner.lock')));
     const journal=new DatabaseSync(join(root,'state','telegram.sqlite'));try{assert.equal(journal.prepare('SELECT status FROM telegram_outbox').get()!.status,'sent');}finally{journal.close();}

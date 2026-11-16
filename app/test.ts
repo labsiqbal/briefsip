@@ -54,11 +54,11 @@ test('HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupt
     assert.fail(`Timed out waiting for ${status}`);
   }
   try {
-    const profile = { id: randomUUID(), name: 'Research', model: 'test-model', instructions: 'Answer precisely.' };
-    assert.equal((await request('/api/agents', profile, 'https://foreign.example')).status, 403);
+    const profile = { runtime: 'api', id: randomUUID(), name: 'Research', model: 'test-model', instructions: 'Answer precisely.' };
+    assert.equal((await request('/api/agents', { ...profile, runtime: 'api' }, 'https://foreign.example')).status, 403);
     assert.equal((await request('/api/agents', { ...profile, name: '' })).status, 400);
-    assert.equal((await request('/api/agents', profile)).status, 201);
-    assert.equal((await request('/api/agents', profile)).status, 200);
+    assert.equal((await request('/api/agents', { ...profile, runtime: 'api' })).status, 201);
+    assert.equal((await request('/api/agents', { ...profile, runtime: 'api' })).status, 200);
     assert.equal((await request('/api/agents', { ...profile, name: 'changed' })).status, 409);
     for (let i = 0; i < 4; i++) assert.equal((await request('/api/agents', { ...profile, id: randomUUID(), name: `Agent ${i}` })).status, 201);
     assert.equal((await request('/api/agents')).body.agents.length, 5);
@@ -282,14 +282,14 @@ test('HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupt
     const changed = await request(editPath, edit);
     assert.equal(changed.status, 200); assert.equal(changed.body.id, profile.id); assert.equal(changed.body.revision, 2);
     assert.deepEqual((await request(editPath, edit)).body, changed.body);
-    const createRetry = await request('/api/agents', profile);
+    const createRetry = await request('/api/agents', { ...profile, runtime: 'api' });
     assert.equal(createRetry.status, 200); assert.deepEqual(createRetry.body, changed.body);
     assert.equal((await request(editPath, { ...edit, id: randomUUID() })).status, 409);
     assert.equal((await request(editPath, { ...edit, name: 'conflicting retry' })).status, 409);
     assert.equal((await request(`/api/agents/${other.id}/edit`, edit)).status, 409);
     assert.equal((await request(editPath, { ...edit, id: randomUUID(), revision: 2, name: '' })).status, 400);
     await app.close(); app = await startApp({ database: options.database });
-    assert.deepEqual((await request('/api/agents', profile)).body, changed.body);
+    assert.deepEqual((await request('/api/agents', { ...profile, runtime: 'api' })).body, changed.body);
     assert.deepEqual((await request(editPath, edit)).body, changed.body);
     assert.equal((await request('/api/agents')).body.agents.find((agent: { id: string }) => agent.id === profile.id).model, 'different-model');
     assert.equal((await request(path)).body.length, 5);
@@ -339,10 +339,10 @@ test('automatic routing shares four workers with execution', async () => {
     assert(response.ok); return response.json();
   }
   try {
-    const worker = await post('/api/agents', { id: randomUUID(), name: 'Worker', model: 'fixture', instructions: 'Execute.' });
+    const worker = await post('/api/agents', {runtime: 'api',  id: randomUUID(), name: 'Worker', model: 'fixture', instructions: 'Execute.' });
     const paths: string[] = [];
     for (let i = 0; i < 5; i++) {
-      const lead = await post('/api/agents', { id: randomUUID(), name: `Lead ${i}`, model: 'fixture', instructions: 'Coordinate.' });
+      const lead = await post('/api/agents', {runtime: 'api',  id: randomUUID(), name: `Lead ${i}`, model: 'fixture', instructions: 'Coordinate.' });
       const channel = await post('/api/channels', { id: randomUUID(), name: `Room ${i}`, instructions: 'Work.', members: [lead.id, worker.id], lead: lead.id });
       const path = `/api/channels/${channel.id}/turns`; paths.push(path);
       await post(path, { id: randomUUID(), text: `Work ${i}`, automatic: true });
@@ -395,7 +395,7 @@ test('legacy agent migration preserves create retries across later edits', async
     assert(response.ok); return response.json();
   }
   try {
-    const current = await post('/api/agents', original); assert.equal(current.revision, 1);
+    const current = await post('/api/agents', { ...original, runtime: 'api' }); assert.equal(current.revision, 1);
     const oldRoom = await post('/api/channels', legacyChannel); assert.equal(oldRoom.revision, 1); assert.equal(oldRoom.archived, 0);
     assert.equal(oldRoom.activity, 1); assert.equal(oldRoom.read_position, 0);
     await post(`/api/channels/${legacyChannel.id}/read`, { id: randomUUID(), position: 1 });
@@ -409,7 +409,7 @@ test('legacy agent migration preserves create retries across later edits', async
     await app.close(); app = await startApp({ database });
     const readRoom = await post('/api/channels', legacyChannel); assert.equal(readRoom.activity, 1); assert.equal(readRoom.read_position, 1);
     assert.deepEqual(await post(path, first), firstResult);
-    const retried = await post('/api/agents', original);
+    const retried = await post('/api/agents', { ...original, runtime: 'api' });
     assert.equal(retried.id, original.id); assert.equal(retried.name, 'Second edit'); assert.equal(retried.revision, 3);
     const directory = await (await fetch(app.origin + '/api/agents')).json(); assert.equal(directory.agents.length, 1);
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
@@ -431,7 +431,7 @@ test('channel read positions are durable, monotone and bound to observed activit
     return { status: response.status, body: await response.json() };
   };
   try {
-    const agent = (await post('/api/agents', { id: randomUUID(), name: 'Reader', model: 'fixture', instructions: 'Help.' })).body;
+    const agent = (await post('/api/agents', {runtime: 'api',  id: randomUUID(), name: 'Reader', model: 'fixture', instructions: 'Help.' })).body;
     const room = (await post('/api/channels', { id: randomUUID(), name: 'Read state', instructions: 'Help.', members: [agent.id], lead: agent.id })).body;
     const path = `/api/channels/${room.id}`, turn = randomUUID();
     const state = async () => (await (await fetch(app.origin + '/api/channels')).json()).find((row: { id: string }) => row.id === room.id);

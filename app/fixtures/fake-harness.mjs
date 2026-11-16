@@ -6,12 +6,13 @@ import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 if (process.argv.includes('--version')) { console.log('fake-harness 1.0.0'); process.exit(0); }
-for (const key of ['OPENAI_API_KEY','ANTHROPIC_API_KEY','COMPOSIO_API_KEY','BRIEFSIP_SCRIPT_TOKEN','NODE_OPTIONS','BRIEFSIP_HARNESS_CANARY']) assert.equal(process.env[key], undefined, `${key} leaked`);
+for (const key of ['OPENAI_API_KEY','ANTHROPIC_API_KEY','COMPOSIO_API_KEY','BRIEFSIP_SCRIPT_TOKEN','NODE_OPTIONS','BRIEFSIP_HARNESS_CANARY']) assert.equal(process.env[key], key === 'ANTHROPIC_API_KEY' && process.env[key] === 'briefsip-no-key' ? 'briefsip-no-key' : undefined, `${key} leaked`);
 const codex = process.argv.includes('app-server');
 const arg = flag => { const at = process.argv.indexOf(flag); return at >= 0 ? process.argv[at + 1] : process.argv.find(value => value.startsWith(flag + '='))?.slice(flag.length + 1); };
 const log = value => appendFileSync('fake-log.jsonl', JSON.stringify(value) + '\n');
 const send = value => process.stdout.write(JSON.stringify(value) + '\n');
 const hasResume = process.argv.some(value => value === '--resume' || value.startsWith('--resume='));
+let mcpURL = process.env.BRIEFSIP_MCP_URL;
 let session = (hasResume ? (arg('--resume') ?? process.argv.find(value => value.startsWith('--resume='))?.slice(9)) : undefined) ?? arg('--session-id') ?? randomUUID(), prompt = '', callback = '', approvalId = '';
 const notify = (method, params) => send({ method, params: { threadId: session, ...params } });
 function delta(text) { if (codex) notify('item/agentMessage/delta', { delta: text }); else send({ type: 'stream_event', session_id: session, uuid: randomUUID(), parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } } }); }
@@ -20,6 +21,7 @@ function finish(allowed = true) {
     notify('item/completed', { item: { id: 'shell', type: 'commandExecution', command: 'echo hello', status: allowed ? 'completed' : 'declined' } });
     delta(allowed ? 'finished' : 'denied');
     if (prompt.includes('FINAL_SECRET')) { delta(' test-mcp-session-'); delta('token'); }
+    if (prompt.includes('FINAL_PROVIDER_SECRET') && process.env.BRIEFSIP_PROVIDER_KEY) { const key = process.env.BRIEFSIP_PROVIDER_KEY; delta(key.slice(0, 8)); delta(key.slice(8)); }
     notify('thread/tokenUsage/updated', { tokenUsage: { last: { inputTokens: 11, outputTokens: 7 } } });
     notify('turn/completed', { turn: { id: 'fake-turn', status: 'completed' } });
   } else {
@@ -33,6 +35,7 @@ function finish(allowed = true) {
 function run(text) {
   if (text.includes('STREAM_GATE') || text.includes('STREAM_CRASH')) { void streamGate(text); return; }
   prompt = text; log({ type: 'turn', session, prompt }); delta('Harness ');
+  if (text.includes('NATIVE_SETUP_FIXTURE') && text.includes('Initial needs:')) { void (async()=>{ const rpc=async(name,args)=>{const r=await fetch(mcpURL,{method:'POST',headers:{Authorization:`Bearer ${process.env.BRIEFSIP_MCP_TOKEN}`,'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:randomUUID(),method:'tools/call',params:{name,arguments:args}})});return {status:r.status,body:await r.json()};}; assert.equal((await rpc('create_text_file',{name:'forbidden',text:'x'})).status,403); const result=await rpc('edit_profile',{revision:1,name:'Native assistant',instructions:'Native setup saved.'});assert(result.body.result,JSON.stringify(result));assert.equal(result.body.result.structuredContent.revision,2,JSON.stringify(result));finish(); })().catch(error=>{log({setupError:String(error)});process.exit(1);});return; }
   if (text.includes('CRASH')) { setTimeout(() => process.exit(19), 20); return; }
   if (text.includes('OVERSIZE')) { process.stdout.write('x'.repeat(1024 * 1024 + 1)); return; }
   if (text.includes('HOLD') && !text.includes('RESTART_FINISH')) {
@@ -45,7 +48,7 @@ function run(text) {
     }
     if (text.includes('APPROVE')) { approvalId = 'approval-native'; send({ id: approvalId, method: 'item/commandExecution/requestApproval', params: { threadId: session, turnId: 'fake-turn', itemId: 'shell', command: text.includes('APPROVE_SECRET') ? 'echo test-mcp-session-token' : 'echo hello', reason: 'Run command outside sandbox?', cwd: process.cwd() } }); return; }
   } else if (text.includes('OUTSIDE_FILE') || text.includes('NETWORK') || text.includes('WORKSPACE_WRITE') || text.includes('READ_ONLY_WRITE') || text.includes('APPROVE')) {
-    approvalId = 'approval-native'; send({ type: 'control_request', request_id: approvalId, request: { subtype: 'hook_callback', callback_id: callback, input: { session_id: session, transcript_path: '', cwd: process.cwd(), hook_event_name: 'PreToolUse', tool_name: text.includes('NETWORK') ? 'WebFetch' : /OUTSIDE_FILE|WORKSPACE_WRITE|READ_ONLY_WRITE/.test(text) ? 'Write' : 'Bash', tool_input: text.includes('NETWORK') ? {url:'https://example.invalid/'} : /OUTSIDE_FILE|WORKSPACE_WRITE|READ_ONLY_WRITE/.test(text) ? {file_path:text.includes('OUTSIDE_FILE') ? '/outside/hello.txt' : process.cwd()+'/hello.txt',content:'hello'} : { command: text.includes('APPROVE_SECRET') ? 'echo test-mcp-session-token' : 'echo hello' }, tool_use_id: 'shell' } } }); return;
+    approvalId = 'approval-native'; send({ type: 'control_request', request_id: approvalId, request: { subtype: 'hook_callback', callback_id: callback, input: { session_id: session, transcript_path: '', cwd: process.cwd(), hook_event_name: 'PreToolUse', tool_name: text.includes('NETWORK') ? 'WebFetch' : /OUTSIDE_FILE|WORKSPACE_WRITE|READ_ONLY_WRITE/.test(text) ? 'Write' : 'Bash', tool_input: text.includes('NETWORK') ? {url:'https://example.invalid/'} : /OUTSIDE_FILE|WORKSPACE_WRITE|READ_ONLY_WRITE/.test(text) ? {file_path:text.includes('OUTSIDE_FILE') ? '/outside/hello.txt' : process.cwd()+'/hello.txt',content:'hello'} : { dangerouslyDisableSandbox: true, command: text.includes('APPROVE_SECRET') ? 'echo test-mcp-session-token' : 'echo hello' }, tool_use_id: 'shell' } } }); return;
   }
   setTimeout(() => finish(), 100);
 }
@@ -81,14 +84,18 @@ async function streamGate(text) {
 for await (const line of createInterface({ input: process.stdin })) {
   const value = JSON.parse(line);
   if (codex) {
-    log({ method: value.method ?? 'response' });
+    log({ method: value.method ?? 'response', home: process.env.HOME });
     if (value.method === 'initialize') send({ id: value.id, result: { userAgent: 'fake' } });
     if (['thread/start','thread/resume'].includes(value.method)) {
-      assert.equal(value.params.cwd, process.cwd()); assert.match(value.params.config.mcp_servers.briefsip.url, /^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
-      assert.match(value.params.config.mcp_servers.briefsip.http_headers.Authorization, /^Bearer /);
+      mcpURL = value.params.config.mcp_servers.briefsip.url; assert.equal(value.params.cwd, process.cwd()); assert.match(value.params.config.mcp_servers.briefsip.url, /^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
+      assert.equal(value.params.config.mcp_servers.briefsip.bearer_token_env_var, 'BRIEFSIP_MCP_TOKEN'); assert(process.env.BRIEFSIP_MCP_TOKEN);
+      assert.equal(value.params.approvalPolicy, 'on-request'); assert.equal(value.params.config.approvals_reviewer, 'user');
+      assert.equal(value.params.config['shell_environment_policy.inherit'], 'none');
+      assert(!JSON.stringify(value.params.config['shell_environment_policy.set']).includes(process.env.BRIEFSIP_MCP_TOKEN));
+      assert(!process.env.BRIEFSIP_PROVIDER_KEY || !JSON.stringify(value.params.config['shell_environment_policy.set']).includes(process.env.BRIEFSIP_PROVIDER_KEY));
       session = value.params.threadId ?? session; send({ id: value.id, result: { thread: { id: session } } });
     }
-    if (value.method === 'turn/start') { log({ context: value.params.additionalContext }); assert.equal(value.params.threadId, session); assert.equal(value.params.sandboxPolicy.networkAccess ?? false, false); send({ id: value.id, result: { turn: { id: 'fake-turn', status: 'inProgress' } } }); notify('turn/started', { turn: { id: 'fake-turn' } }); run(value.params.input[0].text); }
+    if (value.method === 'turn/start') { log({ context: value.params.additionalContext }); assert.equal(value.params.threadId, session); assert.equal(value.params.sandboxPolicy.networkAccess ?? false, false); if(value.params.sandboxPolicy.type==='workspaceWrite'){assert.deepEqual(value.params.sandboxPolicy.writableRoots,[process.cwd()]);assert.equal(value.params.sandboxPolicy.excludeTmpdirEnvVar,true);assert.equal(value.params.sandboxPolicy.excludeSlashTmp,true);} send({ id: value.id, result: { turn: { id: 'fake-turn', status: 'inProgress' } } }); notify('turn/started', { turn: { id: 'fake-turn' } }); run(value.params.input[0].text); }
     if (value.id === approvalId && value.result) { log({ decision: value.result.decision }); finish(value.result.decision === 'accept' || !!value.result.permissions?.network); }
     if (value.method === 'turn/interrupt') { log({ interrupted: true }); send({ id: value.id, result: {} }); }
   } else {
@@ -97,7 +104,7 @@ for await (const line of createInterface({ input: process.stdin })) {
       if (request.subtype === 'initialize') {
         callback = request.hooks?.PreToolUse?.[0]?.hookCallbackIds?.[0] ?? '';
         log({ type: 'init', resume: hasResume, callback: !!callback, context: request.appendSystemPrompt });
-        const config = JSON.parse(arg('--mcp-config')); assert.match(config.mcpServers.briefsip.headers.Authorization, /^Bearer /);
+        const config = JSON.parse(arg('--mcp-config')); assert.equal(config.mcpServers.briefsip.type, 'stdio'); assert(process.env.BRIEFSIP_MCP_TOKEN); assert(!JSON.stringify(config).includes(process.env.BRIEFSIP_MCP_TOKEN));
         send({ type: 'control_response', response: { subtype: 'success', request_id: value.request_id, response: { commands: [], models: [], account: {}, hook_on_failure_supported: true, hooks_applied: true } } });
         send({ type: 'system', subtype: 'init', session_id: session, uuid: randomUUID(), cwd: process.cwd(), tools: [], mcp_servers: [], model: 'fake', permissionMode: 'default', apiKeySource: 'none', slash_commands: [] });
       } else if (request.subtype === 'interrupt') { log({ interrupted: true }); send({ type: 'control_response', response: { subtype: 'success', request_id: value.request_id, response: {} } }); }

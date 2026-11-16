@@ -44,7 +44,7 @@ test('preview endpoint preserves file bytes and enforces direct/channel/thread s
     const res = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); assert(res.ok); return res.json();
   }
   try {
-    const a = await post('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
+    const a = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
     const c = await post('/api/channels', { id: randomUUID(), name: 'C', instructions: 'Help', members: [a.id], lead: a.id });
     const t = await post(`/api/agents/${a.id}/threads`, { id: randomUUID(), name: 'Side' });
     const scopes = [`/api/agents/${a.id}/files`, `/api/channels/${c.id}/files`, `/api/threads/${t.id}/files`];

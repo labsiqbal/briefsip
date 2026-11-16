@@ -42,29 +42,29 @@ test('prompt creation atomically queues one restricted setup and recovers withou
     const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const data = await response.json(); assert.equal(response.status, status, JSON.stringify(data)); return data;
   }
-  const command = () => ({ id: randomUUID(), name: 'Agent baru', model: 'fixture', instructions: 'I need an evidence-focused assistant.', setup: true });
+  const command = () => ({ runtime: 'api', id: randomUUID(), name: 'Agent baru', model: 'fixture', instructions: 'I need an evidence-focused assistant.', setup: true });
   async function until(id: string, status: string) { for (let n = 0; n < 300; n++) { const rows = await request(`/api/agents/${id}/turns`); if (status === 'waiting' ? rows[0]?.paused === 1 && rows[0]?.questions?.length : rows[0]?.status === status) return rows[0]; await new Promise(resolve => setTimeout(resolve, 10)); } assert.fail(`Missing ${status}`); }
   try {
-    const input = command(); await request('/api/agents', input, 201); await until(input.id, 'done'); const before = calls;
-    assert.equal((await request('/api/agents', input)).name, 'Research partner'); assert.equal((await request('/api/agents', input)).role, 'Research agent'); assert.equal(calls, before); assert.equal((await request(`/api/agents/${input.id}/turns`)).length, 1); assert((await request(`/api/agents/${input.id}/turns`))[0].text.includes(input.instructions));
+    const input = command(); await request('/api/agents', { ...input, runtime: 'api' }, 201); await until(input.id, 'done'); const before = calls;
+    assert.equal((await request('/api/agents', { ...input, runtime: 'api' })).name, 'Research partner'); assert.equal((await request('/api/agents', { ...input, runtime: 'api' })).role, 'Research agent'); assert.equal(calls, before); assert.equal((await request(`/api/agents/${input.id}/turns`)).length, 1); assert((await request(`/api/agents/${input.id}/turns`))[0].text.includes(input.instructions));
     await request('/api/agents', { ...input, setup: false }, 409); await request('/api/agents', { ...input, instructions: 'Different' }, 409);
-    const manual = { ...command(), setup: false }; await request('/api/agents', manual, 201); assert.equal((await request(`/api/agents/${manual.id}/turns`)).length, 0);
+    const manual = { ...command(), setup: false }; await request('/api/agents', { ...manual, runtime: 'api' }, 201); assert.equal((await request(`/api/agents/${manual.id}/turns`)).length, 0);
     const malformed = { ...command(), setup: 'yes' }; await request('/api/agents', malformed, 400);
-    mode = 'escape'; const escaped = command(); await request('/api/agents', escaped, 201); const failed = await until(escaped.id, 'failed'); assert.equal(failed.generatedFiles.length, 0);
-    mode = 'name-only'; const partial = command(); await request('/api/agents', partial, 201); await until(partial.id, 'failed');
-    mode = 'no-save'; const empty = command(); await request('/api/agents', empty, 201); await until(empty.id, 'failed');
-    mode = 'ask'; const question = command(); await request('/api/agents', question, 201); const waiting = await until(question.id, 'waiting');
+    mode = 'escape'; const escaped = command(); await request('/api/agents', { ...escaped, runtime: 'api' }, 201); const failed = await until(escaped.id, 'failed'); assert.equal(failed.generatedFiles.length, 0);
+    mode = 'name-only'; const partial = command(); await request('/api/agents', { ...partial, runtime: 'api' }, 201); await until(partial.id, 'failed');
+    mode = 'no-save'; const empty = command(); await request('/api/agents', { ...empty, runtime: 'api' }, 201); await until(empty.id, 'failed');
+    mode = 'ask'; const question = command(); await request('/api/agents', { ...question, runtime: 'api' }, 201); const waiting = await until(question.id, 'waiting');
     await request(`/api/agents/${question.id}/turns/${question.id}/questions/${waiting.questions[0].id}/answer`, { id: randomUUID(), text: 'Research' }); await until(question.id, 'done');
-    mode = 'hold'; const held = command(); await request('/api/agents', held, 201);
+    mode = 'hold'; const held = command(); await request('/api/agents', { ...held, runtime: 'api' }, 201);
     for (let n = 0; n < 300 && !continued; n++) await new Promise(resolve => setTimeout(resolve, 10)); assert(continued);
     await app.close(); app = await startApp(options); const count = edits; mode = 'normal';
-    const stopped = await until(held.id, 'interrupted'); await request('/api/agents', held); assert.equal(edits, count);
+    const stopped = await until(held.id, 'interrupted'); await request('/api/agents', { ...held, runtime: 'api' }); assert.equal(edits, count);
     await request(`/api/agents/${held.id}/turns/${held.id}/resume`, { id: randomUUID(), revision: stopped.revision, acknowledgeUncertain: true }); await until(held.id, 'done'); assert.equal(edits, count);
     await app.close(); app = await startApp({ database: options.database });
-    const offline = command(); await request('/api/agents', offline, 503); assert(!(await request('/api/agents')).agents.some((a: any) => a.id === offline.id));
-    await request('/api/agents', input); // Historical receipt survives provider removal.
+    const offline = command(); await request('/api/agents', { ...offline, runtime: 'api' }, 503); assert(!(await request('/api/agents')).agents.some((a: any) => a.id === offline.id));
+    await request('/api/agents', { ...input, runtime: 'api' }); // Historical receipt survives provider removal.
     await app.close(); const db = new DatabaseSync(options.database); db.exec("CREATE TRIGGER reject_setup BEFORE INSERT ON turns BEGIN SELECT RAISE(ABORT, 'synthetic setup fault'); END"); db.close();
-    app = await startApp(options); const rollback = command(); await request('/api/agents', rollback, 500); assert(!(await request('/api/agents')).agents.some((a: any) => a.id === rollback.id));
+    app = await startApp(options); const rollback = command(); await request('/api/agents', { ...rollback, runtime: 'api' }, 500); assert(!(await request('/api/agents')).agents.some((a: any) => a.id === rollback.id));
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -250,9 +250,9 @@ test('local role create/edit receipts preserve normalized profile, omissions and
   }
   try {
     const input = { id: randomUUID(), name: 'Odd name', role: '  Orchestration agent  ', model: 'fixture', instructions: 'Coordinate.' };
-    const created = await request('/api/agents', input, 201);
+    const created = await request('/api/agents', { ...input, runtime: 'api' }, 201);
     assert.equal(created.role, 'Orchestration agent');
-    assert.deepEqual(await request('/api/agents', input), created);
+    assert.deepEqual(await request('/api/agents', { ...input, runtime: 'api' }), created);
     await request('/api/agents', { ...input, role: 'Personal agent' }, 409);
     for (const role of [null, 1, 'x'.repeat(61), 'bad\nrole', 'bad\u0085role', 'bad\u2028role']) await request('/api/agents', { ...input, id: randomUUID(), role }, 400);
     const path = `/api/agents/${created.id}/edit`, edit = { id: randomUUID(), revision: 1, name: created.name, role: 'x'.repeat(60), model: created.model, instructions: created.instructions };
@@ -267,6 +267,6 @@ test('local role create/edit receipts preserve normalized profile, omissions and
     await app.close(); app = await startApp(options);
     assert.deepEqual(await request(path, edit), updated);
     assert.equal((await request('/api/agents')).agents[0].role, '');
-    assert.equal((await request('/api/agents', input)).role, '');
+    assert.equal((await request('/api/agents', { ...input, runtime: 'api' })).role, '');
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });

@@ -30,7 +30,7 @@ test('queue order survives restart, preserves transcript order, blocks edits and
   }
   async function until(check: () => Promise<boolean>) { for (let n=0; n<200; n++) { if (await check()) return; await new Promise(resolve => setTimeout(resolve, 10)); } assert.fail('Timed out'); }
   try {
-    const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
     const side = await request(`/api/agents/${a.id}/threads`, { id: randomUUID(), name: 'Side' });
     const channel = await request('/api/channels', { id: randomUUID(), name: 'Channel', lead: a.id, members: [a.id], instructions: 'Help' });
     for (const path of [`/api/agents/${a.id}/turns`, `/api/threads/${side.id}/turns`, `/api/channels/${channel.id}/turns`]) {
@@ -62,7 +62,7 @@ test('queue order survives restart, preserves transcript order, blocks edits and
     await until(async () => (await request(path)).find((row: any) => row.id === early.id)?.status === 'done');
     assert(summaries.some(summary => summary.messages.some((message: any) => message.id === last.id)));
     held = undefined; await request(path, { id: randomUUID(), text: 'BLOCK' }); await until(async () => !!held);
-    const b = await request('/api/agents', { id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' });
+    const b = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' });
     const group = await request('/api/channels', { id: randomUUID(), name: 'Large queue', lead: a.id, members: [a.id, b.id], instructions: 'Help' });
     const groupPath = `/api/channels/${group.id}/turns`, groupQueue = `/api/channels/${group.id}/queue`;
     const ids: string[] = [];

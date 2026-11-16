@@ -44,7 +44,7 @@ test('automatic memory selection is atomic, user-protected, scoped and durable a
   const note = (text: string, automatic = true) => ({ id: randomUUID(), entry: randomUUID(), revision: 0, text, essential: false, remove: false, automatic });
   const choose = (id: string, revision: number, essential = true) => ({ id, revision, essential });
   try {
-    const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
     const c = await request('/api/channels', { id: randomUUID(), name: 'C', instructions: 'Help', lead: a.id, members: [a.id] });
     const path = `/api/agents/${a.id}/turns`, memory = `/api/agents/${a.id}/memory`;
     const first = note('AUTOMATIC_CONTEXT'), second = note('MANUAL_CONTEXT', false), third = note('OTHER_AUTOMATIC');

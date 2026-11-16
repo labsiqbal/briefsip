@@ -52,9 +52,9 @@ test('new user turns capture only ready same-scope group replies once across ret
   };
   const submit = async (path: string, text: string, extra = {}) => { const id = randomUUID(); await post(path, { id, text, ...extra }, 202); return id; };
   try {
-    const alpha = await post('/api/agents', { id: randomUUID(), name: 'Alpha', model: 'alpha', instructions: 'Coordinate' }, 201);
-    const beta = await post('/api/agents', { id: randomUUID(), name: 'Beta', model: 'beta', instructions: 'Help' }, 201);
-    const gamma = await post('/api/agents', { id: randomUUID(), name: 'Gamma', model: 'gamma', instructions: 'Help' }, 201);
+    const alpha = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Alpha', model: 'alpha', instructions: 'Coordinate' }, 201);
+    const beta = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Beta', model: 'beta', instructions: 'Help' }, 201);
+    const gamma = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Gamma', model: 'gamma', instructions: 'Help' }, 201);
     targets = [beta.id, gamma.id];
     const path = `/api/agents/${alpha.id}/turns`;
     const group = await submit(path, 'start group'); const waiting = await until(path, group, row => row.agentMessages.some((item: any) => item.status === 'done'));

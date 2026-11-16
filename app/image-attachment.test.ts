@@ -56,8 +56,8 @@ for (const family of ['openai-compatible', 'anthropic', 'gemini'] as ProviderFam
   const images = (payload: any) => family === 'gemini' ? payload.contents.flatMap((message: any) => message.parts.filter((part: any) => part.inlineData)) : payload.messages.flatMap((message: any) => Array.isArray(message.content) ? message.content.filter((part: any) => part.type === 'image_url' || part.type === 'image') : []);
   const exactImage = (part: any) => assert.equal(family === 'gemini' ? part.inlineData.data : family === 'anthropic' ? part.source.data : part.image_url.url, family !== 'openai-compatible' ? png.toString('base64') : 'data:image/png;base64,' + png.toString('base64'));
   try {
-    const a = await request('/api/agents', { id: randomUUID(), name: 'A', model: 'vision', instructions: 'Inspect images' });
-    const b = await request('/api/agents', { id: randomUUID(), name: 'B', model: 'vision', instructions: 'Inspect images' });
+    const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'vision', instructions: 'Inspect images' });
+    const b = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'B', model: 'vision', instructions: 'Inspect images' });
     const room = await request('/api/channels', { id: randomUUID(), name: 'Room', instructions: 'Route images', lead: a.id, members: [a.id, b.id] });
     const thread = await request(`/api/agents/${a.id}/threads`, { id: randomUUID(), name: 'Side' });
     const scopes = [`/api/agents/${a.id}`, `/api/channels/${room.id}`, `/api/threads/${thread.id}`], files: string[] = [];

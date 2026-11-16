@@ -61,9 +61,9 @@ test('teammate messages correlate groups, isolate context, persist receipts and 
     assert.fail(`Timeout: ${path} ${id}`);
   };
   try {
-    const alpha = await post('/api/agents', { id: randomUUID(), name: 'Alpha', model: 'alpha', instructions: 'Coordinate.' }, 201); sender = alpha.id;
-    const beta = await post('/api/agents', { id: randomUUID(), name: 'Beta', role: 'Personal agent', model: 'beta', instructions: 'Help.' }, 201);
-    const gamma = await post('/api/agents', { id: randomUUID(), name: 'Gamma', role: 'Research agent', model: 'gamma', instructions: 'Help.' }, 201); targets = [beta.id, gamma.id];
+    const alpha = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Alpha', model: 'alpha', instructions: 'Coordinate.' }, 201); sender = alpha.id;
+    const beta = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Beta', role: 'Personal agent', model: 'beta', instructions: 'Help.' }, 201);
+    const gamma = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Gamma', role: 'Research agent', model: 'gamma', instructions: 'Help.' }, 201); targets = [beta.id, gamma.id];
     const path = `/api/agents/${alpha.id}/turns`;
     // Recipient's main history must never enter a new delivery conversation.
     const prior = { id: randomUUID(), text: 'PRIVATE_MAIN_HISTORY' };

@@ -40,8 +40,8 @@ test('delegation isolates child context and durably wakes idle parent exactly on
     assert.fail('Timed out waiting for delegation');
   };
   try {
-    const child = await api('/api/agents', { id: randomUUID(), name: 'Child', model: 'child', instructions: 'Help.' }); target = child.id;
-    const parent = await api('/api/agents', { id: randomUUID(), name: 'Parent', model: 'parent', instructions: 'Coordinate.' });
+    const child = await api('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Child', model: 'child', instructions: 'Help.' }); target = child.id;
+    const parent = await api('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Parent', model: 'parent', instructions: 'Coordinate.' });
     const path = `/api/agents/${parent.id}/turns`, id = randomUUID();
     await api(path, { id, text: 'PRIVATE_HISTORY' });
     const rows = await until(path, rows => rows.some(row => row.id === id && row.status === 'done'));
@@ -84,7 +84,7 @@ async function fixture(script: Script, agentLimits?: Partial<AgentLimits>) {
     while (Date.now() < deadline) { const rows = await api(path); if (predicate(rows)) return rows; await new Promise(resolve => setTimeout(resolve, 20)); }
     assert.fail(`Timed out: ${path} ${JSON.stringify(await api(path))}`);
   };
-  const agent = async (name: string) => api('/api/agents', { id: randomUUID(), name, model: name, instructions: `${name} role` });
+  const agent = async (name: string) => api('/api/agents', { runtime: 'api', id: randomUUID(), name, model: name, instructions: `${name} role` });
   return { api, until, agent, calls, database: options.database, stop, restart: async () => { await stop(); app = await startApp(options); stopped = false; }, close: async () => { await stop(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); } };
 }
 const results = (body: any) => body.messages.filter((row: any) => row.role === 'tool').map((row: any) => JSON.parse(row.content));

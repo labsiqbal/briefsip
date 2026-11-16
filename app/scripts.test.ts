@@ -32,7 +32,7 @@ test('local scripts require token and current agent grant, keep payload and retr
   }
   const auth = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   try {
-    const agent = await request('/api/agents', { id: randomUUID(), name: 'Script agent', model: 'fixture', instructions: 'Help.' }, 201);
+    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Script agent', model: 'fixture', instructions: 'Help.' }, 201);
     const permission = `/api/agents/${agent.id}/scripts`, list = `/api/agents/${agent.id}/routines`;
     assert.deepEqual(await request(permission), { enabled: 0, revision: 0, configured: true });
     const routine = await request(list, { id: randomUUID(), name: 'Script routine', prompt: 'Saved instruction', nextAt: Date.now() + 3600000, intervalSeconds: 60, enabled: false });
@@ -65,7 +65,7 @@ test('local scripts require token and current agent grant, keep payload and retr
     assert.equal((await request(`/api/scripts/agents/${agent.id}/routines`, undefined, 200, auth)).length, 1);
     await app.close(); app = await startApp(options);
     assert.deepEqual(await request(path, body, 200, auth), result); assert.equal(prompts.length, 1);
-    const otherAgent = await request('/api/agents', { id: randomUUID(), name: 'No script grant', model: 'fixture', instructions: 'Help.' }, 201);
+    const otherAgent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'No script grant', model: 'fixture', instructions: 'Help.' }, 201);
     const otherRoutine = await request(`/api/agents/${otherAgent.id}/routines`, { id: randomUUID(), name: 'Private routine', prompt: 'Never execute', nextAt: Date.now() + 3600000, intervalSeconds: null, enabled: false });
     await request(`/api/scripts/routines/${otherRoutine.id}/run`, { ...body, id: randomUUID(), revision: otherRoutine.revision }, 403, auth);
     await request(`/api/scripts/routines/${otherRoutine.id}/runs`, undefined, 403, auth);
