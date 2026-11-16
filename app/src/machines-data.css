@@ -30,3 +30,13 @@
 
 .bs-root.set4-page :is(.k-btn, .k-icon-btn), .bs-root.set4-transcription :is(.k-btn, .k-icon-btn), .bs-root.k-dialog:has(.set4-detail) :is(.k-btn, .k-icon-btn) { min-height: 40px; min-width: 40px; }
 .bs-root .set4-detail .k-switch::after { content: ''; position: absolute; inset: -10px -3px; }
+
+.bs-root.set4-page .usage-calls { min-width: 1120px; table-layout: fixed; }
+.usage-call__compact { display: none; }
+@media (max-width: 767px) {
+  .bs-root.set4-page .usage-calls { min-width: 0; }
+  .usage-calls :is(col, th, td):not(:nth-child(1), :nth-child(4)) { display: none; }
+  .usage-calls { --usage-agent-width: 60%; --usage-status-width: 40%; }
+  .usage-call__compact { display: block; margin-top: 8px; }
+  .usage-call__compact summary { cursor: pointer; margin-top: 8px; }
+}

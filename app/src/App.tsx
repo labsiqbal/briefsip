@@ -1285,10 +1285,11 @@ function App() {
           <IconButton label="Routines" aria-current={view === 'routines' ? 'page' : undefined} disabled={!directory} onClick={() => { setRoutineAgent(''); setView('routines'); setDialog(null); }}><CalendarClock size={16} aria-hidden /></IconButton>
           <IconButton label="Workflows" aria-current={view === 'workflows' ? 'page' : undefined} disabled={!directory} onClick={() => { setView('workflows'); setDialog(null); }}><WorkflowIcon size={16} aria-hidden /></IconButton>
           <ActionMenu label="Create new" trigger={<IconButton label="Create new"><Plus size={16} aria-hidden /></IconButton>} items={[
-            { label: 'New agent', onSelect: () => setDialog('agent'), disabled: !directory },
-            { label: 'Import template', onSelect: () => setWorkspaceDialog('import'), disabled: !directory },
-            { label: 'New project', onSelect: () => setDialog('project'), disabled: !directory },
-            { label: 'Add a machine', onSelect: () => setSettings('machines') },
+            ...(agent ? [{ label: 'New conversation', icon: <MessageSquare size={15} aria-hidden />, hint: 'Ctrl/Cmd+Shift+O', onSelect: () => { openAgent(selected); switcherFrame(() => window.dispatchEvent(new Event('briefsip:new-conversation'))); } }] : []),
+            { label: 'New agent', icon: <Plus size={15} aria-hidden />, onSelect: () => setDialog('agent'), disabled: !directory },
+            { label: 'Import template', icon: <Download size={15} aria-hidden />, onSelect: () => setWorkspaceDialog('import'), disabled: !directory },
+            { label: 'New project', icon: <FolderOpen size={15} aria-hidden />, onSelect: () => setDialog('project'), disabled: !directory },
+            { label: 'Add a machine', icon: <Monitor size={15} aria-hidden />, onSelect: () => setSettings('machines') },
           ]} />
           <IconButton label="Collapse sidebar" aria-keyshortcuts="Control+b Meta+b" onClick={() => setCollapsed(true)}><PanelLeft size={16} aria-hidden /></IconButton>
         </nav>
@@ -1391,7 +1392,7 @@ function App() {
           else if (event.key === 'End') next = buttons.length - 1;
           else return;
           event.preventDefault(); buttons[next]?.focus();
-        }}>{filteredSettings.map(group => <div key={group.label} role="group" aria-labelledby={`settings-${group.label}`} className="app-settings__group"><h2 id={`settings-${group.label}`}>{group.label}</h2>{group.items.map(section => <Tooltip key={section.id} content={section.label}><button type="button" aria-label={section.label} className={`cfg-nav__item${settings === section.id ? ' is-active' : ''}`} aria-current={settings === section.id ? 'page' : undefined} onClick={event => { if (settings === section.id) event.currentTarget.closest('[role="dialog"]')?.querySelector<HTMLElement>('.app-settings__page h1')?.focus(); else setSettings(section.id); }}><section.icon size={16} aria-hidden /><span>{section.label}</span></button></Tooltip>)}</div>)}{!filteredSettings.length && <p className="app-settings__no-results" role="status">No settings found</p>}</nav>
+        }}>{filteredSettings.map(group => <div key={group.label} role="group" aria-labelledby={`settings-${group.label}`} className="app-settings__group"><h2 id={`settings-${group.label}`}>{group.label}</h2>{group.items.map(section => <Tooltip key={section.id} content={section.label} side="right" sideOffset={8}><button type="button" aria-label={section.label} className={`cfg-nav__item${settings === section.id ? ' is-active' : ''}`} aria-current={settings === section.id ? 'page' : undefined} onClick={event => { if (settings === section.id) event.currentTarget.closest('[role="dialog"]')?.querySelector<HTMLElement>('.app-settings__page h1')?.focus(); else setSettings(section.id); }}><section.icon size={16} aria-hidden /><span>{section.label}</span></button></Tooltip>)}</div>)}{!filteredSettings.length && <p className="app-settings__no-results" role="status">No settings found</p>}</nav>
       </aside>
       <IconButton className="app-settings__close" label="Close settings" onClick={() => setSettings(null)}><X size={16} aria-hidden /></IconButton>
       <div className="app-settings__main">

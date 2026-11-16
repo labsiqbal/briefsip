@@ -3,7 +3,7 @@
 .attachment__open { color: var(--color-text-primary); background: var(--color-bg-elevated); border: 1px solid var(--color-border-secondary); border-radius: 10px; text-decoration: none; cursor: pointer; }
 .attachment__open:hover { background: var(--color-bg-hover); }
 .attachment__image { cursor: zoom-in; }
-.attachment__image img { flex: none; width: 28px; height: 28px; border-radius: 4px; object-fit: cover; outline: 1px solid oklch(1 0 0 / 0.1); outline-offset: -1px; }
+.attachment__image img { flex: none; width: 24px; height: 24px; border-radius: 4px; object-fit: cover; outline: 1px solid oklch(1 0 0 / 0.1); outline-offset: -1px; }
 :root[data-theme="light"] .attachment__image img { outline-color: oklch(0 0 0 / 0.1); }
 .attachment__open { display: flex; align-items: center; gap: 8px; min-height: 36px; width: fit-content; max-width: 240px; padding: 5px 8px; text-align: left; }
 .attachment__file > svg { flex-shrink: 0; color: var(--color-text-secondary); }
