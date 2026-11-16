@@ -21,7 +21,7 @@ function fixture(runtime: HarnessRuntime = 'hermes', overrides: Partial<HarnessS
 }
 for (const runtime of ['hermes', 'antigravity', 'grok', 'opencode', 'gemini', 'kiro'] as const) {
   test(`${runtime}: initialize, supervised session, stream segments, tool, one-use permission and done`, async () => {
-    const f = fixture(runtime, { model: 'fixture-model' });
+    const f = fixture(runtime, { model: 'fixture-model', instructions: 'Briefsip native context.' });
     try {
       assert.equal(await f.adapter.startSession(), 'fixture-session');
       const events = await collect(f.adapter.sendTurn('hello'));
@@ -33,6 +33,9 @@ for (const runtime of ['hermes', 'antigravity', 'grok', 'opencode', 'gemini', 'k
       assert(log.includes('test-session-secret')); assert(!log.includes('BRIEFSIP_HARNESS_CANARY'));
       const message = JSON.parse(log.split('\n').find(line => line.includes('"method":"initialize"'))!);
       assert.equal(message.params.protocolVersion, 1);
+      const sessionPrompt = JSON.parse(log.split('\n').find(line => line.includes('\"method\":\"session/prompt\"'))!);
+      assert.match(sessionPrompt.params.prompt[0].text, /<briefsip_context>\nBriefsip native context/);
+      assert.equal(sessionPrompt.params.prompt[1].text, 'hello');
       assert.equal(message.params.clientCapabilities.terminal, false);
       assert.equal(dispatchCapabilities(runtime).steer, false);
     } finally { await f.close(); }
@@ -54,7 +57,7 @@ test('ACP read-only workspace rejects file writes without approval', async () =>
   finally { await f.close(); }
 });
 test('Pi RPC streams, requests tool approval, selects model, and cancels', async () => {
-  const f = fixture('pi', { model: 'fixture/model' });
+  const f = fixture('pi', { model: 'fixture/model', instructions: 'Briefsip Pi app context.' });
   try {
     assert.equal(await f.adapter.startSession(), undefined);
     const events = await collect(f.adapter.sendTurn('hello'));

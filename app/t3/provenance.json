@@ -2315,5 +2315,60 @@
       "adaptation": "Adapt Ctrl/Cmd+Shift+O chat.new binding, tooltip and palette entry to Briefsip conversation creation; dialogs retain keyboard ownership.",
       "compatibilityCheck": "work/rebuild/ux-r6/check.mjs"
     }
+  ],
+  "baseInstructionSourceEntries": [
+    {
+      "sourcePath": "packages/provider-core/src/server/orchestrationInstructions.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "79a5e91fb11ad34a83501f9861df34c86314f241a80ca447459c36fc65a07b2f",
+      "symbols": [
+        "T3_CODE_ORCHESTRATION_SECTIONS",
+        "t3AcpPromptWithInstructions"
+      ],
+      "localPaths": [
+        "app/base-instructions.ts",
+        "app/t3/acp-harness.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt compact app guidance, active-tool filtering and ACP context blocks to Briefsip tools and trust boundaries; no T3 orchestration runtime.",
+      "compatibilityCheck": "app/base-instructions.test.ts; app/harness.test.ts; app/acp-harness.test.ts"
+    },
+    {
+      "sourcePath": "packages/provider-core/src/server/runtimeInstructions.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "2f4eae5abdced5ec42e0ba085b5a111f27686f0e33db38c7c675c372d0b2426a",
+      "symbols": [
+        "buildRuntimeInstructions"
+      ],
+      "localPaths": [
+        "app/base-instructions.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt runtime identity and inline Markdown file links to Briefsip file URLs; retain agent instructions after app layer.",
+      "compatibilityCheck": "app/base-instructions.test.ts; app/harness.test.ts; app/acp-harness.test.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/provider/CodexDeveloperInstructions.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "1fc109c65173d3391e2e1b81f6d22535b29a66dbce0789e5ebdcb5b5f13f9d4f",
+      "symbols": [
+        "CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES",
+        "buildCodexAdditionalContext"
+      ],
+      "localPaths": [
+        "app/base-instructions.ts",
+        "app/harness.ts",
+        "app/harness-store.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt numbered application-context entries capped at 4000 UTF-8 bytes; Claude native system append and ACP prompt context preserve harness prompts.",
+      "compatibilityCheck": "app/base-instructions.test.ts; app/harness.test.ts; app/acp-harness.test.ts"
+    }
   ]
 }
