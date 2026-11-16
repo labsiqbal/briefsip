@@ -59,7 +59,8 @@ test('memory CRUD, exact retry, isolated provider search and bounded context sur
     let done = false;
     for (let n = 0; n < 150; n++) { if ((await request(`/api/workflow-runs/${modelRun.id}`)).status === 'done') { done = true; break; } await new Promise(resolve => setTimeout(resolve, 10)); }
     assert(done); assert.equal(results.length, 0); assert.doesNotMatch(contexts[0], /PRIVATE_A|SEARCHABLE_A|SHARED_CHANNEL/);
-    malformed = true; await run(`/api/agents/${a.id}/turns`, 'failed'); malformed = false;
+    malformed = true; await run(`/api/agents/${a.id}/turns`); malformed = false;
+    assert.deepEqual(results, [{ error: 'Invalid memory search.', status: 400 }]);
     const edit = { ...original, id: randomUUID(), revision: 1, text: 'UPDATED_A' }; await request(pa, edit);
     await request(pa, { ...edit, id: randomUUID() }, 409);
     assert.deepEqual(await request(pa, original), created); assert.equal((await request(pa + '?query=UPDATED')).items.length, 1);

@@ -24,14 +24,14 @@ test('coordination: durable delegation, transfer, cancellation, rejection and re
     if (task === 'child-hang' || task === 'block-parent' || (task === 'paused-child' && !allowPausedChild)) return;
     if (task === 'saved-child') await new Promise<void>(resolve => { releaseSavedChild = resolve; });
     if (task === 'parallel-delegate' && !toolResult) { parallelCount++; if (parallelCount === 4) releaseParallel(); await parallelGate; }
-    const shouldCall = !toolResult && ['pause-tree', 'save-result', 'parallel-delegate', 'nested', 'nested-child', 'delegate', 'transfer', 'cancel-tree', 'restart-tree', 'outsider', 'cycle'].includes(task) || task === 'cycle';
+    const shouldCall = !toolResult && ['pause-tree', 'save-result', 'parallel-delegate', 'nested', 'nested-child', 'delegate', 'transfer', 'cancel-tree', 'restart-tree', 'outsider', 'cycle'].includes(task) || task === 'cycle' && !toolResult?.error;
     if (shouldCall) {
       const recipient = task === 'outsider' ? randomUUID() : data.tools[0].function.parameters.properties.recipient.enum[0];
       const name = task === 'transfer' || task === 'cycle' ? 'transfer_task' : 'delegate_task';
       const childTask = ['cancel-tree', 'restart-tree'].includes(task) ? 'child-hang' : task === 'pause-tree' ? 'paused-child' : task === 'save-result' ? 'saved-child' : task === 'nested' ? 'nested-child' : 'child-work';
       res.end(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', content: null, tool_calls: [{ id: randomUUID(), type: 'function', function: { name, arguments: JSON.stringify({ recipient, task: childTask }) } }] } }] }));
     } else {
-      const content = toolResult ? `parent:${toolResult.reply ?? toolResult.status}` : 'child-result';
+      const content = toolResult ? `parent:${toolResult.error ?? toolResult.reply ?? toolResult.status}` : 'child-result';
       res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content } }] }));
     }
   });
@@ -75,15 +75,15 @@ test('coordination: durable delegation, transfer, cancellation, rejection and re
     assert.equal((await rows(path)).length, 3);
     const outsider = { id: randomUUID(), text: 'outsider', recipient: alpha.id };
     const before = calls.length; await post(path, outsider);
-    assert.match((await waitTurn(path, outsider.id, 'failed')).error, /member/);
-    assert.equal(calls.length, before + 1);
+    assert.match((await waitTurn(path, outsider.id, 'done')).reply, /member/);
+    assert.equal(calls.length, before + 2);
     // Keep the longer family-limit cycle separate from later rate-sensitive scenarios.
     const cycleAgents = await Promise.all(['Cycle A', 'Cycle B'].map(name => post('/api/agents', { id: randomUUID(), name, model: 'cycle', instructions: 'Coordinate.' })));
     const cycleRoom = await post('/api/channels', { id: randomUUID(), name: 'Cycle', instructions: 'Coordinate.', members: cycleAgents.map(agent => agent.id), lead: cycleAgents[0].id });
     const cyclePath = `/api/channels/${cycleRoom.id}/turns`, cycle = { id: randomUUID(), text: 'cycle', recipient: cycleAgents[0].id };
     await post(cyclePath, cycle);
-    const cycled = await waitTurn(cyclePath, cycle.id, 'failed');
-    assert.match(cycled.error, /Coordination limit/); assert.equal(cycled.coordination.length, 32);
+    const cycled = await waitTurn(cyclePath, cycle.id, 'done');
+    assert.match(cycled.reply, /Coordination limit/); assert.equal(cycled.coordination.length, 32);
     const cancellation = { id: randomUUID(), text: 'cancel-tree', recipient: alpha.id };
     await post(path, cancellation);
     for (let i = 0; i < 100; i++) {

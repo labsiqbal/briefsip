@@ -63,7 +63,7 @@ test('skill tools page own enabled pins, reject foreign access and observe revoc
     await run(path); assert.match(results[0].error, /not found/);
     const side = await request(`/api/agents/${a.id}/threads`, { id: randomUUID(), name: 'Private side' });
     target = ids[1]; await run(`/api/threads/${side.id}/turns`); assert.equal(results[0].content, 'Pinned 1');
-    mode = 'invalid'; await run(path, 'failed'); assert.equal(results.length, 0);
+    mode = 'invalid'; await run(path); assert.deepEqual(results, [{ error: 'Invalid skill request.', status: 400 }]);
     mode = 'channel';
     const channel = await request('/api/channels', { id: randomUUID(), name: 'Room', instructions: 'Help', lead: a.id, members: [a.id] });
     await run(`/api/channels/${channel.id}/turns`);
