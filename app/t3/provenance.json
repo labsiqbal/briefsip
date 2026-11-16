@@ -2089,7 +2089,7 @@
         "Route"
       ],
       "localPaths": [
-        "app/src/navigation.ts",
+        "app/navigation.ts",
         "app/src/hooks/useAppRoute.ts",
         "app/server.ts"
       ],

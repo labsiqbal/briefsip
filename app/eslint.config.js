@@ -8,7 +8,7 @@ const root = dirname(fileURLToPath(import.meta.url));
 export const browserSafeModules = [
   'agent-create.ts', 'agent-template.ts', 'agent-visibility.ts', 'connected-app-command.ts',
   'conversation-command.ts', 'diff-lines.ts', 'flows.ts', 'mcp-scopes.ts', 'memory-command.ts',
-  'panel-width.ts', 'presentation.ts', 'question-answer.ts', 'remote-message-command.ts',
+  'navigation.ts', 'panel-width.ts', 'presentation.ts', 'question-answer.ts', 'remote-message-command.ts',
   'site-command.ts', 'skill-command.ts', 'skill-files.ts', 'skill-pack-schema.ts', 'skill-zip.ts',
   'speech-preference.ts', 'speech.ts', 'thread-command.ts', 'turn-stream.ts', 'workflow-command.ts',
   'workflow-editor-state.ts', 'workflows.ts',

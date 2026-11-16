@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type SetStateAction } from 'react';
-import { parseRoute, routePath, type AppRoute } from '../navigation';
+import { parseRoute, routePath, type AppRoute } from '../../navigation';
 
 export function useAppRoute() {
   const [route, setRoute] = useState(() => parseRoute(window.location.pathname + window.location.search));

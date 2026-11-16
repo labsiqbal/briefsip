@@ -41,7 +41,7 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
   const stage = mkdtempSync(join(releases, '.staging-'));
   try {
     // Runtime source only. Never include workspace data, .env, test fixtures or development bundles.
-    for (const name of readdirSync(source)) if (/\.(ts|mjs)$/.test(name) && !/(?:\.test\.ts|-it\.ts|\.d\.ts)$/.test(name) || ['package.json', 'package-lock.json', 'dist', 't3', 'hub'].includes(name)) cpSync(join(source, name), join(stage, name), { recursive: true, filter: p => !p.endsWith('.test.ts') && !p.endsWith('-it.ts') && !p.endsWith('.d.ts') });
+    stageRuntime(source, stage);
     // A missing runtime module crashes the candidate after apply; fail the release here instead.
     assertRelativeImports(stage);
     mkdirSync(join(stage, 'machine'), { mode: 0o700 });
@@ -57,6 +57,10 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
     durableWrite(join(releases, 'feed/latest.json'), JSON.stringify(info, null, 2) + '\n', 0o644);
     return info;
   } finally { rmSync(stage, { recursive: true, force: true }); }
+}
+// Copies the runtime selection a release ships; tests stage the same selection to run the import guard.
+export function stageRuntime(source, stage) {
+  for (const name of readdirSync(source)) if (/\.(ts|mjs)$/.test(name) && !/(?:\.test\.ts|-it\.ts|\.d\.ts)$/.test(name) || ['package.json', 'package-lock.json', 'dist', 't3', 'hub'].includes(name)) cpSync(join(source, name), join(stage, name), { recursive: true, filter: p => !p.endsWith('.test.ts') && !p.endsWith('-it.ts') && !p.endsWith('.d.ts') });
 }
 // Every relative import reachable from a runtime entry point must resolve to a staged file.
 export function assertRelativeImports(stage, entries = ['server.ts', 'cli.ts', 'hub/server.ts', 'update-release.mjs', 'agent-desktop-host.mjs']) {

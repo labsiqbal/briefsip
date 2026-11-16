@@ -1,7 +1,7 @@
 import { useConversationRequests } from './hooks/useConversationRequests';
 import { useRouteThread } from './hooks/useRouteThread';
 import { useAppRoute, useRouteFallback } from './hooks/useAppRoute';
-import type { SettingsSection } from './navigation';
+import type { SettingsSection } from '../navigation';
 import { useNarrowSidebar } from './hooks/useNarrowSidebar';
 import { useMessageChanged } from './hooks/useMessageChanged';
 import { useOptimisticTurns } from './hooks/useOptimisticTurns';

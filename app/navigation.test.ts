@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseRoute, routePath, type AppRoute } from './src/navigation.ts';
+import { parseRoute, routePath, type AppRoute } from './navigation.ts';
 const agent = '00000000-0000-4000-8000-000000000001';
 const other = '00000000-0000-4000-8000-000000000002';
 
