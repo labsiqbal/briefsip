@@ -1,5 +1,5 @@
 // Attachment presentation adapted from T3 (MIT); see ../t3/provenance.json.
-export type AttachmentFile = { id: string; name: string; size: number; type?: string; image?: boolean };
+export type AttachmentFile = { id: string; name: string; size: number; type?: string; image?: boolean; deleted?: boolean; thread?: string };
 export function isAttachmentImage(file: Pick<AttachmentFile, 'name' | 'type' | 'image'>) {
   if (typeof file.image === 'boolean') return file.image;
   const type = file.type?.split(';', 1)[0].trim().toLowerCase();

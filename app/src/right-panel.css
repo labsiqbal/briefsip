@@ -115,3 +115,8 @@
 .right-panel__file-size { flex: none; color: var(--color-text-tertiary); font-size: 11px; }
 
 .right-panel__preview-head > .right-panel__path { flex: 1; }
+
+.right-panel__files { max-height: min(320px, 40vh); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.right-panel__thumbnail { display: grid; place-items: center; flex: none; width: 16px; height: 16px; }
+.right-panel__thumbnail:has(img) { width: 32px; height: 32px; }
+.right-panel__thumbnail img { width: 32px; height: 32px; object-fit: cover; border-radius: 5px; outline: 1px solid light-dark(rgb(0 0 0 / .1), rgb(255 255 255 / .1)); outline-offset: -1px; }
