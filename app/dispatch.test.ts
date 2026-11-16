@@ -182,7 +182,7 @@ test('composer recovery validates dispatch mode/target; runtime capability degra
   assert.throws(() => restoreChatCommand(JSON.stringify({ ...command, dispatchMode: 'auto' }), false));
   assert.throws(() => restoreChatCommand(JSON.stringify({ ...command, targetTurn: 'bad' }), false));
   assert.deepEqual(dispatchCapabilities('api'), { queue: true, restart: true, steer: true });
-  for (const runtime of ['codex', 'claude']) assert.equal(dispatchCapabilities(runtime).steer, false);
+  for (const runtime of ['codex', 'claude', 'hermes', 'antigravity', 'grok', 'pi', 'opencode', 'gemini', 'kiro']) assert.equal(dispatchCapabilities(runtime).steer, false);
 });
 
 test('restart during uncertain MCP effect keeps its receipt and never replays external call', async () => {

@@ -562,25 +562,23 @@ test('MCP async discovery cannot dispatch after revoke; lost result remains unce
     await node.restart(); await sleep(150); assert.equal(effects, 2);
 });
 
-test('coding runtimes expose unsupported effect fencing and never execute hub turns', async t => {
+for (const runtime of ['codex', 'claude', 'hermes', 'antigravity', 'grok', 'pi', 'opencode', 'gemini', 'kiro']) test(`${runtime}: unsupported effect fencing never executes hub turns`, async t => {
     const f = await fixture(t), node = await f.node('NativeBoundary', f.alice);
     const workspace = join(f.dir, 'native-workspace'); mkdirSync(workspace);
-    Object.assign(node.options, { workspaces: [{ agent: node.agent.id, directory: workspace, write: false }], harness: { executables: { codex: process.execPath, claude: process.execPath }, issuer: { mintAgentSession() { assert.fail('Unsupported native hub turn minted an execution session.'); }, revokeAgentSession() {} } } });
-    for (const runtime of ['codex', 'claude']) {
-        await node.app.close();
-        const db = new DatabaseSync(node.database);
-        try { db.prepare('UPDATE agents SET runtime=? WHERE id=?').run(runtime, node.agent.id); } finally { db.close(); }
-        await node.restart();
-        const status = await api(node.app, '/api/hub-link');
-        assert.deepEqual(status.supportedRuntimes, ['api']);
-        assert.equal(status.unsupportedRuntimes[runtime], 'native_effect_fencing_unavailable');
-        const p = await node.participate(), post = f.post(f.alice, [p.participationId]);
-        await until(() => f.r.turn(f.ctx(f.alice), post.turnIds[0]).state === 'failed');
-        const results = f.r.history(f.ctx(f.alice), f.project.sectionId).results.filter(row => row.turnId === post.turnIds[0]);
-        assert.equal(results.at(-1)!.payload.code, 'local_engine_unsupported_or_unavailable');
-        assert.equal(f.calls, 0);
-        await node.restart(); assert.equal(f.calls, 0);
-    }
+    Object.assign(node.options, { workspaces: [{ agent: node.agent.id, directory: workspace, write: false }], harness: { executables: { [runtime]: process.execPath }, issuer: { mintAgentSession() { assert.fail('Unsupported native hub turn minted an execution session.'); }, revokeAgentSession() {} } } });
+    await node.app.close();
+    const db = new DatabaseSync(node.database);
+    try { db.prepare('UPDATE agents SET runtime=? WHERE id=?').run(runtime, node.agent.id); } finally { db.close(); }
+    await node.restart();
+    const status = await api(node.app, '/api/hub-link');
+    assert.deepEqual(status.supportedRuntimes, ['api']);
+    assert.equal(status.unsupportedRuntimes[runtime], 'native_effect_fencing_unavailable');
+    const p = await node.participate(), post = f.post(f.alice, [p.participationId]);
+    await until(() => f.r.turn(f.ctx(f.alice), post.turnIds[0]).state === 'failed');
+    const results = f.r.history(f.ctx(f.alice), f.project.sectionId).results.filter(row => row.turnId === post.turnIds[0]);
+    assert.equal(results.at(-1)!.payload.code, 'local_engine_unsupported_or_unavailable');
+    assert.equal(f.calls, 0);
+    await node.restart(); assert.equal(f.calls, 0);
 });
 
 test('two session-enrolled nodes answer browser mention; revoking one live stream preserves other node', async t => {

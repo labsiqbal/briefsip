@@ -166,7 +166,11 @@
     "app/src/QueueEditor.tsx": "508d96afb77d09b58ded09e60be53d7921eef54cc4f44c5b8156f865c002da63",
     "app/src/App.tsx": "8b3c4a08fb472ca26412664ca37394f08235f390ee0aa6ab765f1a3b584bd59b",
     "app/src/ConversationAttachments.tsx": "5a6ad328876edf98c3b9182464c53ba03d1cbbdfd230d020026ed53c939af1d1",
-    "app/src/ui/chat.css": "bc21abfc6b27a7538937300db7fcb71587442b42d130fe47c6e6ed7a2b142d8e"
+    "app/src/ui/chat.css": "bc21abfc6b27a7538937300db7fcb71587442b42d130fe47c6e6ed7a2b142d8e",
+    "app/harness.ts": "dc104f72a04e5dd6e29db98c01189150d23adbca1516b4a3e763b0cf2f869edb",
+    "app/t3/acp-harness.ts": "4a0817f8050a355602adb44b325135077adb89cee7b9bc47fea09fc63d6ce9a8",
+    "app/t3/pi-harness-extension.mjs": "824ccffde84859f769048761599feee6de2b3b4fe0665342b124232d499246eb",
+    "app/t3/harness-mcp-bridge.mjs": "4075660689e41894b7d3a3198f77df0f7d081faad9271b52439e465963081ee3"
   },
   "typeSubstitutions": {
     "HttpServerRequest.HttpServerRequest": "LinkRequest with originalUrl and lowercase scalar headers",
@@ -176,7 +180,8 @@
     "ConnectionFailureFields": "ConnectionDiagnostics alias, retaining hop/via/failureCause/httpStatus/traceId",
     "ExecutionEnvironmentCapabilities": "only optional boolean threadRestartContinuation retained; native decoder drops unknown names",
     "desktop-bootstrap": "briefsip-local-bootstrap; current caller authentication still required",
-    "Effect Git/checkpoint services": "plain async functions, execFile argument arrays and durable node:sqlite operation/checkpoint journals"
+    "Effect Git/checkpoint services": "plain async functions, execFile argument arrays and durable node:sqlite operation/checkpoint journals",
+    "Effect ACP Scope/Deferred/Queue/Schema": "Node process ownership, bounded JSONL request Map, EventQueue, AbortSignal and structural guards; no Effect/ACP runtime dependency"
   },
   "uiSourceEntries": [
     {
@@ -719,6 +724,163 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "compatibilityCheck": "app/harness.test.ts"
+    },
+    {
+      "sourcePath": "packages/provider-acp/src/server/AcpSessionRuntime.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "a040202b8828016c94416da76ab587009512376ba9e4e55ea54b70a71e1a10ca",
+      "localPaths": [
+        "app/t3/acp-harness.ts",
+        "app/harness.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "ACP initialization, new/load/resume, model selection, cancel, one-use permissions and process ownership translated to bounded Node JSONL, promises and AbortSignal. Briefsip workspace descriptor APIs replace client filesystem services.",
+      "compatibilityCheck": "app/acp-harness.test.ts"
+    },
+    {
+      "sourcePath": "packages/provider-acp/src/server/runtimeModel.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "7d84a02ce0fd10cd6881f1ebd95d96d6981bf3d61a680a252222916a35401425",
+      "localPaths": [
+        "app/t3/acp-harness.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "ACP text/tool update fields and initialize _meta.modelState discovery translated to structural guards; UI aggregation remains Briefsip-owned.",
+      "compatibilityCheck": "app/acp-harness.test.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/provider/builtInDrivers.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "d378267315fce89748be95b96fa99bed797ecd41d0bc9372e3b67c3e37d1f5fd",
+      "localPaths": [
+        "app/harness.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Host runtime catalog; no downloads or automatic installation. Missing/unsupported commands hidden by protocol probe.",
+      "compatibilityCheck": "app/acp-harness.test.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/provider/AcpRegistrySessions.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "1d713196c4d6b6444bdd88e6077bcb6023ae89f0d3d2668622dcf4ab76dfc835",
+      "localPaths": [
+        "app/harness-store.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Native ACP session identity remains scoped by agent, conversation, runtime and workspace. Registry import UI and archive migration excluded.",
+      "compatibilityCheck": "app/acp-harness.test.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/provider/acp/AntigravityAcpSupport.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "7134f392df696b0857982fd6587d528532a80d03c7d32369128d8524ef1f5731",
+      "localPaths": [
+        "app/t3/acp-harness.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Standalone agy acp launch and supervised default mode. No managed downloads, client impersonation or auth UI. Unsupported desktop launcher rejected.",
+      "compatibilityCheck": "app/acp-harness.test.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/provider/AntigravityInstallation.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "bcf70cba99bb9e722e24a54e68912741bbc534458ab3ba18e89510d9873bd13f",
+      "localPaths": [
+        "app/harness.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Distinguish standalone agy/antigravity ACP CLI from desktop launcher. Installation and updater excluded.",
+      "compatibilityCheck": "app/acp-harness.test.ts"
+    },
+    {
+      "sourcePath": "packages/provider-grok/src/server/acpSupport.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "e244293785ee9d973bfb01832df94a19ef647e8ab27044926a9ac9ef6ae2ee4e",
+      "localPaths": [
+        "app/t3/acp-harness.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Grok supervised argv, extension initialize metadata and ctrl_c cancellation metadata. Persistent native grants never selected.",
+      "compatibilityCheck": "app/acp-harness.test.ts"
+    },
+    {
+      "sourcePath": "packages/provider-acp-registry/src/server/AcpRegistrySupport.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "60c08bad085be5f578365221d491904c19aa9e2c53bcdb0a85f1abfe063f2c8d",
+      "localPaths": [
+        "app/t3/acp-harness.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Installed local registry command resolves without a shell; Hermes acp command uses generic protocol. Registry installation excluded.",
+      "compatibilityCheck": "app/acp-harness.test.ts"
+    },
+    {
+      "sourcePath": "packages/provider-pi/src/server/rpc.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "b024441f22f1e97e2a2f8baaa7dbb488c44c539d18cf57609aa564b61a28077a",
+      "localPaths": [
+        "app/t3/acp-harness.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Native Pi JSONL request correlation, failure and process lifecycle translated without Effect.",
+      "compatibilityCheck": "app/acp-harness.test.ts"
+    },
+    {
+      "sourcePath": "packages/provider-pi/src/server/adapter.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "7e0bdf7d706b47507b7aced7aa6e55f507f5fcef9e3ff4f49be142c70172e0ba",
+      "localPaths": [
+        "app/t3/acp-harness.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Pi text and tool events, model selection and extension confirm requests map to Briefsip harness events and approvals. Sessions ephemeral with Briefsip transcript; resume capability false.",
+      "compatibilityCheck": "app/acp-harness.test.ts"
+    },
+    {
+      "sourcePath": "packages/provider-pi/src/server/mcpInjection.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "8c1fa982ce717bc320139bf2eedc50d398c727211a9521342d03181fa1eaee05",
+      "localPaths": [
+        "app/t3/acp-harness.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Explicit extension and restrictive discovery flags, offline startup and environment-only session credentials.",
+      "compatibilityCheck": "app/acp-harness.test.ts"
+    },
+    {
+      "sourcePath": "packages/provider-pi/src/server/mcpExtensionSource.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "82e6cf6f9f0efce76c87edea0829a5f035daade383a06970be131cd28bc53e67",
+      "localPaths": [
+        "app/t3/pi-harness-extension.mjs"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Blocking Pi tool_call hook and session-scoped HTTP MCP bridge, using plain JSON Schema and native fetch; no installed extension or auth configuration changes.",
+      "compatibilityCheck": "app/acp-harness.test.ts"
     }
   ],
   "adaptedEntries": [

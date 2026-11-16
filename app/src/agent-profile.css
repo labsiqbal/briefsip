@@ -22,3 +22,5 @@
 .bs-root .agent-profile__resources .panel-row { width: 100%; min-height: 40px; padding: 8px 0; gap: 10px; }
 .bs-root .agent-profile__resources .details-list-row { border: 0; }
 .bs-root .agent-profile__resources .panel-row__title { flex: 1; text-align: left; }
+
+.agent-profile__runtime-label { display: inline-flex; align-items: center; gap: 8px; }
