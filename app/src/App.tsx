@@ -1,3 +1,4 @@
+import { HiddenAgents } from './AgentSidebar';
 import { useConversationRequests } from './hooks/useConversationRequests';
 import { useRouteThread } from './hooks/useRouteThread';
 import { useAppRoute, useRouteFallback } from './hooks/useAppRoute';
@@ -1164,7 +1165,7 @@ function App() {
   const [searches, setSearches] = useState({ agents: '', projects: '' });
   const search = searches[sidebarTab], query = search.trim().toLocaleLowerCase();
   const [searchMachineGroups, setSearchMachineGroups] = useState<Record<string, boolean>>({});
-  const [onlyOnline, setOnlyOnline] = useState(false), [showHidden, setShowHidden] = useState(false), [filterMenu, setFilterMenu] = useState(false);
+  const [onlyOnline, setOnlyOnline] = useState(false), [filterMenu, setFilterMenu] = useState(false);
   const [machineGroups, setMachineGroups] = useState<Record<string, boolean>>(() => { try { const value: unknown = JSON.parse(localStorage.getItem(machineGroupsKey) ?? '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).filter(([, expanded]) => typeof expanded === 'boolean')) as Record<string, boolean> : {}; } catch { return {}; } });
   const [desktopCollapsed, setCollapsedState] = useState(() => { try { return localStorage.getItem(collapsedKey) === '1'; } catch { return false; } });
   const narrowSidebar = useNarrowSidebar(), [narrowOpen, setNarrowOpen] = useState(false);
@@ -1238,7 +1239,20 @@ function App() {
   const summaryFor = (id: string) => summaryByAgent.get(id);
   const matches = (name: string, preview = '', role = '') => !query || `${name} ${role} ${preview}`.toLocaleLowerCase().includes(query);
   const retainedAgent = view === 'chat' && !selectedProject && !projectThread && !selectedChannel ? selected : '';
-  const localAgents = (directory?.agents ?? []).filter(item => showHidden || !item.hidden || item.id === retainedAgent).filter(item => matches(item.name, summaryFor(item.id)?.preview, item.role));
+  const hiddenAgents = (directory?.agents ?? []).filter(item => item.hidden);
+  const matchingHiddenAgents = hiddenAgents.filter(item => matches(item.name, summaryFor(item.id)?.preview, item.role));
+  const localAgents = (directory?.agents ?? []).filter(item => !item.hidden || item.id === retainedAgent).filter(item => matches(item.name, summaryFor(item.id)?.preview, item.role));
+  const restoreFlight = useRef(false);
+  const [restoring, setRestoring] = useState('');
+  async function restoreAgent(item: Agent) {
+    if (restoreFlight.current) return;
+    restoreFlight.current = true; setRestoring(item.id); setAgentActionError('');
+    try {
+      await api(`/api/agents/${item.id}/visibility`, { id: crypto.randomUUID(), revision: item.visibility_revision ?? 0, hidden: false });
+      await load(true);
+    } catch (error) { setAgentActionError(message(error)); }
+    finally { restoreFlight.current = false; setRestoring(''); }
+  }
   const agentRow = (id: string) => {
     const item = directory?.agents.find(agent => agent.id === id);
     if (!item) return null;
@@ -1251,10 +1265,11 @@ function App() {
       </button></AgentActions>;
   };
   const remoteMachines = remoteMachinesState.machines.filter(machine => !onlyOnline || machine.status === 'online').sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
-  const anyMatchingAgents = localAgents.length > 0 || remoteMachines.some(machine => machine.agents.some(item => matches(item.name, summaryFor(`${item.id}@${machine.id}`)?.preview, item.role)));
+  const anyMatchingAgents = localAgents.length > 0 || matchingHiddenAgents.length > 0 || remoteMachines.some(machine => machine.agents.some(item => matches(item.name, summaryFor(`${item.id}@${machine.id}`)?.preview, item.role)));
   const switcherItems: SwitcherItem[] = [
     ...(agent && !route.room && !route.project && !route.machine && !route.view ? [{ id: 'new-conversation', label: 'New conversation', detail: 'Ctrl/Cmd+Shift+O', icon: <Plus size={16} aria-hidden />, group: 'Create', onSelect: () => { setSettings(null); switcherFrame(() => window.dispatchEvent(new Event('briefsip:new-conversation'))); } }] : []),
     ...(directory?.agents.filter(agent => !agent.hidden).map(agent => ({ id: `agent:${agent.id}`, label: agent.name, icon: <AgentAvatar agent={agent} size={24} />, group: 'Agents', onSelect: () => { setSettings(null); openAgent(agent.id); } })) ?? []),
+    ...hiddenAgents.map(agent => ({ id: `restore:${agent.id}`, label: `Restore ${agent.name}`, group: 'Hidden agents', icon: <AgentAvatar agent={agent} size={24} />, onSelect: () => { setSettings(null); setSidebarTab('agents'); void restoreAgent(agent); } })),
     ...remoteMachines.flatMap(machine => machine.agents.map(agent => ({ id: `remote:${machine.id}:${agent.id}`, label: agent.name, icon: <AgentAvatar agent={agent} size={24} />, detail: machine.name, group: 'Agents', onSelect: () => { setSettings(null); openThread(`${agent.id}@${machine.id}`, ''); } }))),
     ...projectState.projects.map(project => ({ id: `project:${project.id}`, label: project.name, group: 'Projects', onSelect: () => { setSettings(null); openProject(project.id); } })),
     ...channels.filter(channel => !channel.archived).map(channel => ({ id: `channel:${channel.id}`, label: `# ${channel.name}`, detail: projectState.projects.find(project => project.id === channel.project)?.name, group: 'Sections', onSelect: () => { setSettings(null); openSection(channel.id); } })),
@@ -1296,16 +1311,15 @@ function App() {
       </div>
       <div className="sidebar__tabs">
       <Tabs<SidebarTab> label="Sidebar" value={sidebarTab} onChange={setSidebarTab} tabs={[
-        { value: 'agents', label: 'Agents', count: (directory?.agents ?? []).filter(item => showHidden || !item.hidden || item.id === retainedAgent).length + remoteMachinesState.machines.reduce((count, machine) => count + machine.agents.length, 0) },
+        { value: 'agents', label: 'Agents', count: (directory?.agents ?? []).filter(item => !item.hidden || item.id === retainedAgent).length + remoteMachinesState.machines.reduce((count, machine) => count + machine.agents.length, 0) },
         { value: 'projects', label: 'Projects', count: projectState.projects.length },
       ]}>
       <div className="sidebar__search">
         <Search size={15} aria-hidden /><Input aria-label={sidebarTab === 'agents' ? 'Search agents' : 'Search projects'} placeholder={sidebarTab === 'agents' ? 'Search agents' : 'Search projects'} value={search} onChange={event => setSearches(current => ({ ...current, [sidebarTab]: event.target.value }))} />
         {sidebarTab === 'agents' && <DropdownMenu.Root open={filterMenu} onOpenChange={setFilterMenu}>
-          <DropdownMenu.Trigger asChild><IconButton label="Filter sidebar" aria-pressed={onlyOnline || showHidden}><Filter size={15} aria-hidden /></IconButton></DropdownMenu.Trigger>
+          <DropdownMenu.Trigger asChild><IconButton label="Filter sidebar" aria-pressed={onlyOnline}><Filter size={15} aria-hidden /></IconButton></DropdownMenu.Trigger>
           <DropdownMenu.Portal><DropdownMenu.Content className="k-pop k-menu" align="end" sideOffset={6}>
             <DropdownMenu.CheckboxItem className="k-menu__item" checked={onlyOnline} onCheckedChange={setOnlyOnline}><DropdownMenu.ItemIndicator><Check size={14} aria-hidden /></DropdownMenu.ItemIndicator>Only online</DropdownMenu.CheckboxItem>
-            <DropdownMenu.CheckboxItem className="k-menu__item" checked={showHidden} onCheckedChange={setShowHidden}><DropdownMenu.ItemIndicator><Check size={14} aria-hidden /></DropdownMenu.ItemIndicator>Show hidden</DropdownMenu.CheckboxItem>
           </DropdownMenu.Content></DropdownMenu.Portal>
         </DropdownMenu.Root>}
       </div>
@@ -1313,7 +1327,7 @@ function App() {
       <div className="sidebar__scroll">
         <TabPanel value="agents">
         <nav className="machine-groups" aria-label="Machines">
-        {(!query || localAgents.length > 0) && <MachineGroup name="This device" subtitle={environment?.name} count={(directory?.agents ?? []).filter(item => showHidden || !item.hidden || item.id === retainedAgent).length} expanded={query ? searchMachineGroups.local !== false : machineGroups.local !== false} onExpandedChange={expanded => setMachineExpanded('local', expanded)} local>
+        {(!query || localAgents.length > 0) && <MachineGroup name="This device" subtitle={environment?.name} count={(directory?.agents ?? []).filter(item => !item.hidden || item.id === retainedAgent).length} expanded={query ? searchMachineGroups.local !== false : machineGroups.local !== false} onExpandedChange={expanded => setMachineExpanded('local', expanded)} local>
           <div className="bot-list sidebar-agents">
             <nav className="bot-list" aria-label="Choose agent">{localAgents.map(item => agentRow(item.id))}
             {directory && !directory.agents.length && <button type="button" className="bot-list__empty" onClick={() => setDialog('agent')}><span className="bot-list__empty-plus"><Plus size={14} aria-hidden /></span><span><span className="bot-row__name">New agent</span></span></button>}
@@ -1336,6 +1350,10 @@ function App() {
         {query && !anyMatchingAgents && <p className="machine-group__note" role="status">No matching agents.</p>}
         {remoteMachinesState.error && <p className="machine-group__note" role="status">Machines could not be refreshed.</p>}
         {!remoteMachinesState.machines.length && <button type="button" className="bot-list__empty" onClick={() => setSettings('machines')}><Monitor size={16} aria-hidden /><span><span className="bot-row__name">Pair a machine</span></span></button>}
+        <HiddenAgents agents={matchingHiddenAgents} searching={!!query} renderAgent={id => {
+          const item = hiddenAgents.find(agent => agent.id === id)!;
+          return <div className="hidden-agent-row"><button type="button" className="bot-row" aria-label={`Open hidden agent ${item.name}`} onClick={() => openAgent(item.id)}><AgentAvatar agent={item} size={36} /><span className="bot-row__text"><span className="bot-row__name">{item.name}</span></span></button><Button size="sm" variant="ghost" aria-label={`Restore ${item.name}`} busy={restoring === id} disabled={!!restoring} onClick={() => void restoreAgent(item)}>Restore</Button></div>;
+        }} />
         </nav>
         </TabPanel>
         <TabPanel value="projects">
