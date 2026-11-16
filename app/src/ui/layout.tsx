@@ -1,3 +1,4 @@
+import { navigateResult, useResultRoute } from '../hooks/useResultRoute';
 import { restoreDetailsOpen } from '../right-panel-state';
 import { useEffect, useState, type ReactNode } from 'react';
 
@@ -17,7 +18,9 @@ export function useDetailsOpen(): [boolean, (open: boolean) => void] {
     window.addEventListener(detailsEvent, sync);
     return () => window.removeEventListener(detailsEvent, sync);
   }, []);
-  return [open, (next: boolean) => {
+  const result = useResultRoute();
+  return [open || !!result, (next: boolean) => {
+    if (!next) navigateResult();
     try { localStorage.setItem(detailsKey, next ? '1' : '0'); } catch { /* The choice still applies to this page. */ }
     window.dispatchEvent(new CustomEvent(detailsEvent, { detail: next }));
   }];

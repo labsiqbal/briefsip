@@ -18,3 +18,14 @@ test('malformed and external deep links show not found without throwing or retai
     assert(!routePath(parsed).includes('example.test'));
   }
 });
+
+test('result links round-trip file and URL views without losing conversation routes', () => {
+  for (const route of [{ agent }, { agent, thread: other }, { room: other }, { machine: other, remoteAgent: agent }]) {
+    for (const result of [{ view: 'file' as const, path: `/api/agents/${agent}/panel/files/${other}`, name: 'Report.html' }, { view: 'url' as const, path: 'https://example.test/?a=1&b=2#part', name: 'Report' }]) {
+      assert.deepEqual(parseRoute(routePath({ ...route, result })), { ...route, result });
+    }
+  }
+  for (const result of [{ view: 'file', path: '/api/backup', name: 'Backup' }, { view: 'url', path: 'javascript:alert(1)', name: 'Bad' }, { view: 'url', path: 'https://user:pass@example.test/', name: 'Bad' }]) {
+    assert(parseRoute(`/agents/${agent}?${new URLSearchParams({ result: JSON.stringify(result) })}`).notFound);
+  }
+});

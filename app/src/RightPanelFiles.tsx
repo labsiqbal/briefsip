@@ -13,7 +13,8 @@ export type PanelSite = { id: string; name: string; revision: number };
 export type OpenFile = { name: string; path: string; image?: boolean; transcribe?: boolean };
 export const previewURL = (path: string, preview: string) => `${path}${path.includes('?') ? '&' : '?'}preview=${preview}`;
 
-function InlineFile({ file, request, onClose }: { file: OpenFile; request: PanelRequest; onClose: () => void }) {
+function InlineFile({ file: selected, request, onClose }: { file: OpenFile; request: PanelRequest; onClose: () => void }) {
+  const [file, setFile] = useState(selected);
   const heading = useRef<HTMLSpanElement>(null);
   useEffect(() => { heading.current?.focus(); }, []);
   const image = isAttachmentImage(file), html = !image && /\.html?$/i.test(file.name);
@@ -21,15 +22,19 @@ function InlineFile({ file, request, onClose }: { file: OpenFile; request: Panel
   const [page, setPage] = useState<{ next_offset?: number | null; digest?: string }>({}), [loadingMore, setLoadingMore] = useState(false);
   const digest = useRef<string | undefined>(undefined);
   const root = useVisiblePolling(useCallback(async current => {
-    if (html || image || file.transcribe) return;
+    if (file.transcribe) return;
     try {
+      const metadata = /\/files\//.test(file.path) ? await request<{ name: string; image: boolean }>(`${file.path}?metadata=1`) : null;
+      if (!current()) return;
+      if (metadata && (metadata.name !== file.name || metadata.image !== file.image)) setFile({ ...file, name: metadata.name, image: metadata.image });
+      if (metadata ? /\.html?$/i.test(metadata.name) || metadata.image || file.transcribe : html || image || file.transcribe) { setError(''); return; }
       const result = await request<{ text: string; next_offset?: number | null; digest?: string }>(previewURL(file.path, 'text'));
       if (current()) {
         if (!result.digest || digest.current !== result.digest) { setText(result.text); setPage(result); digest.current = result.digest; }
         setError('');
       }
     } catch (reason) { if (current()) setError(reason instanceof Error ? reason.message : 'File could not load.'); }
-  }, [file.path, file.transcribe, html, image, request, reload]));
+  }, [file.path, file.name, file.image, file.transcribe, html, image, request, reload]));
   async function loadMore() {
     if (loadingMore || page.next_offset == null) return;
     setLoadingMore(true); setError('');
@@ -42,7 +47,7 @@ function InlineFile({ file, request, onClose }: { file: OpenFile; request: Panel
   }
   return <div ref={root}><Section title={<span className="right-panel__preview-head"><IconButton label="Close file" tooltip="Back to files" onClick={onClose}><ArrowLeft size={15} aria-hidden /></IconButton><span ref={heading} tabIndex={-1} className="right-panel__path">{file.name}</span></span>} actions={<><Tooltip content="Download original. Preview removes scripts, forms, links and external resources."><a className="k-icon-btn" aria-label="Download original" href={file.path.replace('/workspace/file?', '/workspace/download?')} download={file.name}><Download size={15} aria-hidden /></a></Tooltip></>}>
 
-    {error && <Alert tone="error" actions={<Button size="sm" onClick={() => setReload(value => value + 1)}>Retry</Button>}>{error}</Alert>}
+    {error && !html && <Alert tone="error" actions={<Button size="sm" onClick={() => setReload(value => value + 1)}>Retry</Button>}>{error}</Alert>}
     {file.transcribe ? <TranscriptionPanel path={file.path.replace('/panel/files/', '/files/')} request={request} /> : html ? <HtmlPreview key={reload} path={file.path} name={file.name} request={request} /> : image ? <img key={reload} className="right-panel__image" src={previewURL(file.path, 'image')} alt={file.name} onError={() => setError('Image preview could not load. Download the original file.')} /> : !error && (text === null ? <SkeletonRows /> : /\.md(?:own)?$/i.test(file.name) ? <Markdown text={text} scope={file.path.split('/files/')[0]} origin={window.location.origin} /> : <>{/\.pdf$/i.test(file.name) && <p className="k-field__hint">Extracted PDF text. Layout, images and scanned pages are not included.</p>}<CodeBlock label={`Contents of ${file.name}`} maxHeight={600}>{text || '(Empty file)'}</CodeBlock></>)}
     {!html && !image && page.next_offset != null && <Button size="sm" busy={loadingMore} onClick={() => void loadMore()}>Load more text</Button>}
   </Section></div>;
