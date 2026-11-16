@@ -58,7 +58,7 @@ for (const [source, target] of [['openai-compatible', 'openai-compatible'], ['op
       await request(answerPath, command); const done = await until(path, id);
       assert.equal(done.status, 'done', done.error); assert.equal(done.reply, 'Resumed after switch');
       assert.equal(done.agent, agent.id); assert.deepEqual(done.generatedFiles, [file]); assert.equal(initialCalls, 2);
-      assert.equal(payloads.length, 1);
+      assert.equal(payloads.length, 2);
       const sent = JSON.stringify(payloads[0]);
       for (const marker of ['Keep original history', 'Seed answer', 'handoff.txt', 'Continue?', 'Yes']) assert(sent.includes(marker), marker);
       assert(!sent.includes(foreign));
@@ -70,7 +70,7 @@ for (const [source, target] of [['openai-compatible', 'openai-compatible'], ['op
       }
       if (target !== 'gemini') { assert(!sent.includes('private-thought')); assert(!sent.includes('fixture-signature')); }
       const download = await fetch(`${app.origin}${path.slice(0, -6)}/files/${file.id}`); assert.equal(await download.text(), 'Saved before switch');
-      await request(answerPath, command); assert.equal(payloads.length, 1);
+      await request(answerPath, command); assert.equal(payloads.length, 2);
       assert.equal((await request(path)).length, 2); assert.equal((await request(foreignPath)).length, 1);
     } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
   });

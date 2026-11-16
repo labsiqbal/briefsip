@@ -124,3 +124,14 @@ test('M4 route-backed workflow and MCP cursors do not skip ten-item page tails',
   assert.deepEqual([...first.items,...second.items].map((i:any)=>i.id),connections.sort());
  }finally{await f.close();}
 });
+
+test('manual routine creation defaults to authenticated agent without inventing a schedule',async()=>{
+ const f=await fixture();try{
+  const session=await f.client(f.session().token);
+  const input={requestId:randomUUID(),name:'Daily sales',prompt:'Read sales.csv and report paid revenue.',enabled:false,trigger:'manual',reportTo:'direct'};
+  const saved=await call(session,'create_routine',input);
+  assert.equal(saved.agent,f.a.id);assert.equal(saved.trigger,'manual');assert.equal(saved.enabled,0);assert.equal(saved.report_to,'direct');
+  assert.deepEqual(await call(session,'create_routine',input),saved);
+  const read=await call(session,'read_routine',{routine:saved.id});assert.equal(read.routine.prompt,input.prompt);assert.equal(read.runs.length,0);
+ }finally{await f.close();}
+});

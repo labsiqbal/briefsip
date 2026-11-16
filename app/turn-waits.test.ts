@@ -154,7 +154,7 @@ test('routine waits preserve artifacts and reject events cancelled before upload
     const responses = await Promise.all([1, 2].map(() => fetch(app.origin + connectionPath, { method: 'POST', headers: headers(connection.secret, delivery), body })));
     assert(responses.every(response => response.status === 200)); assert.deepEqual(await responses[0].json(), await responses[1].json());
     const [done] = await until(turnsPath, rows => rows[0]?.status === 'done');
-    assert.equal(completed, 1); assert.equal(filesRequested, 1); assert.deepEqual(done.generatedFiles, waiting.generatedFiles);
+    assert.equal(completed, 2); assert.equal(filesRequested, 1); assert.deepEqual(done.generatedFiles, waiting.generatedFiles);
     const download = await fetch(`${app.origin}/api/threads/${run.thread}/files/${done.generatedFiles[0].id}`); assert.equal(await download.text(), 'Evidence before event.');
     assert.equal((await request(runsPath))[0].status, 'done');
     await request(`/api/routines/${routine.id}/test`, { id: randomUUID(), revision: routine.revision });
@@ -173,7 +173,7 @@ test('routine waits preserve artifacts and reject events cancelled before upload
       await request(`${nextPath}/${nextWaiting.id}/cancel`, { id: randomUUID() });
       upload.end(body.slice(10)); assert.equal(await response, 409);
     } finally { upload.destroy(); }
-    assert.equal(completed, 1); assert.equal((await request(runsPath))[0].status, 'cancelled');
+    assert.equal(completed, 2); assert.equal((await request(runsPath))[0].status, 'cancelled');
     assert.equal((await request(nextPath))[0].events[0].status, 'closed');
     const scheduled = await request(`/api/agents/${agent.id}/routines`, { id: randomUUID(), name: 'Scheduled wait', prompt: 'Wait from schedule', nextAt: Date.now() - 1, intervalSeconds: null, enabled: true });
     const scheduledRuns = `/api/routines/${scheduled.id}/runs`, [scheduledRun] = await until(scheduledRuns, rows => rows.length === 1);
@@ -182,7 +182,7 @@ test('routine waits preserve artifacts and reject events cancelled before upload
     await app.close(); const db = new DatabaseSync(options.database); db.prepare('UPDATE turn_waits SET deadline=0 WHERE turn=?').run(scheduledWait.id); db.close();
     app = await startApp(options);
     const [expiredRun] = await until(scheduledRuns, rows => rows[0]?.status === 'failed');
-    assert.match(expiredRun.error, /Event wait timed out/); assert.equal(completed, 1);
+    assert.match(expiredRun.error, /Event wait timed out/); assert.equal(completed, 2);
     assert.equal((await request(scheduledTurns))[0].generatedFiles.length, 1);
 
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }

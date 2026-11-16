@@ -2437,8 +2437,8 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt runtime identity and inline Markdown file links to Briefsip file URLs; retain agent instructions after app layer.",
-      "compatibilityCheck": "app/base-instructions.test.ts; app/harness.test.ts; app/acp-harness.test.ts"
+      "adaptation": "Adapt runtime identity and inline Markdown file links to Briefsip file URLs; Briefsip extends the app guidance with bounded verification, request review and work-log evidence.",
+      "compatibilityCheck": "app/base-instructions.test.ts; app/harness.test.ts; app/acp-harness.test.ts; app/self-verification.test.ts; app/navigation.test.ts"
     },
     {
       "sourcePath": "apps/server/src/provider/CodexDeveloperInstructions.ts",

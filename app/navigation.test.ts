@@ -21,7 +21,7 @@ test('malformed and external deep links show not found without throwing or retai
 
 test('result links round-trip file and URL views without losing conversation routes', () => {
   for (const route of [{ agent }, { agent, thread: other }, { room: other }, { machine: other, remoteAgent: agent }]) {
-    for (const result of [{ view: 'file' as const, path: `/api/agents/${agent}/panel/files/${other}`, name: 'Report.html' }, { view: 'url' as const, path: 'https://example.test/?a=1&b=2#part', name: 'Report' }]) {
+    for (const result of [{ view: 'file' as const, path: `/api/agents/${agent}/panel/files/${other}`, name: 'Report.html' }, { view: 'computer' as const, agent, path: 'https://example.test/', name: 'Browser result' }, { view: 'url' as const, path: 'https://example.test/?a=1&b=2#part', name: 'Report' }]) {
       assert.deepEqual(parseRoute(routePath({ ...route, result })), { ...route, result });
     }
   }

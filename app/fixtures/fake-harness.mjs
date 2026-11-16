@@ -13,7 +13,7 @@ const log = value => appendFileSync('fake-log.jsonl', JSON.stringify(value) + '\
 const send = value => process.stdout.write(JSON.stringify(value) + '\n');
 const hasResume = process.argv.some(value => value === '--resume' || value.startsWith('--resume='));
 let mcpURL = process.env.BRIEFSIP_MCP_URL;
-let session = (hasResume ? (arg('--resume') ?? process.argv.find(value => value.startsWith('--resume='))?.slice(9)) : undefined) ?? arg('--session-id') ?? randomUUID(), prompt = '', callback = '', approvalId = '';
+let session = (hasResume ? (arg('--resume') ?? process.argv.find(value => value.startsWith('--resume='))?.slice(9)) : undefined) ?? arg('--session-id') ?? randomUUID(), prompt = '', callback = '', stopCallback = '', approvalId = '';
 const notify = (method, params) => send({ method, params: { threadId: session, ...params } });
 function delta(text) { if (codex) notify('item/agentMessage/delta', { delta: text }); else send({ type: 'stream_event', session_id: session, uuid: randomUUID(), parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } } }); }
 function finish(allowed = true) {
@@ -35,6 +35,7 @@ function finish(allowed = true) {
 function run(text) {
   if (text.includes('STREAM_GATE') || text.includes('STREAM_CRASH')) { void streamGate(text); return; }
   prompt = text; log({ type: 'turn', session, prompt }); delta('Harness ');
+  if (!codex && text.includes('Create a deliverable.')) { send({ type: 'control_request', request_id: 'sv-stop', request: { subtype: 'hook_callback', callback_id: stopCallback, input: { session_id: session, transcript_path: '', cwd: process.cwd(), hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: 'Done.' } } }); return; }
   if (text.includes('NATIVE_SETUP_FIXTURE') && text.includes('Initial needs:')) { void (async()=>{ const rpc=async(name,args)=>{const r=await fetch(mcpURL,{method:'POST',headers:{Authorization:`Bearer ${process.env.BRIEFSIP_MCP_TOKEN}`,'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:randomUUID(),method:'tools/call',params:{name,arguments:args}})});return {status:r.status,body:await r.json()};}; assert.equal((await rpc('create_text_file',{name:'forbidden',text:'x'})).status,403); const result=await rpc('edit_profile',{revision:1,name:'Native assistant',instructions:'Native setup saved.'});assert(result.body.result,JSON.stringify(result));assert.equal(result.body.result.structuredContent.revision,2,JSON.stringify(result));finish(); })().catch(error=>{log({setupError:String(error)});process.exit(1);});return; }
   if (text.includes('CRASH')) { setTimeout(() => process.exit(19), 20); return; }
   if (text.includes('OVERSIZE')) { process.stdout.write('x'.repeat(1024 * 1024 + 1)); return; }
@@ -103,6 +104,7 @@ for await (const line of createInterface({ input: process.stdin })) {
       const request = value.request;
       if (request.subtype === 'initialize') {
         callback = request.hooks?.PreToolUse?.[0]?.hookCallbackIds?.[0] ?? '';
+        stopCallback = request.hooks?.Stop?.[0]?.hookCallbackIds?.[0] ?? '';
         log({ type: 'init', resume: hasResume, callback: !!callback, context: request.appendSystemPrompt });
         const config = JSON.parse(arg('--mcp-config')); assert.equal(config.mcpServers.briefsip.type, 'stdio'); assert(process.env.BRIEFSIP_MCP_TOKEN); assert(!JSON.stringify(config).includes(process.env.BRIEFSIP_MCP_TOKEN));
         send({ type: 'control_response', response: { subtype: 'success', request_id: value.request_id, response: { commands: [], models: [], account: {}, hook_on_failure_supported: true, hooks_applied: true } } });
@@ -111,6 +113,7 @@ for await (const line of createInterface({ input: process.stdin })) {
       else send({ type: 'control_response', response: { subtype: 'success', request_id: value.request_id, response: {} } });
     }
     if (value.type === 'user') run(typeof value.message.content === 'string' ? value.message.content : value.message.content.map(block => block.text ?? '').join('\n'));
+    if (value.type === 'control_response' && value.response.request_id === 'sv-stop') { log({ type: 'stop-hook', decision: value.response.response?.decision }); run(value.response.response?.reason ?? 'No reminder.'); }
     if (value.type === 'control_response' && value.response.request_id === approvalId) { const decision = value.response.response?.hookSpecificOutput?.permissionDecision; log({ decision }); finish(decision === 'allow'); }
   }
 }

@@ -33,7 +33,7 @@ export function TurnActivity({ turn, agentName, onOpenTask, onOpenAgent, remote,
   useEffect(() => { if (!live) setOpen(false); }, [live]);
   const steps = turnActivitySteps(turn, agentName);
   const contents = <>
-      {steps.length ? <ol className="activity-list" aria-label="Turn activity">{steps.map(step => { const item = (turn.agentMessages ?? []).find(row => row.taskId === step.task); return <li key={step.id}>{step.prose ? <MessageSquare className="activity-step-icon" aria-hidden /> : <Wrench className="activity-step-icon" aria-hidden />}{step.prose ? <div className="legacy"><Markdown text={step.text} scope={scope} origin={window.location.origin} /></div> : <span>{step.text}</span>}{item?.taskId && <Badge tone={['done'].includes(item.status) ? 'success' : ['failed','cancelled','uncertain'].includes(item.status) ? 'warn' : 'brand'}>{item.status === 'queued' && item.wait ? 'Waiting' : item.status.charAt(0).toUpperCase() + item.status.slice(1)}</Badge>}{step.task && <button type="button" className="link-btn link-btn--small" onClick={() => item?.agent && item.thread ? onOpenAgent?.(item.agent, item.thread) : onOpenTask(step.task!)}>{item ? 'Open conversation' : 'View subtask'}</button>}</li>; })}</ol> : null}
+      {steps.length ? <ol className="activity-list" aria-label="Turn activity">{steps.map(step => { const item = (turn.agentMessages ?? []).find(row => row.taskId === step.task); return <li key={step.id}>{step.prose ? <MessageSquare className="activity-step-icon" aria-hidden /> : <Wrench className="activity-step-icon" aria-hidden />}{step.prose ? <div className="legacy"><Markdown results={!!step.artifact} text={step.text} scope={scope} origin={window.location.origin} /></div> : <span>{step.text}</span>}{item?.taskId && <Badge tone={['done'].includes(item.status) ? 'success' : ['failed','cancelled','uncertain'].includes(item.status) ? 'warn' : 'brand'}>{item.status === 'queued' && item.wait ? 'Waiting' : item.status.charAt(0).toUpperCase() + item.status.slice(1)}</Badge>}{step.task && <button type="button" className="link-btn link-btn--small" onClick={() => item?.agent && item.thread ? onOpenAgent?.(item.agent, item.thread) : onOpenTask(step.task!)}>{item ? 'Open conversation' : 'View subtask'}</button>}</li>; })}</ol> : null}
   </>;
   if (logOnly) return <div className="turn-activity-log">{contents}</div>;
   if (!steps.length) return <div className="turn-activity"><div className="turn-activity__header"><span className="activity-label">{live && turn.status === 'running' && <span className="activity-working" aria-hidden />}{activityLabel(turn, now)}</span>{controls}</div></div>;
@@ -41,8 +41,9 @@ export function TurnActivity({ turn, agentName, onOpenTask, onOpenAgent, remote,
 }
 
 export function turnActivitySteps(turn: Props['turn'], agentName: string) {
-  const steps: { id: string; text: string; prose?: boolean; task?: string | null }[] = [];
+  const steps: { id: string; text: string; prose?: boolean; artifact?: boolean; task?: string | null }[] = [];
   const streamedTools = new Set<string>();
+  for (const artifact of turn.activity?.artifacts ?? []) steps.push({ id: `artifact-${artifact.id}`, text: `[${artifact.name}](${artifact.url})`, prose: true, artifact: true });
   for (const segment of streamWork(turn)) {
     const id = `${segment.seq}:${segment.id}`;
     if (segment.kind === 'text') steps.push({ id, text: segment.text, prose: true });
