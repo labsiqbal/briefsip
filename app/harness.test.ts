@@ -107,6 +107,9 @@ for(const runtime of ['codex','claude'] as const) {
       const second=await f.send('SECOND');assert.equal((await f.until(second,row=>['done','failed'].includes(row.status))).status,'done');
       await f.restart();const third=await f.send('THIRD');assert.equal((await f.until(third,row=>['done','failed'].includes(row.status))).status,'done');
       const log=readFileSync(join(f.workspace,'fake-log.jsonl'),'utf8');assert(runtime==='codex'?log.includes('thread/resume'):log.includes('"resume":true'));assert.equal(f.minted.length,3);assert.deepEqual(f.revoked,f.minted.map(row=>row.id));
+      const contexts = log.trim().split('\n').map(line => JSON.parse(line)).filter(row => row.context).map(row => typeof row.context === 'string' ? row.context : Object.values(row.context).map((entry: any) => entry.value).join(''));
+      assert(contexts.length >= 3);
+      for (const context of contexts) { assert.match(context, /<runtime_info>/); assert.match(context, /open_file_in_panel/); assert.doesNotMatch(context, /computer_screenshot|run_shell/); }
       const usage=await f.request('/api/usage');assert(usage.calls.some((call:any)=>call.input_tokens===11&&call.output_tokens===7));
     } finally {await f.close();}
   });

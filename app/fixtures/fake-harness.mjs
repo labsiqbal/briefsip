@@ -88,7 +88,7 @@ for await (const line of createInterface({ input: process.stdin })) {
       assert.match(value.params.config.mcp_servers.briefsip.http_headers.Authorization, /^Bearer /);
       session = value.params.threadId ?? session; send({ id: value.id, result: { thread: { id: session } } });
     }
-    if (value.method === 'turn/start') { assert.equal(value.params.threadId, session); assert.equal(value.params.sandboxPolicy.networkAccess ?? false, false); send({ id: value.id, result: { turn: { id: 'fake-turn', status: 'inProgress' } } }); notify('turn/started', { turn: { id: 'fake-turn' } }); run(value.params.input[0].text); }
+    if (value.method === 'turn/start') { log({ context: value.params.additionalContext }); assert.equal(value.params.threadId, session); assert.equal(value.params.sandboxPolicy.networkAccess ?? false, false); send({ id: value.id, result: { turn: { id: 'fake-turn', status: 'inProgress' } } }); notify('turn/started', { turn: { id: 'fake-turn' } }); run(value.params.input[0].text); }
     if (value.id === approvalId && value.result) { log({ decision: value.result.decision }); finish(value.result.decision === 'accept' || !!value.result.permissions?.network); }
     if (value.method === 'turn/interrupt') { log({ interrupted: true }); send({ id: value.id, result: {} }); }
   } else {
@@ -96,7 +96,7 @@ for await (const line of createInterface({ input: process.stdin })) {
       const request = value.request;
       if (request.subtype === 'initialize') {
         callback = request.hooks?.PreToolUse?.[0]?.hookCallbackIds?.[0] ?? '';
-        log({ type: 'init', resume: hasResume, callback: !!callback });
+        log({ type: 'init', resume: hasResume, callback: !!callback, context: request.appendSystemPrompt });
         const config = JSON.parse(arg('--mcp-config')); assert.match(config.mcpServers.briefsip.headers.Authorization, /^Bearer /);
         send({ type: 'control_response', response: { subtype: 'success', request_id: value.request_id, response: { commands: [], models: [], account: {}, hook_on_failure_supported: true, hooks_applied: true } } });
         send({ type: 'system', subtype: 'init', session_id: session, uuid: randomUUID(), cwd: process.cwd(), tools: [], mcp_servers: [], model: 'fake', permissionMode: 'default', apiKeySource: 'none', slash_commands: [] });

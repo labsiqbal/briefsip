@@ -27,7 +27,8 @@ for await (const line of createInterface({ input: process.stdin })) {
     send({ type: 'extension_ui_request', method: 'confirm', title: 'Briefsip tool approval', id: 'pi-approval', message: JSON.stringify({ toolName: 'bash', input: { command: 'echo fixture' } }) }); continue;
   }
   if (value.type) {
-    if (value.type === 'get_state') send({ type: 'response', id: value.id, success: true, data: { sessionId: 'pi-fixture' } });
+    if (value.type === 'get_state' && process.argv.includes('--append-system-prompt') && !process.argv.includes('--extension')) throw new Error('Pi context must retain permission extension');
+  if (value.type === 'get_state') send({ type: 'response', id: value.id, success: true, data: { sessionId: 'pi-fixture' } });
     else if (value.type === 'get_available_models') send({ type: 'response', id: value.id, success: true, data: { models: [{ provider: 'fixture', id: 'model', name: 'Fixture' }] } });
     else send({ type: 'response', id: value.id, success: true, data: {} });
     continue;
