@@ -16,3 +16,12 @@ export function AgentSidebar({ machine = 'local', label = 'Choose agent', agents
     <Collapsible.Content><nav aria-label={label} className="bot-list">{agents.map(agent => <div key={agent.id}>{renderAgent(agent.id)}</div>)}{children}</nav></Collapsible.Content>
   </Collapsible.Root>;
 }
+
+export function HiddenAgents({ agents, renderAgent, searching = false }: { agents: { id: string }[]; renderAgent: (id: string) => ReactNode; searching?: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!agents.length) return null;
+  return <Collapsible.Root className="hidden-agents" open={searching || expanded} onOpenChange={setExpanded}>
+    <Collapsible.Trigger className="machine-group__header"><ChevronRight className="machine-group__chevron" size={14} aria-hidden /><span className="machine-group__name">Hidden</span><span className="machine-group__count">{agents.length}</span></Collapsible.Trigger>
+    <Collapsible.Content><nav className="bot-list" aria-label="Hidden agents">{agents.map(agent => <div key={agent.id}>{renderAgent(agent.id)}</div>)}</nav></Collapsible.Content>
+  </Collapsible.Root>;
+}
