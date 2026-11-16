@@ -198,7 +198,7 @@ test('dangerous tool waits for exact local owner approval; hub/browser roles can
     assert(results.some(result => result.kind === 'turn.effect.receipt'));
     assert.equal(results.at(-1)!.payload.text, 'Tool finished');
     assert.equal(toolCalls, 1);
-    assert.equal(f.calls, 2);
+    assert.equal(f.calls, 3);
 });
 test('duplicate delivery, final ACK loss and restart never execute twice', async (t) => {
     const f = await fixture(t), node = await f.node('Once', f.alice), p = await node.participate();

@@ -76,7 +76,8 @@ test('steer is injected once at next tool-loop safe point, durable and idempoten
     assert.equal(f.calls.length, 1); f.held.get(text)!();
     const done = await f.turn(root, row => row.status === 'done'); assert.equal(done.reply, 'Steered loop finished');
     assert.match((await f.turn(guidance.id, row => row.status === 'done')).dispatch_label, /Delivered/);
-    assert.equal(done.generatedFiles.length, 1); assert.equal(f.calls.length, 3);
+    assert.equal(done.generatedFiles.length, 1); assert.equal(f.calls.length, 4);
+    assert.match(f.calls.at(-1).messages[0].content, /One verification reminder/);
     for (const body of f.calls.slice(1)) assert.equal(body.messages.filter((message: any) => message.role === 'user' && message.content === guidance.text).length, 1);
     const before = f.calls.length; await f.restart(); await f.request(f.path, guidance); assert.equal(f.calls.length, before);
     const after = randomUUID(); await f.request(f.path, { id: after, text: 'Next request' }); await f.turn(after, row => row.status === 'done');

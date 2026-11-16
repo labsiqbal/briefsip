@@ -227,3 +227,17 @@ test('codex MCP elicitations: only Briefsip form approvals are accepted once; ot
   assert.deepEqual(briefsipToolElicitation({ ...form({}), serverName: 'other-server' }), { action: 'decline' });
   assert.deepEqual(briefsipToolElicitation({ serverName: 'briefsip', threadId: 't', mode: 'url', url: 'https://example.com' }), { action: 'decline' });
 });
+
+for (const runtime of ['codex','claude'] as const) test(`${runtime}: done check nudges once and preserves native session`, async () => {
+  const f = await fixture(runtime);
+  try {
+    const id = await f.send('Create a deliverable.');
+    await f.until(id, row => row.status === 'done');
+    const rows = readFileSync(join(f.workspace,'fake-log.jsonl'),'utf8').trim().split('\n').map(line => JSON.parse(line));
+    const turns = rows.filter(row => row.type === 'turn');
+    assert.equal(turns.length,2); assert.match(turns[1].prompt,/One verification reminder/);
+    assert.equal(turns[0].session,turns[1].session);
+    if(runtime==='claude') assert.equal(rows.find(row=>row.type==='stop-hook').decision,'block');
+    if(runtime==='codex') { const usage = await f.request('/api/usage'); assert(usage.calls.some((call:any)=>call.input_tokens===22&&call.output_tokens===14)); }
+  } finally { await f.close(); }
+});

@@ -116,7 +116,7 @@ for (const family of ['openai-compatible', 'anthropic'] as ProviderFamily[]) tes
       mode = scenario; const id = randomUUID(), before = calls;
       await request(path, { id, text: scenario }); const row = await until(path, id);
       assert.equal(row.status, ['text', 'tool'].includes(mode) ? 'done' : 'failed', mode);
-      assert.equal(calls - before, mode === 'tool' ? 2 : 1, mode);
+      assert.equal(calls - before, mode === 'tool' ? 3 : 1, mode);
       assert.equal(row.generatedFiles.length, mode === 'tool' ? 1 : 0);
       if (mode === 'broken') { assert.equal(row.reply, null); assert.equal(row.partial.text, 'Partial '); }
       if (row.status === 'done') assert.equal(row.reply, 'Partial complete');
@@ -133,7 +133,7 @@ for (const family of ['openai-compatible', 'anthropic'] as ProviderFamily[]) tes
     await app.close(); app = await startApp(options); mode = 'text';
     const signedRestored = (await request(path)).find((row: any) => row.id === signed), signedCalls = calls;
     await request(`${path}/${signed}/resume`, { id: randomUUID(), revision: signedRestored.revision, acknowledgeUncertain: true });
-    const signedDone = await until(path, signed); assert.equal(signedDone.status, 'done'); assert.deepEqual(signedDone.generatedFiles, signedLive.generatedFiles); assert.equal(calls - signedCalls, 1);
+    const signedDone = await until(path, signed); assert.equal(signedDone.status, 'done'); assert.deepEqual(signedDone.generatedFiles, signedLive.generatedFiles); assert.equal(calls - signedCalls, 2);
     mode = 'hold'; const cancelled = randomUUID(); await request(path, { id: cancelled, text: 'Cancel stream' });
     await until(path, cancelled, row => !!row.partial?.text); await request(`${path}/${cancelled}/cancel`, { id: randomUUID() });
     const cancelledRow = await until(path, cancelled); assert.equal(cancelledRow.status, 'cancelled'); assert.equal(cancelledRow.partial.text, 'Partial ');
@@ -151,7 +151,7 @@ for (const family of ['openai-compatible', 'anthropic'] as ProviderFamily[]) tes
       await app.close(); app = await startApp({ ...options, streamTermination: 'finish-reason' });
       mode = 'broken-tool'; const compatible = randomUUID(), before = calls;
       await request(path, { id: compatible, text: 'Tool with finish-reason EOF' }); const result = await until(path, compatible);
-      assert.equal(result.status, 'done'); assert.equal(result.generatedFiles.length, 1); assert.equal(calls - before, 2);
+      assert.equal(result.status, 'done'); assert.equal(result.generatedFiles.length, 1); assert.equal(calls - before, 3);
     }
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(directory, { recursive: true, force: true }); }
 });

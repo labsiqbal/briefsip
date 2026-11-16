@@ -7,12 +7,13 @@ import { marked, type Token, type Tokens } from 'marked';
 import { decodeHTML } from 'entities';
 import { splitMarkdownBlocks } from './ui/markdownStreamBlocks.ts';
 
-export function markdownLink(value: string, scope: string, origin: string): { href: string; external: boolean } | null {
+export function markdownLink(value: string, scope: string, origin: string): { href: string; external: boolean; result?: ResultTarget } | null {
   value = decodeHTML(value);
   if (/[\x00-\x20\x7f\\]/.test(value)) return null;
   if (/^https?:\/\//i.test(value)) {
     try { const url = new URL(value); if (url.username || url.password) return null; if (url.origin !== origin) return { href: url.href, external: true }; value = url.pathname + url.search + url.hash; } catch { return null; }
   }
+  if (value.startsWith('/') && !value.startsWith('//')) { const route = parseRoute(value); if (!route.notFound && route.result) return { href: value, external: false, result: route.result }; }
   if (value.startsWith(scope + '/files/') && /^[a-f0-9-]{36}$/i.test(value.slice((scope + '/files/').length))) return { href: value, external: false };
   if (/^\/sites\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)) return { href: value, external: true };
   return null;
@@ -22,13 +23,13 @@ export const Markdown = memo(function Markdown({ text, scope, origin, files = []
   let count = 0, inLink = false;
   const mentioned = new Set<string>();
   const filePath = (file: AttachmentFile) => `${file.thread ? `/api/threads/${file.thread}` : scope}/files/${file.id}`;
-  function link(href: string, label: ReactNode, key: string | number, file?: AttachmentFile): ReactNode {
+  function link(href: string, label: ReactNode, key: string | number, file?: AttachmentFile, name?: string): ReactNode {
     if (file) mentioned.add(file.id);
     if (file?.deleted) return h('span', { key, className: 'message-muted', 'aria-label': `${file.name} (deleted)` }, label, ' (deleted)');
     const target = markdownLink(href, scope, origin) ?? (file ? { href, external: false } : null);
     if (!target) return h('span', { key }, label);
     if (!results && !files.length) return h('a', { key, href: target.href, ...(target.external ? { target: '_blank', rel: 'noopener noreferrer', title: target.href } : { download: true }) }, label);
-    const result: ResultTarget = target.external ? { view: 'url', path: new URL(target.href, origin).href, name: target.href } : { view: 'file', path: target.href.replace('/files/', '/panel/files/'), name: file?.name ?? (typeof label === 'string' ? label : 'File') };
+    const result: ResultTarget = target.result ?? (target.external ? { view: 'url', path: new URL(target.href, origin).href, name: target.href } : { view: 'file', path: target.href.replace('/files/', '/panel/files/'), name: file?.name ?? name ?? (typeof label === 'string' ? label : 'File') });
     const route = typeof window === 'undefined' ? parseRoute(scope.replace('/api/agents/', '/agents/').replace('/api/channels/', '/rooms/')) : parseRoute(window.location.pathname + window.location.search);
     return h('a', { key, href: routePath({ ...route, result }), title: target.href, onClick: (event: MouseEvent<HTMLAnchorElement>) => {
       if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -67,7 +68,7 @@ export const Markdown = memo(function Markdown({ text, scope, origin, files = []
         case 'link': {
           const file = files.find(file => markdownLink(token.href, file.thread ? `/api/threads/${file.thread}` : scope, origin)?.href === filePath(file) || !/^https?:/i.test(token.href) && token.href.endsWith('/' + file.name));
           inLink = true; const label = child(); inLink = false;
-          return link(file ? filePath(file) : token.href, label, key, file);
+          return link(file ? filePath(file) : token.href, label, key, file, token.text);
         }
         case 'image': return h('span', { key }, token.text ? `[Image: ${token.text}]` : '[Image]');
         case 'table': {

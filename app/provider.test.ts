@@ -95,7 +95,7 @@ test('native Anthropic messages, catalog, tools, resume, cancellation and fallba
       await request(path, body); const row = await until(path, id);
       assert.equal(row.status, ['partial', 'unknown', 'multiple', 'redirect', 'malformed'].includes(mode) ? 'failed' : 'done', mode);
       if (row.status === 'done') assert.equal(row.reply, 'Native\nanswer');
-      if (mode === 'artifact') { assert.equal(row.generatedFiles.length, 1); assert.equal(payloads.length - start, 2); const result = payloads.at(-1).messages.at(-1).content[0]; assert.equal(result.type, 'tool_result'); assert.equal(result.tool_use_id, payloads.at(-1).messages.at(-2).content[0].id); }
+      if (mode === 'artifact') { assert.equal(row.generatedFiles.length, 1); assert.equal(payloads.length - start, 3); const result = payloads.at(-1).messages.at(-1).content[0]; assert.equal(result.type, 'tool_result'); assert.equal(result.tool_use_id, payloads.at(-1).messages.at(-2).content[0].id); }
       if (mode === 'overloaded') assert.deepEqual(payloads.slice(start).map(body => body.model), ['primary', 'backup']);
       const count = payloads.length; await request(path, body); assert.equal(payloads.length, count);
     }

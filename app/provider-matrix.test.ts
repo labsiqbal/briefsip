@@ -168,7 +168,7 @@ test('local provider discovery and execution matrix preserves errors, bounded di
       mode = 'answer';
       await request(`${path}/${id}/resume`, { id: randomUUID(), revision: row.revision, acknowledgeUncertain: true });
       const resumed = await until(path, id); assert.equal(resumed.status, 'done'); assert.deepEqual(resumed.generatedFiles, row.generatedFiles);
-      assert.deepEqual(calls.slice(before).map(call => call.toolResults), [0, 1, 1]); scan();
+      assert.deepEqual(calls.slice(before).map(call => call.toolResults), [0, 1, 1, 1]); scan();
     });
     await app.close(); app = await startApp({ ...options, stream: true });
     for (const scenario of ['stream-cut', 'stream-socket-cut']) await t.test(`turn ${scenario} retains partial text without fallback or replay on restart`, async () => {

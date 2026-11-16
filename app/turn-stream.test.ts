@@ -78,6 +78,7 @@ test('room polling retains active members beyond full history and orders prose/t
       await new Promise<void>(resolve => gates.push(resolve));
       emit({ tool_calls: [{ index: 0, id: 'room-file', type: 'function', function: { name: 'create_text_file', arguments: JSON.stringify({ name: 'room.txt', text: 'Once' }) } }] }); end('tool_calls'); return;
     }
+    if (body.messages[0].content.includes('One verification reminder')) { emit({ content: 'Draft answer.' }); end(); return; }
     if (body.messages.at(-1).role === 'tool') {
       await new Promise<void>(resolve => { releaseAttempt = resolve; });
       emit({ content: 'Draft' });
@@ -129,9 +130,9 @@ test('room polling retains active members beyond full history and orders prose/t
     rows = await until(path, rows => rows.find(row => row.id === root)?.status === 'done');
     const done = rows.find((row: any) => row.id === root);
     assert.equal(done.reply, 'Draft answer.'); assert.equal(done.partial, null); assert.equal(done.generatedFiles.length, 1);
-    assert.deepEqual(done.activity.stream.map((item: any) => [item.seq, item.ordinal, item.kind, item.final]), [[before.seq, 0, 'text', 0], [before.seq, 1, 'tool', 0], [draft.partial.seq, 0, 'text', 1]]);
-    assert.deepEqual(streamWork(done).map(item => item.text), ['Before tool.', 'create_text_file']);
-    assert.equal(done.activity.stream.at(-1).id, draft.partial.segment);
+    assert.deepEqual(done.activity.stream.map((item: any) => [item.seq, item.ordinal, item.kind, item.final]), [[before.seq, 0, 'text', 0], [before.seq, 1, 'tool', 0], [draft.partial.seq, 0, 'text', 0], [done.activity.stream.at(-1).seq, 0, 'text', 1]]);
+    assert.deepEqual(streamWork(done).map(item => item.text), ['Before tool.', 'create_text_file', 'Draft answer.']);
+    assert.equal(done.activity.stream.at(-1).text, 'Draft answer.');
     const restored = (await request(path)).find((row: any) => row.id === root); assert.deepEqual(restored.activity.stream, done.activity.stream);
   } finally {
     releaseAttempt?.(); releaseAnswer?.(); for (const gate of gates) gate();
