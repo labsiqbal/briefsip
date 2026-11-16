@@ -28,7 +28,7 @@ export function activityLabel(turn: ActivityTurn, now: number) {
   if (!['done', 'cancelled'].includes(turn.status) && turn.questions?.some(question => question.answer === null)) return 'Waiting for your answer';
   if (!['done', 'cancelled'].includes(turn.status) && turn.paused) return 'Paused';
   const calls = turn.activity?.calls ?? [];
-  const start = calls[0]?.created ?? turn.created;
+  const start = liveTurn(turn) ? turn.created : calls[0]?.created ?? turn.created;
   // ponytail: provider ledger bounds elapsed time; exact terminal/paused timestamps need a turn lifecycle journal.
   const end = liveTurn(turn) ? now : calls.at(-1)?.finished;
   const elapsed = start && end ? Math.max(0, Math.floor((new Date(end).getTime() - Date.parse(start)) / 1000)) : null;

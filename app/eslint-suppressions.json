@@ -338,9 +338,6 @@
   },
   "src/ui/AgentConversation.tsx": {
     "briefsip-lifecycle/no-component-effects": {
-      "count": 2
-    },
-    "no-restricted-globals": {
       "count": 1
     }
   },
@@ -374,9 +371,6 @@
   },
   "src/ui/TurnActivity.tsx": {
     "briefsip-lifecycle/no-component-effects": {
-      "count": 2
-    },
-    "no-restricted-globals": {
       "count": 1
     }
   },

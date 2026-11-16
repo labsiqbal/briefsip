@@ -8,6 +8,7 @@ import { AgentMessage } from './ChatPrimitives';
 import { Collapsible, IconButton } from './kit';
 import { activityLabel, livePartial, liveTurn, streamIdentity, type TurnActivityData } from './transcript';
 import { TurnActivity } from './TurnActivity';
+import { useLiveClock } from '../hooks/useLiveClock';
 import type { StreamPartial } from '../../turn-stream';
 
 export type Exchange = { id: string; agent: string; name: string; role?: string; machine?: string; thread: string; task?: string; reply: string | null; detailReply?: string | null; error: string | null; status: string; paused: number; truncated: boolean; activity?: TurnActivityData; created?: string; generatedFiles?: { id: string; name: string; size: number; thread: string }[] };
@@ -24,13 +25,8 @@ export type RoomView = { root: string; generation: string; active: boolean; stop
 type RoomTurn = { id: string; agent: string; status: string; paused: number; created: string; error: string | null; partial?: StreamPartial | null; activity?: TurnActivityData; questions?: { answer: string | null }[] };
 type RoomMember = { id: string; name: string; role: string; avatar_revision?: number };
 function RoomReply({ turn, member, text, scope, details, controls, extras }: { turn: RoomTurn; member: RoomMember; text?: string; scope: string; details: ReactNode; controls: ReactNode; extras: ReactNode }) {
-  const [open, setOpen] = useState(false), [now, setNow] = useState(Date.now);
-  const live = liveTurn(turn), streaming = livePartial(turn);
-  useEffect(() => {
-    if (!live) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [live]);
+  const [open, setOpen] = useState(false);
+  const live = liveTurn(turn), streaming = livePartial(turn), now = useLiveClock(live);
   useEffect(() => { if (turn.status === 'done') setOpen(false); }, [turn.status]);
   const answer = text ?? turn.partial?.text ?? '';
   return <Disclosure.Root open={open} onOpenChange={setOpen} asChild><section className="room-agent" aria-label={`Reply from ${member.name}`}>
@@ -46,7 +42,7 @@ function RoomReply({ turn, member, text, scope, details, controls, extras }: { t
   </section></Disclosure.Root>;
 }
 export function RoomMessages({ room, members, pending, turns, scope, details, controls, extras }: { room: RoomView; members: RoomMember[]; pending: RoomTurn[]; turns: RoomTurn[]; scope: string; details: (turn: string) => ReactNode; controls: (turn: string) => ReactNode; extras: (turn: string) => ReactNode }) {
-  const rows = [...room.messages.map(item => ({ key: `${item.kind}-${item.turn}`, item, turn: turns.find(turn => turn.id === item.turn) })), ...pending.filter(turn => turn.status !== 'cancelled' || !!turn.partial?.text || !!turn.activity?.stream?.length || !!turn.activity?.tools.length || !!turn.activity?.harness?.length).map(turn => ({ key: `reply-${turn.id}`, item: undefined, turn }))];
+  const rows = [...room.messages.map(item => ({ key: `${item.kind}-${item.turn}`, item, turn: turns.find(turn => turn.id === item.turn) })), ...pending.filter(turn => turn.status !== 'cancelled' || !!turn.activity?.calls.length || !!turn.partial?.text || !!turn.activity?.stream?.length || !!turn.activity?.tools.length || !!turn.activity?.harness?.length).map(turn => ({ key: `reply-${turn.id}`, item: undefined, turn }))];
   return <div className="room-conversation" aria-label="Section conversation">
     {rows.map(({ key, item, turn }) => item?.kind === 'request' ? <AgentMessage key={key} identity={<div className="agent-identity"><AgentAvatar agent={members.find(member => member.id === item.agent) ?? { id: item.agent, name: item.name }} size={24} /><strong className="message-name">{item.name}</strong>{item.target_name && <span className="message-role">to {item.target_name}</span>}</div>}><div className="room-message-request legacy"><Markdown text={item.text} scope={scope} origin={window.location.origin} /></div></AgentMessage>
       : <RoomReply key={key} turn={turn ?? { id: item!.turn, agent: item!.agent, status: 'done', paused: 0, created: '', error: null }} member={members.find(member => member.id === (turn?.agent ?? item?.agent)) ?? { id: item?.agent ?? turn!.agent, name: item?.name ?? turn!.agent, role: '' }} text={item?.text} scope={scope} details={details(turn?.id ?? item!.turn)} controls={controls(turn?.id ?? item!.turn)} extras={extras(turn?.id ?? item!.turn)} />)}
