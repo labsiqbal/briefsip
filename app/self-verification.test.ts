@@ -64,6 +64,11 @@ test('synthetic done without verification gets one nudge, checks precede final, 
       assert.equal(v.review(turn, { kind: 'ui', review: 'Screenshot inspected against request.' }).verified, true);
       assert.equal(v.artifacts(turn).length, 3);
       assert.equal(v.review(turn, { kind: 'routine', review: 'No saved routine.' }).verified, false);
+      db.prepare('DELETE FROM turn_verification WHERE turn=?').run(turn);
+      db.prepare("INSERT INTO harness_steps VALUES (?,'changed-again','fileChange','completed')").run(turn);
+      db.prepare('INSERT INTO flow_tool_calls(turn,call_id,call,result,after_output,after_action) VALUES (?,?,?,?,0,0)').run(turn, 'routine-readback', JSON.stringify({ function: { name: 'read_routine', arguments: '{}' } }), JSON.stringify({ routine: { id: randomUUID() } }));
+      assert.equal(v.nudge(turn), null);
+      assert.equal(db.prepare('SELECT nudged FROM turn_verification WHERE turn=?').get(turn), undefined);
     } finally { db.close(); }
     app = await startApp({ database, baseURL: `http://127.0.0.1:${address.port}/v1` });
     const restored = (await request(`/api/agents/${agent}/turns`))[0];
