@@ -117,3 +117,15 @@ test('default harness setup saves its profile through MCP and cannot use unrelat
     } finally { await app.close(); rmSync(directory, { recursive: true, force: true }); }
   }
 });
+
+test('new agents fall back to the API runtime when Codex is not installed', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'briefsip-no-codex-')), path = process.env.PATH;
+  process.env.PATH = join(directory, 'empty-bin');
+  const app = await startApp({ database: join(directory, 'state.sqlite') });
+  const api = async (route: string, body?: unknown) => (await fetch(app.origin + route, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })).json();
+  try {
+    assert.equal((await api('/api/runtimes')).defaultRuntime, 'api');
+    const created = await api('/api/agents', { id: randomUUID(), name: 'No Codex', model: 'cx/gpt-6.1-sol', instructions: 'Help.' });
+    assert.equal(created.runtime, 'api');
+  } finally { process.env.PATH = path; await app.close(); rmSync(directory, { recursive: true, force: true }); }
+});

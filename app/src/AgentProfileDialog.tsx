@@ -54,7 +54,7 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
   const [runtimeError, setRuntimeError] = useState('');
   useEffect(() => {
     let stopped = false;
-    void api<{ choices: typeof runtimeChoices }>(profile ? `/api/agents/${profile.id}/runtimes` : '/api/runtimes').then(data => { if (!stopped) setRuntimeChoices(data.choices); }).catch(error => { if (!stopped) setRuntimeError(message(error)); });
+    void api<{ choices: typeof runtimeChoices; defaultRuntime?: Runtime }>(profile ? `/api/agents/${profile.id}/runtimes` : '/api/runtimes').then(data => { if (stopped) return; setRuntimeChoices(data.choices); if (!profile && !recovery.command && data.defaultRuntime) setRuntime(data.defaultRuntime); }).catch(error => { if (!stopped) setRuntimeError(message(error)); });
     return () => { stopped = true; };
   }, [profile]);
   const [account, setAccount] = useState(profile?.provider_account ?? recovery.command?.providerAccount ?? '');
