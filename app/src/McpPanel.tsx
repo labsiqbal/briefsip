@@ -1,6 +1,7 @@
+import { usePolling } from './hooks/usePolling';
 import { getNonce } from 'get-nonce';
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ChevronLeft, ChevronRight, Info, Ellipsis, Plug, Plus, RefreshCw } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Info, Ellipsis, Plug, Plus } from 'lucide-react';
 import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Collapsible, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Tooltip, useConfirm, RecoveryAlert } from './ui/kit';
 type Connection = { id: string; name: string; url: string; hasToken: boolean; enabled: number; revision: number };
 type Tool = { name: string; title?: string; description?: string; inputSchema: unknown; _meta?: Record<string, unknown> };
@@ -30,11 +31,16 @@ export function McpPanel({ agents, request, project }: { project?: string; agent
   const locked = busy || !!pending || invalid, after = cursors.at(-1)!;
   useEffect(() => { heading.current?.focus(); return () => { generation.current++; }; }, []);
   useEffect(() => { heading.current?.focus(); }, [after, selected]);
-  useEffect(() => {
-    let stopped = false; const current = ++reads.current; setPage(null); setDetail(null); setError('');
-    void Promise.all([request<NonNullable<typeof page>>(`/api/mcp${after ? `?after=${after}` : ''}`), selected && agent ? request<Detail>(`/api/mcp/${selected}?agent=${agent}`) : Promise.resolve(null)]).then(([page, detail]) => { if (!stopped && current === reads.current) { setPage(page); setDetail(detail); setTools(detail?.grant.tools ?? []); } }).catch(error => { if (!stopped && current === reads.current) setError(error.message); });
-    return () => { stopped = true; };
-  }, [after, selected, agent, refresh]);
+  usePolling(async signal => {
+    const current = ++reads.current;
+    try {
+      const [nextPage, nextDetail] = await Promise.all([request<NonNullable<typeof page>>(`/api/mcp${after ? `?after=${after}` : ''}`), selected && agent ? request<Detail>(`/api/mcp/${selected}?agent=${agent}`) : Promise.resolve(null)]);
+      if (!signal.aborted && current === reads.current) {
+        setPage(nextPage); setDetail(nextDetail); setError('');
+        setTools(nextDetail?.grant.tools ?? []);
+      }
+    } catch (error) { if (!signal.aborted && current === reads.current) setError(error instanceof Error ? error.message : 'Connections could not load.'); }
+  }, { interval: 5000, enabled: !busy && !showForm && (!detail || JSON.stringify(tools) === JSON.stringify(detail.grant.tools)) }, [after, selected, agent, refresh, request]);
   useEffect(() => {
     if (!tested) return;
     const timer = window.setTimeout(() => setTested(null), Math.max(0, tested.expires - Date.now()));
@@ -64,7 +70,7 @@ export function McpPanel({ agents, request, project }: { project?: string; agent
       await request(command.path, command.body);
       if (current !== generation.current) return;
       if (sessionStorage.getItem(storage) === JSON.stringify(command)) sessionStorage.removeItem(storage);
-      setPending(null);
+      setPending(null); setDetail(null);
       if (command.body.test && (editing ? command.path === `/api/mcp/${editing.id}` : command.path === '/api/mcp')) { setTested(null); setEditing(null); setRotate(false); setToken(''); setName(''); setUrl(''); setShowForm(false); }
       else if (editing && command.path === `/api/mcp/${editing.id}`) setTested(null);
       if(command.path.endsWith('/remove')){setSelected('');setDetail(null);}
@@ -91,10 +97,10 @@ export function McpPanel({ agents, request, project }: { project?: string; agent
     { label: `Remove ${row.name}`, danger: true, onSelect: async () => { if(await confirm({title:`Remove ${row.name}?`,description:'This removes the saved connection and revokes agent access. External effects already completed remain.',confirm:'Remove connection',danger:true}))void execute({path:`/api/mcp/${row.id}/remove`,body:{id:crypto.randomUUID(),confirmed:true}}); } },
   ]} />;
   return <div className="k-page bs-root bs-set3-mcp">
-    <style nonce={getNonce()}>{`.bs-root.bs-set3-mcp > .k-page-head { padding-right: 40px; } .bs-root.bs-set3-mcp .k-row__title { white-space: normal; overflow-wrap: anywhere; } .bs-root.bs-set3-mcp .k-row__meta { overflow-wrap: anywhere; }`}</style>
+    <style nonce={getNonce()}>{`.bs-root.bs-set3-mcp .k-row__title { white-space: normal; overflow-wrap: anywhere; } .bs-root.bs-set3-mcp .k-row__meta { overflow-wrap: anywhere; }`}</style>
     {selected && <Button aria-label="Back to MCP connections" variant="ghost" icon={<ArrowLeft size={14} aria-hidden />} onClick={() => { setSelected(''); setDetail(null); }}>MCP connections</Button>}
-    <PageHeader headingRef={heading} title={selected ? connection?.name ?? 'Connection' : 'MCP connections'} description={!selected ? 'Services agents can use' : undefined}
-      actions={<><IconButton label="Reload" disabled={busy} onClick={() => void reload()}><RefreshCw size={15} aria-hidden /></IconButton>{selected && connection ? <>{editing && <Button disabled={locked} onClick={() => setShowForm(true)}>Continue editing</Button>}{menu(connection)}</> : <Button variant="primary" icon={<Plus size={14} aria-hidden />} disabled={locked} onClick={() => setShowForm(true)}>{editing ? 'Continue editing' : 'Add connection'}</Button>}</>} />
+    <PageHeader headingRef={heading} title={selected ? connection?.name ?? 'Connection' : 'MCP connections'}
+      actions={<>{selected && connection ? <>{editing && <Button disabled={locked} onClick={() => setShowForm(true)}>Continue editing</Button>}{menu(connection)}</> : <Button variant="primary" icon={<Plus size={14} aria-hidden />} disabled={locked} onClick={() => setShowForm(true)}>{editing ? 'Continue editing' : 'Add connection'}</Button>}</>} />
     {error && <Alert tone="error">{error}</Alert>}{recoveryNotice}
     {!selected ? <div id="mcp-connections" className="k-stack">
       {!page ? !error && <><span className="sr-only" role="status">Loading connections...</span><SkeletonRows /></> : page.items.length ? <Card>{page.items.map(row => <Row key={row.id} title={row.name} leading={<Plug size={16} aria-hidden />} disabled={locked} onClick={() => open(row)}
@@ -125,6 +131,7 @@ export function McpPanel({ agents, request, project }: { project?: string; agent
     </>}
     <Dialog open={showForm} size="lg" onOpenChange={setShowForm} title={editing ? `Edit ${editing.name}` : 'New connection'}
       footer={<>
+        {editing && <Button variant="ghost" disabled={busy} onClick={() => void reload()}>Load current revision</Button>}
         {editing && <Button className="k-dialog__foot-start" disabled={locked} onClick={() => { setEditing(null); setRotate(false); setName(''); setUrl(''); setToken(''); setTested(null); }}>Cancel editing</Button>}
         <Button variant={tested ? 'secondary' : 'primary'} type="submit" form="mcp-connection" disabled={locked} busy={busy}>Test connection</Button>
         {tested && <Button variant="primary" disabled={locked || tested.expires <= Date.now()} onClick={async () => { if (editing && !await confirm({ title: 'Save the tested catalog and token, revoke all access permissions, and stop active MCP calls for this connection?', description: 'External effects that have already occurred cannot be undone.', confirm: 'Save changes', danger: true })) return; void execute({ path: editing ? `/api/mcp/${editing.id}` : '/api/mcp', body: { id: crypto.randomUUID(), test: tested.id, ...(editing ? { revision: editing.revision } : {}) } }); }}>{editing ? 'Save changes' : 'Save connection'}</Button>}

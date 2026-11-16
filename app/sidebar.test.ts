@@ -91,21 +91,24 @@ test('sidebar summary bounds entries and text, redacts credentials, and selects 
   const db = new DatabaseSync(':memory:');
   try {
     db.exec(`CREATE TABLE agents(id TEXT PRIMARY KEY,instructions TEXT);
-      CREATE TABLE turns(seq INTEGER PRIMARY KEY,agent TEXT,text TEXT,reply TEXT,created TEXT,status TEXT,error TEXT);
+      CREATE TABLE turns(seq INTEGER PRIMARY KEY,agent TEXT,text TEXT,reply TEXT,created TEXT,status TEXT,error TEXT,channel TEXT);
       CREATE TABLE paired_machines(environment_id TEXT,state TEXT,token TEXT);
       CREATE TABLE remote_agent_calls(id TEXT,machine TEXT,agent TEXT,text TEXT,reply TEXT,created INTEGER,status TEXT,delivery TEXT);`);
     const add = db.prepare('INSERT INTO agents VALUES (?,?)');
     for (let i = 0; i < 501; i++) add.run(`agent-${i}`, 'PRIVATE_INSTRUCTIONS');
-    db.prepare('INSERT INTO turns VALUES (?,?,?,?,?,?,?)').run(1,'agent-0','old',null,'2026-11-14T00:00:00.000Z','running','PRIVATE_ERROR');
-    db.prepare('INSERT INTO turns VALUES (?,?,?,?,?,?,?)').run(2,'agent-0','unused prompt','saved-provider-credential Bearer abcdefghijklmnop token="hide-me" sk-abcdefghijklmnopqrstuv '+ 'x'.repeat(500),'2026-11-14T01:00:00.000Z','done','PRIVATE_ERROR');
+    db.prepare('INSERT INTO turns(seq,agent,text,reply,created,status,error) VALUES (?,?,?,?,?,?,?)').run(1,'agent-0','old',null,'2026-11-14T00:00:00.000Z','running','PRIVATE_ERROR');
+    db.prepare('INSERT INTO turns(seq,agent,text,reply,created,status,error) VALUES (?,?,?,?,?,?,?)').run(2,'agent-0','unused prompt','saved-provider-credential Bearer abcdefghijklmnop token="hide-me" sk-abcdefghijklmnopqrstuv '+ 'x'.repeat(500),'2026-11-14T01:00:00.000Z','done','PRIVATE_ERROR');
     db.prepare('INSERT INTO paired_machines VALUES (?,?,?)').run('machine','paired','PRIVATE_PAIRING_TOKEN');
     const remote = db.prepare('INSERT INTO remote_agent_calls VALUES (?,?,?,?,?,?,?,?)');
     remote.run('a','machine','remote','old',null,1000,'done',null);
     remote.run('b','machine','remote','latest user message','Latest reply',2000,'done',null);
     remote.run('c','machine','remote','AGENT_DELIVERY_SECRET',null,3000,'done','internal-turn');
     remote.run('d','removed-machine','remote','UNPAIRED_SECRET',null,3000,'done',null);
+    db.prepare('INSERT INTO turns(seq,agent,text,created,status,channel) VALUES (?,?,?,?,?,?)').run(3,'agent-1','Room-only secret','2026-11-14T02:00:00.000Z','running','general');
+    db.prepare('INSERT INTO turns(seq,agent,text,created,status,channel) VALUES (?,?,?,?,?,?)').run(4,'agent-0','Room newer than direct','2026-11-14T03:00:00.000Z','done','general');
     const result = readSidebarSummary(db, ['saved-provider-credential']);
     assert.equal(result.summaries.length,501);
+    assert.deepEqual(result.summaries[1], {agent:'agent-1',preview:'',time:null,status:'idle'});
     assert.equal(result.summaries[0].status,'running');
     assert.equal(result.summaries[0].preview.length,180);
     assert.equal(result.summaries[0].time,'2026-11-14T01:00:00.000Z');

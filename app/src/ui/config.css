@@ -216,7 +216,6 @@
 .app-settings__group .cfg-nav__item { width: 100%; height: 32px; min-height: 32px; margin: 0; padding: 0 10px; text-align: left; }
 .app-settings .app-settings__close { position: absolute; z-index: 1; top: 12px; right: 16px; width: 40px; height: 40px; }
 .app-settings__page { margin: 0; max-width: 864px; padding: 40px 32px 64px; }
-.app-settings__page--wide { max-width: 1184px; }
 .app-settings__page--preferences .k-page { gap: 24px; }
 .app-settings__page--preferences .k-page-head { padding-right: 0; }
 .app-settings__page--preferences .k-section { gap: 12px; }
@@ -254,3 +253,6 @@
 .app-settings__page--preferences .k-section { gap: calc(12px * var(--density)); }
 .app-settings__page--preferences .k-row { min-height: calc(64px * var(--density)); padding: calc(12px * var(--density)) calc(16px * var(--density)); }
 .app-settings__page--preferences .k-row__main { min-height: 0; padding: 0; }
+
+.app-settings__page .k-page-head { padding-right: 0; }
+.app-settings .app-settings__page .k-page-head :is(.k-btn, .k-icon-btn) { height: 32px; min-height: 32px; }

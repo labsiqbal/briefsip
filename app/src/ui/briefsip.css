@@ -264,3 +264,14 @@
 
 .sidebar-agent > .agent-actions { opacity: 0; }
 .sidebar-agent:hover > .agent-actions, .sidebar-agent:has(:focus-visible) > .agent-actions, .sidebar-agent > .agent-actions[data-state="open"] { opacity: 1; }
+
+:is(.markdown, .md) a, .k-link { color: var(--color-link); text-decoration: underline; text-underline-offset: 3px; }
+
+.menu__item { justify-content: flex-start; gap: 10px; }
+.menu__item > svg { flex: none; }
+.menu__item--separated { border-top: .5px solid var(--color-border-secondary); margin-top: 4px; padding-top: 12px; border-radius: 0; }
+
+.sidebar-backdrop { position: fixed; inset: 0; z-index: 80; background: var(--color-bg-scrim); }
+@media (max-width: 767px) {
+  .sidebar[role="dialog"] { position: fixed; inset: 0 auto 0 0; z-index: 81; height: 100dvh; max-width: calc(100vw - 48px); }
+}

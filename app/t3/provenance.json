@@ -99,6 +99,52 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "compatibilityCheck": "work/rebuild/collaboration-check/t3-provenance.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/hooks/useMediaQuery.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "d0478451b9932267a0fd1a98d8e158882081c6dcd146bd90be698728480d8f66",
+      "symbols": [],
+      "localPaths": [
+        "app/src/hooks/useNarrowSidebar.ts",
+        "app/src/App.tsx",
+        "app/src/ui/briefsip.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt the 768px breakpoint and useSyncExternalStore media-query subscription; use a Radix off-canvas sidebar with focus return below it.",
+      "compatibilityCheck": "work/rebuild/ui-smoke/r5-panel-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/index.css",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "d723ccee7571f98bc1bc931a880d7d856b5c5f660703845e4f5b66d7f56310ef",
+      "symbols": [],
+      "localPaths": [
+        "app/src/ui/themes.ts",
+        "app/src/ui/chat.css",
+        "app/src/ui/briefsip.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt a separate prose link semantic color; measure AA contrast across every palette surface and always underline prose links.",
+      "compatibilityCheck": "work/rebuild/ui-smoke/r5-panel-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/ui/command.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "3875b5056f9c32812e888fb8a04a4471667d3c7e0e5400f96bea1012666ab3d7",
+      "symbols": [],
+      "localPaths": [
+        "app/src/ui/quick-switcher.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt a ringless command input inside the focused dialog frame.",
+      "compatibilityCheck": "work/rebuild/ui-smoke/r5-panel-smoke.mjs"
     }
   ],
   "licenseSha256": "935d8f2af0c703f9c39517ee57cc4930b19d02d533be930b63f0e82f93614b43",

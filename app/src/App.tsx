@@ -2,6 +2,7 @@ import { useConversationRequests } from './hooks/useConversationRequests';
 import { useRouteThread } from './hooks/useRouteThread';
 import { useAppRoute, useRouteFallback } from './hooks/useAppRoute';
 import type { SettingsSection } from './navigation';
+import { useNarrowSidebar } from './hooks/useNarrowSidebar';
 import { useMessageChanged } from './hooks/useMessageChanged';
 import { useOptimisticTurns } from './hooks/useOptimisticTurns';
 import { useComposerFocus } from './hooks/useComposerFocus';
@@ -365,10 +366,11 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
   const title = thread?.name ?? agent.name;
   const editLabel = channel ? 'Section settings' : thread ? 'Conversation settings' : 'Edit profile';
   const items: MenuItem[] = [
-    ...menuItems,
-    ...(onEdit ? [{ label: editLabel, onSelect: onEdit }] : []),
+    ...menuItems.filter(item => item.label !== 'Export template'),
+    ...(onEdit ? [{ label: editLabel, icon: <Pencil size={15} aria-hidden />, onSelect: onEdit }] : []),
     ...(channel || thread ? [{ label: `${channel ? 'Section' : 'Agent'} memory`, onSelect: () => setShowMemory(true) }, { label: 'History summary', onSelect: () => setSummaryOpen(true) }] : []),
-    { label: detailsOpen ? 'Hide details' : 'Show details', onSelect: () => setDetailsOpen(!detailsOpen) },
+    { label: detailsOpen ? 'Hide panel' : 'Show panel', icon: <PanelRight size={15} aria-hidden />, onSelect: () => setDetailsOpen(!detailsOpen) },
+    ...menuItems.filter(item => item.label === 'Export template').map(item => ({ ...item, separator: true })),
   ];
   const statusLabel = (turn: Turn) => turn.computerWait ? 'Waiting for you' : (turn.approvals?.some(approval => approval.state === 'approval') || turn.harnessApprovals?.some(approval => approval.state === 'approval')) && !['done','cancelled'].includes(turn.status) ? 'Waiting for approval' : turn.editing ? 'Editing' : turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) ? 'Waiting for your answer' : turn.no_update ? 'No updates' : turn.paused && !['done','cancelled'].includes(turn.status) ? 'Paused' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) && turn.status === 'queued' ? 'Waiting for agent reply' : turn.waiting_for && turn.status === 'queued' ? 'Waiting for delegation' : turn.routing === 'pending' && turn.status === 'running' ? 'Selecting recipient' : turn.routing === 'clarify' ? 'Needs clarification' : turn.routing === 'none' ? 'No task needed' : turn.status === 'running' ? 'Running' : statusNames[turn.status] ?? turn.status;
   const tone = (turn: Turn) => turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) || turn.paused && !['done','cancelled'].includes(turn.status) ? 'attention' : ['failed','interrupted'].includes(turn.status) ? 'error' : ['queued','running'].includes(turn.status) ? 'working' : 'done';
@@ -997,7 +999,7 @@ function AgentConversations({ agent, onRestored, configured, onEdit, onExport, w
   </>;
   return <><Chat onRestored={onRestored} onOpenChannel={onOpenChannel} onOpenAgent={onOpenAgent} key={thread?.id ?? agent.id} agent={agent} thread={thread} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)}
     onEdit={thread ? () => setForm(thread) : onEdit}
-    menuItems={[...(thread ? actions(thread) : []), { label: 'Export template', onSelect: onExport }, { label: 'New conversation', onSelect: openForm, disabled: locked }, { label: 'Routines', onSelect: openRoutines }, { label: 'Workflows', onSelect: openWorkflows }, { label: 'Workspace files', onSelect: openWorkspace }]}
+    menuItems={[...(thread ? actions(thread) : []), { label: 'New conversation', icon: <Plus size={15} aria-hidden />, onSelect: openForm, disabled: locked }, { label: 'Routines', icon: <CalendarClock size={15} aria-hidden />, onSelect: openRoutines }, { label: 'Workflows', icon: <WorkflowIcon size={15} aria-hidden />, onSelect: openWorkflows }, { label: 'Workspace files', icon: <FolderOpen size={15} aria-hidden />, onSelect: openWorkspace }, { label: 'Export template', icon: <Download size={15} aria-hidden />, onSelect: onExport }]}
     detailsExtra={{ chats: conversations, onManageRoutines: openRoutines }} rename={form?.id === selected ? nameEditor : null} /></>;
 }
 
@@ -1156,7 +1158,9 @@ function App() {
   const [searchMachineGroups, setSearchMachineGroups] = useState<Record<string, boolean>>({});
   const [onlyOnline, setOnlyOnline] = useState(false), [showHidden, setShowHidden] = useState(false), [filterMenu, setFilterMenu] = useState(false);
   const [machineGroups, setMachineGroups] = useState<Record<string, boolean>>(() => { try { const value: unknown = JSON.parse(localStorage.getItem(machineGroupsKey) ?? '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).filter(([, expanded]) => typeof expanded === 'boolean')) as Record<string, boolean> : {}; } catch { return {}; } });
-  const [collapsed, setCollapsedState] = useState(() => { try { return localStorage.getItem(collapsedKey) === '1'; } catch { return false; } });
+  const [desktopCollapsed, setCollapsedState] = useState(() => { try { return localStorage.getItem(collapsedKey) === '1'; } catch { return false; } });
+  const narrowSidebar = useNarrowSidebar(), [narrowOpen, setNarrowOpen] = useState(false);
+  const collapsed = narrowSidebar ? !narrowOpen : desktopCollapsed;
   const [detailsVisible] = useDetailsOpen();
   const sidebar = useResizablePanel(sidebarPanel, detailsVisible ? 280 : 0);
   const [agentActionError, setAgentActionError] = useState('');
@@ -1164,7 +1168,7 @@ function App() {
   const [editReload, setEditReload] = useState(0);
   const [error, setError] = useState('');
   const directoryRequest = useRef(0);
-  function setCollapsed(value: boolean) { setCollapsedState(value); try { localStorage.setItem(collapsedKey, value ? '1' : '0'); } catch { /* Applies to this page only. */ } }
+  function setCollapsed(value: boolean) { if (narrowSidebar) { setNarrowOpen(!value); return; } setCollapsedState(value); try { localStorage.setItem(collapsedKey, value ? '1' : '0'); } catch { /* Applies to this page only. */ } }
   function setMachineExpanded(key: string, expanded: boolean) { if (query) { setSearchMachineGroups(current => ({ ...current, [key]: expanded })); return; } setMachineGroups(current => { const next = { ...current, [key]: expanded }; try { localStorage.setItem(machineGroupsKey, JSON.stringify(next)); } catch { /* Applies to this page only. */ } return next; }); }
   useEffect(() => { setSearchMachineGroups({}); }, [search, sidebarTab]);
   useEffect(() => { try { localStorage.setItem(sidebarTabKey, sidebarTab); } catch { /* Keep tabs usable without storage. */ } }, [sidebarTab]);
@@ -1188,13 +1192,13 @@ function App() {
     const key = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey)) return;
       const name = event.key.toLowerCase();
-      if (name === 'b') { event.preventDefault(); setCollapsedState(value => { try { localStorage.setItem(collapsedKey, value ? '0' : '1'); } catch { /* Applies to this page only. */ } return !value; }); }
+      if (name === 'b') { event.preventDefault(); if (narrowSidebar) { setNarrowOpen(value => !value); return; } setCollapsedState(value => { try { localStorage.setItem(collapsedKey, value ? '0' : '1'); } catch { /* Applies to this page only. */ } return !value; }); }
       else if (name === '1' || name === '2') { if (document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')) return; event.preventDefault(); setSidebarTab(name === '1' ? 'agents' : 'projects'); }
       else if (name === ',') { event.preventDefault(); setSettings(current => current ?? 'general'); }
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, []);
+  }, [narrowSidebar]);
   async function markRead(room: Channel) {
     const updated = await api<Channel>(`/api/channels/${room.id}/read`, { id: crypto.randomUUID(), position: room.activity });
     setChannels(current => current.map(item => item.id === room.id ? { ...item, activity: Math.max(item.activity, updated.activity), read_position: Math.max(item.read_position, updated.read_position) } : item));
@@ -1261,9 +1265,7 @@ function App() {
   else if (agent) content = <AgentConversations onRestored={() => load(true)} onExport={() => setAgentContent({ agent, kind: 'export' })} onManageRoutines={id => { setRoutineAgent(id); setView('routines'); }} onOpenChannel={openChannel} key={agent.id} agent={agent} workflowAgents={directory.agents} configured={directory.configured} initialThread={route.thread ?? ''} onSelectThread={(thread, replace) => { navigate(current => ({ ...current, agent: agent.id, thread: thread || undefined }), replace); focusComposer(); }} onOpenAgent={openThread} onEdit={() => setDialog('edit')} />;
   else content = <main className="chat chat--empty bs-root"><div className="empty-chat"><div className="empty-chat__title">Create your first agent</div><button type="button" className="btn btn--primary" onClick={() => setDialog('agent')}><Plus size={16} aria-hidden /> New agent</button></div></main>;
   const created = (item: Agent) => { setDirectory(current => current && { ...current, agents: [...current.agents.filter(agent => agent.id !== item.id), item] }); openAgent(item.id); };
-  return <RadixDialog.Root modal open={!!settings} onOpenChange={open => setSettings(current => open ? current ?? 'general' : null)}><div className={`app bs-root${collapsed ? ' is-sidebar-collapsed' : ''}`}>
-    {collapsed && <button type="button" className="icon-btn icon-btn--bordered sidebar-reveal" onClick={() => setCollapsed(false)} aria-label="Expand sidebar" title="Sidebar (Ctrl/Cmd+B)"><PanelLeft size={16} aria-hidden /></button>}
-    {!collapsed && <aside ref={sidebar.ref} className="sidebar" style={{ width: `${sidebar.width}px` }} aria-label="Workspace navigation">
+  const navigation = <aside ref={sidebar.ref} className="sidebar bs-root" style={{ width: `${sidebar.width}px` }} aria-label="Workspace navigation" onClick={event => { if (narrowSidebar && (event.target as HTMLElement).closest('.bot-row, .project-navigation__name, .project-navigation__room')) setNarrowOpen(false); }}>
       <div className="sidebar__titlebar">
         <span className="sidebar__bots-label">Briefsip</span>
         <nav className="sidebar__controls" aria-label="Automation">
@@ -1333,10 +1335,19 @@ function App() {
         <Tooltip content={activityError ? 'Status not updated. Trying again.' : directory?.configured ? 'Provider configured' : 'Provider not configured'}><button type="button" className="provider-status" aria-label={activityError ? 'Status not updated. Trying again.' : directory?.configured ? 'Provider configured' : 'Provider not configured'} onClick={() => setSettings('providers')}><i className={directory?.configured && !activityError ? 'is-on' : ''} aria-hidden /></button></Tooltip>
         <IconButton label="Quick switcher (Ctrl/Cmd+K)" onClick={() => switcher.setOpen(true)}><Search size={16} aria-hidden /></IconButton>
         <IconButton label="Help" onClick={() => setWorkspaceDialog('help')}><BookOpen size={16} aria-hidden /></IconButton>
-        <RadixDialog.Trigger asChild><IconButton label={updateAvailable ? 'Settings - Update available' : 'Settings'} className="sidebar-settings"><Settings size={16} aria-hidden />{updateAvailable && <span className="sidebar-settings__update" />}</IconButton></RadixDialog.Trigger>
+        <RadixDialog.Trigger asChild><IconButton label={updateAvailable ? 'Settings - Update available' : 'Settings'} className="sidebar-settings" onClick={() => { setSettings('general'); setNarrowOpen(false); }}><Settings size={16} aria-hidden />{updateAvailable && <span className="sidebar-settings__update" />}</IconButton></RadixDialog.Trigger>
       </div>
       <PanelResizeHandle panel={sidebar} />
-    </aside>}
+    </aside>;
+  return <RadixDialog.Root modal open={!!settings} onOpenChange={open => setSettings(current => open ? current ?? 'general' : null)}><div className={`app bs-root${collapsed ? ' is-sidebar-collapsed' : ''}`}>
+    {collapsed && <IconButton className="sidebar-reveal icon-btn--bordered" onClick={() => setCollapsed(false)} label="Expand sidebar" tooltip="Sidebar (Ctrl/Cmd+B)"><PanelLeft size={16} aria-hidden /></IconButton>}
+    {narrowSidebar ? <RadixDialog.Root open={!collapsed} onOpenChange={setNarrowOpen}><RadixDialog.Portal>
+      <RadixDialog.Overlay className="sidebar-backdrop" />
+      <RadixDialog.Content asChild aria-describedby={undefined} onOpenAutoFocus={event => { event.preventDefault(); (event.currentTarget as HTMLElement).focus(); }} onCloseAutoFocus={event => { event.preventDefault(); document.querySelector<HTMLButtonElement>('.sidebar-reveal')?.focus(); }}>
+        {navigation}
+      </RadixDialog.Content>
+      <RadixDialog.Title className="sr-only">Workspace navigation</RadixDialog.Title>
+    </RadixDialog.Portal></RadixDialog.Root> : !collapsed && navigation}
     {content}
     {switcher.open && <QuickSwitcher items={switcherItems} agents={directory?.agents ?? []} onClose={() => switcher.setOpen(false)} onChoose={item => { switcher.setOpen(false); switcherFrame(() => { item.onSelect(); if (['Agents', 'Conversations', 'Sections'].includes(item.group)) switcherFrame(focusComposer); }); }} onThread={(agent, thread) => { setSettings(null); openThread(agent, thread); }} />}
     {dialog === 'agent' && directory && <AgentForm request={api} isClientError={error => error instanceof HttpError && error.status < 500} model={directory.defaultModel} onCancel={() => setDialog(null)} onCreated={item => { created(item); setDialog(null); }} />}
@@ -1371,7 +1382,7 @@ function App() {
       </aside>
       <IconButton className="app-settings__close" label="Close settings" onClick={() => setSettings(null)}><X size={16} aria-hidden /></IconButton>
       <div className="app-settings__main">
-        <div className={`app-settings__page legacy${settings === 'general' || settings === 'appearance' ? ' app-settings__page--preferences' : settings === 'data' ? ' app-settings__page--wide' : ''}`} tabIndex={-1}>
+        <div className={`app-settings__page legacy${settings === 'general' || settings === 'appearance' ? ' app-settings__page--preferences' : ''}`} tabIndex={-1}>
           {!directory ? <p className="empty" role="status">Loading workspace...</p>
             : settings === 'skills' ? <Suspense fallback={<p className="empty" role="status">Loading skill library...</p>}><SkillsPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'providers' ? <ProvidersPanel request={api} />

@@ -14,7 +14,7 @@ test('panel state stays isolated across conversations and recreated stores', () 
 });
 test('unavailable browser storage leaves panel usable', () => { const store = createRightPanelStore({ getItem() { throw new Error('Blocked'); }, setItem() { throw new Error('Full'); } }); assert.deepEqual(store.read('a'), { tab: 'chats', width: 360 }); assert.doesNotThrow(() => store.select('a','files')); });
 
-test('legacy Details selection migrates to Chats', () => { assert.equal(parseRightPanelState('"details"', null).tab, 'chats'); });
+test('legacy Details and Activity selections migrate to Chats', () => { for (const tab of ['details', 'activity']) assert.equal(parseRightPanelState(JSON.stringify(tab), null).tab, 'chats'); });
 
 test('only docked layouts restore an open panel', () => {
   for (const viewport of [900, 1024]) assert.equal(restoreDetailsOpen(viewport, 300, '1'), false);

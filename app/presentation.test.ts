@@ -44,7 +44,7 @@ test('all six color themes in light and dark keep text, status, code, viewer and
   for (const { id } of colorThemes) for (const mode of ['light', 'dark'] as const) {
     palette = { ...(mode === 'light' ? light : dark), ...Object.fromEntries(Object.entries(themeTokenValues(id, mode)).map(([name, value]) => [name.slice(2), value])) };
     const name = `${id}/${mode}`;
-    for (const text of ['color-text-primary', 'color-text-secondary', 'color-text-tertiary', 'color-text-quaternary', 'color-icon-secondary', 'color-danger-text', 'color-warn-text', 'color-success-text', 'color-brand-text'])
+    for (const text of ['color-text-primary', 'color-text-secondary', 'color-text-tertiary', 'color-text-quaternary', 'color-icon-secondary', 'color-danger-text', 'color-warn-text', 'color-success-text', 'color-brand-text', 'color-link'])
       for (const surface of surfaces) assert(ratio(palette[text], palette[surface]) >= 4.5, `${name}: ${text} on ${surface}: ${ratio(palette[text], palette[surface])}`);
     for (const [text, surface] of [['color-on-primary', 'color-primary'], ['color-on-primary', 'color-bg-primary-hover'], ['bot-on-action', 'color-brand'], ['bot-on-action', 'color-brand-hover'], ['color-on-danger', 'color-danger'], ['color-on-warn', 'color-warn'], ['color-code-fg', 'color-code-bg'], ['color-danger-text', 'color-danger-bg'], ['color-warn-text', 'color-warn-bg'], ['color-success-text', 'color-success-bg'], ['color-text-secondary', 'color-danger-bg'], ['color-text-secondary', 'color-success-bg'], ['color-viewer-text', 'color-viewer-bg']])
       assert(ratio(palette[text], palette[surface]) >= 4.5, `${name}: ${text} on ${surface}: ${ratio(palette[text], palette[surface])}`);

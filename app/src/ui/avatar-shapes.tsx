@@ -54,11 +54,11 @@ export async function avatarPng(look: AvatarLook): Promise<string> {
   context.drawImage(image, 0, 0, 256, 256);
   return canvas.toDataURL('image/png').split(',')[1];
 }
-export function AvatarPicker({ value, onChange, disabled = false }: { value: AvatarLook | null; onChange: (look: AvatarLook | null) => void; disabled?: boolean }) {
+export function AvatarPicker({ name = '', value, onChange, disabled = false }: { name?: string; value: AvatarLook | null; onChange: (look: AvatarLook | null) => void; disabled?: boolean }) {
   const color = value?.color ?? 0;
   return <div className="k-avatar-picker bs-root">
     <div className="k-avatar-picker__head">
-      <div className="k-avatar-picker__preview" role="img" aria-label={value ? `${AVATAR_COLORS[color].name} ${AVATAR_SHAPES[value.shape].name} preview` : 'Initials avatar preview'}>{value ? <MascotAvatar look={value} size={76} /> : <span aria-hidden="true">Aa</span>}</div>
+      <div className="k-avatar-picker__preview" role="img" aria-label={value ? `${AVATAR_COLORS[color].name} ${AVATAR_SHAPES[value.shape].name} preview` : 'Initials avatar preview'}>{value ? <MascotAvatar look={value} size={76} /> : <span className="bs-avatar" aria-hidden="true">{name.trim().slice(0, 1).toUpperCase() || '?'}</span>}</div>
       <div className="k-avatar-picker__intro"><span className="k-field__label">Choose a look <span className="k-field__optional">Optional</span></span><span className="k-field__hint">Pick a shape and color, or keep initials.</span>{value && <Button size="sm" variant="ghost" disabled={disabled} onClick={() => onChange(null)}>Clear choice</Button>}</div>
     </div>
     <RadioGroup.Root className="k-avatar-picker__shapes" aria-label="Avatar shape" value={value ? String(value.shape) : ''} disabled={disabled} orientation="horizontal" onValueChange={shape => onChange({ shape: Number(shape), color })} loop>

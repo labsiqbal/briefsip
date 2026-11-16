@@ -168,7 +168,7 @@
   },
   "src/McpPanel.tsx": {
     "briefsip-lifecycle/no-component-effects": {
-      "count": 4
+      "count": 3
     },
     "no-restricted-globals": {
       "count": 1
@@ -232,7 +232,7 @@
   },
   "src/SharedDataPanel.tsx": {
     "briefsip-lifecycle/no-component-effects": {
-      "count": 2
+      "count": 1
     }
   },
   "src/SitesPanel.tsx": {
