@@ -26,7 +26,7 @@ test('generated text artifacts persist across interruption without duplicate cre
       return res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: `Saved ${result.name}` } }] }));
     }
     if (task === 'Late file creation') await new Promise<void>(resolve => { releaseLate = resolve; });
-    const args = { name: task === 'bad-path' ? '../escape.txt' : 'result.txt', text: task === 'oversize' ? '界'.repeat(12000) : '<script>literal text</script>\nSYNTHETIC OUTPUT' };
+    const args = { name: task === 'bad-path' ? '../escape.txt' : task === 'Write a file' ? 'result.txt' : `${task}.txt`, text: task === 'oversize' ? '界'.repeat(12000) : '<script>literal text</script>\nSYNTHETIC OUTPUT' };
     res.end(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ id: 'artifact-call', type: 'function', function: { name: 'create_text_file', arguments: JSON.stringify(args) } }] } }] }));
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));

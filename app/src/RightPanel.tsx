@@ -8,7 +8,7 @@ import type { ComputerStatus } from './AgentComputerPanel';
 import { Alert, Badge, Button, IconButton, TabPanel, Tabs } from './ui/kit';
 import { PanelResizeHandle, detailsPanel, useResizablePanel } from './ui/resizable';
 import { createRightPanelStore, rightPanelWidthKey } from './right-panel-state';
-import { PanelFiles, PanelPreview, type PanelFile, type PanelSite } from './RightPanelFiles';
+import { PanelFiles, PanelPreview, type PanelFile, type PanelSite, type OpenFile } from './RightPanelFiles';
 import { PanelDiff, type GitStatus } from './RightPanelDiff';
 import { ComputerViewer } from './ComputerViewer';
 import { usePanelOverlay } from './hooks/usePanelOverlay';
@@ -21,13 +21,14 @@ export type RightPanelExtension = { value: string; label: ReactNode; content: Re
 
 export function useRightPanel(scope: string) {
   const store = useMemo(() => createRightPanelStore({ getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) }), []);
-  const [selection, setSelection] = useState(() => ({ scope, tab: store.read(scope).tab }));
-  if (selection.scope !== scope) setSelection({ scope, tab: store.read(scope).tab });
+  const [selection, setSelection] = useState<{ scope: string; tab: string; file: OpenFile | null }>(() => ({ scope, tab: store.read(scope).tab, file: null }));
+  if (selection.scope !== scope) setSelection({ scope, tab: store.read(scope).tab, file: null });
   const tab = selection.scope === scope ? selection.tab : store.read(scope).tab;
   const spec = useMemo(() => ({ ...detailsPanel, key: rightPanelWidthKey(scope) }), [scope]);
   const panel = useResizablePanel(spec, 280);
-  const select = useCallback((value: string) => { setSelection({ scope, tab: value }); store.select(scope, value); }, [scope, store]);
-  return { tab, panel, select };
+  const select = useCallback((value: string) => { setSelection(current => ({ ...current, scope, tab: value })); store.select(scope, value); }, [scope, store]);
+  const selectFile = useCallback((file: OpenFile | null) => { setSelection({ scope, tab: 'files', file }); store.select(scope, 'files'); }, [scope, store]);
+  return { tab, panel, select, file: selection.scope === scope ? selection.file : null, selectFile };
 }
 
 export function RightPanel({ path, name, state, request, onClose, details, activity, members, attached = [], attachedCount = attached.length, onAttach, attachDisabled = false, settings, extensions = [] }: {
@@ -76,7 +77,7 @@ export function RightPanel({ path, name, state, request, onClose, details, activ
       {error && <div className="right-panel__error"><Alert tone="error" actions={<Button size="sm" onClick={() => setRefresh(value => value + 1)}>Retry</Button>}>{error}</Alert></div>}
       <TabPanel value="chats">{members ? <div className="right-panel__body"><ul className="right-panel__members" aria-label="Section members">{members.map(member => <li key={member.id}><AgentAvatar agent={member} size={32} /><div><strong>{member.name}</strong><span>{[member.lead ? 'Lead' : 'Member', member.role].filter(Boolean).join(' · ')}</span></div></li>)}</ul></div> : details}{activity}</TabPanel>
       <TabPanel value="files">
-        {state.tab === 'diff' && git?.isRepo ? <><div className="right-panel__back"><IconButton label="Back to files" onClick={() => state.select('files')}><ArrowLeft size={15} aria-hidden /></IconButton><span>Source control</span></div><PanelDiff base={base} status={git} request={request} refresh={refresh} /></> : state.tab === 'preview' ? <PanelPreview onBack={() => state.select('files')} base={base} files={context?.previews ?? []} sites={context?.sites ?? []} request={request} /> : <PanelFiles navigation={<>
+        {state.tab === 'diff' && git?.isRepo ? <><div className="right-panel__back"><IconButton label="Back to files" onClick={() => state.select('files')}><ArrowLeft size={15} aria-hidden /></IconButton><span>Source control</span></div><PanelDiff base={base} status={git} request={request} refresh={refresh} /></> : state.tab === 'preview' ? <PanelPreview onBack={() => state.select('files')} base={base} files={context?.previews ?? []} sites={context?.sites ?? []} request={request} /> : <PanelFiles selected={state.file} onSelect={state.selectFile} onDeleted={() => { setRefresh(value => value + 1); window.dispatchEvent(new Event('briefsip:message-changed')); }} navigation={<>
           {(git?.isRepo || !!context?.previews.length || !!context?.sites.length) && <div className="k-stack">
             {git?.isRepo && <Button className="right-panel__nav-row" variant="ghost" icon={<FileDiff size={14} aria-hidden />} onClick={() => state.select('diff')}>Source control <Badge>{git.changedFiles?.length ?? 0} changed</Badge></Button>}
             {(!!context?.previews.length || !!context?.sites.length) && <Button className="right-panel__nav-row" variant="ghost" icon={<Globe size={14} aria-hidden />} onClick={() => state.select('preview')}>Preview artifacts</Button>}

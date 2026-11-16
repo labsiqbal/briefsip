@@ -1,7 +1,7 @@
 import { useVisiblePolling } from './hooks/useVisiblePolling';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowLeft, Download, Ellipsis, FileText } from 'lucide-react';
-import { ActionMenu, Alert, Button, CodeBlock, EmptyState, IconButton, Section, Select, SkeletonRows, Tooltip } from './ui/kit';
+import { ActionMenu, Alert, Button, CodeBlock, EmptyState, IconButton, Section, Select, SkeletonRows, Tooltip, useConfirm } from './ui/kit';
 import { TranscriptionPanel } from './TranscriptionPanel';
 import { WorkspacePanel } from './WorkspacePanel';
 import { attachmentSize, isAttachmentImage } from './attachments';
@@ -10,7 +10,7 @@ import { Markdown } from './Markdown';
 import type { PanelRequest } from './RightPanel';
 export type PanelFile = { seq: number; id: string; name: string; size: number; image?: boolean };
 export type PanelSite = { id: string; name: string; revision: number };
-type OpenFile = { name: string; path: string; image?: boolean; transcribe?: boolean };
+export type OpenFile = { name: string; path: string; image?: boolean; transcribe?: boolean };
 export const previewURL = (path: string, preview: string) => `${path}${path.includes('?') ? '&' : '?'}preview=${preview}`;
 
 function InlineFile({ file, request, onClose }: { file: OpenFile; request: PanelRequest; onClose: () => void }) {
@@ -43,32 +43,47 @@ function InlineFile({ file, request, onClose }: { file: OpenFile; request: Panel
   return <div ref={root}><Section title={<span className="right-panel__preview-head"><IconButton label="Close file" tooltip="Back to files" onClick={onClose}><ArrowLeft size={15} aria-hidden /></IconButton><span ref={heading} tabIndex={-1} className="right-panel__path">{file.name}</span></span>} actions={<><Tooltip content="Download original. Preview removes scripts, forms, links and external resources."><a className="k-icon-btn" aria-label="Download original" href={file.path.replace('/workspace/file?', '/workspace/download?')} download={file.name}><Download size={15} aria-hidden /></a></Tooltip></>}>
 
     {error && <Alert tone="error" actions={<Button size="sm" onClick={() => setReload(value => value + 1)}>Retry</Button>}>{error}</Alert>}
-    {file.transcribe ? <TranscriptionPanel path={file.path.replace('/panel/files/', '/files/')} request={request} /> : html ? <HtmlPreview key={reload} path={file.path} name={file.name} request={request} embedded /> : image ? <img key={reload} className="right-panel__image" src={previewURL(file.path, 'image')} alt={file.name} onError={() => setError('Image preview could not load. Download the original file.')} /> : !error && (text === null ? <SkeletonRows /> : /\.md(?:own)?$/i.test(file.name) ? <Markdown text={text} scope={file.path.split('/files/')[0]} origin={window.location.origin} /> : <>{/\.pdf$/i.test(file.name) && <p className="k-field__hint">Extracted PDF text. Layout, images and scanned pages are not included.</p>}<CodeBlock label={`Contents of ${file.name}`} maxHeight={600}>{text || '(Empty file)'}</CodeBlock></>)}
+    {file.transcribe ? <TranscriptionPanel path={file.path.replace('/panel/files/', '/files/')} request={request} /> : html ? <HtmlPreview key={reload} path={file.path} name={file.name} request={request} /> : image ? <img key={reload} className="right-panel__image" src={previewURL(file.path, 'image')} alt={file.name} onError={() => setError('Image preview could not load. Download the original file.')} /> : !error && (text === null ? <SkeletonRows /> : /\.md(?:own)?$/i.test(file.name) ? <Markdown text={text} scope={file.path.split('/files/')[0]} origin={window.location.origin} /> : <>{/\.pdf$/i.test(file.name) && <p className="k-field__hint">Extracted PDF text. Layout, images and scanned pages are not included.</p>}<CodeBlock label={`Contents of ${file.name}`} maxHeight={600}>{text || '(Empty file)'}</CodeBlock></>)}
     {!html && !image && page.next_offset != null && <Button size="sm" busy={loadingMore} onClick={() => void loadMore()}>Load more text</Button>}
   </Section></div>;
 }
 
-export function PanelFiles({ navigation, base, files, workspace, loading, request, attached, attachedCount = attached.length, onAttach, attachDisabled }: { navigation?: ReactNode; attachedCount?: number; attached: string[]; onAttach?: (file: PanelFile) => void; attachDisabled: boolean; base: string; files: PanelFile[]; workspace?: string; loading: boolean; request: PanelRequest }) {
+export function PanelFiles({ selected, onSelect, onDeleted, navigation, base, files, workspace, loading, request, attached, attachedCount = attached.length, onAttach, attachDisabled }: { selected: OpenFile | null; onSelect: (file: OpenFile | null) => void; onDeleted: () => void; navigation?: ReactNode; attachedCount?: number; attached: string[]; onAttach?: (file: PanelFile) => void; attachDisabled: boolean; base: string; files: PanelFile[]; workspace?: string; loading: boolean; request: PanelRequest }) {
   const opener = useRef<HTMLElement | null>(null);
-  function open(file: OpenFile) { opener.current = document.activeElement as HTMLElement; setSelected(file); }
-  const [selected, setSelected] = useState<OpenFile | null>(null), [earlier, setEarlier] = useState<PanelFile[]>([]), [error, setError] = useState(''), [busy, setBusy] = useState(false), [more, setMore] = useState(true);
-  const rows = [...files, ...earlier.filter(row => !files.some(file => file.id === row.id))];
+  function open(file: OpenFile) { opener.current = document.activeElement as HTMLElement; onSelect(file); }
+  const confirm = useConfirm();
+  const [removed, setRemoved] = useState<string[]>([]);
+  const [earlier, setEarlier] = useState<PanelFile[]>([]), [error, setError] = useState(''), [busy, setBusy] = useState(false), [more, setMore] = useState(true);
+  const rows = [...files, ...earlier.filter(row => !files.some(file => file.id === row.id))].filter(file => !removed.includes(file.id));
+  async function remove(file: PanelFile) {
+    if (!await confirm({ title: `Delete ${file.name}?`, description: 'This removes the file from this conversation and storage.', confirm: 'Delete file', danger: true })) return;
+    setError('');
+    try {
+      const response = await fetch(`${base.replace('/panel', '')}/files/${file.id}`, { method: 'DELETE' });
+      if (!response.ok) throw new Error((await response.json()).error ?? 'File could not be deleted. Try again.');
+      setRemoved(current => [...current, file.id]); document.querySelector<HTMLElement>('.right-panel [role=tab][data-state=active]')?.focus(); onDeleted();
+      if (attached.includes(file.id)) onAttach?.(file);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'File could not be deleted. Try again.'); }
+  }
   async function loadMore() {
     if (busy || !rows.length) return; setBusy(true); setError('');
     try { const page = await request<PanelFile[]>(`${base}/files?before=${rows.at(-1)!.seq}`); setEarlier(current => [...current, ...page.filter(row => !current.some(file => file.id === row.id))]); setMore(page.length === 100); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Files could not load.'); } finally { setBusy(false); }
   }
   return <div className="right-panel__body k-stack">
-    {selected && <InlineFile key={selected.path} file={selected} request={request} onClose={() => { setSelected(null); requestAnimationFrame(() => opener.current?.focus()); }} />}
+    {selected && <InlineFile key={selected.path} file={selected} request={request} onClose={() => { onSelect(null); requestAnimationFrame(() => opener.current?.focus()); }} />}
     <div className="k-stack" hidden={!!selected}>
       {navigation}
       {(loading || !!rows.length || !workspace) && <Section title="Conversation files">
-        {loading ? <SkeletonRows /> : rows.length ? <div className="attachments__list">{rows.map(file => <div className="right-panel__file-row" key={file.id}>
-          <button type="button" className="right-panel__file" aria-label={`Preview ${file.name}`} onClick={() => open({ name: file.name, image: file.image, path: `${base}/files/${file.id}` })}><FileText size={16} aria-hidden /><span className="right-panel__file-name">{file.name}</span><span className="right-panel__file-size">{attachmentSize(file.size)}</span></button>
-          {onAttach && <ActionMenu label={`File actions: ${file.name}`} trigger={<IconButton label={`File actions: ${file.name}`} tooltip="More actions"><Ellipsis size={16} aria-hidden /></IconButton>} items={[
+        {loading ? <SkeletonRows /> : rows.length ? <div className="attachments__list right-panel__files" role="region" aria-label="Conversation files list" tabIndex={0}>{rows.map(file => <div className="right-panel__file-row" key={file.id}>
+          <button type="button" className="right-panel__file" aria-label={`Preview ${file.name}`} onClick={() => open({ name: file.name, image: file.image, path: `${base}/files/${file.id}` })}><span className="right-panel__thumbnail">{isAttachmentImage(file) ? <img src={`${base}/files/${file.id}?preview=image`} alt="" loading="lazy" /> : <FileText size={16} aria-hidden />}</span><span className="right-panel__file-name">{file.name}</span><span className="right-panel__file-size">{attachmentSize(file.size)}</span></button>
+          <ActionMenu label={`File actions: ${file.name}`} trigger={<IconButton label={`File actions: ${file.name}`} tooltip="More actions"><Ellipsis size={16} aria-hidden /></IconButton>} items={[
+            { label: 'Open', onSelect: () => open({ name: file.name, image: file.image, path: `${base}/files/${file.id}` }) },
+            { label: 'Download', onSelect: () => { const link = document.createElement('a'); link.href = `${base}/files/${file.id}`; link.download = file.name; link.click(); } },
+            { label: 'Delete', danger: true, onSelect: () => void remove(file) },
             ...(/\.(mp3|wav|ogg|m4a|webm|mp4|mov)$/i.test(file.name) ? [{ label: 'Transcribe', onSelect: () => open({ name: file.name, path: `${base}/files/${file.id}`, transcribe: true }) }] : []),
-            { label: attached.includes(file.id) ? 'Remove from message' : 'Attach to message', disabled: attachDisabled || !attached.includes(file.id) && attachedCount >= 4, onSelect: () => onAttach(file) },
-          ]} />}
+            ...(onAttach ? [{ label: attached.includes(file.id) ? 'Remove from message' : 'Attach to message', disabled: attachDisabled || !attached.includes(file.id) && attachedCount >= 4, onSelect: () => onAttach(file) }] : []),
+          ]} />
         </div>)}</div> : !workspace && <EmptyState title="No files yet" />}
 
         {error && <Alert tone="error">{error}</Alert>}
@@ -88,7 +103,7 @@ export function PanelPreview({ base, files, sites, request, onBack }: { onBack: 
     {items.length > 1 && <Select label="Preview artifact" value={item?.value ?? ''} options={items} onChange={value => { setSelected(value); setError(''); }} />}
     {item ? <>
       {error && <Alert tone="error">{error}</Alert>}
-      {sites.some(site => site.id === item.value) ? <><iframe key={`${item.path}:${sites.find(site => site.id === item.value)?.revision ?? 0}`} title={`Visual preview ${item.label}`} sandbox="" referrerPolicy="no-referrer" src={item.path} onError={() => setError('Site could not load.')} className="right-panel__preview" /></> : <HtmlPreview key={`${item.path}:${sites.find(site => site.id === item.value)?.revision ?? 0}`} path={item.path} name={item.label} request={request} embedded />}
+      {sites.some(site => site.id === item.value) ? <><iframe key={`${item.path}:${sites.find(site => site.id === item.value)?.revision ?? 0}`} title={`Visual preview ${item.label}`} sandbox="" referrerPolicy="no-referrer" src={item.path} onError={() => setError('Site could not load.')} className="right-panel__preview" /></> : <HtmlPreview key={`${item.path}:${sites.find(site => site.id === item.value)?.revision ?? 0}`} path={item.path} name={item.label} request={request} />}
     </> : <EmptyState title="No HTML artifacts yet" />}
   </div>;
 }

@@ -1,4 +1,4 @@
-import { attachmentSize } from '../attachments';
+import { Attachments } from '../Attachments';
 import { useState, type ReactNode } from 'react';
 import { ChevronDown, CircleAlert } from 'lucide-react';
 import { Collapsible as Disclosure } from 'radix-ui';
@@ -11,13 +11,14 @@ import { TurnActivity, turnActivitySteps } from './TurnActivity';
 import { useLiveClock } from '../hooks/useLiveClock';
 import type { StreamPartial } from '../../turn-stream';
 
-export type Exchange = { id: string; agent: string; name: string; role?: string; machine?: string; thread: string; task?: string; reply: string | null; detailReply?: string | null; error: string | null; status: string; paused: number; truncated: boolean; activity?: TurnActivityData; created?: string; generatedFiles?: { id: string; name: string; size: number; thread: string }[] };
-export function AgentConversation({ items, sender, scope, onOpen }: { items: Exchange[]; sender: string; scope: string; onOpen?: (agent: string, thread: string) => void }) {
+export type Exchange = { id: string; agent: string; name: string; role?: string; machine?: string; thread: string; task?: string; reply: string | null; detailReply?: string | null; error: string | null; status: string; paused: number; truncated: boolean; activity?: TurnActivityData; created?: string; generatedFiles?: { id: string; name: string; size: number; thread: string; deleted?: boolean }[] };
+export function AgentConversation({ items, sender, scope, onOpen, onOpenFile }: { items: Exchange[]; sender: string; scope: string; onOpen?: (agent: string, thread: string) => void; onOpenFile?: (file: { id: string; name: string }) => void }) {
   return <section className="inline-delegation" aria-label="Agent conversation">{items.map(item => <div className="inline-delegation__exchange" key={item.id}>
     <div className="inline-delegation__request"><span className="exchange-label"><strong>{sender}</strong><span>to {item.name}{item.machine ? ` @ ${item.machine}` : ''}</span></span><p className="message-plain">{item.task ?? 'Shared task'}</p></div>
     <div className="inline-delegation__reply"><AgentAvatar agent={{ id: item.agent, name: item.name }} size={24} /><div className="message-column"><div className="agent-identity"><strong>{item.name}</strong>{item.machine && <span className="message-role">{item.machine}</span>}{item.role && <span className="message-role">{item.role}</span>}</div>
       {item.reply ? <div className="legacy"><Markdown text={item.reply} scope={scope} origin={window.location.origin} /></div> : <p className={item.error ? 'message-error' : 'message-muted'}>{item.error ?? (item.paused ? 'Paused' : item.status === 'done' ? 'No reply' : item.status === 'running' ? 'Replying...' : item.status === 'queued' ? 'Queued' : item.status)}</p>}
-      <Collapsible title="Exchange details">{item.activity && <TurnActivity turn={{ status: item.status, paused: item.paused, created: item.created ?? '', activity: item.activity }} agentName={item.name} onOpenTask={() => onOpen?.(item.agent, item.thread)} remote={!!item.machine} />}{item.truncated && <div className="legacy"><Markdown text={item.detailReply ?? item.reply ?? ''} scope={scope} origin={window.location.origin} /></div>}{item.generatedFiles?.map(file => <p key={file.id}><a className="k-link" href={`/api/threads/${file.thread}/files/${file.id}`} download={file.name}>{file.name}</a><span className="message-role"> {attachmentSize(file.size)}</span></p>)}{onOpen && <button type="button" className="link-btn" onClick={() => onOpen(item.agent, item.thread)}>Open conversation with {item.name}</button>}</Collapsible>
+      {!!item.generatedFiles?.length && (!['queued', 'running'].includes(item.status) || !!item.reply) && <Attachments files={item.generatedFiles} path={`/api/threads/${item.thread}/files`} label="Agent output files" onOpen={onOpenFile} />}
+      <Collapsible title="Exchange details">{item.activity && <TurnActivity turn={{ status: item.status, paused: item.paused, created: item.created ?? '', activity: item.activity }} agentName={item.name} onOpenTask={() => onOpen?.(item.agent, item.thread)} remote={!!item.machine} />}{item.truncated && <div className="legacy"><Markdown text={item.detailReply ?? item.reply ?? ''} scope={scope} origin={window.location.origin} /></div>}{onOpen && <button type="button" className="link-btn" onClick={() => onOpen(item.agent, item.thread)}>Open conversation with {item.name}</button>}</Collapsible>
     </div></div>
   </div>)}</section>;
 }

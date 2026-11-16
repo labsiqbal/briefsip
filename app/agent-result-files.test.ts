@@ -12,7 +12,7 @@ import {syncBuiltinESMExports} from 'node:module';
 
 for(const pdf of [false,true]) test(`requester reads returned teammate ${pdf?'PDF':'text'} artifacts but not private inputs or no-reply outputs`,async()=>{
  const dir=mkdtempSync(join(tmpdir(),'briefsip-result-read-'));let worker='',created='',otherOutput='',target='',expectsReply=true,restart=false,hold=false,ready=false,release:(()=>void)|undefined;
- const results:any[]=[],returned:any[]=[];let creates=0;
+ const results:any[]=[],returned:any[]=[];let creates=0,openReturned=false;
  const provider=createServer(async(req,res)=>{
   let raw='';for await(const chunk of req)raw+=chunk;const body=JSON.parse(raw),tools=body.messages.filter((m:any)=>m.role==='tool'),last=tools.length?JSON.parse(tools.at(-1).content):null;let fn:any,answer='Done';
   if(body.model==='worker'){
@@ -23,7 +23,7 @@ for(const pdf of [false,true]) test(`requester reads returned teammate ${pdf?'PD
    returned.push(last);if(restart){restart=false;res.writeHead(503);res.end();return;}
    ready=true;if(hold)await new Promise<void>(resolve=>{release=resolve;});
    for(let i=0;i<200&&!created;i++)await new Promise(r=>setTimeout(r,5));
-   fn={name:'read_attachment',arguments:JSON.stringify({id:target||created})};
+   fn={name:openReturned?'open_file_in_panel':'read_attachment',arguments:JSON.stringify({id:target||created})};
   }else{results.push(last);answer=JSON.stringify(last);}
   res.end(JSON.stringify({choices:[{finish_reason:fn?'tool_calls':'stop',message:fn?{tool_calls:[{id:fn.name,type:'function',function:fn}]}:{content:answer}}]}));
  });
@@ -47,6 +47,12 @@ for(const pdf of [false,true]) test(`requester reads returned teammate ${pdf?'PD
   target='';expectsReply=false;created='';id=randomUUID();await ui(path,{id,text:'No reply'});await wait(path,id,'done');assert(results.at(-1).error);
   expectsReply=true;restart=true;created='';id=randomUUID();await ui(path,{id,text:'Restart'});const failed=await wait(path,id,'failed'),count=creates,snapshot=returned.at(-1);
   await app.close();app=await startApp(options);await ui(`${path}/${id}/resume`,{id:randomUUID(),revision:failed.revision,acknowledgeUncertain:true});await wait(path,id,'done');assert.equal(creates,count);assert.deepEqual(returned.at(-1),snapshot);assert.equal(results.at(-1).text.trim(),'REQUESTED_OUTPUT');
+  openReturned=true;created='';id=randomUUID();await ui(path,{id,text:'Open returned file'});
+  const opened=await wait(path,id,'done');assert.equal(opened.panelFile.id,created);openReturned=false;
+  const removed=created,source=returned.at(-1).replies[0].generatedFiles[0];
+  for(let attempt=0;attempt<2;attempt++)assert.equal((await fetch(app.origin+path.replace('/turns','/files/')+removed,{method:'DELETE',headers:{Origin:app.origin}})).status,200);
+  assert.equal((await fetch(`${app.origin}/api/threads/${source.thread}/files/${removed}`)).status,404);
+  assert(!(await ui(path.replace('/turns','/panel/files'))).some((file:any)=>file.id===removed));
   hold=true;ready=false;created='';id=randomUUID();await ui(path,{id,text:'Delete source'});for(let i=0;i<200&&!ready;i++)await new Promise(r=>setTimeout(r,10));assert(ready);
   const parent=(await ui(path)).find((t:any)=>t.id===id),child=parent.agentMessages[0],thread=(await ui(`/api/agents/${worker}/threads`)).find((t:any)=>t.id===child.thread);
   const originalSpawn=childProcess.spawn;let frozen:ReturnType<typeof childProcess.spawn>|undefined;
