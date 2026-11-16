@@ -13,6 +13,9 @@ test('shell confines cwd, filesystem and environment; enforces read-only and app
     writeFileSync(join(root, 'outside'), 'private'); symlinkSync(root, join(workspace, 'escape'));
     const run = (args: Record<string, unknown>, write = true, allow = true) => runWorkspaceShell({ directory: workspace, write }, args, AbortSignal.timeout(5000), async () => allow, { OPENAI_API_KEY: 'hidden-key', NODE_OPTIONS: '--bad', LANG: 'C.UTF-8' });
     await assert.rejects(run({ command: 'pwd', cwd: '..' }), /workspace/);
+    await assert.rejects(run({ command: 'pwd', check: 'yes' }), /Invalid/);
+    const checked = await run({ command: 'python3 -c "assert 2 + 2 == 4"', check: true });
+    assert.equal(checked.check, true); assert.equal(checked.exitCode, 0);
     await assert.rejects(run({ command: 'pwd', cwd: 'escape' }), /workspace/);
     await assert.rejects(run({ command: 'touch denied' }, true, false), /denied/);
     const env = await run({ command: 'pwd; env; cat /home/user/.ssh/id_rsa; cat escape/outside; echo ok > result' });

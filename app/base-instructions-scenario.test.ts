@@ -33,13 +33,14 @@ test('synthetic scenarios record panel without duplicate writes, inline links, w
       assert(tools.includes('run_shell')); assert.match(system, /run_shell:/);
       if (result) {
         const value = JSON.parse(result.content); assert(!value.error, result.content);
+        if (user === 'run checks') assert.deepEqual(value.verification, { recorded: true, evidenceInWorkLog: true });
         if (value.id) { target = value.id; url = value.url; }
         res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: user === 'run checks' ? 'Checks passed.' : `Open [hello.html](${url}).` } }] })); return;
       }
       const name = user === 'show me hello.html' ? 'open_file_in_panel' : user === 'run checks' ? 'run_shell' : 'create_text_file';
       if (name === 'open_file_in_panel') assert.match(system, /without recreating or rewriting/);
       calls.push(name);
-      const args = name === 'open_file_in_panel' ? { id: target } : name === 'run_shell' ? { command: 'echo verified > checked.txt' } : { name: 'hello.html', text: '<h1>Hello</h1>' };
+      const args = name === 'open_file_in_panel' ? { id: target } : name === 'run_shell' ? { command: 'echo verified > checked.txt && test "$(cat checked.txt)" = verified', check: true } : { name: 'hello.html', text: '<h1>Hello</h1>' };
       res.end(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ id: randomUUID(), type: 'function', function: { name, arguments: JSON.stringify(args) } }] } }] }));
     } catch (error) { failures.push(error); res.writeHead(500); res.end('{}'); }
   });
@@ -75,7 +76,9 @@ test('synthetic scenarios record panel without duplicate writes, inline links, w
     const mcp = await fetch(app.origin + '/mcp', { method: 'POST', headers: { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'open_file_in_panel', arguments: { id: target } } }) });
     const native = await mcp.json(); assert.equal(native.result.structuredContent.id, target);
     await request(`${path}/turns/${shellTurn}/harness-approvals/${approval.id}`, { id: randomUUID(), revision: approval.revision, decision: 'allow' });
-    await until(shellTurn, row => row.status === 'done');
+    const checked = await until(shellTurn, row => row.status === 'done');
+    assert.equal(calls.filter(name => name === 'run_shell').length, 1);
+    assert.equal(checked.activity.artifacts.length, 1);
     assert.equal(readFileSync(join(workspace, 'checked.txt'), 'utf8'), 'verified\n');
     const plain = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Plain', model: 'fixture', instructions: 'Help.' });
     const turn = randomUUID(); await request(`/api/agents/${plain.id}/turns`, { id: turn, text: 'plain' });

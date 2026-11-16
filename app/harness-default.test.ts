@@ -85,6 +85,10 @@ test('provider isolation, account home rotation and MCP shell approval boundarie
     };
     const shell = (command: string) => call('run_shell', { command });
     const normal = await shell('echo hello > result; cat result'); assert.equal(normal.structuredContent.exitCode, 0);
+    assert.deepEqual(normal.structuredContent.verification, { recorded: true, evidenceInWorkLog: true });
+    const custom = await call('run_shell', { command: 'python3 -c "assert 2 + 2 == 4"', check: true });
+    assert.equal(custom.structuredContent.exitCode, 0);
+    assert.deepEqual(custom.structuredContent.verification, { recorded: true, evidenceInWorkLog: true });
     assert.equal(readFileSync(join(workspace, 'result'), 'utf8'), 'hello\n');
     assert.equal((await api(path + '/turns')).find((item: { id: string }) => item.id === turn).harnessApprovals.length, 0);
     const sensitive = shell('rm result');
