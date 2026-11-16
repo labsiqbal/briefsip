@@ -12,5 +12,4 @@
 
 .k-dialog:has(.quick-switcher) { top: 10vh; transform: translateX(-50%); animation: none; }
 .quick-switcher__search .k-input:is(:focus, :focus-visible) { border: 0; box-shadow: none; outline: none; }
-.k-dialog:has(.quick-switcher):focus-within { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
 .quick-switcher__item > :is(svg, .avatar) { flex: none; }

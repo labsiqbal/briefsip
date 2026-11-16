@@ -379,11 +379,6 @@
       "count": 2
     }
   },
-  "src/ui/useTimelineFollow.ts": {
-    "briefsip-lifecycle/no-component-effects": {
-      "count": 1
-    }
-  },
   "src/ui/useTurnStream.ts": {
     "briefsip-lifecycle/no-component-effects": {
       "count": 1

@@ -1,6 +1,7 @@
 import { Card, Row, Section } from './ui/kit';
 
 const shortcuts = [
+  ['Ctrl/Cmd + Shift + O', 'New conversation'],
   ['Ctrl/Cmd + K', 'Quick switcher'],
   ['Ctrl/Cmd + F', 'Find in conversation'],
   ['Ctrl/Cmd + ,', 'Settings'],

@@ -1,5 +1,5 @@
 // Follow/free-scroll behavior adapted from T3 (MIT); see app/t3/provenance.json.
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject, type UIEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type RefObject, type UIEvent } from 'react';
 
 export function useTimelineFollow(bottom: RefObject<HTMLDivElement | null>, enabled = true) {
   const transcript = useRef<HTMLElement>(null), nearBottom = useRef(true), lastScrollTop = useRef(0);
@@ -27,6 +27,6 @@ export function useTimelineFollow(bottom: RefObject<HTMLDivElement | null>, enab
     observer.observe(content); observer.observe(element);
     return () => observer.disconnect();
   }, [bottom, enabled]);
-  useEffect(() => { if (enabled && nearBottom.current) jumpToLatest(); }, []);
+  useLayoutEffect(() => { if (enabled && nearBottom.current) jumpToLatest(); });
   return { transcript, nearBottom, showJump, onScroll, jumpToLatest };
 }

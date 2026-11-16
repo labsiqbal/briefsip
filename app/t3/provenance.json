@@ -213,7 +213,7 @@
       "symbols": [
         "TurnFoldTimelineRow"
       ],
-      "adaptation": "Single muted activity disclosure above answer, using existing Radix Collapsible and Briefsip ordered activity list. Typography polish retains T3 muted text, compact gap and tabular duration; omits upstream full-width divider per #28.",
+      "adaptation": "Single muted activity disclosure above answer, using existing Radix Collapsible and Briefsip ordered activity list. Typography polish retains T3 muted text, compact gap and tabular duration; omits upstream full-width divider per #28. R6 renders duration as plain text when no work entries exist.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "424113972c3053173506fc4d069e05b75e5f8ecde2c5bc283af2e4e154c902f4",
       "license": "MIT",
@@ -1209,7 +1209,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt following versus free-scroll and explicit jump-to-latest to native scroll container and ResizeObserver. No virtual-list dependency.",
+      "adaptation": "Adapt following versus free-scroll and explicit jump-to-latest to native scroll container and ResizeObserver. R6 follows in the layout phase before paint. No virtual-list dependency.",
       "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; app/provider-stream.test.ts; app/harness.test.ts; work/rebuild/ui-smoke/stream-actions-smoke.mjs"
     },
     {
@@ -1510,7 +1510,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "16px message-row spacing and quiet work-log disclosure; provider-ledger duration and existing Briefsip activity semantics retained. Borderless work summary retained from #28.",
+      "adaptation": "16px message-row spacing and quiet work-log disclosure; provider-ledger duration and existing Briefsip activity semantics retained. Borderless work summary retained from #28. R6 renders duration as plain text when no work entries exist.",
       "compatibilityCheck": "app/markdown.test.ts; work/rebuild/chat-like-t3/capture.mjs; work/rebuild/ui-smoke/smoke.mjs"
     },
     {
@@ -1578,7 +1578,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "16px surface radius, 1px outline and small light-mode shadow; neutral Briefsip surfaces instead of upstream glass/theme runtime.",
+      "adaptation": "16px surface radius, 1px outline and small light-mode shadow; neutral Briefsip surfaces instead of upstream glass/theme runtime. R6 retains neutral focus border without an outer accent ring.",
       "compatibilityCheck": "app/markdown.test.ts; work/rebuild/chat-like-t3/capture.mjs; work/rebuild/ui-smoke/smoke.mjs"
     },
     {
@@ -2132,6 +2132,26 @@
       "dependencies": [],
       "adaptation": "Adapt inline rename, trim validation and Escape cancel through Briefsip conversation revisions and existing Radix-styled controls; no native validation bubbles.",
       "compatibilityCheck": "app/navigation.test.ts; app/csp.test.ts; app/dispatch.test.ts; work/rebuild/ux-r5-chat/check.mjs"
+    }
+  ],
+  "uxR6SourceEntries": [
+    {
+      "sourcePath": "packages/shared/src/keybindings.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "56e6101eba7f10aa1d633914bb8ea715491f775b75b93fa9d5244f92a9b9b05d",
+      "symbols": [
+        "chat.new"
+      ],
+      "localPaths": [
+        "app/src/hooks/useNewConversationShortcut.ts",
+        "app/src/HelpPage.tsx",
+        "app/src/App.tsx"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt Ctrl/Cmd+Shift+O chat.new binding, tooltip and palette entry to Briefsip conversation creation; dialogs retain keyboard ownership.",
+      "compatibilityCheck": "work/rebuild/ux-r6/check.mjs"
     }
   ]
 }

@@ -13,11 +13,6 @@ export type TurnActivityData = {
 export function streamWork(turn: { partial?: StreamPartial | null; activity?: TurnActivityData }) {
   return (turn.activity?.stream ?? []).filter(segment => !segment.final && (segment.kind === 'tool' || !!segment.text && !(turn.partial?.seq === segment.seq && turn.partial.segment === segment.id)));
 }
-export function streamIdentity(turn: { partial?: StreamPartial | null; activity?: TurnActivityData }) {
-  if (turn.partial) return `${turn.partial.seq}:${turn.partial.segment ?? 'text-0'}`;
-  const final = turn.activity?.stream?.findLast(segment => segment.final);
-  return final ? `${final.seq}:${final.id}` : undefined;
-}
 
 type ActivityTurn = { status: string; paused: number; created: string; activity?: TurnActivityData; questions?: { answer: string | null }[] };
 export const liveTurn = (turn: ActivityTurn) => ['queued', 'running'].includes(turn.status) && !turn.paused && !turn.questions?.some(question => question.answer === null);

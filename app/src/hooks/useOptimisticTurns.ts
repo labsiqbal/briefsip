@@ -9,7 +9,7 @@ export function reconcileOptimisticTurns<T extends Turn>(pending: Map<string, T>
     if (acknowledge) pending.delete(row.id);
     return { ...row, optimistic: !acknowledge };
   });
-  return [...merged, ...[...pending.values()].filter(row => !ids.has(row.id))].sort((a, b) => a.seq - b.seq);
+  return [...merged, ...[...pending.values()].filter(row => !ids.has(row.id))];
 }
 export function useOptimisticTurns<T extends Turn>() {
   const pending = useRef(new Map<string, T>());

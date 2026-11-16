@@ -16,12 +16,12 @@ type Request = <T>(path: string, data?: unknown) => Promise<T>;
 const message = (error: unknown) => error instanceof Error ? error.message : 'Machine request failed. Try again.';
 const statusLabel = { online: 'Online', offline: 'Offline', unauthorized: 'Unauthorized', 'version-mismatch': 'Version mismatch' };
 export function useMachines(request: Request) {
-  const [machines, setMachines] = useState<PairedMachine[]>([]), [error, setError] = useState('');
+  const [machines, setMachines] = useState<PairedMachine[]>([]), [error, setError] = useState(''), [loaded, setLoaded] = useState(false);
   const generation = useRef(0);
-  async function reload(signal?: AbortSignal) { const current = ++generation.current; try { const result = await request<{ machines: PairedMachine[] }>('/api/machines'); if (!signal?.aborted && current === generation.current) { setMachines(result.machines); setError(''); } } catch (error) { if (!signal?.aborted && current === generation.current) setError(message(error)); } }
+  async function reload(signal?: AbortSignal) { const current = ++generation.current; try { const result = await request<{ machines: PairedMachine[] }>('/api/machines'); if (!signal?.aborted && current === generation.current) { setMachines(result.machines); setLoaded(true); setError(''); } } catch (error) { if (!signal?.aborted && current === generation.current) setError(message(error)); } }
   useEffect(() => () => { generation.current++; }, []);
   usePolling(signal => reload(signal), { interval: 5000 });
-  return { machines, error, reload };
+  return { machines, error, reload, loaded };
 }
 export function MachinesPanel({ request, onChanged }: { request: Request; onChanged: () => void }) {
   const [environment, setEnvironment] = useState<Environment | null>(null), [machines, setMachines] = useState<PairedMachine[] | null>(null);

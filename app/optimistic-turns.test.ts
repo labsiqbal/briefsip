@@ -21,4 +21,8 @@ test('optimistic sends survive stale snapshots, reconcile once by id and respect
   assert.equal(reconcileOptimisticTurns(pending, [{ ...local, status: 'queued' }])[0].status, 'queued', 'Server queue placement wins over optimistic Working');
   pending.set(local.id, local); pending.delete(local.id);
   assert.deepEqual(reconcileOptimisticTurns(pending, []), [], 'Rejected sends leave no optimistic bubble');
+  pending.set(local.id, { ...local, seq: 1 });
+  const history = [{ ...prior, seq: 90 }, { id: 'later', seq: 100, status: 'done' }];
+  assert.deepEqual(reconcileOptimisticTurns(pending, history).map(row => row.id), ['prior', 'later', 'sent']);
+  assert.deepEqual(reconcileOptimisticTurns(pending, [...history, { ...local, seq: 101, status: 'done' }]).map(row => row.id), ['prior', 'later', 'sent']);
 });

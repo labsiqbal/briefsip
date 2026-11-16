@@ -6,8 +6,8 @@ import { AgentAvatar } from '../AgentAvatar';
 import { Markdown, StreamingMarkdown } from '../Markdown';
 import { AgentMessage } from './ChatPrimitives';
 import { Collapsible } from './kit';
-import { activityLabel, livePartial, liveTurn, streamIdentity, type TurnActivityData } from './transcript';
-import { TurnActivity } from './TurnActivity';
+import { activityLabel, livePartial, liveTurn, type TurnActivityData } from './transcript';
+import { TurnActivity, turnActivitySteps } from './TurnActivity';
 import { useLiveClock } from '../hooks/useLiveClock';
 import type { StreamPartial } from '../../turn-stream';
 
@@ -22,19 +22,21 @@ export function AgentConversation({ items, sender, scope, onOpen }: { items: Exc
   </div>)}</section>;
 }
 export type RoomView = { root: string; generation: string; active: boolean; stopped: boolean; round: number; silent: string | null; note: string | null; quiet: { agent: string; name: string; silent: string }[]; messages: { seq: number; turn: string; agent: string; name: string; role: string; target_name?: string; text: string; kind: string }[] };
-type RoomTurn = { id: string; agent: string; status: string; paused: number; created: string; error: string | null; partial?: StreamPartial | null; activity?: TurnActivityData; questions?: { answer: string | null }[] };
+type RoomTurn = { id: string; agent: string; status: string; paused: number; created: string; error: string | null; partial?: StreamPartial | null; activity?: TurnActivityData; questions?: { id: string; prompt: string; answer: string | null }[] };
 type RoomMember = { id: string; name: string; role: string; avatar_revision?: number };
 function RoomReply({ turn, member, text, scope, details, controls, extras }: { turn: RoomTurn; member: RoomMember; text?: string; scope: string; details: ReactNode; controls: ReactNode; extras: ReactNode }) {
   const [open, setOpen] = useState(false);
   const live = liveTurn(turn), streaming = livePartial(turn), now = useLiveClock(live);
   const answer = text ?? turn.partial?.text ?? '';
+  const hasWork = turnActivitySteps(turn, member.name).length > 0;
+  const duration = <>{live && turn.status !== 'queued' && <span className="activity-working" aria-hidden />}{activityLabel(turn, now)}{turn.activity?.fallback_model && <CircleAlert size={12} role="img" aria-label="Fallback model used" />}</>;
   return <Disclosure.Root open={open} onOpenChange={setOpen} asChild><section className="room-agent" aria-label={`Reply from ${member.name}`}>
     <div className={`${text ? 'room-agent__line' : 'room-pending'}${live ? ' is-working' : ''}`}>
       <AgentAvatar agent={member} size={20} /><strong className="room-agent__name message-name" title={member.name}>{member.name}</strong>
-      <Disclosure.Trigger className="room-agent__status" aria-label={activityLabel(turn, now)}>{live && turn.status !== 'queued' && <span className="activity-working" aria-hidden />}{activityLabel(turn, now)}{turn.activity?.fallback_model && <CircleAlert size={12} role="img" aria-label="Fallback model used" />}<ChevronDown size={14} aria-hidden className="k-collapsible__chev" /></Disclosure.Trigger>
+      {hasWork ? <Disclosure.Trigger className="room-agent__status" aria-label={activityLabel(turn, now)}>{duration}<ChevronDown size={14} aria-hidden className="k-collapsible__chev" /></Disclosure.Trigger> : <span className="room-agent__status">{duration}</span>}
     </div>
-    <Disclosure.Content className="room-agent__activity">{details}</Disclosure.Content>
-    {answer && <div className="message-body" aria-label={streaming ? `Streaming answer from ${member.name}` : `Answer from ${member.name}`}><div className="legacy"><StreamingMarkdown key={streamIdentity(turn)} text={answer} scope={scope} origin={window.location.origin} /></div></div>}
+    {hasWork && <Disclosure.Content className="room-agent__activity">{details}</Disclosure.Content>}
+    {answer && <div className="message-body" aria-label={streaming ? `Streaming answer from ${member.name}` : `Answer from ${member.name}`}><div className="legacy"><StreamingMarkdown key={turn.id} text={answer} scope={scope} origin={window.location.origin} /></div></div>}
     {extras}
     {turn.error && turn.status !== 'cancelled' && <p className="message-error">{turn.error}</p>}
     <div className="turn-controls" role="group" aria-label="Message actions">{controls}</div>

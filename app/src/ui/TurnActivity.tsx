@@ -31,6 +31,16 @@ export function TurnActivity({ turn, agentName, onOpenTask, onOpenAgent, remote,
   const live = liveTurn(turn), now = useLiveClock(live);
   const [open, setOpen] = useState(false);
   useEffect(() => { if (!live) setOpen(false); }, [live]);
+  const steps = turnActivitySteps(turn, agentName);
+  const contents = <>
+      {steps.length ? <ol className="activity-list" aria-label="Turn activity">{steps.map(step => { const item = (turn.agentMessages ?? []).find(row => row.taskId === step.task); return <li key={step.id}>{step.prose ? <MessageSquare className="activity-step-icon" aria-hidden /> : <Wrench className="activity-step-icon" aria-hidden />}{step.prose ? <div className="legacy"><Markdown text={step.text} scope={scope} origin={window.location.origin} /></div> : <span>{step.text}</span>}{item?.taskId && <Badge tone={['done'].includes(item.status) ? 'success' : ['failed','cancelled','uncertain'].includes(item.status) ? 'warn' : 'brand'}>{item.status === 'queued' && item.wait ? 'Waiting' : item.status.charAt(0).toUpperCase() + item.status.slice(1)}</Badge>}{step.task && <button type="button" className="link-btn link-btn--small" onClick={() => item?.agent && item.thread ? onOpenAgent?.(item.agent, item.thread) : onOpenTask(step.task!)}>{item ? 'Open conversation' : 'View subtask'}</button>}</li>; })}</ol> : null}
+  </>;
+  if (logOnly) return <div className="turn-activity-log">{contents}</div>;
+  if (!steps.length) return <div className="turn-activity"><div className="turn-activity__header"><span className="activity-label">{live && turn.status === 'running' && <span className="activity-working" aria-hidden />}{activityLabel(turn, now)}</span>{controls}</div></div>;
+  return <Disclosure.Root className="turn-activity" open={open} onOpenChange={setOpen}><div className="turn-activity__header"><Disclosure.Trigger className="k-collapsible__trigger"><span className="activity-label">{live && turn.status === 'running' && <span className="activity-working" aria-hidden />}{activityLabel(turn, now)}</span><ChevronDown size={14} aria-hidden className="k-collapsible__chev" /></Disclosure.Trigger>{controls}</div><Disclosure.Content className="k-collapsible__content">{contents}</Disclosure.Content></Disclosure.Root>;
+}
+
+export function turnActivitySteps(turn: Props['turn'], agentName: string) {
   const steps: { id: string; text: string; prose?: boolean; task?: string | null }[] = [];
   const streamedTools = new Set<string>();
   for (const segment of streamWork(turn)) {
@@ -61,9 +71,5 @@ export function TurnActivity({ turn, agentName, onOpenTask, onOpenAgent, remote,
   for (const checkpoint of turn.activity?.checkpoints ?? []) steps.push({ id: `checkpoint-${checkpoint.turn}`, text: checkpoint.state === 'done' ? 'Git checkpoint captured' : `Git checkpoint ${checkpoint.state}` });
   if (turn.activity?.budget_stopped) steps.push({ id: 'budget', text: `Stopped after ${turn.activity.budget_stopped} tool steps` });
   if (turn.activity?.fallback_model) steps.push({ id: 'fallback', text: `Fallback model used: ${turn.activity.fallback_model}` });
-  const contents = <>
-      {steps.length ? <ol className="activity-list" aria-label="Turn activity">{steps.map(step => { const item = (turn.agentMessages ?? []).find(row => row.taskId === step.task); return <li key={step.id}>{step.prose ? <MessageSquare className="activity-step-icon" aria-hidden /> : <Wrench className="activity-step-icon" aria-hidden />}{step.prose ? <div className="legacy"><Markdown text={step.text} scope={scope} origin={window.location.origin} /></div> : <span>{step.text}</span>}{item?.taskId && <Badge tone={['done'].includes(item.status) ? 'success' : ['failed','cancelled','uncertain'].includes(item.status) ? 'warn' : 'brand'}>{item.status === 'queued' && item.wait ? 'Waiting' : item.status.charAt(0).toUpperCase() + item.status.slice(1)}</Badge>}{step.task && <button type="button" className="link-btn link-btn--small" onClick={() => item?.agent && item.thread ? onOpenAgent?.(item.agent, item.thread) : onOpenTask(step.task!)}>{item ? 'Open conversation' : 'View subtask'}</button>}</li>; })}</ol> : null}
-  </>;
-  if (logOnly) return <div className="turn-activity-log">{contents}</div>;
-  return <Disclosure.Root className="turn-activity" open={open} onOpenChange={setOpen}><div className="turn-activity__header"><Disclosure.Trigger className="k-collapsible__trigger"><span className="activity-label">{live && turn.status === 'running' && <span className="activity-working" aria-hidden />}{activityLabel(turn, now)}</span><ChevronDown size={14} aria-hidden className="k-collapsible__chev" /></Disclosure.Trigger>{controls}</div><Disclosure.Content className="k-collapsible__content">{contents}</Disclosure.Content></Disclosure.Root>;
+  return steps;
 }
