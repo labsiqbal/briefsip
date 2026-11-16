@@ -5,14 +5,15 @@ import { Tooltip } from './kit';
 
 type ChatAgent = ComponentProps<typeof AgentAvatar>['agent'];
 
-export function ChatHeader({ agent, title = agent.name, onToggle, expanded, menu, pillRef, tooltip, right }: {
+export function ChatHeader({ agent, title = agent.name, onToggle, expanded, menu, pillRef, tooltip, right, editing }: {
+  editing?: ReactNode;
   agent: ChatAgent; title?: string; onToggle?: () => void; expanded?: boolean; menu?: ReactNode; pillRef?: RefObject<HTMLDivElement | null>; tooltip?: string; right: ReactNode;
 }) {
   const identity = <><AgentAvatar agent={agent} size={24} /><span className="chat__pill-name">{title}</span></>;
   return <header className="chat__header">
     <span className="chat__pill-anchor">
-      {onToggle ? <button type="button" className="chat__pill" onClick={onToggle} aria-haspopup="menu" aria-expanded={expanded}>{identity}<ChevronDown size={14} aria-hidden className="chat__pill-chev" /></button>
-        : <div ref={pillRef} tabIndex={-1} className="chat__pill" title={tooltip}>{identity}</div>}
+      {editing ?? (onToggle ? <button type="button" className="chat__pill" onClick={onToggle} aria-haspopup="menu" aria-expanded={expanded}>{identity}<ChevronDown size={14} aria-hidden className="chat__pill-chev" /></button>
+        : <div ref={pillRef} tabIndex={-1} className="chat__pill" title={tooltip}>{identity}</div>)}
       {menu}
     </span>
     <div className="chat__header-right">{right}</div>

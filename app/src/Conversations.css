@@ -3,3 +3,9 @@
 .conversation-row > .panel-row { flex: 1 1 0; min-width: 0; height: auto; min-height: 36px; }
 .conversation-row > .k-icon-btn { flex-shrink: 0; width: 28px; height: 28px; margin-right: 4px; }
 .conversation-row .panel-row__title { overflow: hidden; text-overflow: ellipsis; }
+
+.conversation-rename { position: relative; display: flex; align-items: center; gap: 4px; min-width: 0; }
+.conversation-rename .k-input { width: min(280px, 35vw); }
+.conversation-rename__error { position: absolute; top: 100%; padding: 4px 8px; background: var(--color-bg-pane); color: var(--color-danger-text); font-size: 12px; }
+.conversation-row .conversation-rename { flex: 1 1 0; }
+.conversation-row .conversation-rename .k-input { width: 100%; min-width: 0; }

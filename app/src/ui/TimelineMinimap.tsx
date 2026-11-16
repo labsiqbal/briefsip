@@ -31,7 +31,7 @@ export function TimelineMinimap({ items, viewport, onNavigate }: {
         if (!found && visible) { current = index; found = true; }
         else if (!found && rect && rect.top < bounds.top) current = index;
       }
-      const next = { width: Math.max(8, Math.min(40, Math.floor(gutter) - 12)), persistent: gutter >= 48, current, atEnd: timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight <= 1 };
+      const next = { width: Math.max(8, Math.min(40, Math.floor(gutter) - 12)), persistent: gutter >= 64, current, atEnd: timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight <= 1 };
       setMetrics(old => old.width === next.width && old.persistent === next.persistent && old.current === next.current && old.atEnd === next.atEnd ? old : next);
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(refresh); };
@@ -64,7 +64,7 @@ export function TimelineMinimap({ items, viewport, onNavigate }: {
     window.addEventListener('mousemove', check, { signal: controller.signal });
     release.current = () => controller.abort();
   };
-  if (items.length < TIMELINE_MINIMAP_MIN_ITEMS || metrics.width <= 0) return null;
+  if (items.length < TIMELINE_MINIMAP_MIN_ITEMS || !metrics.persistent) return null;
   return <div className="timeline-minimap" data-persistent-gutter={metrics.persistent} data-testid="timeline-minimap" ref={node => {
     if (!node) return;
     const wheel = (event: WheelEvent) => {

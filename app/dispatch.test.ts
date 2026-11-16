@@ -302,3 +302,27 @@ test('queued restart cancels captured generation; late steering stays queued wit
     assert.equal(f.calls.filter(body => body.messages.at(-1)?.content === 'Late guidance').length, 1);
   } finally { await f.close(); }
 });
+
+test('terminal forks preserve partial answers; untitled chats name from first text and keep manual names', async () => {
+  const f = await fixture();
+  try {
+    for (const status of ['cancelled', 'failed', 'interrupted']) {
+      const turn = randomUUID(), text = `Partial ${status}`;
+      await f.offline(db => {
+        db.prepare('INSERT INTO turns(id,agent,text,status,created) VALUES (?,?,?,?,?)').run(turn, f.agent.id, 'Synthetic stopped task', status, new Date().toISOString());
+        const call = db.prepare("INSERT INTO provider_calls(turn,agent,model,origin,purpose,phase,status,created) VALUES (?,?,?,'http://synthetic.test','completion','answer',?,?)").run(turn, f.agent.id, 'fake', status === 'cancelled' ? 'interrupted' : status, new Date().toISOString()).lastInsertRowid;
+        db.prepare('INSERT INTO provider_streams(call,text) VALUES (?,?)').run(call, text);
+      });
+      const fork = await f.request(`${f.path}/${turn}/fork`, { id: randomUUID() });
+      const context = await f.request(`/api/threads/${fork.id}/fork-context`);
+      assert.equal(context.turns.at(-1).reply, text);
+    }
+    const thread = await f.request(`/api/agents/${f.agent.id}/threads`, { id: randomUUID(), name: 'New conversation' });
+    const path = `/api/threads/${thread.id}/turns`, first = randomUUID();
+    await f.request(path, { id: first, text: 'Plan launch' }); await f.turn(first, row => row.status === 'done', path);
+    const named = await f.request(`/api/threads/${thread.id}`); assert.equal(named.name, 'Plan launch');
+    await f.request(`/api/threads/${thread.id}/edit`, { id: randomUUID(), revision: named.revision, archived: false, name: 'Manual name' });
+    const second = randomUUID(); await f.request(path, { id: second, text: 'Another message' }); await f.turn(second, row => row.status === 'done', path);
+    assert.equal((await f.request(`/api/threads/${thread.id}`)).name, 'Manual name');
+  } finally { await f.close(); }
+});

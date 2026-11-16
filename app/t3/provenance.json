@@ -2033,5 +2033,59 @@
       "adaptation": "Adapt compact file-list density and shared panel insets; use a leading back icon with tooltip. Keep one saved width per conversation across all panel tabs.",
       "compatibilityCheck": "work/rebuild/ui-smoke/r4-settings-smoke.mjs"
     }
+  ],
+  "r5ChatSourceEntries": [
+    {
+      "sourcePath": "apps/web/src/routes/_chat.$environmentId.$threadId.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "ebb20356a8659ec361a27b5c0d6094b91d5286e496885e5155f567f5db8c55bd",
+      "symbols": [
+        "Route"
+      ],
+      "localPaths": [
+        "app/src/navigation.ts",
+        "app/src/hooks/useAppRoute.ts",
+        "app/server.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt identity-based conversation URLs and browser history with native History API; Briefsip validates its own agents, threads, projects and rooms. Settings routes preserve their return destination. No TanStack dependency or T3 state store.",
+      "compatibilityCheck": "app/navigation.test.ts; app/csp.test.ts; app/dispatch.test.ts; work/rebuild/ux-r5-chat/check.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/hooks/useHandleNewThread.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "eb3fc20f51c01b45993384469a880d870ec5219f491f3fb0ece7047dec4e0f85",
+      "symbols": [
+        "createNewThreadHandler"
+      ],
+      "localPaths": [
+        "app/src/App.tsx"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt one-click untitled conversation creation and composer focus; Briefsip creates a durable thread using existing retry-safe commands and names it from its first text.",
+      "compatibilityCheck": "app/navigation.test.ts; app/csp.test.ts; app/dispatch.test.ts; work/rebuild/ux-r5-chat/check.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/Sidebar.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "06d9c0bbb562097537fec42309d3872de8d93aa2089a15ec5d6a4f01954c012c",
+      "symbols": [
+        "startThreadRename",
+        "commitThreadRename"
+      ],
+      "localPaths": [
+        "app/src/App.tsx",
+        "app/src/Conversations.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt inline rename, trim validation and Escape cancel through Briefsip conversation revisions and existing Radix-styled controls; no native validation bubbles.",
+      "compatibilityCheck": "app/navigation.test.ts; app/csp.test.ts; app/dispatch.test.ts; work/rebuild/ux-r5-chat/check.mjs"
+    }
   ]
 }

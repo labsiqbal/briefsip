@@ -13,8 +13,8 @@ test('SPA has a fresh matching style nonce while scripts, API and assets keep st
   try {
     const nonces: string[] = [];
     let asset = '';
-    for (let i = 0; i < 2; i++) {
-      const response = await fetch(app.origin + '/');
+    for (const path of ['/', '/', '/agents/00000000-0000-4000-8000-000000000000', '/agents/00000000-0000-4000-8000-000000000000/conversations/00000000-0000-4000-8000-000000000001', '/rooms/deleted', '/projects/deleted', '/settings/appearance?from=%2Frooms%2Fdeleted']) {
+      const response = await fetch(app.origin + path);
       assert.equal(response.status, 200);
       assert.equal(response.headers.get('cache-control'), 'no-store');
       const csp = response.headers.get('content-security-policy')!;
@@ -34,7 +34,8 @@ test('SPA has a fresh matching style nonce while scripts, API and assets keep st
       nonces.push(nonce);
       asset = html.match(/(?:src|href)="(\/assets\/[^"]+)"/)![1];
     }
-    assert.notEqual(nonces[0], nonces[1]);
+    assert.equal(new Set(nonces).size, nonces.length);
+    for (const path of ['/missing.txt', '/assets/missing.js', '/api/missing']) { const response = await fetch(app.origin + path); assert.equal(response.status, 404); await response.arrayBuffer(); }
     for (const path of ['/api/agents', asset]) {
       const response = await fetch(app.origin + path);
       assert.equal(response.status, 200);
