@@ -31,7 +31,6 @@
 .computer-compact-card { padding: 10px; background: var(--color-bg-pane); }
 .computer-compact-row { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 40px; font-size: 12px; color: var(--color-text-secondary); }
 .computer-compact-row > svg, .computer-compact-row > .k-badge, .computer-compact-row > .k-btn { flex-shrink: 0; }
-.computer-compact-thumb, .computer-compact-placeholder { display: block; width: 32px; height: 24px; flex: none; border-radius: 4px; object-fit: cover; outline: .5px solid var(--color-viewer-outline); background: var(--color-viewer-bg); }
 .computer-compact-placeholder { display: grid; place-items: center; color: var(--color-viewer-text); }
 .computer-compact-info { flex: 1; min-width: 0; }
 .computer-compact-info strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }

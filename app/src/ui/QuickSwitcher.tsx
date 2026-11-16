@@ -1,5 +1,5 @@
 // Adapted from T3 command palette patterns (MIT); see app/t3/provenance.json.
-import { useId, useState, type ReactNode } from 'react';
+import { useId, useRef, useState, type ReactNode } from 'react';
 import { Search, MessageSquare, Plus, Folder, Hash } from 'lucide-react';
 import { Dialog, Input } from './kit';
 import { usePolling } from '../hooks/usePolling';
@@ -12,7 +12,8 @@ type Props = { items: SwitcherItem[]; agents: { id: string; name: string }[]; on
 export function QuickSwitcher({ items, agents, onClose, onChoose, onThread }: Props) {
   const [query, setQuery] = useState(''), [active, setActive] = useState(0);
   const [threads, setThreads] = useState<Conversation[]>([]), [error, setError] = useState('');
-  const list = useId();
+  const list = useId(), chosen = useRef<SwitcherItem | null>(null);
+  const [opener] = useState(() => document.activeElement instanceof HTMLElement ? document.activeElement : null);
   usePolling(async signal => {
     const results = await Promise.allSettled(agents.map(async agent => {
       const response = await fetch(`/api/agents/${agent.id}/threads`, { signal });
@@ -27,8 +28,13 @@ export function QuickSwitcher({ items, agents, onClose, onChoose, onThread }: Pr
   const terms = query.trim().toLocaleLowerCase().split(/\s+/);
   const matches = all.filter(item => terms.every(term => `${item.label} ${item.detail ?? ''} ${item.group}`.toLocaleLowerCase().includes(term))).sort((a, b) => a.group.localeCompare(b.group));
   const current = Math.max(0, Math.min(active, matches.length - 1));
-  function choose(item: SwitcherItem) { onChoose(item); }
-  return <Dialog open title="Quick switcher" hideHeader onOpenChange={open => { if (!open) onClose(); }}>
+  function choose(item: SwitcherItem) { chosen.current = item; onClose(); }
+  return <Dialog open title="Quick switcher" hideHeader onCloseAutoFocus={event => {
+    event.preventDefault();
+    if (chosen.current) { onChoose(chosen.current); return; }
+    const target = opener?.isConnected && opener !== document.body ? opener : document.querySelector<HTMLElement>('.composer__input');
+    target?.focus();
+  }} onOpenChange={open => { if (!open) onClose(); }}>
     <div className="quick-switcher">
       <div className="quick-switcher__search"><Search size={18} aria-hidden /><Input role="combobox" aria-label="Jump to" placeholder="Jump to…" value={query} aria-expanded aria-autocomplete="list" aria-controls={list} aria-activedescendant={matches.length ? `${list}-${current}` : undefined} onChange={event => { setQuery(event.target.value); setActive(0); }} onKeyDown={event => {
         if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {

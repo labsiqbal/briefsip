@@ -1,6 +1,7 @@
+import { usePolling } from './hooks/usePolling';
 import { getNonce } from 'get-nonce';
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Blocks, ChevronLeft, ChevronRight, Ellipsis, RefreshCw, Search } from 'lucide-react';
+import { ArrowLeft, Blocks, ChevronLeft, ChevronRight, Ellipsis, Search } from 'lucide-react';
 import { ActionMenu, Alert, Badge, Button, Card, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, Tooltip, useConfirm, RecoveryAlert } from './ui/kit';
 import type { LocalProject } from '../local-projects';
 import { restoreConnectedAppCommand, type ConnectedAppCommand } from '../connected-app-command';
@@ -22,13 +23,16 @@ export function ConnectedAppsPanel({ agents, request, project, onInstallationApp
   useEffect(() => { if (selected) heading.current?.focus(); }, [selected]);
   const keySave=pending?.path==='/api/connected-apps/key', locked = busy || !!pending || invalid, after=cursors.at(-1)!;
   useEffect(() => { mounted.current=true; heading.current?.focus(); return ()=>{mounted.current=false;}; },[]);
-  useEffect(()=>{
-    let stale=false; setCatalog(null); setAccounts(null); setKeyStatus(null); setGrants(null); setPolicies(null); setError('');
-    void request<KeyStatus>('/api/connected-apps/key').then(status=>{if(!stale)setKeyStatus(status);}).catch(error=>{if(!stale)setError(error.message || 'Composio key status could not load.');});
-    const params=new URLSearchParams({search:query,category,after});
-    void Promise.all([request<Catalog>(`/api/connected-apps?${params}`),request<{items:Account[]}>('/api/connected-apps/accounts'), agent ? request<{items:Grant[]}>(`/api/agents/${agent}/connected-apps`) : Promise.resolve({items:[]}),agent ? request<{items:Policy[]}>(`/api/agents/${agent}/connected-app-policies`) : Promise.resolve({items:[]})]).then(([catalog,accounts,grants,policies])=>{if(!stale){setCatalog(catalog);setAccounts(accounts.items);setGrants(grants.items);setPolicies(policies.items);}}).catch(error=>{if(!stale)setError(error.message || 'Connected apps could not load.');});
-    return ()=>{stale=true;};
-  },[agent,query,category,after,refresh]);
+  const loadScope = useRef(''), [loadError, setLoadError] = useState('');
+  usePolling(async signal => {
+    const scope = JSON.stringify([agent, query, category, after, refresh]);
+    if (loadScope.current !== scope) { loadScope.current = scope; setCatalog(null); setAccounts(null); setKeyStatus(null); setGrants(null); setPolicies(null); }
+    const params = new URLSearchParams({ search: query, category, after });
+    try {
+      const [status, catalog, accounts, grants, policies] = await Promise.all([request<KeyStatus>('/api/connected-apps/key').then(status => { if (!signal.aborted) setKeyStatus(status); return status; }), request<Catalog>(`/api/connected-apps?${params}`), request<{ items: Account[] }>('/api/connected-apps/accounts'), agent ? request<{ items: Grant[] }>(`/api/agents/${agent}/connected-apps`) : Promise.resolve({ items: [] }), agent ? request<{ items: Policy[] }>(`/api/agents/${agent}/connected-app-policies`) : Promise.resolve({ items: [] })]);
+      if (!signal.aborted) { setKeyStatus(status); setCatalog(catalog); setAccounts(accounts.items); setGrants(grants.items); setPolicies(policies.items); setLoadError(''); }
+    } catch (error) { if (!signal.aborted) setLoadError(error instanceof Error ? error.message : 'Connected apps could not load.'); }
+  }, { interval: 15000 }, [agent, query, category, after, refresh, request]);
   async function execute(command:ConnectedAppCommand,connect=false) {
     if(sending.current || invalid)return;
     if(command.path==='/api/connected-apps/key' && !key.trim()){setError('Paste the Composio API key again to retry this save.');return;}
@@ -72,37 +76,36 @@ export function ConnectedAppsPanel({ agents, request, project, onInstallationApp
     setSetup(true);
   };
   return <div className="k-page bs-root bs-set3-apps">
-    <style nonce={getNonce()}>{`.bs-root.bs-set3-apps > .k-page-head { padding-right: 40px; } .bs-root.bs-set3-apps .k-row__title { white-space: normal; overflow-wrap: anywhere; } .bs-root.bs-set3-apps .k-row__meta { overflow-wrap: anywhere; }`}</style>
+    <style nonce={getNonce()}>{`.bs-root.bs-set3-apps .k-row__title { white-space: normal; overflow-wrap: anywhere; } .bs-root.bs-set3-apps .k-row__meta { overflow-wrap: anywhere; }`}</style>
     {selected && <Button aria-label="Back to Connected apps" variant="ghost" icon={<ArrowLeft size={14} aria-hidden />} onClick={()=>{setSelected('');heading.current?.focus();}}>Connected apps</Button>}
     <PageHeader headingRef={heading} title={selected ? title(selected) : 'Connected apps'} actions={<>
-      <IconButton label="Reload connected apps" disabled={busy} onClick={()=>setRefresh(n=>n+1)}><RefreshCw size={15} aria-hidden /></IconButton>
-      {!project && <ActionMenu label="Integration setup" trigger={<button type="button" className="k-icon-btn" aria-label="Integration setup" disabled={busy}><Ellipsis size={16} aria-hidden /></button>} items={[
+      {!project && <ActionMenu label="Integration setup" trigger={<IconButton label="Integration setup" tooltip="More actions" disabled={busy}><Ellipsis size={16} aria-hidden /></IconButton>} items={[
         {label:keyStatus?.source==='settings'?'Replace key':'Set up',disabled:locked||!keyStatus,onSelect:()=>void openSetup()},
         ...(keyStatus?.source==='settings' ? ['separator' as const,{label:'Remove key',danger:true,disabled:locked,onSelect:()=>void removeKey()}] : []),
       ]} />}
     </>} />
-    {error && <Alert tone="error">{error}</Alert>}{recoveryNotice}
+    {(error || loadError) && <Alert tone="error" actions={loadError ? <Button size="sm" onClick={() => setRefresh(n => n + 1)}>Try again</Button> : undefined}>{error || loadError}</Alert>}{recoveryNotice}
     {project && !selected && <Card><Row title="Allow global apps" trailing={<Tooltip content="Member agents may also use apps granted to them in Settings. Project accounts take priority for the same toolkit."><span><Switch label="Allow global apps" checked={project.allowInstallationApps} disabled={locked} onChange={async enabled=>{if(enabled&&!await confirm({title:'Allow installation apps in this project?',description:'Members can use their installation accounts alongside this project’s accounts. Approval choices stay separate for this project.',confirm:'Allow installation apps'}))return;try{await onInstallationAppsChange?.(enabled);}catch(error){setError(error instanceof Error?error.message:'Project setting could not save.');}}}/></span></Tooltip>} /></Card>}
     {catalog?.configured===false ? <EmptyState icon={<Blocks size={20} aria-hidden />} title="Connect apps" action={!project ? <Button disabled={locked||!keyStatus} onClick={()=>void openSetup()}>Set up</Button> : undefined}>{project?'Set up Composio in Settings > Connected apps.':undefined}</EmptyState> : selected ? <>
       <Section title="Accounts">
-        {accounts === null ? !error && <SkeletonRows count={1} /> : !accounts.some(row=>row.toolkit===selected) ? <EmptyState title="No connected accounts" /> : <Card>{accounts.filter(row=>row.toolkit===selected).map(row=><Row key={row.id} title={row.id} meta={<Badge tone={row.status==='ACTIVE'?'success':'neutral'}>{row.status==='ACTIVE'?'Connected':row.status}</Badge>} trailing={<ActionMenu label={`Manage account ${row.id}`} items={[{label:'Disconnect',danger:true,onSelect:async()=>{if(await confirm({title:`Disconnect ${title(row.toolkit)}?`,description:'Agent access is revoked. Completed app actions cannot be undone.',confirm:'Disconnect',danger:true}))void execute({path:`/api/connected-apps/disconnect/${row.id}`,body:{id:crypto.randomUUID()}});}}]} trigger={<button type="button" className="k-icon-btn" aria-label={`Manage account ${row.id}`} disabled={locked}><Ellipsis size={16} aria-hidden /></button>} />} />)}</Card>}
+        {accounts === null ? !error && !loadError && <SkeletonRows count={1} /> : !accounts.some(row=>row.toolkit===selected) ? <EmptyState title="No connected accounts" /> : <Card>{accounts.filter(row=>row.toolkit===selected).map(row=><Row key={row.id} title={row.id} meta={<Badge tone={row.status==='ACTIVE'?'success':'neutral'}>{row.status==='ACTIVE'?'Connected':row.status}</Badge>} trailing={<ActionMenu label={`Manage account ${row.id}`} items={[{label:'Disconnect',danger:true,onSelect:async()=>{if(await confirm({title:`Disconnect ${title(row.toolkit)}?`,description:'Agent access is revoked. Completed app actions cannot be undone.',confirm:'Disconnect',danger:true}))void execute({path:`/api/connected-apps/disconnect/${row.id}`,body:{id:crypto.randomUUID()}});}}]} trigger={<IconButton label={`Manage account ${row.id}`} tooltip="More actions" disabled={locked}><Ellipsis size={16} aria-hidden /></IconButton>} />} />)}</Card>}
       </Section>
       <Section title="Agent access" actions={!!agents.length && <Select size="sm" label="Agent for connected apps" value={agent} disabled={locked} onChange={setAgent} options={agents.map(row=>({value:row.id,label:row.name}))} />}>
-        {!agent ? <EmptyState title="No agents yet" /> : grants===null ? !error && <SkeletonRows count={1} /> : !connected.includes(selected) ? <EmptyState title="No connected account" /> : <Card><Row title={title(selected)} trailing={<Switch label={`Allow ${agents.find(row=>row.id===agent)?.name} to use ${title(selected)}`} checked={!!selectedGrant?.enabled} disabled={locked} onChange={enabled=>void execute({path:`/api/agents/${agent}/connected-apps/${selected}`,body:{id:crypto.randomUUID(),revision:selectedGrant?.revision ?? 0,enabled}})} />} /></Card>}
+        {!agent ? <EmptyState title="No agents yet" /> : grants===null ? !error && !loadError && <SkeletonRows count={1} /> : !connected.includes(selected) ? <EmptyState title="No connected account" /> : <Card><Row title={title(selected)} trailing={<Switch label={`Allow ${agents.find(row=>row.id===agent)?.name} to use ${title(selected)}`} checked={!!selectedGrant?.enabled} disabled={locked} onChange={enabled=>void execute({path:`/api/agents/${agent}/connected-apps/${selected}`,body:{id:crypto.randomUUID(),revision:selectedGrant?.revision ?? 0,enabled}})} />} /></Card>}
         {project && connected.includes(selected) && <Button size="sm" disabled={locked || !agents.length} onClick={async()=>{if(await confirm({title:`Allow all project members to use ${title(selected)}?`,description:`This grants ${agents.length} current members access. Actions that write or have unknown effects still ask for approval in chat.`,confirm:'Allow all members'}))void execute({path:`/api/connected-apps/grant-all/${selected}`,body:{id:crypto.randomUUID(),confirmed:true}});}}>Allow all members</Button>}
       </Section>
       <Section title="Allowed actions">
-        {policies===null ? !error && <SkeletonRows count={1} /> : !policies.some(row=>row.toolkit===selected) ? <EmptyState title="No saved approvals" /> : <Card>{policies.filter(row=>row.toolkit===selected).map(row=><Row key={row.fingerprint} title={row.tool} meta={row.account} trailing={<Button size="sm" disabled={locked} onClick={()=>void execute({path:`/api/agents/${agent}/connected-app-policies`,body:{id:crypto.randomUUID(),fingerprint:row.fingerprint}})}>Ask next time</Button>} />)}</Card>}
+        {policies===null ? !error && !loadError && <SkeletonRows count={1} /> : !policies.some(row=>row.toolkit===selected) ? <EmptyState title="No saved approvals" /> : <Card>{policies.filter(row=>row.toolkit===selected).map(row=><Row key={row.fingerprint} title={row.tool} meta={row.account} trailing={<Button size="sm" disabled={locked} onClick={()=>void execute({path:`/api/agents/${agent}/connected-app-policies`,body:{id:crypto.randomUUID(),fingerprint:row.fingerprint}})}>Ask next time</Button>} />)}</Card>}
       </Section>
     </> : <>
       {link && <Alert title="Finish connecting in Composio" actions={<Button size="sm" onClick={()=>setRefresh(n=>n+1)}>Check connection</Button>}><a href={link} target="_blank" rel="noopener noreferrer">Open connection page</a></Alert>}
       <Section title="Accounts">
-        {accounts===null ? !error && <><span role="status" className="sr-only">Loading connected apps...</span><SkeletonRows count={2} /></> : !accounts.length ? <EmptyState title="No connected accounts" /> : <Card>{accounts.map(row=><Row key={row.id} title={title(row.toolkit)} onClick={()=>setSelected(row.toolkit)} meta={<><span>{row.id}</span><Badge tone={row.status==='ACTIVE'?'success':'neutral'}>{row.status==='ACTIVE'?'Connected':row.status}</Badge></>} />)}</Card>}
+        {accounts===null ? !error && !loadError && <><span role="status" className="sr-only">Loading connected apps...</span><SkeletonRows count={2} /></> : !accounts.length ? <EmptyState title="No connected accounts" /> : <Card>{accounts.map(row=><Row key={row.id} title={title(row.toolkit)} onClick={()=>setSelected(row.toolkit)} meta={<><span>{row.id}</span><Badge tone={row.status==='ACTIVE'?'success':'neutral'}>{row.status==='ACTIVE'?'Connected':row.status}</Badge></>} />)}</Card>}
       </Section>
       <Section title="Browse apps">
         <form className="k-inline" style={{alignItems:'flex-end'}} onSubmit={event=>{event.preventDefault();setCursors(['']);setQuery(search);}}><Field label="Search apps"><Input type="search" maxLength={100} placeholder="Gmail, Slack, GitHub..." value={search} disabled={locked} onChange={event=>setSearch(event.target.value)} /></Field><Button type="submit" icon={<Search size={14} aria-hidden />} disabled={locked}>Search</Button></form>
         {!!catalog && <div className="k-row-actions" aria-label="App categories"><Button size="sm" variant={category===''?'brand':'ghost'} aria-pressed={category===''} disabled={locked} onClick={()=>{setCategory('');setCursors(['']);}}>All apps</Button>{catalog.categories.map(row=><Button key={row.id} size="sm" variant={category===row.id?'brand':'ghost'} aria-pressed={category===row.id} disabled={locked} onClick={()=>{setCategory(row.id);setCursors(['']);}}>{row.name}</Button>)}</div>}
-        {!catalog ? !error && <SkeletonRows /> : !catalog.items.length ? <EmptyState title="No apps found" /> : <Card>{catalog.items.map(app=>{
+        {!catalog ? !error && !loadError && <SkeletonRows /> : !catalog.items.length ? <EmptyState title="No apps found" /> : <Card>{catalog.items.map(app=>{
           const rows=accounts?.filter(row=>row.toolkit===app.slug) ?? [], active=rows.some(row=>row.status==='ACTIVE');
           return <Row key={app.slug} leading={<Blocks size={16} aria-hidden />} title={app.name} meta={active ? <Badge tone="success">Connected</Badge> : undefined} onClick={active?()=>setSelected(app.slug):undefined} trailing={active ? <Button size="sm" disabled={locked} onClick={()=>setSelected(app.slug)}>Manage</Button> : <Button size="sm" disabled={locked || !app.managedAuth} onClick={()=>void execute({path:`/api/connected-apps/connect/${app.slug}`,body:{id:crypto.randomUUID()}},true)}>{app.managedAuth?'Connect':'Custom auth needed'}</Button>} />;
         })}</Card>}
@@ -110,7 +113,7 @@ export function ConnectedAppsPanel({ agents, request, project, onInstallationApp
       </Section>
     </>}
     {!project && <Dialog open={setup} onOpenChange={open=>{setSetup(open);if(!open&&!pending){setReplacing(false);setKey('');}}} title={replacing?'Replace key':'Set up Composio'} footer={keyStatus?.source!=='environment' || keySave ? <Button type="submit" form="composio-key" variant="primary" busy={busy} disabled={busy || invalid || !key.trim() || !!pending && !keySave}>{keySave?'Try again':'Save key'}</Button> : undefined}>
-      <div className="k-stack">{error && <Alert tone="error">{error}</Alert>}{recoveryNotice}
+      <div className="k-stack">{(error || loadError) && <Alert tone="error" actions={loadError ? <Button size="sm" onClick={() => setRefresh(n => n + 1)}>Try again</Button> : undefined}>{error || loadError}</Alert>}{recoveryNotice}
       {!keyStatus ? <SkeletonRows count={1} /> : keyStatus.source==='environment' && !keySave ? <Badge>From server environment</Badge> : <form id="composio-key" onSubmit={event=>{event.preventDefault();void saveKey();}}>
         <Field label="Composio API key"><Input type="password" autoComplete="off" spellCheck={false} maxLength={4096} value={key} disabled={busy || invalid} onChange={event=>setKey(event.target.value)} /></Field>
       </form>}

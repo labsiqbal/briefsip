@@ -1,5 +1,6 @@
 import { useMessageChanged } from './hooks/useMessageChanged';
 import { useOptimisticTurns } from './hooks/useOptimisticTurns';
+import { useComposerFocus } from './hooks/useComposerFocus';
 import { useQuickSwitcher } from './hooks/useQuickSwitcher';
 import { QuickSwitcher, type SwitcherItem } from './ui/QuickSwitcher';
 import { usePolling } from './hooks/usePolling';
@@ -985,7 +986,7 @@ function AgentConversations({ agent, onRestored, configured, onEdit, onExport, w
   ];
   const row = (item: Thread) => <div data-conversation-id={item.id} key={item.id} className={`conversation-row${selected === item.id ? ' is-current' : ''}`}>
     <button type="button" className="panel-row panel-row--link" aria-current={selected === item.id || undefined} title={item.name} onClick={() => select(item.id)}><MessageSquare size={16} aria-hidden /><span className="panel-row__text"><span className="panel-row__title">{item.name}</span>{!!item.archived && <span className="panel-row__meta">Archived</span>}</span></button>
-    <ActionMenu label={`Menu conversation ${item.name}`} trigger={<button type="button" className="k-icon-btn" aria-label={`Menu conversation ${item.name}`} disabled={locked}><Ellipsis size={15} aria-hidden /></button>} items={actions(item)} />
+    <ActionMenu label={`Menu conversation ${item.name}`} trigger={<IconButton label={`Menu conversation ${item.name}`} tooltip="More actions" disabled={locked}><Ellipsis size={15} aria-hidden /></IconButton>} items={actions(item)} />
   </div>;
   const visible = threads.filter(item => showArchived || !item.archived), deliveries = visible.filter(item => item.delivery);
   const conversations = <>
@@ -994,7 +995,7 @@ function AgentConversations({ agent, onRestored, configured, onEdit, onExport, w
     <section aria-label="Agent conversations">
       <div className="section-label section-label--row"><span>Conversations</span><div className="details-list-actions"><DropdownMenu.Root><DropdownMenu.Trigger asChild><IconButton label="Conversation filters"><Filter size={15} aria-hidden /></IconButton></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="k-pop k-menu" align="end" sideOffset={6}><DropdownMenu.CheckboxItem className="k-menu__item" checked={showArchived} onCheckedChange={next => { setShowArchived(next); if (!next && thread?.archived) select(''); }}><DropdownMenu.ItemIndicator><Check size={14} aria-hidden /></DropdownMenu.ItemIndicator>Show archived</DropdownMenu.CheckboxItem></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{!locked && <IconButton label="New conversation" onClick={openForm}><Plus size={15} aria-hidden /></IconButton>}</div></div>
       <div className="panel-card">
-        <div className="conversation-row" data-conversation-id="main"><button type="button" className={`panel-row panel-row--link${!thread ? ' is-current' : ''}`} aria-current={!thread || undefined} onClick={() => select('')}><MessageSquare size={16} aria-hidden /><span className="panel-row__title">Main chat</span></button><ActionMenu label="Menu conversation Main chat" trigger={<button type="button" className="k-icon-btn" aria-label="Menu conversation Main chat"><Ellipsis size={15} aria-hidden /></button>} items={[{ label: 'Edit profile', onSelect: onEdit }]} /></div>
+        <div className="conversation-row" data-conversation-id="main"><button type="button" className={`panel-row panel-row--link${!thread ? ' is-current' : ''}`} aria-current={!thread || undefined} onClick={() => select('')}><MessageSquare size={16} aria-hidden /><span className="panel-row__title">Main chat</span></button><ActionMenu label="Menu conversation Main chat" trigger={<IconButton label="Menu conversation Main chat" tooltip="More actions"><Ellipsis size={15} aria-hidden /></IconButton>} items={[{ label: 'Edit profile', onSelect: onEdit }]} /></div>
         {visible.filter(item => !item.delivery).map(row)}
       </div>
       {!!deliveries.length && <Collapsible variant="section" title={<>From other agents <Badge>{deliveries.length}</Badge></>}><div className="panel-card">{deliveries.map(row)}</div></Collapsible>}
@@ -1114,7 +1115,7 @@ function MachineGroup({ name, subtitle, count, status, expanded, onExpandedChang
 
 
 function App() {
-  const switcher = useQuickSwitcher(), switcherFrame = useNextFrame();
+  const switcher = useQuickSwitcher(), switcherFrame = useNextFrame(), focusComposer = useComposerFocus();
   const { deleteAgent, deleting } = useDeleteAgent(api, async id => {
     setDialog(null); setAgentContent(null);
     setSelected(current => current === id ? '' : current); setOpenedThread(current => current?.agent === id ? null : current);
@@ -1343,12 +1344,12 @@ function App() {
       <PanelResizeHandle panel={sidebar} />
     </aside>}
     {content}
-    {switcher.open && <QuickSwitcher items={switcherItems} agents={directory?.agents ?? []} onClose={() => switcher.setOpen(false)} onChoose={item => { switcher.setOpen(false); switcherFrame(() => { item.onSelect(); if (['Agents', 'Conversations', 'Sections'].includes(item.group)) switcherFrame(() => document.querySelector<HTMLTextAreaElement>('.composer__input')?.focus()); }); }} onThread={(agent, thread) => { setSettings(null); openThread(agent, thread); }} />}
+    {switcher.open && <QuickSwitcher items={switcherItems} agents={directory?.agents ?? []} onClose={() => switcher.setOpen(false)} onChoose={item => { switcher.setOpen(false); switcherFrame(() => { item.onSelect(); if (['Agents', 'Conversations', 'Sections'].includes(item.group)) switcherFrame(focusComposer); }); }} onThread={(agent, thread) => { setSettings(null); openThread(agent, thread); }} />}
     {dialog === 'agent' && directory && <AgentForm request={api} isClientError={error => error instanceof HttpError && error.status < 500} model={directory.defaultModel} onCancel={() => setDialog(null)} onCreated={item => { created(item); setDialog(null); }} />}
     {dialog === 'project' && directory && <CreateProject state={projectState} agents={directory.agents} request={api} onClose={() => setDialog(null)} onCreated={item => { openSection(item.channel); }} />}
     {dialog === 'edit' && directory && channel && <ChannelForm key={`${channel.id}:${channel.revision}:${editReload}`} agents={directory.agents} channel={channel} onCancel={() => setDialog(null)} onReload={() => { void load().then(() => setEditReload(value => value + 1)); }} onCreated={() => { void load(); setDialog(null); }} />}
     {dialog === 'edit' && directory && !channel && agent && <AgentForm request={api} isClientError={error => error instanceof HttpError && error.status < 500} key={`${agent.id}:${editReload}`} model={directory.defaultModel} profile={agent} onCancel={() => setDialog(null)} onDelete={item => deleteAgent(item)} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} onCreated={() => { void load(); setDialog(null); }} />}
-    {workspaceDialog && <Dialog open size="lg" title={workspaceDialog === 'help' ? 'Help' : 'Import template'} onOpenChange={open => { if (!open) setWorkspaceDialog(null); }}><div className="legacy"><Suspense fallback={<p role="status">Loading...</p>}>{workspaceDialog === 'help' ? <HelpPage /> : <AgentTemplateImport request={api} onClose={() => setWorkspaceDialog(null)} onCreated={item => { created(item); setWorkspaceDialog(null); }} />}</Suspense></div></Dialog>}
+    {workspaceDialog && <Dialog open size="lg" title={workspaceDialog === 'help' ? 'Keyboard shortcuts' : 'Import template'} onOpenChange={open => { if (!open) setWorkspaceDialog(null); }}><div className="legacy"><Suspense fallback={<p role="status">Loading...</p>}>{workspaceDialog === 'help' ? <HelpPage /> : <AgentTemplateImport request={api} onClose={() => setWorkspaceDialog(null)} onCreated={item => { created(item); setWorkspaceDialog(null); }} />}</Suspense></div></Dialog>}
     {agentContent && <Dialog open size="lg" title={`${agentContent.agent.name} · Export template`} onOpenChange={open => { if (!open) setAgentContent(null); }}><div className="legacy"><Suspense fallback={<p role="status">Loading...</p>}><AgentTemplateExport id={agentContent.agent.id} request={api} /></Suspense></div></Dialog>}
     <RadixDialog.Portal><RadixDialog.Content className="app-settings bs-root" aria-describedby={undefined} onEscapeKeyDown={event => { if (settingsQuery && document.activeElement === settingsSearch.current) { event.preventDefault(); setSettingsQuery(''); } }} onOpenAutoFocus={event => {
       event.preventDefault();

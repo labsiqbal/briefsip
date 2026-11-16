@@ -1,7 +1,7 @@
 // Panel tabs and surface composition adapted from T3 (MIT); see ../t3/provenance.json.
 import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, FileDiff, Files, Globe, MessageSquare, Monitor, Users, X } from 'lucide-react';
+import { Activity, ArrowLeft, FileDiff, Files, Globe, MessageSquare, Monitor, Users, X } from 'lucide-react';
 import { Dialog as Sheet } from 'radix-ui';
 import { useVisiblePolling } from './hooks/useVisiblePolling';
 import type { ComputerStatus } from './AgentComputerPanel';
@@ -25,8 +25,7 @@ export function useRightPanel(scope: string) {
   const [selection, setSelection] = useState(() => ({ scope, tab: store.read(scope).tab }));
   if (selection.scope !== scope) setSelection({ scope, tab: store.read(scope).tab });
   const tab = selection.scope === scope ? selection.tab : store.read(scope).tab;
-  const computer = tab === 'computer';
-  const spec = useMemo(() => ({ ...detailsPanel, key: rightPanelWidthKey(computer ? `${scope}:computer` : scope), defaultWidth: computer ? Math.round(window.innerWidth / 2) : 360 }), [scope, computer]);
+  const spec = useMemo(() => ({ ...detailsPanel, key: rightPanelWidthKey(scope) }), [scope]);
   const panel = useResizablePanel(spec, 280);
   const select = useCallback((value: string) => { setSelection({ scope, tab: value }); store.select(scope, value); }, [scope, store]);
   return { tab, panel, select };
@@ -74,13 +73,13 @@ export function RightPanel({ path, name, state, request, onClose, details, activ
   const selected = ['diff', 'preview'].includes(state.tab) ? 'files' : tabs.some(tab => tab.value === state.tab) ? state.tab : 'chats';
   const content = <aside className="details right-panel bs-root" style={{ width: `${width}px` }} aria-label="Conversation details" onPointerDownCapture={event => inside.current.add(event.nativeEvent)}>
     {!overlay && <PanelResizeHandle panel={state.panel} />}
-    <div className="right-panel__header"><span>Conversation</span><div>{settings}<IconButton label="Close details" onClick={onClose}><X size={16} aria-hidden /></IconButton></div></div>
+    <div className="right-panel__header"><div>{settings}<IconButton label="Close details" onClick={onClose}><X size={16} aria-hidden /></IconButton></div></div>
     <Tabs label="Conversation panel" value={selected} onChange={state.select} tabs={tabs}>
       {error && <div className="right-panel__error"><Alert tone="error" actions={<Button size="sm" onClick={() => setRefresh(value => value + 1)}>Retry</Button>}>{error}</Alert></div>}
       <TabPanel value="chats">{members ? <div className="right-panel__body"><ul className="right-panel__members" aria-label="Section members">{members.map(member => <li key={member.id}><AgentAvatar agent={member} size={32} /><div><strong>{member.name}</strong><span>{[member.lead ? 'Lead' : 'Member', member.role].filter(Boolean).join(' · ')}</span></div></li>)}</ul></div> : details}</TabPanel>
       <TabPanel value="activity"><PanelActivity members={members} />{activity}</TabPanel>
       <TabPanel value="files">
-        {state.tab === 'diff' && git?.isRepo ? <><div className="right-panel__body"><Button size="sm" variant="ghost" onClick={() => state.select('files')}>Back to files</Button></div><PanelDiff base={base} status={git} request={request} refresh={refresh} /></> : state.tab === 'preview' ? <><div className="right-panel__body"><Button size="sm" variant="ghost" onClick={() => state.select('files')}>Back to files</Button></div><PanelPreview base={base} files={context?.previews ?? []} sites={context?.sites ?? []} request={request} /></> : <>
+        {state.tab === 'diff' && git?.isRepo ? <><div className="right-panel__back"><IconButton label="Back to files" onClick={() => state.select('files')}><ArrowLeft size={15} aria-hidden /></IconButton><span>Source control</span></div><PanelDiff base={base} status={git} request={request} refresh={refresh} /></> : state.tab === 'preview' ? <><div className="right-panel__back"><IconButton label="Back to files" onClick={() => state.select('files')}><ArrowLeft size={15} aria-hidden /></IconButton><span>Preview</span></div><PanelPreview base={base} files={context?.previews ?? []} sites={context?.sites ?? []} request={request} /></> : <>
           {(git?.isRepo || !!context?.previews.length || !!context?.sites.length) && <div className="right-panel__body k-stack">
             {git?.isRepo && <Button className="right-panel__nav-row" variant="ghost" icon={<FileDiff size={14} aria-hidden />} onClick={() => state.select('diff')}>Source control <Badge>{git.changedFiles?.length ?? 0} changed</Badge></Button>}
             {(!!context?.previews.length || !!context?.sites.length) && <Button className="right-panel__nav-row" variant="ghost" icon={<Globe size={14} aria-hidden />} onClick={() => state.select('preview')}>Preview artifacts</Button>}

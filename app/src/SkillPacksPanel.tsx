@@ -1,6 +1,7 @@
+import { usePolling } from './hooks/usePolling';
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { restoreSkillCommand, type SkillCommand } from '../skill-command';
-import { ArrowLeft, ChevronLeft, ChevronRight, Ellipsis, FileText, Package, Plus, RefreshCw } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Ellipsis, FileText, Package, Plus } from 'lucide-react';
 import { ActionMenu, Alert, Badge, Button, Card, CodeBlock, Collapsible, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, Tooltip, useConfirm, RecoveryAlert } from './ui/kit';
 type Member = { skill: string; version: number; name: string; description: string; content: string };
 type Pack = { id: string; name: string; revision: number; latest: number; members: Member[] };
@@ -20,11 +21,15 @@ export function SkillPacksPanel({ agents, initialOwner, request, onClose, embedd
   const confirm = useConfirm();
   const replace = async () => !editor || JSON.stringify(editor) === baseline || confirm({ title: 'Discard unsaved pack changes?', confirm: 'Discard changes', danger: true });
   useEffect(() => { if (!embedded) heading.current?.focus(); return () => { generation.current++; }; }, []);
-  useEffect(() => {
-    let stopped = false; setPage(null); setLibrary(null); setError('');
-    void Promise.all([request<Page>(`/api/skill-packs${after ? `?after=${after}` : ''}`), request<Library>(`/api/skills${skillAfter ? `?after=${skillAfter}` : ''}`)]).then(([packs, skills]) => { if (!stopped) { setPage(packs); setLibrary(skills); } }).catch(error => { if (!stopped) setError(error.message); });
-    return () => { stopped = true; };
-  }, [after, skillAfter, refresh]);
+  const loadScope = useRef(''), [loadError, setLoadError] = useState('');
+  usePolling(async signal => {
+    const scope = JSON.stringify([after, skillAfter, refresh]);
+    if (loadScope.current !== scope) { loadScope.current = scope; setPage(null); setLibrary(null); setError(''); }
+    try {
+      const [packs, skills] = await Promise.all([request<Page>(`/api/skill-packs${after ? `?after=${after}` : ''}`), request<Library>(`/api/skills${skillAfter ? `?after=${skillAfter}` : ''}`)]);
+      if (!signal.aborted) { setPage(packs); setLibrary(skills); setLoadError(''); }
+    } catch (error) { if (!signal.aborted) setLoadError(error instanceof Error ? error.message : 'Packs could not load.'); }
+  }, { interval: 15000 }, [after, skillAfter, refresh, request]);
   useEffect(() => {
     let stopped = false; setBinding(undefined);
     if (editor?.id && owner) void request<Binding | null>(`/api/agents/${owner}/skill-packs/${editor.id}`).then(row => { if (!stopped) setBinding(row); }).catch(error => { if (!stopped) setError(error.message); });
@@ -82,14 +87,13 @@ export function SkillPacksPanel({ agents, initialOwner, request, onClose, embedd
     {!embedded && <PageHeader headingRef={heading} title="Packs"
       actions={<>
         <Button variant="ghost" icon={<ArrowLeft size={14} aria-hidden />} onClick={async () => { if (await replace()) onClose(); }}>Skills</Button>
-        <IconButton label="Reload packs" disabled={busy} onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton>
         <Button variant="primary" icon={<Plus size={14} aria-hidden />} disabled={locked} onClick={() => void startNew()}>Create pack</Button>
       </>} />}
-    {embedded && <div className="k-row-actions" style={{ justifyContent: 'flex-end' }}><IconButton label="Reload packs" disabled={busy} onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton><Button variant="primary" icon={<Plus size={14} aria-hidden />} disabled={locked} onClick={() => void startNew()}>Create pack</Button></div>}
-    {error && <Alert tone="error">{error}</Alert>}
+    {embedded && <div className="k-row-actions" style={{ justifyContent: 'flex-end' }}><Button variant="primary" icon={<Plus size={14} aria-hidden />} disabled={locked} onClick={() => void startNew()}>Create pack</Button></div>}
+    {(error || loadError) && <Alert tone="error" actions={loadError ? <Button size="sm" onClick={() => setRefresh(value => value + 1)}>Try again</Button> : undefined}>{error || loadError}</Alert>}
     {recoveryNotice}
     <div className="k-stack">
-      {!page ? !error && <><span className="sr-only" role="status">Loading packs...</span><SkeletonRows /></>
+      {!page ? !error && !loadError && <><span className="sr-only" role="status">Loading packs...</span><SkeletonRows /></>
         : !page.packs.length ? <EmptyState icon={<Package size={18} />} title="No packs" />
         : <Card>{page.packs.map(pack => <Row key={pack.id} title={pack.name} leading={<Package size={16} aria-hidden />} meta={<Badge>v{pack.revision}</Badge>} disabled={locked} onClick={() => void open(pack.id)} />)}</Card>}
       {pager(cursors.length > 1, !!page?.next_after, locked, () => setCursors(value => value.slice(0, -1)), () => setCursors(value => [...value, page!.next_after!]), 'packs')}
@@ -102,7 +106,7 @@ export function SkillPacksPanel({ agents, initialOwner, request, onClose, embedd
         <Button type="submit" form="pack-editor" variant="primary" busy={busy} disabled={locked || !editor?.members.length}>Save version</Button>
       </>}>
       {editor && <>
-        {error && <Alert tone="error">{error}</Alert>}
+        {(error || loadError) && <Alert tone="error" actions={loadError ? <Button size="sm" onClick={() => setRefresh(value => value + 1)}>Try again</Button> : undefined}>{error || loadError}</Alert>}
         {recoveryNotice}
         <form id="pack-editor" className="k-stack" onSubmit={event => { event.preventDefault(); void execute({ path: editor.id ? `/api/skill-packs/${editor.id}` : '/api/skill-packs', body: { id: crypto.randomUUID(), revision: editor.latest, name: editor.name, members: editor.members.map(({ skill, version }) => ({ skill, version })) } }); }}>
           <fieldset disabled={locked} className="k-fieldset">
@@ -110,7 +114,7 @@ export function SkillPacksPanel({ agents, initialOwner, request, onClose, embedd
             <Section title="Skills">
               {!editor.members.length ? <EmptyState icon={<FileText size={18} />} title="No skills" />
                 : <Card>{editor.members.map(member => <Row key={member.skill} title={member.name} meta={<Badge>Version {member.version}</Badge>}
-                    trailing={<ActionMenu label={`Menu ${member.name}`} trigger={<button type="button" className="k-icon-btn" aria-label={`Menu ${member.name}`} disabled={locked}><Ellipsis size={16} aria-hidden /></button>} items={[
+                    trailing={<ActionMenu label={`Menu ${member.name}`} trigger={<IconButton label={`Menu ${member.name}`} tooltip="More actions" disabled={locked}><Ellipsis size={16} aria-hidden /></IconButton>} items={[
                       { label: 'Remove from draft', danger: true, onSelect: () => setEditor({ ...editor, members: editor.members.filter(row => row.skill !== member.skill) }) },
                     ]} />}>
                     <Collapsible title={<>Review instructions for {member.name}</>}><p className="k-field__hint">{member.description}</p><CodeBlock label={`Instructions for ${member.name}`}>{member.content}</CodeBlock></Collapsible>
@@ -136,7 +140,7 @@ export function SkillPacksPanel({ agents, initialOwner, request, onClose, embedd
             : <Card><Row title={editor.name} meta={binding === undefined ? <span role="status">Loading installation...</span> : !binding || binding.removed ? 'Not installed' : <><Badge>Installed version {binding.version}</Badge><Badge>{binding.enabled ? 'Active' : 'Inactive'}</Badge></>}
                 trailing={<>
                   {binding && !binding.removed && <Switch checked={!!binding.enabled} disabled={locked || !owner || binding === undefined || !binding.enabled} label="Disable entire pack" onChange={() => void mutate(false)} />}
-                  <ActionMenu label="Pack installation actions" trigger={<button type="button" className="k-icon-btn" aria-label="Pack installation actions" disabled={locked}><Ellipsis size={16} aria-hidden /></button>} items={[
+                  <ActionMenu label="Pack installation actions" trigger={<IconButton label="Pack installation actions" tooltip="More actions" disabled={locked}><Ellipsis size={16} aria-hidden /></IconButton>} items={[
                     { label: `Install v${editor.revision}`, disabled: !owner || binding === undefined, onSelect: () => void mutate(true) },
                     ...(binding && !binding.removed ? [{ label: 'Remove entire pack', danger: true, onSelect: () => void mutate(false, true) }] : []),
                   ]} />

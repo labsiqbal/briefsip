@@ -1994,5 +1994,44 @@
       "adaptation": "Retain inline editor with composer Enter, Shift+Enter and Escape bindings, blur save and exact-id reload recovery using Briefsip fenced edit leases.",
       "compatibilityCheck": "app/transcript.test.ts; app/queue-edits.test.ts; work/rebuild/ui-smoke/run-controls-smoke.mjs; work/rebuild/ux-r4-chat/check.mjs"
     }
+  ],
+  "r4SettingsSourceEntries": [
+    {
+      "sourcePath": "apps/web/src/components/CommandPalette.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "ac2cd1274fd629583eded7a616fe0153bd3d525702f23b4a9dda7004b2401da2",
+      "symbols": [
+        "CommandPaletteDialog"
+      ],
+      "localPaths": [
+        "app/src/ui/QuickSwitcher.tsx",
+        "app/src/ui/kit.tsx",
+        "app/src/ui/quick-switcher.css",
+        "app/src/hooks/useComposerFocus.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt final-focus handling: complete palette navigation after dialog teardown, then focus the composer; Escape restores the opener. Keep a local input focus ring.",
+      "compatibilityCheck": "work/rebuild/ui-smoke/r4-settings-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/DiffPanel.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "3a0a91c03f1c549fa9a45f97d0457fef1b614e60fde7a43fc5cdb30fcf4f6358",
+      "symbols": [
+        "DiffPanel"
+      ],
+      "localPaths": [
+        "app/src/RightPanel.tsx",
+        "app/src/RightPanelFiles.tsx",
+        "app/src/right-panel.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt compact file-list density and shared panel insets; use a leading back icon with tooltip. Keep one saved width per conversation across all panel tabs.",
+      "compatibilityCheck": "work/rebuild/ui-smoke/r4-settings-smoke.mjs"
+    }
   ]
 }

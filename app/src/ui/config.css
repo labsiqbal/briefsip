@@ -196,7 +196,7 @@
 .color-theme-card { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 7px; border: 0; border-radius: 14px; background: transparent; color: var(--color-text-primary); text-align: left; cursor: pointer; }
 .color-theme-card:hover { background: var(--color-bg-hover); }
 .color-theme-card:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
-.color-theme-card[aria-pressed='true'] { background: var(--color-brand-soft); box-shadow: 0 0 0 1.5px var(--color-brand) inset; }
+.color-theme-card[aria-pressed='true'] { box-shadow: 0 0 0 1.5px var(--color-brand) inset; }
 .theme-preview { display: flex; overflow: hidden; width: 100%; height: 86px; border-radius: 10px; box-shadow: 0 0 0 1px var(--color-border-secondary); }
 .theme-preview__sidebar { display: flex; flex-direction: column; gap: 6px; width: 32%; padding: 12px 7px; background: var(--color-bg-sidebar); }
 .theme-preview__sidebar i { display: block; height: 7px; border-radius: 4px; background: var(--color-text-tertiary); opacity: .65; }
@@ -206,7 +206,6 @@
 .theme-preview__chat i:first-child { width: 70%; }
 .theme-preview__chat b { width: 46%; margin-top: auto; margin-left: auto; background: var(--color-brand); opacity: 1; }
 .color-theme-card__name { display: flex; justify-content: space-between; gap: 6px; font-size: 13px; line-height: 18px; font-weight: 500; }
-.color-theme-card__name span { color: var(--color-brand-text); font-size: 11px; font-weight: 600; }
 
 /* SET1: grouped settings shell and preference pages. Other panels keep their layout. */
 .app-settings__nav { width: 240px; padding: 0 12px 16px; overflow-y: auto; gap: 0; }

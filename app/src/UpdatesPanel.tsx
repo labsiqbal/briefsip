@@ -33,6 +33,14 @@ export function UpdatesPanel({ request }: { request: Request }) {
   }
   const feed = state?.feed ?? state?.available;
   const eligible = (machine: PairedMachine) => { const peer = peers.find(row=>row.machine===machine.id); return !!feed && machine.allowUpdates && ['online','version-mismatch'].includes(machine.status) && peer?.available && peer.launcherAvailable && peer.current?.version !== feed?.version; };
+  function peerStatus(machine: PairedMachine) {
+    const peer = peers.find(row => row.machine === machine.id);
+    if (!['online', 'version-mismatch'].includes(machine.status)) return machine.status === 'unauthorized' ? 'Access revoked' : 'Machine offline';
+    if (eligible(machine)) return 'Ready to update';
+    if ((peer?.current?.version ?? machine.version) === state?.current?.version) return 'Up to date';
+    if (!machine.allowUpdates) return 'Remote updates off';
+    return peer?.reason ?? (peer?.current?.version === feed?.version ? 'Up to date' : !peer?.launcherAvailable ? 'Launcher unavailable' : 'Updates unavailable');
+  }
   const chosen = machines.filter(machine=>selected.includes(machine.id) && (dialog || eligible(machine)));
   async function fanOut() {
     if (!feed || fanBusy) return;
@@ -52,7 +60,7 @@ export function UpdatesPanel({ request }: { request: Request }) {
       </Card></Section>
       {attempt&&<Section title="Last update"><Alert tone={['rolled-back','failed'].includes(attempt.status)?'warn':'info'} title={phases[attempt.status]??attempt.status}><span role="status">Version {attempt.version}{attempt.reason?` - ${attempt.reason}`:''}</span></Alert><ol className="updates-steps" aria-label="Update progress">{['backing-up','starting','verifying','done'].map((step,index)=><li key={step} aria-current={attempt.status===step?'step':undefined}><span>{index+1}</span>{phases[step]}</li>)}</ol></Section>}
       <Section title="Paired machines" actions={chosen.length > 0 ? <Button onClick={()=>{setSelected(chosen.map(machine=>machine.id));setResults([]);fanPending.current=null;setDialog(true);}}>Update selected ({chosen.length})</Button> : undefined}>
-        {!machines.length?<EmptyState title="No paired machines" />:<Card>{machines.map(machine=>{const peer=peers.find(row=>row.machine===machine.id);return <Row key={machine.id} title={machine.name} meta={<>{peer?.reason??(!machine.allowUpdates?'Remote updates off':!['online','version-mismatch'].includes(machine.status)?machine.status==='unauthorized'?'Access revoked':'Machine offline':eligible(machine)?'Ready to update':peer?.current?.version===feed?.version?'Up to date':!peer?.launcherAvailable?'Launcher unavailable':'Updates unavailable')}<span>{peer?.runningTurns??machine.agents.filter(agent=>agent.status==='running').length} running turns</span></>} trailing={<><Badge>{peer?.current?.version??machine.version}</Badge>{eligible(machine) && <label className="k-inline"><span>Also update {machine.name}</span><Switch label={`Also update ${machine.name}`} checked={selected.includes(machine.id)} onChange={checked=>setSelected(ids=>checked?[...ids,machine.id]:ids.filter(id=>id!==machine.id))}/></label>}</>}/>;})}</Card>}
+        {!machines.length?<EmptyState title="No paired machines" />:<Card>{machines.map(machine=>{const peer=peers.find(row=>row.machine===machine.id);return <Row key={machine.id} title={machine.name} meta={<>{peerStatus(machine)}<span>{peer?.runningTurns??machine.agents.filter(agent=>agent.status==='running').length} running turns</span></>} trailing={<><Badge>{peer?.current?.version??machine.version}</Badge>{eligible(machine) && <label className="k-inline"><span>Also update {machine.name}</span><Switch label={`Also update ${machine.name}`} checked={selected.includes(machine.id)} onChange={checked=>setSelected(ids=>checked?[...ids,machine.id]:ids.filter(id=>id!==machine.id))}/></label>}</>}/>;})}</Card>}
       </Section>
     </>}
     <Dialog open={dialog} onOpenChange={open=>{if(!fanBusy)setDialog(open);}} title={`Update ${chosen.length} ${chosen.length===1?'machine':'machines'}?`} description={`Briefsip ${feed?.version??''}. Each machine backs up its database and rolls back automatically if health checks fail.`} size="lg" footer={<><Button disabled={fanBusy} onClick={()=>setDialog(false)}>{results.length?'Close':'Cancel'}</Button><Button variant="primary" busy={fanBusy} disabled={fanBusy||!!results.length||!chosen.length} onClick={()=>void fanOut()}>Update {chosen.length} {chosen.length===1?'machine':'machines'}</Button></>}>

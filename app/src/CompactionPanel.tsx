@@ -14,7 +14,7 @@ export function CompactionPanel({ path, request }: { path: string; request: <T>(
   }, [after, refresh, path, request]));
   return <div ref={root} className="bs-root summary-row">
     <div className="details-list-row">
-      {data ? <button ref={summaryButton} type="button" className="panel-row panel-row--link" onClick={() => setOpen(true)}><History size={16} aria-hidden /><span className="panel-row__title">History summary</span><Badge>Up to date</Badge></button> : <div className="panel-row"><History size={16} aria-hidden /><span className="panel-row__title">History summary</span><Badge>{error ? 'Unavailable' : loaded ? 'None yet' : 'Loading'}</Badge></div>}
+      {data ? <button ref={summaryButton} type="button" className="panel-row panel-row--link" onClick={() => setOpen(true)}><History size={16} aria-hidden /><span className="panel-row__title">History summary</span><Badge>Up to date</Badge><ChevronRight size={14} aria-hidden /></button> : <div className="panel-row"><History size={16} aria-hidden /><span className="panel-row__title">History summary</span><Badge>{error ? 'Unavailable' : loaded ? 'None yet' : 'Loading'}</Badge></div>}
 
     </div>
     {error && <Alert tone="error" actions={<Button size="sm" onClick={() => setRefresh(n => n + 1)}>Retry</Button>}>{error}</Alert>}
