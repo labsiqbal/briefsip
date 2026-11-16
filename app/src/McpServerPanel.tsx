@@ -60,8 +60,8 @@ export function McpServerPanel({ request }: { request: <T>(path: string, body?: 
   </>;
   const detail = page?.items.find(token => token.id === detailId);
   return <div className="k-page bs-root bs-set3-external">
-    <style nonce={getNonce()}>{`.bs-root.bs-set3-external > .k-page-head { padding-right: 40px; } .bs-root.bs-set3-external .k-row__title { white-space: normal; overflow-wrap: anywhere; } .bs-root.bs-set3-external .k-row__meta { overflow-wrap: anywhere; }`}</style>
-    <PageHeader headingRef={heading} title="External access" description="Apps that can access Briefsip"
+    <style nonce={getNonce()}>{`.bs-root.bs-set3-external .k-row__title { white-space: normal; overflow-wrap: anywhere; } .bs-root.bs-set3-external .k-row__meta { overflow-wrap: anywhere; }`}</style>
+    <PageHeader headingRef={heading} title="External access"
       actions={<><Button variant="primary" icon={<Plus size={14} aria-hidden />} disabled={locked} onClick={() => setShowForm(true)}>Create token</Button></>} />
     {error && <Alert tone="error" actions={<Button size="sm" onClick={() => setRefresh(value => value + 1)}>Retry</Button>}>{error}</Alert>}
     {notice && (notice === 'Copied.' ? <span role="status" className="sr-only">{notice}</span> : <Alert>{notice}</Alert>)}
@@ -72,7 +72,7 @@ export function McpServerPanel({ request }: { request: <T>(path: string, body?: 
     <Section title="Access tokens">
       {!page ? !error && <><span role="status" className="sr-only">Loading access tokens...</span><SkeletonRows /></> : !page.items.length ? <EmptyState icon={<KeyRound size={18} />} title="No access tokens" /> : <Card>{page.items.map(token => <Row key={token.id} title={token.name} leading={<KeyRound size={16} aria-hidden />} onClick={() => setDetailId(token.id)}
         meta={<><Badge tone={token.revoked === null ? 'success' : 'neutral'}>{token.revoked === null ? 'Active' : 'Revoked'}</Badge><span>{token.scopes.length} permissions</span><span>{token.lastUsed === null ? 'Never used' : `Last used ${new Date(token.lastUsed).toLocaleString('en-US')}`}</span></>}
-        trailing={token.revoked === null && <ActionMenu label={`Token actions for ${token.name}`} trigger={<button type="button" className="k-icon-btn" aria-label={`Token actions for ${token.name}`} disabled={locked}><Ellipsis size={16} aria-hidden /></button>} items={[{ label: 'Revoke token', danger: true, onSelect: async () => { if (await confirm({ title: `Revoke ${token.name}?`, description: 'This token will stop working immediately. Work already queued or running will continue.', confirm: 'Revoke token', danger: true })) void execute({ path: `${path}/${token.id}/revoke`, body: { id: crypto.randomUUID() } }); } }]} />} />)}</Card>}
+        trailing={token.revoked === null && <ActionMenu label={`Token actions for ${token.name}`} trigger={<IconButton label={`Token actions for ${token.name}`} tooltip="More actions" disabled={locked}><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: 'Revoke token', danger: true, onSelect: async () => { if (await confirm({ title: `Revoke ${token.name}?`, description: 'This token will stop working immediately. Work already queued or running will continue.', confirm: 'Revoke token', danger: true })) void execute({ path: `${path}/${token.id}/revoke`, body: { id: crypto.randomUUID() } }); } }]} />} />)}</Card>}
     </Section>
     <Dialog open={!!detail} onOpenChange={open => { if (!open) setDetailId(''); }} title={detail?.name ?? 'Token permissions'}>
       {detail && <div className="k-stack"><div><Badge tone={detail.revoked === null ? 'success' : 'neutral'}>{detail.revoked === null ? 'Active' : 'Revoked'}</Badge></div><Section title="Permissions"><Card>{detail.scopes.map(id => <Row key={id} title={scopeLabel(id)} />)}</Card></Section></div>}

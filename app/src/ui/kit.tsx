@@ -13,8 +13,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     {busy ? <span className="k-spinner" aria-hidden /> : icon}{children}
   </button>;
 });
-export const IconButton = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement> & { label: string }>(function IconButton({ label, className, children, type = 'button', ...rest }, ref) {
-  return <Tooltip content={label}><button ref={ref} type={type} className={cx('k-icon-btn', className)} aria-label={label} {...rest}>{children}</button></Tooltip>;
+export const IconButton = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement> & { label: string; tooltip?: string }>(function IconButton({ label, tooltip = label, className, children, type = 'button', ...rest }, ref) {
+  return <Tooltip content={tooltip}><button ref={ref} type={type} className={cx('k-icon-btn', className)} aria-label={label} {...rest}>{children}</button></Tooltip>;
 });
 
 // ---------- fields ----------
@@ -119,7 +119,7 @@ export function Tabs<T extends string>({ value, onChange, tabs, label, children 
     {children}
   </RadixTabs.Root>;
 }
-export function TabPanel({ value, children }: { value: string; children: ReactNode }) { return <RadixTabs.Content value={value} className="k-tabs__panel">{children}</RadixTabs.Content>; }
+export function TabPanel({ value, children }: { value: string; children: ReactNode }) { return <RadixTabs.Content value={value} tabIndex={-1} className="k-tabs__panel">{children}</RadixTabs.Content>; }
 
 /** Scrollable read-only text (file contents, JSON, logs). */
 export function CodeBlock({ children, label, maxHeight = 280 }: { children: ReactNode; label: string; maxHeight?: number }) {
@@ -204,14 +204,14 @@ export function ActionPopover({ trigger, children, label }: { trigger: ReactNode
 }
 
 // ---------- dialogs ----------
-export function Dialog({ open, onOpenChange, title, description, actions, children, footer, size = 'md', hideHeader = false }: { open: boolean; onOpenChange: (open: boolean) => void; title: ReactNode; description?: ReactNode; actions?: ReactNode; children: ReactNode; footer?: ReactNode; size?: 'md' | 'lg'; hideHeader?: boolean }) {
+export function Dialog({ open, onOpenChange, title, description, actions, children, footer, size = 'md', hideHeader = false, onCloseAutoFocus }: { onCloseAutoFocus?: (event: Event) => void; open: boolean; onOpenChange: (open: boolean) => void; title: ReactNode; description?: ReactNode; actions?: ReactNode; children: ReactNode; footer?: ReactNode; size?: 'md' | 'lg'; hideHeader?: boolean }) {
   // Code-opened dialogs remember the opener and restore focus on close.
   const opener = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => { if (open) opener.current = document.activeElement instanceof HTMLElement && !document.activeElement.closest('.k-dialog') ? document.activeElement : opener.current ?? null; }, [open]);
   return <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
     <RadixDialog.Portal>
       <RadixDialog.Overlay className="k-overlay" />
-      <RadixDialog.Content {...(!description ? { 'aria-describedby': undefined } : {})} className={cx('k-dialog', 'bs-root', `k-dialog--${size}`)} onCloseAutoFocus={event => { const target = opener.current; opener.current = null; if (target?.isConnected) { event.preventDefault(); target.focus(); } }} onOpenAutoFocus={event => {
+      <RadixDialog.Content {...(!description ? { 'aria-describedby': undefined } : {})} className={cx('k-dialog', 'bs-root', `k-dialog--${size}`)} onCloseAutoFocus={event => { onCloseAutoFocus?.(event); if (event.defaultPrevented) return; const target = opener.current; opener.current = null; if (target?.isConnected) { event.preventDefault(); target.focus(); } }} onOpenAutoFocus={event => {
         const body = (event.currentTarget as HTMLElement).querySelector('.k-dialog__body');
         const first = body?.querySelector<HTMLElement>(':is(input:not([type=hidden]):not([type=number]), textarea):not([readonly]):not(:disabled)') ?? body?.querySelector<HTMLElement>('[role=tab][data-state=active]');
         event.preventDefault(); (first ?? (event.currentTarget as HTMLElement)).focus();

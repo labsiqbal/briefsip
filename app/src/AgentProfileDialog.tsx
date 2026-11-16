@@ -2,7 +2,7 @@ import { useReturnFocus } from './hooks/useReturnFocus';
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { Tabs as RadixTabs } from 'radix-ui';
-import { Brain, Ellipsis, Globe } from 'lucide-react';
+import { Brain, ChevronRight, Ellipsis, Globe } from 'lucide-react';
 import { restoreAgentCreation, type AgentCreation } from '../agent-create';
 import { AgentAvatar, AvatarEditor } from './AgentAvatar';
 import { MascotAvatar } from './ui/avatar-shapes';
@@ -27,8 +27,7 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
   const [profile] = useState(liveProfile);
   const creationKey = 'briefsip-agent-creation';
   const nameInput = useRef<HTMLInputElement>(null);
-  const formRef = useRef<HTMLFormElement>(null);
-  const [tab, setTab] = useState(focusComputer ? 'access' : 'profile');
+  const [tab, setTab] = useState(focusComputer ? 'advanced' : 'profile');
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [resource, setResource] = useState<'memory' | 'sites' | null>(null);
@@ -39,7 +38,7 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
   const exportTrigger = useRef<HTMLButtonElement>(null), avatarChange = useRef<HTMLButtonElement>(null);
   useReturnFocus(exportTrigger, exportOpen);
   useReturnFocus(avatarChange, avatarOpen);
-  const [dirty, setDirty] = useState(false);
+  const [visibilityOpen, setVisibilityOpen] = useState(false);
   const [recovery, setRecovery] = useState(() => { try { return { command: liveProfile ? null : restoreAgentCreation(sessionStorage.getItem(creationKey)), invalid: false }; } catch { return { command: null, invalid: true }; } });
   const [instructionCount, setInstructionCount] = useState((profile?.instructions ?? recovery.command?.instructions ?? '').length);
   const [invalid, setInvalid] = useState(recovery.invalid);
@@ -82,15 +81,6 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
   const [modelValue, setModelValue] = useState(profile?.model ?? recovery.command?.model ?? model);
   const [backupValue, setBackupValue] = useState(profile?.backup_model ?? recovery.command?.backupModel ?? '');
   const pending = useRef<(AgentCreation & { revision?: number }) | null>(recovery.command);
-  function updateDirty() {
-    if (!profile || !formRef.current) return;
-    const form = new FormData(formRef.current);
-    setDirty(runtime !== (profile.runtime ?? 'api') || account !== (profile.provider_account ?? '') ||
-      ['name', 'role', 'instructions'].some(key => String(form.get(key)) !== profile[key as 'name' | 'role' | 'instructions']) ||
-      String(form.get('model')) !== profile.model || String(form.get('backupModel')) !== (profile.backup_model ?? '') ||
-      Number(form.get('threadLimit')) !== profile.thread_limit || Number(form.get('toolBudget')) !== (profile.tool_budget ?? 90));
-  }
-  useEffect(updateDirty, [runtime, account, modelValue, backupValue]);
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (busy || invalid) return;
@@ -176,20 +166,18 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
   </>;
   return <>
     <Dialog open size={profile ? 'lg' : 'md'} onOpenChange={next => { if (!next && !busy) onCancel(); }} title={profile ? 'Agent profile' : 'New agent'}
-      actions={profile && <ActionMenu label="Agent profile actions" trigger={<IconButton ref={exportTrigger} label="Agent profile actions"><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: 'Export template', onSelect: () => setExportOpen(true) }, ...(onDelete ? [{ label: 'Delete agent', danger: true, disabled: busy, onSelect: () => void onDelete(profile).catch(error => setError(message(error))) }] : [])]} />}
+      actions={profile && <ActionMenu label="Agent profile actions" trigger={<IconButton ref={exportTrigger} label="Agent profile actions" tooltip="More actions"><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: 'Export template', onSelect: () => setExportOpen(true) }, ...(onVisibilityChanged ? [{ label: liveProfile?.hidden ? 'Restore agent' : 'Hide agent', onSelect: () => setVisibilityOpen(true) }] : []), ...(onDelete ? [{ label: 'Delete agent', danger: true, disabled: busy, onSelect: () => void onDelete(profile).catch(error => setError(message(error))) }] : [])]} />}
       footer={<>
         {!profile && pending.current && <Button variant="ghost" disabled={busy} onClick={() => void discardPending()} className="k-dialog__foot-start">Discard recovery</Button>}
         {profile && error && onReload && <Button variant="ghost" onClick={onReload} className="k-dialog__foot-start">Discard changes and reload</Button>}
-        {profile && tab === 'access' && !dirty && !pending.current ? <Button onClick={onCancel}>Done</Button> : <>
-          <Button disabled={busy} onClick={onCancel}>Cancel</Button>
-          <Button type="submit" form="agent-form" variant="primary" busy={busy} disabled={invalid}>{busy ? 'Saving...' : submitLabel}</Button>
-        </>}
+        <Button disabled={busy} onClick={onCancel}>Cancel</Button>
+        <Button type="submit" form="agent-form" variant="primary" busy={busy} disabled={invalid}>{busy ? 'Saving...' : submitLabel}</Button>
       </>}>
       {invalid && <Alert tone="error" title="Recovery data could not be read" actions={<Button size="sm" onClick={() => void discardInvalid()}>Discard recovery data</Button>}>Check the agent list before discarding it.</Alert>}
       {!profile && pending.current && <RecoveryAlert inFlight={busy} tone="warn" title="Creation is not confirmed yet">Try again with the same request to avoid creating a duplicate agent.</RecoveryAlert>}
       <div className={`agent-profile${profile ? ' agent-profile--edit' : ''}`}>
-        <Tabs value={tab} onChange={setTab} label="Agent profile" tabs={profile ? [{ value: 'profile', label: 'Profile' }, { value: 'model', label: 'Model' }, { value: 'access', label: 'Access' }, { value: 'advanced', label: 'Advanced' }] : []}>
-          <form ref={formRef} id="agent-form" className="k-fieldset" noValidate onChange={event => { setFieldErrors(current => { const next = { ...current }; if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) delete next[event.target.name]; return next; }); updateDirty(); }} onSubmit={event => {
+        <Tabs value={tab} onChange={setTab} label="Agent profile" tabs={profile ? [{ value: 'profile', label: 'Profile' }, { value: 'model', label: 'Model' }, { value: 'advanced', label: 'Advanced' }] : []}>
+          <form id="agent-form" className="k-fieldset" noValidate onChange={event => { setFieldErrors(current => { const next = { ...current }; if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) delete next[event.target.name]; return next; }); }} onSubmit={event => {
             const inputs = Array.from(event.currentTarget.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input, textarea'));
             const invalid = inputs.filter(input => !input.validity.valid || input.required && !input.value.trim());
             setFieldErrors(Object.fromEntries(invalid.map(input => [input.name, input.validity.rangeUnderflow || input.validity.rangeOverflow ? `Use ${input.getAttribute('min')}-${input.getAttribute('max')}.` : input.validity.badInput || input.validity.stepMismatch ? 'Enter a whole number.' : 'Required.'])));
@@ -198,7 +186,7 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
               const input = invalid[0];
               flushSync(() => {
                 if (profile) setTab(['model', 'backupModel'].includes(input.name) ? 'model' : ['threadLimit', 'toolBudget'].includes(input.name) ? 'advanced' : 'profile');
-                else if (['threadLimit', 'toolBudget'].includes(input.name)) setAdvancedOpen(true);
+                else if (['model', 'backupModel', 'threadLimit', 'toolBudget'].includes(input.name)) setAdvancedOpen(true);
               });
               input.focus(); return;
             }
@@ -206,25 +194,22 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
           }}>
             {profile ? <>
               {/* Force-mounted panels keep all staged values in FormData, including coding-runtime API settings. */}
-              <RadixTabs.Content forceMount value="profile" hidden={tab !== 'profile'} className="k-tabs__panel">{profileFields}</RadixTabs.Content>
-              <RadixTabs.Content forceMount value="model" hidden={tab !== 'model'} className="k-tabs__panel">{modelFields}</RadixTabs.Content>
-              <RadixTabs.Content forceMount value="advanced" hidden={tab !== 'advanced'} className="k-tabs__panel">{advancedFields}
-                <div className="details-list">
-                  <Button variant="ghost" icon={<Brain size={16} aria-hidden />} onClick={() => openResource('memory')}>Agent memory</Button>
+              <RadixTabs.Content tabIndex={-1} forceMount value="profile" hidden={tab !== 'profile'} className="k-tabs__panel">{profileFields}</RadixTabs.Content>
+              <RadixTabs.Content tabIndex={-1} forceMount value="model" hidden={tab !== 'model'} className="k-tabs__panel">{modelFields}</RadixTabs.Content>
+              <RadixTabs.Content tabIndex={-1} forceMount value="advanced" hidden={tab !== 'advanced'} className="k-tabs__panel">{advancedFields}
+                <AgentComputerSettings agent={profile.id} request={api} autoFocus={focusComputer && tab === 'advanced'} />
+                <div className="details-list agent-profile__resources">
+                  <button type="button" className="panel-row panel-row--link" onClick={() => openResource('memory')}><Brain size={16} aria-hidden /><span className="panel-row__title">Agent memory</span><ChevronRight size={14} aria-hidden /></button>
                   <CompactionPanel path={`/api/agents/${profile.id}/compaction`} request={api} />
-                  <Button variant="ghost" icon={<Globe size={16} aria-hidden />} onClick={() => openResource('sites')}>Agent sites</Button>
+                  <button type="button" className="panel-row panel-row--link" onClick={() => openResource('sites')}><Globe size={16} aria-hidden /><span className="panel-row__title">Agent sites</span><ChevronRight size={14} aria-hidden /></button>
                 </div>
               </RadixTabs.Content>
             </> : <>
               <Segmented label="How to create an agent" value={setup ? 'describe' : 'manual'} disabled={busy || locked || invalid} onChange={value => setSetup(value === 'describe')} options={[{ value: 'manual', label: 'Manual' }, { value: 'describe', label: 'Draft with AI' }]} />
-              {profileFields}{modelFields}
-              <Collapsible title="Advanced settings" open={advancedOpen} onOpenChange={setAdvancedOpen}>{advancedFields}</Collapsible>
+              {profileFields}
+              <Collapsible title="Advanced settings" open={advancedOpen} onOpenChange={setAdvancedOpen}>{modelFields}{advancedFields}</Collapsible>
             </>}
           </form>
-          {profile && <RadixTabs.Content forceMount value="access" hidden={tab !== 'access'} className="k-tabs__panel">
-            <AgentComputerSettings agent={profile.id} request={api} autoFocus={focusComputer && tab === 'access'} />
-            {onVisibilityChanged && <AgentVisibility agent={liveProfile!} request={api} onChanged={onVisibilityChanged} />}
-          </RadixTabs.Content>}
         </Tabs>
         {error && <Alert tone="error">{error}</Alert>}
       </div>
@@ -232,6 +217,7 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
     {profile && resource && <Dialog open size="lg" title={resource === 'memory' ? 'Agent memory' : 'Agent sites'} onOpenChange={open => { if (!open) closeResource(); }}>
       <Suspense fallback={<p role="status">Loading...</p>}>{resource === 'memory' ? <MemoryPanel channel={false} archived={false} path={`/api/agents/${profile.id}/memory`} request={api} onClose={closeResource} /> : <SitesPanel agent={profile.id} request={api} />}</Suspense>
     </Dialog>}
+    {profile && onVisibilityChanged && <Dialog open={visibilityOpen} title="Availability" onOpenChange={setVisibilityOpen} footer={<Button onClick={() => setVisibilityOpen(false)}>Done</Button>}><AgentVisibility agent={liveProfile!} request={api} onChanged={onVisibilityChanged} /></Dialog>}
     {profile && exportOpen && <Dialog open size="lg" title="Export template" description={profile.name} onOpenChange={setExportOpen} footer={<Button onClick={() => setExportOpen(false)}>Done</Button>}><Suspense fallback={<p role="status">Loading saved profile...</p>}><AgentTemplateExport id={profile.id} request={api} /></Suspense></Dialog>}
     {!profile && <Dialog open={avatarOpen} size="md" title="Avatar" onOpenChange={setAvatarOpen} footer={<Button onClick={() => setAvatarOpen(false)}>Done</Button>}><Suspense fallback={<p role="status">Loading avatar picker...</p>}><LookPicker value={look} onChange={setLook} disabled={busy || locked || invalid} /></Suspense></Dialog>}
     {profile && onVisibilityChanged && avatarOpen && <AvatarEditor agent={profile.id} request={api} onChanged={onVisibilityChanged} onClose={() => setAvatarOpen(false)} />}

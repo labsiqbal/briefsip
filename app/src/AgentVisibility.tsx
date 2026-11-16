@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { visibilityCommand } from '../agent-visibility';
-import { Alert, Badge, Button, Card, Row, Section, useConfirm, RecoveryAlert } from './ui/kit';
+import { Alert, Badge, Button, Card, Row, useConfirm, RecoveryAlert } from './ui/kit';
 
 export function AgentVisibility({ agent, request, onChanged }: { agent: { id: string; name: string; hidden?: boolean; visibility_revision?: number }; request: <T>(path: string, body?: unknown) => Promise<T>; onChanged: () => Promise<void> }) {
   const key = `briefsip-visibility:${agent.id}`;
@@ -34,11 +34,9 @@ export function AgentVisibility({ agent, request, onChanged }: { agent: { id: st
     finally { flight.current = false; if (mounted.current) setBusy(false); }
   }
   return <div className="k-stack bs-root">
-    <Section title="Availability">
       <Card><Row title={<Badge>{agent.hidden ? 'Hidden · queue paused' : 'Available'}</Badge>} trailing={<Button size="sm" busy={busy} disabled={busy || recovery.invalid} onClick={() => void save()}>{busy ? 'Saving...' : recovery.pending ? 'Try again' : agent.hidden ? 'Restore agent' : 'Hide agent'}</Button>} /></Card>
       {recovery.pending && <RecoveryAlert inFlight={busy} tone="warn" title="Not confirmed" actions={<Button size="sm" onClick={() => void reload()}>Discard and reload</Button>} />}
       {recovery.invalid && <Alert tone="error" actions={<Button size="sm" onClick={() => void reload()}>Discard and reload</Button>}>Saved request is invalid. Load the latest status before continuing.</Alert>}
       {error && <Alert tone="error">{error}</Alert>}
-    </Section>
   </div>;
 }

@@ -24,7 +24,7 @@
   background: var(--color-border-primary); opacity: 0; transition: opacity 0.15s var(--ease-out);
 }
 .panel-resize-handle:hover::after, .panel-resize-handle[data-dragging]::after { opacity: 1; }
-.panel-resize-handle:focus { outline: none; }
+.panel-resize-handle:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
 .panel-resize-handle:focus-visible::after { opacity: 1; background: var(--color-border-focus); }
 :root.is-panel-resizing, :root.is-panel-resizing * { user-select: none; cursor: col-resize !important; }
 :root.is-panel-resizing *, :root.is-panel-resizing *::before, :root.is-panel-resizing *::after { transition: none !important; }

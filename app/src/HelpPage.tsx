@@ -1,4 +1,4 @@
-import { Card, PageHeader, Row, Section } from './ui/kit';
+import { Card, Row, Section } from './ui/kit';
 
 const shortcuts = [
   ['Ctrl/Cmd + K', 'Quick switcher'],
@@ -16,7 +16,6 @@ const shortcuts = [
 
 export function HelpPage() {
   return <div className="k-page bs-root help-page">
-    <PageHeader title="Keyboard shortcuts" />
     <Section title="Workspace"><Card>{shortcuts.map(([keys, action]) => <Row key={keys} title={action} trailing={<kbd>{keys}</kbd>} />)}</Card></Section>
   </div>;
 }

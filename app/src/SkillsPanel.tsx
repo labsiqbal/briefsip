@@ -1,10 +1,11 @@
+import { usePolling } from './hooks/usePolling';
 import { getNonce } from 'get-nonce';
 import { SkillPacksPanel } from './SkillPacksPanel';
 import { useEffect, useRef, useState } from 'react';
 import { restoreSkillCommand, type SkillCommand } from '../skill-command';
 import { parseSkillFiles, type SkillFile } from '../skill-files';
 import { SkillFolderImport, downloadSkillFolder } from './SkillFolderImport';
-import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, Ellipsis, FileText, Plus, RefreshCw } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, Ellipsis, FileText, Plus } from 'lucide-react';
 import { ActionMenu, Alert, Badge, Button, Card, Collapsible, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, TabPanel, Tabs, Textarea, Tooltip, useConfirm, RecoveryAlert } from './ui/kit';
 type Skill = { id: string; name: string; description: string; content: string; revision: number; latest: number; files?: SkillFile[] };
 type Installed = { pack?: string | null; removed: number; skill: string; name: string; version: number; enabled: number; revision: number; latest: number };
@@ -29,11 +30,15 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
   const locked = busy || importBusy || !!pending || invalid, after = cursors.at(-1)!;
   useEffect(() => { heading.current?.focus(); return () => { navigation.current++; }; }, []);
   useEffect(() => { heading.current?.focus(); }, [after]);
-  useEffect(() => {
-    let stopped = false; setPage(null); setInstalled(null); setError(''); setLoadError('');
-    void Promise.all([request<NonNullable<typeof page>>(`/api/skills${after ? `?after=${after}` : ''}`), owner ? request<{ items: Installed[]; next_after: string | null }>(`/api/agents/${owner}/skills${installAfter ? `?after=${installAfter}` : ''}`) : Promise.resolve({ items: [], next_after: null })]).then(([library, rows]) => { if (!stopped) { setPage(library); setInstalled(rows.items); setInstallNext(rows.next_after); } }).catch(error => { if (!stopped) setLoadError(error.message || 'Skills could not load.'); });
-    return () => { stopped = true; };
-  }, [owner, after, installAfter, refresh]);
+  const loadScope = useRef('');
+  usePolling(async signal => {
+    const scope = JSON.stringify([owner, after, installAfter, refresh]);
+    if (loadScope.current !== scope) { loadScope.current = scope; setPage(null); setInstalled(null); }
+    try {
+      const [library, rows] = await Promise.all([request<NonNullable<typeof page>>(`/api/skills${after ? `?after=${after}` : ''}`), owner ? request<{ items: Installed[]; next_after: string | null }>(`/api/agents/${owner}/skills${installAfter ? `?after=${installAfter}` : ''}`) : Promise.resolve({ items: [], next_after: null })]);
+      if (!signal.aborted) { setPage(library); setInstalled(rows.items); setInstallNext(rows.next_after); setLoadError(''); }
+    } catch (error) { if (!signal.aborted) setLoadError(error instanceof Error ? error.message : 'Skills could not load.'); }
+  }, { interval: 15000 }, [owner, after, installAfter, refresh, request]);
   useEffect(() => {
     let stopped = false; setBinding(undefined);
     if (owner && editor?.id) void request<Installed | null>(`/api/agents/${owner}/skills/${editor.id}`).then(row => { if (!stopped) setBinding(row); }).catch(error => { if (!stopped) setError(error.message); });
@@ -80,12 +85,11 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
     {pending && <RecoveryAlert inFlight={busy} tone="warn" title="Not confirmed" actions={<><Button size="sm" variant="primary" busy={busy} onClick={() => void execute(pending)}>Try again</Button><Button size="sm" disabled={busy} onClick={() => void discard()}>Discard request</Button></>} />}
   </>;
   return <div className="k-page bs-root bs-set3-skills">
-    <style nonce={getNonce()}>{`.bs-root.bs-set3-skills > .k-page-head { padding-right: 40px; } .bs-root.bs-set3-skills .k-row__title { white-space: normal; overflow-wrap: anywhere; } .bs-root.bs-set3-skills .k-row__meta { overflow-wrap: anywhere; } .bs-root.bs-set3-skills .k-tabs__panel[hidden] { display: none; }`}</style>
+    <style nonce={getNonce()}>{`.bs-root.bs-set3-skills .k-row__title { white-space: normal; overflow-wrap: anywhere; } .bs-root.bs-set3-skills .k-row__meta { overflow-wrap: anywhere; } .bs-root.bs-set3-skills .k-tabs__panel[hidden] { display: none; }`}</style>
     <PageHeader headingRef={heading} title="Skills"
       actions={<>
-        {tab !== 'packs' && <IconButton label="Reload" disabled={busy} onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} aria-hidden /></IconButton>}
         {tab !== 'packs' && <><span hidden ref={importControl}><SkillFolderImport compact disabled={locked} onBusy={setImportBusy} onError={setError} onImport={files => void importFiles(files)} /></span>
-        <ActionMenu label="Import" trigger={<Button disabled={locked} icon={<ChevronDown size={14} aria-hidden />}>Import</Button>} items={[
+        <ActionMenu label="Import" trigger={<Button disabled={locked}>Import<ChevronDown size={14} aria-hidden /></Button>} items={[
           { label: 'Folder', onSelect: () => importControl.current?.querySelectorAll('button')[0]?.click() },
           { label: 'File', onSelect: () => importControl.current?.querySelectorAll('button')[1]?.click() },
         ]} /></>}
@@ -105,7 +109,7 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
             meta={<><span>Version {row.version}</span>{row.latest > row.version && <Badge tone="warn">Version {row.latest} available</Badge>}{row.pack && <Badge>Pack</Badge>}{!row.enabled && <Badge>Inactive</Badge>}</>}
             trailing={<>
               <Switch checked={!!row.enabled} disabled={locked || !!row.pack} label={`${row.enabled ? 'Disable' : 'Enable'} ${row.name}`} onChange={() => void execute({ path: `/api/agents/${owner}/skills/${row.skill}`, body: { id: crypto.randomUUID(), revision: row.revision, version: row.version, enabled: !row.enabled } })} />
-              <ActionMenu label={`Menu ${row.name}`} trigger={<button type="button" className="k-icon-btn" aria-label={`Menu ${row.name}`} disabled={locked}><Ellipsis size={16} aria-hidden /></button>} items={[
+              <ActionMenu label={`Menu ${row.name}`} trigger={<IconButton label={`Menu ${row.name}`} tooltip="More actions" disabled={locked}><Ellipsis size={16} aria-hidden /></IconButton>} items={[
                 { label: `Review version ${row.version}`, onSelect: () => void open(row.skill, row.version) },
                 'separator',
                 { label: row.pack ? 'Managed by Skill packs' : 'Remove from agent', danger: !row.pack, disabled: !!row.pack, onSelect: async () => { if (await confirm({ title: `Remove ${row.name} from ${ownerName}?`, description: 'Library revisions remain available. Executions already running stay unchanged.', confirm: 'Remove', danger: true })) void execute({ path: `/api/agents/${owner}/skills/${row.skill}`, body: { id: crypto.randomUUID(), revision: row.revision, version: row.version, enabled: false, remove: true } }); } },
@@ -120,7 +124,7 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
       {loadError ? <Alert tone="error" actions={<Button size="sm" disabled={busy} onClick={() => setRefresh(value => value + 1)}>Try again</Button>}>{loadError}</Alert>
         : !page ? <><span className="sr-only" role="status">Loading skills...</span><SkeletonRows count={3} /></>
         : page.skills.length === 0 ? <EmptyState icon={<FileText size={18} />} title="No skills" />
-        : <Card>{page.skills.map(skill => <Row key={skill.id} title={skill.name} meta={`v${skill.revision}`} leading={<FileText size={16} aria-hidden />} disabled={locked} onClick={() => void open(skill.id)} trailing={<ActionMenu label={`Menu ${skill.name}`} trigger={<button type="button" className="k-icon-btn" aria-label={`Menu ${skill.name}`} disabled={locked}><Ellipsis size={16} aria-hidden /></button>} items={[{ label: 'Edit skill', onSelect: () => void open(skill.id) }]} />} />)}</Card>}
+        : <Card>{page.skills.map(skill => <Row key={skill.id} title={skill.name} meta={`v${skill.revision}`} leading={<FileText size={16} aria-hidden />} disabled={locked} onClick={() => void open(skill.id)} trailing={<ActionMenu label={`Menu ${skill.name}`} trigger={<IconButton label={`Menu ${skill.name}`} tooltip="More actions" disabled={locked}><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: 'Edit skill', onSelect: () => void open(skill.id) }]} />} />)}</Card>}
       {pager(cursors.length > 1, !!page?.next_after, () => setCursors(value => value.slice(0, -1)), () => setCursors(value => [...value, page!.next_after!]), 'Skill')}
     </div>
     </TabPanel>
