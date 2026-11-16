@@ -74,6 +74,7 @@ export function themeTokenValues(theme: ColorTheme, mode: ColorMode): ThemeToken
     ...[palette.background, palette.card, palette.sidebarBackground, palette.popover].map(base => mix(base, palette.foreground, 0x14 / 255))];
   const text = readable(palette.foreground, surfaces), secondary = readable(palette.mutedForeground, surfaces);
   const brand = palette.primary, brandText = readable(brand, surfaces), onBrand = readable(palette.primaryForeground, [brand]);
+  const link = readable(mode === 'dark' ? '#8AB4F8' : '#185ABC', surfaces);
   const focus = readable(palette.ring, surfaces, 3);
   const danger = readable(palette.destructive, surfaces), warn = readable(mode === 'dark' ? '#F0B84B' : '#8A5A00', surfaces), success = readable(mode === 'dark' ? '#55D68A' : '#087443', surfaces);
   // Bot HQ uses translucent neutral overlays for hover, selection and fills; opaque accent tints read as heavy blocks.
@@ -81,7 +82,7 @@ export function themeTokenValues(theme: ColorTheme, mode: ColorMode): ThemeToken
     '--color-bg-chrome': palette.background, '--color-bg-sidebar': palette.sidebarBackground, '--color-bg-pane': palette.card, '--color-bg-elevated': palette.popover,
     '--color-bg-active': `${palette.foreground}14`, '--color-bg-tertiary': `${palette.foreground}0A`, '--color-bg-hover': `${palette.foreground}0F`, '--color-bg-secondary-hover': palette.secondary, '--color-bg-secondary-active': palette.accent,
     '--color-bg-elevated-hover': palette.secondary, '--color-bg-active-solid': palette.secondary, '--color-bg-subtle': palette.muted, '--color-bg-primary-disabled': palette.border,
-    '--color-text-primary': text, '--color-text-secondary': secondary, '--color-text-tertiary': secondary, '--color-text-quaternary': secondary, '--color-icon-secondary': secondary,
+    '--color-link': link, '--color-text-primary': text, '--color-text-secondary': secondary, '--color-text-tertiary': secondary, '--color-text-quaternary': secondary, '--color-icon-secondary': secondary,
     '--color-border-secondary': `${palette.foreground}${mode === 'dark' ? '1A' : '1F'}`, '--color-border-tertiary': `${palette.foreground}${mode === 'dark' ? '0F' : '14'}`, '--color-border-primary': readable(palette.border, surfaces, 3), '--color-border-focus': focus,
     '--color-primary': text, '--color-on-primary': readable(palette.background, [text]), '--color-bg-primary-hover': text, '--color-ink': text, '--color-brand': brand, '--color-brand-hover': brand, '--color-brand-text': brandText, '--color-brand-soft': palette.accent, '--color-focus-ring': palette.accent,
     '--color-bubble-agent': palette.muted, '--color-bubble-user': palette.userBubble, '--bot-bubble': brand, '--bot-action': brand, '--bot-action-hover': brand, '--bot-action-soft': palette.accent, '--bot-action-text': brandText, '--bot-on-action': onBrand,

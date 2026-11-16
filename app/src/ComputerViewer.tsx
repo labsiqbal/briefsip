@@ -11,10 +11,12 @@ import type { ComputerRequest, ComputerStatus } from './AgentComputerPanel';
 import './computer-viewer.css';
 
 type ControlCommand = { id: string; revision: number; operation: 'take' | 'hand-back' | 'dismiss'; turn?: string };
-export function useComputerControl(agent: string, request: ComputerRequest) {
+export function useComputerControl(agent: string, request: ComputerRequest, suspended = false) {
   const key = `briefsip-computer-control:${agent}`;
   const [status, setStatus] = useState<ComputerStatus | null>(null), [error, setError] = useState('');
   const [pending, setPending] = useState<ControlCommand | null>(null), [busy, setBusy] = useState(false), [invalid, setInvalid] = useState(false);
+  const statusReads = useRef(0);
+  const updateStatus = useCallback((value: ComputerStatus) => { statusReads.current++; setStatus(value); }, []);
   const mounted = useRef(true), flight = useRef(false), confirmed = useRef(false), confirm = useConfirm();
   useEffect(() => {
     mounted.current = true;
@@ -28,9 +30,11 @@ export function useComputerControl(agent: string, request: ComputerRequest) {
     return () => { mounted.current = false; };
   }, [agent, request, key]);
   const ref = useVisiblePolling(useCallback(async current => {
-    try { const value = await request<ComputerStatus>(`/api/agents/${agent}/computer`); if (current() && !flight.current) { setStatus(value); } }
+    if (suspended) return;
+    const read = statusReads.current;
+    try { const value = await request<ComputerStatus>(`/api/agents/${agent}/computer`); if (current() && !flight.current && read === statusReads.current) { setStatus(value); } }
     catch (error) { if (current()) setError(error instanceof Error ? error.message : 'Computer status unavailable.'); }
-  }, [agent, request]), 1000);
+  }, [agent, request, suspended]), 1000);
   async function control(operation: ControlCommand['operation'], turn?: string) {
     if (!status || flight.current || invalid) return;
     if (!pending && operation === 'take' && !confirmed.current) {
@@ -45,7 +49,7 @@ export function useComputerControl(agent: string, request: ComputerRequest) {
     try {
       const value = await request<ComputerStatus>(`/api/agents/${agent}/computer/control`, command);
       sessionStorage.removeItem(key);
-      if (mounted.current) { setStatus(value); setPending(null); }
+      if (mounted.current) { updateStatus(value); setPending(null); }
     } catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : 'Control change is not confirmed. Retry the saved request.'); }
     finally { flight.current = false; if (mounted.current) setBusy(false); }
   }
@@ -53,7 +57,7 @@ export function useComputerControl(agent: string, request: ComputerRequest) {
     if (!await confirm({ title: 'Load current control?', description: 'Accepted changes still apply. Check current control before taking another action.', confirm: 'Load current control' })) return;
     try {
       const value = await request<ComputerStatus>(`/api/agents/${agent}/computer`);
-      sessionStorage.removeItem(key); setStatus(value); setPending(null); setInvalid(false); setError('');
+      sessionStorage.removeItem(key); updateStatus(value); setPending(null); setInvalid(false); setError('');
     } catch (error) { setError(error instanceof Error ? error.message : 'Computer status unavailable.'); }
   }
   const recovery = <>
@@ -61,7 +65,7 @@ export function useComputerControl(agent: string, request: ComputerRequest) {
     {pending && <RecoveryAlert inFlight={busy} progress={false} tone="warn" title="Control change not confirmed" actions={<><Button size="sm" variant="primary" onClick={() => void control(pending.operation, pending.turn)}>Retry saved request</Button><Button size="sm" onClick={() => void discard()}>Load current control</Button></>}>Couldn't confirm the change. Retry to finish it, or load the latest status.</RecoveryAlert>}
     {invalid && <Alert tone="error" title="Saved control request could not be read" actions={<Button size="sm" onClick={() => void discard()}>Load current control</Button>}>Check the latest computer status before sending another request.</Alert>}
   </>;
-  return { ref, status, setStatus, control, setError, busy, locked: busy || !!pending || invalid, recovery };
+  return { ref, status, setStatus: updateStatus, control, setError, busy, locked: busy || !!pending || invalid, recovery };
 }
 
 export function ComputerRequestCard({ agent, name, wait, request }: { agent: string; name: string; wait: ComputerWait; request: ComputerRequest }) {
@@ -76,15 +80,16 @@ export function ComputerRequestCard({ agent, name, wait, request }: { agent: str
 }
 
 export function ComputerViewer({ agent, name, request, popout = false, onClose }: { agent: string; name: string; request: ComputerRequest; popout?: boolean; onClose?: () => void }) {
-  const controls = useComputerControl(agent, request), { status } = controls;
+  const [stopping, setStopping] = useState(false);
+  const controls = useComputerControl(agent, request, stopping), { status } = controls;
   const settings = useComputerSettings(agent, request, controls.setStatus);
   const confirm = useConfirm();
   const [visible, setVisible] = useState(!document.hidden), [text, setText] = useState(''), [screenError, setScreenError] = useState(false), [starting, setStarting] = useState(false), [sendingText, setSendingText] = useState(false);
-  const [connected, setConnected] = useState(false), [connection, setConnection] = useState(0), [stopping, setStopping] = useState(false);
+  const [connected, setConnected] = useState(false), [connection, setConnection] = useState(0);
   const screen = useRef<HTMLDivElement>(null), canvas = useRef<HTMLDivElement>(null), rfb = useRef<RFB | null>(null), handBack = useRef<HTMLButtonElement>(null), inputFlight = useRef(0);
   const user = status?.control.mode === 'user', running = !!status && ['running','idle'].includes(status.state);
   useEffect(() => {
-    if (!running || !visible || !canvas.current) return;
+    if (!running || !visible || controls.locked || stopping || !canvas.current) return;
     let stopped = false, disconnected = false, client: RFB | undefined;
     let clipboard: EventListener | undefined;
     setConnected(false); setScreenError(false);
@@ -112,7 +117,7 @@ export function ComputerViewer({ agent, name, request, popout = false, onClose }
       if (client && clipboard) client.removeEventListener('clipboard', clipboard);
       rfb.current = null; element.replaceChildren();
     };
-  }, [agent, running, visible, connection, user, controls.locked, status?.control.revision, request]);
+  }, [agent, running, visible, connection, user, controls.locked, stopping, status?.control.revision, request]);
   useEffect(() => {
     const change = () => setVisible(!document.hidden);
     document.addEventListener('visibilitychange', change);
@@ -189,7 +194,7 @@ export function ComputerViewer({ agent, name, request, popout = false, onClose }
             <div className="k-row-actions"><Button size="sm" disabled={!connected || locked} onClick={() => rfb.current?.clipboardPasteFrom(text)}>Set clipboard</Button><MessageCopyButton text={text} label="Copy computer clipboard" /><Button size="sm" variant="primary" type="submit" busy={sendingText} disabled={!text || locked}>Send text</Button></div>
           </form>
         </ActionPopover>}
-        {running && !popout && <IconButton label="Pop out" onClick={() => window.open(`/?computer=${encodeURIComponent(agent)}`, '_blank', 'popup,width=1280,height=960,noopener')}><ExternalLink size={14} aria-hidden /></IconButton>}
+        {running && !popout && <Button size="sm" icon={<ExternalLink size={14} aria-hidden />} onClick={() => window.open(`/?computer=${encodeURIComponent(agent)}`, '_blank', 'popup,width=1280,height=960,noopener')}>Pop out</Button>}
         {running && (user ? <Button ref={handBack} size="sm" variant="primary" busy={controls.busy} disabled={locked} onClick={() => void controls.control('hand-back')}>Hand back to agent</Button> : <Button size="sm" variant="primary" busy={controls.busy} disabled={!status?.enabled || !status.available || locked} onClick={() => void controls.control('take')}>Take control</Button>)}
         {running && <ActionMenu label="More computer actions" trigger={<IconButton label="More computer actions" disabled={stopping} aria-busy={stopping || undefined}>{stopping ? <span className="k-spinner" aria-hidden /> : <Ellipsis size={16} aria-hidden />}</IconButton>} items={[
           { label: 'Reconnect', icon: <RefreshCw size={14} aria-hidden />, disabled: locked, onSelect: () => setConnection(value => value + 1) },

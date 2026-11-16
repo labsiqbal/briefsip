@@ -40,6 +40,7 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
   useReturnFocus(avatarChange, avatarOpen);
   const [visibilityOpen, setVisibilityOpen] = useState(false);
   const [recovery, setRecovery] = useState(() => { try { return { command: liveProfile ? null : restoreAgentCreation(sessionStorage.getItem(creationKey)), invalid: false }; } catch { return { command: null, invalid: true }; } });
+  const [avatarName, setAvatarName] = useState(profile?.name ?? recovery.command?.name ?? '');
   const [instructionCount, setInstructionCount] = useState((profile?.instructions ?? recovery.command?.instructions ?? '').length);
   const [invalid, setInvalid] = useState(recovery.invalid);
   const [setup, setSetup] = useState(recovery.command?.setup ?? false);
@@ -132,11 +133,11 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
   const submitLabel = profile ? 'Save changes' : pending.current ? 'Retry creation' : setup ? 'Create and draft' : 'Create agent';
   const profileFields = <>
     {(!profile || onVisibilityChanged) && <div className="agent-profile__avatar">
-      {profile ? <AgentAvatar agent={liveProfile!} size={40} /> : <span className="agent-profile__initials">{look ? <MascotAvatar look={look} size={40} /> : 'Aa'}</span>}<span className="agent-profile__name">{profile?.name ?? 'Avatar'}</span>
+      {profile ? <AgentAvatar agent={liveProfile!} size={40} /> : <span className="agent-profile__initials">{look ? <MascotAvatar look={look} size={40} /> : <AgentAvatar agent={{ id: '', name: avatarName.trim() || '?' }} size={40} />}</span>}<span className="agent-profile__name">{profile?.name ?? 'Avatar'}</span>
       <Button ref={avatarChange} onClick={() => setAvatarOpen(true)}>Change</Button>
     </div>}
     <Field label={!profile && setup ? 'Temporary name' : 'Name'} optional={!profile && setup} error={fieldErrors.name}>
-      <Input ref={nameInput} name="name" required={!setup} maxLength={80} readOnly={locked} defaultValue={profile?.name ?? recovery.command?.name} placeholder="Iris" />
+      <Input ref={nameInput} name="name" onChange={event => setAvatarName(event.target.value)} required={!setup} maxLength={80} readOnly={locked} defaultValue={profile?.name ?? recovery.command?.name} placeholder="Iris" />
     </Field>
     <Field label="Role" optional><Input name="role" maxLength={60} readOnly={locked} defaultValue={profile?.role ?? recovery.command?.role ?? ''} /></Field>
     <Field label={!profile && setup ? 'Brief' : 'Instructions'} optional={!profile && !setup} error={fieldErrors.instructions}>
@@ -219,7 +220,7 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
     </Dialog>}
     {profile && onVisibilityChanged && <Dialog open={visibilityOpen} title="Availability" onOpenChange={setVisibilityOpen} footer={<Button onClick={() => setVisibilityOpen(false)}>Done</Button>}><AgentVisibility agent={liveProfile!} request={api} onChanged={onVisibilityChanged} /></Dialog>}
     {profile && exportOpen && <Dialog open size="lg" title="Export template" description={profile.name} onOpenChange={setExportOpen} footer={<Button onClick={() => setExportOpen(false)}>Done</Button>}><Suspense fallback={<p role="status">Loading saved profile...</p>}><AgentTemplateExport id={profile.id} request={api} /></Suspense></Dialog>}
-    {!profile && <Dialog open={avatarOpen} size="md" title="Avatar" onOpenChange={setAvatarOpen} footer={<Button onClick={() => setAvatarOpen(false)}>Done</Button>}><Suspense fallback={<p role="status">Loading avatar picker...</p>}><LookPicker value={look} onChange={setLook} disabled={busy || locked || invalid} /></Suspense></Dialog>}
+    {!profile && <Dialog open={avatarOpen} size="md" title="Avatar" onOpenChange={setAvatarOpen} footer={<Button onClick={() => setAvatarOpen(false)}>Done</Button>}><Suspense fallback={<p role="status">Loading avatar picker...</p>}><LookPicker name={avatarName} value={look} onChange={setLook} disabled={busy || locked || invalid} /></Suspense></Dialog>}
     {profile && onVisibilityChanged && avatarOpen && <AvatarEditor agent={profile.id} request={api} onChanged={onVisibilityChanged} onClose={() => setAvatarOpen(false)} />}
   </>;
 }

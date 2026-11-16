@@ -1,5 +1,5 @@
 import { useVisiblePolling } from './hooks/useVisiblePolling';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowLeft, Download, Ellipsis, FileText } from 'lucide-react';
 import { ActionMenu, Alert, Button, CodeBlock, EmptyState, IconButton, Section, Select, SkeletonRows, Tooltip } from './ui/kit';
 import { TranscriptionPanel } from './TranscriptionPanel';
@@ -48,7 +48,7 @@ function InlineFile({ file, request, onClose }: { file: OpenFile; request: Panel
   </Section></div>;
 }
 
-export function PanelFiles({ base, files, workspace, loading, request, attached, attachedCount = attached.length, onAttach, attachDisabled }: { attachedCount?: number; attached: string[]; onAttach?: (file: PanelFile) => void; attachDisabled: boolean; base: string; files: PanelFile[]; workspace?: string; loading: boolean; request: PanelRequest }) {
+export function PanelFiles({ navigation, base, files, workspace, loading, request, attached, attachedCount = attached.length, onAttach, attachDisabled }: { navigation?: ReactNode; attachedCount?: number; attached: string[]; onAttach?: (file: PanelFile) => void; attachDisabled: boolean; base: string; files: PanelFile[]; workspace?: string; loading: boolean; request: PanelRequest }) {
   const opener = useRef<HTMLElement | null>(null);
   function open(file: OpenFile) { opener.current = document.activeElement as HTMLElement; setSelected(file); }
   const [selected, setSelected] = useState<OpenFile | null>(null), [earlier, setEarlier] = useState<PanelFile[]>([]), [error, setError] = useState(''), [busy, setBusy] = useState(false), [more, setMore] = useState(true);
@@ -61,6 +61,7 @@ export function PanelFiles({ base, files, workspace, loading, request, attached,
   return <div className="right-panel__body k-stack">
     {selected && <InlineFile key={selected.path} file={selected} request={request} onClose={() => { setSelected(null); requestAnimationFrame(() => opener.current?.focus()); }} />}
     <div className="k-stack" hidden={!!selected}>
+      {navigation}
       {(loading || !!rows.length || !workspace) && <Section title="Conversation files">
         {loading ? <SkeletonRows /> : rows.length ? <div className="attachments__list">{rows.map(file => <div className="right-panel__file-row" key={file.id}>
           <button type="button" className="right-panel__file" aria-label={`Preview ${file.name}`} onClick={() => open({ name: file.name, image: file.image, path: `${base}/files/${file.id}` })}><FileText size={16} aria-hidden /><span className="right-panel__file-name">{file.name}</span><span className="right-panel__file-size">{attachmentSize(file.size)}</span></button>
@@ -78,13 +79,14 @@ export function PanelFiles({ base, files, workspace, loading, request, attached,
   </div>;
 }
 
-export function PanelPreview({ base, files, sites, request }: { base: string; files: PanelFile[]; sites: PanelSite[]; request: PanelRequest }) {
+export function PanelPreview({ base, files, sites, request, onBack }: { onBack: () => void; base: string; files: PanelFile[]; sites: PanelSite[]; request: PanelRequest }) {
   const items = [...files.filter(file => /\.html?$/i.test(file.name)).map(file => ({ value: file.id, label: file.name, path: `${base}/files/${file.id}` })), ...sites.map(site => ({ value: site.id, label: site.name, path: `${base}/sites/${site.id}` }))];
   const [selected, setSelected] = useState(items[0]?.value ?? ''), [error, setError] = useState('');
   const item = items.find(item => item.value === selected) ?? items[0];
   return <div className="right-panel__body k-stack">
+    <div className="right-panel__preview-head"><IconButton label="Back to files" onClick={onBack}><ArrowLeft size={15} aria-hidden /></IconButton><span className="right-panel__path">{item?.label ?? 'Preview'}</span>{item && <Tooltip content="Download original"><a className="k-icon-btn" aria-label="Download original" href={item.path} download={item.label}><Download size={15} aria-hidden /></a></Tooltip>}</div>
     {items.length > 1 && <Select label="Preview artifact" value={item?.value ?? ''} options={items} onChange={value => { setSelected(value); setError(''); }} />}
-    {item ? <><div className="right-panel__preview-head"><span className="right-panel__path">{item.label}</span><Tooltip content="Download original. Preview removes scripts, forms, links and external resources."><a className="k-icon-btn" aria-label="Download original" href={item.path} download={item.label}><Download size={15} aria-hidden /></a></Tooltip></div>
+    {item ? <>
       {error && <Alert tone="error">{error}</Alert>}
       {sites.some(site => site.id === item.value) ? <><iframe key={`${item.path}:${sites.find(site => site.id === item.value)?.revision ?? 0}`} title={`Visual preview ${item.label}`} sandbox="" referrerPolicy="no-referrer" src={item.path} onError={() => setError('Site could not load.')} className="right-panel__preview" /></> : <HtmlPreview key={`${item.path}:${sites.find(site => site.id === item.value)?.revision ?? 0}`} path={item.path} name={item.label} request={request} embedded />}
     </> : <EmptyState title="No HTML artifacts yet" />}

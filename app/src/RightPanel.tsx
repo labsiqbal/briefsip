@@ -1,7 +1,7 @@
 // Panel tabs and surface composition adapted from T3 (MIT); see ../t3/provenance.json.
 import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, ArrowLeft, FileDiff, Files, Globe, MessageSquare, Monitor, Users, X } from 'lucide-react';
+import { ArrowLeft, FileDiff, Files, Globe, MessageSquare, Monitor, Users, X } from 'lucide-react';
 import { Dialog as Sheet } from 'radix-ui';
 import { useVisiblePolling } from './hooks/useVisiblePolling';
 import type { ComputerStatus } from './AgentComputerPanel';
@@ -12,7 +12,6 @@ import { PanelFiles, PanelPreview, type PanelFile, type PanelSite } from './Righ
 import { PanelDiff, type GitStatus } from './RightPanelDiff';
 import { ComputerViewer } from './ComputerViewer';
 import { usePanelOverlay } from './hooks/usePanelOverlay';
-import { PanelActivity } from './RightPanelActivity';
 import { AgentAvatar } from './AgentAvatar';
 import './right-panel.css';
 
@@ -65,7 +64,6 @@ export function RightPanel({ path, name, state, request, onClose, details, activ
   const chatsLabel = members ? 'Members' : 'Chats';
   const tabs = [
     { value: 'chats', title: chatsLabel, label: <>{members ? <Users size={14} aria-hidden /> : <MessageSquare size={14} aria-hidden />}<span className="right-panel__tab-label">{chatsLabel}</span></> },
-    { value: 'activity', title: 'Activity', label: <><Activity size={14} aria-hidden /><span className="right-panel__tab-label">Activity</span></> },
     { value: 'files', title: 'Files', label: <><Files size={14} aria-hidden /><span className="right-panel__tab-label">Files</span></> },
     ...(context?.computer && computerAvailable ? [{ value: 'computer', title: 'Computer', label: <><Monitor size={14} aria-hidden /><span className="right-panel__tab-label">Computer</span></> }] : []),
     ...extensions,
@@ -76,16 +74,14 @@ export function RightPanel({ path, name, state, request, onClose, details, activ
     <div className="right-panel__header"><div>{settings}<IconButton label="Close details" onClick={onClose}><X size={16} aria-hidden /></IconButton></div></div>
     <Tabs label="Conversation panel" value={selected} onChange={state.select} tabs={tabs}>
       {error && <div className="right-panel__error"><Alert tone="error" actions={<Button size="sm" onClick={() => setRefresh(value => value + 1)}>Retry</Button>}>{error}</Alert></div>}
-      <TabPanel value="chats">{members ? <div className="right-panel__body"><ul className="right-panel__members" aria-label="Section members">{members.map(member => <li key={member.id}><AgentAvatar agent={member} size={32} /><div><strong>{member.name}</strong><span>{[member.lead ? 'Lead' : 'Member', member.role].filter(Boolean).join(' · ')}</span></div></li>)}</ul></div> : details}</TabPanel>
-      <TabPanel value="activity"><PanelActivity members={members} />{activity}</TabPanel>
+      <TabPanel value="chats">{members ? <div className="right-panel__body"><ul className="right-panel__members" aria-label="Section members">{members.map(member => <li key={member.id}><AgentAvatar agent={member} size={32} /><div><strong>{member.name}</strong><span>{[member.lead ? 'Lead' : 'Member', member.role].filter(Boolean).join(' · ')}</span></div></li>)}</ul></div> : details}{activity}</TabPanel>
       <TabPanel value="files">
-        {state.tab === 'diff' && git?.isRepo ? <><div className="right-panel__back"><IconButton label="Back to files" onClick={() => state.select('files')}><ArrowLeft size={15} aria-hidden /></IconButton><span>Source control</span></div><PanelDiff base={base} status={git} request={request} refresh={refresh} /></> : state.tab === 'preview' ? <><div className="right-panel__back"><IconButton label="Back to files" onClick={() => state.select('files')}><ArrowLeft size={15} aria-hidden /></IconButton><span>Preview</span></div><PanelPreview base={base} files={context?.previews ?? []} sites={context?.sites ?? []} request={request} /></> : <>
-          {(git?.isRepo || !!context?.previews.length || !!context?.sites.length) && <div className="right-panel__body k-stack">
+        {state.tab === 'diff' && git?.isRepo ? <><div className="right-panel__back"><IconButton label="Back to files" onClick={() => state.select('files')}><ArrowLeft size={15} aria-hidden /></IconButton><span>Source control</span></div><PanelDiff base={base} status={git} request={request} refresh={refresh} /></> : state.tab === 'preview' ? <PanelPreview onBack={() => state.select('files')} base={base} files={context?.previews ?? []} sites={context?.sites ?? []} request={request} /> : <PanelFiles navigation={<>
+          {(git?.isRepo || !!context?.previews.length || !!context?.sites.length) && <div className="k-stack">
             {git?.isRepo && <Button className="right-panel__nav-row" variant="ghost" icon={<FileDiff size={14} aria-hidden />} onClick={() => state.select('diff')}>Source control <Badge>{git.changedFiles?.length ?? 0} changed</Badge></Button>}
             {(!!context?.previews.length || !!context?.sites.length) && <Button className="right-panel__nav-row" variant="ghost" icon={<Globe size={14} aria-hidden />} onClick={() => state.select('preview')}>Preview artifacts</Button>}
           </div>}
-          <PanelFiles attachedCount={attachedCount} attached={attached} onAttach={onAttach} attachDisabled={attachDisabled} key={base} base={base} files={files} workspace={context?.workspace?.name} loading={loading} request={request} />
-        </>}
+        </>} attachedCount={attachedCount} attached={attached} onAttach={onAttach} attachDisabled={attachDisabled} key={base} base={base} files={files} workspace={context?.workspace?.name} loading={loading} request={request} />}
       </TabPanel>
       <TabPanel value="computer">{context?.computer && <div className="right-panel__computer"><ComputerViewer agent={context.computer} name={name} request={request} /></div>}</TabPanel>
       {extensions.map(extension => <TabPanel key={extension.value} value={extension.value}>{extension.content}</TabPanel>)}

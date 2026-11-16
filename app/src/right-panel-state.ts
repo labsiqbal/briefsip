@@ -6,7 +6,7 @@ export function parseRightPanelState(tab: string | null, width: string | null): 
   let selected = 'chats';
   try { const value: unknown = JSON.parse(tab ?? 'null'); if (typeof value === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(value)) selected = value; } catch { /* Invalid preferences use defaults. */ }
   const pixels = width?.trim() ? Number(width) : NaN;
-  return { tab: selected === 'browser' ? 'computer' : selected === 'details' ? 'chats' : selected, width: Number.isFinite(pixels) ? Math.max(280, Math.round(pixels)) : 360 };
+  return { tab: selected === 'browser' ? 'computer' : ['details', 'activity'].includes(selected) ? 'chats' : selected, width: Number.isFinite(pixels) ? Math.max(280, Math.round(pixels)) : 360 };
 }
 export function createRightPanelStore(storage: Storage) {
   return {

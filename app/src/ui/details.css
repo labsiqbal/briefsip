@@ -77,7 +77,7 @@
 .details-activity:not(:has(.activity-section)) > .activity-empty { display: flex; }
 .upcoming-row { position: relative; }
 .upcoming-row > .k-collapsible > .k-collapsible__trigger { padding-right: 70px; }
-.upcoming-row .k-collapsible__title { gap: 6px; }
+.upcoming-row .k-collapsible__title { gap: 6px; white-space: nowrap; }
 .upcoming-row .panel-row__meta { min-width: 0; }
 .upcoming-manage { position: absolute; top: 0; right: 0; }
 .section-label { padding: 0 12px; font-size: 13px; line-height: 18px; letter-spacing: 0; color: var(--color-text-secondary); }

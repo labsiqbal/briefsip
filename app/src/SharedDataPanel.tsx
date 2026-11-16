@@ -1,5 +1,6 @@
+import { usePolling } from './hooks/usePolling';
 import { useEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Database, Ellipsis, RefreshCw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Database, Ellipsis } from 'lucide-react';
 import { ActionMenu, Alert, Button, Card, CodeBlock, Collapsible, EmptyState, Field, IconButton, PageHeader, Row, Section, SkeletonRows, Tooltip, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
 import './machines-data.css';
 type Table = { name: string; owner: string; columns: { name: string; type: string }[] };
@@ -14,11 +15,11 @@ export function SharedDataPanel({ request, agents }: { agents: { id: string; nam
   const confirm = useConfirm();
   const heading = useRef<HTMLHeadingElement>(null), version = useRef(0);
   useEffect(() => { heading.current?.focus(); return () => { version.current++; }; }, []);
-  useEffect(() => {
-    const active = ++version.current; setListing(null); setError('');
-    void request<Listing>(`/api/data?after=${encodeURIComponent(after)}`).then(value => { if (active === version.current) setListing(value); }).catch(error => { if (active === version.current) setError(error.message); });
-    return () => { version.current++; };
-  }, [after, reload]);
+  usePolling(async signal => {
+    const active = ++version.current;
+    try { const value = await request<Listing>(`/api/data?after=${encodeURIComponent(after)}`); if (!signal.aborted && active === version.current) { setListing(value); setError(''); } }
+    catch (error) { if (!signal.aborted && active === version.current) setError(error instanceof Error ? error.message : 'Tables could not load.'); }
+  }, { interval: 5000, enabled: !busy }, [after, reload, request]);
   async function execute(table?: string) {
     if (busy || !listing) return;
     let command = pending;
@@ -38,7 +39,7 @@ export function SharedDataPanel({ request, agents }: { agents: { id: string; nam
     finally { if (active === version.current) setBusy(false); }
   }
   return <div className="k-page bs-root set4-page">
-    <PageHeader headingRef={heading} title="Shared data" actions={<IconButton label="Reload" disabled={busy} onClick={() => setReload(n => n + 1)}><RefreshCw size={15} aria-hidden /></IconButton>} />
+    <PageHeader headingRef={heading} title="Shared data" />
     {error && <Alert tone="error">{error}</Alert>}
     {pending && <RecoveryAlert inFlight={busy} tone="warn" title={`Not confirmed: delete ${pending.table}`} actions={<>
       <Button size="sm" disabled={busy || !listing} onClick={() => void execute()}>Try again</Button>

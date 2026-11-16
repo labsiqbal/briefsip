@@ -1,6 +1,6 @@
 .bs-root .agent-profile [hidden] { display: none !important; }
 .bs-root .agent-profile__avatar { display: flex; align-items: center; gap: 12px; }
-.bs-root .agent-profile__avatar .avatar { flex-shrink: 0; overflow: hidden; border-radius: 12px; background: var(--color-bg-tertiary); color: var(--color-text-primary); display: inline-flex; align-items: center; justify-content: center; }
+.bs-root .agent-profile__avatar .avatar { flex-shrink: 0; overflow: hidden; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; }
 .bs-root .agent-profile__avatar .avatar img { width: 100%; height: 100%; object-fit: cover; }
 .bs-root .agent-profile__name { flex: 1; min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
 .bs-root .agent-profile__runtime { display: block; }
