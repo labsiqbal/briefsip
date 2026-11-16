@@ -27,6 +27,8 @@ import { restoreChatCommand, restoreChannelCommand, type ChatCommand, type Chann
 import { AgentForm } from './AgentProfileDialog';
 import { AgentAvatar } from './AgentAvatar';
 import { QueuePanel } from './QueuePanel';
+import { useNewConversationShortcut } from './hooks/useNewConversationShortcut';
+import { useRoutePresentation } from './hooks/useRoutePresentation';
 import { QueueEditor } from './QueueEditor';
 import { CancelTurn, QueuedRunsControl } from './ui/RunControls';
 import { Markdown, StreamingMarkdown } from './Markdown';
@@ -39,7 +41,7 @@ import { Attachments } from './Attachments';
 import { ProvidersPanel } from './ProvidersPanel';
 import { TurnActivity } from './ui/TurnActivity';
 import { AgentMessage, ChatComposer, ChatEmptyState, ChatHeader, ChatTranscript, ChatTurn, HumanMessage, TurnStatus } from './ui/ChatPrimitives';
-import { liveTurn, livePartial, streamIdentity, turnPollDelay, type TurnActivityData } from './ui/transcript';
+import { liveTurn, livePartial, turnPollDelay, type TurnActivityData } from './ui/transcript';
 import { TimelineMinimap } from './ui/TimelineMinimap';
 import { deriveTimelineMinimapItems } from './ui/timelineMinimapItems';
 import { EventConnection } from './EventConnection';
@@ -51,7 +53,7 @@ import { QuestionCard, type Question } from './QuestionCard';
 import { ApprovalCard, type AppApproval } from './ApprovalCard';
 import { CompactionPanel } from './CompactionPanel';
 import { lazy, Suspense, useEffect, useRef, useState, useId, type FormEvent, type ReactNode } from 'react';
-import { Link as LinkIcon, Archive, BarChart3, BookOpen, Database, Download, KeyRound, Palette, Plug, SlidersHorizontal, Bell, BellOff, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, GitFork, ListRestart, Square, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
+import { Link as LinkIcon, Archive, BarChart3, BookOpen, Database, Download, KeyRound, Palette, Plug, SlidersHorizontal, Bell, BellOff, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, GitFork, ListRestart, Square, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Cable, Trash2, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
 import { PanelResizeHandle, sidebarPanel, useResizablePanel } from './ui/resizable';
@@ -338,6 +340,8 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
     catch (error) { setError(message(error)); }
   }
   const [menuOpen, setMenuOpen] = useState(false), [summaryOpen, setSummaryOpen] = useState(false);
+  const [queueOrderOpen, setQueueOrderOpen] = useState(false);
+  const [conversationSettingsOpen, setConversationSettingsOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useDetailsOpen();
   const rightPanel = useRightPanel(scope);
   useEffect(() => {
@@ -366,11 +370,12 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
   const title = thread?.name ?? agent.name;
   const editLabel = channel ? 'Section settings' : thread ? 'Conversation settings' : 'Edit profile';
   const items: MenuItem[] = [
-    ...menuItems.filter(item => item.label !== 'Export template'),
-    ...(onEdit ? [{ label: editLabel, icon: <Pencil size={15} aria-hidden />, onSelect: onEdit }] : []),
-    ...(channel || thread ? [{ label: `${channel ? 'Section' : 'Agent'} memory`, onSelect: () => setShowMemory(true) }, { label: 'History summary', onSelect: () => setSummaryOpen(true) }] : []),
+    ...menuItems.filter(item => !['Export template', 'Delete'].includes(item.label)),
+    ...(thread ? [{ label: 'Conversation settings', icon: <SlidersHorizontal size={15} aria-hidden />, onSelect: () => setConversationSettingsOpen(true) }] : onEdit ? [{ label: editLabel, icon: <Pencil size={15} aria-hidden />, onSelect: onEdit }] : []),
+    ...(channel ? [{ label: `${channel ? 'Section' : 'Agent'} memory`, icon: <BookOpen size={15} aria-hidden />, onSelect: () => setShowMemory(true) }, { label: 'History summary', icon: <ListRestart size={15} aria-hidden />, onSelect: () => setSummaryOpen(true) }] : []),
     { label: detailsOpen ? 'Hide panel' : 'Show panel', icon: <PanelRight size={15} aria-hidden />, onSelect: () => setDetailsOpen(!detailsOpen) },
     ...menuItems.filter(item => item.label === 'Export template').map(item => ({ ...item, separator: true })),
+    ...menuItems.filter(item => item.label === 'Delete'),
   ];
   const statusLabel = (turn: Turn) => turn.computerWait ? 'Waiting for you' : (turn.approvals?.some(approval => approval.state === 'approval') || turn.harnessApprovals?.some(approval => approval.state === 'approval')) && !['done','cancelled'].includes(turn.status) ? 'Waiting for approval' : turn.editing ? 'Editing' : turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) ? 'Waiting for your answer' : turn.no_update ? 'No updates' : turn.paused && !['done','cancelled'].includes(turn.status) ? 'Paused' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) && turn.status === 'queued' ? 'Waiting for agent reply' : turn.waiting_for && turn.status === 'queued' ? 'Waiting for delegation' : turn.routing === 'pending' && turn.status === 'running' ? 'Selecting recipient' : turn.routing === 'clarify' ? 'Needs clarification' : turn.routing === 'none' ? 'No task needed' : turn.status === 'running' ? 'Running' : statusNames[turn.status] ?? turn.status;
   const tone = (turn: Turn) => turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) || turn.paused && !['done','cancelled'].includes(turn.status) ? 'attention' : ['failed','interrupted'].includes(turn.status) ? 'error' : ['queued','running'].includes(turn.status) ? 'working' : 'done';
@@ -384,6 +389,8 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
   };
   const waiting = turns?.flatMap(turn => turn.events?.filter(event => event.status === 'waiting').map(event => ({ turn, event })) ?? []) ?? [];
   return <div className="chat-row bs-root">
+    {queueOrderOpen && <Dialog open title="Queue order" onOpenChange={setQueueOrderOpen}><QueuePanel path={path} request={api} onOpen={id => { setQueueOrderOpen(false); openFocused(id); }} /></Dialog>}
+    {conversationSettingsOpen && <Dialog open title="Conversation settings" onOpenChange={setConversationSettingsOpen}><div className="k-stack"><Button icon={<BookOpen size={16} aria-hidden />} onClick={() => { setConversationSettingsOpen(false); setShowMemory(true); }}>Agent memory</Button><Button icon={<ListRestart size={16} aria-hidden />} onClick={() => { setConversationSettingsOpen(false); setSummaryOpen(true); }}>History summary</Button></div></Dialog>}
     {summaryOpen && <Dialog open title="Conversation context" onOpenChange={setSummaryOpen}><CompactionPanel path={path.replace(/\/turns$/, '/compaction')} request={api} /></Dialog>}
     <main className={`chat${finding ? ' is-finding' : ''}`} aria-label={`Conversation ${title}`}>
       {finding && <MessageFind query={query} onQuery={setQuery} viewport={transcript} content={turns} onClose={() => { setFinding(false); setQuery(''); composer.current?.focus(); }} />}
@@ -414,7 +421,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
                     <div className="message-body">
                       {channel && turn.parent && <div className="room-request"><strong>{turn.messageOrigin?.name ?? turn.agent_name ?? agent.name}</strong><p>{turn.text}</p></div>}
                       {turn.dispatch_mode === 'steer' && turn.dispatch_label && ['queued', 'running'].includes(turn.status) && <p className="dispatch-receipt">{turn.dispatch_label}{turn.dispatch_target && <> · <button type="button" className="link-btn link-btn--small" onClick={() => openFocused(turn.dispatch_target!)}>View target turn</button></>}</p>}
-                      {turn.status === 'cancelled' && !turn.reply && !turn.partial?.text ? null : turn.status === 'done' && !turn.reply && turn.dispatch_label ? null : (turn.reply || livePartial(turn) || turn.status === 'cancelled' && turn.partial?.text) ? <div className={livePartial(turn) ? "live-answer" : "reply-answer"} aria-label={livePartial(turn) ? "Streaming answer" : "Agent reply"}><div className="legacy"><StreamingMarkdown key={streamIdentity(turn)} text={turn.reply ?? turn.partial!.text} scope={path.slice(0, -6)} origin={window.location.origin} /></div>{livePartial(turn) && <span className="stream-caret" aria-hidden />}</div>
+                      {turn.status === 'cancelled' && !turn.reply && !turn.partial?.text ? null : turn.status === 'done' && !turn.reply && turn.dispatch_label ? null : (turn.reply || livePartial(turn) || turn.status === 'cancelled' && turn.partial?.text) ? <div className={livePartial(turn) ? "live-answer" : "reply-answer"} aria-label={livePartial(turn) ? "Streaming answer" : "Agent reply"}><div className="legacy"><StreamingMarkdown key={turn.id} text={turn.reply ?? turn.partial!.text} scope={path.slice(0, -6)} origin={window.location.origin} /></div>{livePartial(turn) && <span className="stream-caret" aria-hidden />}</div>
                         : <p className={turn.error ? 'message-error' : 'message-muted'}>{turn.error && <CircleAlert size={14} aria-hidden />}{turn.error ?? <span>{(turn.approvals?.some(approval => approval.state === 'approval') || turn.harnessApprovals?.some(approval => approval.state === 'approval')) ? 'Review the connected app action to continue.' : turn.questions?.some(question => question.answer === null) ? 'Answer the question to continue the task.' : turn.workflow_run ? 'Workflow finished without a text result.' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) ? 'Results will be combined after all recipients finish. New messages include results already available.' : turn.events?.some(event => event.status === 'waiting') ? 'Waiting for a signed event.' : turn.waiting_for ? 'Waiting for child task results.' : turn.status === 'queued' ? 'Waiting for turn.' : null}</span>}</p>}
                       {!turn.reply && turn.partial?.text && !livePartial(turn) && turn.status !== 'cancelled' && <div className="message-partial"><span className="message-muted">Partial reply</span><div className="legacy"><Markdown text={turn.partial.text} scope={path.slice(0, -6)} origin={window.location.origin} /></div></div>}
                     </div>
@@ -445,7 +452,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
         {!configured && <p className="composer__note">{!channel && 'provider_account' in agent && !!agent.provider_account && agent.provider_available === false ? 'Provider account unavailable. Choose a provider in the agent profile.' : 'Provider not configured. Check Settings > Providers.'}</p>}
         {error && <div className="composer__error" role="alert"><span>{error} {pending && 'Use Retry send to check the same request without creating a duplicate message.'}</span></div>}
         {blocked && <div className="composer__error" role="alert"><span>Message recovery data could not be read. Sending is blocked. Check history to confirm the previous message was not sent.</span><Button size="sm" variant="ghost" onClick={async () => { if (!await confirm({ title: 'Discard recovery data?', description: 'The previous message may already have been received. Check history before sending another message.', confirm: 'Discard message recovery', danger: true })) return; try { sessionStorage.removeItem(storageKey); setBlocked(false); setError(''); nextFrame(() => composer.current?.focus()); } catch { setError('Recovery data could not be deleted. Check site storage.'); } }}>Discard message recovery</Button></div>}
-        <QueuedRunsControl turns={queueTurns.filter(queued)} path={path} target={dispatchTarget} request={api} archived={archived} onChanged={refreshTurns} />
+        <QueuedRunsControl turns={queueTurns.filter(queued)} path={path} target={dispatchTarget} request={api} archived={archived} onChanged={refreshTurns} onOrder={() => setQueueOrderOpen(true)} />
         <ChatComposer attachments={attachments.composer} hasAttachments={!!attached.length} onPasteFiles={files => { if (pastedFiles.length) { setError('Wait for pasted files to finish uploading.'); return; } setPastedFiles(files); }} mentions={channel ? members : []} onMention={value => { setDraft(value); try { sessionStorage.setItem(draftKey, value); } catch { setError('Draft was not saved. Copy your message before leaving.'); } }} label={channel ? `Message #${channel.section_name ?? channel.name}` : `Message ${agent.name}`} inputRef={composer} multiline={draft.includes('\n')} onSubmit={send} onSendKey={event => { void send(event, (event.ctrlKey || event.metaKey) && canSteer ? 'steer' : 'queue'); }} onAttach={attachments.choose} attachmentDisabledReason={archived || blocked || !!pending || busy || attachments.uploading ? 'Attachments unavailable' : undefined} actions={attachments.recordingAction}
           recipient={channel && activeTurns.length > 0 ? <Select size="sm" label="Addressed member" value={dispatchTarget?.id ?? ''} disabled={busy || !!pending || blocked} onChange={setAddressedTurn} options={[{ value: '', label: 'Everyone' }, ...activeTurns.map(turn => ({ value: turn.id, label: members.find(member => member.id === turn.agent)?.name ?? turn.agent }))]} /> : undefined}
           stopAction={runningRoom && !archived ? <RoomStop key={runningRoom.root} room={runningRoom} path={path} archived={archived} onStopped={() => { refreshTurns(); composer.current?.focus(); }} /> : runningTurn && !archived ? <CancelTurn key={runningTurn.id} primary turn={runningTurn.id} path={path} request={api} onCancelled={() => { refreshTurns(); composer.current?.focus(); }} /> : undefined}
@@ -480,7 +487,6 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
             </div>
       </div>
     } activity={<div className="details__sections details-activity">
-              <QueuePanel path={path} request={api} onOpen={id => { setQuery(''); setHistoryPages([]); focusedOnce.current = ''; setFocusedTask(id); }} />
               {!!waiting.length && <section className="activity-section"><Collapsible variant="section" title={<>Waiting <Badge>{waiting.length}</Badge></>}><div className="k-stack">{waiting.map(({turn, event}) => <div key={event.id} className="k-stack"><button type="button" className="panel-row panel-row--link" onClick={() => openFocused(turn.id)}><span className="panel-row__text"><span className="panel-row__title">{event.event}</span><time className="panel-row__meta" dateTime={new Date(event.deadline).toISOString()}>{new Date(event.deadline).toLocaleString('en-US')}</time></span></button>{!archived && <EventConnection compact path={`/api/turn-waits/${event.id}`} request={api} />}</div>)}</div></Collapsible></section>}
               {channel?.project && <SectionRoutines channel={channel.id} onOpen={onOpenAgent} />}
               {detailsExtra?.onManageRoutines && <UpcomingRoutines agent={agent.id} onManage={detailsExtra.onManageRoutines} />}
@@ -906,7 +912,7 @@ function AgentConversations({ agent, onRestored, configured, onEdit, onExport, w
   const commandKey = `briefsip:thread-command:${agent.id}`;
   const [recovery] = useState(() => { try { return { command: restoreThreadCommand(sessionStorage.getItem(commandKey), agent.id), invalid: false }; } catch { return { command: null, invalid: true }; } });
   const [pending, setPending] = useState<ThreadCommand | null>(recovery.command), [invalid, setInvalid] = useState(recovery.invalid);
-  const flight = useRef(false), actionFlight = useRef(false);
+  const flight = useRef(false), actionFlight = useRef(false), renameTarget = useRef('');
   const [showWorkspace, setShowWorkspace] = useState(false);
   const workspaceButton = useRef<HTMLButtonElement>(null);
   const nextFrame = useNextFrame();
@@ -921,14 +927,15 @@ function AgentConversations({ agent, onRestored, configured, onEdit, onExport, w
       if (signal?.aborted || version !== loadVersion.current) return;
       const missing = !!preferred && !rows.some(row => row.id === preferred);
       setThreads(rows); setLoaded(true);
-      if (!quiet || missing) setError(missing ? 'Conversation is no longer available. Main chat opened.' : '');
-      if (missing || afterSave) select(missing ? '' : preferred, missing);
+      if (!quiet) setError('');
+      if (afterSave) select(missing ? '' : preferred, missing);
     }
     catch (error) { if (!afterSave && !quiet && version === loadVersion.current) setError(message(error)); throw new Error(message(error)); }
   }
   usePolling(signal => load(selected, false, loaded, signal).catch(() => {}), { interval: 5000, enabled: !loaded || !busy && !pending && !invalid }, [selected]);
   const leave = () => { navigation.current++; loadVersion.current++; };
   const openForm = () => { if (!busy && !pending && !invalid) void execute({ path: `/api/agents/${agent.id}/threads`, data: { id: crypto.randomUUID(), name: 'New conversation' } }); };
+  useNewConversationShortcut(openForm);
   const openRoutines = () => { leave(); onManageRoutines(agent.id); };
   const openWorkflows = () => { leave(); setShowWorkspace(false); setShowWorkflows(true); };
   const openWorkspace = () => { leave(); setShowWorkflows(false); setForm(null); setShowWorkspace(true); };
@@ -937,6 +944,7 @@ function AgentConversations({ agent, onRestored, configured, onEdit, onExport, w
   if (showWorkflows) return <PageView wide>{errorBanner}<Suspense fallback={<p className="empty" role="status">Loading workflows...</p>}><WorkflowPanel owner={agent} agents={workflowAgents} request={api} onNavigate={leave} onBack={() => { leave(); setShowWorkflows(false); }} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={workflowAgents.find(item => item.id === owner)} threadId={id} configured={configured} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />} /></Suspense></PageView>;
 
   if (!loaded) return <PageView>{errorBanner}<p className="empty" role="status">Loading conversation...</p></PageView>;
+  if (selected && !thread) return <PageView><EmptyState title="Page not found" action={<Button onClick={() => select('')}>Back to chats</Button>}>This conversation no longer exists.</EmptyState></PageView>;
   const locked = busy || !!pending || invalid;
   async function execute(command: ThreadCommand) {
     if (flight.current || invalid) return;
@@ -975,21 +983,21 @@ function AgentConversations({ agent, onRestored, configured, onEdit, onExport, w
     finally { actionFlight.current = false; setBusy(false); }
   }
   const actions = (item: Thread): MenuItem[] => [
-    { label: 'Rename', disabled: locked, onSelect: () => setForm(item) },
-    { label: item.archived ? 'Restore' : 'Archive', disabled: locked, onSelect: () => void change(item, item.archived ? 'restore' : 'archive') },
-    { label: 'Delete', danger: true, disabled: locked, onSelect: () => void change(item, 'delete') },
+    { label: 'Rename', icon: <Pencil size={15} aria-hidden />, disabled: locked, onSelect: () => { renameTarget.current = item.id; setForm(item); } },
+    { label: item.archived ? 'Restore' : 'Archive', icon: <Archive size={15} aria-hidden />, disabled: locked, onSelect: () => void change(item, item.archived ? 'restore' : 'archive') },
+    { label: 'Delete', icon: <Trash2 size={15} aria-hidden />, separator: true, danger: true, disabled: locked, onSelect: () => void change(item, 'delete') },
   ];
-  const nameEditor = form && <InlineConversationName key={`${form.id}:${form.revision}`} thread={form} busy={locked} onCancel={() => { setForm(null); nextFrame(() => document.querySelector<HTMLButtonElement>(`[data-conversation-id="${form.id}"] > .panel-row`)?.focus()); }} onSave={name => void execute({ path: `/api/threads/${form.id}/edit`, data: { id: crypto.randomUUID(), name, revision: form.revision, archived: !!form.archived } })} />;
+  const nameEditor = form && <InlineConversationName key={`${form.id}:${form.revision}`} thread={form} busy={locked} onCancel={() => { renameTarget.current = ''; setForm(null); nextFrame(() => document.querySelector<HTMLButtonElement>(`[data-conversation-id="${form.id}"] > .panel-row`)?.focus()); }} onSave={name => void execute({ path: `/api/threads/${form.id}/edit`, data: { id: crypto.randomUUID(), name, revision: form.revision, archived: !!form.archived } })} />;
   const row = (item: Thread) => <div data-conversation-id={item.id} key={item.id} className={`conversation-row${selected === item.id ? ' is-current' : ''}`}>
     {form?.id === item.id && selected !== item.id ? nameEditor : <button type="button" className="panel-row panel-row--link" aria-current={selected === item.id || undefined} title={item.name} onClick={() => select(item.id)}><MessageSquare size={16} aria-hidden /><span className="panel-row__text"><span className="panel-row__title">{item.name}</span>{!!item.archived && <span className="panel-row__meta">Archived</span>}</span></button>}
-    <ActionMenu label={`Menu conversation ${item.name}`} trigger={<IconButton label={`Menu conversation ${item.name}`} tooltip="More actions" disabled={locked}><Ellipsis size={15} aria-hidden /></IconButton>} items={actions(item)} />
+    <ActionMenu onCloseAutoFocus={event => { if (renameTarget.current === item.id && document.querySelector('.conversation-rename input')) { event.preventDefault(); renameTarget.current = ''; nextFrame(() => { const input = document.querySelector<HTMLInputElement>('.conversation-rename input'); input?.focus(); input?.select(); }); } }} label={`Menu conversation ${item.name}`} trigger={<IconButton label={`Menu conversation ${item.name}`} tooltip="More actions" disabled={locked}><Ellipsis size={15} aria-hidden /></IconButton>} items={actions(item)} />
   </div>;
   const visible = threads.filter(item => showArchived || !item.archived), deliveries = visible.filter(item => item.delivery);
   const conversations = <>
     {error && <Alert tone="error" actions={<Button size="sm" disabled={busy} onClick={() => void load().catch(() => {})}>Reload conversations</Button>}>{error}</Alert>}
     {(pending || invalid) && <RecoveryAlert inFlight={busy} tone="warn" title={invalid ? 'Conversation recovery is unavailable' : 'Conversation change is not confirmed'} actions={<>{pending && <Button size="sm" busy={busy} onClick={() => void execute(pending)}>Retry change</Button>}<Button size="sm" disabled={busy} onClick={async () => { if (await confirm({ title: 'Discard pending change?', description: 'Check conversations first. The change may already have been saved.', confirm: 'Discard', danger: true })) { try { sessionStorage.removeItem(commandKey); setPending(null); setInvalid(false); } catch { setError('Recovery could not be cleared. Check browser storage.'); } } }}>Discard</Button></>} />}
     <section aria-label="Agent conversations">
-      <div className="section-label section-label--row"><span>Conversations</span><div className="details-list-actions"><DropdownMenu.Root><DropdownMenu.Trigger asChild><IconButton label="Conversation filters"><Filter size={15} aria-hidden /></IconButton></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="k-pop k-menu" align="end" sideOffset={6}><DropdownMenu.CheckboxItem className="k-menu__item" checked={showArchived} onCheckedChange={next => { setShowArchived(next); if (!next && thread?.archived) select(''); }}><DropdownMenu.ItemIndicator><Check size={14} aria-hidden /></DropdownMenu.ItemIndicator>Show archived</DropdownMenu.CheckboxItem></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{!locked && <IconButton label="New conversation" onClick={openForm}><Plus size={15} aria-hidden /></IconButton>}</div></div>
+      <div className="section-label section-label--row"><span>Conversations</span><div className="details-list-actions"><DropdownMenu.Root><DropdownMenu.Trigger asChild><IconButton label="Conversation filters"><Filter size={15} aria-hidden /></IconButton></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="k-pop k-menu" align="end" sideOffset={6}><DropdownMenu.CheckboxItem className="k-menu__item" checked={showArchived} onCheckedChange={next => { setShowArchived(next); if (!next && thread?.archived) select(''); }}><DropdownMenu.ItemIndicator><Check size={14} aria-hidden /></DropdownMenu.ItemIndicator>Show archived</DropdownMenu.CheckboxItem></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{!locked && <IconButton label="New conversation" tooltip="New conversation (Ctrl/Cmd+Shift+O)" aria-keyshortcuts="Control+Shift+O Meta+Shift+O" onClick={openForm}><Plus size={15} aria-hidden /></IconButton>}</div></div>
       <div className="panel-card">
         <div className="conversation-row" data-conversation-id="main"><button type="button" className={`panel-row panel-row--link${!thread ? ' is-current' : ''}`} aria-current={!thread || undefined} onClick={() => select('')}><MessageSquare size={16} aria-hidden /><span className="panel-row__title">Main chat</span></button><ActionMenu label="Menu conversation Main chat" trigger={<IconButton label="Menu conversation Main chat" tooltip="More actions"><Ellipsis size={15} aria-hidden /></IconButton>} items={[{ label: 'Edit profile', onSelect: onEdit }]} /></div>
         {visible.filter(item => !item.delivery).map(row)}
@@ -999,7 +1007,7 @@ function AgentConversations({ agent, onRestored, configured, onEdit, onExport, w
   </>;
   return <><Chat onRestored={onRestored} onOpenChannel={onOpenChannel} onOpenAgent={onOpenAgent} key={thread?.id ?? agent.id} agent={agent} thread={thread} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)}
     onEdit={thread ? () => setForm(thread) : onEdit}
-    menuItems={[...(thread ? actions(thread) : []), { label: 'New conversation', icon: <Plus size={15} aria-hidden />, onSelect: openForm, disabled: locked }, { label: 'Routines', icon: <CalendarClock size={15} aria-hidden />, onSelect: openRoutines }, { label: 'Workflows', icon: <WorkflowIcon size={15} aria-hidden />, onSelect: openWorkflows }, { label: 'Workspace files', icon: <FolderOpen size={15} aria-hidden />, onSelect: openWorkspace }, { label: 'Export template', icon: <Download size={15} aria-hidden />, onSelect: onExport }]}
+    menuItems={[{ label: 'New conversation', icon: <Plus size={15} aria-hidden />, onSelect: openForm, disabled: locked }, ...(thread ? actions(thread).map((item, index) => ({ ...item, separator: index === 0 || item.separator })) : []), { label: 'Routines', separator: !!thread, icon: <CalendarClock size={15} aria-hidden />, onSelect: openRoutines }, { label: 'Workflows', icon: <WorkflowIcon size={15} aria-hidden />, onSelect: openWorkflows }, { label: 'Workspace files', icon: <FolderOpen size={15} aria-hidden />, onSelect: openWorkspace }, { label: 'Export template', icon: <Download size={15} aria-hidden />, onSelect: onExport }]}
     detailsExtra={{ chats: conversations, onManageRoutines: openRoutines }} rename={form?.id === selected ? nameEditor : null} /></>;
 }
 
@@ -1081,7 +1089,7 @@ function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agent
 const settingsGroups: { label: string; items: { id: SettingsSection; label: string; icon: typeof Settings }[] }[] = [
   { label: 'Preferences', items: [{ id: 'general', icon: SlidersHorizontal, label: 'General' }, { id: 'appearance', icon: Palette, label: 'Appearance' }] },
   { label: 'Agents', items: [{ id: 'skills', icon: BookOpen, label: 'Skills' }] },
-  { label: 'Connections', items: [{ id: 'providers', icon: Server, label: 'Providers' }, { id: 'hub', icon: LinkIcon, label: 'briefsip.com' }, { id: 'connected-apps', icon: Plug, label: 'Connected apps' }, { id: 'mcp', icon: Server, label: 'MCP connections' }] },
+  { label: 'Connections', items: [{ id: 'providers', icon: Server, label: 'Providers' }, { id: 'hub', icon: LinkIcon, label: 'briefsip.com' }, { id: 'connected-apps', icon: Plug, label: 'Connected apps' }, { id: 'mcp', icon: Cable, label: 'MCP connections' }] },
   { label: 'System', items: [{ id: 'machines', icon: Monitor, label: 'Machines' }, { id: 'updates', icon: Download, label: 'Updates' }] },
   { label: 'Data', items: [{ id: 'usage', icon: BarChart3, label: 'Usage' }, { id: 'data', icon: Database, label: 'Shared data' }, { id: 'backup', icon: Archive, label: 'Backup & restore' }] },
   { label: 'Advanced', items: [{ id: 'mcp-server', icon: KeyRound, label: 'External access' }] },
@@ -1219,9 +1227,12 @@ function App() {
     else navigate({ agent: owner, ...(thread ? { thread } : {}) });
     setDialog(null); focusComposer();
   };
-  const invalidRoute = !!directory && (!!route.agent && !directory.agents.some(agent => agent.id === route.agent) || !!route.room && !channels.some(channel => channel.id === route.room) || !!route.project && !!projectState.root && !project);
-  useRouteFallback(invalidRoute || !!directory && !route.agent && !route.room && !route.project && !route.view && !route.machine, { ...(directory?.agents[0] ? { agent: directory.agents[0].id } : {}), ...(route.settings ? { settings: route.settings } : {}) }, navigate);
-  useRouteFallback(!!routeThread?.missing, { agent: route.agent, ...(route.settings ? { settings: route.settings } : {}) }, navigate);
+  const invalidRoute = !!directory && (!!route.agent && !directory.agents.some(agent => agent.id === route.agent) || !!route.room && !channels.some(channel => channel.id === route.room) || !!route.project && !!projectState.root && !project || !!route.machine && remoteMachinesState.loaded && !remoteMachinesState.machines.some(machine => machine.id === route.machine && machine.agents.some(agent => agent.id === route.remoteAgent)));
+  useRouteFallback(!route.notFound && !invalidRoute && !!directory && !route.agent && !route.room && !route.project && !route.view && !route.machine, { ...(directory?.agents[0] ? { agent: directory.agents[0].id } : {}), ...(route.settings ? { settings: route.settings } : {}) }, navigate);
+  const notFound = route.notFound || invalidRoute || routeThread?.missing;
+  const settingsName = settingsGroups.flatMap(group => group.items).find(item => item.id === route.settings)?.label;
+  const pageTitle = notFound ? 'Page not found' : route.settings ? `Settings · ${settingsName}` : project ? project.name : channel ? `#${channel.section_name ?? channel.name} · ${sectionProject?.name ?? 'Room'}` : route.machine ? remoteMachinesState.machines.find(machine => machine.id === route.machine)?.agents.find(agent => agent.id === route.remoteAgent)?.name : route.view ? route.view === 'routines' ? 'Routines' : 'Workflows' : agent ? `${routeThread?.thread?.name ?? 'Main chat'} · ${agent.name}` : '';
+  useRoutePresentation(route, pageTitle, setSidebarTab);
   const relativeTime = (value: string | null | undefined) => { if (!value) return ''; const age = Math.max(0, Date.now() - Date.parse(value)); if (!Number.isFinite(age)) return ''; const minutes = Math.floor(age / 60000); if (minutes < 60) return `${Math.max(1, minutes)}m`; const hours = Math.floor(minutes / 60); if (hours < 24) return `${hours}h`; return `${Math.floor(hours / 24)}d`; };
   const summaryByAgent = new Map(summaries.map(item => [item.agent, item]));
   const summaryFor = (id: string) => summaryByAgent.get(id);
@@ -1231,7 +1242,7 @@ function App() {
   const agentRow = (id: string) => {
     const item = directory?.agents.find(agent => agent.id === id);
     if (!item) return null;
-    const current = view === 'chat' && !selectedProject && !projectThread && !selectedChannel && item.id === selected, summary = summaryFor(item.id);
+    const current = !notFound && view === 'chat' && !selectedProject && !projectThread && !selectedChannel && item.id === selected, summary = summaryFor(item.id);
     return collapsed
       ? <button key={item.id} type="button" className={`bot-rail-item${current ? ' is-selected' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgent(item.id)} title={item.name} aria-label={item.name}><AgentAvatar agent={item} size={36} /></button>
       : <AgentActions key={item.id} agent={item} request={api} onChanged={() => load(true)} onEdit={() => { openAgent(item.id); setDialog('edit'); }} onDelete={() => deleteAgent(item)} onError={error => setAgentActionError(message(error))}><button type="button" className={`bot-row${current ? ' is-selected' : ''}`} aria-label={`${item.name} ${summary?.status === 'running' ? 'Working' : 'Idle'}${item.computer_waiting ? ' - Waiting for you' : ''}${item.provider_available === false ? ' - Provider account unavailable' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgent(item.id)}>
@@ -1242,6 +1253,7 @@ function App() {
   const remoteMachines = remoteMachinesState.machines.filter(machine => !onlyOnline || machine.status === 'online').sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   const anyMatchingAgents = localAgents.length > 0 || remoteMachines.some(machine => machine.agents.some(item => matches(item.name, summaryFor(`${item.id}@${machine.id}`)?.preview, item.role)));
   const switcherItems: SwitcherItem[] = [
+    ...(agent && !route.room && !route.project && !route.machine && !route.view ? [{ id: 'new-conversation', label: 'New conversation', detail: 'Ctrl/Cmd+Shift+O', icon: <Plus size={16} aria-hidden />, group: 'Create', onSelect: () => { setSettings(null); switcherFrame(() => window.dispatchEvent(new Event('briefsip:new-conversation'))); } }] : []),
     ...(directory?.agents.filter(agent => !agent.hidden).map(agent => ({ id: `agent:${agent.id}`, label: agent.name, icon: <AgentAvatar agent={agent} size={24} />, group: 'Agents', onSelect: () => { setSettings(null); openAgent(agent.id); } })) ?? []),
     ...remoteMachines.flatMap(machine => machine.agents.map(agent => ({ id: `remote:${machine.id}:${agent.id}`, label: agent.name, icon: <AgentAvatar agent={agent} size={24} />, detail: machine.name, group: 'Agents', onSelect: () => { setSettings(null); openThread(`${agent.id}@${machine.id}`, ''); } }))),
     ...projectState.projects.map(project => ({ id: `project:${project.id}`, label: project.name, group: 'Projects', onSelect: () => { setSettings(null); openProject(project.id); } })),
@@ -1254,6 +1266,7 @@ function App() {
   let content: ReactNode;
   if (error) content = <PageView><div className="empty"><h1>Workspace is not open</h1><p role="alert">{error}</p><button onClick={() => void load()}>Try again</button></div></PageView>;
   else if (!directory) content = <main className="chat chat--empty bs-root"><p className="empty-chat__sub" role="status">Loading workspace...</p></main>;
+  else if (notFound) content = <PageView><EmptyState title="Page not found" action={<Button onClick={() => navigate(directory.agents[0] ? { agent: directory.agents[0].id } : {}, true)}>Back to chats</Button>}>This page may have moved or no longer exists.</EmptyState></PageView>;
   else if (deleting) content = <main className="chat chat--empty bs-root"><p className="empty-chat__sub" role="status">Deleting agent...</p></main>;
   else if (view === 'remote') { const machine = remoteMachinesState.machines.find(item => item.id === remoteSelection?.machine); content = <RemoteAgentDetail key={`${machine?.id}:${remoteSelection?.agent}`} request={api} machine={machine} agent={machine?.agents.find(item => item.id === remoteSelection?.agent)} />; }
   else if (view === 'workflows') content = <PageView wide><Suspense fallback={<p className="empty" role="status">Loading workflow directory...</p>}><WorkflowDirectory agents={directory.agents} request={api} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={directory.agents.find(item => item.id === owner)} threadId={id} configured={directory.configured} onOpenAgent={openThread} onOpenChannel={openChannel} />} /></Suspense></PageView>;
@@ -1378,7 +1391,7 @@ function App() {
           else if (event.key === 'End') next = buttons.length - 1;
           else return;
           event.preventDefault(); buttons[next]?.focus();
-        }}>{filteredSettings.map(group => <div key={group.label} role="group" aria-labelledby={`settings-${group.label}`} className="app-settings__group"><h2 id={`settings-${group.label}`}>{group.label}</h2>{group.items.map(section => <button key={section.id} type="button" className={`cfg-nav__item${settings === section.id ? ' is-active' : ''}`} aria-current={settings === section.id ? 'page' : undefined} onClick={event => { if (settings === section.id) event.currentTarget.closest('[role="dialog"]')?.querySelector<HTMLElement>('.app-settings__page h1')?.focus(); else setSettings(section.id); }}><section.icon size={16} aria-hidden /><span>{section.label}</span></button>)}</div>)}{!filteredSettings.length && <p className="app-settings__no-results" role="status">No settings found</p>}</nav>
+        }}>{filteredSettings.map(group => <div key={group.label} role="group" aria-labelledby={`settings-${group.label}`} className="app-settings__group"><h2 id={`settings-${group.label}`}>{group.label}</h2>{group.items.map(section => <Tooltip key={section.id} content={section.label}><button type="button" aria-label={section.label} className={`cfg-nav__item${settings === section.id ? ' is-active' : ''}`} aria-current={settings === section.id ? 'page' : undefined} onClick={event => { if (settings === section.id) event.currentTarget.closest('[role="dialog"]')?.querySelector<HTMLElement>('.app-settings__page h1')?.focus(); else setSettings(section.id); }}><section.icon size={16} aria-hidden /><span>{section.label}</span></button></Tooltip>)}</div>)}{!filteredSettings.length && <p className="app-settings__no-results" role="status">No settings found</p>}</nav>
       </aside>
       <IconButton className="app-settings__close" label="Close settings" onClick={() => setSettings(null)}><X size={16} aria-hidden /></IconButton>
       <div className="app-settings__main">
@@ -1406,6 +1419,7 @@ function App() {
 function ComputerWindow() {
   const agent = new URLSearchParams(location.search).get('computer') ?? '';
   const [name, setName] = useState('Agent'), [error, setError] = useState('');
+  useRoutePresentation({}, error ? 'Computer unavailable' : `Computer · ${name}`);
   useEffect(() => {
     let active = true;
     void api<Directory>('/api/agents').then(data => { const found = data.agents.find(item => item.id === agent); if (active) { if (found) setName(found.name); else setError('Agent not found.'); } }).catch(error => { if (active) setError(message(error)); });

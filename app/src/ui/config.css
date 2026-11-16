@@ -256,3 +256,13 @@
 
 .app-settings__page .k-page-head { padding-right: 0; }
 .app-settings .app-settings__page .k-page-head :is(.k-btn, .k-icon-btn) { height: 32px; min-height: 32px; }
+
+@media (max-width: 767px) {
+  .app-settings__nav { width: 64px; padding-inline: 8px; }
+  .app-settings__heading { justify-content: center; padding-inline: 0; font-size: 10px; }
+  .app-settings__search, .app-settings__group h2, .app-settings__group .cfg-nav__item > span { display: none; }
+  .app-settings__group .cfg-nav__item { justify-content: center; padding: 10px; min-height: 40px; }
+  .app-settings__page--preferences .k-row { flex-direction: column; align-items: stretch; }
+  .app-settings__page--preferences .k-row__main { flex-basis: auto; }
+  .app-settings__page--preferences .k-row__trailing { margin-left: 0; justify-content: flex-start; }
+}

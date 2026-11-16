@@ -64,8 +64,10 @@ function QueuedRun({ turn, path, target, request, archived, onChanged }: { turn:
   </li>;
 }
 
-export function QueuedRunsControl({ turns, ...props }: { turns: QueuedTurn[]; path: string; target?: { id: string; capabilities: { steer: boolean } }; request: Request; archived: boolean; onChanged: () => void }) {
+export function QueuedRunsControl({ turns, onOrder, ...props }: { onOrder?: () => void; turns: QueuedTurn[]; path: string; target?: { id: string; capabilities: { steer: boolean } }; request: Request; archived: boolean; onChanged: () => void }) {
   const [expanded, setExpanded] = useState(false);
-  if (!turns.length) return null;
-  return <section className="queued-runs" aria-label="Queued messages"><div className="queued-runs__heading">Queued <span>{turns.length}</span></div><ol>{(expanded ? turns : turns.slice(0, 3)).map(turn => <QueuedRun key={turn.id} turn={turn} {...props} />)}</ol>{turns.length > 3 && <Button size="sm" variant="ghost" onClick={() => setExpanded(!expanded)}>{expanded ? 'Show less' : `Show ${turns.length - 3} more`}</Button>}</section>;
+  let recovery = false;
+  try { recovery = !!sessionStorage.getItem(`briefsip-queue-order:${props.path.replace(/\/turns$/, '/queue')}`); } catch { recovery = true; }
+  if (!turns.length && !recovery) return null;
+  return <section className="queued-runs" aria-label="Queued messages"><div className="queued-runs__heading">Queued <span>{turns.length}</span>{onOrder && <Button size="sm" variant="ghost" onClick={onOrder}>Order</Button>}</div><ol>{(expanded ? turns : turns.slice(0, 3)).map(turn => <QueuedRun key={turn.id} turn={turn} {...props} />)}</ol>{turns.length > 3 && <Button size="sm" variant="ghost" onClick={() => setExpanded(!expanded)}>{expanded ? 'Show less' : `Show ${turns.length - 3} more`}</Button>}</section>;
 }

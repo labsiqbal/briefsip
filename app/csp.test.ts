@@ -13,9 +13,9 @@ test('SPA has a fresh matching style nonce while scripts, API and assets keep st
   try {
     const nonces: string[] = [];
     let asset = '';
-    for (const path of ['/', '/', '/agents/00000000-0000-4000-8000-000000000000', '/agents/00000000-0000-4000-8000-000000000000/conversations/00000000-0000-4000-8000-000000000001', '/rooms/deleted', '/projects/deleted', '/settings/appearance?from=%2Frooms%2Fdeleted']) {
+    for (const path of ['/', '/', '/nonsense/path', '/missing.txt', '/agents/00000000-0000-4000-8000-000000000000', '/agents/00000000-0000-4000-8000-000000000000/conversations/00000000-0000-4000-8000-000000000001', '/rooms/deleted', '/projects/deleted', '/settings/nope', '/agents/malformed', '/settings/appearance?from=%2Frooms%2Fdeleted']) {
       const response = await fetch(app.origin + path);
-      assert.equal(response.status, 200);
+      assert.equal(response.status, ['/nonsense/path', '/missing.txt', '/rooms/deleted', '/projects/deleted', '/settings/nope', '/agents/malformed'].includes(path) ? 404 : 200);
       assert.equal(response.headers.get('cache-control'), 'no-store');
       const csp = response.headers.get('content-security-policy')!;
       const styles = csp.split('; ').find(directive => directive.startsWith('style-src '))!;
@@ -26,6 +26,7 @@ test('SPA has a fresh matching style nonce while scripts, API and assets keep st
       assert.equal(styles, `style-src 'self' 'nonce-${nonce}'`);
       assert.equal(csp.split('; ').find(directive => directive.startsWith('script-src ')), "script-src 'self'");
       assert.equal(csp, policy.replace("style-src 'self'", `style-src 'self' 'nonce-${nonce}'`));
+      assert.match(response.headers.get('content-type')!, /text\/html/);
       const html = await response.text();
       const tags = [...html.matchAll(/<meta name="csp-nonce" content="([^"]+)">/g)];
       assert.equal(tags.length, 1);

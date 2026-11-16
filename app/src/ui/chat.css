@@ -200,7 +200,6 @@
   box-shadow: 0 1px 2px rgb(0 0 0 / 5%); transition: border-color 120ms;
 }
 .composer:focus-within { border-color: var(--color-border-primary); }
-.composer:has(.composer__input:focus-visible) { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
 .composer__left { min-width: 0; padding: 16px 16px 8px; }
 .composer__toolbar { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0 8px 8px; }
 .composer__right { display: flex; align-items: center; gap: 8px; min-width: 0; margin-left: auto; }
@@ -318,7 +317,7 @@
 
 /* T3 queue/voice patterns, using Briefsip surfaces and controls. */
 .queued-runs { max-width: var(--chat-content-max-width); margin: 0 auto 8px; max-height: 240px; overflow: auto; border: 1px solid var(--color-border-tertiary); border-radius: 14px; background: var(--color-bg-pane); padding: 8px 12px; }
-.queued-runs__heading { color: var(--color-text-secondary); font-size: 12px; display: flex; gap: 8px; }
+.queued-runs__heading { align-items: center; color: var(--color-text-secondary); font-size: 12px; display: flex; gap: 8px; }
 .queued-runs ol { list-style: none; padding: 0; margin: 0; }
 .queued-run + .queued-run { border-top: 1px solid var(--color-border-tertiary); }
 .queued-run { padding: 4px 0; }
@@ -335,6 +334,7 @@
 .turn-activity { display: block; }
 .turn-activity__header { display: flex; align-items: center; border-bottom: 1px solid var(--color-border-secondary); }
 .turn-activity__header > .k-collapsible__trigger { flex: 1; min-width: 0; }
+.turn-activity__header > .activity-label { padding: 4px 4px 8px; color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
 .composer__toolbar > .k-select { width: auto; max-width: 180px; }
 
 .fork-history { width: 100%; opacity: .72; }
@@ -364,3 +364,5 @@
 
 @container (max-width: 760px) { .timeline-minimap { display: none; } }
 .fork-origin { padding-inline: 4px; }
+
+.queued-runs__heading .k-btn { margin-left: auto; }

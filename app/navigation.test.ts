@@ -11,10 +11,10 @@ test('routes round-trip agents, conversations, rooms, projects and settings retu
     assert.deepEqual(parseRoute(routePath({ ...route, settings: 'appearance' })), { ...route, settings: 'appearance' });
   }
 });
-test('malformed and external deep links fall back without throwing or retaining untrusted paths', () => {
+test('malformed and external deep links show not found without throwing or retaining untrusted paths', () => {
   for (const path of ['/missing', '/agents/deleted', '/rooms/%ZZ', '/projects/../x', '//example.test', '/settings/nope', '/settings/general?from=https%3A%2F%2Fexample.test', '/settings/general?from=%2Fsettings%2Fgeneral']) {
     const parsed = parseRoute(path);
-    assert.deepEqual(parsed, path.startsWith('/settings/general') ? { settings: 'general' } : {});
+    assert.deepEqual(parsed, path.startsWith('/settings/general') ? { settings: 'general' } : { notFound: true });
     assert(!routePath(parsed).includes('example.test'));
   }
 });

@@ -191,10 +191,10 @@ export function Tooltip({ content, children }: { content: ReactNode; children: R
 }
 
 export type MenuEntry = { label: string; onSelect: () => void; danger?: boolean; disabled?: boolean; icon?: ReactNode } | 'separator';
-export function ActionMenu({ trigger, items, align = 'end', label }: { trigger: ReactNode; items: MenuEntry[]; align?: 'start' | 'center' | 'end'; label: string }) {
+export function ActionMenu({ trigger, items, align = 'end', label, onCloseAutoFocus }: { onCloseAutoFocus?: (event: Event) => void; trigger: ReactNode; items: MenuEntry[]; align?: 'start' | 'center' | 'end'; label: string }) {
   return <DropdownMenu.Root>
     <DropdownMenu.Trigger asChild aria-label={label}>{trigger}</DropdownMenu.Trigger>
-    <DropdownMenu.Portal><DropdownMenu.Content className="k-pop k-menu" align={align} sideOffset={6}>
+    <DropdownMenu.Portal><DropdownMenu.Content className="k-pop k-menu" align={align} sideOffset={6} onCloseAutoFocus={onCloseAutoFocus}>
       {items.map((item, index) => item === 'separator' ? <DropdownMenu.Separator key={index} className="k-menu__sep" /> : <DropdownMenu.Item key={item.label} disabled={item.disabled} onSelect={item.onSelect} className={cx('k-menu__item', item.danger && 'is-danger')}>{item.icon}{item.label}</DropdownMenu.Item>)}
     </DropdownMenu.Content></DropdownMenu.Portal>
   </DropdownMenu.Root>;

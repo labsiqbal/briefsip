@@ -99,7 +99,7 @@ time, .k-badge, .activity-chip, .activity-timing, .steps__worked, .steps__count,
   background: var(--color-bg-pane); border: 0.5px solid var(--color-border-secondary);
   box-shadow: var(--shadow-popover);
   animation: rise 100ms var(--ease-out);
-  max-height: 320px; overflow-y: auto;
+  max-height: calc(100dvh - 80px); overflow-y: auto;
 }
 .menu.is-below { top: calc(100% + 6px); }
 .menu.is-above { bottom: calc(100% + 6px); }
