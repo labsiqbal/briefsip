@@ -91,7 +91,7 @@ test('parallel workflow joins once in branch order, retains failures and cancels
   const retryBody={id:randomUUID(),revision:original.revision};
   await request(`/api/workflow-runs/${retryRun.id}/retry`,retryBody);
   await request(`/api/workflow-runs/${retryRun.id}/retry`,retryBody);
-  await until(async()=>held.has('a-new'));assert(!held.has('b'));assert.equal(calls.length,20);assert.equal(inputs.at(-1),originalPrompt);assert.match(systems.at(-1)!,/^Updated profile\./);
+  await until(async()=>held.has('a-new'));assert(!held.has('b'));assert.equal(calls.length,20);assert.equal(inputs.at(-1),originalPrompt);assert.match(systems.at(-1)!,/\n\nUpdated profile\./);
   finish('a-new','failure again',true);await until(async()=>(await request(`/api/workflow-runs/${retryRun.id}`)).status==='failed');
   const second=await request(`/api/workflow-runs/${retryRun.id}`);
   await request(`/api/workflow-runs/${retryRun.id}/retry`,{id:randomUUID(),revision:second.revision});
