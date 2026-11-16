@@ -145,6 +145,45 @@
       "dependencies": [],
       "adaptation": "Adapt a ringless command input inside the focused dialog frame.",
       "compatibilityCheck": "work/rebuild/ui-smoke/r5-panel-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/server/src/os-jank.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "6237f38007d2e49fea28d73485d6d4b9afa22646e911f360ad62b7c06faa7281",
+      "symbols": [
+        "fixPath",
+        "hydratePosixPath",
+        "hydratePosixHome"
+      ],
+      "localPaths": [
+        "app/t3/path.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Plain TypeScript POSIX startup hydration; fixed capture allowlist, shared five-second budget, bounded output, process-group cleanup, one redacted failure warning and per-process cache. Windows excluded; harnessEnv unchanged.",
+      "compatibilityCheck": "app/path-hydration.test.ts"
+    },
+    {
+      "sourcePath": "packages/shared/src/shell.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "d63182ab8a4a3a693bfd86ee8fb19ecb212f2dea24360f49d7ea287fac9321dc",
+      "symbols": [
+        "listLoginShellCandidates",
+        "readUserLoginShell",
+        "buildEnvironmentCaptureCommand",
+        "readEnvironmentFromLoginShell",
+        "mergePathEntries",
+        "readPathFromLaunchctl"
+      ],
+      "localPaths": [
+        "app/t3/path.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Plain TypeScript POSIX startup hydration; fixed capture allowlist, shared five-second budget, bounded output, process-group cleanup, one redacted failure warning and per-process cache. Windows excluded; harnessEnv unchanged.",
+      "compatibilityCheck": "app/path-hydration.test.ts"
     }
   ],
   "licenseSha256": "935d8f2af0c703f9c39517ee57cc4930b19d02d533be930b63f0e82f93614b43",
@@ -170,7 +209,8 @@
     "app/harness.ts": "dc104f72a04e5dd6e29db98c01189150d23adbca1516b4a3e763b0cf2f869edb",
     "app/t3/acp-harness.ts": "4a0817f8050a355602adb44b325135077adb89cee7b9bc47fea09fc63d6ce9a8",
     "app/t3/pi-harness-extension.mjs": "824ccffde84859f769048761599feee6de2b3b4fe0665342b124232d499246eb",
-    "app/t3/harness-mcp-bridge.mjs": "4075660689e41894b7d3a3198f77df0f7d081faad9271b52439e465963081ee3"
+    "app/t3/harness-mcp-bridge.mjs": "4075660689e41894b7d3a3198f77df0f7d081faad9271b52439e465963081ee3",
+    "app/t3/path.ts": "d4d073dfa6643312958fe9882927f27dba8c5e8f690aa67dba0efc00d72a4ea9"
   },
   "typeSubstitutions": {
     "HttpServerRequest.HttpServerRequest": "LinkRequest with originalUrl and lowercase scalar headers",
