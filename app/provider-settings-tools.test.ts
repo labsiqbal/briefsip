@@ -27,7 +27,7 @@ test('provider settings read stays private and excludes endpoint and credentials
     const agent=await request('/api/agents',{id:randomUUID(),name:'Reader',model:'fixture',backupModel:'backup',instructions:'Help'}),path=`/api/agents/${agent.id}`;
     const side=await request(path+'/threads',{id:randomUUID(),name:'Side'}),room=await request('/api/channels',{id:randomUUID(),name:'Room',members:[agent.id],lead:agent.id,instructions:'Help'});
     for(const location of [path,`/api/threads/${side.id}`]){await run(location);assert(advertised);assert.deepEqual(result,{revision:1,providerAccount:'',model:'fixture',backupModel:'backup',configured:true});assert(!JSON.stringify(result).includes(secret));assert(!JSON.stringify(result).includes(baseURL));}
-    args={agent:randomUUID()};await run(path,'failed');args={};await run(`/api/channels/${room.id}`,'failed');assert.equal(advertised,false);
+    args={agent:randomUUID()};await run(path);assert.deepEqual(result,{error:'Reading provider settings does not accept arguments.',status:400});args={};await run(`/api/channels/${room.id}`,'failed');assert.equal(advertised,false);
     assert.equal((await request('/api/agents')).agents[0].revision,1);
   } finally {await app.close();provider.closeAllConnections();await new Promise<void>(resolve=>provider.close(()=>resolve()));rmSync(directory,{recursive:true,force:true});}
 });

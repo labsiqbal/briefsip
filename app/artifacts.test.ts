@@ -21,6 +21,8 @@ test('generated text artifacts persist across interruption without duplicate cre
       return res.end(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ id: 'read-unrelated', type: 'function', function: { name: 'read_attachment', arguments: JSON.stringify({ id: unrelatedFile }) } }] } }] }));
     }
     if (result) {
+      if (task === 'bad-path') assert.deepEqual(result, { error: 'Invalid text file name or content.', status: 400 });
+      if (task === 'oversize') assert.deepEqual(result, { error: 'Text file limit is 32 KiB.', status: 413 });
       observedResult = true;
       if (hold) return;
       return res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: `Saved ${result.name}` } }] }));
@@ -58,7 +60,7 @@ test('generated text artifacts persist across interruption without duplicate cre
       const foreign = paths.find(other => other !== path)!; assert.equal((await fetch(`${app.origin}${foreign}/files/${file.id}`)).status, 404);
     }
     const path = paths[0];
-    for (const text of ['bad-path', 'oversize']) { const id = randomUUID(); await post(`${path}/turns`, { id, text }); await wait(`${path}/turns`, id, 'failed'); }
+    for (const text of ['bad-path', 'oversize']) { const id = randomUUID(); await post(`${path}/turns`, { id, text }); await wait(`${path}/turns`, id, 'done'); }
     assert.equal((await get(`${path}/files`)).length, 1);
     hold = true; observedResult = false;
     const id = randomUUID(); await post(`${path}/turns`, { id, text: 'Retain on restart' });

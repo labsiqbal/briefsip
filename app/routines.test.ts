@@ -25,6 +25,9 @@ test('manual routine runs keep schedule, deduplicate across restart and enforce 
       return res.end(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ id: fileSaved ? 'failed-outcome' : 'partial-output', type: 'function', function: fileSaved ? { name: 'report_failure', arguments: JSON.stringify({ reason: 'Required service access is missing.' }) } : { name: 'create_text_file', arguments: JSON.stringify({ name: 'partial.txt', text: 'Collected evidence before failure.' }) } }] } }] }));
     }
     if (data.messages.at(-1).content === 'DIRECT_FAILURE' || data.messages.at(-1).content === 'INVALID_FAILURE') return res.end(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ id: 'invalid-outcome', type: 'function', function: { name: 'report_failure', arguments: JSON.stringify({ reason: '' }) } }] } }] }));
+    if (data.messages.at(-1).role === 'tool') {
+      assert.deepEqual(JSON.parse(data.messages.at(-1).content), { error: 'Field reason is invalid (maximum 2000 characters).', status: 400 });
+    }
     res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Test complete' } }] }));
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
@@ -73,8 +76,8 @@ test('manual routine runs keep schedule, deduplicate across restart and enforce 
     assert.equal((await get(`/api/routines/${failed.id}/runs`))[0].error, 'Required service access is missing.');
     const invalid = await post(list, { ...create, id: randomUUID(), prompt: 'INVALID_FAILURE' });
     await post(`/api/routines/${invalid.id}/test`, { id: randomUUID(), revision: invalid.revision });
-    for (let n = 0; n < 100; n++) { rows = await get(`/api/routines/${invalid.id}/runs`); if (rows[0]?.status === 'failed') break; await new Promise(resolve => setTimeout(resolve, 20)); }
-    assert.equal(rows[0].status, 'failed'); assert.equal(rows[0].no_update, 0); assert.match(rows[0].error, /reason/);
+    for (let n = 0; n < 100; n++) { rows = await get(`/api/routines/${invalid.id}/runs`); if (rows[0]?.status === 'done') break; await new Promise(resolve => setTimeout(resolve, 20)); }
+    assert.equal(rows[0].status, 'done'); assert.equal(rows[0].no_update, 0); assert.equal(rows[0].error, null);
     const direct = await post(`/api/agents/${agent.id}/turns`, { id: randomUUID(), text: 'DIRECT_FAILURE' }, 202);
     let directTurn;
     for (let n = 0; n < 100; n++) { directTurn = (await get(`/api/agents/${agent.id}/turns`)).find((turn: { id: string }) => turn.id === direct.id); if (directTurn?.status === 'failed') break; await new Promise(resolve => setTimeout(resolve, 20)); }

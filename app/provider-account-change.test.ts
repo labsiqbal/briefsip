@@ -100,10 +100,11 @@ test('provider account metadata tool redacts credentials and paths', async () =>
     await app.close(); app = await startApp(options);
     const side = await request(path + '/threads', { id: randomUUID(), name: 'Side' });
     await send(`/api/threads/${side.id}`); assert.deepEqual(results.at(-1), expected);
-    args = '{"extra":true}'; await send(path, 'failed'); assert.equal(results.length, 2);
+    args = '{"extra":true}'; await send(path); assert.equal(results.length, 3);
+    assert.deepEqual(results.at(-1), { error: 'Provider account listing does not accept arguments.', status: 400 });
     args = '{}';
     const channel = await request('/api/channels', { id: randomUUID(), name: 'Room', members: [agent.id], lead: agent.id, instructions: 'Help' });
-    await send(`/api/channels/${channel.id}`, 'failed'); assert(!advertised); assert.equal(results.length, 2);
+    await send(`/api/channels/${channel.id}`, 'failed'); assert(!advertised); assert.equal(results.length, 3);
   } finally {
     await app?.close(); provider.closeAllConnections();
     await new Promise<void>(resolve => provider.close(() => resolve()));
@@ -158,7 +159,8 @@ test('private model discovery uses selected account, pages results and cancels w
     assert.deepEqual(results.at(-1), { account: 'b', models: ['model-100', 'model-101'], next_after: null });
     args = { account: '' }; await send(); assert.equal(results.at(-1).status, 503);
     args = { account: 'missing' }; await send(); assert.equal(results.at(-1).status, 503);
-    args = { account: 'b', extra: true }; await send(path, 'failed'); assert.equal(catalogCalls.length, 2);
+    args = { account: 'b', extra: true }; await send(); assert.equal(catalogCalls.length, 2);
+    assert.deepEqual(results.at(-1), { error: 'Invalid model catalog parameters.', status: 400 });
     args = {}; mode = 'error'; await send(); assert.equal(results.at(-1).status, 502); assert(!JSON.stringify(results).includes('private provider diagnostic'));
     const channel = await request('/api/channels', { id: randomUUID(), name: 'Room', members: [agent.id], lead: agent.id, instructions: 'Help' });
     await send(`/api/channels/${channel.id}`, 'failed'); assert(!advertised); assert.equal(catalogCalls.length, 3);
