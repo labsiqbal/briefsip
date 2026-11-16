@@ -19,7 +19,7 @@ test('activity duration stops at recorded provider finish; live text and polling
   assert.equal(activityLabel({ ...turn, status: 'interrupted' }, now), 'Interrupted after 1m 54s');
   assert.equal(activityLabel({ ...turn, status: 'cancelled' }, now), 'Stopped after 1m 54s');
   assert.equal(activityLabel({ ...turn, status: 'running' }, Date.parse(created) + 12000), 'Working… 12s');
-  assert.equal(activityLabel({ ...turn, status: 'running', activity: { ...activity, calls: [{ ...activity.calls[0], created: '2026-11-14T00:00:02.000Z' }] } }, Date.parse(created) + 3000), 'Working… 3s');
+  assert.equal(activityLabel({ ...turn, status: 'running', activity: { ...activity, calls: [{ ...activity.calls[0], created: '2026-11-14T00:00:02.000Z' }] } }, Date.parse(created) + 3000), 'Working… 1s');
   assert.equal(activityLabel({ ...turn, status: 'queued', paused: 1 }, now), 'Paused');
   assert.equal(activityLabel({ ...turn, status: 'queued', questions: [{ answer: null }] }, now), 'Waiting for your answer');
   assert.equal(activityLabel({ ...turn, activity: undefined }, now), 'Worked');

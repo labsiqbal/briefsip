@@ -31,7 +31,7 @@
 
 /* ---------- transcript ---------- */
 .transcript-wrap { container-type: inline-size; position: relative; flex: 1 1 0; min-height: 0; }
-.transcript { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; padding: 60px 16px 16px; scroll-padding-top: 60px; overflow-anchor: none; }
+.transcript { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; padding: 60px 16px 16px; scroll-padding-top: 60px; overflow-anchor: none; scrollbar-gutter: stable; }
 .transcript__col { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; max-width: var(--chat-content-max-width); margin: 0 auto; min-height: 100%; justify-content: flex-end; }
 .transcript__col > * { max-width: 100%; }
 
@@ -201,6 +201,7 @@
   box-shadow: 0 1px 2px rgb(0 0 0 / 5%); transition: border-color 120ms;
 }
 .composer:focus-within { border-color: var(--color-border-primary); }
+.composer:has(.composer__input:focus-visible) { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
 .composer__left { min-width: 0; padding: 16px 16px 8px; }
 .composer__toolbar { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0 8px 8px; }
 .composer__right { display: flex; align-items: center; gap: 8px; min-width: 0; margin-left: auto; }
@@ -300,19 +301,12 @@
 .room-agent .room-pending, .room-agent .room-agent__line { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; min-width: 0; min-height: 32px; white-space: nowrap; }
 .room-agent .room-pending > .agent-avatar, .room-agent .room-agent__line > .agent-avatar { flex-shrink: 0; }
 .room-agent__name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 13px; font-weight: 500; }
-.room-agent__status { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.room-agent__actions { display: flex; align-items: center; flex: 0 0 auto; margin-left: auto; }
-.room-agent__actions .turn-task-controls { display: contents; }
-.room-agent__actions .k-icon-btn { width: 30px; height: 30px; flex-shrink: 0; }
+.room-agent__status { padding: 0; border: 0; background: none; color: var(--color-text-secondary); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.room-agent__status { margin-left: auto; }
+.room-agent__status[data-state="open"] .k-collapsible__chev { transform: rotate(180deg); }
 .room-agent__activity { min-width: 0; }
 /* Keep long conversation names from clipping a second placeholder line. */
 .composer__input:placeholder-shown { white-space: nowrap; text-overflow: ellipsis; }
-
-.room-agent__actions { opacity: 0; transition: opacity 200ms var(--ease-out); }
-.room-agent:hover .room-agent__actions, .room-agent:focus-within .room-agent__actions,
-.room-agent__actions:has([data-state="open"]) { opacity: 1; }
-@media (hover: none) { .room-agent__actions { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .room-agent__actions { transition: none; } }
 
 /* Room controls and approvals must fit beside the two desktop panels. */
 .room-conversation, .room-agent { grid-template-columns: minmax(0, 1fr); }

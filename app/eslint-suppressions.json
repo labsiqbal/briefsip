@@ -104,7 +104,7 @@
   },
   "src/App.tsx": {
     "briefsip-lifecycle/no-component-effects": {
-      "count": 26
+      "count": 24
     }
   },
   "src/ApprovalCard.tsx": {
@@ -334,11 +334,6 @@
   "src/hub/HubConnection.tsx": {
     "briefsip-lifecycle/no-component-effects": {
       "count": 2
-    }
-  },
-  "src/ui/AgentConversation.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
-      "count": 1
     }
   },
   "src/ui/ChatPrimitives.tsx": {

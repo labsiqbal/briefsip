@@ -1,11 +1,11 @@
 import { attachmentSize } from '../attachments';
-import { useEffect, useState, type ReactNode } from 'react';
-import { ChevronDown, ChevronRight, CircleAlert } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import { ChevronDown, CircleAlert } from 'lucide-react';
 import { Collapsible as Disclosure } from 'radix-ui';
 import { AgentAvatar } from '../AgentAvatar';
 import { Markdown, StreamingMarkdown } from '../Markdown';
 import { AgentMessage } from './ChatPrimitives';
-import { Collapsible, IconButton } from './kit';
+import { Collapsible } from './kit';
 import { activityLabel, livePartial, liveTurn, streamIdentity, type TurnActivityData } from './transcript';
 import { TurnActivity } from './TurnActivity';
 import { useLiveClock } from '../hooks/useLiveClock';
@@ -27,18 +27,17 @@ type RoomMember = { id: string; name: string; role: string; avatar_revision?: nu
 function RoomReply({ turn, member, text, scope, details, controls, extras }: { turn: RoomTurn; member: RoomMember; text?: string; scope: string; details: ReactNode; controls: ReactNode; extras: ReactNode }) {
   const [open, setOpen] = useState(false);
   const live = liveTurn(turn), streaming = livePartial(turn), now = useLiveClock(live);
-  useEffect(() => { if (turn.status === 'done') setOpen(false); }, [turn.status]);
   const answer = text ?? turn.partial?.text ?? '';
   return <Disclosure.Root open={open} onOpenChange={setOpen} asChild><section className="room-agent" aria-label={`Reply from ${member.name}`}>
     <div className={`${text ? 'room-agent__line' : 'room-pending'}${live ? ' is-working' : ''}`}>
       <AgentAvatar agent={member} size={20} /><strong className="room-agent__name message-name" title={member.name}>{member.name}</strong>
-      <span className="room-agent__status" title={activityLabel(turn, now)}>{live && turn.status !== 'queued' && <span className="activity-working" aria-hidden />}{activityLabel(turn, now)}{turn.activity?.fallback_model && <CircleAlert size={12} role="img" aria-label="Fallback model used" />}</span>
-      <div className="room-agent__actions"><Disclosure.Trigger asChild><IconButton label={`${open ? 'Hide' : 'Show'} activity for ${member.name}`}>{open ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}</IconButton></Disclosure.Trigger>{controls}</div>
+      <Disclosure.Trigger className="room-agent__status" aria-label={activityLabel(turn, now)}>{live && turn.status !== 'queued' && <span className="activity-working" aria-hidden />}{activityLabel(turn, now)}{turn.activity?.fallback_model && <CircleAlert size={12} role="img" aria-label="Fallback model used" />}<ChevronDown size={14} aria-hidden className="k-collapsible__chev" /></Disclosure.Trigger>
     </div>
     <Disclosure.Content className="room-agent__activity">{details}</Disclosure.Content>
     {answer && <div className="message-body" aria-label={streaming ? `Streaming answer from ${member.name}` : `Answer from ${member.name}`}><div className="legacy"><StreamingMarkdown key={streamIdentity(turn)} text={answer} scope={scope} origin={window.location.origin} /></div></div>}
     {extras}
     {turn.error && turn.status !== 'cancelled' && <p className="message-error">{turn.error}</p>}
+    <div className="turn-controls" role="group" aria-label="Message actions">{controls}</div>
   </section></Disclosure.Root>;
 }
 export function RoomMessages({ room, members, pending, turns, scope, details, controls, extras }: { room: RoomView; members: RoomMember[]; pending: RoomTurn[]; turns: RoomTurn[]; scope: string; details: (turn: string) => ReactNode; controls: (turn: string) => ReactNode; extras: (turn: string) => ReactNode }) {
