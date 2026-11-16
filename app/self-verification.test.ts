@@ -49,22 +49,25 @@ test('synthetic done without verification gets one nudge, checks precede final, 
       db.prepare('DELETE FROM turn_verification WHERE turn=?').run(turn);
       v.command(turn, 'native-check', 'npm test', '1 test passed', 0);
       assert.equal(v.nudge(turn), null);
+      db.prepare('INSERT INTO flow_tool_calls(turn,call_id,call,result,after_output,after_action) VALUES (?,?,?,?,0,0)').run(turn, 'read-after-tests', JSON.stringify({ function: { name: 'run_shell', arguments: JSON.stringify({ command: 'cat result.txt' }) } }), JSON.stringify({ output: 'Requested result', exitCode: 0 }));
+      assert.equal(v.review(turn, { kind: 'code', review: 'Tests ran before rereading the result.' }).verified, true);
+      assert.equal(v.nudge(turn), null);
       db.prepare("INSERT INTO harness_steps VALUES (?,'changed','fileChange','completed')").run(turn);
       assert.equal(v.review(turn, { kind: 'code', review: 'Old tests do not cover the edit.' }).verified, false);
       assert.match(v.nudge(turn)!, /One verification reminder/);
       assert.equal(v.nudge(turn), null);
-      const artifacts = v.artifacts(turn); assert.equal(artifacts.length, 1);
+      const artifacts = v.artifacts(turn); assert.equal(artifacts.length, 2);
       const bytes = db.prepare('SELECT bytes FROM files WHERE id=?').get(artifacts[0].id)!.bytes as Uint8Array; assert.match(Buffer.from(bytes).toString(), /1 test passed/);
       const screenshot = randomUUID();
       db.prepare('INSERT INTO flow_tool_calls(turn,call_id,call,result,after_output,after_action) VALUES (?,?,?,?,0,0)').run(turn, screenshot, JSON.stringify({ function: { name: 'computer_screenshot', arguments: '{}' } }), '{}');
       db.prepare("INSERT INTO computer_actions VALUES (?,?,'done',?)").run(turn, screenshot, Buffer.from('screenshot fixture'));
       assert.equal(v.review(turn, { kind: 'ui', review: 'Screenshot inspected against request.' }).verified, true);
-      assert.equal(v.artifacts(turn).length, 2);
+      assert.equal(v.artifacts(turn).length, 3);
       assert.equal(v.review(turn, { kind: 'routine', review: 'No saved routine.' }).verified, false);
     } finally { db.close(); }
     app = await startApp({ database, baseURL: `http://127.0.0.1:${address.port}/v1` });
     const restored = (await request(`/api/agents/${agent}/turns`))[0];
-    assert.equal(restored.generatedFiles.length, 1); assert.equal(restored.activity.artifacts.length, 2);
+    assert.equal(restored.generatedFiles.length, 1); assert.equal(restored.activity.artifacts.length, 3);
     assert.match(await (await fetch(app.origin + restored.activity.artifacts[0].url)).text(), /1 test passed/);
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
