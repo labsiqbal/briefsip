@@ -163,7 +163,7 @@ pub async fn pdf(state: &AppState, meta: &Value, bytes: &[u8]) -> Result<Respons
         let result = work
             .get_or_init(|| async {
                 let result = async {
-                    let text = extract_pdf(bytes).await?;
+                    let text = crate::harness::pdf::extract(state, bytes).await?;
                     let db = state.database.lock().map_err(|_| Failure::storage())?;
                     let pending = PENDING.lock().map_err(|_| Failure::storage())?;
                     if !pending

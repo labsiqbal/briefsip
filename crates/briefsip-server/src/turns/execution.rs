@@ -435,8 +435,14 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                 }
                 let mut result = match tools::run(state, &turn, &call).await {
                     Err(e)
-                        if ["interrupt_agent", "ask_user", "wait_for_event"]
-                            .contains(&string(&call["function"], "name"))
+                        if [
+                            "interrupt_agent",
+                            "ask_user",
+                            "wait_for_event",
+                            "call_mcp_tool",
+                            "list_mcp_tools",
+                        ]
+                        .contains(&string(&call["function"], "name"))
                             || call["function"]["name"] == "send_message" && e.status != 429 =>
                     {
                         return Err(e)
@@ -570,7 +576,14 @@ pub fn prompt(db: &Connection, t: &Value, images: bool) -> Result<Value> {
     let mut refs = Vec::new();
     let mut parts = Vec::new();
     for id in ids {
-        let file = crate::files::attachments::file(db, &id, &scope(t))?;
+        let file = match crate::files::attachments::file(db, &id, &scope(t)) {
+            Ok(file) => file,
+            Err(e) if e.status == 404 => {
+                refs.push(json!({"id":id,"deleted":true}));
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
         if let Some(mime) = crate::files::attachments::image_type(&file.bytes) {
             refs.push(json!({"id":id,"name":file.meta["name"],"media_type":mime,"note":"Image pixels are only included for the current request. Use read_attachment to inspect older images."}));
             if images {

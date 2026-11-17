@@ -1,0 +1,115 @@
+use super::*;
+use rusqlite::OptionalExtension;
+pub async fn drain(state: &AppState) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if state
+            .turns
+            .active
+            .lock()
+            .map_err(|_| Failure::storage())?
+            .is_empty()
+        {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(error(503, "Turn shutdown did not settle."));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+}
+pub fn workspace(
+    state: &AppState,
+    db: &Connection,
+    turn: &Value,
+) -> Result<Option<crate::config::WorkspaceConfig>> {
+    tools::workspace(state, db, turn)
+}
+pub fn restricted(db: &Connection, turn: &Value) -> Result<bool> {
+    Ok(tools::project_context(db, turn)?.is_some())
+}
+pub fn reminder(db: &Connection, turn: &Value, profile: &Value) -> Result<Option<String>> {
+    if super::profile::setup(db, turn)? {
+        return Ok(None);
+    }
+    Ok(verification::nudge(db,string(turn,"id"),turn,profile)?.then(||"One verification reminder: no current check is recorded. Run one relevant check, compare it with the request, then finish. Reuse existing output; verify_result is optional. State checks blocked by budget or tools.".into()))
+}
+pub fn peer(db: &Connection, turn: &str) -> Result<bool> {
+    exists(db,"WITH RECURSIVE a(id,parent,origin) AS(SELECT id,parent,origin FROM turns WHERE id=? UNION SELECT t.id,t.parent,t.origin FROM turns t JOIN a ON a.parent=t.id) SELECT 1 FROM a WHERE origin LIKE 'peer:%'",[turn])
+}
+pub fn specs(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Value>> {
+    tools::offered(state, db, turn)
+}
+pub async fn tool(
+    state: &AppState,
+    turn: &str,
+    name: &str,
+    args: &Value,
+    call_id: &str,
+) -> Result<Value> {
+    let row = {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        one(
+            &guard.connection,
+            "SELECT * FROM turns WHERE id=? AND status='running'",
+            [turn],
+        )?
+        .ok_or_else(|| error(403, "MCP authorization failed."))?
+    };
+    let call = json!({"id":call_id,"type":"function","function":{"name":name,"arguments":args.to_string()}});
+    let result = tools::run(state, &row, &call).await?;
+    if name.starts_with("computer_") {
+        use base64::Engine;
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        let db = &guard.connection;
+        let image = db
+            .query_row(
+                "SELECT image FROM computer_actions WHERE turn=? AND call_id=?",
+                [turn, call_id],
+                |r| r.get::<_, Option<Vec<u8>>>(0),
+            )
+            .optional()?
+            .flatten();
+        if result["status"] == "waiting_for_user" {
+            db.execute(
+                "DELETE FROM harness_sessions WHERE agent=?",
+                [string(&row, "agent")],
+            )?;
+            state.turns.cancel(turn);
+        }
+        let mut content = vec![json!({"type":"text","text":result.to_string()})];
+        if let Some(image) = image {
+            content.push(json!({"type":"image","mimeType":"image/png","data":base64::engine::general_purpose::STANDARD.encode(image)}));
+        }
+        return Ok(json!({"content":content}));
+    }
+    Ok(result)
+}
+pub fn history(db: &Connection, turn: &Value, args: &Value) -> Result<Value> {
+    super::history::read(db, turn, "read_history", args)
+}
+pub fn message(state: &AppState, db: &Connection, caller: &Value, args: &Value) -> Result<Value> {
+    let turn = one(
+        db,
+        "SELECT * FROM turns WHERE id=?",
+        [string(caller, "turn")],
+    )?
+    .ok_or_else(|| error(403, "MCP authorization failed."))?;
+    let call = json!({"id":format!("mcp:{}:{}",string(caller,"id"),string(args,"requestId")),"function":{"name":"send_message"}});
+    let result = messaging::run(
+        state,
+        db,
+        &turn,
+        &call,
+        &json!({"recipients":[args["recipient"]],"text":args["text"],"expects_reply":false}),
+    )?;
+    one(db,"SELECT t.id,t.thread FROM agent_deliveries d JOIN turns t ON t.id=d.turn WHERE d.request=?",[string(&result,"request")])?.ok_or_else(||error(409,"Recipient is unavailable or message is invalid."))
+}
+
+pub fn journal(db: &Connection, turn: &Value, call: &Value, result: &Value) -> Result<()> {
+    tools::journal(db, turn, call, result)
+}
+
+pub fn setup(db: &Connection, turn: &Value) -> Result<bool> {
+    super::profile::setup(db, turn)
+}

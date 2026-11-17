@@ -1,7 +1,7 @@
 use super::*;
 use sha2::{Digest, Sha256};
 
-fn project_context(db: &Connection, turn: &Value) -> Result<Option<Value>> {
+pub(super) fn project_context(db: &Connection, turn: &Value) -> Result<Option<Value>> {
     if turn["thread"].is_string() {
         one(
             db,
@@ -78,7 +78,19 @@ pub fn workspace(
         .workspaces
         .iter()
         .find(|w| w.agent == string(turn, "agent"))
-        .cloned())
+        .cloned()
+        .or_else(|| {
+            data::agents::workspace(state, string(turn, "agent"))
+                .filter(|_| {
+                    data::agents::read(db, string(turn, "agent"))
+                        .is_ok_and(|a| a["runtime"] != "api")
+                })
+                .map(|v| crate::config::WorkspaceConfig {
+                    agent: string(turn, "agent").into(),
+                    directory: std::path::PathBuf::from(string(&v, "directory")),
+                    write: v["write"] == true,
+                })
+        }))
 }
 pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Value>> {
     let mut specs: Vec<Value> =
@@ -143,6 +155,7 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
                 .cloned(),
         );
     }
+    specs.extend(crate::mcp::execution::specs()?);
     if turn["profile_setup"] == 1 {
         specs.retain(|t| ["edit_profile", "ask_user"].contains(&string(&t["function"], "name")));
         for tool in &mut specs {
@@ -275,6 +288,9 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
         )? {
             return Err(error(502, "Enabled installed skill not found."));
         }
+    }
+    if ["list_mcp_tools", "call_mcp_tool"].contains(&name) {
+        return crate::mcp::execution::run(state, turn, call, &args).await;
     }
     if name == "run_shell" {
         return super::shell::run(state, turn, call, args).await;

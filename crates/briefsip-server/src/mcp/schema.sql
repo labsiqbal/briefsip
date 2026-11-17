@@ -1,0 +1,15 @@
+CREATE TABLE IF NOT EXISTS mcp_connections(id TEXT PRIMARY KEY,name TEXT NOT NULL,url TEXT NOT NULL,token TEXT NOT NULL,tools TEXT NOT NULL,enabled INTEGER NOT NULL,revision INTEGER NOT NULL) STRICT;
+CREATE TABLE IF NOT EXISTS mcp_grants(agent TEXT NOT NULL REFERENCES agents(id),connection TEXT NOT NULL REFERENCES mcp_connections(id),revision INTEGER NOT NULL,tools TEXT NOT NULL,PRIMARY KEY(agent,connection)) STRICT;
+CREATE TABLE IF NOT EXISTS mcp_tests(id TEXT PRIMARY KEY,digest TEXT NOT NULL,name TEXT NOT NULL,url TEXT NOT NULL,token TEXT NOT NULL,tools TEXT NOT NULL,expires INTEGER NOT NULL,connection TEXT,revision INTEGER) STRICT;
+CREATE TABLE IF NOT EXISTS mcp_commands(id TEXT PRIMARY KEY,request TEXT NOT NULL,result TEXT NOT NULL) STRICT;
+CREATE TABLE IF NOT EXISTS mcp_calls(turn TEXT NOT NULL REFERENCES turns(id),call TEXT NOT NULL,uncertain INTEGER NOT NULL,PRIMARY KEY(turn,call)) STRICT;
+CREATE TABLE IF NOT EXISTS mcp_files(turn TEXT NOT NULL REFERENCES turns(id),file TEXT NOT NULL REFERENCES files(id),PRIMARY KEY(turn,file)) STRICT;
+CREATE TABLE IF NOT EXISTS mcp_projects(connection TEXT PRIMARY KEY REFERENCES mcp_connections(id),project TEXT NOT NULL) STRICT;
+CREATE TABLE IF NOT EXISTS mcp_test_projects(test TEXT PRIMARY KEY,project TEXT NOT NULL) STRICT;
+CREATE TABLE IF NOT EXISTS mcp_feature_commands(caller TEXT NOT NULL,request_id TEXT NOT NULL,digest TEXT NOT NULL,plan TEXT,result TEXT,PRIMARY KEY(caller,request_id)) STRICT;
+CREATE TABLE IF NOT EXISTS mcp_server_tokens(id TEXT PRIMARY KEY,token_hash TEXT NOT NULL UNIQUE,kind TEXT NOT NULL CHECK(kind IN ('session','peer')),name TEXT NOT NULL,agent TEXT REFERENCES agents(id),turn TEXT REFERENCES turns(id),scopes TEXT NOT NULL,created INTEGER NOT NULL,last_used INTEGER,revoked INTEGER,expires INTEGER,request_digest TEXT NOT NULL) STRICT;
+CREATE TABLE IF NOT EXISTS mcp_server_commands(id TEXT PRIMARY KEY,digest TEXT NOT NULL,result TEXT NOT NULL) STRICT;
+CREATE TABLE IF NOT EXISTS mcp_server_messages(caller TEXT NOT NULL REFERENCES mcp_server_tokens(id),request_id TEXT NOT NULL,digest TEXT NOT NULL,turn TEXT NOT NULL UNIQUE REFERENCES turns(id),result TEXT NOT NULL,PRIMARY KEY(caller,request_id)) STRICT;
+UPDATE mcp_server_tokens SET revoked=unixepoch('subsec')*1000 WHERE kind='session' AND revoked IS NULL;
+DELETE FROM mcp_tests;
+DELETE FROM mcp_test_projects;

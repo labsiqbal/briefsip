@@ -47,6 +47,8 @@ pub struct Config {
     pub remaining_data: crate::data::options::Options,
     #[serde(flatten)]
     pub turns: crate::turns::options::Options,
+    #[serde(flatten)]
+    pub harness: crate::harness::config::Config,
 }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -131,6 +133,7 @@ impl Config {
                 .take(1024 * 1024)
                 .read_to_string(&mut input)?;
             let mut config: Self = serde_json::from_str(&input)?;
+            config.harness.test_mode = true;
             config.validate()?;
             return Ok(config);
         }
@@ -231,6 +234,7 @@ impl Config {
             update: crate::updates::config::Config::environment()?,
             remaining_data: crate::data::options::Options::environment(),
             turns: crate::turns::options::Options::environment()?,
+            harness: crate::harness::config::Config::default(),
         };
         config.validate()?;
         Ok(config)

@@ -229,12 +229,12 @@ pub async fn handle(state: &AppState, req: Request, parts: &[&str]) -> Result<Re
         let db = state.database.lock().map_err(|_| Failure::storage())?;
         file(&db.connection, id, &scope)?
     };
-    let response = read(state, file, &q).await?;
+    let response = read(state, file, &q).await;
     {
         let db = state.database.lock().map_err(|_| Failure::storage())?;
         context(&db.connection, kind, owner)?;
     }
-    Ok(response)
+    response
 }
 pub async fn read(state: &AppState, file: File, q: &[(String, String)]) -> Result<Response> {
     if parameter(q, "metadata") == Some("1") {

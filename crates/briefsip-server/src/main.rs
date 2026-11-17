@@ -6,6 +6,8 @@ mod data;
 mod db;
 mod events;
 mod files;
+mod harness;
+mod mcp;
 mod turns;
 mod updates;
 mod web;
@@ -77,7 +79,7 @@ fn security_headers(response: &mut Response) {
 fn text_header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers.get(name).and_then(|value| value.to_str().ok())
 }
-fn allowed(state: &AppState, value: Option<&str>) -> bool {
+pub(crate) fn allowed(state: &AppState, value: Option<&str>) -> bool {
     value.is_some_and(|value| {
         value == state.origin
             || state
@@ -120,6 +122,9 @@ async fn dispatch(State(state): State<AppState>, request: Request) -> Response {
 }
 async fn local(state: &AppState, request: Request) -> Result<Response, Failure> {
     let path = request.uri().path();
+    if path.starts_with("/api/scripts/") {
+        return harness::scripts::local(state, request).await;
+    }
     if updates::pending(state) && !["/api/environment", "/api/updates"].contains(&path) {
         return Ok(local_error(
             503,
@@ -154,6 +159,12 @@ async fn local(state: &AppState, request: Request) -> Result<Response, Failure> 
     }
     if updates::handles(path) {
         return updates::local(state, request).await;
+    }
+    if harness::handles(path, request.method()) {
+        return harness::local(state, request).await;
+    }
+    if mcp::handles(path) {
+        return mcp::local(state, request).await;
     }
     if turns::handles(path, request.method()) {
         return turns::local(state, request).await;
@@ -425,7 +436,11 @@ async fn canonical_request(
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> db::Result<()> {
-    let config = Config::read()?;
+    if std::env::args().nth(1).as_deref() == Some("--mcp-stdio") {
+        return mcp::stdio().await;
+    }
+    let mut config = Config::read()?;
+    harness::hydrate(&mut config.harness).await;
     let database = Arc::new(Mutex::new(db::open(
         &config.database,
         config.auth.is_some(),
@@ -438,6 +453,8 @@ async fn main() -> db::Result<()> {
             files::init(&guard.connection)?;
             data::initialize(&guard)?;
             turns::initialize(&guard.connection).map_err(|e| e.message)?;
+            harness::initialize(&guard.connection).map_err(|e| e.message)?;
+            mcp::initialize(&guard.connection).map_err(|e| e.message)?;
             computer::initialize(&guard.connection)?;
             updates::initialize(&guard.connection)?;
         }
@@ -484,6 +501,8 @@ async fn main() -> db::Result<()> {
     let shutdown_state = state.clone();
     let router = Router::new()
         .merge(computer::routes())
+        .merge(harness::routes())
+        .merge(mcp::routes())
         .merge(files::routes())
         .merge(updates::routes())
         .merge(turns::routes())
@@ -510,6 +529,7 @@ async fn main() -> db::Result<()> {
             if let Err(error) = turns::stop(&shutdown_state) {
                 eprintln!("Turn shutdown failed: {}", error.message);
             }
+            harness::stop(&shutdown_state).await;
             shutdown_state.events.close();
             stop.graceful_shutdown(Some(Duration::from_secs(5)));
         });
@@ -526,6 +546,7 @@ async fn main() -> db::Result<()> {
                 if let Err(error) = turns::stop(&shutdown_state) {
                     eprintln!("Turn shutdown failed: {}", error.message);
                 }
+                harness::stop(&shutdown_state).await;
                 shutdown_state.events.close();
             })
             .await
@@ -541,6 +562,7 @@ async fn main() -> db::Result<()> {
     result?;
     Ok(())
 }
+
 async fn shutdown() {
     let interrupt = tokio::signal::ctrl_c();
     let terminate = async {

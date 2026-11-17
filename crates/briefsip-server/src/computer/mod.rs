@@ -76,6 +76,13 @@ pub fn routes() -> Router<AppState> {
         .route("/api/peer/unpair", any(entry))
         .route("/api/mcp-server/peer-tokens", any(entry))
 }
+pub(crate) async fn feature(state: &AppState, request: Request) -> Result<Response> {
+    if request.uri().path() == "/api/machines" {
+        machines::handle(state, request).await
+    } else {
+        handle_computer(state, request).await
+    }
+}
 async fn entry(State(state): State<AppState>, request: Request) -> Response {
     let path = request.uri().path().to_owned();
     let transport = [
@@ -118,6 +125,9 @@ async fn entry(State(state): State<AppState>, request: Request) -> Response {
         }
         if path == "/api/remote-agents/messages" {
             return remote::handle(&state, request).await;
+        }
+        if crate::mcp::handles(&path) {
+            return crate::mcp::local(&state, request).await;
         }
         machines::handle(&state, request).await
     }
