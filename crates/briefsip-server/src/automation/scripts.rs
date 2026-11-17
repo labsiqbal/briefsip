@@ -756,7 +756,7 @@ pub(crate) async fn local(state: &AppState, request: Request) -> Result<Response
                 )
             })?
         };
-        crate::turns::start_script(state, string(&body, "id")).await?;
+        crate::turns::start_queued(state, string(&body, "id")).await?;
         return Ok(crate::json_response(status, value));
     }
     parts.headers.remove(header::AUTHORIZATION);

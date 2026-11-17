@@ -265,7 +265,7 @@ pub(crate) fn schedule(state: &AppState) -> Result<()> {
     Ok(())
 }
 
-pub(crate) async fn start_script(state: &AppState, id: &str) -> Result<()> {
+pub(crate) async fn start_queued(state: &AppState, id: &str) -> Result<()> {
     schedule(state)?;
     let started = state
         .turns
@@ -422,7 +422,7 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
     }
     state.turns.wake.notify_one();
     if method == Method::POST {
-        schedule(state)?;
+        start_queued(state, string(&v, "id")).await?;
     }
     Ok(crate::json_response(status, value))
 }
