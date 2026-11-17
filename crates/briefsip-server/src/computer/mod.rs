@@ -34,6 +34,16 @@ pub fn initialize(db: &rusqlite::Connection) -> crate::db::Result<()> {
         .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.message.into() })
 }
 
+fn transaction<T>(
+    db: &rusqlite::Connection,
+    work: impl FnOnce(&rusqlite::Connection) -> Result<T>,
+) -> Result<T> {
+    let tx = rusqlite::Transaction::new_unchecked(db, rusqlite::TransactionBehavior::Immediate)?;
+    let result = work(&tx)?;
+    tx.commit()?;
+    Ok(result)
+}
+
 fn error(status: u16, message: impl Into<String>) -> Failure {
     Failure::new(status, "computer_error", message)
 }
@@ -241,4 +251,34 @@ async fn handle_computer(state: &AppState, request: Request) -> Result<Response>
         _ => return Err(error(404, "Route not found.")),
     };
     Ok(crate::json_response(200, value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn failed_commit_rolls_back_and_allows_next_command() -> Result<()> {
+        let db = rusqlite::Connection::open_in_memory()?;
+        db.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE parents(id INTEGER PRIMARY KEY); CREATE TABLE children(parent INTEGER REFERENCES parents(id) DEFERRABLE INITIALLY DEFERRED);")?;
+        assert!(transaction(&db, |db| {
+            db.execute("INSERT INTO children VALUES(1)", [])?;
+            Ok(())
+        })
+        .is_err());
+        assert!(db.is_autocommit());
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM children", [], |r| r.get::<_, i64>(0))?,
+            0
+        );
+        transaction(&db, |db| {
+            db.execute("INSERT INTO parents VALUES(1)", [])?;
+            db.execute("INSERT INTO children VALUES(1)", [])?;
+            Ok(())
+        })?;
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM children", [], |r| r.get::<_, i64>(0))?,
+            1
+        );
+        Ok(())
+    }
 }

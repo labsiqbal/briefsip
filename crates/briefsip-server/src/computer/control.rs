@@ -11,19 +11,7 @@ fn db<T>(s: &AppState, work: impl FnOnce(&Connection) -> Result<T>) -> Result<T>
     work(&g.connection)
 }
 fn tx<T>(s: &AppState, work: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
-    db(s, |c| {
-        c.execute_batch("BEGIN IMMEDIATE")?;
-        match work(c) {
-            Ok(v) => {
-                c.execute_batch("COMMIT")?;
-                Ok(v)
-            }
-            Err(e) => {
-                let _ = c.execute_batch("ROLLBACK");
-                Err(e)
-            }
-        }
-    })
+    db(s, |db| super::transaction(db, work))
 }
 fn permission(c: &Connection, agent: &str) -> Result<Value> {
     Ok(one(

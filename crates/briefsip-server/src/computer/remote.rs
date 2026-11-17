@@ -13,19 +13,7 @@ fn db<T>(state: &AppState, work: impl FnOnce(&Connection) -> Result<T>) -> Resul
     work(&guard.connection)
 }
 fn transaction<T>(state: &AppState, work: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
-    db(state, |db| {
-        db.execute_batch("BEGIN IMMEDIATE")?;
-        match work(db) {
-            Ok(value) => {
-                db.execute_batch("COMMIT")?;
-                Ok(value)
-            }
-            Err(error) => {
-                let _ = db.execute_batch("ROLLBACK");
-                Err(error)
-            }
-        }
-    })
+    db(state, |db| super::transaction(db, work))
 }
 pub fn initialize(db: &Connection) -> Result<()> {
     db.execute_batch("UPDATE turns SET status='interrupted',paused=0,error='Remote send is uncertain after restart. It will not be replayed.' WHERE id IN(SELECT delivery FROM remote_agent_calls WHERE state='sending'); UPDATE remote_agent_calls SET state='uncertain',status='interrupted',error='Remote send is uncertain after restart. It will not be replayed.' WHERE state='sending';")?;
