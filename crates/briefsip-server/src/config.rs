@@ -35,8 +35,10 @@ pub struct Config {
     pub auth: Option<AuthConfig>,
     pub fixed_clock: Option<i64>,
     pub tls: Option<Tls>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "workspace_bindings")]
     pub workspaces: Vec<WorkspaceConfig>,
+    #[serde(flatten)]
+    pub data: crate::data::Options,
 }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -45,6 +47,22 @@ pub struct WorkspaceConfig {
     pub directory: PathBuf,
     #[serde(default)]
     pub write: bool,
+}
+fn workspace_value(value: serde_json::Value) -> crate::db::Result<Vec<WorkspaceConfig>> {
+    let rows = value
+        .as_array()
+        .filter(|rows| rows.len() <= 256)
+        .ok_or("Workspace bindings require Linux and at most 256 entries")?;
+    rows.iter()
+        .map(|row| {
+            serde_json::from_value(row.clone()).map_err(|_| "Invalid workspace binding".into())
+        })
+        .collect()
+}
+fn workspace_bindings<'de, D: serde::Deserializer<'de>>(
+    input: D,
+) -> Result<Vec<WorkspaceConfig>, D::Error> {
+    workspace_value(serde_json::Value::deserialize(input)?).map_err(serde::de::Error::custom)
 }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -104,7 +122,7 @@ impl Config {
             std::io::stdin()
                 .take(1024 * 1024)
                 .read_to_string(&mut input)?;
-            let config: Self = serde_json::from_str(&input)?;
+            let mut config: Self = serde_json::from_str(&input)?;
             config.validate()?;
             return Ok(config);
         }
@@ -114,7 +132,6 @@ impl Config {
         for key in [
             "BRIEFSIP_HUB_ORIGIN",
             "BRIEFSIP_HUB_SIGNING_PUBLIC_KEY",
-            "BRIEFSIP_PROVIDER_ACCOUNTS",
             "BRIEFSIP_IMAGE_BASE_URL",
             "BRIEFSIP_IMAGE_MODEL",
             "BRIEFSIP_IMAGE_API_KEY",
@@ -126,24 +143,9 @@ impl Config {
             "BRIEFSIP_RELEASES_DIR",
             "BRIEFSIP_LAUNCHER_SOCKET",
             "BRIEFSIP_UPDATE_TRIAL",
-            "OPENAI_BASE_URL",
-            "OPENAI_API_KEY",
-            "OPENAI_MODEL",
-            "ANTHROPIC_BASE_URL",
-            "ANTHROPIC_API_KEY",
-            "ANTHROPIC_MODEL",
-            "GEMINI_BASE_URL",
-            "GEMINI_API_KEY",
-            "GEMINI_MODEL",
-            "BRIEFSIP_PROVIDER",
-            "BRIEFSIP_STREAM",
-            "BRIEFSIP_STREAM_TERMINATION",
-            "BRIEFSIP_MAX_TOKENS",
-            "BRIEFSIP_CONCURRENCY",
             "RESEND_API_KEY",
             "BRIEFSIP_INSTALLATION_ID",
             "BRIEFSIP_AGENT_DESKTOP",
-            "BRIEFSIP_PROJECT_ROOT",
             "BRIEFSIP_COMPOSIO",
             "BRIEFSIP_MAIL_FROM",
             "BRIEFSIP_MAIL_ENDPOINT",
@@ -203,7 +205,7 @@ impl Config {
                 })
                 .join("briefsip.sqlite")
         };
-        let config = Self {
+        let mut config = Self {
             database,
             port,
             host: default_host(),
@@ -222,16 +224,20 @@ impl Config {
                 Ok(raw) if raw.len() > 65536 => {
                     return Err("Workspace configuration exceeds 64 KiB".into())
                 }
-                Ok(raw) => serde_json::from_str(&raw).map_err(|_| "Invalid workspace JSON")?,
+                Ok(raw) => workspace_value(
+                    serde_json::from_str(&raw).map_err(|_| "Invalid workspace JSON")?,
+                )?,
                 Err(env::VarError::NotPresent) => Vec::new(),
                 Err(_) => return Err("Invalid workspace JSON".into()),
             },
+            data: crate::data::Options::environment()?,
         };
         config.validate()?;
         Ok(config)
     }
-    fn validate(&self) -> crate::db::Result<()> {
+    fn validate(&mut self) -> crate::db::Result<()> {
         crate::files::validate_workspaces(&self.workspaces)?;
+        self.data.validate()?;
         if self.tls.is_none() && !matches!(self.host.as_str(), "127.0.0.1" | "::1") {
             return Err("HTTP development listener must use loopback".into());
         }
@@ -264,6 +270,76 @@ impl Config {
             }
             if let Some(api) = &auth.api_url {
                 trusted_origin(api, auth.development)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn shared_config_normalizes_accounts_and_preserves_workspace_errors() -> crate::db::Result<()> {
+        let directory = env::temp_dir();
+        let agent = uuid::Uuid::new_v4().to_string();
+        let base = json!({"database":directory.join("config-test.sqlite"),"workspaces":[{"agent":agent,"directory":directory,"write":true}],"accounts":[{"id":"fixture","name":" Fixture ","baseURL":"http://127.0.0.1:1234"}]});
+        let mut config: Config = serde_json::from_value(base.clone())?;
+        config.validate()?;
+        assert_eq!(config.workspaces.len(), 1);
+        assert!(config.workspaces[0].write);
+        for (field, value, message) in [
+            (
+                "workspaces",
+                json!(null),
+                "Workspace bindings require Linux and at most 256 entries",
+            ),
+            (
+                "workspaces",
+                json!([{"agent":agent,"directory":directory,"write":1}]),
+                "Invalid workspace binding",
+            ),
+            (
+                "workspaces",
+                json!([{"agent":agent,"directory":"relative"}]),
+                "Invalid workspace binding",
+            ),
+            (
+                "workspaces",
+                json!([{"agent":agent,"directory":format!("{}/../missing",directory.display())}]),
+                "Invalid workspace binding",
+            ),
+            (
+                "accounts",
+                json!(null),
+                "Provider accounts must be an array of at most 32 entries",
+            ),
+            (
+                "accounts",
+                json!([{"id":"fixture","name":"Fixture","baseURL":"http://foreign.example"}]),
+                "Invalid provider account URL",
+            ),
+            (
+                "accounts",
+                json!([{"id":"fixture","name":"Fixture","baseURL":"https://example.test","provider":1}]),
+                "BRIEFSIP_PROVIDER must be openai-compatible, anthropic or gemini",
+            ),
+            (
+                "accounts",
+                json!([{"id":"fixture","name":"Fixture","baseURL":"https://example.test","streamTermination":1}]),
+                "BRIEFSIP_STREAM_TERMINATION must be marker or finish-reason",
+            ),
+        ] {
+            let mut input = base.clone();
+            input[field] = value;
+            let result = serde_json::from_value::<Config>(input)
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })
+                .and_then(|mut config| config.validate());
+            match result {
+                Err(error) => assert!(error.to_string().contains(message), "{error}"),
+                Ok(()) => panic!("Invalid {field} accepted"),
             }
         }
         Ok(())

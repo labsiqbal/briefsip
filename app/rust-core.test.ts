@@ -57,9 +57,25 @@ test('core SSE wire format replays persisted snapshots, isolates scopes and clos
     const otherReader = isolated.body!.getReader(), pending = otherReader.read();
     assert.equal(await Promise.race([pending.then(() => 'unexpected snapshot'), new Promise(resolve => setTimeout(() => resolve('quiet'), 80))]), 'quiet');
     const writer = new DatabaseSync(database); writer.prepare('UPDATE provider_streams SET text=? WHERE call=?').run('Latest answer', call); writer.prepare('UPDATE provider_stream_segments SET text=?,revision=4 WHERE call=?').run('Latest answer',call); writer.close();
+    const notify = await fetch(app.origin + `/api/agents/${agent}/visibility`, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ id: randomUUID(), revision: 0, hidden: false }) });
+    assert.equal(notify.status, 200); await notify.text();
     const changed = await reader.read(); assert.equal(JSON.parse(Buffer.from(changed.value!).toString().slice(6)).partial.text, 'Latest answer');
+    for (const [index, write] of [
+      { path: `/api/agents/${agent}/files/${randomUUID()}`, type: 'application/octet-stream', body: 'file change' },
+      { path: `/api/agents/${agent}/sites`, type: 'application/json', body: JSON.stringify({ id: randomUUID(), name: 'Fixture', source: '<p>Fixture</p>' }) },
+      { path: '/api/skills', type: 'application/json', body: JSON.stringify({ id: randomUUID(), revision: 0, name: 'Fixture', description: 'Fixture', content: 'Fixture' }) },
+    ].entries()) {
+      const revision = index + 5, text = `File lane commit ${revision}`, external = new DatabaseSync(database);
+      external.prepare('UPDATE provider_streams SET text=? WHERE call=?').run(text, call);
+      external.prepare('UPDATE provider_stream_segments SET text=?,revision=? WHERE call=?').run(text, revision, call); external.close();
+      const next = reader.read();
+      assert.equal(await Promise.race([next.then(() => 'polled'), new Promise(resolve => setTimeout(() => resolve('quiet'), 80))]), 'quiet');
+      const response = await fetch(app.origin + write.path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': write.type, 'X-File-Name': 'fixture.txt' }, body: write.body });
+      assert.equal(response.status, 200, await response.text());
+      const frame = await next; assert.equal(JSON.parse(Buffer.from(frame.value!).toString().slice(6)).partial.text, text);
+    }
     const reconnected = await fetch(app.origin + path, { signal: controller.signal }), reconnectReader = reconnected.body!.getReader();
-    const repaired = await reconnectReader.read(); assert.equal(JSON.parse(Buffer.from(repaired.value!).toString().slice(6)).partial.revision,4);
+    const repaired = await reconnectReader.read(); assert.equal(JSON.parse(Buffer.from(repaired.value!).toString().slice(6)).partial.revision,7);
     await app.close(); assert.equal((await reader.read()).done, true);
     assert.equal((await pending).done,true); assert.equal((await reconnectReader.read()).done,true);
   } finally { controller.abort(); await app.close(); rmSync(root, { recursive: true, force: true }); }
@@ -67,6 +83,10 @@ test('core SSE wire format replays persisted snapshots, isolates scopes and clos
 
 test('Rust test bridge rejects unported options before starting a process', { skip: process.env.BRIEFSIP_TEST_SERVER !== 'rust' }, async () => {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-core-unported-'));
-  try { await assert.rejects(startApp({ database: join(root, 'db.sqlite'), machines: { now: () => 1 } }), /not ported: option machines.*PORTING/); assert(!existsSync(join(root, 'db.sqlite'))); }
+  try {
+    await assert.rejects(startApp({ database: join(root, 'db.sqlite'), machines: { now: () => 1 } }), /not ported: option machines.*PORTING/);
+    for (const concurrency of [NaN, Infinity, 0, 33]) await assert.rejects(startApp({ database: join(root, `db-${String(concurrency)}.sqlite`), concurrency }), /BRIEFSIP_CONCURRENCY must be 1\.\.32/);
+    assert(!existsSync(join(root, 'db.sqlite')));
+  }
   finally { rmSync(root, { recursive: true, force: true }); }
 });
