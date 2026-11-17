@@ -52,8 +52,11 @@ test('Rust route inventory stays within Node matchers and reports ported coverag
     assert(matches.length > 0, `Rust route absent from Node: ${route}`);
     for (const [name] of matches) ported.add(name);
   }
+  const witnesses = routes.map(route => route.replace(/\{seq\}/g, '1').replace(/\{[^}]+\}/g, id));
+  for (const [name, matcher] of matchers) if (!endpoints.has(name) && witnesses.some(witness => matcher(witness))) ported.add(name);
   assert(![...endpoints.values()].some(matcher => matcher('/api/__inventory_unknown')));
   assert(![...endpoints.values()].some(matcher => matcher(`/api/agents/${id}/__inventory_unknown`)));
   t.diagnostic(`ported ${ported.size}/${matchers.size} (${routes.length} Rust route registrations)`);
+  for (const name of matchers.keys()) if (!ported.has(name)) t.diagnostic(`missing ${name}`);
   for (const route of routes) t.diagnostic(route);
 });
