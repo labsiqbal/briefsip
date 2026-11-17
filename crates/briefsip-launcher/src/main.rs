@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 mod backup;
 mod config;
-mod files;
+use briefsip_launcher::files;
 #[cfg(test)]
 mod tests;
 
@@ -395,6 +395,8 @@ impl Launcher {
     fn request(self: &Rc<Self>, request: Value) -> Result<Value> {
         let keys = if request["type"] == "apply" {
             &["type", "id", "target", "version"][..]
+        } else if request["type"] == "trial" {
+            &["type", "id"][..]
         } else {
             &["type"][..]
         };
@@ -408,6 +410,19 @@ impl Launcher {
         }
         match request["type"].as_str() {
             Some("apply") => self.accept(&request),
+            Some("trial") => {
+                let id = request["id"]
+                    .as_str()
+                    .filter(|id| valid_request_id(id))
+                    .ok_or("Invalid update request.")?;
+                let state = self.state.borrow();
+                let attempt = state
+                    .last_attempt
+                    .as_ref()
+                    .filter(|a| a.id == id)
+                    .ok_or("Unknown update trial.")?;
+                Ok(json!({"committed":attempt.status=="done" && state.current==attempt.target}))
+            }
             Some("status") => {
                 let mut value = serde_json::to_value(&*self.state.borrow())?;
                 value

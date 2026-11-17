@@ -36,6 +36,9 @@ pub fn maintenance(state: AppState) -> tokio::task::JoinHandle<()> {
         let mut timer = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
         loop {
             timer.tick().await;
+            if crate::updates::pending(&state) {
+                continue;
+            }
             let result = state
                 .database
                 .lock()

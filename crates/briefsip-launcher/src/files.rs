@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
-    io::Write,
+    io::{Read, Write},
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
     path::{Component, Path, PathBuf},
 };
@@ -134,7 +134,17 @@ pub fn manifest(path: &Path) -> Result<BTreeMap<String, String>> {
             } else if key == "release.json" && s.is_file() {
                 continue;
             } else if s.is_file() {
-                files.insert(key, format!("{:x}", Sha256::digest(fs::read(path)?)));
+                let mut file = File::open(path)?;
+                let mut digest = Sha256::new();
+                let mut bytes = [0; 65536];
+                loop {
+                    let n = file.read(&mut bytes)?;
+                    if n == 0 {
+                        break;
+                    }
+                    digest.update(&bytes[..n]);
+                }
+                files.insert(key, format!("{:x}", digest.finalize()));
             } else {
                 return Err("Unsupported release file.".into());
             }

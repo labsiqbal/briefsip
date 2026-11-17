@@ -5,8 +5,11 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+briefsip-launcher = { path = "../briefsip-launcher" }
+flate2 = "1"
 ammonia = "4"
 regex = "1"
+ring = "0.17"
 axum = { version = "0.8", features = ["http1", "json", "tokio"] }
 axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
 async-stream = "0.3"
