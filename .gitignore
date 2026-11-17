@@ -31,3 +31,6 @@ __pycache__/
 /work/ui-spike/http-netlog.json
 /references/bot-hq/
 /references/t3code/
+
+# CodeGraph local index
+/.codegraph/
