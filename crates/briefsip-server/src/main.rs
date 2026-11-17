@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 mod auth;
+mod computer;
 mod config;
 mod data;
 mod db;
@@ -36,6 +37,7 @@ struct AppState {
     events: events::Hub,
     turns: turns::Runtime,
     trial_pending: Arc<std::sync::atomic::AtomicBool>,
+    computer: Arc<computer::Manager>,
 }
 
 fn json_response(status: u16, value: Value) -> Response {
@@ -424,6 +426,7 @@ async fn main() -> db::Result<()> {
             files::init(&guard.connection)?;
             data::initialize(&guard)?;
             turns::initialize(&guard.connection).map_err(|e| e.message)?;
+            computer::initialize(&guard.connection)?;
         }
         events.watch(&guard.connection);
     }
@@ -439,6 +442,7 @@ async fn main() -> db::Result<()> {
     );
     let tls = config.tls.clone();
     let auth = config.auth.clone().map(auth::Auth::new).transpose()?;
+    let computer = Arc::new(computer::Manager::new(&config)?);
     let state = AppState {
         database,
         config: Arc::new(config),
@@ -447,8 +451,10 @@ async fn main() -> db::Result<()> {
         events,
         turns: turns::Runtime::default(),
         trial_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        computer: computer.clone(),
     };
     let turn_task = turns::start(state.clone());
+    let computer_maintenance = computer::maintenance(state.clone());
     let conversation_maintenance = data::maintenance(state.clone());
     let maintenance_state = state.clone();
     let maintenance = tokio::spawn(async move {
@@ -462,6 +468,7 @@ async fn main() -> db::Result<()> {
     });
     let shutdown_events = state.events.clone();
     let router = Router::new()
+        .merge(computer::routes())
         .merge(files::routes())
         .merge(turns::routes())
         .route("/api/session", any(dispatch))
@@ -504,6 +511,8 @@ async fn main() -> db::Result<()> {
     turn_task.abort();
     maintenance.abort();
     conversation_maintenance.abort();
+    computer_maintenance.abort();
+    computer.close().await;
     result?;
     Ok(())
 }
