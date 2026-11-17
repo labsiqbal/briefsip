@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './server.ts';
 import { launcherRequest } from './updates.ts';
+import { launcherCommand } from './rust-test-launcher.ts';
 import { durableWrite, fileManifest, latestRelease, selectRelease, selectedRelease, verifyRelease } from './update-release.mjs';
 import { receiveRelease, releaseArchive } from './update-archive.ts';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -37,7 +38,7 @@ function publishFixture(dir:string, version:string, mode='healthy') { const sour
 async function launcher(dir:string, current:string) {
   const releases=join(dir,'releases'),data=join(dir,'data');mkdirSync(data,{recursive:true});selectRelease(releases,'current',current);
   const port=await freePort(),config=join(dir,'launcher.json');writeFileSync(config,JSON.stringify({dataDir:data,releasesDir:releases,port,trialTimeoutMs:5000}),{mode:0o600});
-  let processLog=''; const child=spawn(process.execPath,[join(root,'scripts/briefsip-launcher.mjs'),'--config',config],{stdio:['ignore','pipe','pipe']});child.stdout!.on('data',b=>{processLog+=b;});child.stderr!.on('data',b=>{processLog+=b;});
+  let processLog=''; const child=spawn(...launcherCommand(config),{stdio:['ignore','pipe','pipe']});child.stdout!.on('data',b=>{processLog+=b;});child.stderr!.on('data',b=>{processLog+=b;});
   const options={launcherSocket:join(data,'launcher.sock'),releasesDir:releases};
   try {await until(async()=>{try{return (await fetch(`http://127.0.0.1:${port}/api/environment`)).ok;}catch{return false;}});}catch(e){await stop(child);throw new Error(String(e)+'\n'+processLog);}
   return {child,options,data,port,config,get log(){return processLog;},async close(){await stop(child);}};
@@ -55,11 +56,11 @@ test('release builder publishes verified immutable files before feed metadata an
 
 test('release lint failure stops build, tests and packaging; successful gates run in order',()=>{
  const dir=temp(),source=join(dir,'source'),releases=join(dir,'releases');try{
- fixture(source,'1.0.0');const file=join(source,'package.json'),pkg=JSON.parse(readFileSync(file,'utf8'));
+ fixture(source,'1.0.0');execFileSync('git',['init'],{cwd:dir,stdio:'ignore'});execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','Fixture'],{cwd:dir,stdio:'ignore'});const file=join(source,'package.json'),pkg=JSON.parse(readFileSync(file,'utf8'));
  pkg.scripts={lint:'node -e "process.exit(7)"',build:'node -e "require(\'node:fs\').writeFileSync(\'built\',\'yes\')"',test:'node -e "const fs=require(\'node:fs\');if(!fs.existsSync(\'built\'))process.exit(8);fs.writeFileSync(\'tested\',\'yes\')"'};
- writeFileSync(file,JSON.stringify(pkg));assert.throws(()=>buildRelease({source,releases,install:false,allowDirty:true}),/Command failed/);
+ writeFileSync(file,JSON.stringify(pkg));assert.throws(()=>buildRelease({source,releases,repository:dir,install:false,allowDirty:true}),/Command failed/);
  assert(!existsSync(join(source,'tested')));assert(!existsSync(join(source,'built')));assert(!existsSync(releases));
- pkg.scripts.lint='node -e "0"';writeFileSync(file,JSON.stringify(pkg));buildRelease({source,releases,install:false,allowDirty:true});assert(existsSync(join(source,'built')));assert(existsSync(join(source,'tested')));
+ pkg.scripts.lint='node -e "0"';writeFileSync(file,JSON.stringify(pkg));buildRelease({source,releases,repository:dir,install:false,allowDirty:true});assert(existsSync(join(source,'built')));assert(existsSync(join(source,'tested')));
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 
@@ -81,7 +82,7 @@ test('desktop release sync follows dirty guard and publishes matching version th
 
 test('launcher commits healthy trial, preserves data and request identity, and refuses competing launcher',async()=>{
  const dir=temp();let f:Awaited<ReturnType<typeof launcher>>|undefined;try{const first=publishFixture(dir,'1.0.0');f=await launcher(dir,first.id);const second=publishFixture(dir,'1.0.1');const request={type:'apply',id:randomUUID(),target:second.id,version:second.version};assert.equal((await launcherRequest(f.options,request)).accepted,true);assert.equal((await launcherRequest(f.options,request)).accepted,true);await assert.rejects(launcherRequest(f.options,{...request,target:first.id,version:first.version}),/already used/);const outcome=await until(async()=>{const state=await launcherRequest(f!.options,{type:'status'});return (state.lastAttempt as {status?:string})?.status==='done'?state:undefined;});assert.equal(outcome.current,second.id);assert.equal(selectedRelease(join(dir,'releases'),'previous'),first.id);assert.equal((JSON.parse(readFileSync(join(f.data,'update-state.json'),'utf8'))).lastAttempt.status,'done');
- const rival=spawn(process.execPath,[join(root,'scripts/briefsip-launcher.mjs'),'--config',f.config],{stdio:'ignore'});const [code]=await once(rival,'exit');assert.notEqual(code,0);assert.equal((await launcherRequest(f.options,{type:'status'})).current,second.id);
+ const rival=spawn(...launcherCommand(f.config),{stdio:'ignore'});const [code]=await once(rival,'exit');assert.notEqual(code,0);assert.equal((await launcherRequest(f.options,{type:'status'})).current,second.id);
  }finally{await f?.close();rmSync(dir,{recursive:true,force:true});}
 });
 for(const mode of ['wrong','exit'])test(`launcher ${mode} candidate rolls back release and original DB snapshot`,async()=>{
@@ -118,7 +119,7 @@ test('peer SHA-256 mismatch rejects download before publication',async()=>{const
 
 test('interrupted trial recovers immutable snapshot before restarting previous release',async()=>{
  const dir=temp();let f:Awaited<ReturnType<typeof launcher>>|undefined, restarted:ChildProcess|undefined;try{const first=publishFixture(dir,'1.0.0');f=await launcher(dir,first.id);const db=new DatabaseSync(join(f.data,'briefsip.sqlite'));db.exec("INSERT INTO data VALUES('before crash')");db.close();const bad=publishFixture(dir,'1.0.1','wrong');await launcherRequest(f.options,{type:'apply',id:randomUUID(),target:bad.id,version:bad.version});await until(async()=>{const state=await launcherRequest(f!.options,{type:'status'});if((state.lastAttempt as {status?:string})?.status!=='verifying')return false;try{const check=new DatabaseSync(join(f!.data,'briefsip.sqlite'));const damaged=check.prepare('SELECT value FROM data').get()?.value==='trial damage';check.close();return damaged;}catch{return false;}});const died=once(f.child,'exit');f.child.kill('SIGKILL');await died;await delay(200);
- let log='';restarted=spawn(process.execPath,[join(root,'scripts/briefsip-launcher.mjs'),'--config',f.config],{stdio:['ignore','pipe','pipe']});restarted.stderr!.on('data',b=>{log+=b;});await until(async()=>{try{const s=await launcherRequest(f!.options,{type:'status'});return (s.lastAttempt as {status?:string})?.status==='rolled-back';}catch{return false;}},15000).catch(e=>{throw new Error(String(e)+'\n'+log);});await until(async()=>{try{return (await (await fetch(`http://127.0.0.1:${f!.port}/api/environment`)).json()).version==='1.0.0';}catch{return false;}});const restored=new DatabaseSync(join(f.data,'briefsip.sqlite'));assert.equal(restored.prepare('SELECT value FROM data').get()?.value,'before crash');restored.close();
+ let log='';restarted=spawn(...launcherCommand(f.config),{stdio:['ignore','pipe','pipe']});restarted.stderr!.on('data',b=>{log+=b;});await until(async()=>{try{const s=await launcherRequest(f!.options,{type:'status'});return (s.lastAttempt as {status?:string})?.status==='rolled-back';}catch{return false;}},15000).catch(e=>{throw new Error(String(e)+'\n'+log);});await until(async()=>{try{return (await (await fetch(`http://127.0.0.1:${f!.port}/api/environment`)).json()).version==='1.0.0';}catch{return false;}});const restored=new DatabaseSync(join(f.data,'briefsip.sqlite'));assert.equal(restored.prepare('SELECT value FROM data').get()?.value,'before crash');restored.close();
  }finally{if(restarted)await stop(restarted);await f?.close();rmSync(dir,{recursive:true,force:true});}
 });
 
@@ -129,7 +130,7 @@ if(process.env.BRIEFSIP_UPDATE_IT==='1')test('real release build, HTTP update, b
  let pkg=JSON.parse(readFileSync(join(source,'package.json'),'utf8'));pkg.version='0.1.0';writeFileSync(join(source,'package.json'),JSON.stringify(pkg,null,2)+'\n');let lock=JSON.parse(readFileSync(join(source,'package-lock.json'),'utf8'));lock.version=pkg.version;lock.packages[''].version=pkg.version;writeFileSync(join(source,'package-lock.json'),JSON.stringify(lock,null,2)+'\n');
  async function realBuild(notes:string){await new Promise<void>((done,reject)=>{const builder=spawn(process.execPath,['--input-type=module','-e',`import {buildRelease} from ${JSON.stringify(new URL('../scripts/release.mjs',import.meta.url).href)};buildRelease(${JSON.stringify({source,releases,allowDirty:true,notes})});`],{stdio:'inherit'});builder.once('error',reject);builder.once('exit',code=>code===0?done():reject(new Error('Real release build failed.')));});return latestRelease(releases)!;}
  const first=await realBuild('Integration v1');f=await launcher(dir,first.id);const config=JSON.parse(readFileSync(f.config,'utf8'));config.trialTimeoutMs=30000;writeFileSync(f.config,JSON.stringify(config),{mode:0o600});await f.close();
- const child=spawn(process.execPath,[join(root,'scripts/briefsip-launcher.mjs'),'--config',f.config],{stdio:['ignore','pipe','pipe']});let log='';child.stdout!.on('data',b=>{log+=b;});child.stderr!.on('data',b=>{log+=b;});f={...f,child,async close(){await stop(child);},get log(){return log;}};
+ const child=spawn(...launcherCommand(f.config),{stdio:['ignore','pipe','pipe']});let log='';child.stdout!.on('data',b=>{log+=b;});child.stderr!.on('data',b=>{log+=b;});f={...f,child,async close(){await stop(child);},get log(){return log;}};
  const app={origin:`http://127.0.0.1:${f.port}`};await until(async()=>{try{return (await originalFetch(app.origin+'/api/environment')).ok;}catch{return false;}},30000);
  const agent={id:randomUUID(),name:'Owner data survives',model:'fixture',instructions:'Preserve this agent.'};await api(app,'/api/agents',agent,201);
  function version(v:string){pkg.version=v;lock.version=v;lock.packages[''].version=v;writeFileSync(join(source,'package.json'),JSON.stringify(pkg,null,2)+'\n');writeFileSync(join(source,'package-lock.json'),JSON.stringify(lock,null,2)+'\n');}

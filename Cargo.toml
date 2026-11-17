@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/briefsip-server"]
+members = ["crates/briefsip-server", "crates/briefsip-launcher"]
 resolver = "2"
 
 [workspace.package]

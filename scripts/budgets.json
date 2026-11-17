@@ -4,5 +4,8 @@
     "p95LatencyMs": 10,
     "warmupRequests": 25,
     "measuredRequests": 200
+  },
+  "rustLauncher": {
+    "idleRssMiB": 10
   }
 }
