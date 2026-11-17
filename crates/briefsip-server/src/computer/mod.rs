@@ -8,6 +8,8 @@ pub mod machines;
 pub mod options;
 #[allow(dead_code)]
 pub mod remote;
+#[allow(dead_code)]
+pub mod resources;
 mod vnc;
 pub use desktop::Manager;
 mod proxy;
@@ -26,7 +28,10 @@ pub type Result<T> = std::result::Result<T, Failure>;
 pub fn initialize(db: &rusqlite::Connection) -> crate::db::Result<()> {
     db.execute_batch(include_str!("schema.sql"))?;
     machines::initialize(db)?;
-    remote::initialize(db).map_err(|e| e.message.into())
+    remote::initialize(db)
+        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.message.into() })?;
+    resources::initialize(db)
+        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.message.into() })
 }
 
 fn error(status: u16, message: impl Into<String>) -> Failure {
