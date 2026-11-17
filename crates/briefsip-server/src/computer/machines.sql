@@ -13,4 +13,7 @@ CREATE TABLE IF NOT EXISTS mcp_server_tokens (
     created INTEGER NOT NULL, last_used INTEGER, revoked INTEGER, expires INTEGER, request_digest TEXT NOT NULL
   ) STRICT;
   CREATE TABLE IF NOT EXISTS mcp_server_commands(id TEXT PRIMARY KEY,digest TEXT NOT NULL,result TEXT NOT NULL) STRICT;
-CREATE TABLE IF NOT EXISTS mcp_server_messages(caller TEXT,turn TEXT);
+CREATE TABLE IF NOT EXISTS mcp_server_messages (
+    caller TEXT NOT NULL REFERENCES mcp_server_tokens(id), request_id TEXT NOT NULL, digest TEXT NOT NULL,
+    turn TEXT NOT NULL UNIQUE REFERENCES turns(id), result TEXT NOT NULL, PRIMARY KEY(caller,request_id)
+  ) STRICT;
