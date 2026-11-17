@@ -76,7 +76,7 @@ pub(super) fn json(value: &Value, rules: &[(&Value, Range<usize>)]) -> String {
     encode(value, rules, &mut body);
     body
 }
-pub(super) fn response(value: &Value, rules: &[(&Value, Range<usize>)]) -> Response {
+pub(crate) fn response(value: &Value, rules: &[(&Value, Range<usize>)]) -> Response {
     use axum::response::IntoResponse;
     let body = json(value, rules);
     (

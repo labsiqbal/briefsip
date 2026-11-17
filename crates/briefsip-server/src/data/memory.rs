@@ -11,6 +11,23 @@ pub fn route(
         .filter(|_| uuid(id))
         .ok_or_else(|| error(404, "Memory owner not found."))?;
     let scope = format!("{kind}:{id}");
+    scoped(
+        db,
+        &scope,
+        v,
+        q,
+        get,
+        kind == "channels" && owner["archived"] == 1,
+    )
+}
+pub(crate) fn scoped(
+    db: &Connection,
+    scope: &str,
+    v: &Value,
+    q: &[(String, String)],
+    get: bool,
+    archived: bool,
+) -> Result<Value> {
     if get {
         if q.iter()
             .any(|(k, _)| !["query", "after"].contains(&k.as_str()))
@@ -67,7 +84,7 @@ pub fn route(
     )? {
         return Ok(old);
     }
-    if kind == "channels" && owner["archived"] == 1 {
+    if archived {
         return Err(error(409, "Restore the channel before changing memory."));
     }
     let current = one(

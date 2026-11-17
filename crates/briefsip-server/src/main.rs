@@ -11,6 +11,7 @@ mod files;
 mod harness;
 mod mcp;
 mod media;
+mod tasks;
 mod turns;
 mod updates;
 mod web;
@@ -155,7 +156,14 @@ async fn local(state: &AppState, request: Request) -> Result<Response, Failure> 
         if request.method() != Method::GET {
             return Ok(local_error(405, "Streaming requires GET."));
         }
-        if request.uri().query().is_some() && request.uri().path() != "/api/sync" {
+        if request.uri().query().is_some()
+            && request.uri().path() != "/api/sync"
+            && !tasks::query_allowed(
+                request.uri().path(),
+                request.method(),
+                &data::query(&request),
+            )
+        {
             return Ok(local_error(
                 400,
                 "Streaming does not accept query parameters.",
@@ -346,10 +354,20 @@ async fn canonical_request(
         .and_then(web::id)
         .ok_or_else(|| Failure::new(400, "invalid_id", "requestId must be a UUID v4."))?;
     *request_id = id;
-    if request.uri().query().is_some() && request.uri().path() != "/api/sync" {
+    if request.uri().query().is_some()
+        && request.uri().path() != "/api/sync"
+        && !tasks::query_allowed(
+            request.uri().path(),
+            request.method(),
+            &data::query(&request),
+        )
+    {
         return Err(Failure::new(400, "invalid_route", "Invalid route."));
     }
     let _capacity = data::limits::reserve(request.uri().path(), request.method())?;
+    if tasks::device_path(request.uri().path()) {
+        return tasks::device(state, request, request_id).await;
+    }
     if computer::devices::host_path(request.uri().path()) {
         return computer::devices::host(state, request, request_id).await;
     }
@@ -367,12 +385,17 @@ async fn canonical_request(
     let path = request.uri().path().to_owned();
     let method = request.method().clone();
     let body = if method != Method::GET && method != Method::HEAD {
-        let bytes = axum::body::to_bytes(request.into_body(), 65536)
+        let limit = if tasks::result_path(&path) {
+            8388608
+        } else {
+            65536
+        };
+        let bytes = axum::body::to_bytes(request.into_body(), limit)
             .await
             .map_err(|_| {
                 let mut error =
                     Failure::new(413, "payload_too_large", "Payload exceeds the limit.");
-                error.details = Some(json!({"maxBytes":65536}));
+                error.details = Some(json!({"maxBytes":limit}));
                 error
             })?;
         let value = web::parse_json(&bytes)?;
@@ -420,6 +443,11 @@ async fn canonical_request(
     }
     if let Some(response) =
         computer::devices::human(state, &path, &method, &body, &actor, &headers).await?
+    {
+        return Ok(response);
+    }
+    if let Some(response) =
+        tasks::human(state, &path, &method, &body, &actor, &query, &headers).await?
     {
         return Ok(response);
     }
@@ -534,6 +562,7 @@ async fn main() -> db::Result<()> {
         .merge(files::routes())
         .merge(updates::routes())
         .merge(turns::routes())
+        .merge(tasks::routes())
         .merge(connectors::routes())
         .merge(automation::routes())
         .route("/api/session", any(dispatch))
