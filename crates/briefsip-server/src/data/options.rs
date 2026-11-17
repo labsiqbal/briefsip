@@ -105,7 +105,7 @@ impl Options {
             .and_then(|entry| entry.set_password(value))
             .map_err(|_| unavailable(mail))
     }
-    pub(super) fn key(&self, name: &str, mail: bool) -> Result<Vec<u8>> {
+    pub(crate) fn key(&self, name: &str, mail: bool) -> Result<Vec<u8>> {
         let encoded = self.read(name, mail)?.ok_or_else(|| unavailable(mail))?;
         B64.decode(&encoded)
             .ok()

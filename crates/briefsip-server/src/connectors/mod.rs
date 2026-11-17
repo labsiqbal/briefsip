@@ -1,0 +1,129 @@
+pub mod calendar;
+pub(crate) mod composio;
+pub mod config;
+mod journal;
+pub mod mail;
+pub mod runner;
+mod slack;
+mod telegram;
+
+use crate::{
+    data::{all, closed, error, exists, one, param, string, transaction, uuid},
+    web::Failure,
+    AppState,
+};
+use axum::{
+    extract::{Request, State},
+    http::Method,
+    response::Response,
+    routing::any,
+    Router,
+};
+use rusqlite::{params, Connection};
+use serde_json::{json, Value};
+type Result<T> = std::result::Result<T, Failure>;
+
+pub fn initialize(db: &Connection) -> Result<()> {
+    composio::initialize(db)
+}
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/agents/{id}/routines/calendar.ics", any(entry))
+        .route("/api/connected-apps", any(entry))
+        .route("/api/connected-apps/key", any(entry))
+        .route("/api/connected-apps/key/remove", any(entry))
+        .route("/api/connected-apps/accounts", any(entry))
+        .route("/api/connected-apps/connect/{toolkit}", any(entry))
+        .route("/api/connected-apps/disconnect/{account}", any(entry))
+        .route("/api/connected-apps/grant-all/{toolkit}", any(entry))
+        .route("/api/agents/{id}/connected-apps", any(entry))
+        .route("/api/agents/{id}/connected-apps/{toolkit}", any(entry))
+        .route("/api/agents/{id}/connected-app-policies", any(entry))
+        .route(
+            "/api/agents/{id}/turns/{turn}/app-approvals/{call}",
+            any(entry),
+        )
+        .route(
+            "/api/threads/{id}/turns/{turn}/app-approvals/{call}",
+            any(entry),
+        )
+        .route(
+            "/api/channels/{id}/turns/{turn}/app-approvals/{call}",
+            any(entry),
+        )
+}
+async fn entry(State(state): State<AppState>, request: Request) -> Response {
+    let result = async {
+        if state.auth.is_some()
+            || !crate::allowed(
+                &state,
+                Some(&format!(
+                    "http://{}",
+                    crate::text_header(request.headers(), "host").unwrap_or("")
+                )),
+            ) && !state.config.allowed_origins.iter().any(|origin| {
+                url::Url::parse(origin).ok().is_some_and(|u| {
+                    u.authority() == crate::text_header(request.headers(), "host").unwrap_or("")
+                })
+            })
+            || crate::text_header(request.headers(), "sec-fetch-site") == Some("cross-site")
+        {
+            return Err(error(
+                403,
+                "Access is only allowed through the local Briefsip address.",
+            ));
+        }
+        if crate::turns::pending(&state) {
+            return Err(error(503, "Update is being verified. Retry after restart."));
+        }
+        if request.headers().contains_key("authorization") {
+            return Err(error(403, "Request must originate from Briefsip."));
+        }
+        let path = request.uri().path().to_owned();
+        let method = request.method().clone();
+        let query = crate::data::query(&request);
+        let value = if method == Method::POST {
+            if !crate::data::origin(&state, request.headers())
+                || crate::text_header(request.headers(), "content-type")
+                    .unwrap_or("")
+                    .split(';')
+                    .next()
+                    != Some("application/json")
+            {
+                return Err(error(403, "Request must originate from Briefsip."));
+            }
+            let bytes = axum::body::to_bytes(request.into_body(), 64000)
+                .await
+                .map_err(|_| error(413, "Request is too large."))?;
+            let value: Value =
+                serde_json::from_slice(&bytes).map_err(|_| error(400, "Invalid JSON."))?;
+            if !value.is_object() {
+                return Err(error(400, "JSON object is required."));
+            }
+            if !value["id"].as_str().is_some_and(uuid) {
+                return Err(error(400, "Invalid request ID."));
+            }
+            value
+        } else if method == Method::GET {
+            json!({})
+        } else {
+            return Err(error(405, "Method not allowed."));
+        };
+        if path.ends_with("/routines/calendar.ics") && method == Method::GET {
+            let db = state.database.lock().map_err(|_| Failure::storage())?;
+            return calendar::export(
+                &db.connection,
+                path.split('/').nth(3).unwrap_or(""),
+                state.config.now(),
+            );
+        }
+        let result = composio::route(&state, &path, &method, &query, &value).await?;
+        Ok(crate::json_response(200, result))
+    }
+    .await;
+    let mut response = result.unwrap_or_else(|e: Failure| crate::local_error(e.status, &e.message));
+    crate::security_headers(&mut response);
+    response
+}
+mod media;
+mod workflow;

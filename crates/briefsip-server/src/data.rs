@@ -32,6 +32,7 @@ pub use providers::Options;
 use rusqlite::{types::ValueRef, Connection, Params};
 pub use schema::initialize;
 use serde_json::{json, Value};
+pub(crate) use sync::append_mutation;
 
 pub fn maintenance(state: AppState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {

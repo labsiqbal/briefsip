@@ -2,6 +2,7 @@
 mod auth;
 mod computer;
 mod config;
+mod connectors;
 mod data;
 mod db;
 mod events;
@@ -435,6 +436,12 @@ async fn canonical_request(
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> db::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("--connector-journal-config") {
+        return connectors::runner::journal();
+    }
+    if std::env::args().nth(1).as_deref() == Some("--connector-config") {
+        return connectors::runner::run().await;
+    }
     let config = Config::read()?;
     let database = Arc::new(Mutex::new(db::open(
         &config.database,
@@ -448,6 +455,7 @@ async fn main() -> db::Result<()> {
             files::init(&guard.connection)?;
             data::initialize(&guard)?;
             turns::initialize(&guard.connection).map_err(|e| e.message)?;
+            connectors::initialize(&guard.connection).map_err(|e| e.message)?;
             computer::initialize(&guard.connection)?;
             updates::initialize(&guard.connection)?;
         }
@@ -493,11 +501,13 @@ async fn main() -> db::Result<()> {
         }
     });
     let shutdown_state = state.clone();
+    let connector_maintenance = connectors::mail::start(state.clone());
     let router = Router::new()
         .merge(computer::routes())
         .merge(files::routes())
         .merge(updates::routes())
         .merge(turns::routes())
+        .merge(connectors::routes())
         .route("/api/session", any(dispatch))
         .route("/api/session/logout", any(dispatch))
         .route("/api/agents", any(dispatch))
@@ -550,6 +560,7 @@ async fn main() -> db::Result<()> {
     turn_task.abort();
     maintenance.abort();
     conversation_maintenance.abort();
+    connector_maintenance.abort();
     for task in computer_maintenance {
         task.abort();
     }

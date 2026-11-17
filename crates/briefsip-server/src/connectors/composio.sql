@@ -1,0 +1,12 @@
+CREATE TABLE IF NOT EXISTS composio_installation(id INTEGER PRIMARY KEY CHECK(id=1),user_id TEXT NOT NULL) STRICT;
+    CREATE TABLE IF NOT EXISTS composio_auth_configs(toolkit TEXT PRIMARY KEY,config TEXT NOT NULL) STRICT;
+    CREATE TABLE IF NOT EXISTS composio_grants(agent TEXT NOT NULL REFERENCES agents(id),toolkit TEXT NOT NULL,enabled INTEGER NOT NULL,revision INTEGER NOT NULL,PRIMARY KEY(agent,toolkit)) STRICT;
+    CREATE TABLE IF NOT EXISTS composio_commands(id TEXT PRIMARY KEY,request TEXT NOT NULL,result TEXT) STRICT;
+    CREATE TABLE IF NOT EXISTS composio_calls(turn TEXT NOT NULL REFERENCES turns(id),call_id TEXT NOT NULL,agent TEXT NOT NULL REFERENCES agents(id),call TEXT NOT NULL,tool TEXT NOT NULL,state TEXT NOT NULL,decision TEXT,result TEXT,after_output INTEGER NOT NULL,after_action INTEGER NOT NULL,revision INTEGER NOT NULL,PRIMARY KEY(turn,call_id)) STRICT;
+    CREATE TABLE IF NOT EXISTS composio_policies(agent TEXT NOT NULL REFERENCES agents(id),fingerprint TEXT NOT NULL,tool TEXT NOT NULL,account TEXT NOT NULL,toolkit TEXT NOT NULL,PRIMARY KEY(agent,fingerprint)) STRICT;
+    CREATE TABLE IF NOT EXISTS composio_settings(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL,ciphertext TEXT NOT NULL) STRICT;
+    UPDATE composio_calls SET state='uncertain',revision=revision+1 WHERE state='running';
+CREATE TABLE IF NOT EXISTS composio_project_identities(project TEXT PRIMARY KEY,user_id TEXT NOT NULL) STRICT;
+    CREATE TABLE IF NOT EXISTS composio_project_grants(project TEXT NOT NULL,agent TEXT NOT NULL REFERENCES agents(id),toolkit TEXT NOT NULL,enabled INTEGER NOT NULL,revision INTEGER NOT NULL,PRIMARY KEY(project,agent,toolkit)) STRICT;
+    CREATE TABLE IF NOT EXISTS composio_policy_projects(fingerprint TEXT PRIMARY KEY,project TEXT NOT NULL) STRICT;
+    CREATE TABLE IF NOT EXISTS composio_project_accounts(project TEXT NOT NULL,account TEXT NOT NULL,toolkit TEXT NOT NULL,removed INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(project,account)) STRICT;
