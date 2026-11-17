@@ -105,6 +105,11 @@ pub fn read(db: &Connection, turn: &Value, name: &str, args: &Value) -> Result<V
                 json!({"id":args["id"],"name":file.meta["name"],"media_type":mime,"note":"Image pixels follow this tool result in a user message."})
             });
         }
+        if let Some(format) = super::transcription::audio(&file.bytes) {
+            return Ok(
+                json!({"id":args["id"],"name":file.meta["name"],"text":"","source":"audio","format":format,"note":"Audio file attached. Its contents have not been transcribed. Ask the user to transcribe it through the file preview before interpreting it."}),
+            );
+        }
         let text = std::str::from_utf8(&file.bytes)
             .map_err(|_| error(415, "Message attachment must be UTF-8 text."))?;
         return Ok(

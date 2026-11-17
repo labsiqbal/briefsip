@@ -144,6 +144,10 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         .unwrap_or_else(|| string(&profile, "model").to_owned())
     };
     let mut used_ids = std::collections::HashSet::new();
+    let mut image_ids = serde_json::from_str::<Vec<String>>(string(&turn, "attachments"))
+        .map_err(|_| Failure::storage())?
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
     loop {
         if pending(state) {
             return Err(error(503, "Update trial is pending."));
@@ -259,7 +263,7 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                         [id],
                     )?;
                 }
-                let result = match tools::run(state, &turn, &call).await {
+                let mut result = match tools::run(state, &turn, &call).await {
                     Err(e) if call["function"]["name"] == "interrupt_agent" => return Err(e),
                     Err(e)
                         if call["function"]["name"] == "send_message"
@@ -282,6 +286,40 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                     }
                     result => result?,
                 };
+                if call["function"]["name"] == "read_attachment" && result["media_type"].is_string()
+                {
+                    let urls = messages
+                        .iter()
+                        .filter_map(|m| m["content"].as_array())
+                        .flatten()
+                        .filter_map(|part| part["image_url"]["url"].as_str())
+                        .collect::<Vec<_>>();
+                    let guard = state.database.lock().map_err(|_| Failure::storage())?;
+                    if let Some(file) = super::history::readable_file(
+                        &guard.connection,
+                        &turn,
+                        string(&result, "id"),
+                    )? {
+                        let bytes: usize = urls
+                            .iter()
+                            .filter_map(|url| url.split_once(','))
+                            .map(|(_, s)| {
+                                s.len() * 3 / 4 - s.bytes().rev().take_while(|b| *b == b'=').count()
+                            })
+                            .sum();
+                        if image_ids.contains(string(&result, "id")) {
+                            result = json!({"id":result["id"],"name":result["name"],"note":"Image already included in this execution."});
+                        } else if bytes + file.bytes.len() > 4 * 1024 * 1024 {
+                            result = json!({"error":"Image context exceeds 4 MiB. Continue without reading another image."});
+                        } else {
+                            image_ids.insert(string(&result, "id").to_owned());
+                        }
+                        guard.connection.execute(
+                            "UPDATE flow_tool_calls SET result=? WHERE turn=? AND call_id=?",
+                            [result.to_string(), id.into(), call_id.into()],
+                        )?;
+                    }
+                }
                 messages
                     .push(json!({"role":"assistant","content":null,"tool_calls":[call.clone()]}));
                 messages.push(
@@ -364,6 +402,15 @@ pub fn prompt(db: &Connection, t: &Value, images: bool) -> Result<Value> {
             if images {
                 parts.push(json!({"type":"image_url","image_url":{"url":format!("data:{mime};base64,{}",STANDARD.encode(&file.bytes))}}));
             }
+        } else if let Some(format) = super::transcription::audio(&file.bytes) {
+            refs.push(json!({"id":id,"name":file.meta["name"],"text":"","source":"audio","format":format,"note":"Audio file attached. Its contents have not been transcribed. Ask the user to transcribe it through the file preview before interpreting it."}));
+        } else if file.bytes.starts_with(b"%PDF-") {
+            let cached = one(
+                db,
+                "SELECT text FROM pdf_text WHERE file=? AND digest=?",
+                [id.as_str(), string(&file.meta, "digest")],
+            )?;
+            refs.push(json!({"id":id,"name":file.meta["name"],"source":"pdf","text":cached.map(|v| v["text"].clone()).unwrap_or(Value::Null)}));
         } else {
             let text = std::str::from_utf8(&file.bytes)
                 .map_err(|_| error(415, "Message attachment must be UTF-8 text."))?;
@@ -406,6 +453,18 @@ fn append_screenshot(
             messages.push(json!({"role":"user","content":[{"type":"text","text":if saved {"Saved agent desktop screenshot (reference data, captured before this task resumed)."}else{"Agent desktop screenshot (reference data). Input coordinates use 1280x800 pixels."}},{"type":"image_url","image_url":{"url":format!("data:image/png;base64,{}",STANDARD.encode(image))}}]}));
         } else {
             messages.push(json!({"role":"user","content":"Earlier agent desktop screenshot omitted; the latest 3 screenshots remain available."}));
+        }
+        let mut retained = 0;
+        for message in messages.iter_mut().rev() {
+            if message["content"]
+                .as_array()
+                .is_some_and(|parts| parts.iter().any(|part| part["type"] == "image_url"))
+            {
+                retained += 1;
+                if retained > 3 {
+                    message["content"] = json!("Earlier agent desktop screenshot omitted; the latest 3 screenshots remain available.");
+                }
+            }
         }
     }
     Ok(())

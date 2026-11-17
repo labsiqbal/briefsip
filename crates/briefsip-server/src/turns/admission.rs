@@ -26,19 +26,43 @@ pub(super) fn files(v: &Value) -> Result<Value> {
     Ok(files)
 }
 pub fn validate_files(db: &Connection, files: &Value, scope: &str) -> Result<()> {
-    let mut bytes = 0;
+    let (mut text_bytes, mut image_bytes, mut audio_bytes) = (0, 0, 0);
     for f in files.as_array().ok_or_else(Failure::storage)? {
         let id = f.as_str().ok_or_else(Failure::storage)?;
-        let file = one(
-            db,
-            "SELECT length(bytes) AS size,scope FROM files WHERE id=? AND deleted=0",
-            [id],
-        )?
-        .filter(|v| v["scope"] == scope)
-        .ok_or_else(|| error(404, "Attachment not found in this conversation."))?;
-        bytes += file["size"].as_i64().unwrap_or(0);
+        let file = crate::files::attachments::file(db, id, scope)?;
+        if crate::files::attachments::image_type(&file.bytes).is_some() {
+            image_bytes += file.bytes.len();
+        } else if super::transcription::audio(&file.bytes).is_some() {
+            audio_bytes += file.bytes.len();
+        } else if file.bytes.starts_with(b"%PDF-") {
+            if file.bytes.len() > 10 * 1024 * 1024 {
+                return Err(error(413, "PDF attachment limit is 10 MiB."));
+            }
+        } else {
+            std::str::from_utf8(&file.bytes)
+                .ok()
+                .filter(|text| {
+                    !text
+                        .chars()
+                        .any(|c| c < ' ' && !['\n', '\r', '\t'].contains(&c))
+                })
+                .ok_or_else(|| error(415, "Message attachment must be UTF-8 text."))?;
+            text_bytes += file.bytes.len();
+        }
     }
-    if bytes > 32 * 1024 {
+    if image_bytes > 4 * 1024 * 1024 {
+        return Err(error(
+            413,
+            "Total image attachment limit is 4 MiB per message.",
+        ));
+    }
+    if audio_bytes > 10 * 1024 * 1024 {
+        return Err(error(
+            413,
+            "Total audio attachment limit is 10 MiB per message.",
+        ));
+    }
+    if text_bytes > 32 * 1024 {
         return Err(error(
             413,
             "Total text attachment limit is 32 KiB per message.",
