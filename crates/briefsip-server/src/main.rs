@@ -132,11 +132,8 @@ async fn local(state: &AppState, request: Request) -> Result<Response, Failure> 
             "Update is being verified. Retry after restart.",
         ));
     }
-    if path.starts_with("/api/scripts/") && request.method() == Method::DELETE {
-        return Ok(local_error(
-            403,
-            "File deletion requires the local owner in Briefsip.",
-        ));
+    if path.starts_with("/api/scripts/") {
+        return Box::pin(automation::scripts::local(state, request)).await;
     }
     if text_header(request.headers(), "authorization")
         .is_some_and(|value| value.starts_with("Bearer bsi_"))

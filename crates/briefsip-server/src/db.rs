@@ -49,6 +49,7 @@ pub fn open(path: &Path, canonical_mode: bool, now: i64) -> Result<Database> {
             .create(parent)?;
     }
     let connection = Connection::open(path)?;
+    connection.set_prepared_statement_cache_capacity(128);
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     let source = fs::canonicalize(path)?;
     if fs::metadata(&source)?.nlink() != 1 {

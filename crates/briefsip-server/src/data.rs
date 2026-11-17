@@ -148,7 +148,7 @@ pub(crate) fn closed(v: &Value, keys: &[&str]) -> bool {
         .is_some_and(|m| m.keys().all(|k| keys.contains(&k.as_str())))
 }
 pub(crate) fn all(db: &Connection, sql: &str, params: impl Params) -> Result<Vec<Value>> {
-    let mut statement = db.prepare(sql)?;
+    let mut statement = db.prepare_cached(sql)?;
     let names: Vec<_> = statement
         .column_names()
         .iter()
