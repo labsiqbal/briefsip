@@ -128,19 +128,7 @@ fn with_db<T>(s: &AppState, f: impl FnOnce(&Connection) -> Result<T>) -> Result<
     f(&g.connection)
 }
 fn tx<T>(s: &AppState, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
-    with_db(s, |db| {
-        db.execute_batch("BEGIN IMMEDIATE")?;
-        match f(db) {
-            Ok(v) => {
-                db.execute_batch("COMMIT")?;
-                Ok(v)
-            }
-            Err(e) => {
-                let _ = db.execute_batch("ROLLBACK");
-                Err(e)
-            }
-        }
-    })
+    with_db(s, |db| super::transaction(db, f))
 }
 fn row(s: &AppState, id: &str) -> Result<Value> {
     with_db(s, |db| {
