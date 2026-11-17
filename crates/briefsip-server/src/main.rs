@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 mod auth;
+mod automation;
 mod computer;
 mod config;
 mod connectors;
@@ -126,6 +127,12 @@ async fn local(state: &AppState, request: Request) -> Result<Response, Failure> 
         return Ok(local_error(
             503,
             "Update is being verified. Retry after restart.",
+        ));
+    }
+    if path.starts_with("/api/scripts/") && request.method() == Method::DELETE {
+        return Ok(local_error(
+            403,
+            "File deletion requires the local owner in Briefsip.",
         ));
     }
     if text_header(request.headers(), "authorization")
@@ -443,6 +450,7 @@ async fn main() -> db::Result<()> {
         return connectors::runner::run().await;
     }
     let config = Config::read()?;
+    let _script_discovery = automation::scripts::open(&config)?;
     let database = Arc::new(Mutex::new(db::open(
         &config.database,
         config.auth.is_some(),
@@ -456,6 +464,7 @@ async fn main() -> db::Result<()> {
             data::initialize(&guard)?;
             turns::initialize(&guard.connection).map_err(|e| e.message)?;
             connectors::initialize(&guard.connection).map_err(|e| e.message)?;
+            automation::initialize(&guard.connection).map_err(|e| e.message)?;
             computer::initialize(&guard.connection)?;
             updates::initialize(&guard.connection)?;
         }
@@ -485,7 +494,9 @@ async fn main() -> db::Result<()> {
         turns: turns::Runtime::new()?,
         computer: computer.clone(),
     };
+    automation::scripts::sync(&state).map_err(|e| e.message)?;
     let turn_task = turns::start(state.clone());
+    let automation_task = automation::start(state.clone());
     let computer_maintenance = computer::maintenance(state.clone());
     let conversation_maintenance = data::maintenance(state.clone());
     let trial_watch = updates::watch_trial(state.clone());
@@ -508,6 +519,7 @@ async fn main() -> db::Result<()> {
         .merge(updates::routes())
         .merge(turns::routes())
         .merge(connectors::routes())
+        .merge(automation::routes())
         .route("/api/session", any(dispatch))
         .route("/api/session/logout", any(dispatch))
         .route("/api/agents", any(dispatch))
@@ -558,6 +570,7 @@ async fn main() -> db::Result<()> {
             .await
     };
     turn_task.abort();
+    automation_task.abort();
     maintenance.abort();
     conversation_maintenance.abort();
     connector_maintenance.abort();

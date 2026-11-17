@@ -51,6 +51,8 @@ pub struct Config {
     pub media: crate::media::Options,
     #[serde(flatten)]
     pub connectors: crate::connectors::config::Options,
+    #[serde(flatten)]
+    pub automation: crate::automation::options::Options,
 }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -144,7 +146,6 @@ impl Config {
         for key in [
             "BRIEFSIP_HUB_ORIGIN",
             "BRIEFSIP_HUB_SIGNING_PUBLIC_KEY",
-            "BRIEFSIP_SCRIPT_DIRECTORY",
             "BRIEFSIP_AGENT_DESKTOP",
             "BRIEFSIP_COMPOSIO",
         ] {
@@ -235,6 +236,7 @@ impl Config {
             turns: crate::turns::options::Options::environment()?,
             media: crate::media::Options::environment()?,
             connectors: crate::connectors::config::Options::environment(),
+            automation: crate::automation::options::Options::environment(),
         };
         config.validate()?;
         Ok(config)
@@ -243,6 +245,7 @@ impl Config {
         crate::files::validate_workspaces(&self.workspaces)?;
         self.data.validate()?;
         self.computer.validate()?;
+        crate::automation::options::configure(self)?;
         self.remaining_data.validate()?;
         self.turns.validate()?;
         self.media.validate()?;

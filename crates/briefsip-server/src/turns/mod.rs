@@ -1,3 +1,5 @@
+pub(crate) use admission::route as script_route;
+pub(crate) use history::requested_files;
 mod accounts;
 mod admission;
 mod compaction;
@@ -19,7 +21,7 @@ mod stream;
 pub(crate) mod tools;
 pub(crate) use crate::media::transcription;
 mod verification;
-mod waits;
+pub(crate) mod waits;
 
 use crate::{data, web::Failure, AppState};
 use axum::{extract::Request, http::Method, response::Response, routing::any, Router};
@@ -126,13 +128,14 @@ pub fn start(state: AppState) -> tokio::task::JoinHandle<()> {
         }
     })
 }
-fn schedule(state: &AppState) -> Result<()> {
+pub(crate) fn schedule(state: &AppState) -> Result<()> {
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let db = &guard.connection;
     if pending(state) {
         return Ok(());
     }
     queue::expire(db)?;
+    refresh_routing(db)?;
     waits::expire(db, state.config.now())?;
     messaging::settle(state, db)?;
     coordination::settle(db)?;
@@ -163,7 +166,7 @@ fn schedule(state: &AppState) -> Result<()> {
         .as_ref()
         .and_then(Value::as_u64)
         .unwrap_or(4) as usize;
-    let queued = all(db, "SELECT t.*,a.thread_limit FROM turns t JOIN agents a ON a.id=t.agent WHERE t.status='queued' AND t.paused=0 AND t.waiting_for IS NULL AND NOT EXISTS(SELECT 1 FROM turn_waits w WHERE w.turn=t.id AND w.status='waiting') AND NOT EXISTS(SELECT 1 FROM questions q WHERE q.turn=t.id AND q.answer IS NULL) AND NOT EXISTS(SELECT 1 FROM remote_agent_calls WHERE delivery=t.id) AND NOT EXISTS(SELECT 1 FROM agent_requests r WHERE r.turn=t.id AND r.expects_reply=1 AND r.settled=0 AND NOT EXISTS(SELECT 1 FROM delegation_tasks d WHERE d.request=r.id)) AND NOT EXISTS(SELECT 1 FROM delegation_waits w WHERE w.turn=t.id AND w.status='waiting') AND NOT EXISTS(SELECT 1 FROM delegation_tasks d WHERE d.creator_turn=t.id AND d.wait=1 AND d.wake_delivered=0) AND t.dispatch_mode<>'steer' AND NOT EXISTS(SELECT 1 FROM agent_visibility v WHERE v.agent=t.agent AND v.hidden=1) AND NOT EXISTS(SELECT 1 FROM queue_edits e JOIN turns h ON h.id=e.turn WHERE e.state='held' AND e.expires_at>unixepoch('subsec')*1000 AND h.agent=t.agent AND h.thread IS t.thread AND coalesce((SELECT position FROM queue_positions WHERE turn=h.id),h.seq)<=coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)) ORDER BY coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)", [])?;
+    let queued = all(db, "SELECT t.*,a.thread_limit FROM turns t JOIN agents a ON a.id=t.agent WHERE t.status='queued' AND t.paused=0 AND t.waiting_for IS NULL AND NOT EXISTS(SELECT 1 FROM turn_waits w WHERE w.turn=t.id AND w.status='waiting') AND NOT EXISTS(SELECT 1 FROM questions q WHERE q.turn=t.id AND q.answer IS NULL) AND NOT EXISTS(SELECT 1 FROM remote_agent_calls WHERE delivery=t.id) AND NOT EXISTS(SELECT 1 FROM agent_requests r WHERE r.turn=t.id AND r.expects_reply=1 AND r.settled=0 AND NOT EXISTS(SELECT 1 FROM delegation_tasks d WHERE d.request=r.id)) AND NOT EXISTS(SELECT 1 FROM delegation_waits w WHERE w.turn=t.id AND w.status='waiting') AND NOT EXISTS(SELECT 1 FROM delegation_tasks d WHERE d.creator_turn=t.id AND d.wait=1 AND d.wake_delivered=0) AND t.dispatch_mode<>'steer' AND coalesce(t.routing,'')<>'released' AND NOT EXISTS(SELECT 1 FROM agent_visibility v WHERE v.agent=t.agent AND v.hidden=1) AND NOT EXISTS(SELECT 1 FROM queue_edits e JOIN turns h ON h.id=e.turn WHERE e.state='held' AND e.expires_at>unixepoch('subsec')*1000 AND h.agent=t.agent AND h.thread IS t.thread AND coalesce((SELECT position FROM queue_positions WHERE turn=h.id),h.seq)<=coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)) ORDER BY coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)", [])?;
     for row in queued {
         if active.len() >= capacity {
             break;
@@ -217,6 +220,28 @@ fn schedule(state: &AppState) -> Result<()> {
             }
             task_state.turns.wake.notify_one();
         });
+    }
+    Ok(())
+}
+
+pub(crate) fn refresh_routing(db: &Connection) -> Result<()> {
+    for turn in all(db, "SELECT id FROM turns WHERE agent IN(SELECT agent FROM agent_visibility WHERE hidden=1) AND coalesce(routing,'') NOT IN('released','room') AND id NOT IN(SELECT turn FROM queue_edits WHERE state='held') AND channel IS NOT NULL AND parent IS NULL AND status='queued' AND paused=0 AND waiting_for IS NULL AND NOT EXISTS(SELECT 1 FROM provider_calls p WHERE p.turn=turns.id AND p.purpose='completion')", [])? {
+        db.execute("UPDATE turns SET routing='released',revision=revision+1 WHERE id=?", [string(&turn,"id")])?;
+    }
+    for turn in all(db, "SELECT id,channel FROM turns WHERE routing='released' AND status='queued' AND id NOT IN(SELECT turn FROM queue_edits WHERE state='held')", [])? {
+        let channel = data::conversations::channel(db, string(&turn, "channel"))?;
+        if channel["archived"] == 1 {
+            continue;
+        }
+        let available = all(db, "SELECT m.agent FROM channel_members m WHERE channel=? AND NOT EXISTS(SELECT 1 FROM agent_visibility v WHERE v.agent=m.agent AND v.hidden=1)", [string(&turn, "channel")])?;
+        let owner = available.iter().find(|a| a["agent"] == channel["lead"]).or_else(|| (available.len() == 1).then(|| &available[0]));
+        if let Some(owner) = owner {
+            let owner = string(owner, "agent");
+            let count: i64 = db.query_row("SELECT count(*) FROM turns WHERE agent=? AND id<>? AND status IN('queued','running')", [owner, string(&turn,"id")], |r| r.get(0))?;
+            if count < 100 {
+                db.execute("UPDATE turns SET agent=?,routing=?,revision=revision+1 WHERE id=?", params![owner, if available.len()>1 {"pending"}else{"assigned"},string(&turn,"id")])?;
+            }
+        }
     }
     Ok(())
 }
@@ -421,4 +446,20 @@ pub fn routes() -> Router<AppState> {
             "/api/channels/{id}/turns/{turn}/questions/{question}/answer",
             any(crate::dispatch),
         )
+}
+
+pub(crate) fn enqueue_automation(
+    state: &AppState,
+    db: &Connection,
+    agent: &str,
+    thread: &str,
+    id: &str,
+    text: &str,
+) -> Result<()> {
+    admission::account(state, db, agent)?;
+    db.execute(
+        "INSERT INTO turns(id,agent,thread,text,status,created) VALUES(?,?,?,?,'queued',?)",
+        params![id, agent, thread, text, iso(db, state.config.now())?],
+    )?;
+    Ok(())
 }

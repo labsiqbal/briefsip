@@ -41,7 +41,7 @@ test('Rust route inventory stays within Node matchers and reports ported coverag
   const id = '00000000-0000-4000-8000-000000000001';
   const ported = new Set<string>();
   for (const route of routes) {
-    const witness = route.replace(/\{[^}]+\}/g, id);
+    const witness = route.replace(/\{seq\}/g, '1').replace(/\{[^}]+\}/g, id);
     if (!/^\/(?:api(?:\/|$)|mcp(?:\/|$))/.test(route)) {
       assert(publicMatchers.some(matcher => matcher.test(witness)), `Rust public route absent from Node: ${route}`);
       continue;

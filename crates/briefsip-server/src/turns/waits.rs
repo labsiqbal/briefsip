@@ -57,7 +57,12 @@ pub fn request(
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
-fn event(body: &[u8], headers: &axum::http::HeaderMap, secret: &str, now: i64) -> Result<Value> {
+pub(crate) fn event(
+    body: &[u8],
+    headers: &axum::http::HeaderMap,
+    secret: &str,
+    now: i64,
+) -> Result<Value> {
     if ["x-briefsip-time", "x-briefsip-id", "x-briefsip-signature"]
         .iter()
         .any(|name| headers.get_all(*name).iter().count() != 1)

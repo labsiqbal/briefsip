@@ -321,7 +321,12 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
     if !integer(&v["revision"], 1, 9_007_199_254_740_991) {
         return Err(error(400, "Invalid agent revision."));
     }
-    let mut request = json!({"agent":id,"revision":v["revision"],"name":name,"model":model,"instructions":instructions});
+    let script_provider = v["scriptProvider"] == true;
+    let mut request = if script_provider {
+        json!({"agent":id,"revision":v["revision"],"scriptProvider":true,"model":model})
+    } else {
+        json!({"agent":id,"revision":v["revision"],"name":name,"model":model,"instructions":instructions})
+    };
     for key in [
         "role",
         "runtime",

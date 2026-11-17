@@ -515,6 +515,16 @@ fn control(
         if ["done", "cancelled"].contains(&string(&t, "status")) {
             return Err(error(409, "Terminal tasks cannot be resumed or paused."));
         }
+        if exists(
+            db,
+            "SELECT 1 FROM flow_steps WHERE turn=? AND status IN('done','failed','skipped')",
+            [id],
+        )? {
+            return Err(error(
+                409,
+                "Flow step has already settled. Start a new routine run.",
+            ));
+        }
         let branch = all(db,"WITH RECURSIVE tree(id) AS(SELECT id FROM turns WHERE id=? UNION ALL SELECT t.id FROM turns t JOIN tree ON t.parent=tree.id) SELECT t.* FROM turns t JOIN tree ON tree.id=t.id",[id])?;
         let mut unfinished = Vec::new();
         for item in &branch {
@@ -643,7 +653,7 @@ fn control(
                 if db.query_row("SELECT count(*) FROM turns WHERE agent=? AND id<>? AND status IN('queued','running')",[owner,child],|r|r.get::<_,i64>(0))? >= 100 {
                     return Err(error(429,"Recipient queue is full."));
                 }
-                db.execute("UPDATE turns SET agent=?,paused=0,revision=revision+1,status='queued',error=NULL,tool_budget_used=0,waiting_for=CASE WHEN waiting_for IN(SELECT id FROM turns WHERE status='cancelled') THEN NULL ELSE waiting_for END WHERE id=?",[owner,child])?;
+                db.execute("UPDATE turns SET agent=?,routing=CASE WHEN ?='reassign' THEN 'assigned' ELSE routing END,paused=0,revision=revision+1,status='queued',error=NULL,tool_budget_used=0,waiting_for=CASE WHEN waiting_for IN(SELECT id FROM turns WHERE status='cancelled') THEN NULL ELSE waiting_for END WHERE id=?",[owner,action,child])?;
             }
         }
         let result =

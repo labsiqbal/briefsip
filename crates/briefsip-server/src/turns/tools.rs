@@ -81,6 +81,9 @@ pub fn workspace(
         .cloned())
 }
 pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Value>> {
+    if crate::automation::model(db, string(turn, "id"))?.is_some() {
+        return Ok(Vec::new());
+    }
     let mut specs: Vec<Value> =
         serde_json::from_str(include_str!("tool-specs.json")).map_err(|_| Failure::storage())?;
     let private = super::messaging::channel(db, string(turn, "id"))?.is_none();
@@ -99,7 +102,8 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
             private && super::messaging::allowed(db, string(turn, "id")).unwrap_or(false)
         }
         "edit_profile" | "list_skills" | "read_skill" | "read_skill_file" | "list_sites"
-        | "publish_site" | "delete_site" | "set_avatar" => private,
+        | "publish_site" | "delete_site" | "set_avatar" | "list_routines" | "read_routine"
+        | "set_routine_flow" => private,
         "run_shell"
         | "git_status"
         | "git_diff"
@@ -118,6 +122,7 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
         | "git_create_worktree" => writable,
         _ => false,
     });
+    specs.extend(crate::automation::tools(db, turn)?);
     if !turn["channel"].is_null() {
         specs.retain(|t| t["function"]["name"] != "delegate_task");
         specs.splice(0..0, super::coordination::tools(db, turn)?);
@@ -436,6 +441,9 @@ pub(super) fn dispatch(
     let name = string(&call["function"], "name");
     let agent = string(turn, "agent");
     match name {
+        "list_routines" | "read_routine" | "set_routine_flow" | "no_update" | "report_failure" => {
+            crate::automation::tool(db, turn, name, args)
+        }
         "set_provider_account" => super::accounts::request(state, db, turn, call, args),
         "read_history" | "read_message" | "read_attachment" => {
             super::history::read(db, turn, name, args)

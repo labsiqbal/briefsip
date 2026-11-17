@@ -9,8 +9,6 @@ briefsip-launcher = { path = "../briefsip-launcher" }
 flate2 = "1"
 ammonia = "4"
 regex = "1"
-chrono = { version = "0.4", default-features = false, features = ["std"] }
-chrono-tz = "0.10"
 ring = "0.17"
 axum = { version = "0.8", features = ["http1", "json", "tokio", "ws"] }
 axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
@@ -40,6 +38,8 @@ subtle = "2"
 unicode-normalization = "0.1"
 idna = "1"
 moxcms = "0.8"
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+chrono-tz = "0.10.4"
 
 [lints]
 workspace = true

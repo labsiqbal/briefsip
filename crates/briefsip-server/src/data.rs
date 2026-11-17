@@ -386,6 +386,9 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
         }
     })
     .await?;
+    if write && matches!(parts.as_slice(), ["api", "agents", _, "scripts" | "delete"]) {
+        crate::automation::scripts::sync(state)?;
+    }
     if write && matches!(parts.as_slice(), ["api", "agents", _, "delete"]) {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
@@ -442,7 +445,11 @@ fn route(
         }
         ["api", "agents", id, "template"] if get => agents::template(db, id)?,
         ["api", "agents", id, "edit"] if post => agents::edit(state, db, id, v)?,
-        ["api", "agents", id, "visibility"] if post => agents::visibility(state, db, id, v)?,
+        ["api", "agents", id, "visibility"] if post => {
+            let value = agents::visibility(state, db, id, v)?;
+            crate::turns::refresh_routing(db)?;
+            value
+        }
         ["api", "agents", id, "scripts"] if get || post => agents::scripts(state, db, id, v, get)?,
         ["api", "agents", id, "delete"] if post => agents::delete(state, db, id, v, q, headers)?,
         ["api", "agents", id, "avatar"] if get => agents::avatar_read(db, id)?,

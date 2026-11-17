@@ -111,22 +111,24 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
             profile["revision"]
         ));
         let context_channel = super::messaging::channel(db, id)?;
-        let memory_scope = context_channel
-            .as_deref()
-            .map(|id| format!("channels:{id}"))
-            .unwrap_or_else(|| format!("agents:{}", string(&turn, "agent")));
-        let memory = all(
-            db,
-            "SELECT id,text FROM memories WHERE scope=? AND essential=1 AND removed=0 ORDER BY id",
-            [&memory_scope],
-        )?;
-        if !memory.is_empty() {
-            system.push_str(&format!(
-                "\n\nSaved memory (reference data):\n{}",
-                json!(memory)
-            ));
+        if crate::automation::model(db, id)?.is_none() {
+            let memory_scope = context_channel
+                .as_deref()
+                .map(|id| format!("channels:{id}"))
+                .unwrap_or_else(|| format!("agents:{}", string(&turn, "agent")));
+            let memory = all(
+                db,
+                "SELECT id,text FROM memories WHERE scope=? AND essential=1 AND removed=0 ORDER BY id",
+                [&memory_scope],
+            )?;
+            if !memory.is_empty() {
+                system.push_str(&format!(
+                    "\n\nSaved memory (reference data):\n{}",
+                    json!(memory)
+                ));
+            }
         }
-        if context_channel.is_none() {
+        if context_channel.is_none() && crate::automation::model(db, id)?.is_none() {
             system.push_str(&crate::files::skills::context(db, string(&turn, "agent"))?);
         }
         let mut messages = vec![json!({"role":"system","content":system})];
@@ -303,13 +305,17 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
     }
     let mut model = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
-        one(
-            &guard.connection,
-            "SELECT model FROM model_fallbacks WHERE turn=? AND agent=?",
-            [id, string(&turn, "agent")],
-        )?
-        .map(|r| string(&r, "model").to_owned())
-        .unwrap_or_else(|| string(&profile, "model").to_owned())
+        if let Some(model) = crate::automation::model(&guard.connection, id)? {
+            model
+        } else {
+            one(
+                &guard.connection,
+                "SELECT model FROM model_fallbacks WHERE turn=? AND agent=?",
+                [id, string(&turn, "agent")],
+            )?
+            .map(|r| string(&r, "model").to_owned())
+            .unwrap_or_else(|| string(&profile, "model").to_owned())
+        }
     };
     let mut used_ids = std::collections::HashSet::new();
     let mut image_ids = serde_json::from_str::<Vec<String>>(string(&turn, "attachments"))
@@ -377,7 +383,8 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
             Err(e)
                 if e.code == "provider_unavailable"
                     && !string(&profile, "backup_model").is_empty()
-                    && model == string(&profile, "model") =>
+                    && model == string(&profile, "model")
+                    && !tools.is_empty() =>
             {
                 let attempts = {
                     let db = state.database.lock().map_err(|_| Failure::storage())?;
@@ -434,7 +441,16 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                     .iter()
                     .any(|tool| tool["function"]["name"] == call["function"]["name"])
                 {
-                    return Err(error(502, "Provider requested an unavailable tool."));
+                    return Err(error(
+                        502,
+                        if ["no_update", "report_failure"]
+                            .contains(&string(&call["function"], "name"))
+                        {
+                            "Coordination recipient is not another channel member."
+                        } else {
+                            "Provider requested an unavailable tool."
+                        },
+                    ));
                 }
                 let call_id = string(&call, "id");
                 if !used_ids.insert(call_id.to_owned()) {
@@ -597,6 +613,14 @@ pub fn prompt(db: &Connection, t: &Value, images: bool) -> Result<Value> {
     let mut refs = Vec::new();
     let mut parts = Vec::new();
     for id in ids {
+        if let Some(file) = one(
+            db,
+            "SELECT name FROM files WHERE id=? AND scope=? AND deleted=1",
+            params![id, scope(t)],
+        )? {
+            refs.push(json!({"id":id,"name":file["name"],"text":"[Deleted file]"}));
+            continue;
+        }
         let file = crate::files::attachments::file(db, &id, &scope(t))?;
         if let Some(mime) = crate::files::attachments::image_type(&file.bytes) {
             refs.push(json!({"id":id,"name":file.meta["name"],"media_type":mime,"note":"Image pixels are only included for the current request. Use read_attachment to inspect older images."}));
