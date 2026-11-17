@@ -17,6 +17,7 @@ pub async fn call(
     tools: &[Value],
     phase: &str,
 ) -> Result<Answer> {
+    let hub_turn = crate::computer::hub::check(state, turn)?.is_some();
     let native = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         exists(
@@ -25,6 +26,12 @@ pub async fn call(
             [turn],
         )?
     };
+    if native && hub_turn {
+        return Err(error(
+            403,
+            "This runtime cannot fence every native effect for hub turns. Use an API runtime.",
+        ));
+    }
     if native {
         return crate::harness::run(state, turn, model, messages, phase)
             .await
@@ -121,6 +128,7 @@ pub async fn call(
             _ => request.bearer_auth(key),
         };
     }
+    let effect = crate::computer::hub::before_effect(state, turn, "provider", json!({"model":model,"purpose":if phase=="routing"{"routing"}else{"completion"},"phase":phase})).await?;
     let mut tokens = [None; 3];
     let operation = async {
         {
@@ -244,7 +252,17 @@ pub async fn call(
         }
         Ok(Answer::Text(text.to_owned()))
     };
-    let result=tokio::time::timeout(std::time::Duration::from_millis(if phase=="compaction" {state.config.data.timeout.unwrap_or(120000).min(15000)}else{state.config.data.timeout.unwrap_or(120000)}),operation).await.unwrap_or_else(|_|Err(error(502,"The provider request timed out. Check the provider before retrying because completion may be uncertain.")));
+    let result=tokio::time::timeout(std::time::Duration::from_millis(if phase=="compaction" {state.config.data.timeout.unwrap_or(120000).min(15000)}else{state.config.data.timeout.unwrap_or(120000)}),crate::computer::hub::run_effect(&effect, operation)).await.unwrap_or_else(|_|Err(error(502,"The provider request timed out. Check the provider before retrying because completion may be uncertain.")));
+    crate::computer::hub::finish_effect(
+        state,
+        effect,
+        if result.is_ok() {
+            "succeeded"
+        } else {
+            "failed"
+        },
+    )
+    .await?;
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let db = &guard.connection;
     db.execute("UPDATE provider_calls SET status=?,finished=?,input_tokens=?,output_tokens=?,total_tokens=? WHERE seq=?",params![if result.is_ok(){"received"}else{"failed"},iso(db,state.config.now())?,tokens[0],tokens[1],tokens[2],seq])?;

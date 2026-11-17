@@ -266,7 +266,9 @@ fn delivery(
         params![thread, string(&sender, "name"), state.config.now()],
     )?;
     if let Some(mut remote) = remote {
-        remote["name"] = json!(target);
+        remote["name"] = one(db, "SELECT json_extract(a.value,'$.name') AS agent,m.name AS machine FROM paired_machines m,json_each(m.agents) a WHERE m.environment_id=? AND json_extract(a.value,'$.id')=?", [string(&remote, "machine"), string(&remote, "agent")])?
+            .map(|row| json!(format!("{} on {}", string(&row, "agent"), string(&row, "machine"))))
+            .unwrap_or(json!(target));
         remote["text"] = json!(text);
         remote["depth"] = json!(depth);
         remote["delivery"] = json!(id);
@@ -437,8 +439,14 @@ pub fn run(
                 .map(|r| {
                     r.as_str()
                         .filter(|id| seen.insert(*id))
-                        .map(str::to_owned)
+                        .map(|name| resolve(db, name))
                         .ok_or_else(|| error(409, "Invalid recipient, text, or reply request."))
+                        .and_then(|result| result)
+                        .and_then(|id| {
+                            id.ok_or_else(|| {
+                                error(409, "Recipient is unavailable or message is invalid.")
+                            })
+                        })
                 })
                 .collect::<Result<Vec<_>>>()?;
             if !closed(args, &["recipients", "text", "expects_reply"])

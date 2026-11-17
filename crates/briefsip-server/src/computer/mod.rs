@@ -4,6 +4,9 @@ pub mod actions;
 pub mod control;
 mod desktop;
 pub mod devices;
+pub mod host_metrics;
+pub mod hub;
+pub mod hub_config;
 #[allow(dead_code)]
 pub mod machines;
 pub mod options;
@@ -29,6 +32,7 @@ pub type Result<T> = std::result::Result<T, Failure>;
 pub fn initialize(db: &rusqlite::Connection) -> crate::db::Result<()> {
     db.execute_batch(include_str!("schema.sql"))?;
     machines::initialize(db)?;
+    hub::initialize(db)?;
     remote::initialize(db)
         .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.message.into() })?;
     resources::initialize(db)
@@ -57,6 +61,7 @@ async fn body(request: Request, limit: usize) -> Result<Value> {
 pub fn routes() -> Router<AppState> {
     Router::new()
         .merge(devices::routes())
+        .merge(hub::routes())
         .route("/api/agents/{id}/computer", any(entry))
         .route("/api/agents/{id}/computer/start", any(entry))
         .route("/api/agents/{id}/computer/stop", any(entry))
@@ -67,6 +72,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/agents/{id}/computer/vnc-ticket", any(entry))
         .route("/api/agents/{id}/computer/vnc", any(entry))
         .route("/api/environment", any(entry))
+        .route("/api/host-metrics", any(entry))
         .route("/api/remote-agents/messages", any(entry))
         .route("/api/machines", any(entry))
         .route("/api/machines/remove", any(entry))
@@ -122,6 +128,9 @@ async fn entry(State(state): State<AppState>, request: Request) -> Response {
         {
             return Err(error(401, "Unauthorized request."));
         }
+        if path == "/api/host-metrics" {
+            return host_metrics::handle(&state, request).await;
+        }
         if path.starts_with("/api/agents/") {
             return handle_computer(&state, request).await;
         }
@@ -142,6 +151,7 @@ pub fn maintenance(state: AppState) -> Vec<tokio::task::JoinHandle<()>> {
     let desktop = state.clone();
     vec![
         tokio::spawn(remote::worker(state.clone())),
+        hub::maintenance(state.clone()),
         tokio::spawn(async move {
             let interval = state
                 .config

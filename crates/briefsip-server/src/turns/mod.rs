@@ -1,3 +1,4 @@
+pub(crate) use admission::account as hub_account;
 pub(crate) use admission::prepare as prepare_script;
 pub(crate) use admission::route as script_route;
 pub(crate) use history::requested_files;
@@ -152,7 +153,7 @@ pub(crate) fn schedule(state: &AppState) -> Result<()> {
     for (id, cancel) in active.iter() {
         if !exists(
             db,
-            "SELECT 1 FROM turns WHERE id=? AND status IN('queued','running') AND paused=0",
+            "SELECT 1 FROM turns WHERE id=? AND status IN('queued','running') AND (paused=0 OR EXISTS(SELECT 1 FROM composio_calls WHERE turn=turns.id AND state='approval'))",
             [id],
         )? {
             cancel.send_replace(true);

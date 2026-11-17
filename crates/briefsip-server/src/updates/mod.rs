@@ -1,5 +1,6 @@
 mod archive;
 pub mod config;
+pub mod install;
 mod peers;
 mod release;
 use peers::*;
@@ -32,6 +33,7 @@ const UNMANAGED: &str = "Server is not running under the Briefsip launcher. Inst
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .merge(install::routes())
         .route("/api/machines/updates", any(crate::dispatch))
         .route("/api/updates", any(crate::dispatch))
         .route("/api/updates/apply", any(crate::dispatch))
@@ -163,6 +165,7 @@ pub fn watch_trial(state: AppState) -> tokio::task::JoinHandle<()> {
     })
 }
 pub fn initialize(db: &rusqlite::Connection) -> crate::db::Result<()> {
+    install::initialize(db)?;
     db.execute_batch("CREATE TABLE IF NOT EXISTS update_commands(id TEXT PRIMARY KEY,request TEXT NOT NULL,result TEXT NOT NULL) STRICT;")?;
     Ok(())
 }

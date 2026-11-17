@@ -25,13 +25,44 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         tools::workspace(state, &guard.connection, &turn)?.filter(|b| b.write)
     };
     if let Some(binding) = binding {
-        crate::files::git::writes::capture(state, &binding, id).await?;
+        let effect = crate::computer::hub::before_effect(
+            state,
+            id,
+            "tool",
+            json!({"kind":"workspace.checkpoint"}),
+        )
+        .await?;
+        let result = crate::computer::hub::run_effect(
+            &effect,
+            crate::files::git::writes::capture(state, &binding, id),
+        )
+        .await;
+        crate::computer::hub::finish_effect(state, effect, "unknown").await?;
+        result?;
     }
     {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         crate::computer::control::assert_recoverable(&guard.connection, id)?;
     }
-    crate::connectors::composio::resume(state, id).await?;
+    let ready = {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        exists(
+            &guard.connection,
+            "SELECT 1 FROM composio_calls WHERE turn=? AND state='ready'",
+            [id],
+        )?
+    };
+    let resumed = if ready {
+        crate::computer::hub::before_effect(state, id, "tool", json!({"kind":"composio.resume"}))
+            .await?
+    } else {
+        None
+    };
+    let result =
+        crate::computer::hub::run_effect(&resumed, crate::connectors::composio::resume(state, id))
+            .await;
+    crate::computer::hub::finish_effect(state, resumed, "unknown").await?;
+    result?;
     let connector_turn = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let turn = one(&guard.connection, "SELECT * FROM turns WHERE id=?", [id])?
@@ -468,11 +499,41 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                         [id],
                     )?;
                 }
-                let outcome = if string(&call["function"], "name").starts_with("composio__") {
-                    crate::connectors::composio::call(state, &turn, &call, &connector_tools).await
-                } else {
-                    tools::run(state, &turn, &call).await
+                if crate::computer::hub::check(state, id)?.is_some()
+                    && [
+                        "delegate_task",
+                        "send_message",
+                        "interrupt_agent",
+                        "set_provider_account",
+                    ]
+                    .contains(&string(&call["function"], "name"))
+                {
+                    return Err(error(
+                        403,
+                        "Hub turns do not grant agent delegation or provider changes.",
+                    ));
+                }
+                let effect =
+                    crate::computer::hub::before_effect(state, id, "tool", call.clone()).await?;
+                let operation = async {
+                    if string(&call["function"], "name").starts_with("composio__") {
+                        crate::connectors::composio::call(state, &turn, &call, &connector_tools)
+                            .await
+                    } else {
+                        tools::run(state, &turn, &call).await
+                    }
                 };
+                let outcome = crate::computer::hub::run_effect(&effect, operation).await;
+                crate::computer::hub::finish_effect(
+                    state,
+                    effect,
+                    if outcome.is_ok() {
+                        "succeeded"
+                    } else {
+                        "unknown"
+                    },
+                )
+                .await?;
                 if outcome.as_ref().is_ok_and(|v| v["paused"] == true) {
                     return Ok(());
                 }

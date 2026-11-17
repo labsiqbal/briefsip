@@ -42,6 +42,8 @@ pub struct Config {
     #[serde(flatten)]
     pub computer: crate::computer::options::Options,
     #[serde(flatten)]
+    pub hub: crate::computer::hub_config::Config,
+    #[serde(flatten)]
     pub update: crate::updates::config::Config,
     #[serde(flatten)]
     pub remaining_data: crate::data::options::Options,
@@ -146,12 +148,7 @@ impl Config {
         if args.iter().any(|arg| arg != "--mode=canonical") {
             return Err("Unsupported Briefsip mode".into());
         }
-        for key in [
-            "BRIEFSIP_HUB_ORIGIN",
-            "BRIEFSIP_HUB_SIGNING_PUBLIC_KEY",
-            "BRIEFSIP_AGENT_DESKTOP",
-            "BRIEFSIP_COMPOSIO",
-        ] {
+        for key in ["BRIEFSIP_AGENT_DESKTOP", "BRIEFSIP_COMPOSIO"] {
             if env::var_os(key).is_some() {
                 return Err(format!("not ported: {key} (see crates/PORTING.md)").into());
             }
@@ -234,6 +231,7 @@ impl Config {
             },
             data: crate::data::Options::environment()?,
             computer: crate::computer::options::Options::environment()?,
+            hub: crate::computer::hub_config::Config::environment()?,
             update: crate::updates::config::Config::environment()?,
             remaining_data: crate::data::options::Options::environment(),
             turns: crate::turns::options::Options::environment()?,
@@ -249,6 +247,7 @@ impl Config {
         crate::files::validate_workspaces(&self.workspaces)?;
         self.data.validate()?;
         self.computer.validate()?;
+        self.hub.validate()?;
         crate::automation::options::configure(self)?;
         self.remaining_data.validate()?;
         self.turns.validate()?;

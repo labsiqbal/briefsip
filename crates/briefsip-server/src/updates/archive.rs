@@ -75,8 +75,11 @@ fn preflight(path: &Path, total: &mut u64, entries: &mut usize) -> Result<()> {
     Ok(())
 }
 pub async fn create(root: &Path, id: &str) -> Result<Archive> {
-    release::verify(root, id)?;
+    if !release::id(id) {
+        return Err(error(400, "Invalid release ID."));
+    }
     preflight(&root.join(id), &mut 0, &mut 0)?;
+    release::verify(root, id)?;
     let directory = Temporary::new(root, "archive")?;
     let file = directory.0.join("release.tar.gz");
     let mut child = tokio::process::Command::new("tar")

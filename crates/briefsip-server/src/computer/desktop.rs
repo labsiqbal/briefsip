@@ -155,6 +155,8 @@ pub struct Desktop {
 }
 pub struct Manager {
     pub viewers: super::vnc::Viewers,
+    pub hub: super::hub::Hub,
+    pub metrics: Mutex<super::host_metrics::Metrics>,
     test_bridge: Option<super::options::TestBridge>,
     pub enabled: bool,
     pub width: u32,
@@ -193,6 +195,8 @@ impl Manager {
         let (stop, _) = watch::channel(false);
         let mut manager = Self {
             viewers: super::vnc::Viewers::default(),
+            hub: super::hub::Hub::default(),
+            metrics: Mutex::new(super::host_metrics::Metrics::default()),
             test_bridge: if d.test_runtime {
                 config.computer.test_computer_bridge.clone()
             } else {

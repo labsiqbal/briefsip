@@ -1,10 +1,13 @@
+import { hubTestTransport } from './rust-hub-test-bridge.ts';
+import type { HubLinkOptions } from './hub-link.ts';
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import type { AgentDesktopManager } from './agent-desktop.ts';
 import type { PeerTokenIssuer } from './machines.ts';
 
-type Options = { desktop?: ConstructorParameters<typeof AgentDesktopManager>[0]; peerTokenIssuer?: PeerTokenIssuer; machines?: { now?: () => number; healthIntervalMs?: number } };
+type Options = { hubLink?: HubLinkOptions; desktop?: ConstructorParameters<typeof AgentDesktopManager>[0]; peerTokenIssuer?: PeerTokenIssuer; machines?: { now?: () => number; healthIntervalMs?: number } };
 export async function computerTestBridge(options: Options) {
+  const hub = hubTestTransport(options.hubLink);
   const token = randomBytes(32).toString('hex');
   const desktops = new Map<string, { child: import('node:child_process').ChildProcess; exited: boolean; env: NodeJS.ProcessEnv; profile: string }>();
   const server = createServer(async (request, response) => {
@@ -12,10 +15,19 @@ export async function computerTestBridge(options: Options) {
     try {
       let raw = ''; for await (const chunk of request) { raw += chunk; if (raw.length > 65536) throw new Error('Test bridge payload exceeded.'); }
       const { operation, args } = JSON.parse(raw); let value: unknown;
-      if (operation === 'clock') value = options.machines?.now?.() ?? Date.now();
+      if (operation.startsWith('hub-')) value = await hub.call(operation, args);
+      else if (operation === 'clock') value = options.machines?.now?.() ?? Date.now();
       else if (operation === 'issue') value = options.peerTokenIssuer ? await options.peerTokenIssuer.createPeerToken(args) : null;
       else if (operation === 'revoke') value = options.peerTokenIssuer ? await options.peerTokenIssuer.revokePeerToken(args.id) : null;
       else if (operation === 'verify') value = options.peerTokenIssuer ? await options.peerTokenIssuer.verifyBearer(args.token) : null;
+      else if (operation === 'peer-http') {
+        const url = new URL(args.url);
+        if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) throw new Error('Peer fixture requires loopback.');
+        const result = await fetch(args.url, { method: args.method, headers: args.headers, body: args.body ?? undefined, redirect: 'manual', signal: AbortSignal.timeout(10000) });
+        const chunks: Uint8Array[] = []; let size = 0;
+        for await (const chunk of result.body ?? []) { size += chunk.length; if (size > 128 * 1024) throw new Error('Peer fixture response exceeded.'); chunks.push(chunk); }
+        value = { status: result.status, headers: Object.fromEntries(result.headers), body: Buffer.concat(chunks).toString('base64') };
+      }
       else if (operation.startsWith('desktop-') && options.desktop?.runtime) {
         const runtime = options.desktop.runtime;
         if (operation === 'desktop-launch') {
@@ -39,5 +51,5 @@ export async function computerTestBridge(options: Options) {
   });
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   const address = server.address(); if (!address || typeof address === 'string') throw new Error('Test bridge did not bind.');
-  return { config: { origin: `http://127.0.0.1:${address.port}`, token }, close: async () => { for (const entry of desktops.values()) if (!entry.exited) entry.child.stdin?.end(); desktops.clear(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); } };
+  return { config: { origin: `http://127.0.0.1:${address.port}`, token }, close: async () => { hub.close(); for (const entry of desktops.values()) if (!entry.exited) entry.child.stdin?.end(); desktops.clear(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); } };
 }
