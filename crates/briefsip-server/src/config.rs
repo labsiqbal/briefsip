@@ -35,6 +35,8 @@ pub struct Config {
     pub auth: Option<AuthConfig>,
     pub fixed_clock: Option<i64>,
     pub tls: Option<Tls>,
+    #[serde(flatten)]
+    pub data: crate::data::Options,
 }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -104,8 +106,6 @@ impl Config {
         for key in [
             "BRIEFSIP_HUB_ORIGIN",
             "BRIEFSIP_HUB_SIGNING_PUBLIC_KEY",
-            "BRIEFSIP_WORKSPACES",
-            "BRIEFSIP_PROVIDER_ACCOUNTS",
             "BRIEFSIP_IMAGE_BASE_URL",
             "BRIEFSIP_IMAGE_MODEL",
             "BRIEFSIP_IMAGE_API_KEY",
@@ -117,24 +117,9 @@ impl Config {
             "BRIEFSIP_RELEASES_DIR",
             "BRIEFSIP_LAUNCHER_SOCKET",
             "BRIEFSIP_UPDATE_TRIAL",
-            "OPENAI_BASE_URL",
-            "OPENAI_API_KEY",
-            "OPENAI_MODEL",
-            "ANTHROPIC_BASE_URL",
-            "ANTHROPIC_API_KEY",
-            "ANTHROPIC_MODEL",
-            "GEMINI_BASE_URL",
-            "GEMINI_API_KEY",
-            "GEMINI_MODEL",
-            "BRIEFSIP_PROVIDER",
-            "BRIEFSIP_STREAM",
-            "BRIEFSIP_STREAM_TERMINATION",
-            "BRIEFSIP_MAX_TOKENS",
-            "BRIEFSIP_CONCURRENCY",
             "RESEND_API_KEY",
             "BRIEFSIP_INSTALLATION_ID",
             "BRIEFSIP_AGENT_DESKTOP",
-            "BRIEFSIP_PROJECT_ROOT",
             "BRIEFSIP_COMPOSIO",
             "BRIEFSIP_MAIL_FROM",
             "BRIEFSIP_MAIL_ENDPOINT",
@@ -209,11 +194,13 @@ impl Config {
                 .collect(),
             fixed_clock: None,
             tls,
+            data: crate::data::Options::environment()?,
         };
         config.validate()?;
         Ok(config)
     }
     fn validate(&self) -> crate::db::Result<()> {
+        self.data.validate()?;
         if self.tls.is_none() && !matches!(self.host.as_str(), "127.0.0.1" | "::1") {
             return Err("HTTP development listener must use loopback".into());
         }

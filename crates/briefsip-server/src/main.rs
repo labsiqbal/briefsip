@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 mod auth;
 mod config;
+mod data;
 mod db;
 mod events;
 mod web;
@@ -137,20 +138,8 @@ async fn local(state: &AppState, request: Request) -> Result<Response, Failure> 
         }
         return state.events.response(scope, &state.database);
     }
-    if path == "/api/agents" && request.method() == Method::GET {
-        let guard = state.database.lock().map_err(|_| Failure::storage())?;
-        let mut statement = guard.connection.prepare("SELECT count(*) FROM agents")?;
-        let count: i64 = statement.query_row([], |row| row.get(0))?;
-        if count != 0 {
-            return Ok(local_error(
-                501,
-                "not ported: agent data (see crates/PORTING.md)",
-            ));
-        }
-        return Ok(json_response(
-            200,
-            json!({"agents":[],"hubAvailable":false,"configured":false,"defaultModel":""}),
-        ));
+    if data::handles(path) {
+        return data::local(state, request).await;
     }
     if request.method() == Method::GET && path != "/api" && !path.starts_with("/api/") {
         return static_ui(state, path).await;
@@ -323,6 +312,7 @@ async fn canonical_request(
     if request.uri().query().is_some() {
         return Err(Failure::new(400, "invalid_route", "Invalid route."));
     }
+    let _capacity = data::limits::reserve(request.uri().path(), request.method())?;
     let auth = state.auth.as_ref().ok_or_else(Failure::storage)?;
     let actor = auth
         .authenticate(
@@ -386,6 +376,9 @@ async fn canonical_request(
             json!({"ok":true,"data":{"accountId":actor.account,"projects":projects}}),
         ));
     }
+    if let Some(response) = data::canonical(state, &path, &method, &body, &actor.account)? {
+        return Ok(response);
+    }
     if path == "/api/session/logout" && method == Method::POST {
         if let Some(key) = body
             .as_object()
@@ -417,6 +410,10 @@ async fn main() -> db::Result<()> {
         config.auth.is_some(),
         config.now(),
     )?));
+    if config.auth.is_none() {
+        let guard = database.lock().map_err(|_| "Database lock poisoned")?;
+        data::initialize(&guard)?;
+    }
     let listener = TcpListener::bind((config.host.as_str(), config.port)).await?;
     let origin = format!(
         "{}://{}",
@@ -430,6 +427,12 @@ async fn main() -> db::Result<()> {
     let tls = config.tls.clone();
     let auth = config.auth.clone().map(auth::Auth::new).transpose()?;
     let events = events::Hub::new();
+    events.watch(
+        &database
+            .lock()
+            .map_err(|_| "Database lock poisoned")?
+            .connection,
+    );
     let state = AppState {
         database,
         config: Arc::new(config),
@@ -437,6 +440,7 @@ async fn main() -> db::Result<()> {
         auth,
         events,
     };
+    let conversation_maintenance = data::maintenance(state.clone());
     let maintenance_state = state.clone();
     let maintenance = tokio::spawn(async move {
         let mut timer = tokio::time::interval(Duration::from_secs(30));
@@ -455,6 +459,7 @@ async fn main() -> db::Result<()> {
         .route("/api/agents/{id}/turns/stream", any(dispatch))
         .route("/api/threads/{id}/turns/stream", any(dispatch))
         .route("/api/channels/{id}/turns/stream", any(dispatch))
+        .merge(data::routes())
         .fallback(dispatch)
         .with_state(state);
     println!("Briefsip: {origin}");
@@ -486,6 +491,7 @@ async fn main() -> db::Result<()> {
             .await
     };
     maintenance.abort();
+    conversation_maintenance.abort();
     result?;
     Ok(())
 }
