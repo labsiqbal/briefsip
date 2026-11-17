@@ -597,3 +597,53 @@ pub(super) fn append_mutation(
     }
     Ok(())
 }
+
+pub(crate) fn append_record(
+    db: &Connection,
+    project: &str,
+    kind: &str,
+    id: &str,
+    reader: Option<&str>,
+    now: i64,
+) -> Result<()> {
+    if db.is_autocommit() {
+        return Err(Failure::storage());
+    }
+    let records = super::sync_projection::records(db)?;
+    for viewer in all(
+        db,
+        "SELECT account FROM project_members WHERE project=? AND deleted=0 AND (? IS NULL OR account=?) ORDER BY account",
+        rusqlite::params![project, reader, reader],
+    )? {
+        let account = string(&viewer, "account");
+        let scope = scope(db, account, project)?;
+        let row = all(
+            db,
+            &format!(
+                "{records}SELECT revision,operation,body FROM records WHERE kind=$kind AND id=$id"
+            ),
+            named_params! {"$account":account,"$project":project,"$kind":kind,"$id":id},
+        )?
+        .into_iter()
+        .next();
+        if let Some(row) = row {
+            if string(&row, "body").len() > PAGE_BYTES - 10000 {
+                return Err(Failure::new(
+                    413,
+                    "sync_record_too_large",
+                    "Sync record exceeds the page limit.",
+                ));
+            }
+            db.execute("INSERT INTO sync_events(account,project,authorization_generation,previous_position,record_kind,record_id,revision,operation,body_json,committed_at) VALUES(?,?,?,?,?,?,?,?,?,?)", rusqlite::params![account,project,string(&scope,"authorizationGeneration"),head(db,account,project,"sync_heads")?,kind,id,row["revision"].as_i64(),row["operation"].as_str(),row["body"].as_str(),now])?;
+            db.execute("INSERT INTO sync_heads VALUES(?,?,?) ON CONFLICT(account,project) DO UPDATE SET event_position=excluded.event_position", rusqlite::params![account,project,db.last_insert_rowid()])?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn append_device(db: &Connection, device: &str, now: i64) -> Result<()> {
+    for row in all(db, "SELECT id FROM projects WHERE account=(SELECT account FROM devices WHERE id=?) AND deleted=0 ORDER BY id", [device])? {
+        append_record(db, string(&row, "id"), "device", device, None, now)?;
+    }
+    Ok(())
+}

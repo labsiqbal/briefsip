@@ -3,9 +3,9 @@ mod admission;
 mod compaction;
 mod coordination;
 mod dispatch;
-mod execution;
+pub(crate) mod execution;
 mod history;
-pub(crate) mod media;
+pub(crate) use crate::media::images as media;
 mod memory;
 pub(crate) mod messaging;
 pub mod options;
@@ -16,8 +16,8 @@ mod queue;
 mod room;
 mod shell;
 mod stream;
-mod tools;
-pub(crate) mod transcription;
+pub(crate) mod tools;
+pub(crate) use crate::media::transcription;
 mod verification;
 mod waits;
 
@@ -39,7 +39,7 @@ type Result<T> = std::result::Result<T, Failure>;
 #[derive(Clone, Default)]
 pub struct Runtime {
     active: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,
-    media: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,
+    pub(crate) media: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,
     wake: Arc<Notify>,
     client: reqwest::Client,
     stopping: Arc<std::sync::atomic::AtomicBool>,
@@ -89,6 +89,11 @@ pub fn stop(state: &AppState) -> Result<()> {
         )?;
         Ok(())
     })?;
+    if let Ok(active) = state.turns.media.lock() {
+        for cancel in active.values() {
+            cancel.send_replace(true);
+        }
+    }
     if let Ok(active) = state.turns.active.lock() {
         for cancel in active.values() {
             cancel.send_replace(true);

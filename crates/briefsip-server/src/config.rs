@@ -47,6 +47,8 @@ pub struct Config {
     pub remaining_data: crate::data::options::Options,
     #[serde(flatten)]
     pub turns: crate::turns::options::Options,
+    #[serde(flatten)]
+    pub media: crate::media::Options,
 }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -231,6 +233,7 @@ impl Config {
             update: crate::updates::config::Config::environment()?,
             remaining_data: crate::data::options::Options::environment(),
             turns: crate::turns::options::Options::environment()?,
+            media: crate::media::Options::environment()?,
         };
         config.validate()?;
         Ok(config)
@@ -241,6 +244,7 @@ impl Config {
         self.computer.validate()?;
         self.remaining_data.validate()?;
         self.turns.validate()?;
+        self.media.validate()?;
         if self.tls.is_none() && !matches!(self.host.as_str(), "127.0.0.1" | "::1") {
             return Err("HTTP development listener must use loopback".into());
         }

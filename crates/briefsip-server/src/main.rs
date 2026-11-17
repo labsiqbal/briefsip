@@ -6,6 +6,7 @@ mod data;
 mod db;
 mod events;
 mod files;
+mod media;
 mod turns;
 mod updates;
 mod web;
@@ -333,6 +334,9 @@ async fn canonical_request(
         return Err(Failure::new(400, "invalid_route", "Invalid route."));
     }
     let _capacity = data::limits::reserve(request.uri().path(), request.method())?;
+    if computer::devices::host_path(request.uri().path()) {
+        return computer::devices::host(state, request, request_id).await;
+    }
     let auth = state.auth.as_ref().ok_or_else(Failure::storage)?;
     let actor = auth
         .authenticate(
@@ -343,6 +347,7 @@ async fn canonical_request(
         )
         .await?;
     let query = data::query(&request);
+    let headers = request.headers().clone();
     let path = request.uri().path().to_owned();
     let method = request.method().clone();
     let body = if method != Method::GET && method != Method::HEAD {
@@ -396,6 +401,11 @@ async fn canonical_request(
             200,
             json!({"ok":true,"data":{"accountId":actor.account,"projects":projects}}),
         ));
+    }
+    if let Some(response) =
+        computer::devices::human(state, &path, &method, &body, &actor, &headers).await?
+    {
+        return Ok(response);
     }
     if let Some(response) = data::canonical(state, &path, &method, &body, &actor, &query).await? {
         return Ok(response);
@@ -479,6 +489,7 @@ async fn main() -> db::Result<()> {
             if let Some(auth) = &maintenance_state.auth {
                 let _ = auth.retry_logouts(&maintenance_state.database).await;
             }
+            let _ = computer::devices::maintain(&maintenance_state);
         }
     });
     let shutdown_state = state.clone();
@@ -510,6 +521,9 @@ async fn main() -> db::Result<()> {
             if let Err(error) = turns::stop(&shutdown_state) {
                 eprintln!("Turn shutdown failed: {}", error.message);
             }
+            if let Err(error) = computer::devices::close(&shutdown_state) {
+                eprintln!("Device shutdown failed: {}", error.message);
+            }
             shutdown_state.events.close();
             stop.graceful_shutdown(Some(Duration::from_secs(5)));
         });
@@ -525,6 +539,9 @@ async fn main() -> db::Result<()> {
                 shutdown().await;
                 if let Err(error) = turns::stop(&shutdown_state) {
                     eprintln!("Turn shutdown failed: {}", error.message);
+                }
+                if let Err(error) = computer::devices::close(&shutdown_state) {
+                    eprintln!("Device shutdown failed: {}", error.message);
                 }
                 shutdown_state.events.close();
             })

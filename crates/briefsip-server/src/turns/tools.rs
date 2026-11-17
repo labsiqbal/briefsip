@@ -92,7 +92,7 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
         | "open_file_in_panel" | "ask_user" | "select_memory" | "remember_memory"
         | "search_memory" | "verify_result" | "wait_for_event" => true,
         "read_provider_settings" => private,
-        "generate_image" => state.config.turns.image_provider.is_some(),
+        "generate_image" => state.config.media.image_provider.is_some(),
         "list_agents" | "send_message" | "delegate_task" | "task_status" | "wait_task"
         | "cancel_task" => super::messaging::allowed(db, string(turn, "id")).unwrap_or(false),
         "interrupt_agent" => {
