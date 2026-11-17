@@ -252,6 +252,7 @@ pub async fn input(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
         return Err(error(400, "Invalid computer input."));
     }
     super::actions::validate(name, &v["args"], s.computer.width, s.computer.height)?;
+    s.computer.admit_input(agent, s.config.now())?;
     let gate = s.computer.control_gate(agent)?;
     let _guard = gate.lock().await;
     assert_enabled(s, agent)?;

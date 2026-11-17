@@ -152,6 +152,7 @@ pub struct Manager {
     _proxy_task: Option<tokio::task::JoinHandle<()>>,
     closing: AtomicBool,
     pub controls: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
+    input_rates: Mutex<HashMap<String, (i64, u32)>>,
 }
 impl Manager {
     pub fn new(config: &Config) -> crate::db::Result<Self> {
@@ -186,6 +187,7 @@ impl Manager {
             _proxy_task: None,
             closing: AtomicBool::new(false),
             controls: Mutex::new(HashMap::new()),
+            input_rates: Mutex::new(HashMap::new()),
         };
         if enabled {
             let uid =
@@ -223,6 +225,18 @@ impl Manager {
             .or_insert_with(|| Arc::new(AsyncMutex::new(())))
             .clone())
     }
+    pub fn admit_input(&self, agent: &str, now: i64) -> Result<()> {
+        let mut rates = self.input_rates.lock().map_err(|_| Failure::storage())?;
+        let entry = rates.entry(agent.to_owned()).or_insert((now, 0));
+        if now - entry.0 >= 1000 {
+            *entry = (now, 0);
+        }
+        entry.1 = entry.1.saturating_add(1);
+        if entry.1 > 30 {
+            return Err(error(429, "Computer input rate exceeded."));
+        }
+        Ok(())
+    }
     pub fn get(&self, agent: &str) -> Result<Option<Arc<Desktop>>> {
         Ok(self
             .desktops
@@ -241,7 +255,7 @@ impl Manager {
                 } else if d.starting.load(Ordering::SeqCst) {
                     "starting"
                 } else if d.busy.load(Ordering::SeqCst) == 0
-                    && now - d.activity.load(Ordering::SeqCst) >= 1000
+                    && now - d.activity.load(Ordering::SeqCst) >= self.idle
                 {
                     "idle"
                 } else {
