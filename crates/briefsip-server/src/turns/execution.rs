@@ -31,6 +31,24 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         crate::computer::control::assert_recoverable(&guard.connection, id)?;
     }
+    crate::connectors::composio::resume(state, id).await?;
+    let connector_turn = {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        let turn = one(&guard.connection, "SELECT * FROM turns WHERE id=?", [id])?
+            .ok_or_else(Failure::storage)?;
+        if super::messaging::channel(&guard.connection, id)?.is_none()
+            && !super::profile::setup(&guard.connection, &turn)?
+        {
+            Some(turn)
+        } else {
+            None
+        }
+    };
+    let connector_tools = if let Some(turn) = connector_turn {
+        crate::connectors::composio::tools(state, &turn).await?
+    } else {
+        vec![]
+    };
     let compacted = super::compaction::run(state, id).await?;
     let (turn, profile, mut messages, tools) = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
@@ -39,7 +57,8 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
             one(db, "SELECT * FROM turns WHERE id=?", [id])?.ok_or_else(Failure::storage)?;
         turn["profile_setup"] = json!(super::profile::setup(db, &turn)? as i64);
         let profile = data::agents::read(db, string(&turn, "agent"))?;
-        let tools = tools::offered(state, db, &turn)?;
+        let mut tools = tools::offered(state, db, &turn)?;
+        tools.extend(crate::connectors::composio::specs(&connector_tools));
         let early_replies = super::messaging::capture(db, id)?;
         room::admit(db, id)?;
         let mut system =
@@ -433,7 +452,15 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                         [id],
                     )?;
                 }
-                let mut result = match tools::run(state, &turn, &call).await {
+                let outcome = if string(&call["function"], "name").starts_with("composio__") {
+                    crate::connectors::composio::call(state, &turn, &call, &connector_tools).await
+                } else {
+                    tools::run(state, &turn, &call).await
+                };
+                if outcome.as_ref().is_ok_and(|v| v["paused"] == true) {
+                    return Ok(());
+                }
+                let mut result = match outcome {
                     Err(e)
                         if ["interrupt_agent", "ask_user", "wait_for_event"]
                             .contains(&string(&call["function"], "name"))

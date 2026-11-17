@@ -513,7 +513,7 @@ pub(super) fn maintain(state: &AppState) -> Result<()> {
     }
     Ok(())
 }
-pub(super) fn append_mutation(
+pub(crate) fn append_mutation(
     db: &Connection,
     project: &str,
     mutation: &str,
