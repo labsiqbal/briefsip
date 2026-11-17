@@ -478,8 +478,14 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                 }
                 let mut result = match outcome {
                     Err(e)
-                        if ["interrupt_agent", "ask_user", "wait_for_event"]
-                            .contains(&string(&call["function"], "name"))
+                        if [
+                            "interrupt_agent",
+                            "ask_user",
+                            "wait_for_event",
+                            "call_mcp_tool",
+                            "list_mcp_tools",
+                        ]
+                        .contains(&string(&call["function"], "name"))
                             || call["function"]["name"] == "send_message" && e.status != 429 =>
                     {
                         return Err(e)

@@ -1,5 +1,73 @@
 use super::*;
 
+pub async fn prepare(
+    state: &AppState,
+    parts: &[&str],
+    method: &Method,
+    value: &Value,
+) -> Result<()> {
+    if method != Method::POST
+        || !matches!(
+            parts,
+            ["api", "agents" | "threads" | "channels", _, "turns"]
+                | [
+                    "api",
+                    "agents" | "threads" | "channels",
+                    _,
+                    "turns",
+                    _,
+                    "edit"
+                ]
+        )
+    {
+        return Ok(());
+    }
+    let files = files(value)?;
+    let documents = {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        let db = &guard.connection;
+        if exists(db, "SELECT 1 FROM turns WHERE id=?", [string(value, "id")])? {
+            return Ok(());
+        }
+        conversation(db, parts[1], parts[2], value)?;
+        validate_files(db, &files, &format!("{}:{}", parts[1], parts[2]))?;
+        files
+            .as_array()
+            .ok_or_else(Failure::storage)?
+            .iter()
+            .map(|id| {
+                crate::files::attachments::file(
+                    db,
+                    id.as_str().unwrap_or(""),
+                    &format!("{}:{}", parts[1], parts[2]),
+                )
+            })
+            .collect::<Result<Vec<_>>>()?
+    };
+    let mut size = 0;
+    for file in documents {
+        if file.bytes.starts_with(b"%PDF-") {
+            let response = crate::files::preview::pdf(state, &file.meta, &file.bytes).await?;
+            let bytes = axum::body::to_bytes(response.into_body(), 2 * 1024 * 1024)
+                .await
+                .map_err(|_| Failure::storage())?;
+            let value: Value = serde_json::from_slice(&bytes).map_err(|_| Failure::storage())?;
+            size += string(&value, "text").len();
+        } else if crate::files::attachments::image_type(&file.bytes).is_none()
+            && super::transcription::audio(&file.bytes).is_none()
+        {
+            size += file.bytes.len();
+        }
+    }
+    if size > 32 * 1024 {
+        return Err(error(
+            413,
+            "Total text attachment limit is 32 KiB per message.",
+        ));
+    }
+    Ok(())
+}
+
 pub fn scoped(db: &Connection, kind: &str, owner: &str, id: &str, message: &str) -> Result<Value> {
     let row =
         one(db, "SELECT * FROM turns WHERE id=?", [id])?.ok_or_else(|| error(404, message))?;
@@ -138,14 +206,20 @@ pub(super) fn conversation(
         }
     }
 }
-pub fn account(state: &AppState, db: &Connection, agent: &str) -> Result<data::providers::Account> {
-    let a = data::agents::read(db, agent)?;
-    if a["runtime"] != "api" {
+pub fn ready(state: &AppState, db: &Connection, agent: &str) -> Result<()> {
+    let profile = data::agents::read(db, agent)?;
+    if profile["runtime"] == "api" {
+        account(state, db, agent)?;
+    } else if crate::harness::executable(state, string(&profile, "runtime")).is_none() {
         return Err(error(
             503,
-            "not ported: harness runtime execution (lane 2f)",
+            "Coding runtime requires an installed executable on PATH.",
         ));
     }
+    Ok(())
+}
+pub fn account(state: &AppState, db: &Connection, agent: &str) -> Result<data::providers::Account> {
+    let a = data::agents::read(db, agent)?;
     let id = string(&a, "provider_account");
     let a=data::providers::accounts(state)?.into_iter().find(|a|a.id==id).ok_or_else(||error(503,"The selected provider account is missing. Choose another account or update server configuration."))?;
     if a.base.is_empty() {
@@ -333,7 +407,20 @@ fn create(
             "Restore the recipient agent before sending a message.",
         ));
     }
-    account(state, db, &agent)?;
+    ready(state, db, &agent)?;
+    if data::agents::read(db, &agent)?["runtime"] != "api"
+        && super::harness::workspace(
+            state,
+            db,
+            &json!({"agent":agent,"channel":channel,"thread":thread}),
+        )?
+        .is_none()
+    {
+        return Err(error(
+            503,
+            "Coding runtime requires a workspace for this conversation.",
+        ));
+    }
     let count: i64 = db.query_row(
         "SELECT count(*) FROM turns WHERE agent=? AND status IN ('queued','running')",
         [&agent],
@@ -353,7 +440,7 @@ fn create(
         }
         for member in members {
             let member = string(&member, "agent");
-            account(state, db, member)?;
+            ready(state, db, member)?;
             if db.query_row(
                 "SELECT count(*) FROM turns WHERE agent=? AND status IN('queued','running')",
                 [member],
@@ -409,6 +496,8 @@ fn create(
                 db.execute("INSERT INTO room_dispatches VALUES(?,?)", params![id, root])?;
             }
         }
+        let native = data::agents::read(db, &agent)?["runtime"] != "api";
+        let mode = if native { "restart" } else { mode };
         if let Some(a) = active.filter(|a| a["status"] == "running") {
             let active = string(&a, "id");
             db.execute(
@@ -434,7 +523,7 @@ fn create(
                 dispatch::cancel(db, active, "Stopped for restart. Provider effects may already have happened; uncertain operations were not replayed.")?;
                 db.execute("INSERT INTO queue_positions VALUES(?,?) ON CONFLICT(turn) DO UPDATE SET position=excluded.position",params![id,history::position(db,&a)?])?;
                 state.turns.cancel(active);
-                db.execute("UPDATE turns SET dispatch_mode='restart',dispatch_target=?,dispatch_label='Restarted from interrupted turn' WHERE id=?",[active,id])?;
+                db.execute("UPDATE turns SET dispatch_mode='restart',dispatch_target=?,dispatch_label=? WHERE id=?",[active,if native {"Runtime cannot steer; restarted from interrupted turn"}else{"Restarted from interrupted turn"},id])?;
             }
         } else {
             db.execute(
@@ -649,7 +738,7 @@ fn control(
                         return Err(error(409, "Task owner is no longer a channel member."));
                     }
                 }
-                account(state, db, owner)?;
+                ready(state, db, owner)?;
                 if db.query_row("SELECT count(*) FROM turns WHERE agent=? AND id<>? AND status IN('queued','running')",[owner,child],|r|r.get::<_,i64>(0))? >= 100 {
                     return Err(error(429,"Recipient queue is full."));
                 }

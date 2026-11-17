@@ -18,7 +18,6 @@ pub struct Options {
     pub timeout: Option<u64>,
     pub concurrency: Option<Value>,
     pub project_root: Option<String>,
-    pub harness: Option<Value>,
     pub stream: Option<bool>,
     pub stream_termination: Option<String>,
     pub max_tokens: Option<Value>,

@@ -101,7 +101,7 @@ async fn entry(State(state): State<AppState>, request: Request) -> Response {
     crate::security_headers(&mut response);
     response
 }
-async fn local(state: &AppState, request: Request) -> Result<Response> {
+pub(crate) async fn local(state: &AppState, request: Request) -> Result<Response> {
     if state.auth.is_some() {
         return Ok(crate::canonical(state, request).await);
     }

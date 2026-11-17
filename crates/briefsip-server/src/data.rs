@@ -10,7 +10,7 @@ pub(crate) mod limits;
 pub(crate) mod memory;
 pub mod options;
 mod panel;
-mod projects;
+pub(crate) mod projects;
 pub(crate) mod providers;
 mod schema;
 mod sidebar;

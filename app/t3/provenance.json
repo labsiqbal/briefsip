@@ -2493,5 +2493,84 @@
       "adaptation": "Rust-owned JSON instruction layer preserves runtime safety and tool guidance; no Node runtime import.",
       "compatibilityCheck": "app/base-instructions.test.ts; app/self-verification.test.ts"
     }
+  ],
+  "rustHarnessSourceEntries": [
+    {
+      "sourcePath": "packages/effect-codex-app-server/src/protocol.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "7a75263f6c86882c054bc3962274e525849ac89af26c2266aa7da9407070ebc8",
+      "localPath": "crates/briefsip-server/src/harness/store.rs",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Rust protocol and access-control translation from existing Briefsip TypeScript adaptation; no upstream runtime dependency.",
+      "compatibilityCheck": "app/rust-harness.test.ts"
+    },
+    {
+      "sourcePath": "packages/provider-acp/src/server/AcpSessionRuntime.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "a040202b8828016c94416da76ab587009512376ba9e4e55ea54b70a71e1a10ca",
+      "localPath": "crates/briefsip-server/src/harness/protocol.rs",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Rust protocol and access-control translation from existing Briefsip TypeScript adaptation; no upstream runtime dependency.",
+      "compatibilityCheck": "app/rust-harness.test.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/os-jank.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "6237f38007d2e49fea28d73485d6d4b9afa22646e911f360ad62b7c06faa7281",
+      "localPath": "crates/briefsip-server/src/harness/process.rs",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Rust protocol and access-control translation from existing Briefsip TypeScript adaptation; no upstream runtime dependency.",
+      "compatibilityCheck": "app/rust-harness.test.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/mcp/McpSessionRegistry.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "324094b7befdfc2cf488d95a7393948ccec55ae63fafe8c281ccd27ee89c8345",
+      "localPath": "crates/briefsip-server/src/mcp/registry.rs",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Rust protocol and access-control translation from existing Briefsip TypeScript adaptation; no upstream runtime dependency.",
+      "compatibilityCheck": "app/rust-harness.test.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/mcp/threadAccess.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "ab252a9aaed7035e17ef0d5ec52cf7a34b240ebafbc53085e9ab9b096553839a",
+      "localPath": "crates/briefsip-server/src/mcp/features.rs",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Rust protocol and access-control translation from existing Briefsip TypeScript adaptation; no upstream runtime dependency.",
+      "compatibilityCheck": "app/rust-harness.test.ts"
+    },
+    {
+      "sourcePath": "packages/provider-pi/src/server/mcpExtensionSource.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "82e6cf6f9f0efce76c87edea0829a5f035daade383a06970be131cd28bc53e67",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Embeds existing MIT-adapted Briefsip Pi permission and MCP extension in disposable runtime directory.",
+      "compatibilityCheck": "app/acp-harness.test.ts",
+      "localPath": "crates/briefsip-server/src/harness/store.rs"
+    },
+    {
+      "sourcePath": "packages/effect-codex-app-server/src/protocol.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "7a75263f6c86882c054bc3962274e525849ac89af26c2266aa7da9407070ebc8",
+      "localPath": "crates/briefsip-server/src/harness/protocol.rs",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Rust translation of the existing Briefsip Codex form-elicitation policy and protocol checks; one-time forms remain session-bound.",
+      "compatibilityCheck": "app/rust-harness.test.ts"
+    }
   ]
 }

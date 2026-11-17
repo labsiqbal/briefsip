@@ -14,6 +14,9 @@ use std::{
 };
 use subtle::ConstantTimeEq;
 
+#[derive(Clone)]
+pub(crate) struct UploadAgent(pub String);
+
 pub struct Discovery {
     directory: PathBuf,
     lock: Metadata,
@@ -214,7 +217,7 @@ pub fn routes() -> Router<AppState> {
         )
 }
 async fn entry(State(state): State<AppState>, request: Request) -> Response {
-    let result = handle(&state, request).await;
+    let result = local(&state, request).await;
     let mut response = result.unwrap_or_else(|e| crate::local_error(e.status, &e.message));
     if let Some(token) = &state.config.remaining_data.script_token {
         if crate::text_header(response.headers(), "content-type")
@@ -234,7 +237,7 @@ async fn entry(State(state): State<AppState>, request: Request) -> Response {
     crate::security_headers(&mut response);
     response
 }
-fn allowed(db: &Connection, agent: &str) -> Result<()> {
+pub(crate) fn allowed(db: &Connection, agent: &str) -> Result<()> {
     if !data::exists(
         db,
         "SELECT 1 FROM script_permissions WHERE agent=? AND enabled=1",
@@ -272,7 +275,7 @@ fn admit(db: &Connection, agent: &str, id: &str, now: i64) -> Result<()> {
     )?;
     Ok(())
 }
-async fn handle(state: &AppState, request: Request) -> Result<Response> {
+pub(crate) async fn local(state: &AppState, request: Request) -> Result<Response> {
     if request.method() == Method::DELETE {
         return Err(error(
             403,
@@ -315,6 +318,45 @@ async fn handle(state: &AppState, request: Request) -> Result<Response> {
         return Err(error(403, "Script access denied."));
     }
     let path = request.uri().path().to_owned();
+    let p = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
+    if request.method() == Method::POST {
+        if let ["api", "scripts", "agents", agent, "threads", thread, "files", file] = p.as_slice()
+        {
+            {
+                let guard = state.database.lock().map_err(|_| Failure::storage())?;
+                allowed(&guard.connection, agent)?;
+                if !data::exists(
+                    &guard.connection,
+                    "SELECT 1 FROM threads WHERE id=? AND agent=? AND deleted=0",
+                    params![thread, agent],
+                )? {
+                    return Err(error(404, "Side thread not found for this agent."));
+                }
+            }
+            if data::param(&data::query(&request), "transcription") == Some("1") {
+                return Err(error(
+                    403,
+                    "Transcription requires user approval in Briefsip.",
+                ));
+            }
+            let (mut parts, body) = request.into_parts();
+            parts.extensions.insert(UploadAgent((*agent).to_owned()));
+            parts.headers.remove(header::AUTHORIZATION);
+            parts.headers.insert(
+                header::ORIGIN,
+                HeaderValue::from_str(&state.origin).map_err(|_| Failure::storage())?,
+            );
+            parts.uri = format!("/api/threads/{thread}/files/{file}")
+                .parse()
+                .map_err(|_| Failure::storage())?;
+            let response =
+                crate::files::entry(State(state.clone()), Request::from_parts(parts, body)).await;
+            let guard = state.database.lock().map_err(|_| Failure::storage())?;
+            allowed(&guard.connection, agent)?;
+            crate::files::context(&guard.connection, "threads", thread)?;
+            return Ok(response);
+        }
+    }
     let q = data::query(&request);
     let (mut parts, raw) = request.into_parts();
     let post = parts.method == Method::POST;
@@ -341,7 +383,6 @@ async fn handle(state: &AppState, request: Request) -> Result<Response> {
     } else {
         json!({})
     };
-    let p = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
     let (mapped, body) = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
@@ -691,12 +732,13 @@ async fn handle(state: &AppState, request: Request) -> Result<Response> {
         return Ok(crate::json_response(200, value));
     }
     if post && mapped.ends_with("/turns") {
-        let guard = state.database.lock().map_err(|_| Failure::storage())?;
-        let db = &guard.connection;
         let mapped_parts = mapped
             .trim_start_matches('/')
             .split('/')
             .collect::<Vec<_>>();
+        crate::turns::prepare_script(state, &mapped_parts, &Method::POST, &body).await?;
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        let db = &guard.connection;
         let (status, value) = transaction(db, || {
             allowed(db, p[3])?;
             if !data::exists(db, "SELECT 1 FROM turns WHERE id=?", [string(&body, "id")])? {
@@ -736,9 +778,31 @@ async fn handle(state: &AppState, request: Request) -> Result<Response> {
         return super::local(state, req).await;
     }
     if mapped.contains("/files") {
-        return Ok(crate::files::entry(State(state.clone()), req).await);
+        let response = crate::files::entry(State(state.clone()), req).await;
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        allowed(&guard.connection, p[3])?;
+        let context = mapped.split('/').collect::<Vec<_>>();
+        crate::files::context(&guard.connection, context[2], context[3])?;
+        return Ok(response);
     }
-    crate::local(state, req).await
+    let response = crate::local(state, req).await?;
+    if !post && mapped.starts_with("/api/threads/") && mapped.ends_with("/turns") {
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
+            .await
+            .map_err(|_| Failure::storage())?;
+        let mut rows: Value = serde_json::from_slice(&bytes).map_err(|_| Failure::storage())?;
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        allowed(&guard.connection, p[3])?;
+        for row in rows.as_array_mut().into_iter().flatten() {
+            row["generatedFiles"] = json!(crate::turns::requested_files(
+                &guard.connection,
+                string(row, "id"),
+            )?);
+        }
+        return Ok(crate::json_response(status.as_u16(), rows));
+    }
+    Ok(response)
 }
 fn workflow_result(
     db: &Connection,

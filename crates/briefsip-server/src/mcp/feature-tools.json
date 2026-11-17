@@ -1,0 +1,1818 @@
+[
+  {
+    "name": "read_agent",
+    "description": "Read an agent profile and status.",
+    "scope": "agents:profile",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "agent": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        }
+      },
+      "required": [
+        "agent"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "create_agent",
+    "description": "Create an agent profile.",
+    "scope": "agents:write",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "instructions": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000
+        },
+        "toolBudget": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 200
+        }
+      },
+      "required": [
+        "requestId",
+        "name",
+        "model",
+        "instructions"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "update_agent",
+    "description": "Update an agent name, role, instructions or tool budget.",
+    "scope": "agents:write",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "agent": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "instructions": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000
+        },
+        "toolBudget": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 200
+        }
+      },
+      "required": [
+        "requestId",
+        "agent",
+        "revision"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "hide_agent",
+    "description": "Hide an agent after confirmation.",
+    "scope": "agents:write",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "agent": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "confirmed": {
+          "const": true
+        }
+      },
+      "required": [
+        "requestId",
+        "agent",
+        "revision",
+        "confirmed"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_conversations",
+    "description": "List direct, side and delivery conversations.",
+    "scope": "conversations:read",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "after": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 400
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 50
+        },
+        "agent": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "archived": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "agent"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "read_conversation",
+    "description": "Read conversation turns with cursor and text offsets.",
+    "scope": "conversations:read",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "direct",
+            "thread",
+            "section"
+          ]
+        },
+        "conversation": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "before": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 50
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000000
+        },
+        "turn": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        }
+      },
+      "required": [
+        "kind",
+        "conversation"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "create_conversation",
+    "description": "Create a side conversation.",
+    "scope": "conversations:write",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "agent": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "requestId",
+        "agent",
+        "name"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "rename_conversation",
+    "description": "Rename a side conversation.",
+    "scope": "conversations:write",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "thread": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "requestId",
+        "thread",
+        "revision",
+        "name"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "archive_conversation",
+    "description": "Archive a side conversation.",
+    "scope": "conversations:write",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "thread": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "requestId",
+        "thread",
+        "revision"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "restore_conversation",
+    "description": "Restore a side conversation.",
+    "scope": "conversations:write",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "thread": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "requestId",
+        "thread",
+        "revision"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "delete_conversation",
+    "description": "Delete an idle side conversation after confirmation.",
+    "scope": "conversations:write",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "thread": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "confirmed": {
+          "const": true
+        }
+      },
+      "required": [
+        "requestId",
+        "thread",
+        "revision",
+        "confirmed"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_projects",
+    "description": "List projects visible to this caller.",
+    "scope": "projects:read",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "after": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 400
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 50
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "read_project",
+    "description": "Read project members, folders and sections.",
+    "scope": "projects:read",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "after": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 400
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 50
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "create_project",
+    "description": "Create a project with optional folders and members.",
+    "scope": "projects:write",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "description": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 2000
+        },
+        "folders": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "properties": {
+              "mode": {
+                "enum": [
+                  "new",
+                  "existing"
+                ]
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              }
+            },
+            "required": [
+              "mode"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "members": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "properties": {
+              "agent": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+                "maxLength": 36
+              },
+              "write": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "agent",
+              "write"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "confirmWrite": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "requestId",
+        "name"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "add_project_section",
+    "description": "Add a project section.",
+    "scope": "projects:write",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "project": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "requestId",
+        "project",
+        "revision",
+        "name"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "rename_project_section",
+    "description": "Rename a project section.",
+    "scope": "projects:write",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "project": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "section": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "requestId",
+        "project",
+        "section",
+        "revision",
+        "name"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "archive_project_section",
+    "description": "Archive a project section.",
+    "scope": "projects:write",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "project": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "section": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "requestId",
+        "project",
+        "section",
+        "revision"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "restore_project_section",
+    "description": "Restore a project section.",
+    "scope": "projects:write",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "project": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "section": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "requestId",
+        "project",
+        "section",
+        "revision"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "add_project_member",
+    "description": "Add or update a project member.",
+    "scope": "projects:write",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "project": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "agent": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "write": {
+          "type": "boolean"
+        },
+        "confirmWrite": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "requestId",
+        "project",
+        "agent",
+        "revision",
+        "write"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "remove_project_member",
+    "description": "Remove a project member.",
+    "scope": "projects:write",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "project": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "agent": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "requestId",
+        "project",
+        "agent",
+        "revision"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "send_section_message",
+    "description": "Send a message through project group chat.",
+    "scope": "projects:write",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "project": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "section": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        },
+        "recipient": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        }
+      },
+      "required": [
+        "requestId",
+        "project",
+        "section",
+        "text"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_routines",
+    "description": "List routines with owner, project, schedule and delivery filters.",
+    "scope": "routines:read",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "after": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 400
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 50
+        },
+        "agent": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "project": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+              "maxLength": 36
+            },
+            {
+              "const": "none"
+            }
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "trigger": {
+          "enum": [
+            "once",
+            "recurring",
+            "manual",
+            "webhook",
+            "script"
+          ]
+        },
+        "search": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 80
+        },
+        "reportTo": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "read_routine",
+    "description": "Read routine configuration and paginated runs.",
+    "scope": "routines:read",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "routine": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "before": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 50
+        }
+      },
+      "required": [
+        "routine"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "create_routine",
+    "description": "Save a routine, without running it. Agent defaults to yourself for sessions. Manual triggers need no schedule. Use read_routine to verify the saved configuration.",
+    "scope": "routines:write",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "agent": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        },
+        "schedule": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "instant"
+                },
+                "at": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 253370764799999
+                }
+              },
+              "required": [
+                "kind",
+                "at"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "once"
+                },
+                "date": {
+                  "type": "string",
+                  "minLength": 10,
+                  "maxLength": 10
+                },
+                "time": {
+                  "type": "string",
+                  "minLength": 5,
+                  "maxLength": 5
+                }
+              },
+              "required": [
+                "kind",
+                "date",
+                "time"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "cron"
+                },
+                "expression": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "required": [
+                "kind",
+                "expression"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "interval"
+                },
+                "amount": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 525600
+                },
+                "unit": {
+                  "enum": [
+                    "minute",
+                    "hour",
+                    "day"
+                  ]
+                },
+                "anchorAt": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 253370764799999
+                }
+              },
+              "required": [
+                "kind",
+                "amount",
+                "unit",
+                "anchorAt"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "zone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "project": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+              "maxLength": 36
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reportTo": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+              "maxLength": 36
+            },
+            {
+              "enum": [
+                "direct",
+                "run"
+              ]
+            }
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "trigger": {
+          "enum": [
+            "schedule",
+            "manual",
+            "webhook",
+            "script"
+          ]
+        }
+      },
+      "required": [
+        "requestId",
+        "name",
+        "prompt",
+        "enabled"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "update_routine",
+    "description": "Update a routine using its current revision.",
+    "scope": "routines:write",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "routine": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        },
+        "schedule": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "instant"
+                },
+                "at": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 253370764799999
+                }
+              },
+              "required": [
+                "kind",
+                "at"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "once"
+                },
+                "date": {
+                  "type": "string",
+                  "minLength": 10,
+                  "maxLength": 10
+                },
+                "time": {
+                  "type": "string",
+                  "minLength": 5,
+                  "maxLength": 5
+                }
+              },
+              "required": [
+                "kind",
+                "date",
+                "time"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "cron"
+                },
+                "expression": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "required": [
+                "kind",
+                "expression"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "interval"
+                },
+                "amount": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 525600
+                },
+                "unit": {
+                  "enum": [
+                    "minute",
+                    "hour",
+                    "day"
+                  ]
+                },
+                "anchorAt": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 253370764799999
+                }
+              },
+              "required": [
+                "kind",
+                "amount",
+                "unit",
+                "anchorAt"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "zone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "project": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+              "maxLength": 36
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reportTo": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+              "maxLength": 36
+            },
+            {
+              "enum": [
+                "direct",
+                "run"
+              ]
+            }
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "trigger": {
+          "enum": [
+            "schedule",
+            "manual",
+            "webhook",
+            "script"
+          ]
+        }
+      },
+      "required": [
+        "requestId",
+        "routine",
+        "revision"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "pause_routine",
+    "description": "Pause a routine.",
+    "scope": "routines:write",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "routine": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "requestId",
+        "routine",
+        "revision"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "resume_routine",
+    "description": "Resume a routine.",
+    "scope": "routines:write",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "routine": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "requestId",
+        "routine",
+        "revision"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "run_routine",
+    "description": "Run a routine now.",
+    "scope": "routines:write",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "routine": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "requestId",
+        "routine",
+        "revision"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "delete_routine",
+    "description": "Delete an idle routine after confirmation.",
+    "scope": "routines:write",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "routine": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "confirmed": {
+          "const": true
+        }
+      },
+      "required": [
+        "requestId",
+        "routine",
+        "revision",
+        "confirmed"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_workflows",
+    "description": "List workflow definitions.",
+    "scope": "workflows:read",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "after": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 400
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 50
+        },
+        "agent": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "deleted": {
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "read_workflow",
+    "description": "Read a workflow definition.",
+    "scope": "workflows:read",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workflow": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        }
+      },
+      "required": [
+        "workflow"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "start_workflow",
+    "description": "Start a workflow run.",
+    "scope": "workflows:run",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "workflow": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "input": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 16000
+        }
+      },
+      "required": [
+        "requestId",
+        "workflow",
+        "revision",
+        "input"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "read_workflow_run",
+    "description": "Read workflow run status and paginated steps.",
+    "scope": "workflows:read",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "run": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "after": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 400
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 50
+        }
+      },
+      "required": [
+        "run"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_machines",
+    "description": "List paired machines with status and version.",
+    "scope": "machines:read",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "after": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 400
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 50
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "read_update_status",
+    "description": "Read local update status without applying updates.",
+    "scope": "machines:read",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_connected_apps",
+    "description": "List connected apps and grants without credentials.",
+    "scope": "settings:read",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "after": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 400
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 50
+        },
+        "project": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "agent": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_mcp_connections",
+    "description": "List MCP connections and grants without tokens or URLs.",
+    "scope": "settings:read",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "after": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 400
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 50
+        },
+        "project": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "agent": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_project_environment",
+    "description": "List environment variable names and update times.",
+    "scope": "settings:read",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "after": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 400
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 50
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "read_computer_status",
+    "description": "Read an agent computer status without viewer tickets.",
+    "scope": "computer:read",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "agent": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        }
+      },
+      "required": [
+        "agent"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "open_computer",
+    "description": "Start an already enabled agent computer.",
+    "scope": "computer:run",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "agent": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        }
+      },
+      "required": [
+        "requestId",
+        "agent"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "read_usage",
+    "description": "Read provider usage for visible conversations.",
+    "scope": "usage:read",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "before": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 50
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_skills",
+    "description": "List library skills or this agent’s installed skills.",
+    "scope": "skills:read",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "after": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 400
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 50
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "delegate_task",
+    "description": "Delegate work from a running conversation.",
+    "scope": "orchestration",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "agent": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400
+        },
+        "task": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        },
+        "turn": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        }
+      },
+      "required": [
+        "requestId",
+        "agent",
+        "task"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "task_status",
+    "description": "Read delegated task status.",
+    "scope": "orchestration",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        }
+      },
+      "required": [
+        "taskId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "wait_task",
+    "description": "Wait up to 30 seconds for a delegated task.",
+    "scope": "orchestration",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "taskId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30
+        }
+      },
+      "required": [
+        "requestId",
+        "taskId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "cancel_task",
+    "description": "Cancel a delegated task.",
+    "scope": "orchestration",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        },
+        "taskId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+          "maxLength": 36
+        }
+      },
+      "required": [
+        "requestId",
+        "taskId"
+      ],
+      "additionalProperties": false
+    }
+  }
+]
