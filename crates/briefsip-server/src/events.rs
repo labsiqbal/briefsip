@@ -5,14 +5,14 @@ use axum::{
     response::Response,
 };
 use rusqlite::OptionalExtension;
-use serde_json::{json, Value};
+use serde_json::json;
 use std::{
     collections::HashMap,
     convert::Infallible,
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
 
 pub struct Scope {
     table: &'static str,
@@ -70,20 +70,8 @@ fn snapshots(db: &Database, scope: &Scope) -> Result<Vec<(String, String)>, Fail
         .collect::<Result<Vec<_>, _>>()?;
     let mut frames = Vec::new();
     for turn in turns {
-        let call: Option<(i64,String,String,String)> = db.connection.query_row("SELECT c.seq,coalesce(s.text,''),c.model,c.status FROM provider_calls c LEFT JOIN provider_streams s ON s.call=c.seq WHERE c.turn=? AND c.purpose='completion' AND c.phase IN('answer','budget_summary') ORDER BY c.seq DESC LIMIT 1", [&turn], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?;
-        if let Some((seq, text, model, status)) = call {
-            let last: Option<(String,String,i64,i64)> = db.connection.query_row("SELECT id,kind,ordinal,final FROM provider_stream_segments WHERE call=? ORDER BY ordinal DESC LIMIT 1", [seq], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?;
-            let revision: i64 = db.connection.query_row(
-                "SELECT coalesce(max(revision),0) FROM provider_stream_segments WHERE call=?",
-                [seq],
-                |row| row.get(0),
-            )?;
-            let segment = match &last {
-                Some((id, kind, _, _)) if kind == "text" => id.clone(),
-                Some((_, _, ordinal, _)) => format!("text-{}", ordinal + 1),
-                None => "text-0".to_owned(),
-            };
-            let partial: Value = json!({"seq":seq,"text":text,"model":model,"status":status,"segment":segment,"revision":revision,"final":last.is_some_and(|value| value.3 != 0)});
+        let partial = crate::data::partial(&db.connection, &turn)?;
+        if !partial.is_null() {
             frames.push((
                 turn.clone(),
                 format!("data: {}\n\n", json!({"id":turn,"partial":partial})),
@@ -95,11 +83,23 @@ fn snapshots(db: &Database, scope: &Scope) -> Result<Vec<(String, String)>, Fail
 #[derive(Clone)]
 pub struct Hub {
     shutdown: watch::Sender<bool>,
+    changes: broadcast::Sender<String>,
 }
 impl Hub {
     pub fn new() -> Self {
         let (shutdown, _) = watch::channel(false);
-        Self { shutdown }
+        let (changes, _) = broadcast::channel(256);
+        Self { shutdown, changes }
+    }
+    pub fn watch(&self, db: &rusqlite::Connection) {
+        let hub = self.clone();
+        db.commit_hook(Some(move || {
+            hub.publish("database".to_owned());
+            false
+        }));
+    }
+    pub fn publish(&self, scope: String) {
+        let _ = self.changes.send(scope);
     }
     pub fn close(&self) {
         self.shutdown.send_replace(true);
@@ -115,19 +115,18 @@ impl Hub {
                 ));
             }
         }
+        let mut changes = self.changes.subscribe();
         let db = db.clone();
         let mut shutdown = self.shutdown.subscribe();
         let stream = async_stream::stream! {
             let mut previous = HashMap::new();
-            let mut poll = tokio::time::interval(Duration::from_millis(40));
-            poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut initial = true;
             let mut heartbeat = tokio::time::interval_at(tokio::time::Instant::now() + Duration::from_secs(15), Duration::from_secs(15));
             loop {
                 tokio::select! {
                     _ = shutdown.changed() => break,
                     _ = heartbeat.tick() => yield Ok::<_, Infallible>(": keepalive\n\n".to_owned()),
-                    _ = poll.tick() => {
-                        // ponytail: 100 durable snapshots per reader; turn lane can publish after commits to avoid polling.
+                    _ = async { if initial { initial = false; } else { let _ = changes.recv().await; } } => {
                         let result = db.lock().map_err(|_| Failure::storage()).and_then(|db| if exists(&db, &scope)? { snapshots(&db, &scope).map(Some) } else { Ok(None) });
                         let frames = match result { Ok(Some(frames)) => frames, _ => break };
                         previous.retain(|turn, _| frames.iter().any(|(current, _)| current == turn));
@@ -149,5 +148,26 @@ impl Hub {
             .headers_mut()
             .insert("x-accel-buffering", HeaderValue::from_static("no"));
         Ok(response)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn committed_writes_broadcast_without_polling() -> Result<(), Box<dyn std::error::Error>> {
+        let db = rusqlite::Connection::open_in_memory()?;
+        db.execute_batch("CREATE TABLE records(id INTEGER)")?;
+        let hub = Hub::new();
+        hub.watch(&db);
+        let mut listener = hub.changes.subscribe();
+        db.execute_batch("BEGIN; INSERT INTO records VALUES(1); ROLLBACK")?;
+        assert!(matches!(
+            listener.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
+        db.execute("INSERT INTO records VALUES(2)", [])?;
+        assert_eq!(listener.try_recv()?, "database");
+        Ok(())
     }
 }

@@ -1,12 +1,15 @@
 {
-  "scope": "SQLite schema batches, durable provider snapshots and workspace Git carried from Briefsip existing adaptations.",
+  "scope": "SQLite schema, provider snapshot delivery, persisted delegation/room history, silence filtering, fork context and workspace Git carried from Briefsip existing adaptations.",
   "manifest": "app/agent-delegation.provenance.json",
   "localPaths": [
     "crates/briefsip-server/build.rs",
     "crates/briefsip-server/src/db.rs",
     "crates/briefsip-server/src/events.rs",
     "crates/briefsip-server/src/files/git.rs",
-    "crates/briefsip-server/src/files/git_writes.rs"
+    "crates/briefsip-server/src/files/git_writes.rs",
+    "crates/briefsip-server/src/data/history.rs",
+    "crates/briefsip-server/src/data/conversations.rs",
+    "crates/briefsip-server/src/data/schema.sql"
   ],
   "sources": [
     {

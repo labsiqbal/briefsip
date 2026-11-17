@@ -12,7 +12,7 @@ axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
 async-stream = "0.3"
 base64 = "0.22"
 jsonwebtoken = "9"
-rusqlite = { version = "0.31", features = ["bundled", "functions", "backup"] }
+rusqlite = { version = "0.31", features = ["bundled", "functions", "backup", "hooks"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 sha2 = "0.10"
 url = "2"
@@ -22,6 +22,9 @@ serde_yaml = "0.9"
 tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "signal", "sync", "time", "process", "io-util"] }
 getrandom = "0.2"
 uuid = { version = "1", features = ["v4"] }
+
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+rustix = { version = "1", features = ["fs"] }
 
 [lints]
 workspace = true

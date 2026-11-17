@@ -50,7 +50,12 @@ pub fn validate_bindings(bindings: &[WorkspaceConfig]) -> crate::db::Result<()> 
             .ok_or("Invalid workspace binding")?;
         if !valid_id(&binding.agent)
             || !ids.insert(&binding.agent)
-            || directory.len() > 4096
+            || directory.encode_utf16().count() > 4096
+            || !directory.starts_with('/')
+            || directory
+                .split('/')
+                .skip(1)
+                .any(|part| part.is_empty() || part == "." || part == "..")
             || directory == "/"
             || directory
                 .chars()

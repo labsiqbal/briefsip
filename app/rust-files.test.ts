@@ -97,9 +97,15 @@ test('Rust skill and pack transactions preserve pinned versions, receipts and ro
 test('Rust workspace pages and Git reads reject traversal, links, filters and inherited Git configuration', rust, async () => {
   const f = await fixture();
   try {
+    const agents = await f.request('/api/agents');
+    assert.equal(agents.agents.find((agent: { id: string }) => agent.id === f.agent).workspace_connected, true);
+    assert.equal(agents.agents.find((agent: { id: string }) => agent.id === f.other).workspace_connected, false);
+    const panel = await f.request(`/api/agents/${f.agent}/panel`);
+    assert.equal(panel.workspace.name, 'workspace');
     const path = `/api/agents/${f.agent}/workspace`; writeFileSync(join(f.workspace, 'text.txt'), 'x'.repeat(8000) + 'end');
     writeFileSync(join(f.root, 'private'), 'PRIVATE'); symlinkSync('../private', join(f.workspace, 'link')); linkSync(join(f.root, 'private'), join(f.workspace, 'hard')); symlinkSync(f.root, join(f.workspace, 'dir-link'));
     assert((await f.request(path + '/entries')).entries.some((entry: { name: string }) => entry.name === 'text.txt'));
+    assert((await f.request(`/api/agents/${f.agent}/panel/workspace/entries`)).entries.some((entry: { name: string }) => entry.name === 'text.txt'));
     const first = await f.request(path + '/file?path=text.txt'); assert.equal(first.next_offset, 8000); assert.equal((await f.request(path + '/file?path=text.txt&offset=8000&digest=' + first.digest)).text, 'end');
     writeFileSync(join(f.workspace, 'text.txt'), 'changed'); await f.request(path + '/file?path=text.txt&digest=' + first.digest, undefined, 409);
     for (const name of ['../private', '/etc/passwd', 'link', 'hard', 'dir-link/private']) await f.request(path + '/file?path=' + encodeURIComponent(name), undefined, 400);
