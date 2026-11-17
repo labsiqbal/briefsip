@@ -6,6 +6,8 @@ mod desktop;
 #[allow(dead_code)]
 pub mod machines;
 pub mod options;
+#[allow(dead_code)]
+pub mod remote;
 mod vnc;
 pub use desktop::Manager;
 mod proxy;
@@ -23,7 +25,8 @@ use serde_json::Value;
 pub type Result<T> = std::result::Result<T, Failure>;
 pub fn initialize(db: &rusqlite::Connection) -> crate::db::Result<()> {
     db.execute_batch(include_str!("schema.sql"))?;
-    machines::initialize(db)
+    machines::initialize(db)?;
+    remote::initialize(db).map_err(|e| e.message.into())
 }
 
 fn error(status: u16, message: impl Into<String>) -> Failure {
@@ -47,6 +50,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/agents/{id}/computer/vnc-ticket", any(entry))
         .route("/api/agents/{id}/computer/vnc", any(entry))
         .route("/api/environment", any(entry))
+        .route("/api/remote-agents/messages", any(entry))
         .route("/api/machines", any(entry))
         .route("/api/machines/remove", any(entry))
         .route("/api/machines/reciprocal", any(entry))
@@ -95,6 +99,9 @@ async fn entry(State(state): State<AppState>, request: Request) -> Response {
         if path.starts_with("/api/agents/") {
             return handle_computer(&state, request).await;
         }
+        if path == "/api/remote-agents/messages" {
+            return remote::handle(&state, request).await;
+        }
         machines::handle(&state, request).await
     }
     .await;
@@ -105,6 +112,7 @@ async fn entry(State(state): State<AppState>, request: Request) -> Response {
 pub fn maintenance(state: AppState) -> Vec<tokio::task::JoinHandle<()>> {
     let desktop = state.clone();
     vec![
+        tokio::spawn(remote::worker(state.clone())),
         tokio::spawn(async move {
             let interval = state
                 .config
