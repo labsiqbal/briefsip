@@ -48,7 +48,9 @@ test('Rust route inventory stays within Node matchers and reports ported coverag
       assert(publicMatchers.some(matcher => matcher.test(witness)), `Rust public route absent from Node: ${route}`);
       continue;
     }
-    const matches = [...endpoints].filter(([, matcher]) => matcher(witness));
+    // Node rewrites project environment URLs before matching their operation.
+    const environment = witness.replace(/^\/api\/projects\/[^/]+(\/environment(?:\/(?:remove|settings))?)$/, '/api$1');
+    const matches = [...endpoints].filter(([, matcher]) => matcher(witness) || matcher(environment));
     assert(matches.length > 0, `Rust route absent from Node: ${route}`);
     for (const [name] of matches) ported.add(name);
   }

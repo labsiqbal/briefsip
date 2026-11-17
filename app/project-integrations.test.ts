@@ -33,6 +33,30 @@ test('project environment: closed names, byte bounds and split/escaped output re
   assert.equal(redactSecrets(JSON.stringify({value:'line\nsecret'}),['line\nsecret']),'{"value":"[REDACTED]"}');
 });
 
+test('project environment settings and removal preserve consent, replay and stale-write fences', async () => {
+  const f = await fixture();
+  try {
+    const agent = await f.agent(), project = await f.project(agent.id, 'Environment');
+    const base = `/api/projects/${project.id}/environment`;
+    const setting = { id: randomUUID(), revision: 1, exposeComputer: true, confirmed: true };
+    await f.request(base + '/settings', { ...setting, confirmed: false }, 400);
+    assert.deepEqual(await f.request(base + '/settings', setting), { exposeComputer: true, revision: 2 });
+    assert.deepEqual(await f.request(base + '/settings', setting), { exposeComputer: true, revision: 2 });
+    await f.request(base + '/settings', { ...setting, id: randomUUID() }, 409);
+    await f.request(base + '/settings', { ...setting, exposeComputer: false }, 409);
+    const saved = await f.request(base, { id: randomUUID(), name: 'TOKEN', value: 'fixture-value' });
+    const remove = { id: randomUUID(), name: saved.name, updated: saved.updated, confirmed: true };
+    await f.request(base + '/remove', { ...remove, confirmed: false }, 400);
+    await f.request(base + '/remove', { ...remove, updated: saved.updated + 1 }, 409);
+    assert.deepEqual(await f.request(base + '/remove', remove), { deleted: true });
+    assert.deepEqual(await f.request(base + '/remove', remove), { deleted: true });
+    assert.deepEqual((await f.request(base)).items, []);
+    for (const operation of ['settings', 'remove']) {
+      await f.request('/api/environment/' + operation, { id: randomUUID() }, 404);
+    }
+  } finally { await f.close(); }
+});
+
 for(const runtime of ['codex','claude'] as const)test(`${runtime}: project environment encryption, harness shell, routine and direct-chat isolation`,async()=>{
   const binaries=mkdtempSync(resolve('node_modules/.project-binary-')),binary=join(binaries,'fake-harness');
   const source=readFileSync(new URL('./fixtures/fake-harness.mjs',import.meta.url),'utf8');
