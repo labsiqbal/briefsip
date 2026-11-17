@@ -105,7 +105,8 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
     specs.retain(|t| match string(&t["function"], "name") {
         "read_history" | "read_message" | "read_attachment" | "create_text_file"
         | "open_file_in_panel" | "ask_user" | "select_memory" | "remember_memory"
-        | "search_memory" | "verify_result" | "wait_for_event" => true,
+        | "search_memory" | "verify_result" | "wait_for_event" | "list_data_tables"
+        | "query_data" => true,
         "read_provider_settings" => private,
         "generate_image" => state.config.media.image_provider.is_some(),
         "list_agents" | "send_message" | "delegate_task" | "task_status" | "wait_task"
@@ -283,6 +284,9 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
     }
     if name == "generate_image" {
         return super::media::generate(state, turn, call, &args).await;
+    }
+    if ["list_data_tables", "query_data"].contains(&name) {
+        return crate::files::shared::tool(state, turn, call, &args).await;
     }
     if name == "copy_skill_file" {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
