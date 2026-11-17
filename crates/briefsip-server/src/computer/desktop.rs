@@ -716,31 +716,40 @@ impl Manager {
                 }
             }
         }
-        let mut reader = image::ImageReader::new(std::io::Cursor::new(&bytes))
-            .with_guessed_format()
-            .map_err(|_| Failure::storage())?;
-        let mut limits = image::Limits::default();
-        limits.max_image_width = Some(self.width);
-        limits.max_image_height = Some(self.height);
-        reader.limits(limits);
-        let image = reader.decode().map_err(|_| Failure::storage())?.resize(
-            960,
-            600,
-            image::imageops::FilterType::Lanczos3,
-        );
-        let mut encoded = Vec::new();
+        let width = self.width;
+        let height = self.height;
+        let (bytes, encoded) = tokio::task::spawn_blocking(move || -> Result<_> {
+            let mut reader = image::ImageReader::new(std::io::Cursor::new(&bytes))
+                .with_guessed_format()
+                .map_err(|_| Failure::storage())?;
+            let mut limits = image::Limits::default();
+            limits.max_image_width = Some(width);
+            limits.max_image_height = Some(height);
+            reader.limits(limits);
+            let image = reader.decode().map_err(|_| Failure::storage())?.resize(
+                960,
+                600,
+                image::imageops::FilterType::Lanczos3,
+            );
+            let mut encoded = Vec::new();
+            if jpeg {
+                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut encoded, 72)
+                    .encode_image(&image)
+                    .map_err(|_| Failure::storage())?;
+            } else {
+                image
+                    .write_to(
+                        &mut std::io::Cursor::new(&mut encoded),
+                        image::ImageFormat::Png,
+                    )
+                    .map_err(|_| Failure::storage())?;
+            }
+            Ok((bytes, encoded))
+        })
+        .await
+        .map_err(|_| Failure::storage())??;
         if jpeg {
-            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut encoded, 72)
-                .encode_image(&image)
-                .map_err(|_| Failure::storage())?;
             *d.jpeg.lock().map_err(|_| Failure::storage())? = Some((bytes, encoded.clone()));
-        } else {
-            image
-                .write_to(
-                    &mut std::io::Cursor::new(&mut encoded),
-                    image::ImageFormat::Png,
-                )
-                .map_err(|_| Failure::storage())?;
         }
         Ok(encoded)
     }

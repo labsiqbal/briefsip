@@ -107,7 +107,7 @@ test('Rust avatars preserve decoded pixels across resizing, alpha, JPEG, WebP an
         const x = Math.floor(i / channels) % width, y = Math.floor(i / channels / width), c = i % channels;
         raw[i] = !rust || width === 256 && height === 256 ? (i * 37 + (i >>> 8) * 13) % 256
           : c === 0 ? 30 + Math.floor(180 * x / width) : c === 1 ? 40 + Math.floor(160 * y / height)
-          : c === 2 ? 70 + Math.floor(60 * (x / width + y / height)) : 130 + Math.floor(100 * x / width);
+          : c === 2 ? 70 + Math.floor(60 * (x / width + y / height)) : 200;
       }
       const input = await sharp(raw, { raw: { width, height, channels } }).withMetadata({ orientation }).toFormat(format, format === 'jpeg' ? { quality: 70 } : undefined).toBuffer();
       const expected = await sharp(input).rotate().resize(256, 256, { fit: 'cover' }).png().toBuffer();
@@ -119,8 +119,9 @@ test('Rust avatars preserve decoded pixels across resizing, alpha, JPEG, WebP an
         const meta = await sharp(actual).metadata(), reference = await sharp(expected).metadata();
         assert.equal(meta.width, reference.width); assert.equal(meta.height, reference.height);
         assert.equal(meta.format, reference.format); assert.equal(meta.channels, reference.channels);
+        assert.equal(meta.space, reference.space); assert.equal(meta.depth, reference.depth);
         const pixels = await sharp(actual).raw().toBuffer(), expectedPixels = await sharp(expected).raw().toBuffer();
-        const tolerance = width === 256 && height === 256 ? 0 : format === 'png' ? 8 : 12;
+        const tolerance = width === 256 && height === 256 ? 0 : format === 'png' ? 4 : format === 'webp' ? 8 : 5;
         assert.equal(pixels.length, expectedPixels.length);
         for (let i = 0; i < pixels.length; i++) assert(Math.abs(pixels[i] - expectedPixels[i]) <= tolerance,
           `${width}x${height} ${format} orientation ${orientation}: pixel ${i}, ${pixels[i]} vs ${expectedPixels[i]}, tolerance ${tolerance}`);

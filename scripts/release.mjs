@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -11,13 +11,13 @@ export function readIssueComments(issue) {
   return JSON.parse(execFileSync('gh', ['issue', 'view', String(issue), '-R', 'labsiqbal/briefsip', '--json', 'comments'], { encoding: 'utf8' })).comments;
 }
 
-
 export function assertNativeDependencies(binary) {
   const output = execFileSync('ldd', [binary], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   if (/not found/i.test(output)) throw new Error(`Native dependency missing for ${binary}: ${output}`);
   for (const line of output.split('\n')) {
     const match = line.match(/=>\s+(\/[^\s(]+)/) ?? line.match(/^\s*(\/[^\s(]+)/);
-    if (match && !['/lib', '/usr/lib', '/lib64'].some(root => match[1] === root || match[1].startsWith(`${root}/`))) {
+    let path; if (match) { try { path = realpathSync(match[1]); } catch { path = match[1]; } }
+    if (path && !['/lib', '/usr/lib', '/lib64'].some(root => path === root || path.startsWith(`${root}/`))) {
       throw new Error(`Native dependency outside system loader paths for ${binary}: ${match[1]}`);
     }
   }

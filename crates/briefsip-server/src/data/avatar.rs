@@ -3,9 +3,9 @@ use crate::AppState;
 use image::ImageDecoder;
 use rusqlite::Connection;
 use std::io::Cursor;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio::sync::Semaphore;
 
-static ACTIVE: AtomicUsize = AtomicUsize::new(0);
+static DECODERS: Semaphore = Semaphore::const_new(2);
 
 #[derive(Default)]
 pub struct Prepared {
@@ -24,32 +24,29 @@ impl Prepared {
         Err(Failure::storage())
     }
 }
-struct Slot;
-impl Drop for Slot {
-    fn drop(&mut self) {
-        ACTIVE.fetch_sub(1, Ordering::Release);
-    }
-}
 async fn decode(bytes: Vec<u8>) -> Result<Vec<u8>, Failure> {
-    if ACTIVE
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
-            (n < 2).then_some(n + 1)
-        })
-        .is_err()
-    {
-        return Err(Failure::new(
+    blocking(std::time::Duration::from_secs(3), move |deadline| {
+        normalize(&bytes, deadline)
+    })
+    .await
+}
+async fn blocking(
+    duration: std::time::Duration,
+    work: impl FnOnce(std::time::Instant) -> Result<Vec<u8>, Failure> + Send + 'static,
+) -> Result<Vec<u8>, Failure> {
+    let slot = DECODERS.try_acquire().map_err(|_| {
+        Failure::new(
             429,
-            "avatar_busy",
+            "invalid_avatar",
             "Image processing is busy. Try again.",
-        ));
-    }
-    let slot = Slot;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        )
+    })?;
+    let deadline = std::time::Instant::now() + duration;
     let task = tokio::task::spawn_blocking(move || {
         let _slot = slot;
-        normalize(&bytes, deadline)
+        work(deadline)
     });
-    tokio::time::timeout(std::time::Duration::from_secs(3), task)
+    tokio::time::timeout(duration, task)
         .await
         .map_err(|_| failed())?
         .map_err(|_| failed())?
@@ -62,13 +59,6 @@ fn failed() -> Failure {
     )
 }
 fn normalize(bytes: &[u8], deadline: std::time::Instant) -> Result<Vec<u8>, Failure> {
-    let failed = || {
-        Failure::new(
-            400,
-            "invalid_avatar",
-            "Cannot read the image. Use a static PNG, JPEG, or WebP up to 16 megapixels.",
-        )
-    };
     let reader = image::ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|_| failed())?;
@@ -96,8 +86,7 @@ fn normalize(bytes: &[u8], deadline: std::time::Instant) -> Result<Vec<u8>, Fail
     if std::time::Instant::now() >= deadline {
         return Err(failed());
     }
-    if let Some(profile_bytes) = profile {
-        let profile = moxcms::ColorProfile::new_from_slice(&profile_bytes).map_err(|_| failed())?;
+    if let Some(profile) = profile.and_then(|p| moxcms::ColorProfile::new_from_slice(&p).ok()) {
         let mut rgba = image.to_rgba8();
         let transform = profile
             .create_transform_8bit(
@@ -126,9 +115,13 @@ fn normalize(bytes: &[u8], deadline: std::time::Instant) -> Result<Vec<u8>, Fail
         };
     }
     image.apply_orientation(orientation);
-    let scale = 256.0 / f64::from(image.width().min(image.height()));
-    let width = (f64::from(image.width()) * scale).round() as u32;
-    let height = (f64::from(image.height()) * scale).round() as u32;
+    let side = image.width().min(image.height());
+    image = image.crop_imm(
+        (image.width() - side).div_ceil(2),
+        (image.height() - side).div_ceil(2),
+        side,
+        side,
+    );
     let alpha = matches!(
         image.color(),
         image::ColorType::Rgba8
@@ -145,7 +138,7 @@ fn normalize(bytes: &[u8], deadline: std::time::Instant) -> Result<Vec<u8>, Fail
         }
     }
     let mut resized =
-        image::imageops::resize(&rgba, width, height, image::imageops::FilterType::Lanczos3);
+        image::imageops::resize(&rgba, 256, 256, image::imageops::FilterType::Lanczos3);
     if alpha {
         for pixel in resized.pixels_mut() {
             if pixel[3] > 0.0 {
@@ -155,18 +148,10 @@ fn normalize(bytes: &[u8], deadline: std::time::Instant) -> Result<Vec<u8>, Fail
             }
         }
     }
-    let cropped = image::imageops::crop_imm(
-        &resized,
-        (width - 256).div_ceil(2),
-        (height - 256).div_ceil(2),
-        256,
-        256,
-    )
-    .to_image();
     let resized = if alpha {
-        image::DynamicImage::ImageRgba8(image::DynamicImage::ImageRgba32F(cropped).to_rgba8())
+        image::DynamicImage::ImageRgba8(image::DynamicImage::ImageRgba32F(resized).to_rgba8())
     } else {
-        image::DynamicImage::ImageRgb8(image::DynamicImage::ImageRgba32F(cropped).to_rgb8())
+        image::DynamicImage::ImageRgb8(image::DynamicImage::ImageRgba32F(resized).to_rgb8())
     };
     let mut output = Vec::new();
     resized
@@ -192,4 +177,69 @@ pub async fn run<T>(
     prepared.output = Some(decode(input).await?);
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     work(&guard.connection, &mut prepared)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn narrow_images_crop_before_scaling_without_unbounded_allocation(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let source = image::RgbImage::from_pixel(65535, 1, image::Rgb([70, 90, 120]));
+        let mut bytes = Vec::new();
+        image::DynamicImage::ImageRgb8(source)
+            .write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)?;
+        let output = normalize(
+            &bytes,
+            std::time::Instant::now() + std::time::Duration::from_secs(3),
+        )
+        .map_err(|e| e.message)?;
+        let decoded = image::load_from_memory(&output)?;
+        assert_eq!((decoded.width(), decoded.height()), (256, 256));
+        assert!(decoded
+            .to_rgb8()
+            .pixels()
+            .all(|pixel| pixel.0 == [70, 90, 120]));
+        Ok(())
+    }
+    #[tokio::test]
+    async fn decoder_admission_timeout_and_failure_release_capacity(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let first = DECODERS.try_acquire()?;
+        let second = DECODERS.try_acquire()?;
+        let busy = decode(Vec::new())
+            .await
+            .err()
+            .ok_or("Expected busy decoder")?;
+        assert_eq!(busy.status, 429);
+        assert_eq!(busy.message, "Image processing is busy. Try again.");
+        drop(first);
+        drop(second);
+        let invalid = decode(Vec::new())
+            .await
+            .err()
+            .ok_or("Expected malformed image")?;
+        assert_eq!(invalid.status, 400);
+        assert_eq!(invalid.message, failed().message);
+        assert_eq!(DECODERS.available_permits(), 2);
+        let (release, wait) = std::sync::mpsc::channel();
+        let timeout = blocking(std::time::Duration::from_millis(20), move |_| {
+            let _ = wait.recv();
+            Ok(Vec::new())
+        })
+        .await;
+        assert_eq!(
+            timeout.err().ok_or("Expected timeout")?.message,
+            failed().message
+        );
+        assert_eq!(DECODERS.available_permits(), 1);
+        release.send(())?;
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while DECODERS.available_permits() != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await?;
+        Ok(())
+    }
 }
