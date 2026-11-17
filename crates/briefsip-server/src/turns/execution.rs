@@ -204,6 +204,12 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                 return Ok(());
             }
             provider::Answer::Tool(call) => {
+                if !tools
+                    .iter()
+                    .any(|tool| tool["function"]["name"] == call["function"]["name"])
+                {
+                    return Err(error(502, "Provider requested an unavailable tool."));
+                }
                 let call_id = string(&call, "id");
                 if !used_ids.insert(call_id.to_owned()) {
                     return Err(error(
@@ -221,6 +227,12 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                     )?;
                 }
                 let result = match tools::run(state, &turn, &call).await {
+                    Err(e)
+                        if call["function"]["name"] == "send_message"
+                            && e.message.starts_with("Concurrent child limit") =>
+                    {
+                        return Err(e)
+                    }
                     Err(e) if e.status < 500 => {
                         let guard = state.database.lock().map_err(|_| Failure::storage())?;
                         if !exists(

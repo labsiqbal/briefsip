@@ -450,11 +450,18 @@ pub fn run(
             let id = string(args, "taskId");
             let row = task(db, turn, id)?;
             if call["function"]["name"] == "cancel_task" {
-                let cancelled = cancel(
+                let mut cancelled = cancel(
                     db,
                     &[string(&row, "delivery").to_owned()],
                     "Cancelled by requester.",
                 )?;
+                if row["status"] == "waiting"
+                    && !cancelled.iter().any(|id| id == string(&row, "delivery"))
+                {
+                    let delivery = string(&row, "delivery");
+                    db.execute("UPDATE turns SET status='cancelled',paused=0,revision=revision+1,error='Cancelled by requester.' WHERE id=?",[delivery])?;
+                    cancelled.push(delivery.into());
+                }
                 let status = status(db, turn, id)?;
                 return Ok(json!({"taskId":id,"status":status["status"],"cancelled":cancelled}));
             }

@@ -125,7 +125,7 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
     }
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let db = &guard.connection;
-    transaction(db, || {
+    let result = transaction(db, || {
         if !exists(
             db,
             "SELECT 1 FROM turns WHERE id=? AND status='running'",
@@ -154,7 +154,14 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
             journal(db, turn, call, &result)?;
         }
         Ok(result)
-    })
+    });
+    if result
+        .as_ref()
+        .is_err_and(|e| e.status == 429 && e.message == "Agent message rate limit reached.")
+    {
+        db.execute("INSERT INTO agent_message_cooldowns(agent,until) VALUES(?,?) ON CONFLICT(agent) DO UPDATE SET until=excluded.until",params![string(turn,"agent"),state.config.now()+state.config.turns.limit("cooldownMs",600000)])?;
+    }
+    result
 }
 pub fn journal(db: &Connection, turn: &Value, call: &Value, result: &Value) -> Result<()> {
     if exists(db,"SELECT 1 FROM flow_tool_calls WHERE turn=? AND call_id=? UNION ALL SELECT 1 FROM generated_files WHERE turn=? AND call_id=?",[string(turn,"id"),string(call,"id"),string(turn,"id"),string(call,"id")])? {return Ok(());}
@@ -310,6 +317,9 @@ fn dispatch(
         "list_agents" | "send_message" | "delegate_task" | "task_status" | "wait_task"
         | "cancel_task" => super::messaging::run(state, db, turn, call, args),
         "verify_result" => super::verification::review(db, turn, args),
+        "edit_profile" | "set_avatar" | "list_sites" | "publish_site" | "delete_site" => {
+            super::profile::execute(state, db, turn, name, args)
+        }
         "list_workspace" | "read_workspace_file" | "inspect_workspace_file" => {
             let binding = workspace(state, db, turn)?.ok_or_else(|| {
                 error(

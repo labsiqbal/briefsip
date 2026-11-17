@@ -557,7 +557,7 @@ pub(super) fn avatar_input(v: &Value) -> Result<Option<Vec<u8>>> {
     }
     Ok(Some(bytes))
 }
-pub(super) fn normalize(bytes: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn normalize(bytes: &[u8]) -> Result<Vec<u8>> {
     let failed = || {
         error(
             400,

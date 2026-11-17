@@ -85,7 +85,7 @@ impl Options {
                     ]
                     .contains(&k.as_str())
                         || v.as_i64()
-                            .is_none_or(|v| v < 1 || v > 9_007_199_254_740_991)
+                            .is_none_or(|v| !(1..=9_007_199_254_740_991).contains(&v))
                 })
             })
         }) {

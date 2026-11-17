@@ -7,6 +7,7 @@ pub(crate) mod media;
 mod memory;
 pub(crate) mod messaging;
 pub mod options;
+mod profile;
 mod provider;
 mod questions;
 mod queue;
