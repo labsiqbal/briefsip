@@ -153,6 +153,8 @@ pub struct Manager {
     closing: AtomicBool,
     pub controls: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
     input_rates: Mutex<HashMap<String, (i64, u32)>>,
+    input_slots: Mutex<HashMap<String, Arc<Semaphore>>>,
+    starts: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
 }
 impl Manager {
     pub fn new(config: &Config) -> crate::db::Result<Self> {
@@ -188,6 +190,8 @@ impl Manager {
             closing: AtomicBool::new(false),
             controls: Mutex::new(HashMap::new()),
             input_rates: Mutex::new(HashMap::new()),
+            input_slots: Mutex::new(HashMap::new()),
+            starts: Mutex::new(HashMap::new()),
         };
         if enabled {
             let uid =
@@ -225,7 +229,7 @@ impl Manager {
             .or_insert_with(|| Arc::new(AsyncMutex::new(())))
             .clone())
     }
-    pub fn admit_input(&self, agent: &str, now: i64) -> Result<()> {
+    pub fn admit_input(&self, agent: &str, now: i64) -> Result<tokio::sync::OwnedSemaphorePermit> {
         let mut rates = self.input_rates.lock().map_err(|_| Failure::storage())?;
         let entry = rates.entry(agent.to_owned()).or_insert((now, 0));
         if now - entry.0 >= 1000 {
@@ -235,7 +239,14 @@ impl Manager {
         if entry.1 > 30 {
             return Err(error(429, "Computer input rate exceeded."));
         }
-        Ok(())
+        self.input_slots
+            .lock()
+            .map_err(|_| Failure::storage())?
+            .entry(agent.to_owned())
+            .or_insert_with(|| Arc::new(Semaphore::new(8)))
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| error(429, "Computer input queue is full."))
     }
     pub fn get(&self, agent: &str) -> Result<Option<Arc<Desktop>>> {
         Ok(self
@@ -411,6 +422,14 @@ impl Manager {
         if crate::web::id(agent).is_none() {
             return Err(error(400, "Invalid agent ID."));
         }
+        let gate = self
+            .starts
+            .lock()
+            .map_err(|_| Failure::storage())?
+            .entry(agent.to_owned())
+            .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+            .clone();
+        let _starting = gate.lock().await;
         if let Some(d) = self.get(agent)? {
             if d.stopped.load(Ordering::SeqCst) {
                 return Err(error(
@@ -490,6 +509,7 @@ impl Manager {
         Ok(d)
     }
     pub async fn stop(&self, agent: &str) -> Result<()> {
+        self.viewers.revoke(agent)?;
         let Some(d) = self.get(agent)? else {
             return Ok(());
         };

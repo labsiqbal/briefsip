@@ -72,16 +72,17 @@ pub fn assert_recoverable(c: &Connection, turn: &str) -> Result<()> {
 pub fn turn_wait(c: &Connection, turn: &str) -> Result<Option<Value>> {
     one(c,"SELECT w.* FROM computer_waits w JOIN turns t ON t.id=w.turn WHERE w.turn=? AND w.state='waiting' AND t.status NOT IN('done','cancelled')",[turn])
 }
-pub fn read(s: &AppState, agent: &str) -> Result<Value> {
+fn read_db(s: &AppState, c: &Connection, agent: &str) -> Result<Value> {
     let mut value = s.computer.status(agent, s.config.now())?;
-    db(s, |c| {
-        let p = permission(c, agent)?;
-        value["enabled"] = json!(p["enabled"] == 1);
-        value["revision"] = p["revision"].clone();
-        value["control"] = control(c, agent, s.config.now())?;
-        value["requests"] = json!(waits(c, agent)?);
-        Ok(value)
-    })
+    let p = permission(c, agent)?;
+    value["enabled"] = json!(p["enabled"] == 1);
+    value["revision"] = p["revision"].clone();
+    value["control"] = control(c, agent, s.config.now())?;
+    value["requests"] = json!(waits(c, agent)?);
+    Ok(value)
+}
+pub fn read(s: &AppState, agent: &str) -> Result<Value> {
+    db(s, |c| read_db(s, c, agent))
 }
 fn command_id(v: &Value) -> bool {
     v["id"]
@@ -113,9 +114,6 @@ pub async fn configure(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
     let request =
         json!({"agent":agent,"id":v["id"],"revision":v["revision"],"enabled":v["enabled"]})
             .to_string();
-    if let Some(p) = db(s, |c| prior(c, v, &request))? {
-        return Ok(p);
-    }
     if v["enabled"] == true && !s.computer.enabled {
         return Err(error(
             403,
@@ -124,6 +122,9 @@ pub async fn configure(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
     }
     let gate = s.computer.control_gate(agent)?;
     let _guard = gate.lock().await;
+    if let Some(p) = db(s, |c| prior(c, v, &request))? {
+        return Ok(p);
+    }
     tx(s, |c| {
         let ctrl = control(c, agent, s.config.now())?;
         if v["enabled"] == false && (ctrl["mode"] == "user" || !waits(c, agent)?.is_empty()) {
@@ -136,10 +137,7 @@ pub async fn configure(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
             return Err(error(409, "Computer setting changed. Load latest status."));
         }
         c.execute("INSERT INTO agent_computers VALUES(?,?,?) ON CONFLICT(agent) DO UPDATE SET enabled=excluded.enabled,revision=excluded.revision",params![agent,if v["enabled"]==true{1}else{0},v["revision"].as_i64().unwrap_or(0)+1])?;
-        Ok(())
-    })?;
-    let result = read(s, agent)?;
-    db(s, |c| {
+        let result = read_db(s, c, agent)?;
         c.execute(
             "INSERT INTO computer_commands VALUES(?,?,?)",
             params![text(v, "id"), request, result.to_string()],
@@ -221,20 +219,18 @@ pub async fn transition(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
                 c.execute("UPDATE turns SET paused=0,revision=revision+1,error=NULL WHERE id=? AND status='queued' AND paused=1 AND revision=(SELECT pause_revision FROM computer_waits WHERE turn=?) AND NOT EXISTS(SELECT 1 FROM computer_actions WHERE turn=? AND state='uncertain')",params![text(&wait,"turn"),text(&wait,"turn"),text(&wait,"turn")])?;
             }
         }
-        Ok(())
-    })?;
-    if let Some(d) = s.computer.get(agent)? {
-        d.disconnected.send_modify(|n| *n += 1);
-    }
-    let value = read(s, agent)?;
-    db(s, |c| {
+        let value = read_db(s, c, agent)?;
         c.execute(
             "INSERT INTO computer_commands VALUES(?,?,?)",
             params![text(v, "id"), request, value.to_string()],
         )?;
         Ok(())
     })?;
-    Ok(value)
+    s.computer.viewers.revoke(agent)?;
+    if let Some(d) = s.computer.get(agent)? {
+        d.disconnected.send_modify(|n| *n += 1);
+    }
+    read(s, agent)
 }
 pub async fn input(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
     let name = text(v, "name");
@@ -252,7 +248,7 @@ pub async fn input(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
         return Err(error(400, "Invalid computer input."));
     }
     super::actions::validate(name, &v["args"], s.computer.width, s.computer.height)?;
-    s.computer.admit_input(agent, s.config.now())?;
+    let _input = s.computer.admit_input(agent, s.config.now())?;
     let gate = s.computer.control_gate(agent)?;
     let _guard = gate.lock().await;
     assert_enabled(s, agent)?;
