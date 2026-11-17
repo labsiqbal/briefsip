@@ -69,11 +69,11 @@ fn denied_host(host: &str) -> bool {
 }
 async fn target(host: &str, port: u16, fixture: Option<&TestTarget>) -> Option<SocketAddr> {
     if let Some(t) = fixture {
-        if host == t.hostname && (port == t.port || Some(port) == t.https_port) {
-            let mapped = if Some(port) == t.https_port {
+        if host == t.hostname && (port == t.port || port == 443 && t.https_port.is_some()) {
+            let mapped = if port == 443 {
                 t.https_port.unwrap_or(port)
             } else {
-                t.port
+                port
             };
             return Some(SocketAddr::from(([127, 0, 0, 1], mapped)));
         }
