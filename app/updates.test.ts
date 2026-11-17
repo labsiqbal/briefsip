@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { rustBinary } from './rust-binary.ts';
 import { startApp } from './server.ts';
 import { launcherRequest } from './updates.ts';
 import { launcherCommand } from './rust-test-launcher.ts';
@@ -136,7 +137,7 @@ test('Rust trial gates owner work until matching private socket commit', {skip:p
  const control=netServer(client=>{let raw='';client.on('data',chunk=>{raw+=chunk;if(!raw.includes('\n'))return;const q=JSON.parse(raw);client.end(JSON.stringify(q.type==='trial'?{committed:committed&&q.id===id}:{protocol:1,current:'development'})+'\n');});});
  try{
   await new Promise<void>(done=>control.listen(socket,done));chmodSync(socket,0o600);const port=await freePort(),app={origin:`http://127.0.0.1:${port}`};
-  child=spawn(process.env.BRIEFSIP_RUST_BINARY??join(root,'target/debug/briefsip-server'),[],{env:{PATH:process.env.PATH,HOME:dir,PORT:String(port),BRIEFSIP_DATA_DIR:join(dir,'data'),BRIEFSIP_UPDATE_TRIAL:id,BRIEFSIP_LAUNCHER_SOCKET:socket},stdio:'ignore'});
+  child=spawn(rustBinary('briefsip-server',process.env.BRIEFSIP_RUST_BINARY),[],{env:{PATH:process.env.PATH,HOME:dir,PORT:String(port),BRIEFSIP_DATA_DIR:join(dir,'data'),BRIEFSIP_UPDATE_TRIAL:id,BRIEFSIP_LAUNCHER_SOCKET:socket},stdio:'ignore'});
   await until(async()=>{try{return (await fetch(app.origin+'/api/environment')).ok;}catch{return false;}});
   await api(app,'/api/updates');await api(app,'/api/agents',undefined,503);await api(app,'/api/machines',undefined,503);await api(app,'/api/pairing-codes',{id:randomUUID()},503);
   committed=true;await until(async()=>{try{return (await fetch(app.origin+'/api/agents')).status===200;}catch{return false;}});await api(app,'/api/machines');
@@ -148,7 +149,7 @@ test('Rust launcher trials native Rust server, commits over socket, and rolls ba
  try{
   function native(version:string){
    const release=publishFixture(dir,version),path=join(dir,'releases',release.id);mkdirSync(join(path,'bin'));
-   cpSync(process.env.BRIEFSIP_RUST_BINARY??join(root,'target/debug/briefsip-server'),join(path,'bin/briefsip-server'));
+   cpSync(rustBinary('briefsip-server',process.env.BRIEFSIP_RUST_BINARY),join(path,'bin/briefsip-server'));
    execFileSync('strip',['--strip-debug',join(path,'bin/briefsip-server')]);
    writeFileSync(join(path,'package.json'),JSON.stringify({version,type:'module'}));
    const info={...release,files:fileManifest(path)};writeFileSync(join(path,'release.json'),JSON.stringify(info));

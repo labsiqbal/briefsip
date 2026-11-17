@@ -2,6 +2,7 @@ import type { AgentDesktopManager } from './agent-desktop.ts';
 import { computerTestBridge } from './rust-computer-test-bridge.ts';
 import type { PeerTokenIssuer } from './machines.ts';
 import { spawn } from 'node:child_process';
+import { rustBinary } from './rust-binary.ts';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
@@ -15,7 +16,7 @@ export async function startRustServer(options: Config) {
   let config: string;
   try { config = JSON.stringify({ ...serializable, desktop: desktop ? { ...desktop, runtime: undefined, now: undefined, testRuntime: !!desktop.runtime } : undefined, machines: machines ? { healthIntervalMs: machines.healthIntervalMs } : undefined, testComputerBridge: bridge.config }, (key, value) => { if (typeof value === 'function') throw new Error(`not ported: function option ${key} (see crates/PORTING.md)`); return value; }); } catch (error) { await bridge.close(); throw error; }
   const root = fileURLToPath(new URL('../', import.meta.url));
-  const binary = process.env.BRIEFSIP_RUST_BINARY ?? resolve(root, 'target/debug/briefsip-server');
+  const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
   const child = spawn(binary, ['--test-config'], { cwd: root, env: { ...process.env, BRIEFSIP_TEST_SERVER: 'rust' }, stdio: ['pipe', 'pipe', 'pipe'] });
   const exited = new Promise<void>(closed => child.once('close', () => closed()));
   let stderr = '', stdout = '';
