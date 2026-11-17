@@ -1,14 +1,19 @@
 mod admission;
 mod compaction;
+mod coordination;
 mod execution;
 mod history;
+pub(crate) mod media;
 mod memory;
+pub(crate) mod messaging;
+pub mod options;
 mod provider;
 mod questions;
 mod queue;
 mod shell;
 mod stream;
 mod tools;
+pub(crate) mod transcription;
 mod verification;
 
 use crate::{data, web::Failure, AppState};
@@ -29,6 +34,7 @@ type Result<T> = std::result::Result<T, Failure>;
 #[derive(Clone, Default)]
 pub struct Runtime {
     active: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,
+    media: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,
     wake: Arc<Notify>,
 }
 impl Runtime {
@@ -83,6 +89,8 @@ fn schedule(state: &AppState) -> Result<()> {
         return Ok(());
     }
     queue::expire(db)?;
+    messaging::settle(state, db)?;
+    coordination::settle(db)?;
     for approval in all(db,"SELECT id FROM harness_approvals WHERE state='approval' AND turn IN (SELECT id FROM turns WHERE status<>'running')",[])? {
         db.execute("UPDATE harness_approvals SET state='expired',revision=revision+1 WHERE id=?",[string(&approval,"id")])?;
     }
@@ -106,7 +114,7 @@ fn schedule(state: &AppState) -> Result<()> {
         .as_ref()
         .and_then(Value::as_u64)
         .unwrap_or(4) as usize;
-    let queued = all(db, "SELECT t.*,a.thread_limit FROM turns t JOIN agents a ON a.id=t.agent WHERE t.status='queued' AND t.paused=0 AND t.waiting_for IS NULL AND NOT EXISTS(SELECT 1 FROM questions q WHERE q.turn=t.id AND q.answer IS NULL) AND t.dispatch_mode<>'steer' AND NOT EXISTS(SELECT 1 FROM agent_visibility v WHERE v.agent=t.agent AND v.hidden=1) AND NOT EXISTS(SELECT 1 FROM queue_edits e JOIN turns h ON h.id=e.turn WHERE e.state='held' AND e.expires_at>unixepoch('subsec')*1000 AND h.agent=t.agent AND h.thread IS t.thread AND coalesce((SELECT position FROM queue_positions WHERE turn=h.id),h.seq)<=coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)) ORDER BY coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)", [])?;
+    let queued = all(db, "SELECT t.*,a.thread_limit FROM turns t JOIN agents a ON a.id=t.agent WHERE t.status='queued' AND t.paused=0 AND t.waiting_for IS NULL AND NOT EXISTS(SELECT 1 FROM questions q WHERE q.turn=t.id AND q.answer IS NULL) AND NOT EXISTS(SELECT 1 FROM remote_agent_calls WHERE delivery=t.id) AND NOT EXISTS(SELECT 1 FROM agent_requests r WHERE r.turn=t.id AND r.expects_reply=1 AND r.settled=0 AND NOT EXISTS(SELECT 1 FROM delegation_tasks d WHERE d.request=r.id)) AND NOT EXISTS(SELECT 1 FROM delegation_waits w WHERE w.turn=t.id AND w.status='waiting') AND NOT EXISTS(SELECT 1 FROM delegation_tasks d WHERE d.creator_turn=t.id AND d.wait=1 AND d.wake_delivered=0) AND t.dispatch_mode<>'steer' AND NOT EXISTS(SELECT 1 FROM agent_visibility v WHERE v.agent=t.agent AND v.hidden=1) AND NOT EXISTS(SELECT 1 FROM queue_edits e JOIN turns h ON h.id=e.turn WHERE e.state='held' AND e.expires_at>unixepoch('subsec')*1000 AND h.agent=t.agent AND h.thread IS t.thread AND coalesce((SELECT position FROM queue_positions WHERE turn=h.id),h.seq)<=coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)) ORDER BY coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)", [])?;
     for row in queued {
         if active.len() >= capacity {
             break;

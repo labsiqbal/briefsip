@@ -41,6 +41,8 @@ pub struct Config {
     pub data: crate::data::Options,
     #[serde(flatten)]
     pub computer: crate::computer::options::Options,
+    #[serde(flatten)]
+    pub turns: crate::turns::options::Options,
 }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -134,12 +136,6 @@ impl Config {
         for key in [
             "BRIEFSIP_HUB_ORIGIN",
             "BRIEFSIP_HUB_SIGNING_PUBLIC_KEY",
-            "BRIEFSIP_IMAGE_BASE_URL",
-            "BRIEFSIP_IMAGE_MODEL",
-            "BRIEFSIP_IMAGE_API_KEY",
-            "BRIEFSIP_TRANSCRIPTION_BASE_URL",
-            "BRIEFSIP_TRANSCRIPTION_MODEL",
-            "BRIEFSIP_TRANSCRIPTION_API_KEY",
             "BRIEFSIP_SCRIPT_TOKEN",
             "BRIEFSIP_SCRIPT_DIRECTORY",
             "BRIEFSIP_RELEASES_DIR",
@@ -234,6 +230,7 @@ impl Config {
             },
             data: crate::data::Options::environment()?,
             computer: crate::computer::options::Options::environment()?,
+            turns: crate::turns::options::Options::environment()?,
         };
         config.validate()?;
         Ok(config)
@@ -242,6 +239,7 @@ impl Config {
         crate::files::validate_workspaces(&self.workspaces)?;
         self.data.validate()?;
         self.computer.validate()?;
+        self.turns.validate()?;
         if self.tls.is_none() && !matches!(self.host.as_str(), "127.0.0.1" | "::1") {
             return Err("HTTP development listener must use loopback".into());
         }

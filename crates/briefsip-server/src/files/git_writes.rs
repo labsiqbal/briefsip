@@ -1027,6 +1027,8 @@ mod tests {
             auth: None,
             events: crate::events::Hub::new(),
             computer,
+            turns: crate::turns::Runtime::default(),
+            trial_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         let agent = uuid::Uuid::new_v4().to_string();
         let turn = uuid::Uuid::new_v4().to_string();

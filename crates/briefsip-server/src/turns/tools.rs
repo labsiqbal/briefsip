@@ -22,6 +22,9 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
         "read_history" | "read_message" | "read_attachment" | "create_text_file"
         | "open_file_in_panel" | "ask_user" | "select_memory" | "remember_memory"
         | "search_memory" | "verify_result" => true,
+        "generate_image" => state.config.turns.image_provider.is_some(),
+        "list_agents" | "send_message" | "delegate_task" | "task_status" | "wait_task"
+        | "cancel_task" => super::messaging::allowed(db, string(turn, "id")).unwrap_or(false),
         "read_provider_settings"
         | "edit_profile"
         | "list_skills"
@@ -40,6 +43,10 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
         | "copy_skill_file" => bound,
         _ => false,
     });
+    if !private {
+        specs.retain(|t| t["function"]["name"] != "delegate_task");
+        specs.extend(super::coordination::tools(db, turn)?);
+    }
     if private {
         specs.push(json!({"type":"function","function":{"name":"list_provider_accounts","description":"List your configured provider account choices without credentials or endpoint paths. Returns account ID, display name, provider family, origin and default model. Use set_provider_account only after the user requests a switch.","parameters":{"type":"object","properties":{},"additionalProperties":false}}}));
         specs.push(json!({"type":"function","function":{"name":"set_provider_model","description":"Change your own primary or backup model only when the user requests it. Supply current revision from read_provider_settings. Current execution keeps its model.","parameters":{"type":"object","properties":{"revision":{"type":"integer","minimum":1},"model":{"type":"string","maxLength":160},"backupModel":{"type":"string","maxLength":160}},"required":["revision"],"additionalProperties":false}}}));
@@ -75,6 +82,9 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
         return Err(error(400, "Tool arguments must be a JSON object."));
     }
     let name = string(&call["function"], "name");
+    if name == "generate_image" {
+        return super::media::generate(state, turn, call, &args).await;
+    }
     if name == "run_shell" {
         return super::shell::run(state, turn, call, args).await;
     }
@@ -125,6 +135,10 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
         }
         let result = dispatch(state, db, turn, call, &args)?;
         if ![
+            "delegate_task",
+            "transfer_task",
+            "send_message",
+            "wait_task",
             "read_history",
             "read_message",
             "search_memory",
@@ -289,6 +303,12 @@ fn dispatch(
             db.execute("UPDATE turns SET status='queued',paused=1,revision=revision+1,error=NULL WHERE id=?",[string(turn,"id")])?;
             Ok(Value::Null)
         }
+        "transfer_task" => super::coordination::execute(state, db, turn, call, args),
+        "delegate_task" if args.get("agent").is_none() && !turn["channel"].is_null() => {
+            super::coordination::execute(state, db, turn, call, args)
+        }
+        "list_agents" | "send_message" | "delegate_task" | "task_status" | "wait_task"
+        | "cancel_task" => super::messaging::run(state, db, turn, call, args),
         "verify_result" => super::verification::review(db, turn, args),
         "list_workspace" | "read_workspace_file" | "inspect_workspace_file" => {
             let binding = workspace(state, db, turn)?.ok_or_else(|| {

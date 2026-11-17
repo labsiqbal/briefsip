@@ -2,6 +2,10 @@ use super::*;
 use base64::{engine::general_purpose::STANDARD, Engine};
 
 pub async fn run(state: &AppState, id: &str) -> Result<()> {
+    {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        crate::computer::control::assert_recoverable(&guard.connection, id)?;
+    }
     let compacted = super::compaction::run(state, id).await?;
     let (turn, profile, mut messages, tools) = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
@@ -239,6 +243,22 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                 );
                 let db = state.database.lock().map_err(|_| Failure::storage())?;
                 append_screenshot(&db.connection, id, call_id, false, &mut messages)?;
+                if call["function"]["name"] == "read_attachment" && result["media_type"].is_string()
+                {
+                    if let Some(file) =
+                        super::history::readable_file(&db.connection, &turn, string(&result, "id"))?
+                    {
+                        let mime = string(&result, "media_type");
+                        let url = format!("data:{mime};base64,{}", STANDARD.encode(&file.bytes));
+                        if !messages.iter().any(|m| {
+                            m["content"].as_array().is_some_and(|parts| {
+                                parts.iter().any(|p| p["image_url"]["url"] == url)
+                            })
+                        }) {
+                            messages.push(json!({"role":"user","content":[{"type":"text","text":format!("Image attachment {} (reference data).",result["id"])},{"type":"image_url","image_url":{"url":url}}]}));
+                        }
+                    }
+                }
                 if !exists(
                     &db.connection,
                     "SELECT 1 FROM turns WHERE id=? AND status='running'",
@@ -348,6 +368,31 @@ fn replay(db: &Connection, turn: &str) -> Result<Vec<Value>> {
     let mut entries:Vec<(i64,i64,u8,Value)>=all(db,"SELECT call,result,after_output,coalesce(after_action,0) AS after_action FROM flow_tool_calls WHERE turn=? ORDER BY seq",[turn])?.into_iter().map(|r|(r["after_action"].as_i64().unwrap_or(0),r["after_output"].as_i64().unwrap_or(0),0,r)).collect();
     for (position,g) in all(db,"SELECT g.call,g.after_action,f.id,f.name,length(f.bytes) AS size,f.scope FROM generated_files g JOIN files f ON f.id=g.file WHERE g.turn=? ORDER BY g.seq",[turn])?.into_iter().enumerate() {
         entries.push((g["after_action"].as_i64().unwrap_or(0),position as i64,1,json!({"call":g["call"],"result":json!({"id":g["id"],"name":g["name"],"size":g["size"],"url":format!("/api/{}/files/{}",string(&g,"scope").replace(':',"/"),string(&g,"id"))}).to_string()})));
+    }
+    for (position, row) in all(
+        db,
+        "SELECT * FROM coordination WHERE turn=? ORDER BY seq",
+        [turn],
+    )?
+    .into_iter()
+    .enumerate()
+    {
+        let result = if let Some(child) = row["child"].as_str() {
+            one(
+                db,
+                "SELECT status,reply,error FROM turns WHERE id=?",
+                [child],
+            )?
+            .ok_or_else(Failure::storage)?
+        } else {
+            json!({"status":"transferred","recipient":row["target"],"task":row["prompt"]})
+        };
+        entries.push((
+            position as i64,
+            i64::MAX,
+            2,
+            json!({"call":row["call"],"result":result.to_string()}),
+        ));
     }
     entries.sort_by_key(|(action, output, kind, _)| (*action, *output, *kind));
     let mut messages = Vec::new();

@@ -19,3 +19,7 @@ CREATE TABLE IF NOT EXISTS harness_approvals(id TEXT PRIMARY KEY,turn TEXT NOT N
 CREATE TABLE IF NOT EXISTS harness_policies(agent TEXT NOT NULL REFERENCES agents(id),runtime TEXT NOT NULL,workspace TEXT NOT NULL,prefix TEXT NOT NULL,PRIMARY KEY(agent,runtime,workspace,prefix)) STRICT;
 CREATE TABLE IF NOT EXISTS harness_decisions(id TEXT PRIMARY KEY,request TEXT NOT NULL,result TEXT NOT NULL) STRICT;
 UPDATE harness_approvals SET state='expired',revision=revision+1 WHERE state='approval';
+
+CREATE TABLE IF NOT EXISTS image_generations(turn TEXT NOT NULL REFERENCES turns(id),call TEXT NOT NULL,file TEXT REFERENCES files(id),uncertain INTEGER NOT NULL,PRIMARY KEY(turn,call)) STRICT;
+CREATE TABLE IF NOT EXISTS transcriptions(id TEXT PRIMARY KEY,file TEXT NOT NULL REFERENCES files(id),request TEXT NOT NULL,model TEXT NOT NULL,origin TEXT NOT NULL,status TEXT NOT NULL,result TEXT,created TEXT NOT NULL,usage TEXT) STRICT;
+UPDATE transcriptions SET status='uncertain' WHERE status='pending';

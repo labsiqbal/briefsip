@@ -20,6 +20,7 @@ pub async fn call(
     if pending(state) {
         return Err(error(503, "Update trial is pending."));
     }
+    let mut messages = messages.to_vec();
     let (account, seq) = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
@@ -27,6 +28,18 @@ pub async fn call(
             .filter(|r| r["status"] == "running")
             .ok_or_else(|| error(409, "Task has stopped."))?;
         let account = admission::account(state, db, string(&row, "agent"))?;
+        if phase != "compaction" && super::messaging::allowed(db, turn)? {
+            let turn_row =
+                one(db, "SELECT * FROM turns WHERE id=?", [turn])?.ok_or_else(Failure::storage)?;
+            if let Some(first) = messages.first_mut().filter(|m| m["role"] == "system") {
+                first["content"] = json!(format!(
+                    "{}\n\n{}",
+                    string(first, "content"),
+                    super::messaging::awareness(db, &turn_row)?
+                ));
+            }
+        }
+
         let origin = url::Url::parse(&account.base)
             .map_err(|_| error(502, MALFORMED))?
             .origin()
@@ -65,7 +78,7 @@ pub async fn call(
     let body = translate(
         &account.family,
         model,
-        messages,
+        &messages,
         tools,
         max_tokens,
         streamed,

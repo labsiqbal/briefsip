@@ -267,7 +267,7 @@ fn create(
                     "ID was already used for a different message or dispatch mode.",
                 ));
             }
-        } else if old["text"] != text || old["attachments"] != f.to_string() {
+        } else if old["text"] != text || data::json(&old["attachments"])? != f {
             return Err(error(409, "ID was already used for a different message."));
         }
         scoped(
@@ -358,6 +358,7 @@ fn create(
     data::save_receipt(db, "dispatch_commands", id, &request, &result)?;
     Ok((202, result))
 }
+#[allow(clippy::too_many_arguments)]
 fn control(
     state: &AppState,
     db: &Connection,
@@ -453,7 +454,6 @@ fn control(
                     "Answer the task question before resuming or reassigning.",
                 ));
             }
-            crate::computer::control::assert_recoverable(db, id)?;
             if crate::computer::control::turn_wait(db, id)?.is_some() {
                 return Err(error(
                     409,

@@ -261,6 +261,12 @@ async fn entry(State(state): State<AppState>, req: Request) -> Response {
         if parts.first() == Some(&"sites") || parts.get(3) == Some(&"sites") {
             return sites::handle(&state, req, &parts).await;
         }
+        if parts.get(3) == Some(&"files")
+            && parameter(&query(&req), "transcription") == Some("1")
+            && parts.len() == 5
+        {
+            return crate::turns::transcription::handle(&state, req, &parts).await;
+        }
         if parts.get(3) == Some(&"files") {
             return attachments::handle(&state, req, &parts).await;
         }

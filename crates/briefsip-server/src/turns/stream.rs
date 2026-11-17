@@ -373,10 +373,7 @@ pub async fn read(
             return Err(error(502, provider::STREAM_ERROR));
         }
         bytes.extend_from_slice(&chunk);
-        loop {
-            let Some(index) = bytes.iter().position(|b| matches!(b, b'\r' | b'\n')) else {
-                break;
-            };
+        while let Some(index) = bytes.iter().position(|b| matches!(b, b'\r' | b'\n')) {
             if bytes[index] == b'\r' && index + 1 == bytes.len() {
                 break;
             }

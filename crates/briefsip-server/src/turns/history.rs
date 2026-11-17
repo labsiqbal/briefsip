@@ -38,7 +38,10 @@ pub fn readable_file(
     let (clause, mut params) = scope(turn);
     params.extend([position(db, turn)?.into(), id.to_owned().into()]);
     let generated=exists(db,&format!("SELECT 1 FROM generated_files g JOIN turns t ON t.id=g.turn WHERE {clause} AND coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)<=? AND file=?"),rusqlite::params_from_iter(params))?;
-    if !sent && !generated {
+    let (clause, mut params) = scope(turn);
+    params.extend([position(db, turn)?.into(), id.to_owned().into()]);
+    let image=exists(db,&format!("SELECT 1 FROM image_generations g JOIN turns t ON t.id=g.turn WHERE {clause} AND coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)<=? AND file=?"),rusqlite::params_from_iter(params))?;
+    if !sent && !generated && !image {
         return Ok(None);
     }
     match crate::files::attachments::file(db, id, &execution::scope(turn)) {
@@ -95,6 +98,13 @@ pub fn read(db: &Connection, turn: &Value, name: &str, args: &Value) -> Result<V
                 json!({"error":"Attachment not found in sent messages in this conversation."}),
             );
         };
+        if let Some(mime) = crate::files::attachments::image_type(&file.bytes) {
+            return Ok(if offset > 0 {
+                json!({"error":"Image offset must be zero."})
+            } else {
+                json!({"id":args["id"],"name":file.meta["name"],"media_type":mime,"note":"Image pixels follow this tool result in a user message."})
+            });
+        }
         let text = std::str::from_utf8(&file.bytes)
             .map_err(|_| error(415, "Message attachment must be UTF-8 text."))?;
         return Ok(

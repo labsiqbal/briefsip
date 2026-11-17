@@ -73,6 +73,8 @@ pub fn capture(db: &Connection, turn: &str) -> Result<()> {
             ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
+    let reads = regex::Regex::new(r"(?:^|[;&|]\s*)(?:cat|head|tail|sed|wc|stat)\s")
+        .map_err(|_| Failure::storage())?;
     for (id, call, result, image) in rows {
         let call: Value = serde_json::from_str(&call).map_err(|_| Failure::storage())?;
         let result: Value = serde_json::from_str(&result).map_err(|_| Failure::storage())?;
@@ -81,9 +83,7 @@ pub fn capture(db: &Connection, turn: &str) -> Result<()> {
                 .map_err(|_| Failure::storage())?;
             let command = string(&args, "command");
             let check = args["check"] == true || check_command(command)?;
-            let read = regex::Regex::new(r"(?:^|[;&|]\s*)(?:cat|head|tail|sed|wc|stat)\s")
-                .map_err(|_| Failure::storage())?
-                .is_match(&shell_command(command)?);
+            let read = reads.is_match(&shell_command(command)?);
             if check || read {
                 let report = format!(
                     "# Check report\n\nCommand: {}\n\nExit code: {}\n\n```text\n{}\n```\n",
