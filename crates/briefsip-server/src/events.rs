@@ -101,6 +101,9 @@ impl Hub {
     pub fn publish(&self, scope: String) {
         let _ = self.changes.send(scope);
     }
+    pub fn subscribe(&self) -> broadcast::Receiver<String> {
+        self.changes.subscribe()
+    }
     pub fn close(&self) {
         self.shutdown.send_replace(true);
     }

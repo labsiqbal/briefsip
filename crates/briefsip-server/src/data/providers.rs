@@ -36,6 +36,9 @@ pub struct Account {
     pub base: String,
     pub key: Option<String>,
     pub model: String,
+    pub stream: bool,
+    pub termination: String,
+    pub max_tokens: u64,
 }
 fn family(v: Option<&str>) -> crate::db::Result<String> {
     match v.unwrap_or("openai-compatible") {
@@ -145,6 +148,16 @@ impl Options {
             base: self.base_url.clone().unwrap_or_default(),
             key: self.api_key.clone(),
             model: self.default_model.clone().unwrap_or_default(),
+            stream: self.stream.unwrap_or(false),
+            termination: self
+                .stream_termination
+                .clone()
+                .unwrap_or_else(|| "marker".into()),
+            max_tokens: self
+                .max_tokens
+                .as_ref()
+                .and_then(Value::as_u64)
+                .unwrap_or(4096),
         }];
         if let Some(base) = &self.base_url {
             address(base)?;
@@ -243,6 +256,9 @@ impl Options {
                 base: base.into(),
                 key: v["apiKey"].as_str().map(str::to_owned),
                 model: string(v, "defaultModel").into(),
+                stream: v["stream"].as_bool().unwrap_or(false),
+                termination: termination.into(),
+                max_tokens: v["maxTokens"].as_u64().unwrap_or(4096),
             });
         }
         Ok(out)

@@ -1,15 +1,15 @@
 mod access;
-mod agents;
-mod conversations;
+pub(crate) mod agents;
+pub(crate) mod conversations;
 mod deletion;
 mod delivery;
 mod folders;
-mod history;
+pub(crate) mod history;
 pub(crate) mod limits;
-mod memory;
+pub(crate) mod memory;
 mod panel;
 mod projects;
-mod providers;
+pub(crate) mod providers;
 mod schema;
 mod sidebar;
 
@@ -65,13 +65,13 @@ fn image_header(hex: &str) -> bool {
             && hex.get(16..24) == Some("57454250")
             && matches!(hex.get(24..32), Some("56503820" | "5650384C" | "56503858"))
 }
-fn error(status: u16, message: impl Into<String>) -> Failure {
+pub(crate) fn error(status: u16, message: impl Into<String>) -> Failure {
     Failure::new(status, "invalid_request", message)
 }
-fn string<'a>(v: &'a Value, key: &str) -> &'a str {
+pub(crate) fn string<'a>(v: &'a Value, key: &str) -> &'a str {
     v[key].as_str().unwrap_or("")
 }
-fn field(v: &Value, key: &str, max: usize) -> Result<String> {
+pub(crate) fn field(v: &Value, key: &str, max: usize) -> Result<String> {
     let s = v[key]
         .as_str()
         .filter(|s| !s.trim().is_empty() && s.encode_utf16().count() <= max)
@@ -83,17 +83,17 @@ fn field(v: &Value, key: &str, max: usize) -> Result<String> {
         })?;
     Ok(s.trim().to_owned())
 }
-fn uuid(value: &str) -> bool {
+pub(crate) fn uuid(value: &str) -> bool {
     crate::web::id(value).is_some()
 }
-fn integer(v: &Value, min: i64, max: i64) -> bool {
+pub(crate) fn integer(v: &Value, min: i64, max: i64) -> bool {
     v.as_i64().is_some_and(|n| (min..=max).contains(&n))
 }
-fn closed(v: &Value, keys: &[&str]) -> bool {
+pub(crate) fn closed(v: &Value, keys: &[&str]) -> bool {
     v.as_object()
         .is_some_and(|m| m.keys().all(|k| keys.contains(&k.as_str())))
 }
-fn all(db: &Connection, sql: &str, params: impl Params) -> Result<Vec<Value>> {
+pub(crate) fn all(db: &Connection, sql: &str, params: impl Params) -> Result<Vec<Value>> {
     let mut statement = db.prepare(sql)?;
     let names: Vec<_> = statement
         .column_names()
@@ -124,16 +124,16 @@ fn all(db: &Connection, sql: &str, params: impl Params) -> Result<Vec<Value>> {
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(rows)
 }
-fn one(db: &Connection, sql: &str, params: impl Params) -> Result<Option<Value>> {
+pub(crate) fn one(db: &Connection, sql: &str, params: impl Params) -> Result<Option<Value>> {
     Ok(all(db, sql, params)?.into_iter().next())
 }
-fn exists(db: &Connection, sql: &str, params: impl Params) -> Result<bool> {
+pub(crate) fn exists(db: &Connection, sql: &str, params: impl Params) -> Result<bool> {
     Ok(one(db, sql, params)?.is_some())
 }
-fn json(raw: &Value) -> Result<Value> {
+pub(crate) fn json(raw: &Value) -> Result<Value> {
     serde_json::from_str(raw.as_str().unwrap_or("")).map_err(|_| Failure::storage())
 }
-fn receipt(
+pub(crate) fn receipt(
     db: &Connection,
     table: &str,
     id: &str,
@@ -152,7 +152,7 @@ fn receipt(
     }
     Ok(None)
 }
-fn save_receipt(
+pub(crate) fn save_receipt(
     db: &Connection,
     table: &str,
     id: &str,
@@ -165,14 +165,14 @@ fn save_receipt(
     )?;
     Ok(())
 }
-fn table(db: &Connection, name: &str) -> Result<bool> {
+pub(crate) fn table(db: &Connection, name: &str) -> Result<bool> {
     exists(
         db,
         "SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?",
         [name],
     )
 }
-fn iso(db: &Connection, now: i64) -> Result<String> {
+pub(crate) fn iso(db: &Connection, now: i64) -> Result<String> {
     db.query_row(
         "SELECT strftime('%Y-%m-%dT%H:%M:%fZ',?/1000.0,'unixepoch')",
         [now],
@@ -180,22 +180,22 @@ fn iso(db: &Connection, now: i64) -> Result<String> {
     )
     .map_err(Into::into)
 }
-fn transaction<T>(db: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
+pub(crate) fn transaction<T>(db: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
     let transaction =
         rusqlite::Transaction::new_unchecked(db, rusqlite::TransactionBehavior::Immediate)?;
     let value = f()?;
     transaction.commit()?;
     Ok(value)
 }
-fn query(request: &Request) -> Vec<(String, String)> {
+pub(crate) fn query(request: &Request) -> Vec<(String, String)> {
     url::form_urlencoded::parse(request.uri().query().unwrap_or("").as_bytes())
         .into_owned()
         .collect()
 }
-fn param<'a>(q: &'a [(String, String)], name: &str) -> Option<&'a str> {
+pub(crate) fn param<'a>(q: &'a [(String, String)], name: &str) -> Option<&'a str> {
     q.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str())
 }
-fn origin(state: &AppState, headers: &HeaderMap) -> bool {
+pub(crate) fn origin(state: &AppState, headers: &HeaderMap) -> bool {
     crate::allowed(state, crate::text_header(headers, "origin"))
 }
 
@@ -524,9 +524,6 @@ pub fn routes() -> Router<AppState> {
         .route("/api/channels", any(crate::dispatch))
         .route("/api/channels/{id}/edit", any(crate::dispatch))
         .route("/api/channels/{id}/read", any(crate::dispatch))
-        .route("/api/agents/{id}/turns", any(crate::dispatch))
-        .route("/api/threads/{id}/turns", any(crate::dispatch))
-        .route("/api/channels/{id}/turns", any(crate::dispatch))
         .route("/api/agents/{id}/dispatch", any(crate::dispatch))
         .route("/api/threads/{id}/dispatch", any(crate::dispatch))
         .route("/api/channels/{id}/dispatch", any(crate::dispatch))

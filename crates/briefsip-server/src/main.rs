@@ -5,6 +5,7 @@ mod data;
 mod db;
 mod events;
 mod files;
+mod turns;
 mod web;
 
 use axum::{
@@ -33,6 +34,8 @@ struct AppState {
     origin: String,
     auth: Option<auth::Auth>,
     events: events::Hub,
+    turns: turns::Runtime,
+    trial_pending: Arc<std::sync::atomic::AtomicBool>,
 }
 
 fn json_response(status: u16, value: Value) -> Response {
@@ -138,6 +141,9 @@ async fn local(state: &AppState, request: Request) -> Result<Response, Failure> 
             ));
         }
         return state.events.response(scope, &state.database);
+    }
+    if turns::handles(path, request.method()) {
+        return turns::local(state, request).await;
     }
     if data::handles(path) {
         return data::local(state, request).await;
@@ -417,6 +423,7 @@ async fn main() -> db::Result<()> {
         if config.auth.is_none() {
             files::init(&guard.connection)?;
             data::initialize(&guard)?;
+            turns::initialize(&guard.connection).map_err(|e| e.message)?;
         }
         events.watch(&guard.connection);
     }
@@ -438,7 +445,10 @@ async fn main() -> db::Result<()> {
         origin: origin.clone(),
         auth,
         events,
+        turns: turns::Runtime::default(),
+        trial_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
+    let turn_task = turns::start(state.clone());
     let conversation_maintenance = data::maintenance(state.clone());
     let maintenance_state = state.clone();
     let maintenance = tokio::spawn(async move {
@@ -453,6 +463,7 @@ async fn main() -> db::Result<()> {
     let shutdown_events = state.events.clone();
     let router = Router::new()
         .merge(files::routes())
+        .merge(turns::routes())
         .route("/api/session", any(dispatch))
         .route("/api/session/logout", any(dispatch))
         .route("/api/agents", any(dispatch))
@@ -490,6 +501,7 @@ async fn main() -> db::Result<()> {
             })
             .await
     };
+    turn_task.abort();
     maintenance.abort();
     conversation_maintenance.abort();
     result?;

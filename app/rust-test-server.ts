@@ -10,7 +10,7 @@ export async function startRustServer(options: Config) {
   const config = JSON.stringify(options, (key, value) => { if (typeof value === 'function') throw new Error(`not ported: function option ${key} (see crates/PORTING.md)`); return value; });
   const root = fileURLToPath(new URL('../', import.meta.url));
   const binary = process.env.BRIEFSIP_RUST_BINARY ?? resolve(root, 'target/debug/briefsip-server');
-  const child = spawn(binary, ['--test-config'], { cwd: root, env: { ...process.env, BRIEFSIP_TEST_SERVER: 'rust' }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(binary, ['--test-config'], { cwd: root, env: { ...process.env, BRIEFSIP_TEST_SERVER: 'rust', BRIEFSIP_TEST_PARENT: String(process.pid) }, stdio: ['pipe', 'pipe', 'pipe'] });
   const exited = new Promise<void>(closed => child.once('close', () => closed()));
   let stderr = '', stdout = '';
   child.stderr.setEncoding('utf8'); child.stderr.on('data', value => { stderr = (stderr + value).slice(-8192); });
