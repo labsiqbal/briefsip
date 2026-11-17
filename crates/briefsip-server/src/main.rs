@@ -612,6 +612,7 @@ async fn main() -> db::Result<()> {
         let stop = handle.clone();
         let task = tokio::spawn(async move {
             shutdown().await;
+            let _ = computer::hub::stop(&shutdown_state).await;
             if let Err(error) = turns::stop(&shutdown_state) {
                 eprintln!("Turn shutdown failed: {}", error.message);
             }
@@ -632,6 +633,7 @@ async fn main() -> db::Result<()> {
         axum::serve(listener, router)
             .with_graceful_shutdown(async move {
                 shutdown().await;
+                let _ = computer::hub::stop(&shutdown_state).await;
                 if let Err(error) = turns::stop(&shutdown_state) {
                     eprintln!("Turn shutdown failed: {}", error.message);
                 }

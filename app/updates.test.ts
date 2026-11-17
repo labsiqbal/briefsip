@@ -118,7 +118,7 @@ test('peer fan-out needs both owners, grants no default update scope, streams ve
  if(process.env.BRIEFSIP_TEST_SERVER==='rust')for(const name of ['a.sqlite','b.sqlite']){
   const path=join(dir,name),db=new DatabaseSync(path);const row=db.prepare('SELECT token,origin FROM paired_machines').get()!;db.close();
   const bytes=Buffer.from(String(row.token),'base64'),cipher=createDecipheriv('aes-256-gcm',readFileSync(path+'.peer-key'),bytes.subarray(0,12));
-  cipher.setAAD(Buffer.from(String(row.origin)));cipher.setAuthTag(bytes.subarray(-16));tokens.push(Buffer.concat([cipher.update(bytes.subarray(12,-16)),cipher.final()]).toString('utf8'));
+  cipher.setAAD(Buffer.from(String(row.origin)));cipher.setAuthTag(bytes.subarray(-16));const token=Buffer.concat([cipher.update(bytes.subarray(12,-16)),cipher.final()]).toString('utf8');if(!tokens.includes(token))tokens.push(token);
  }
  assert.equal(tokens.length,2);for(const token of tokens){assert(!JSON.stringify(result).includes(token));assert(!logs.join('\n').includes(token));}await a.close();await b.close();for(const name of readdirSync(dir).filter(name=>name.endsWith('.sqlite'))){const bytes=readFileSync(join(dir,name));for(const token of tokens)assert(!bytes.includes(Buffer.from(token)));}
  }finally{globalThis.fetch=original;console.error=oldLog;await a.close().catch(()=>{});await b.close().catch(()=>{});await ctlA.close();await ctlB.close();rmSync(dir,{recursive:true,force:true});}

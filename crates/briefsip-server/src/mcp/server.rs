@@ -393,15 +393,46 @@ fn send(state: &AppState, db: &Connection, caller: &Value, args: &Value) -> Resu
     } else {
         string(&data::agents::read(db, string(caller, "agent"))?, "name").to_owned()
     };
+    let machine = if caller["kind"] == "peer" {
+        sender.strip_prefix("Briefsip: ")
+    } else {
+        None
+    };
+    let title = if let Some(machine) = machine {
+        format!(
+            "{} on {}: {}",
+            "Briefsip",
+            machine.chars().take(24).collect::<String>(),
+            text.split_whitespace().collect::<Vec<_>>().join(" ")
+        )
+    } else {
+        format!(
+            "{} asked: {}",
+            sender.chars().take(40).collect::<String>(),
+            text.split_whitespace().collect::<Vec<_>>().join(" ")
+        )
+    }
+    .chars()
+    .take(80)
+    .collect::<String>();
     let result = json!({"requestId":request_id,"thread":thread,"turn":turn,"status":"queued"});
     transaction(db, || {
         db.execute(
-            "INSERT INTO threads(id,agent,name) VALUES(?,?,'Agent delivery')",
-            [&thread, &recipient],
+            "INSERT INTO threads(id,agent,name) VALUES(?,?,?)",
+            [&thread, &recipient, &title],
         )?;
         db.execute(
-            "INSERT INTO delivery_conversations(thread,sender,machine,activity) VALUES(?,?,NULL,?)",
-            params![thread, sender, state.config.now()],
+            "INSERT INTO delivery_conversations(thread,sender,machine,activity) VALUES(?,?,?,?)",
+            params![
+                thread,
+                if machine.is_some() {
+                    "Briefsip"
+                } else {
+                    &sender
+                },
+                machine,
+                state.config.now()
+            ],
         )?;
         db.execute("INSERT INTO turns(id,agent,thread,text,status,created,origin,message_depth) VALUES(?,?,?,?,'queued',?,?,?)",params![turn,recipient,thread,text,data::iso(db,state.config.now())?,format!("{}:{}",string(caller,"kind"),sender),args["metadata"]["depth"].as_i64().unwrap_or(1)])?;
         db.execute(

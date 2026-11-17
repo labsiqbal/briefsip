@@ -1,0 +1,11 @@
+CREATE TABLE IF NOT EXISTS hub_link_identity (id INTEGER PRIMARY KEY CHECK(id=1),installation_id TEXT NOT NULL,node_id TEXT NOT NULL,origin TEXT NOT NULL,hub_key TEXT NOT NULL,account_id TEXT,node_generation INTEGER,authority_generation TEXT,disabled INTEGER NOT NULL DEFAULT 0) STRICT;
+    CREATE TABLE IF NOT EXISTS hub_link_withdrawals (project_id TEXT NOT NULL,participation_id TEXT NOT NULL,revision INTEGER NOT NULL,PRIMARY KEY(project_id,participation_id)) STRICT;
+    CREATE TABLE IF NOT EXISTS hub_link_threads (project_id TEXT NOT NULL,section_id TEXT NOT NULL,agent_id TEXT NOT NULL,thread TEXT NOT NULL,PRIMARY KEY(project_id,section_id,agent_id)) STRICT;
+    CREATE TABLE IF NOT EXISTS hub_link_events (event_id TEXT PRIMARY KEY,project_id TEXT NOT NULL,section_id TEXT NOT NULL,participation_id TEXT NOT NULL,digest TEXT NOT NULL,frame TEXT NOT NULL) STRICT;
+    CREATE TABLE IF NOT EXISTS hub_link_requests (project_id TEXT NOT NULL,participation_id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(project_id,participation_id)) STRICT;
+    CREATE TABLE IF NOT EXISTS hub_link_profile (id INTEGER PRIMARY KEY CHECK(id=1),name TEXT NOT NULL) STRICT;
+    CREATE TABLE IF NOT EXISTS hub_link_grants (project_id TEXT NOT NULL,participation_id TEXT NOT NULL,value TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,PRIMARY KEY(project_id,participation_id)) STRICT;
+    CREATE TABLE IF NOT EXISTS hub_link_turns (turn_id TEXT PRIMARY KEY,event_id TEXT UNIQUE NOT NULL,digest TEXT NOT NULL,frame TEXT NOT NULL,state TEXT NOT NULL,sequence INTEGER NOT NULL DEFAULT 0,published TEXT NOT NULL DEFAULT '',spent INTEGER NOT NULL DEFAULT 0) STRICT;
+    CREATE TABLE IF NOT EXISTS hub_link_results (turn_id TEXT NOT NULL,sequence INTEGER NOT NULL,frame TEXT NOT NULL,acked INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(turn_id,sequence)) STRICT;
+    CREATE TABLE IF NOT EXISTS hub_link_actions (action_id TEXT PRIMARY KEY,turn_id TEXT NOT NULL,digest TEXT NOT NULL,kind TEXT NOT NULL,state TEXT NOT NULL,approved INTEGER NOT NULL DEFAULT 0,lease TEXT,payload TEXT NOT NULL) STRICT;
+CREATE TABLE IF NOT EXISTS hub_link_runtime(id INTEGER PRIMARY KEY CHECK(id=1),value TEXT NOT NULL) STRICT;

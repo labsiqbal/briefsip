@@ -302,7 +302,7 @@ pub async fn bridge(s: &AppState, operation: &str, args: Value) -> Result<Value>
     }
     Ok(value["value"].clone())
 }
-async fn now(s: &AppState) -> Result<i64> {
+pub(crate) async fn now(s: &AppState) -> Result<i64> {
     if s.config.computer.test_computer_bridge.is_some() {
         let v = bridge(s, "clock", json!({})).await?;
         Ok(v.as_i64().unwrap_or_else(|| s.config.now()))
@@ -389,6 +389,7 @@ fn no_secrets(value: &Value, tokens: &[&str]) -> Result<()> {
     Ok(())
 }
 async fn remote(
+    s: &AppState,
     origin: &str,
     path: &str,
     token: Option<&str>,
@@ -416,7 +417,7 @@ async fn remote(
         if path == "/api/peer/agents" {
             req = req.header("X-Briefsip-Messaging-Policy", "1");
         }
-        let mut response = req.send().await.map_err(|_| {
+        let mut response = peer_http(s, req).await.map_err(|_| {
             error(
                 502,
                 "Remote machine is unavailable or exceeded its time, size, or JSON limits.",
@@ -541,6 +542,7 @@ async fn confirm(s: &AppState, r: &Value) -> Result<Value> {
         false,
     )?;
     remote(
+        s,
         origin,
         "/api/machines/reciprocal",
         Some(&token),
@@ -585,6 +587,7 @@ async fn add(s: &AppState, v: &Value) -> Result<Value> {
     }
     receipt(s, &id, &fingerprint, None, &Value::Null)?;
     let response = remote(
+        s,
         &origin,
         "/api/pairing/redeem",
         None,
@@ -632,7 +635,14 @@ async fn add(s: &AppState, v: &Value) -> Result<Value> {
     })();
     if result.is_err() {
         let _ = revoke(s, text(&issued, "id")).await;
-        let _ = remote(&origin, "/api/peer/unpair", Some(&token), Some(&json!({}))).await;
+        let _ = remote(
+            s,
+            &origin,
+            "/api/peer/unpair",
+            Some(&token),
+            Some(&json!({})),
+        )
+        .await;
         return Err(error(
             503,
             "Pairing could not be saved. Create a new code and try again.",
@@ -718,11 +728,11 @@ async fn reciprocal(s: &AppState, v: &Value, header: Option<&str>) -> Result<Val
     if pending["environment_id"] != peer["id"] || pending["origin"] != peer["origin"] {
         return Err(error(401, "Unauthorized peer request."));
     }
-    let check = descriptor(&remote(origin, "/api/environment", None, None).await?)?;
+    let check = descriptor(&remote(s, origin, "/api/environment", None, None).await?)?;
     if check["id"] != peer["id"] || check["origin"] != peer["origin"] {
         return Err(error(401, "Remote machine identity changed."));
     }
-    let cached = agents(&remote(origin, "/api/peer/agents", Some(&token), None).await?)?;
+    let cached = agents(&remote(s, origin, "/api/peer/agents", Some(&token), None).await?)?;
     no_secrets(
         &json!({"peer":peer,"cached":cached}),
         &[&token, text(&auth, "token")],
@@ -870,12 +880,12 @@ pub async fn update_remote(
 ) -> Result<Value> {
     let r = update_peer(s, machine)?;
     let origin = text(&r, "origin");
-    let peer = descriptor(&remote(origin, "/api/environment", None, None).await?)?;
+    let peer = descriptor(&remote(s, origin, "/api/environment", None, None).await?)?;
     if peer["id"] != r["environment_id"] || peer["origin"] != r["origin"] {
         return Err(error(401, "Remote machine identity changed."));
     }
     let token = crypt(s, text(&r, "token"), origin, false)?;
-    let value = remote(origin, path, Some(&token), body).await?;
+    let value = remote(s, origin, path, Some(&token), body).await?;
     no_secrets(
         &value,
         &[
@@ -890,6 +900,47 @@ pub async fn update_remote(
     )?;
     Ok(value)
 }
+async fn peer_http(s: &AppState, request: reqwest::RequestBuilder) -> Result<reqwest::Response> {
+    if s.config.computer.test_computer_bridge.is_none() {
+        return request
+            .send()
+            .await
+            .map_err(|_| error(502, "Peer request failed."));
+    }
+    use reqwest::ResponseBuilderExt;
+    let request = request.build().map_err(|_| Failure::storage())?;
+    let headers = request
+        .headers()
+        .iter()
+        .map(|(k, v)| {
+            Ok((
+                k.as_str().to_owned(),
+                json!(v.to_str().map_err(|_| Failure::storage())?),
+            ))
+        })
+        .collect::<Result<serde_json::Map<String, Value>>>()?;
+    let body = request
+        .body()
+        .and_then(|b| b.as_bytes())
+        .map(|b| String::from_utf8(b.to_vec()))
+        .transpose()
+        .map_err(|_| Failure::storage())?;
+    let result = bridge(s, "peer-http", json!({"url":request.url().as_str(),"method":request.method().as_str(),"headers":headers,"body":body})).await?;
+    let mut response = axum::http::Response::builder()
+        .status(result["status"].as_u64().ok_or_else(Failure::storage)? as u16)
+        .url(request.url().clone());
+    for (k, v) in result["headers"].as_object().into_iter().flatten() {
+        response = response.header(k, v.as_str().ok_or_else(Failure::storage)?);
+    }
+    Ok(response
+        .body(
+            STANDARD
+                .decode(text(&result, "body"))
+                .map_err(|_| Failure::storage())?,
+        )
+        .map_err(|_| Failure::storage())?
+        .into())
+}
 pub async fn call_tool(s: &AppState, machine: &str, tool: &str, args: &Value) -> Result<Value> {
     let operation = async {
         let r = row(s, machine).map_err(|_| error(404, "Paired machine is unavailable."))?;
@@ -897,7 +948,7 @@ pub async fn call_tool(s: &AppState, machine: &str, tool: &str, args: &Value) ->
             return Err(error(404, "Paired machine is unavailable."));
         }
         let origin = text(&r, "origin");
-        let peer = descriptor(&remote(origin, "/api/environment", None, None).await?)?;
+        let peer = descriptor(&remote(s, origin, "/api/environment", None, None).await?)?;
         if peer["id"] != machine || peer["origin"] != origin {
             return Err(error(401, "Remote machine identity changed."));
         }
@@ -936,7 +987,7 @@ pub async fn call_tool(s: &AppState, machine: &str, tool: &str, args: &Value) ->
             if let Some(session) = &session {
                 request = request.header("Mcp-Session-Id", session);
             }
-            let mut response = request.send().await.map_err(|_| {
+            let mut response = peer_http(s, request).await.map_err(|_| {
                 error(
                     502,
                     "Remote machine is offline or MCP request exceeded its bounds.",
@@ -1070,7 +1121,7 @@ pub async fn download_release(
         })
 }
 async fn check_machine(s: &AppState, r: &Value) -> Result<()> {
-    let result=async{let origin=text(r,"origin");let peer=descriptor(&remote(origin,"/api/environment",None,None).await?)?;if peer["id"]!=r["environment_id"] || peer["origin"]!=r["origin"]{return Err(error(401,"Remote machine identity changed."));}let token=crypt(s,text(r,"token"),origin,false)?;let roster=remote(origin,"/api/peer/agents",Some(&token),None).await?;let cached=agents(&roster)?;no_secrets(&json!({"peer":peer,"cached":cached}),&[&token,&crypt(s,text(r,"return_token"),&format!("{origin}:return"),false)?])?;
+    let result=async{let origin=text(r,"origin");let peer=descriptor(&remote(s, origin,"/api/environment",None,None).await?)?;if peer["id"]!=r["environment_id"] || peer["origin"]!=r["origin"]{return Err(error(401,"Remote machine identity changed."));}let token=crypt(s,text(r,"token"),origin,false)?;let roster=remote(s, origin,"/api/peer/agents",Some(&token),None).await?;let cached=agents(&roster)?;no_secrets(&json!({"peer":peer,"cached":cached}),&[&token,&crypt(s,text(r,"return_token"),&format!("{origin}:return"),false)?])?;
         with_db(s,|db|{db.execute("UPDATE paired_machines SET name=?,version=?,last_seen=?,agents=? WHERE environment_id=? AND local_token_id=?",params![text(&peer,"name"),text(&peer,"version"),s.config.now(),cached.to_string(),text(r,"environment_id"),text(r,"local_token_id")])?;if let Some(allowed)=roster["messagingAllowed"].as_bool(){db.execute("INSERT INTO computer_peer_messaging VALUES(?,?) ON CONFLICT(token_id) DO UPDATE SET allowed=excluded.allowed",params![text(r,"local_token_id"),allowed as i64])?;}else{db.execute("DELETE FROM computer_peer_messaging WHERE token_id=?",[text(r,"local_token_id")])?;}Ok(())})?;Ok::<_,Failure>(())}.await;
     let status = match result {
         Ok(()) => "online",
@@ -1151,6 +1202,7 @@ async fn unpair(s: &AppState, v: &Value) -> Result<Value> {
         let _ = revoke(s, text(&r, "local_token_id")).await;
         if let Ok(token) = crypt(s, text(&r, "token"), text(&r, "origin"), false) {
             let _ = remote(
+                s,
                 text(&r, "origin"),
                 "/api/peer/unpair",
                 Some(&token),
@@ -1315,44 +1367,8 @@ pub async fn handle(
         "/api/pairing-codes" => {
             fields(&value, &["id"])?;
             let id = request_id(&value["id"])?;
-            let mut code = String::new();
-            while code.len() < 12 {
-                for b in random::<12>()? {
-                    if b < 248 {
-                        code.push(b"23456789ABCDEFGHJKLMNPQRSTUVWXYZ"[(b as usize) % 31] as char);
-                        if code.len() == 12 {
-                            break;
-                        }
-                    }
-                }
-            }
             let now = now(s).await?;
-            let expires = now + 600000;
-            tx(s, |db| {
-                if one(db, "SELECT 1 FROM pairing_codes WHERE id=?", [&id])?.is_some() {
-                    return Err(error(
-                        409,
-                        "This code was already shown. Create a new pairing code.",
-                    ));
-                }
-                let count: i64 = db.query_row(
-                    "SELECT count(*) FROM pairing_codes WHERE used=0 AND expires>?",
-                    [now],
-                    |r| r.get(0),
-                )?;
-                if count >= 5 {
-                    return Err(error(
-                        429,
-                        "Five pairing codes are active. Wait for one to expire.",
-                    ));
-                }
-                db.execute(
-                    "INSERT INTO pairing_codes VALUES(?,?,?,0)",
-                    params![id, hash(&json!(code)), expires],
-                )?;
-                Ok(())
-            })?;
-            json!({"code":code,"expiresAt":expires})
+            with_db(s, |db| pairing_code(db, &id, now, |_| Ok(())))?
         }
         "/api/machines" => add(s, &value).await?,
         "/api/pairing/redeem" => redeem(s, &value).await?,
@@ -1394,4 +1410,50 @@ pub async fn handle(
 
 pub fn ensure_updates_allowed(state: &AppState, machine: &str) -> Result<()> {
     update_peer(state, machine).map(|_| ())
+}
+
+pub(crate) fn pairing_code(
+    db: &Connection,
+    id: &str,
+    now: i64,
+    commit: impl FnOnce(&Connection) -> Result<()>,
+) -> Result<Value> {
+    let mut code = String::new();
+    while code.len() < 12 {
+        for b in random::<12>()? {
+            if b < 248 {
+                code.push(b"23456789ABCDEFGHJKLMNPQRSTUVWXYZ"[(b as usize) % 31] as char);
+                if code.len() == 12 {
+                    break;
+                }
+            }
+        }
+    }
+    let expires = now + 600000;
+    super::transaction(db, |db| {
+        if one(db, "SELECT 1 FROM pairing_codes WHERE id=?", [&id])?.is_some() {
+            return Err(error(
+                409,
+                "This code was already shown. Create a new pairing code.",
+            ));
+        }
+        let count: i64 = db.query_row(
+            "SELECT count(*) FROM pairing_codes WHERE used=0 AND expires>?",
+            [now],
+            |r| r.get(0),
+        )?;
+        if count >= 5 {
+            return Err(error(
+                429,
+                "Five pairing codes are active. Wait for one to expire.",
+            ));
+        }
+        db.execute(
+            "INSERT INTO pairing_codes VALUES(?,?,?,0)",
+            params![id, hash(&json!(code)), expires],
+        )?;
+        commit(db)?;
+        Ok(())
+    })?;
+    Ok(json!({"code":code,"expiresAt":expires}))
 }
