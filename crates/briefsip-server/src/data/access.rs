@@ -386,7 +386,7 @@ fn policy(
     })
 }
 
-pub fn route(
+pub async fn route(
     state: &AppState,
     path: &str,
     method: &Method,
@@ -413,6 +413,15 @@ pub fn route(
             ]
     ) {
         return Ok(None);
+    }
+    if parts.as_slice() == ["api", "agents"] && *method == Method::POST {
+        let result = super::avatar::run(state, |db, avatar| {
+            active(db)?;
+            grants::create(state, db, account, v, avatar)
+        })
+        .await?;
+        state.events.publish(path.to_owned());
+        return Ok(Some(envelope(result)?));
     }
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let db = &guard.connection;
@@ -442,11 +451,6 @@ pub fn route(
             &id(&json!(parts[2]))?,
             v,
         )?)?));
-    }
-    if parts.as_slice() == ["api", "agents"] && *method == Method::POST {
-        let result = grants::create(state, db, account, v)?;
-        state.events.publish(path.to_owned());
-        return Ok(Some(envelope(result)?));
     }
     if parts.len() == 5 && parts[1] == "projects" && parts[3] == "agents" && *method == Method::PUT
     {

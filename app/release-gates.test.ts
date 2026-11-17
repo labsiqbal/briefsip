@@ -5,7 +5,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseRelease } from './update-release.mjs';
-const { buildRelease } = await import(new URL('../scripts/release.mjs', import.meta.url).href);
+const { buildRelease, assertNativeDependencies } = await import(new URL('../scripts/release.mjs', import.meta.url).href);
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'release-gates-'));
@@ -93,6 +93,13 @@ test('Rust resource failure prevents publication; successful staging retains Nod
     for (const name of ['LICENSE', 'agent-delegation.LICENSE']) writeFileSync(join(f.dir, 'app', name), 'Fixture notice');
     writeFileSync(join(f.dir, 'app/package.json'), JSON.stringify({ version: '1.0.0', type: 'module', scripts: { lint: 'node -e "0"', build: 'node -e "0"', test: 'node -e "0"' } }));
     writeFileSync(join(bin, 'cargo'), `#!${process.execPath}\nimport { appendFileSync } from 'node:fs';\nappendFileSync('cargo-checks', JSON.stringify(process.argv.slice(2)) + '\\n');\n`, { mode: 0o700 });
+    writeFileSync(join(bin, 'ldd'), `#!${process.execPath}
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+appendFileSync(${JSON.stringify(join(f.dir, 'ldd-checks'))}, process.argv[2] + '\\n');
+const mode = ${JSON.stringify(join(f.dir, 'dependency-mode'))};
+const value = existsSync(mode) ? readFileSync(mode, 'utf8') : 'system';
+console.log(value === 'missing' ? 'libvips.so => not found' : value === 'external' ? 'libvips.so => /tmp/node_modules/libvips.so (0x1)' : 'libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x1)\\n/lib64/ld-linux-x86-64.so.2 (0x2)');
+`, { mode: 0o700 });
     writeFileSync(join(f.dir, 'scripts/resource-gate.mjs'), "import { existsSync } from 'node:fs';\nif (existsSync('gate-fails')) throw new Error('Rust resource budget exceeded');\n");
     writeFileSync(join(f.dir, 'scripts/budgets.json'), '{}');
     writeFileSync(join(f.dir, 'gate-fails'), 'fail');
@@ -101,7 +108,17 @@ test('Rust resource failure prevents publication; successful staging retains Nod
     assert.throws(() => buildRelease(options), /resource-gate/);
     assert.equal(existsSync(f.options.releases), false);
     rmSync(join(f.dir, 'gate-fails'));
+    for (const [mode, message] of [['missing', /Native dependency missing/], ['external', /outside system loader paths/]] as const) {
+      writeFileSync(join(f.dir, 'dependency-mode'), mode);
+      assert.throws(() => buildRelease(options), message);
+      assert.equal(existsSync(join(f.options.releases, 'feed/latest.json')), false);
+    }
+    rmSync(join(f.dir, 'dependency-mode'));
     const info = buildRelease(options), stage = join(f.options.releases, info.id);
+    const dependencies = readFileSync(join(f.dir, 'ldd-checks'), 'utf8').trim().split('\n');
+    assert.equal(dependencies.length, 4);
+    assert(dependencies.at(-2)!.endsWith('/bin/briefsip-server'));
+    assert(dependencies.at(-1)!.endsWith('/bin/briefsip-launcher'));
     assert.equal(readFileSync(join(stage, 'server.ts'), 'utf8'), '// Fixture runtime\n');
     assert.equal(readFileSync(join(stage, 'bin/briefsip-server'), 'utf8'), 'fixture binary');
     for (const name of ['LICENSE', 'agent-delegation.LICENSE']) assert.equal(readFileSync(join(stage, 'bin', name), 'utf8'), 'Fixture notice');
@@ -111,7 +128,7 @@ test('Rust resource failure prevents publication; successful staging retains Nod
     assert.equal(readFileSync(join(stage, 'bin/launcher.NOTICE'), 'utf8'), 'T3 MIT notice');
     assert.equal(readFileSync(join(stage, 'machine/briefsip-launcher.mjs'), 'utf8'), readFileSync(new URL('../scripts/briefsip-launcher.mjs', import.meta.url), 'utf8'));
     const checks = readFileSync(join(f.dir, 'cargo-checks'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
-    assert.equal(checks.length, 8);
+    assert.equal(checks.length, 16);
     assert(checks.some(args => args.join(' ') === 'build --release --locked'));
   } finally { process.env.PATH = previousPath; rmSync(f.dir, { recursive: true, force: true }); rmSync(bin, { recursive: true, force: true }); }
 });
@@ -152,4 +169,17 @@ console.log(JSON.stringify({comments: [{body: 'Claimed by Fixture, branch ' + (a
     assert.deepEqual(info.issues, [30]);
     t.diagnostic(`PASS DEMO --issues 30 (exit ${passed.status}): ${passed.stdout.trim().split('\n').at(-1)}; metadata issues=${JSON.stringify(info.issues)}`);
   } finally { rmSync(f.dir, { recursive: true, force: true }); rmSync(bin, { recursive: true, force: true }); }
+});
+
+const releaseRoot = new URL('../target/release/', import.meta.url);
+test('staged Rust binaries resolve only system loader libraries', { skip: !existsSync(new URL('briefsip-server', releaseRoot)) }, () => {
+  const stage = mkdtempSync(join(tmpdir(), 'briefsip-native-dependencies-'));
+  try {
+    mkdirSync(join(stage, 'bin'));
+    for (const name of ['briefsip-server', 'briefsip-launcher']) {
+      const binary = join(stage, 'bin', name);
+      cpSync(new URL(name, releaseRoot), binary);
+      assertNativeDependencies(binary);
+    }
+  } finally { rmSync(stage, { recursive: true, force: true }); }
 });

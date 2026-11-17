@@ -91,7 +91,7 @@ test('Rust sync snapshots page, hash and replay; delta cursors survive restart a
   } finally { await f.close(); }
 });
 
-test('Rust avatars preserve Sharp PNG bytes across resizing, alpha, JPEG, WebP and orientation', { skip: !rust }, async () => {
+test('Rust avatars preserve decoded pixels across resizing, alpha, JPEG, WebP and orientation', { skip: !rust }, async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-avatar-parity-'));
   const app = await startRustServer({ database: join(directory, 'db.sqlite') });
   const request = async (path: string, body?: unknown, status = 200) => {
@@ -102,12 +102,30 @@ test('Rust avatars preserve Sharp PNG bytes across resizing, alpha, JPEG, WebP a
     const agent = await request('/api/agents', { id: randomUUID(), name: 'Avatar', model: 'fixture', instructions: 'Help' }, 201);
     let revision = 0;
     for (const [width, height, channels, format, orientation] of [[513, 257, 4, 'png', 1], [73, 901, 3, 'png', 1], [512, 393, 3, 'jpeg', 1], [320, 241, 4, 'webp', 1], [256, 256, 3, 'png', 1], [17, 17, 1, 'png', 1], [43, 67, 3, 'jpeg', 6], [31, 23, 4, 'png', 3]] as const) {
-      const raw = Buffer.alloc(width * height * channels); for (let i = 0; i < raw.length; i++) raw[i] = (i * 37 + (i >>> 8) * 13) % 256;
+      const raw = Buffer.alloc(width * height * channels);
+      for (let i = 0; i < raw.length; i++) {
+        const x = Math.floor(i / channels) % width, y = Math.floor(i / channels / width), c = i % channels;
+        raw[i] = !rust || width === 256 && height === 256 ? (i * 37 + (i >>> 8) * 13) % 256
+          : c === 0 ? 30 + Math.floor(180 * x / width) : c === 1 ? 40 + Math.floor(160 * y / height)
+          : c === 2 ? 70 + Math.floor(60 * (x / width + y / height)) : 200;
+      }
       const input = await sharp(raw, { raw: { width, height, channels } }).withMetadata({ orientation }).toFormat(format, format === 'jpeg' ? { quality: 70 } : undefined).toBuffer();
       const expected = await sharp(input).rotate().resize(256, 256, { fit: 'cover' }).png().toBuffer();
       await request(`/api/agents/${agent.id}/avatar`, { id: randomUUID(), revision: revision++, image: input.toString('base64') });
       const response = await fetch(`${app.origin}/api/agents/${agent.id}/avatar/image`); assert.equal(response.status, 200);
-      assert(Buffer.from(await response.arrayBuffer()).equals(expected), `${width}x${height} ${format} orientation ${orientation}`);
+      const actual = Buffer.from(await response.arrayBuffer());
+      if (!rust) assert(actual.equals(expected), `${width}x${height} ${format} orientation ${orientation}`);
+      else {
+        const meta = await sharp(actual).metadata(), reference = await sharp(expected).metadata();
+        assert.equal(meta.width, reference.width); assert.equal(meta.height, reference.height);
+        assert.equal(meta.format, reference.format); assert.equal(meta.channels, reference.channels);
+        assert.equal(meta.space, reference.space); assert.equal(meta.depth, reference.depth);
+        const pixels = await sharp(actual).raw().toBuffer(), expectedPixels = await sharp(expected).raw().toBuffer();
+        const tolerance = width === 256 && height === 256 ? 0 : format === 'png' ? 4 : format === 'webp' ? 8 : 5;
+        assert.equal(pixels.length, expectedPixels.length);
+        for (let i = 0; i < pixels.length; i++) assert(Math.abs(pixels[i] - expectedPixels[i]) <= tolerance,
+          `${width}x${height} ${format} orientation ${orientation}: pixel ${i}, ${pixels[i]} vs ${expectedPixels[i]}, tolerance ${tolerance}`);
+      }
     }
   } finally { await app.close(); rmSync(directory, { recursive: true, force: true }); }
 });

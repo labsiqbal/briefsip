@@ -434,7 +434,13 @@ fn parse_creation(v: &Value) -> Result<Value> {
     Ok(command)
 }
 
-pub(super) fn create(state: &AppState, db: &Connection, account: &str, v: &Value) -> Result<Value> {
+pub(super) fn create(
+    state: &AppState,
+    db: &Connection,
+    account: &str,
+    v: &Value,
+    avatar: &mut super::super::avatar::Prepared,
+) -> Result<Value> {
     let command = parse_creation(v)?;
     let aid = string(&command, "id");
     let project = string(&command, "projectId");
@@ -468,10 +474,8 @@ pub(super) fn create(state: &AppState, db: &Connection, account: &str, v: &Value
     if let Some(old) = prior()? {
         return Ok(old);
     }
-    let avatar = original
-        .as_deref()
-        .map(agents::normalize)
-        .transpose()
+    let avatar = avatar
+        .get(original)
         .map_err(|e| Failure::new(e.status, "invalid_avatar", e.message))?;
     transaction(db, || {
         if let Some(old) = prior()? {
