@@ -33,6 +33,7 @@ pub async fn call(
         ));
     }
     if native {
+        state.turns.mark_started(turn);
         return crate::harness::run(state, turn, model, messages, phase)
             .await
             .map(Answer::Text);
@@ -137,6 +138,7 @@ pub async fn call(
                 return Err(error(409,"Task has stopped."));
             }
             state.events.turn(&guard.connection, turn)?;
+            state.turns.mark_started(turn);
         }
         let response=request.send().await.map_err(|_|error(502,"The provider could not be reached. Check the provider URL and network before retrying; completion may be uncertain."))?;
         let status = response.status().as_u16();
@@ -265,7 +267,7 @@ pub async fn call(
     .await?;
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let db = &guard.connection;
-    db.execute("UPDATE provider_calls SET status=?,finished=?,input_tokens=?,output_tokens=?,total_tokens=? WHERE seq=?",params![if result.is_ok(){"received"}else{"failed"},iso(db,state.config.now())?,tokens[0],tokens[1],tokens[2],seq])?;
+    db.execute("UPDATE provider_calls SET status=?,finished=?,input_tokens=?,output_tokens=?,total_tokens=? WHERE seq=? AND status='pending'",params![if result.is_ok(){"received"}else{"failed"},iso(db,state.config.now())?,tokens[0],tokens[1],tokens[2],seq])?;
     result
 }
 async fn bounded(mut r: Response, limit: usize) -> Result<Vec<u8>> {

@@ -1,4 +1,7 @@
 CREATE TABLE IF NOT EXISTS queue_positions(turn TEXT PRIMARY KEY REFERENCES turns(id),position INTEGER NOT NULL) STRICT;
+CREATE TRIGGER IF NOT EXISTS turn_stopped AFTER UPDATE OF status ON turns
+WHEN NEW.status='cancelled' AND OLD.status<>'cancelled' AND NEW.stopped_at IS NULL
+BEGIN UPDATE turns SET stopped_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=NEW.id; END;
 CREATE TABLE IF NOT EXISTS queue_edits(editor TEXT PRIMARY KEY,turn TEXT NOT NULL REFERENCES turns(id),state TEXT NOT NULL,original TEXT NOT NULL,expires_at INTEGER NOT NULL DEFAULT 0) STRICT;
 CREATE TABLE IF NOT EXISTS task_controls(id TEXT PRIMARY KEY,request TEXT NOT NULL,result TEXT NOT NULL) STRICT;
 CREATE TABLE IF NOT EXISTS questions(id TEXT PRIMARY KEY,turn TEXT NOT NULL REFERENCES turns(id),call_id TEXT NOT NULL,call TEXT NOT NULL,prompt TEXT NOT NULL,choices TEXT NOT NULL,answer TEXT,after_output INTEGER NOT NULL,after_action INTEGER NOT NULL,UNIQUE(turn,call_id)) STRICT;

@@ -3,7 +3,7 @@ mod backup;
 pub(crate) mod git;
 mod panel;
 pub(crate) mod preview;
-mod shared;
+pub(crate) mod shared;
 pub(crate) mod sites;
 pub(crate) mod skills;
 pub(crate) mod workspace;

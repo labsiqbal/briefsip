@@ -42,9 +42,13 @@ use crate::data::{
 };
 type Result<T> = std::result::Result<T, Failure>;
 
+struct Active {
+    cancel: watch::Sender<bool>,
+    started: watch::Sender<bool>,
+}
 #[derive(Clone, Default)]
 pub struct Runtime {
-    active: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,
+    active: Arc<Mutex<HashMap<String, Active>>>,
     pub(crate) media: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,
     wake: Arc<Notify>,
     client: reqwest::Client,
@@ -66,7 +70,14 @@ impl Runtime {
     fn cancel(&self, turn: &str) {
         if let Ok(active) = self.active.lock() {
             if let Some(cancel) = active.get(turn) {
-                cancel.send_replace(true);
+                cancel.cancel.send_replace(true);
+            }
+        }
+    }
+    pub(crate) fn mark_started(&self, turn: &str) {
+        if let Ok(active) = self.active.lock() {
+            if let Some(active) = active.get(turn) {
+                active.started.send_replace(true);
             }
         }
     }
@@ -102,7 +113,7 @@ pub fn stop(state: &AppState) -> Result<()> {
     }
     if let Ok(active) = state.turns.active.lock() {
         for cancel in active.values() {
-            cancel.send_replace(true);
+            cancel.cancel.send_replace(true);
         }
     }
     Ok(())
@@ -157,7 +168,7 @@ pub(crate) fn schedule(state: &AppState) -> Result<()> {
             "SELECT 1 FROM turns WHERE id=? AND status IN('queued','running') AND (paused=0 OR EXISTS(SELECT 1 FROM composio_calls WHERE turn=turns.id AND state='approval'))",
             [id],
         )? {
-            cancel.send_replace(true);
+            cancel.cancel.send_replace(true);
         }
     }
     if pending(state) {
@@ -208,7 +219,14 @@ pub(crate) fn schedule(state: &AppState) -> Result<()> {
             continue;
         }
         let (cancel, mut receiver) = watch::channel(false);
-        active.insert(id.to_owned(), cancel);
+        let (started, _) = watch::channel(false);
+        active.insert(
+            id.to_owned(),
+            Active {
+                cancel,
+                started: started.clone(),
+            },
+        );
         let task_state = state.clone();
         let id = id.to_owned();
         tokio::spawn(async move {
@@ -229,8 +247,13 @@ pub(crate) fn schedule(state: &AppState) -> Result<()> {
                         task_state.turns.wake.notify_one();
                         return;
                     }
-                    let _=db.connection.execute("UPDATE turns SET status='failed',error=?,stopped_at=? WHERE id=? AND status IN('queued','running') AND paused=0",params![failure.message,iso(&db.connection,task_state.config.now()).ok(),id]);
-                    let _=db.connection.execute("UPDATE provider_calls SET status='failed',finished=? WHERE turn=? AND status='pending'",params![iso(&db.connection,task_state.config.now()).ok(),id]);
+                    let status = if task_state.turns.stopping.load(Ordering::Acquire) {
+                        "interrupted"
+                    } else {
+                        "failed"
+                    };
+                    let _=db.connection.execute("UPDATE turns SET status=?,error=?,stopped_at=? WHERE id=? AND status IN('queued','running') AND paused=0",params![status,failure.message,iso(&db.connection,task_state.config.now()).ok(),id]);
+                    let _=db.connection.execute("UPDATE provider_calls SET status=?,finished=? WHERE turn=? AND status='pending'",params![status,iso(&db.connection,task_state.config.now()).ok(),id]);
                 }
             }
             if let Ok(mut active) = task_state.turns.active.lock() {
@@ -238,6 +261,25 @@ pub(crate) fn schedule(state: &AppState) -> Result<()> {
             }
             task_state.turns.wake.notify_one();
         });
+    }
+    Ok(())
+}
+
+pub(crate) async fn start_script(state: &AppState, id: &str) -> Result<()> {
+    schedule(state)?;
+    let started = state
+        .turns
+        .active
+        .lock()
+        .map_err(|_| Failure::storage())?
+        .get(id)
+        .map(|active| active.started.subscribe());
+    if let Some(mut started) = started {
+        if !*started.borrow_and_update() {
+            // ponytail: handoff waits one second; slower startup needs a separate admission receipt.
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_secs(1), started.changed()).await;
+        }
     }
     Ok(())
 }
@@ -379,6 +421,9 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
         }
     }
     state.turns.wake.notify_one();
+    if method == Method::POST {
+        schedule(state)?;
+    }
     Ok(crate::json_response(status, value))
 }
 pub fn routes() -> Router<AppState> {
