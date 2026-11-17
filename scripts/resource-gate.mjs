@@ -1,7 +1,9 @@
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { createServer } from 'node:net';
+import { fileManifest } from '../app/update-release.mjs';
 import { performance } from 'node:perf_hooks';
 import { pathToFileURL } from 'node:url';
 
@@ -39,6 +41,60 @@ export async function measureRust(binary, budgets) {
     try { await closed; } finally { clearTimeout(timeout); rmSync(directory, { recursive: true, force: true }); }
   }
 }
+export async function measureRustLauncher(binary, budgets) {
+  const budget = budgets.rustLauncher;
+  if (!Number.isFinite(budget?.idleRssMiB) || budget.idleRssMiB <= 0) throw new Error('Invalid Rust launcher budget: idleRssMiB');
+  const directory = mkdtempSync(join(tmpdir(), 'briefsip-launcher-budget-'));
+  const releases = join(directory, 'releases'), id = '1.0.0-00000000', release = join(releases, id);
+  let child, closed;
+  try {
+    const socket = createServer();
+    await new Promise((ready, reject) => { socket.once('error', reject); socket.listen(0, '127.0.0.1', ready); });
+    const port = socket.address().port;
+    await new Promise(ready => socket.close(ready));
+    mkdirSync(release, { recursive: true });
+    writeFileSync(join(release, 'package.json'), JSON.stringify({ version: '1.0.0', type: 'module' }));
+    writeFileSync(join(release, 'server.ts'), `import {createServer} from 'node:http';
+const server=createServer((q,r)=>r.end(JSON.stringify({version:'1.0.0'}))).listen(Number(process.env.PORT),'127.0.0.1');
+const stop=()=>server.close(()=>process.exit(0));process.on('SIGTERM',stop);process.on('disconnect',stop);
+`);
+    writeFileSync(join(release, 'release.json'), JSON.stringify({ id, version: '1.0.0', files: fileManifest(release) }));
+    symlinkSync(id, join(releases, 'current'));
+    const config = join(directory, 'launcher.json');
+    writeFileSync(config, JSON.stringify({ dataDir: join(directory, 'data'), releasesDir: releases, port }), { mode: 0o600 });
+    child = spawn(resolve(binary), ['--config', config], { stdio: ['ignore', 'ignore', 'pipe'] });
+    closed = new Promise(ready => child.once('close', ready));
+    let failure = '';
+    child.stderr.setEncoding('utf8'); child.stderr.on('data', value => { failure = (failure + value).slice(-4096); });
+    child.once('error', error => { failure = error.message; });
+    const deadline = performance.now() + 10000;
+    let ready = false;
+    while (performance.now() < deadline) {
+      if (child.exitCode !== null || child.signalCode !== null || failure) throw new Error(`Rust launcher gate exited: ${failure}`);
+      try { const response = await fetch(`http://127.0.0.1:${port}/api/environment`, { signal: AbortSignal.timeout(500) }); ready = response.ok && (await response.json()).version === '1.0.0'; } catch {}
+      if (ready) break;
+      await new Promise(done => setTimeout(done, 50));
+    }
+    if (!ready) throw new Error('Rust launcher gate readiness timed out');
+    await new Promise(done => setTimeout(done, 200));
+    const idleRssMiB = Number(/^VmRSS:\s+(\d+)\s+kB$/m.exec(readFileSync(`/proc/${child.pid}/status`, 'utf8'))?.[1]) / 1024;
+    if (!Number.isFinite(idleRssMiB)) throw new Error('Cannot read Rust launcher RSS from /proc');
+    const result = { idleRssMiB };
+    console.log(JSON.stringify({ rustLauncher: result, budget }));
+    if (idleRssMiB > budget.idleRssMiB) throw new Error('Rust launcher resource budget exceeded');
+    return result;
+  } finally {
+    if (child) {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+      const timer = setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); }, 5000);
+      try { await closed; } finally { clearTimeout(timer); }
+    }
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  await measureRust(process.argv[2], JSON.parse(readFileSync(process.argv[3] ?? new URL('./budgets.json', import.meta.url), 'utf8')));
+  if (!process.argv[4]) throw new Error('Rust launcher binary is required by the resource gate');
+  const budgets = JSON.parse(readFileSync(process.argv[3] ?? new URL('./budgets.json', import.meta.url), 'utf8'));
+  await measureRustLauncher(process.argv[4], budgets);
+  await measureRust(process.argv[2], budgets);
 }

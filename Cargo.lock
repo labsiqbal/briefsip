@@ -159,6 +159,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "briefsip-launcher"
+version = "0.1.0"
+dependencies = [
+ "nix",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "time",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "briefsip-server"
 version = "0.1.0"
 dependencies = [
@@ -789,6 +804,18 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "nix"
+version = "0.31.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bc81ce8148d3b4f3274da811f11cdd824ae661ee4ef732cdb229825cf5be7f7"
+dependencies = [
+ "bitflags",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
 ]
 
 [[package]]

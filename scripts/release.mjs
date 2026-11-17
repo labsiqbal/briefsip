@@ -40,7 +40,7 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
   const rust = existsSync(join(repository, 'Cargo.toml'));
   if (build && rust) {
     for (const args of [['fmt', '--check'], ['clippy', '--all-targets', '--', '-D', 'warnings'], ['test'], ['build', '--release', '--locked']]) execFileSync('cargo', args, { cwd: repository, stdio: 'inherit' });
-    execFileSync(process.execPath, [join(repository, 'scripts/resource-gate.mjs'), join(repository, 'target/release/briefsip-server'), join(repository, 'scripts/budgets.json')], { cwd: repository, stdio: 'inherit', env: { ...process.env, TMPDIR: '/dev/shm' } });
+    execFileSync(process.execPath, [join(repository, 'scripts/resource-gate.mjs'), join(repository, 'target/release/briefsip-server'), join(repository, 'scripts/budgets.json'), join(repository, 'target/release/briefsip-launcher')], { cwd: repository, stdio: 'inherit', env: { ...process.env, TMPDIR: '/dev/shm' } });
   }
   mkdirSync(releases, { recursive: true, mode: 0o700 });
   const stage = mkdtempSync(join(releases, '.staging-'));
@@ -49,6 +49,9 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
     stageRuntime(source, stage);
     if (build && rust) {
       mkdirSync(join(stage, 'bin'), { mode: 0o700 }); cpSync(join(repository, 'target/release/briefsip-server'), join(stage, 'bin/briefsip-server'));
+      cpSync(join(repository, 'target/release/briefsip-launcher'), join(stage, 'bin/briefsip-launcher'));
+      cpSync(join(repository, 'crates/briefsip-launcher/provenance.json'), join(stage, 'bin/launcher-provenance.json'));
+      cpSync(join(repository, 'crates/briefsip-launcher/NOTICE'), join(stage, 'bin/launcher.NOTICE'));
       cpSync(join(repository, 'crates/briefsip-server/provenance.json'), join(stage, 'bin/provenance.json'));
       for (const name of ['LICENSE', 'agent-delegation.LICENSE']) cpSync(join(repository, 'app', name), join(stage, 'bin', name));
     }
