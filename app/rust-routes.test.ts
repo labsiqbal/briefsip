@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import ts from 'typescript';
 
 test('Rust route inventory stays within Node matchers and reports ported coverage', t => {
@@ -32,7 +32,8 @@ test('Rust route inventory stays within Node matchers and reports ported coverag
     ts.forEachChild(node, visit);
   };
   visit(source);
-  const rust = readFileSync(new URL('../crates/briefsip-server/src/main.rs', import.meta.url), 'utf8');
+  const src = new URL('../crates/briefsip-server/src/', import.meta.url);
+  const rust = readdirSync(src, { recursive: true }).filter(name => String(name).endsWith('.rs')).map(name => readFileSync(new URL(String(name), src), 'utf8')).join('\n');
   const routes = [...rust.matchAll(/\.route\(\s*"([^"\n]+)"/g)].map(match => match[1]);
   assert(routes.length > 0);
   const id = '00000000-0000-4000-8000-000000000001';
