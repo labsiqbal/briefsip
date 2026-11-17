@@ -224,7 +224,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/channels/{id}/panel/sites/{site}", any(entry))
         .route("/sites/{id}", any(entry))
 }
-async fn entry(State(state): State<AppState>, req: Request) -> Response {
+pub(crate) async fn entry(State(state): State<AppState>, req: Request) -> Response {
     if state.auth.is_some() {
         return crate::canonical(&state, req).await;
     }
