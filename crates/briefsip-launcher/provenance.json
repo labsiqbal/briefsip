@@ -6,14 +6,28 @@
       "sourcePath": "apps/server/src/serviceLauncher.ts",
       "revision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "44878720ffcc5141bbe8584a8cac96d4cfd673fea2f6ac0a01c785876a69ed54",
-      "symbols": ["ServiceLauncher", "backupDatabaseOnce", "startTrial", "returnToPrevious"],
+      "symbols": [
+        "ServiceLauncher",
+        "backupDatabaseOnce",
+        "startTrial",
+        "returnToPrevious"
+      ],
       "license": "MIT",
       "notice": "crates/briefsip-launcher/NOTICE",
-      "localPaths": ["crates/briefsip-launcher/src/main.rs", "crates/briefsip-launcher/src/files.rs", "crates/briefsip-launcher/src/backup.rs"],
-      "adaptation": "Preserve private config, durable acceptance, immutable snapshots, trial selection, health deadline, rollback, restart recovery and Node IPC activation; add native server selection and Linux parent-death supervision.",
+      "localPaths": [
+        "crates/briefsip-launcher/src/main.rs",
+        "crates/briefsip-launcher/src/files.rs",
+        "crates/briefsip-launcher/src/backup.rs",
+        "crates/briefsip-launcher/src/lib.rs"
+      ],
+      "adaptation": "Preserve private config, durable acceptance, immutable snapshots, trial selection, health deadline, rollback, restart recovery and Node IPC activation; add native server selection and Linux parent-death supervision. Share release integrity with Rust server; native trials activate through private launcher socket after durable commit.",
       "compatibilityCheck": "BRIEFSIP_TEST_LAUNCHER=rust node --experimental-strip-types --test app/updates.test.ts app/launcher.test.ts"
     }
   ],
   "briefsipSourceRevision": "9a78457c",
-  "briefsipSources": ["scripts/briefsip-launcher.mjs", "app/update-backup.ts", "app/backup.ts"]
+  "briefsipSources": [
+    "scripts/briefsip-launcher.mjs",
+    "app/update-backup.ts",
+    "app/backup.ts"
+  ]
 }

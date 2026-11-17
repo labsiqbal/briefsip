@@ -36,7 +36,6 @@ pub fn routes() -> Router<AppState> {
         .route("/api/machines/remove", any(entry))
         .route("/api/machines/reciprocal", any(entry))
         .route("/api/machines/agent-messaging", any(entry))
-        .route("/api/machines/updates", any(entry))
         .route("/api/pairing-codes", any(entry))
         .route("/api/pairing/redeem", any(entry))
         .route("/api/peer/agents", any(entry))
@@ -72,6 +71,9 @@ async fn entry(State(state): State<AppState>, request: Request) -> Response {
                 "Access is only allowed through the local Briefsip address.",
             ));
         }
+        if crate::updates::pending(&state) && path != "/api/environment" {
+            return Err(error(503, "Update is being verified. Retry after restart."));
+        }
         if crate::text_header(request.headers(), "authorization")
             .is_some_and(|v| v.starts_with("Bearer bsi_"))
         {
@@ -100,7 +102,9 @@ pub fn maintenance(state: AppState) -> tokio::task::JoinHandle<()> {
         );
         loop {
             timer.tick().await;
-            let _ = machines::health(&state).await;
+            if !crate::updates::pending(&state) {
+                let _ = machines::health(&state).await;
+            }
         }
     })
 }

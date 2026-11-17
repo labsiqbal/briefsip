@@ -79,5 +79,18 @@
       "compatibilityCheck": "app/workspace-git.test.ts",
       "via": "app/workspace-git.ts"
     }
-  ]
+  ],
+  "launcherIntegration": {
+    "manifest": "crates/briefsip-launcher/provenance.json",
+    "notice": "crates/briefsip-launcher/NOTICE",
+    "localPaths": [
+      "crates/briefsip-server/src/updates/mod.rs",
+      "crates/briefsip-server/src/updates/release.rs"
+    ],
+    "via": [
+      "app/updates.ts",
+      "scripts/briefsip-launcher.mjs"
+    ],
+    "compatibilityCheck": "BRIEFSIP_TEST_SERVER=rust BRIEFSIP_TEST_LAUNCHER=rust node --experimental-strip-types --test app/updates.test.ts app/launcher.test.ts"
+  }
 }

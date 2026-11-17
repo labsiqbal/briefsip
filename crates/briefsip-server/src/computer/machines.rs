@@ -153,14 +153,7 @@ fn row(s: &AppState, id: &str) -> Result<Value> {
     .ok_or_else(|| error(404, "Paired machine not found."))
 }
 pub fn version() -> String {
-    let path = std::env::current_exe()
-        .ok()
-        .and_then(|v| v.parent()?.parent().map(|r| r.join("app/package.json")));
-    path.and_then(|p| fs::read(p).ok())
-        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
-        .or_else(|| serde_json::from_str(include_str!("../../../../app/package.json")).ok())
-        .map(|v| text(&v, "version").to_owned())
-        .unwrap_or_default()
+    crate::updates::version()
 }
 pub fn environment(s: &AppState) -> Result<Value> {
     let mut v = with_db(s, |db| {

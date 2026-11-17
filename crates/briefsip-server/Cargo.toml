@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+briefsip-launcher = { path = "../briefsip-launcher" }
+flate2 = "1"
 ammonia = "4"
 regex = "1"
 ring = "0.17"

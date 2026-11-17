@@ -41,6 +41,8 @@ pub struct Config {
     pub data: crate::data::Options,
     #[serde(flatten)]
     pub computer: crate::computer::options::Options,
+    #[serde(flatten)]
+    pub update: crate::updates::config::Config,
 }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -142,9 +144,6 @@ impl Config {
             "BRIEFSIP_TRANSCRIPTION_API_KEY",
             "BRIEFSIP_SCRIPT_TOKEN",
             "BRIEFSIP_SCRIPT_DIRECTORY",
-            "BRIEFSIP_RELEASES_DIR",
-            "BRIEFSIP_LAUNCHER_SOCKET",
-            "BRIEFSIP_UPDATE_TRIAL",
             "RESEND_API_KEY",
             "BRIEFSIP_INSTALLATION_ID",
             "BRIEFSIP_AGENT_DESKTOP",
@@ -234,6 +233,7 @@ impl Config {
             },
             data: crate::data::Options::environment()?,
             computer: crate::computer::options::Options::environment()?,
+            update: crate::updates::config::Config::environment()?,
         };
         config.validate()?;
         Ok(config)

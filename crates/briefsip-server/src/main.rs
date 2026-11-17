@@ -6,6 +6,7 @@ mod data;
 mod db;
 mod events;
 mod files;
+mod updates;
 mod web;
 
 use axum::{
@@ -28,12 +29,13 @@ use web::Failure;
 const POLICY: &str = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self' https: http:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 #[derive(Clone)]
-struct AppState {
+pub(crate) struct AppState {
     database: Arc<Mutex<db::Database>>,
     config: Arc<Config>,
     origin: String,
     auth: Option<auth::Auth>,
     events: events::Hub,
+    pub(crate) trial_pending: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 fn json_response(status: u16, value: Value) -> Response {
@@ -88,7 +90,8 @@ async fn dispatch(State(state): State<AppState>, request: Request) -> Response {
         return canonical(&state, request).await;
     }
     let host = text_header(request.headers(), "host").unwrap_or("");
-    if format!("http://{host}") != state.origin
+    if !updates::transport(request.uri().path())
+        && format!("http://{host}") != state.origin
         && !state
             .config
             .allowed_origins
@@ -114,6 +117,12 @@ async fn dispatch(State(state): State<AppState>, request: Request) -> Response {
 }
 async fn local(state: &AppState, request: Request) -> Result<Response, Failure> {
     let path = request.uri().path();
+    if updates::pending(state) && !["/api/environment", "/api/updates"].contains(&path) {
+        return Ok(local_error(
+            503,
+            "Update is being verified. Retry after restart.",
+        ));
+    }
     if text_header(request.headers(), "authorization")
         .is_some_and(|value| value.starts_with("Bearer bsi_"))
     {
@@ -139,6 +148,9 @@ async fn local(state: &AppState, request: Request) -> Result<Response, Failure> 
             ));
         }
         return state.events.response(scope, &state.database);
+    }
+    if updates::handles(path) {
+        return updates::local(state, request).await;
     }
     if data::handles(path) {
         return data::local(state, request).await;
@@ -419,6 +431,7 @@ async fn main() -> db::Result<()> {
             files::init(&guard.connection)?;
             data::initialize(&guard)?;
             computer::initialize(&guard.connection)?;
+            updates::initialize(&guard.connection)?;
         }
         events.watch(&guard.connection);
     }
@@ -434,15 +447,18 @@ async fn main() -> db::Result<()> {
     );
     let tls = config.tls.clone();
     let auth = config.auth.clone().map(auth::Auth::new).transpose()?;
+    let trial_pending = updates::trial(&config);
     let state = AppState {
         database,
         config: Arc::new(config),
         origin: origin.clone(),
         auth,
         events,
+        trial_pending,
     };
     let computer_maintenance = computer::maintenance(state.clone());
     let conversation_maintenance = data::maintenance(state.clone());
+    let trial_watch = updates::watch_trial(state.clone());
     let maintenance_state = state.clone();
     let maintenance = tokio::spawn(async move {
         let mut timer = tokio::time::interval(Duration::from_secs(30));
@@ -457,6 +473,7 @@ async fn main() -> db::Result<()> {
     let router = Router::new()
         .merge(computer::routes())
         .merge(files::routes())
+        .merge(updates::routes())
         .route("/api/session", any(dispatch))
         .route("/api/session/logout", any(dispatch))
         .route("/api/agents", any(dispatch))
@@ -497,6 +514,7 @@ async fn main() -> db::Result<()> {
     maintenance.abort();
     conversation_maintenance.abort();
     computer_maintenance.abort();
+    trial_watch.abort();
     result?;
     Ok(())
 }
