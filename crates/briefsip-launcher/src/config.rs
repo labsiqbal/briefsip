@@ -117,10 +117,10 @@ pub fn parse_env(source: &str) -> BTreeMap<String, String> {
             break;
         };
         let key = line[..equal]
-            .trim()
+            .trim_matches([' ', '\t'])
             .strip_prefix("export ")
-            .unwrap_or(line[..equal].trim())
-            .trim();
+            .unwrap_or(line[..equal].trim_matches([' ', '\t']))
+            .trim_matches([' ', '\t']);
         if key.is_empty() {
             rest = &rest[line_end..];
             continue;
@@ -145,7 +145,12 @@ pub fn parse_env(source: &str) -> BTreeMap<String, String> {
         let end = value.find('\n').unwrap_or(value.len());
         values.insert(
             key.into(),
-            value[..end].split('#').next().unwrap_or("").trim().into(),
+            value[..end]
+                .split('#')
+                .next()
+                .unwrap_or("")
+                .trim_matches([' ', '\t'])
+                .into(),
         );
         rest = &value[end..];
     }

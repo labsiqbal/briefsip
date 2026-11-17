@@ -5,6 +5,14 @@ use std::{fs, path::Path};
 #[test]
 fn literal_env_matches_node_parse_env() {
     let source = "# ignored\r\nexport A=one\nA=last # tail\nEMPTY=\n=x\nS='literal # value'\nD=\"one\\ntwo\\rthree\"\nB=`back\nline`\nBAD-KEY=$(touch /never)\nUNFINISHED=\"quote\nNEXT=yes\n";
+    assert_eq!(
+        parse_env("\u{000b}A=x\nB=\u{000b} y\u{000c}"),
+        [
+            ("\u{000b}A".into(), "x".into()),
+            ("B".into(), "\u{000b} y\u{000c}".into())
+        ]
+        .into()
+    );
     let expected = [
         ("A", "last"),
         ("EMPTY", ""),

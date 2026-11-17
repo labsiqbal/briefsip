@@ -183,11 +183,11 @@ impl Launcher {
                         Err(e) => return Err(e.into()),
                     }
                 }
-                if timeout(Duration::from_secs(5), child.process.wait())
-                    .await
-                    .is_err()
-                {
-                    child.process.kill().await?;
+                match timeout(Duration::from_secs(5), child.process.wait()).await {
+                    Ok(status) => {
+                        status?;
+                    }
+                    Err(_) => child.process.kill().await?,
                 }
             }
         }
