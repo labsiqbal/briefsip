@@ -78,6 +78,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/workflows/{id}/webhook-events", any(entry))
         .route("/api/workflow-webhooks/{id}", any(entry))
         .route("/api/workflow-waits/{id}/{seq}", any(entry))
+        .route("/api/workflow-waits/{id}/{seq}/events", any(entry))
         .route("/api/flows", any(entry))
         .route("/api/workflows", any(entry))
         .route("/api/agents/{id}/workflows", any(entry))

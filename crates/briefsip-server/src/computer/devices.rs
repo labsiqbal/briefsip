@@ -1127,6 +1127,19 @@ pub async fn host(state: &AppState, request: Request, request_id: &str) -> Resul
         let result = waits::resolve(db, &principal, &v, operation == "wait-event-results", now)?;
         return Ok(crate::json_response(200, json!({"ok":true,"data":result})));
     }
+    if method == Method::POST && operation == "acquire" {
+        let token = crate::text_header(&headers, "x-briefsip-executor").ok_or_else(|| {
+            fail(
+                401,
+                "executor_invalid",
+                "Executor token is not available yet.",
+            )
+        })?;
+        let result = data::transaction(db, || {
+            crate::tasks::execution::acquire(db, &principal, &v, token, now)
+        })?;
+        return crate::tasks::response(result);
+    }
     if method == Method::POST && operation == "session" {
         fields(&v, &["requestId", "expectedGeneration"])?;
         let result = super::transaction(db, |db| {

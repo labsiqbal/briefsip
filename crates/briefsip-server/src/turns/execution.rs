@@ -188,7 +188,7 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                 ));
             }
             messages.push(json!({"role":"user","content":request}));
-            messages.push(json!({"role":if row["agent"]==turn["agent"]{"assistant"}else{"user"},"content":row["reply"]}));
+            messages.push(json!({"role":if row["agent"]==turn["agent"]{"assistant"}else{"user"},"content":if row["agent"]==turn["agent"]{row["reply"].clone()}else{json!(format!("Other participant {} replied:\n{}",row["author"],string(&row,"reply")))}}));
             for steer in dispatch::guidance(db, string(&row, "id"))? {
                 messages.push(json!({"role":"user","content":steer["text"]}));
             }

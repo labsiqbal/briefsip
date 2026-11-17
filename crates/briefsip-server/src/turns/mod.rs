@@ -10,6 +10,7 @@ pub(crate) mod execution;
 pub(crate) mod harness;
 mod history;
 pub(crate) use crate::media::images as media;
+pub(crate) use memory::scoped as canonical_memory;
 mod memory;
 pub(crate) mod messaging;
 pub mod options;
@@ -382,6 +383,10 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/turn-waits/{id}", any(crate::dispatch))
+        .route("/api/turn-waits/{id}/events", any(crate::dispatch))
+        .route("/api/agents/{id}/compaction", any(crate::dispatch))
+        .route("/api/threads/{id}/compaction", any(crate::dispatch))
+        .route("/api/channels/{id}/compaction", any(crate::dispatch))
         .route(
             "/api/agents/{id}/turns/{turn}/harness-approvals/{approval}",
             any(crate::dispatch),
