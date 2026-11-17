@@ -39,6 +39,8 @@ pub struct Config {
     pub workspaces: Vec<WorkspaceConfig>,
     #[serde(flatten)]
     pub data: crate::data::Options,
+    #[serde(flatten)]
+    pub computer: crate::computer::options::Options,
 }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -231,6 +233,7 @@ impl Config {
                 Err(_) => return Err("Invalid workspace JSON".into()),
             },
             data: crate::data::Options::environment()?,
+            computer: crate::computer::options::Options::environment()?,
         };
         config.validate()?;
         Ok(config)
@@ -238,6 +241,7 @@ impl Config {
     fn validate(&mut self) -> crate::db::Result<()> {
         crate::files::validate_workspaces(&self.workspaces)?;
         self.data.validate()?;
+        self.computer.validate()?;
         if self.tls.is_none() && !matches!(self.host.as_str(), "127.0.0.1" | "::1") {
             return Err("HTTP development listener must use loopback".into());
         }
