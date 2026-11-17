@@ -1,8 +1,13 @@
 #[allow(dead_code)]
-mod actions;
+pub mod actions;
+#[allow(dead_code)]
+pub mod control;
+mod desktop;
 #[allow(dead_code)]
 pub mod machines;
 pub mod options;
+mod vnc;
+pub use desktop::Manager;
 mod proxy;
 
 use crate::{local_error, web::Failure, AppState};
@@ -17,6 +22,7 @@ use serde_json::Value;
 
 pub type Result<T> = std::result::Result<T, Failure>;
 pub fn initialize(db: &rusqlite::Connection) -> crate::db::Result<()> {
+    db.execute_batch(include_str!("schema.sql"))?;
     machines::initialize(db)
 }
 
@@ -31,6 +37,15 @@ async fn body(request: Request, limit: usize) -> Result<Value> {
 }
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route("/api/agents/{id}/computer", any(entry))
+        .route("/api/agents/{id}/computer/start", any(entry))
+        .route("/api/agents/{id}/computer/stop", any(entry))
+        .route("/api/agents/{id}/computer/screenshot", any(entry))
+        .route("/api/agents/{id}/computer/control", any(entry))
+        .route("/api/agents/{id}/computer/input", any(entry))
+        .route("/api/agents/{id}/computer/open-url", any(entry))
+        .route("/api/agents/{id}/computer/vnc-ticket", any(entry))
+        .route("/api/agents/{id}/computer/vnc", any(entry))
         .route("/api/environment", any(entry))
         .route("/api/machines", any(entry))
         .route("/api/machines/remove", any(entry))
@@ -77,6 +92,9 @@ async fn entry(State(state): State<AppState>, request: Request) -> Response {
         {
             return Err(error(401, "Unauthorized request."));
         }
+        if path.starts_with("/api/agents/") {
+            return handle_computer(&state, request).await;
+        }
         machines::handle(&state, request).await
     }
     .await;
@@ -101,6 +119,96 @@ pub fn maintenance(state: AppState) -> tokio::task::JoinHandle<()> {
         loop {
             timer.tick().await;
             let _ = machines::health(&state).await;
+            let _ = state.computer.maintain(state.config.now()).await;
         }
     })
+}
+
+async fn handle_computer(state: &AppState, request: Request) -> Result<Response> {
+    use axum::{
+        http::{header, HeaderValue, Method},
+        response::IntoResponse,
+    };
+    let path = request.uri().path().to_owned();
+    let parts = path.split('/').collect::<Vec<_>>();
+    let agent = parts
+        .get(3)
+        .copied()
+        .filter(|v| crate::web::id(v).is_some())
+        .ok_or_else(|| error(404, "Agent not found."))?;
+    let operation = parts.get(5).copied().unwrap_or("");
+    if request.headers().contains_key("authorization") {
+        return Err(error(
+            403,
+            "Computer access requires the local owner in Briefsip.",
+        ));
+    }
+    {
+        let db = state.database.lock().map_err(|_| Failure::storage())?;
+        if crate::files::one(&db.connection, "SELECT 1 FROM agents WHERE id=?", [agent])?.is_none()
+        {
+            return Err(error(404, "Agent not found."));
+        }
+    }
+    if operation == "vnc" {
+        return vnc::upgrade(state.clone(), request, agent.into()).await;
+    }
+    if request.uri().query().is_some() {
+        return Err(error(400, "Computer routes do not accept parameters."));
+    }
+    crate::files::origin(state, &request)?;
+    if request.method() == Method::GET && operation.is_empty() {
+        return Ok(crate::json_response(200, control::read(state, agent)?));
+    }
+    if request.method() == Method::GET && operation == "screenshot" {
+        control::assert_enabled(state, agent)?;
+        let image = state.computer.screenshot(agent, true).await?;
+        let mut response = (
+            [
+                (header::CONTENT_TYPE, "image/jpeg"),
+                (
+                    axum::http::HeaderName::from_static("cross-origin-resource-policy"),
+                    "same-origin",
+                ),
+            ],
+            image.clone(),
+        )
+            .into_response();
+        response
+            .headers_mut()
+            .insert(header::CONTENT_LENGTH, HeaderValue::from(image.len()));
+        return Ok(response);
+    }
+    if request.method() != Method::POST || operation == "screenshot" {
+        return Err(error(405, "Method not allowed."));
+    }
+    crate::files::mutation(state, &request)?;
+    let origin = crate::text_header(request.headers(), "origin")
+        .unwrap_or("")
+        .to_owned();
+    let data = body(request, if operation == "input" { 20000 } else { 2048 }).await?;
+    let value = match operation {
+        "" => control::configure(state, agent, &data).await?,
+        "control" => control::transition(state, agent, &data).await?,
+        "input" => control::input(state, agent, &data).await?,
+        "open-url" => control::open_result(state, agent, &data).await?,
+        "vnc-ticket" => state.computer.viewers.mint(state, agent, &origin, &data)?,
+        "start" | "stop" => {
+            if !data.as_object().is_some_and(|m| m.is_empty()) {
+                return Err(error(400, "Computer controls do not accept arguments."));
+            }
+            let gate = state.computer.control_gate(agent)?;
+            let _guard = gate.lock().await;
+            if operation == "start" {
+                control::assert_enabled(state, agent)?;
+                state.computer.start(agent, state.config.now()).await?;
+            } else {
+                state.computer.viewers.revoke(agent)?;
+                state.computer.stop(agent).await?;
+            }
+            control::read(state, agent)?
+        }
+        _ => return Err(error(404, "Route not found.")),
+    };
+    Ok(crate::json_response(200, value))
 }

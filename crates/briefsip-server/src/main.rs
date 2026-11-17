@@ -34,6 +34,7 @@ struct AppState {
     origin: String,
     auth: Option<auth::Auth>,
     events: events::Hub,
+    computer: Arc<computer::Manager>,
 }
 
 fn json_response(status: u16, value: Value) -> Response {
@@ -434,12 +435,14 @@ async fn main() -> db::Result<()> {
     );
     let tls = config.tls.clone();
     let auth = config.auth.clone().map(auth::Auth::new).transpose()?;
+    let computer = Arc::new(computer::Manager::new(&config)?);
     let state = AppState {
         database,
         config: Arc::new(config),
         origin: origin.clone(),
         auth,
         events,
+        computer: computer.clone(),
     };
     let computer_maintenance = computer::maintenance(state.clone());
     let conversation_maintenance = data::maintenance(state.clone());
@@ -497,6 +500,7 @@ async fn main() -> db::Result<()> {
     maintenance.abort();
     conversation_maintenance.abort();
     computer_maintenance.abort();
+    computer.close().await;
     result?;
     Ok(())
 }
