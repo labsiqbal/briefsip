@@ -252,7 +252,7 @@ pub(crate) fn schedule(state: &AppState) -> Result<()> {
                     } else {
                         "failed"
                     };
-                    let _=db.connection.execute("UPDATE turns SET status=?,error=?,stopped_at=? WHERE id=? AND status IN('queued','running') AND paused=0",params![status,failure.message,iso(&db.connection,task_state.config.now()).ok(),id]);
+                    let _=db.connection.execute("UPDATE turns SET status=?,error=?,stopped_at=? WHERE id=? AND status IN('queued','running') AND paused=0 AND(status='running' OR ?='failed')",params![status,failure.message,iso(&db.connection,task_state.config.now()).ok(),id,status]);
                     let _=db.connection.execute("UPDATE provider_calls SET status=?,finished=? WHERE turn=? AND status='pending'",params![status,iso(&db.connection,task_state.config.now()).ok(),id]);
                 }
             }
