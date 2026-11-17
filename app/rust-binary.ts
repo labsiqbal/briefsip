@@ -4,12 +4,17 @@ import { resolve } from 'node:path';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const built = new Set<string>();
+const buildEnvironment = { ...process.env };
 
 // Builds the binary through Cargo before a parity test starts it.
 export function rustBinary(name: 'briefsip-server' | 'briefsip-launcher', override?: string): string {
   if (override) return override;
   if (!built.has(name)) {
-    execFileSync('cargo', ['build', '--quiet', '--package', name, '--bin', name], { cwd: root, stdio: ['ignore', 'ignore', 'inherit'] });
+    execFileSync('cargo', ['build', '--quiet', '--package', name, '--bin', name], {
+      cwd: root,
+      env: buildEnvironment,
+      stdio: ['ignore', 'ignore', 'inherit'],
+    });
     built.add(name);
   }
   return resolve(root, 'target/debug', name);
