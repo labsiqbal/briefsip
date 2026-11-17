@@ -214,6 +214,7 @@ dependencies = [
  "jsonwebtoken",
  "regex",
  "reqwest",
+ "ring",
  "rusqlite",
  "rustix",
  "serde",

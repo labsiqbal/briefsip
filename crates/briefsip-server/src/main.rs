@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 mod auth;
+mod computer;
 mod config;
 mod data;
 mod db;
@@ -417,6 +418,7 @@ async fn main() -> db::Result<()> {
         if config.auth.is_none() {
             files::init(&guard.connection)?;
             data::initialize(&guard)?;
+            computer::initialize(&guard.connection)?;
         }
         events.watch(&guard.connection);
     }
@@ -439,6 +441,7 @@ async fn main() -> db::Result<()> {
         auth,
         events,
     };
+    let computer_maintenance = computer::maintenance(state.clone());
     let conversation_maintenance = data::maintenance(state.clone());
     let maintenance_state = state.clone();
     let maintenance = tokio::spawn(async move {
@@ -452,6 +455,7 @@ async fn main() -> db::Result<()> {
     });
     let shutdown_events = state.events.clone();
     let router = Router::new()
+        .merge(computer::routes())
         .merge(files::routes())
         .route("/api/session", any(dispatch))
         .route("/api/session/logout", any(dispatch))
@@ -492,6 +496,7 @@ async fn main() -> db::Result<()> {
     };
     maintenance.abort();
     conversation_maintenance.abort();
+    computer_maintenance.abort();
     result?;
     Ok(())
 }
