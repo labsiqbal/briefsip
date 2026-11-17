@@ -22,8 +22,7 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let turn = one(&guard.connection, "SELECT * FROM turns WHERE id=?", [id])?
             .ok_or_else(Failure::storage)?;
-        let private = super::messaging::channel(&guard.connection, id)?.is_none();
-        tools::workspace(state, &guard.connection, &turn)?.filter(|b| b.write && private)
+        tools::workspace(state, &guard.connection, &turn)?.filter(|b| b.write)
     };
     if let Some(binding) = binding {
         crate::files::git::writes::capture(state, &binding, id).await?;

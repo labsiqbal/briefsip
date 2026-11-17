@@ -1,11 +1,78 @@
 use super::*;
 use sha2::{Digest, Sha256};
 
+fn project_context(db: &Connection, turn: &Value) -> Result<Option<Value>> {
+    if turn["thread"].is_string() {
+        one(
+            db,
+            "SELECT project,folder FROM local_project_threads WHERE thread=?",
+            [string(turn, "thread")],
+        )
+    } else if turn["channel"].is_string() {
+        one(
+            db,
+            "SELECT project FROM channels WHERE id=? AND project IS NOT NULL",
+            [string(turn, "channel")],
+        )
+    } else {
+        Ok(None)
+    }
+}
 pub fn workspace(
     state: &AppState,
-    _db: &Connection,
+    db: &Connection,
     turn: &Value,
 ) -> Result<Option<crate::config::WorkspaceConfig>> {
+    if let Some(context) = project_context(db, turn)? {
+        let project = string(&context, "project");
+        let current = one(
+            db,
+            "SELECT archived FROM local_projects WHERE id=? AND deleted=0",
+            [project],
+        )?
+        .ok_or_else(|| error(404, "Project not found."))?;
+        if current["archived"] == 1 {
+            return Err(error(409, "Project is archived."));
+        }
+        let member = one(
+            db,
+            "SELECT write FROM local_project_members WHERE project=? AND agent=?",
+            [project, string(turn, "agent")],
+        )?
+        .ok_or_else(|| error(403, "Agent is not a project member."))?;
+        let folders = all(
+            db,
+            "SELECT directory FROM local_project_folders WHERE project=? ORDER BY rowid",
+            [project],
+        )?;
+        let Some(first) = folders.first() else {
+            return Ok(None);
+        };
+        let directory = context["folder"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| string(first, "directory"));
+        if !folders.iter().any(|r| r["directory"] == directory) {
+            return Err(error(403, "Folder is not in this project."));
+        }
+        let binding = crate::config::WorkspaceConfig {
+            agent: string(turn, "agent").to_owned(),
+            directory: std::path::PathBuf::from(directory),
+            write: member["write"] == 1,
+        };
+        crate::files::workspace::validate_bindings(std::slice::from_ref(&binding)).map_err(
+            |_| {
+                error(
+                    409,
+                    "Project folder is unavailable or contains a symbolic link.",
+                )
+            },
+        )?;
+        return Ok(Some(binding));
+    }
+    if super::messaging::channel(db, string(turn, "id"))?.is_some() {
+        return Ok(None);
+    }
     Ok(state
         .config
         .workspaces
@@ -18,7 +85,7 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
         serde_json::from_str(include_str!("tool-specs.json")).map_err(|_| Failure::storage())?;
     let private = super::messaging::channel(db, string(turn, "id"))?.is_none();
     let binding = workspace(state, db, turn)?;
-    let bound = binding.is_some() && private;
+    let bound = binding.is_some();
     let writable = bound && binding.as_ref().is_some_and(|b| b.write);
     specs.retain(|t| match string(&t["function"], "name") {
         "read_history" | "read_message" | "read_attachment" | "create_text_file"
@@ -213,29 +280,27 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
         return super::shell::run(state, turn, call, args).await;
     }
     if name.starts_with("git_") {
-        let binding = state
-            .config
-            .workspaces
-            .iter()
-            .find(|b| b.agent == string(turn, "agent") && turn["channel"].is_null())
-            .ok_or_else(|| {
+        let binding = {
+            let guard = state.database.lock().map_err(|_| Failure::storage())?;
+            workspace(state, &guard.connection, turn)?.ok_or_else(|| {
                 error(
                     403,
                     "Workspace access is not granted for this conversation.",
                 )
-            })?;
+            })?
+        };
         let result = match name {
-            "git_status" if closed(&args, &[]) => crate::files::git::status(Some(binding)).await?,
+            "git_status" if closed(&args, &[]) => crate::files::git::status(Some(&binding)).await?,
             "git_diff"
                 if closed(&args, &["path"]) && args.get("path").is_none_or(Value::is_string) =>
             {
-                crate::files::git::diff(binding, args["path"].as_str()).await?
+                crate::files::git::diff(&binding, args["path"].as_str()).await?
             }
             "git_log"
                 if closed(&args, &["limit"])
                     && args.get("limit").is_none_or(|v| integer(v, 1, 50)) =>
             {
-                crate::files::git::log(binding, args["limit"].as_i64().unwrap_or(10)).await?
+                crate::files::git::log(&binding, args["limit"].as_i64().unwrap_or(10)).await?
             }
             "git_commit" | "git_create_branch" | "git_create_worktree" => {
                 let actions = {
@@ -248,7 +313,7 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
                 };
                 return crate::files::git::writes::execute(
                     state,
-                    binding,
+                    &binding,
                     string(turn, "id"),
                     call,
                     &args,
@@ -275,7 +340,6 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
         let binding = workspace(state, db, turn)?
-            .filter(|_| turn["channel"].is_null())
             .ok_or_else(|| error(403, "Workspace does not have write permission."))?;
         let actions = db.query_row(
             "SELECT count(*) FROM coordination WHERE turn=?",
