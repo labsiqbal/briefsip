@@ -2,6 +2,16 @@ use super::*;
 use base64::{engine::general_purpose::STANDARD, Engine};
 
 pub async fn run(state: &AppState, id: &str) -> Result<()> {
+    let binding = {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        let turn = one(&guard.connection, "SELECT * FROM turns WHERE id=?", [id])?
+            .ok_or_else(Failure::storage)?;
+        tools::workspace(state, &guard.connection, &turn)?
+            .filter(|b| b.write && turn["channel"].is_null())
+    };
+    if let Some(binding) = binding {
+        crate::files::git::writes::capture(state, &binding, id).await?;
+    }
     {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         crate::computer::control::assert_recoverable(&guard.connection, id)?;
@@ -173,7 +183,17 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                 "answer"
             },
         )
-        .await;
+        .await
+        .map_err(|failure| {
+            if exhausted {
+                error(
+                    502,
+                    format!("Stopped after {used} tool steps. Resume to continue."),
+                )
+            } else {
+                failure
+            }
+        });
         let reply = match reply {
             Err(e)
                 if e.code == "provider_unavailable"

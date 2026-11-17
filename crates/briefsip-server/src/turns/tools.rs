@@ -17,7 +17,9 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
     let mut specs: Vec<Value> =
         serde_json::from_str(include_str!("tool-specs.json")).map_err(|_| Failure::storage())?;
     let private = turn["channel"].is_null();
-    let bound = workspace(state, db, turn)?.is_some() && private;
+    let binding = workspace(state, db, turn)?;
+    let bound = binding.is_some() && private;
+    let writable = bound && binding.as_ref().is_some_and(|b| b.write);
     specs.retain(|t| match string(&t["function"], "name") {
         "read_history" | "read_message" | "read_attachment" | "create_text_file"
         | "open_file_in_panel" | "ask_user" | "select_memory" | "remember_memory"
@@ -38,12 +40,21 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
         | "delete_site"
         | "set_avatar" => private,
         "run_shell"
+        | "git_status"
+        | "git_diff"
+        | "git_log"
         | "list_workspace"
         | "inspect_workspace_file"
-        | "read_workspace_file"
-        | "create_workspace_file"
+        | "read_workspace_file" => bound,
+        "create_workspace_file"
         | "create_workspace_directory"
-        | "copy_skill_file" => bound,
+        | "copy_skill_file"
+        | "delete_workspace_file"
+        | "replace_workspace_file"
+        | "restore_workspace_file"
+        | "git_commit"
+        | "git_create_branch"
+        | "git_create_worktree" => writable,
         _ => false,
     });
     if !private {
@@ -90,6 +101,78 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
     }
     if name == "run_shell" {
         return super::shell::run(state, turn, call, args).await;
+    }
+    if name.starts_with("git_") {
+        let binding = state
+            .config
+            .workspaces
+            .iter()
+            .find(|b| b.agent == string(turn, "agent") && turn["channel"].is_null())
+            .ok_or_else(|| {
+                error(
+                    403,
+                    "Workspace access is not granted for this conversation.",
+                )
+            })?;
+        let result = match name {
+            "git_status" if closed(&args, &[]) => crate::files::git::status(Some(binding)).await?,
+            "git_diff"
+                if closed(&args, &["path"]) && args.get("path").is_none_or(Value::is_string) =>
+            {
+                crate::files::git::diff(binding, args["path"].as_str()).await?
+            }
+            "git_log"
+                if closed(&args, &["limit"])
+                    && args.get("limit").is_none_or(|v| integer(v, 1, 50)) =>
+            {
+                crate::files::git::log(binding, args["limit"].as_i64().unwrap_or(10)).await?
+            }
+            "git_commit" | "git_create_branch" | "git_create_worktree" => {
+                let actions = {
+                    let guard = state.database.lock().map_err(|_| Failure::storage())?;
+                    guard.connection.query_row(
+                        "SELECT count(*) FROM coordination WHERE turn=?",
+                        [string(turn, "id")],
+                        |r| r.get(0),
+                    )?
+                };
+                return crate::files::git::writes::execute(
+                    state,
+                    binding,
+                    string(turn, "id"),
+                    call,
+                    &args,
+                    actions,
+                )
+                .await;
+            }
+            _ => return Err(error(400, "Invalid Git arguments.")),
+        };
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        journal(&guard.connection, turn, call, &result)?;
+        return Ok(result);
+    }
+    if [
+        "create_workspace_file",
+        "create_workspace_directory",
+        "copy_skill_file",
+        "delete_workspace_file",
+        "replace_workspace_file",
+        "restore_workspace_file",
+    ]
+    .contains(&name)
+    {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        let db = &guard.connection;
+        let binding = workspace(state, db, turn)?
+            .filter(|_| turn["channel"].is_null())
+            .ok_or_else(|| error(403, "Workspace does not have write permission."))?;
+        let actions = db.query_row(
+            "SELECT count(*) FROM coordination WHERE turn=?",
+            [string(turn, "id")],
+            |r| r.get(0),
+        )?;
+        return crate::files::writes::execute(db, &binding, string(turn, "id"), call, actions);
     }
     if name.starts_with("computer_") {
         if !turn["channel"].is_null() {

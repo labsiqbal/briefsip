@@ -1008,5 +1008,207 @@
         "additionalProperties": false
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "delete_workspace_file",
+      "description": "Recoverably remove one regular file from your explicitly write-enabled workspace. Supply the SHA-256 digest from read_workspace_file. Requires write grant. Moves the file into a private sibling recovery directory without erasing bytes. If concurrent replacement is detected after moving, inspect the recovery path; do not retry automatically. Directory and link targets are rejected before moving. Concurrent replacement can move a directory or link into recovery; it is preserved and reported uncertain, never recursively erased. Completed moves survive cancellation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "maxLength": 2048
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "path",
+          "digest"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "restore_workspace_file",
+      "description": "Restore one file from a private .briefsip-removed recovery directory into a NEW relative workspace path. Supply its SHA-256 digest. Existing destinations, traversal, links and directories are refused; recovery bytes always remain. Copies up to 10 MiB with atomic no-overwrite publication; completed restoration survives cancellation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "recoveryPath": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 2048
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "recoveryPath",
+          "path",
+          "digest"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "replace_workspace_file",
+      "description": "Replace a regular workspace file using its last read SHA-256 digest and new UTF-8 text (32 KiB maximum). Requires write grant. Old bytes move into recovery before new bytes publish, so the path is temporarily absent. A competing file is never overwritten. Partial failure retains recovery bytes and requires inspection, not automatic retry. Completed edits survive cancellation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 32768
+          }
+        },
+        "required": [
+          "path",
+          "digest",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "git_status",
+      "description": "Read local branch, dirty files, branches and worktrees for your bound Git workspace. Ahead/behind is unknown; no remote is contacted.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "git_diff",
+      "description": "Read a text-only unified diff including staged and untracked files. Limit 256 KiB. Relative file path only; links and Git metadata are refused.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "maxLength": 2048
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "git_log",
+      "description": "Read at most 50 local commits without contacting remotes.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "git_commit",
+      "description": "Commit using the configured local Git identity. Listed regular-file paths are staged; omit paths for all tracked changes inside this workspace. Unrelated staged paths stay unchanged. Hooks, filters and remotes are disabled. Uncertain calls are never replayed.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "paths": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "maxLength": 2048
+            }
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "git_create_branch",
+      "description": "Create a local branch from HEAD without switching the workspace or contacting remotes.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "git_create_worktree",
+      "description": "Create a local branch/worktree under the Briefsip data directory. Storage outside the workspace root parent requires host approval and is refused. No remote or submodule commands run.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    }
   }
 ]
