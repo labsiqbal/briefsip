@@ -2,7 +2,7 @@ use super::*;
 use axum::response::IntoResponse;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use rusqlite::OptionalExtension;
-use std::{io::Cursor, os::unix::fs::PermissionsExt, path::PathBuf};
+use std::{os::unix::fs::PermissionsExt, path::PathBuf};
 
 pub fn read(db: &Connection, id: &str) -> Result<Value> {
     one(db, "SELECT * FROM agents WHERE id=?", [id])?.ok_or_else(|| error(404, "Agent not found."))
@@ -171,7 +171,12 @@ fn bounds(v: &Value) -> Result<()> {
     }
     Ok(())
 }
-pub fn create(state: &AppState, db: &Connection, v: &Value) -> Result<(u16, Value)> {
+pub fn create(
+    state: &AppState,
+    db: &Connection,
+    v: &Value,
+    avatar: &mut super::avatar::Prepared,
+) -> Result<(u16, Value)> {
     let id = string(v, "id");
     if exists(db, "SELECT 1 FROM deleted_agents WHERE id=?", [id])? {
         return Err(error(409, "Agent was deleted. Use a new ID."));
@@ -261,7 +266,7 @@ pub fn create(state: &AppState, db: &Connection, v: &Value) -> Result<(u16, Valu
     {
         return Err(error(400, "Provider account not found."));
     }
-    let image = input.as_deref().map(normalize).transpose()?;
+    let image = avatar.get(input)?;
     if runtime != "api" && workspace(state, id).is_none() {
         let dir = state
             .config
@@ -572,131 +577,13 @@ pub(super) fn avatar_input(v: &Value) -> Result<Option<Vec<u8>>> {
     }
     Ok(Some(bytes))
 }
-pub(super) fn normalize(bytes: &[u8]) -> Result<Vec<u8>> {
-    let failed = || {
-        error(
-            400,
-            "Cannot read the image. Use a static PNG, JPEG, or WebP up to 16 megapixels.",
-        )
-    };
-    let reader = image::ImageReader::new(Cursor::new(bytes))
-        .with_guessed_format()
-        .map_err(|_| failed())?;
-    let (width, height) = reader.into_dimensions().map_err(|_| failed())?;
-    if u64::from(width) * u64::from(height) > 16 * 1024 * 1024 {
-        return Err(failed());
-    }
-    if image::guess_format(bytes).map_err(|_| failed())? == image::ImageFormat::WebP
-        && image::codecs::webp::WebPDecoder::new(Cursor::new(bytes))
-            .map_err(|_| failed())?
-            .has_animation()
-    {
-        return Err(failed());
-    }
-    use libvips::{ops, VipsApp, VipsImage};
-    static VIPS: std::sync::OnceLock<std::result::Result<VipsApp, String>> =
-        std::sync::OnceLock::new();
-    let app = VIPS
-        .get_or_init(|| {
-            let app = VipsApp::new("briefsip-avatar", false).map_err(|e| e.to_string())?;
-            app.cache_set_max(0);
-            app.concurrency_set(1);
-            Ok(app)
-        })
-        .as_ref()
-        .map_err(|_| failed())?;
-    app.error_clear();
-    let normalized = (|| -> libvips::Result<Vec<u8>> {
-        let mut image = VipsImage::new_from_buffer(bytes, "[fail-on=warning]")?;
-        if image.get_n_pages() > 1 {
-            return Err(libvips::error::Error::IOError("Animated image"));
-        }
-        let shrink = f64::from(width.min(height)) / 256.0;
-        if bytes.starts_with(&[255, 216]) {
-            let mut factor = if shrink >= 8.0 {
-                8
-            } else if shrink >= 4.0 {
-                4
-            } else if shrink >= 2.0 {
-                2
-            } else {
-                1
-            };
-            if factor > 1 && shrink as i32 == factor {
-                factor /= 2;
-            }
-            if factor > 1 {
-                image = VipsImage::new_from_buffer(
-                    bytes,
-                    &format!("[shrink={factor},fail-on=warning]"),
-                )?;
-            }
-        } else if bytes.starts_with(b"RIFF") && shrink > 1.0 {
-            image = VipsImage::new_from_buffer(
-                bytes,
-                &format!("[scale={},fail-on=warning]", 1.0 / shrink),
-            )?;
-        }
-        let interpretation = image.get_interpretation()?;
-        if image.get_as_string("icc-profile-data").is_ok()
-            || matches!(interpretation, ops::Interpretation::Cmyk)
-        {
-            image = ops::icc_transform_with_opts(
-                &image,
-                if matches!(interpretation, ops::Interpretation::Rgb16) {
-                    "p3"
-                } else {
-                    "srgb"
-                },
-                &ops::IccTransformOptions {
-                    embedded: true,
-                    input_profile: (matches!(interpretation, ops::Interpretation::Cmyk))
-                        .then(|| "cmyk".into()),
-                    depth: if matches!(interpretation, ops::Interpretation::Rgb16) {
-                        16
-                    } else {
-                        8
-                    },
-                    intent: ops::Intent::Perceptual,
-                    ..Default::default()
-                },
-            )?;
-        }
-        let scale = 256.0 / f64::from(image.get_width().min(image.get_height()));
-        let format = image.get_format()?;
-        let premultiplied = image.image_hasalpha() && scale != 1.0;
-        if premultiplied {
-            image = ops::cast(&ops::premultiply(&image)?, format)?;
-        }
-        if scale != 1.0 {
-            image = ops::resize_with_opts(
-                &image,
-                scale,
-                &ops::ResizeOptions {
-                    vscale: scale,
-                    kernel: ops::Kernel::Lanczos3,
-                    ..Default::default()
-                },
-            )?;
-        }
-        image = ops::autorot(&image)?;
-        image = ops::extract_area(
-            &image,
-            (image.get_width() - 255) / 2,
-            (image.get_height() - 255) / 2,
-            256,
-            256,
-        )?;
-        if premultiplied {
-            image = ops::cast(&ops::unpremultiply(&image)?, format)?;
-        }
-        image = ops::colourspace(&image, ops::Interpretation::Srgb)?;
-        image.image_write_to_buffer(".png[keep=none,compression=6,filter=none]")
-    })();
-    app.error_clear();
-    normalized.map_err(|_| failed())
-}
-pub fn avatar_save(db: &Connection, id: &str, v: &Value) -> Result<Value> {
+
+pub fn avatar_save(
+    db: &Connection,
+    id: &str,
+    v: &Value,
+    avatar: &mut super::avatar::Prepared,
+) -> Result<Value> {
     read(db, id)?;
     if !closed(v, &["id", "revision", "image"])
         || !integer(&v["revision"], 0, 9_007_199_254_740_991)
@@ -719,7 +606,7 @@ pub fn avatar_save(db: &Connection, id: &str, v: &Value) -> Result<Value> {
     if avatar_read(db, id)?["revision"] != v["revision"] {
         return Err(error(409, "Avatar changed. Reload before saving."));
     }
-    let image = input.as_deref().map(normalize).transpose()?;
+    let image = avatar.get(input)?;
     let revision = v["revision"].as_i64().ok_or_else(Failure::storage)? + 1;
     db.execute("INSERT INTO agent_avatars VALUES(?,?,?) ON CONFLICT(agent) DO UPDATE SET revision=excluded.revision,image=excluded.image",rusqlite::params![id,revision,image])?;
     let result = json!({"revision":revision,"present":image.is_some()});

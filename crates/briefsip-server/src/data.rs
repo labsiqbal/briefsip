@@ -1,5 +1,6 @@
 mod access;
 mod agents;
+mod avatar;
 mod conversations;
 mod deletion;
 mod delivery;
@@ -369,20 +370,23 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
     if path == "/api/models" && method == Method::GET {
         return Ok(json_response(200, providers::models(state, &q).await?));
     }
-    let guard = state.database.lock().map_err(|_| Failure::storage())?;
-    let db = &guard.connection;
     let write = method == Method::POST;
     let project = parts
         .get(1)
         .is_some_and(|v| matches!(*v, "projects" | "project-folders"));
-    let result = if write && !project {
-        transaction(db, || {
-            route(state, db, &parts, &method, &q, &headers, &body)
-        })?
-    } else {
-        route(state, db, &parts, &method, &q, &headers, &body)?
-    };
+    let result = avatar::run(state, |db, avatar| {
+        if write && !project {
+            transaction(db, || {
+                route(state, db, &parts, &method, &q, &headers, &body, avatar)
+            })
+        } else {
+            route(state, db, &parts, &method, &q, &headers, &body, avatar)
+        }
+    })
+    .await?;
     if write && matches!(parts.as_slice(), ["api", "agents", _, "delete"]) {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        let db = &guard.connection;
         deletion::cleanup(db, parts[2])?;
         let storage = state
             .config
@@ -409,6 +413,7 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
     Ok(result)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn route(
     state: &AppState,
     db: &Connection,
@@ -417,6 +422,7 @@ fn route(
     q: &[(String, String)],
     headers: &HeaderMap,
     v: &Value,
+    avatar: &mut avatar::Prepared,
 ) -> Result<Response> {
     let get = *method == Method::GET;
     let post = *method == Method::POST;
@@ -429,7 +435,7 @@ fn route(
     let value = match p {
         ["api", "agents"] if get => agents::list(state, db)?,
         ["api", "agents"] if post => {
-            let (status, v) = agents::create(state, db, v)?;
+            let (status, v) = agents::create(state, db, v, avatar)?;
             return Ok(json_response(status, v));
         }
         ["api", "agents", id, "template"] if get => agents::template(db, id)?,
@@ -438,7 +444,7 @@ fn route(
         ["api", "agents", id, "scripts"] if get || post => agents::scripts(state, db, id, v, get)?,
         ["api", "agents", id, "delete"] if post => agents::delete(state, db, id, v, q, headers)?,
         ["api", "agents", id, "avatar"] if get => agents::avatar_read(db, id)?,
-        ["api", "agents", id, "avatar"] if post => agents::avatar_save(db, id, v)?,
+        ["api", "agents", id, "avatar"] if post => agents::avatar_save(db, id, v, avatar)?,
         ["api", "agents", id, "avatar", "image"] if get => {
             return agents::avatar_image(state, db, id, headers)
         }
@@ -547,7 +553,7 @@ pub async fn canonical(
                 .map(Some);
         }
     }
-    access::route(state, path, method, body, &actor.account)
+    access::route(state, path, method, body, &actor.account).await
 }
 
 pub fn routes() -> Router<AppState> {

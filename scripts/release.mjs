@@ -11,6 +11,18 @@ export function readIssueComments(issue) {
   return JSON.parse(execFileSync('gh', ['issue', 'view', String(issue), '-R', 'labsiqbal/briefsip', '--json', 'comments'], { encoding: 'utf8' })).comments;
 }
 
+
+export function assertNativeDependencies(binary) {
+  const output = execFileSync('ldd', [binary], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  if (/not found/i.test(output)) throw new Error(`Native dependency missing for ${binary}: ${output}`);
+  for (const line of output.split('\n')) {
+    const match = line.match(/=>\s+(\/[^\s(]+)/) ?? line.match(/^\s*(\/[^\s(]+)/);
+    if (match && !['/lib', '/usr/lib', '/lib64'].some(root => match[1] === root || match[1].startsWith(`${root}/`))) {
+      throw new Error(`Native dependency outside system loader paths for ${binary}: ${match[1]}`);
+    }
+  }
+}
+
 export function buildRelease({ source = join(root, 'app'), releases = join(homedir(), '.local/share/briefsip/releases'), allowDirty = false, notes, build = true, install = true, repository = root, issues = [], readIssueComments: readComments = readIssueComments } = {}) {
   const git = args => execFileSync('git', args, { cwd: repository, encoding: 'utf8' }).trim();
   if (!Array.isArray(issues) || issues.some(issue => !Number.isSafeInteger(issue) || issue <= 0)) throw new Error('Invalid issues. Use --issues 30,31 with positive issue numbers.');
@@ -50,6 +62,7 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
     if (build && rust) {
       mkdirSync(join(stage, 'bin'), { mode: 0o700 }); cpSync(join(repository, 'target/release/briefsip-server'), join(stage, 'bin/briefsip-server'));
       cpSync(join(repository, 'target/release/briefsip-launcher'), join(stage, 'bin/briefsip-launcher'));
+      for (const name of ['briefsip-server', 'briefsip-launcher']) assertNativeDependencies(join(stage, 'bin', name));
       cpSync(join(repository, 'crates/briefsip-launcher/provenance.json'), join(stage, 'bin/launcher-provenance.json'));
       cpSync(join(repository, 'crates/briefsip-launcher/NOTICE'), join(stage, 'bin/launcher.NOTICE'));
       cpSync(join(repository, 'crates/briefsip-server/provenance.json'), join(stage, 'bin/provenance.json'));

@@ -35,6 +35,7 @@ pub(crate) struct AppState {
     origin: String,
     auth: Option<auth::Auth>,
     events: events::Hub,
+    computer: Arc<computer::Manager>,
     pub(crate) trial_pending: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -449,6 +450,7 @@ async fn main() -> db::Result<()> {
     let tls = config.tls.clone();
     let auth = config.auth.clone().map(auth::Auth::new).transpose()?;
     let trial_pending = updates::trial(&config);
+    let computer = Arc::new(computer::Manager::new(&config)?);
     let state = AppState {
         database,
         config: Arc::new(config),
@@ -456,6 +458,7 @@ async fn main() -> db::Result<()> {
         auth,
         events,
         trial_pending,
+        computer: computer.clone(),
     };
     let computer_maintenance = computer::maintenance(state.clone());
     let conversation_maintenance = data::maintenance(state.clone());
@@ -514,7 +517,10 @@ async fn main() -> db::Result<()> {
     };
     maintenance.abort();
     conversation_maintenance.abort();
-    computer_maintenance.abort();
+    for task in computer_maintenance {
+        task.abort();
+    }
+    computer.close().await;
     trial_watch.abort();
     result?;
     Ok(())

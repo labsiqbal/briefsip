@@ -1021,12 +1021,15 @@ mod tests {
         let database =
             crate::db::open(&config.database, false, 0).map_err(|_| Failure::storage())?;
         crate::files::init(&database.connection).map_err(|_| Failure::storage())?;
+        let computer =
+            Arc::new(crate::computer::Manager::new(&config).map_err(|_| Failure::storage())?);
         let state = AppState {
             database: Arc::new(Mutex::new(database)),
             config: Arc::new(config),
             origin: "http://127.0.0.1".to_owned(),
             auth: None,
             events: crate::events::Hub::new(),
+            computer,
             trial_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         let agent = uuid::Uuid::new_v4().to_string();
