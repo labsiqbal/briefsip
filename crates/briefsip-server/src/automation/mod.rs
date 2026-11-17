@@ -1,5 +1,6 @@
 mod flows;
 pub mod options;
+pub(crate) mod project;
 mod routines;
 mod schedule;
 pub mod scripts;
@@ -94,6 +95,62 @@ pub fn routes() -> Router<AppState> {
         .route("/api/workflow-runs/{id}/retry", any(entry))
         .route("/api/workflow-notifications", any(entry))
         .route("/api/workflow-notifications/{id}/read", any(entry))
+        .route("/api/projects/{project}/routines", any(entry))
+        .route("/api/projects/{project}/routines/{id}", any(entry))
+        .route("/api/projects/{project}/routines/{id}/edit", any(entry))
+        .route("/api/projects/{project}/routines/{id}/flow", any(entry))
+        .route("/api/projects/{project}/routines/{id}/runs", any(entry))
+        .route("/api/projects/{project}/routines/{id}/run", any(entry))
+        .route("/api/projects/{project}/routines/{id}/webhook", any(entry))
+        .route(
+            "/api/projects/{project}/routines/{id}/webhook-events",
+            any(entry),
+        )
+        .route(
+            "/api/projects/{project}/agents/{agent}/routines",
+            any(entry),
+        )
+        .route(
+            "/api/projects/{project}/agents/{agent}/routines/calendar.ics",
+            any(entry),
+        )
+        .route("/api/projects/{project}/workflows", any(entry))
+        .route("/api/projects/{project}/workflows/{id}", any(entry))
+        .route(
+            "/api/projects/{project}/workflows/{id}/versions",
+            any(entry),
+        )
+        .route("/api/projects/{project}/workflows/{id}/edit", any(entry))
+        .route("/api/projects/{project}/workflows/{id}/restore", any(entry))
+        .route("/api/projects/{project}/workflows/{id}/delete", any(entry))
+        .route("/api/projects/{project}/workflows/{id}/run", any(entry))
+        .route("/api/projects/{project}/workflows/{id}/runs", any(entry))
+        .route(
+            "/api/projects/{project}/workflows/{id}/schedule",
+            any(entry),
+        )
+        .route(
+            "/api/projects/{project}/agents/{agent}/workflows",
+            any(entry),
+        )
+        .route("/api/projects/{project}/workflow-runs/{id}", any(entry))
+        .route(
+            "/api/projects/{project}/workflow-runs/{id}/approve",
+            any(entry),
+        )
+        .route(
+            "/api/projects/{project}/workflow-runs/{id}/cancel",
+            any(entry),
+        )
+        .route(
+            "/api/projects/{project}/workflow-runs/{id}/retry",
+            any(entry),
+        )
+        .route("/api/projects/{project}/workflow-notifications", any(entry))
+        .route(
+            "/api/projects/{project}/workflow-notifications/{id}/read",
+            any(entry),
+        )
 }
 async fn entry(State(state): State<AppState>, request: Request) -> Response {
     let result = local(&state, request).await;
@@ -187,14 +244,17 @@ pub(crate) async fn local(state: &AppState, request: Request) -> Result<Response
 }
 pub fn start(state: AppState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        if state.auth.is_some() {
-            return;
-        }
         let mut events = state.events.subscribe();
         let mut timer = tokio::time::interval(std::time::Duration::from_secs(1));
         loop {
             tokio::select! {_ = events.recv()=>(), _=timer.tick()=>()}
             if crate::turns::pending(&state) {
+                continue;
+            }
+            if state.auth.is_some() {
+                if let Err(e) = project::maintain(&state) {
+                    eprintln!("Project automation failed: {}", e.message);
+                }
                 continue;
             }
             let result = (|| {

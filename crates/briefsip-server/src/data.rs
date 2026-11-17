@@ -1,9 +1,10 @@
-mod access;
+pub(crate) mod access;
 pub(crate) mod agents;
 pub(crate) mod avatar;
 pub(crate) mod conversations;
 mod deletion;
 mod delivery;
+pub(crate) mod environment;
 mod folders;
 pub(crate) mod history;
 pub(crate) mod limits;
@@ -276,6 +277,8 @@ pub fn handles(path: &str) -> bool {
                 _,
                 "edit" | "archive" | "delete" | "thread" | "sections"
             ]
+            | ["api", "projects", _, "environment"]
+            | ["api", "projects", _, "environment", "remove" | "settings"]
             | ["api", "projects", _, "sections", _, "edit"]
             | [
                 "api",
@@ -386,6 +389,9 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
         }
     })
     .await?;
+    if write && matches!(parts.as_slice(), ["api", "projects", _, "delete"]) {
+        crate::connectors::composio::remove_project(state, parts[2]).await?;
+    }
     if write && matches!(parts.as_slice(), ["api", "agents", _, "scripts" | "delete"]) {
         crate::automation::scripts::sync(state)?;
     }
@@ -438,6 +444,15 @@ fn route(
         ));
     }
     let value = match p {
+        ["api", "projects", project, "environment", ..] => environment::route(
+            state,
+            db,
+            project,
+            p.last().copied().unwrap_or(""),
+            v,
+            headers,
+            get,
+        )?,
         ["api", "agents"] if get => agents::list(state, db)?,
         ["api", "agents"] if post => {
             let (status, v) = agents::create(state, db, v, avatar)?;
@@ -585,6 +600,15 @@ pub fn routes() -> Router<AppState> {
         )
         .route(
             "/api/projects/{id}/agents/{agent}/response-policy",
+            any(crate::dispatch),
+        )
+        .route("/api/projects/{id}/environment", any(crate::dispatch))
+        .route(
+            "/api/projects/{id}/environment/remove",
+            any(crate::dispatch),
+        )
+        .route(
+            "/api/projects/{id}/environment/settings",
             any(crate::dispatch),
         )
         .route("/api/projects/{id}/edit", any(crate::dispatch))

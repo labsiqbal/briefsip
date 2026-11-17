@@ -186,6 +186,9 @@ pub fn routes() -> Router<AppState> {
         .route("/api/agents/{id}/workspace/entries", any(entry))
         .route("/api/agents/{id}/workspace/file", any(entry))
         .route("/api/agents/{id}/workspace/download", any(entry))
+        .route("/api/projects/{id}/git", any(entry))
+        .route("/api/projects/{id}/git/diff", any(entry))
+        .route("/api/projects/{id}/git/log", any(entry))
         .route("/api/agents/{id}/git", any(entry))
         .route("/api/agents/{id}/git/status", any(entry))
         .route("/api/agents/{id}/git/diff", any(entry))
@@ -274,6 +277,9 @@ pub(crate) async fn entry(State(state): State<AppState>, req: Request) -> Respon
             return workspace::handle(&state, req, &parts).await;
         }
         if parts.get(3) == Some(&"git") {
+            if parts.get(1) == Some(&"projects") {
+                return git::project(&state, req, &parts).await;
+            }
             return git::handle(&state, req, &parts).await;
         }
         skills::handle(&state, req, &parts).await

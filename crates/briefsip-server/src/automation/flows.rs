@@ -1,15 +1,29 @@
 use super::*;
 use std::collections::{BTreeSet, HashSet};
-fn validate(db: &Connection, root: &str, links: &Value) -> Result<Value> {
+pub(super) fn validate(db: &Connection, root: &str, links: &Value) -> Result<Value> {
+    validate_scope(db, root, links, None)
+}
+pub(super) fn validate_scope(
+    db: &Connection,
+    root: &str,
+    links: &Value,
+    project: Option<&str>,
+) -> Result<Value> {
     let invalid = |m| error(400, m);
     let links = links
         .as_array()
         .filter(|l| l.len() <= 64)
         .ok_or_else(|| invalid("Flow requires a source agent and up to 64 links."))?;
-    let known: HashSet<_> = all(db, "SELECT id FROM agents", [])?
-        .iter()
-        .map(|r| string(r, "id").to_owned())
-        .collect();
+    let agents = if let Some(project) = project {
+        all(
+            db,
+            "SELECT agent AS id FROM agent_projects WHERE project=? AND deleted=0",
+            [project],
+        )?
+    } else {
+        all(db, "SELECT id FROM agents", [])?
+    };
+    let known: HashSet<_> = agents.iter().map(|r| string(r, "id").to_owned()).collect();
     let mut seen = HashSet::new();
     let mut remaining = BTreeSet::from([root.to_owned()]);
     let mut clean = Vec::new();

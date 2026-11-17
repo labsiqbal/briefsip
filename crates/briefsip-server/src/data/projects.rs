@@ -309,6 +309,26 @@ fn edit(state: &AppState, db: &Connection, pid: &str, op: &str, v: &Value) -> Re
                     ));
                 }
                 if op == "delete" {
+                    db.execute("DELETE FROM project_environment WHERE project=?", [pid])?;
+                    db.execute(
+                        "DELETE FROM project_environment_settings WHERE project=?",
+                        [pid],
+                    )?;
+                    db.execute("DELETE FROM mcp_tests WHERE id IN(SELECT test FROM mcp_test_projects WHERE project=?)", [pid])?;
+                    db.execute("DELETE FROM mcp_test_projects WHERE project=?", [pid])?;
+                    db.execute("DELETE FROM mcp_grants WHERE connection IN(SELECT connection FROM mcp_projects WHERE project=?)", [pid])?;
+                    let connections = all(
+                        db,
+                        "SELECT connection FROM mcp_projects WHERE project=?",
+                        [pid],
+                    )?;
+                    db.execute("DELETE FROM mcp_projects WHERE project=?", [pid])?;
+                    for row in connections {
+                        db.execute(
+                            "DELETE FROM mcp_connections WHERE id=?",
+                            [string(&row, "connection")],
+                        )?;
+                    }
                     db.execute("UPDATE local_projects SET deleted=1 WHERE id=?", [pid])?;
                     db.execute("DELETE FROM local_project_members WHERE project=?", [pid])?;
                     db.execute("DELETE FROM channel_members WHERE channel IN(SELECT channel FROM local_project_sections WHERE project=?)",[pid])?;

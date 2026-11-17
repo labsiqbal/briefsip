@@ -37,6 +37,20 @@ pub(super) fn unavailable(mail: bool) -> Failure {
     error
 }
 impl Options {
+    fn service(&self, name: &str, mail: bool) -> Result<String> {
+        let installation = self
+            .installation_id
+            .as_ref()
+            .ok_or_else(|| unavailable(mail))?;
+        Ok(format!(
+            "briefsip/server/{installation}{}",
+            if name.starts_with("routine-webhook/") {
+                "/routine-webhooks"
+            } else {
+                ""
+            }
+        ))
+    }
     pub fn environment() -> Self {
         Self {
             script_token: std::env::var("BRIEFSIP_SCRIPT_TOKEN").ok(),
@@ -60,7 +74,7 @@ impl Options {
         }
         Ok(())
     }
-    fn read(&self, name: &str, mail: bool) -> Result<Option<String>> {
+    pub(crate) fn read(&self, name: &str, mail: bool) -> Result<Option<String>> {
         if self.test_keyring_locked {
             return Err(unavailable(mail));
         }
@@ -71,19 +85,15 @@ impl Options {
         if std::env::var("BRIEFSIP_TEST_SERVER").as_deref() == Ok("rust") {
             return Err(unavailable(mail));
         }
-        let installation = self
-            .installation_id
-            .as_ref()
-            .ok_or_else(|| unavailable(mail))?;
-        let entry = keyring::Entry::new(&format!("briefsip/server/{installation}"), name)
-            .map_err(|_| unavailable(mail))?;
+        let entry =
+            keyring::Entry::new(&self.service(name, mail)?, name).map_err(|_| unavailable(mail))?;
         match entry.get_password() {
             Ok(v) => Ok(Some(v)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(_) => Err(unavailable(mail)),
         }
     }
-    fn write(&self, name: &str, value: &str, mail: bool) -> Result<()> {
+    pub(crate) fn write(&self, name: &str, value: &str, mail: bool) -> Result<()> {
         if self.test_keyring_locked {
             return Err(unavailable(mail));
         }
@@ -97,11 +107,7 @@ impl Options {
         if std::env::var("BRIEFSIP_TEST_SERVER").as_deref() == Ok("rust") {
             return Err(unavailable(mail));
         }
-        let installation = self
-            .installation_id
-            .as_ref()
-            .ok_or_else(|| unavailable(mail))?;
-        keyring::Entry::new(&format!("briefsip/server/{installation}"), name)
+        keyring::Entry::new(&self.service(name, mail)?, name)
             .and_then(|entry| entry.set_password(value))
             .map_err(|_| unavailable(mail))
     }

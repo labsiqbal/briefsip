@@ -330,7 +330,7 @@ impl Drop for Session {
         }
     }
 }
-fn key(state: &AppState, create: bool, suffix: &str) -> Result<[u8; 32]> {
+pub(crate) fn key(state: &AppState, create: bool, suffix: &str) -> Result<[u8; 32]> {
     let path = std::path::PathBuf::from(format!("{}.{suffix}", state.config.database.display()));
     if create {
         let mut bytes = [0; 32];
@@ -372,8 +372,16 @@ pub fn encrypt(state: &AppState, token: &str, url: &str) -> Result<String> {
     if token.is_empty() {
         return Ok(String::new());
     }
+    encrypt_with(state, token, url, "mcp-key")
+}
+pub(crate) fn encrypt_with(
+    state: &AppState,
+    token: &str,
+    url: &str,
+    suffix: &str,
+) -> Result<String> {
     let k = LessSafeKey::new(
-        UnboundKey::new(&aead::AES_256_GCM, &key(state, true, "mcp-key")?)
+        UnboundKey::new(&aead::AES_256_GCM, &key(state, true, suffix)?)
             .map_err(|_| Failure::storage())?,
     );
     let mut nonce = [0; 12];

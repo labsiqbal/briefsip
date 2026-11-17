@@ -476,7 +476,19 @@ async fn execute(
     if runtime == "codex" {
         rpc(&mut process,&mut seq,"initialize",json!({"clientInfo":{"name":"briefsip","title":"Briefsip","version":"0.1.0"},"capabilities":{"experimentalApi":true}})).await?;
         process.send(json!({"method":"initialized"})).await?;
+        let environment = {
+            let guard = state.database.lock().map_err(|_| Failure::storage())?;
+            data::environment::values(
+                state,
+                &guard.connection,
+                string(turn, "id"),
+                string(turn, "agent"),
+            )?
+        };
         let mut params = json!({"cwd":workspace,"approvalPolicy":"on-request","sandbox":if binding.write{"workspace-write"}else{"read-only"},"config":{"mcp_servers":{"briefsip":{"url":mcp_url,"bearer_token_env_var":"BRIEFSIP_MCP_TOKEN"}},"approvals_reviewer":"user","shell_environment_policy.inherit":"none","shell_environment_policy.set":{"PATH":super::path(state),"LANG":"C.UTF-8","HOME":workspace},"shell_environment_policy.exclude":["BRIEFSIP_PROVIDER_KEY","BRIEFSIP_MCP_TOKEN","ANTHROPIC_API_KEY"]}});
+        for (name, value) in environment {
+            params["config"]["shell_environment_policy.set"][name] = json!(value);
+        }
         if !native_model.is_empty() {
             params["model"] = json!(native_model);
         }
@@ -1161,7 +1173,12 @@ pub async fn run(
         model
     ])
     .to_string();
+    let project_environment = {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        data::environment::values(state, &guard.connection, turn_id, string(&turn, "agent"))?
+    };
     let mut env = state.config.harness.environment.clone();
+    env.extend(project_environment.clone());
     let same_home;
     {
         let mut homes = state.config.harness.homes.lock().await;
@@ -1241,7 +1258,15 @@ pub async fn run(
             ("HERMES_DISABLE_LAZY_INSTALLS".into(), "1".into()),
         ]);
     }
-    let secrets = vec![token.clone(), account.key.unwrap_or_default()];
+    let mut secrets = vec![token.clone(), account.key.unwrap_or_default()];
+    {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        secrets.extend(crate::mcp::secrets::project(
+            state,
+            &guard.connection,
+            None,
+        )?);
+    }
     let result = tokio::time::timeout(Duration::from_millis(state.config.data.timeout.unwrap_or(120000)), execute(
         state, &turn, &profile, runtime, model, messages, phase, call, &token, env, saved,
         &binding, secrets,

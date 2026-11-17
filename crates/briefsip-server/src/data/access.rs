@@ -65,7 +65,7 @@ fn label(v: &Value) -> Result<String> {
         .map(|s| s.trim().to_owned())
         .ok_or_else(|| Failure::new(400, "invalid_label", "Label is invalid."))
 }
-pub(super) fn active(db: &Connection) -> Result<()> {
+pub(crate) fn active(db: &Connection) -> Result<()> {
     if !exists(
         db,
         "SELECT 1 FROM authority_state WHERE id=1 AND serving_state='active'",

@@ -33,13 +33,11 @@ fn edges(n: &Value) -> Vec<&str> {
         _ => vec![string(n, "next")],
     }
 }
-fn branch(db: &Connection, n: &Value) -> Result<Value> {
+fn branch(agents: &HashSet<String>, n: &Value) -> Result<Value> {
     let kind = string(n, "kind");
     if kind == "agent" {
         keys(n, &["kind", "agent", "prompt"])?;
-        if !n["agent"].as_str().is_some_and(|a| {
-            data::exists(db, "SELECT 1 FROM agents WHERE id=?", [a]).unwrap_or(false)
-        }) {
+        if !n["agent"].as_str().is_some_and(|a| agents.contains(a)) {
             return Err(error(400, "Workflow agent not found."));
         }
         Ok(json!({"kind":"agent","agent":n["agent"],"prompt":text(&n["prompt"],16000,false)?}))
@@ -54,6 +52,21 @@ fn branch(db: &Connection, n: &Value) -> Result<Value> {
     }
 }
 pub fn validate(db: &Connection, g: &Value) -> Result<Value> {
+    validate_scope(db, g, None)
+}
+pub fn validate_scope(db: &Connection, g: &Value, project: Option<&str>) -> Result<Value> {
+    let agents = if let Some(project) = project {
+        all(
+            db,
+            "SELECT agent AS id FROM agent_projects WHERE project=? AND deleted=0",
+            [project],
+        )?
+    } else {
+        all(db, "SELECT id FROM agents", [])?
+    }
+    .iter()
+    .map(|a| string(a, "id").to_owned())
+    .collect();
     keys(g, &["entry", "maxSteps", "nodes", "positions"])?;
     let entry = id(&g["entry"])?;
     if !integer(&g["maxSteps"], 1, 1000) {
@@ -82,7 +95,7 @@ pub fn validate(db: &Connection, g: &Value) -> Result<Value> {
                     o.remove("id");
                     o.remove("next");
                 }
-                let parsed = branch(db, &b)?;
+                let parsed = branch(&agents, &b)?;
                 let mut x = json!({"id":name,"kind":kind});
                 x[if kind == "agent" { "agent" } else { "model" }] =
                     parsed[if kind == "agent" { "agent" } else { "model" }].clone();
@@ -96,7 +109,7 @@ pub fn validate(db: &Connection, g: &Value) -> Result<Value> {
                     .as_array()
                     .filter(|a| (2..=8).contains(&a.len()))
                     .ok_or_else(|| error(400, "Parallel blocks require 2 to 8 branches."))?;
-                json!({"id":name,"kind":kind,"branches":branches.iter().map(|b|branch(db,b)).collect::<Result<Vec<_>>>()?,"next":id(&n["next"])?})
+                json!({"id":name,"kind":kind,"branches":branches.iter().map(|b|branch(&agents,b)).collect::<Result<Vec<_>>>()?,"next":id(&n["next"])?})
             }
             "condition" => {
                 let op = string(n, "operator");
