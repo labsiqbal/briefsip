@@ -3,6 +3,7 @@ mod auth;
 mod config;
 mod db;
 mod events;
+mod files;
 mod web;
 
 use axum::{
@@ -417,6 +418,14 @@ async fn main() -> db::Result<()> {
         config.auth.is_some(),
         config.now(),
     )?));
+    if config.auth.is_none() {
+        files::init(
+            &database
+                .lock()
+                .map_err(|_| "Database lock poisoned")?
+                .connection,
+        )?;
+    }
     let listener = TcpListener::bind((config.host.as_str(), config.port)).await?;
     let origin = format!(
         "{}://{}",
@@ -449,6 +458,7 @@ async fn main() -> db::Result<()> {
     });
     let shutdown_events = state.events.clone();
     let router = Router::new()
+        .merge(files::routes())
         .route("/api/session", any(dispatch))
         .route("/api/session/logout", any(dispatch))
         .route("/api/agents", any(dispatch))

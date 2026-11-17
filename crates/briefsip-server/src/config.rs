@@ -35,6 +35,16 @@ pub struct Config {
     pub auth: Option<AuthConfig>,
     pub fixed_clock: Option<i64>,
     pub tls: Option<Tls>,
+    #[serde(default)]
+    pub workspaces: Vec<WorkspaceConfig>,
+}
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceConfig {
+    pub agent: String,
+    pub directory: PathBuf,
+    #[serde(default)]
+    pub write: bool,
 }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -104,7 +114,6 @@ impl Config {
         for key in [
             "BRIEFSIP_HUB_ORIGIN",
             "BRIEFSIP_HUB_SIGNING_PUBLIC_KEY",
-            "BRIEFSIP_WORKSPACES",
             "BRIEFSIP_PROVIDER_ACCOUNTS",
             "BRIEFSIP_IMAGE_BASE_URL",
             "BRIEFSIP_IMAGE_MODEL",
@@ -209,11 +218,20 @@ impl Config {
                 .collect(),
             fixed_clock: None,
             tls,
+            workspaces: match env::var("BRIEFSIP_WORKSPACES") {
+                Ok(raw) if raw.len() > 65536 => {
+                    return Err("Workspace configuration exceeds 64 KiB".into())
+                }
+                Ok(raw) => serde_json::from_str(&raw).map_err(|_| "Invalid workspace JSON")?,
+                Err(env::VarError::NotPresent) => Vec::new(),
+                Err(_) => return Err("Invalid workspace JSON".into()),
+            },
         };
         config.validate()?;
         Ok(config)
     }
     fn validate(&self) -> crate::db::Result<()> {
+        crate::files::validate_workspaces(&self.workspaces)?;
         if self.tls.is_none() && !matches!(self.host.as_str(), "127.0.0.1" | "::1") {
             return Err("HTTP development listener must use loopback".into());
         }

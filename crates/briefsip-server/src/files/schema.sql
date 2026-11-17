@@ -1,0 +1,27 @@
+CREATE TABLE IF NOT EXISTS files (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL,
+      scope TEXT NOT NULL, name TEXT NOT NULL, digest TEXT NOT NULL, bytes BLOB NOT NULL, created TEXT NOT NULL) STRICT;
+      CREATE INDEX IF NOT EXISTS files_scope_seq ON files(scope,seq);
+CREATE TABLE IF NOT EXISTS generated_files (seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      turn TEXT NOT NULL REFERENCES turns(id), file TEXT NOT NULL REFERENCES files(id),
+      call_id TEXT NOT NULL, call TEXT NOT NULL, after_action INTEGER NOT NULL,
+      UNIQUE(turn,call_id)) STRICT;
+CREATE TABLE IF NOT EXISTS skills(id TEXT PRIMARY KEY,name TEXT NOT NULL,revision INTEGER NOT NULL) STRICT;
+    CREATE TABLE IF NOT EXISTS skill_versions(skill TEXT NOT NULL REFERENCES skills(id),revision INTEGER NOT NULL,name TEXT NOT NULL,description TEXT NOT NULL,content TEXT NOT NULL,PRIMARY KEY(skill,revision)) STRICT;
+    CREATE TABLE IF NOT EXISTS agent_skills(agent TEXT NOT NULL REFERENCES agents(id),skill TEXT NOT NULL REFERENCES skills(id),version INTEGER NOT NULL,enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),revision INTEGER NOT NULL,PRIMARY KEY(agent,skill),FOREIGN KEY(skill,version) REFERENCES skill_versions(skill,revision)) STRICT;
+    CREATE TABLE IF NOT EXISTS skill_commands(id TEXT PRIMARY KEY,request TEXT NOT NULL,result TEXT NOT NULL) STRICT;
+    CREATE TABLE IF NOT EXISTS skill_files(skill TEXT NOT NULL,revision INTEGER NOT NULL,files TEXT NOT NULL,PRIMARY KEY(skill,revision),FOREIGN KEY(skill,revision) REFERENCES skill_versions(skill,revision)) STRICT;
+CREATE TABLE IF NOT EXISTS skill_packs(id TEXT PRIMARY KEY,name TEXT NOT NULL,revision INTEGER NOT NULL) STRICT;
+    CREATE TABLE IF NOT EXISTS skill_pack_versions(pack TEXT NOT NULL REFERENCES skill_packs(id),revision INTEGER NOT NULL,name TEXT NOT NULL,members TEXT NOT NULL,PRIMARY KEY(pack,revision)) STRICT;
+    CREATE TABLE IF NOT EXISTS agent_packs(agent TEXT NOT NULL REFERENCES agents(id),pack TEXT NOT NULL REFERENCES skill_packs(id),version INTEGER NOT NULL,enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),removed INTEGER NOT NULL CHECK(removed IN (0,1)),revision INTEGER NOT NULL,PRIMARY KEY(agent,pack),FOREIGN KEY(pack,version) REFERENCES skill_pack_versions(pack,revision)) STRICT;
+CREATE TABLE IF NOT EXISTS local_sites (
+    id TEXT PRIMARY KEY, agent TEXT NOT NULL REFERENCES agents(id), name TEXT NOT NULL,
+    source TEXT NOT NULL, html TEXT NOT NULL, revision INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0,
+    updated TEXT NOT NULL
+  ) STRICT;
+  CREATE TABLE IF NOT EXISTS site_commands (
+    id TEXT PRIMARY KEY, agent TEXT NOT NULL REFERENCES agents(id), digest TEXT NOT NULL, site TEXT NOT NULL REFERENCES local_sites(id)
+  ) STRICT;
+CREATE TABLE IF NOT EXISTS shared_data(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL,image BLOB) STRICT;
+    INSERT OR IGNORE INTO shared_data VALUES (1,0,NULL);
+    CREATE TABLE IF NOT EXISTS shared_data_commands(id TEXT PRIMARY KEY,request TEXT NOT NULL,result TEXT NOT NULL) STRICT;
+CREATE TABLE IF NOT EXISTS pdf_text(file TEXT PRIMARY KEY REFERENCES files(id),text TEXT NOT NULL) STRICT;
