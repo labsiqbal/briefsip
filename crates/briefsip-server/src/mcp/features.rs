@@ -350,6 +350,8 @@ fn api<'a>(
             || path.starts_with("/api/agents/") && path.contains("/computer")
         {
             crate::computer::feature(state, request).await?
+        } else if path.contains("/connected-apps") || path.contains("/connected-app-policies") {
+            crate::connectors::entry(axum::extract::State(state.clone()), request).await
         } else {
             crate::local(state, request).await?
         };
@@ -537,6 +539,16 @@ fn clean(state: &AppState, db: &Connection, v: &Value) -> Result<Value> {
         if let Some(key) = a.key.as_deref() {
             v = connections::redact(&v, key);
         }
+    }
+    for row in all(
+        db,
+        "SELECT ciphertext FROM composio_settings WHERE ciphertext<>''",
+        [],
+    )? {
+        v = connections::redact(
+            &v,
+            &crate::connectors::composio::decrypt(state, string(&row, "ciphertext"))?,
+        );
     }
     for row in all(db, "SELECT token,url FROM mcp_connections", [])? {
         v = connections::redact(

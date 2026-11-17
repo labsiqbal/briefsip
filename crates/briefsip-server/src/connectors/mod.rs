@@ -30,6 +30,35 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/agents/{id}/routines/calendar.ics", any(entry))
         .route("/api/connected-apps", any(entry))
+        .route("/api/projects/{project}/connected-apps", any(entry))
+        .route(
+            "/api/projects/{project}/connected-apps/accounts",
+            any(entry),
+        )
+        .route(
+            "/api/projects/{project}/connected-apps/connect/{toolkit}",
+            any(entry),
+        )
+        .route(
+            "/api/projects/{project}/connected-apps/disconnect/{account}",
+            any(entry),
+        )
+        .route(
+            "/api/projects/{project}/connected-apps/grant-all/{toolkit}",
+            any(entry),
+        )
+        .route(
+            "/api/projects/{project}/agents/{id}/connected-apps",
+            any(entry),
+        )
+        .route(
+            "/api/projects/{project}/agents/{id}/connected-apps/{toolkit}",
+            any(entry),
+        )
+        .route(
+            "/api/projects/{project}/agents/{id}/connected-app-policies",
+            any(entry),
+        )
         .route("/api/connected-apps/key", any(entry))
         .route("/api/connected-apps/key/remove", any(entry))
         .route("/api/connected-apps/accounts", any(entry))
@@ -52,7 +81,7 @@ pub fn routes() -> Router<AppState> {
             any(entry),
         )
 }
-async fn entry(State(state): State<AppState>, request: Request) -> Response {
+pub(crate) async fn entry(State(state): State<AppState>, request: Request) -> Response {
     let result = async {
         if state.auth.is_some()
             || !crate::allowed(
@@ -76,12 +105,51 @@ async fn entry(State(state): State<AppState>, request: Request) -> Response {
         if crate::turns::pending(&state) {
             return Err(error(503, "Update is being verified. Retry after restart."));
         }
-        if request.headers().contains_key("authorization") {
+        if request.headers().contains_key("authorization")
+            && !request.uri().path().starts_with("/api/projects/")
+        {
             return Err(error(403, "Request must originate from Briefsip."));
         }
-        let path = request.uri().path().to_owned();
+        let mut path = request.uri().path().to_owned();
+        let project = path
+            .strip_prefix("/api/projects/")
+            .and_then(|s| s.split_once('/'))
+            .map(|(id, rest)| (id.to_owned(), format!("/api/{rest}")));
+        if let Some((id, canonical)) = &project {
+            if request.headers().contains_key("authorization")
+                || request.headers().contains_key("origin")
+                    && !crate::data::origin(&state, request.headers())
+            {
+                return Err(error(
+                    403,
+                    "Project integrations require the local Owner in Briefsip.",
+                ));
+            }
+            let guard = state.database.lock().map_err(|_| Failure::storage())?;
+            let current = crate::data::projects::read(&guard.connection, id)?;
+            if current["archived"] == true {
+                return Err(error(409, "Project is archived."));
+            }
+            if let Some(agent) = canonical
+                .strip_prefix("/api/agents/")
+                .and_then(|s| s.split('/').next())
+            {
+                if !exists(
+                    &guard.connection,
+                    "SELECT 1 FROM local_project_members WHERE project=? AND agent=?",
+                    [id, agent],
+                )? {
+                    return Err(error(403, "Agent is not a project member."));
+                }
+            }
+            path = canonical.clone();
+        }
         let method = request.method().clone();
-        let query = crate::data::query(&request);
+        let mut query = crate::data::query(&request);
+        if let Some((id, _)) = &project {
+            query.retain(|(name, _)| name != "project");
+            query.push(("project".into(), id.clone()));
+        }
         let value = if method == Method::POST {
             if !crate::data::origin(&state, request.headers())
                 || crate::text_header(request.headers(), "content-type")

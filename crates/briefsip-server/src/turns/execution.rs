@@ -36,7 +36,8 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let turn = one(&guard.connection, "SELECT * FROM turns WHERE id=?", [id])?
             .ok_or_else(Failure::storage)?;
-        if super::messaging::channel(&guard.connection, id)?.is_none()
+        if (super::messaging::channel(&guard.connection, id)?.is_none()
+            || tools::project_context(&guard.connection, &turn)?.is_some())
             && !super::profile::setup(&guard.connection, &turn)?
         {
             Some(turn)

@@ -659,3 +659,56 @@ pub async fn handle(state: &AppState, req: Request, parts: &[&str]) -> Result<Re
     };
     Ok(json_response(200, result))
 }
+
+pub async fn project(state: &AppState, req: Request, parts: &[&str]) -> Result<Response> {
+    if req.headers().contains_key("authorization")
+        || req.headers().contains_key("origin") && !crate::data::origin(state, req.headers())
+    {
+        return Err(error(403, "Projects require the local Owner in Briefsip."));
+    }
+    if req.method() != Method::GET {
+        return Err(error(400, "Invalid project parameters."));
+    }
+    let q = query(&req);
+    let project = {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        crate::data::projects::read(&guard.connection, parts[2])?
+    };
+    let folder = parameter(&q, "folder").or_else(|| {
+        project["folders"]
+            .as_array()
+            .and_then(|v| v.first())
+            .and_then(Value::as_str)
+    });
+    if q.iter()
+        .any(|(k, _)| !["folder", "path", "limit"].contains(&k.as_str()))
+        || !project["folders"]
+            .as_array()
+            .is_some_and(|a| a.iter().any(|v| v.as_str() == folder))
+    {
+        return Err(error(400, "Choose a project folder."));
+    }
+    let binding = WorkspaceConfig {
+        agent: parts[2].into(),
+        directory: PathBuf::from(folder.ok_or_else(|| error(400, "Choose a project folder."))?),
+        write: false,
+    };
+    workspace::open_directory(&binding.directory).map_err(|_| {
+        error(
+            409,
+            "Project folder is unavailable or contains a symbolic link.",
+        )
+    })?;
+    let value = match parts.get(4).copied().unwrap_or("status") {
+        "diff" => diff(&binding, parameter(&q, "path")).await?,
+        "log" => {
+            log(
+                &binding,
+                parameter(&q, "limit").unwrap_or("50").parse().unwrap_or(0),
+            )
+            .await?
+        }
+        _ => status(Some(&binding)).await?,
+    };
+    Ok(json_response(200, value))
+}

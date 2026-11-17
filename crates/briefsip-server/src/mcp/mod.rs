@@ -1,9 +1,9 @@
-mod client;
+pub(crate) mod client;
 mod connections;
 pub(crate) mod execution;
 mod features;
 mod registry;
-mod secrets;
+pub(crate) mod secrets;
 mod server;
 mod stdio;
 pub use stdio::run as stdio;

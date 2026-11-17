@@ -1,6 +1,6 @@
 use super::*;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-fn secret() -> Result<String> {
+pub(super) fn secret() -> Result<String> {
     let mut bytes = [0; 32];
     getrandom::getrandom(&mut bytes).map_err(|_| Failure::storage())?;
     Ok(URL_SAFE_NO_PAD.encode(bytes))
@@ -57,7 +57,7 @@ fn url(state: &AppState, mut v: Value, workflow: bool) -> Value {
     }
     v
 }
-fn filters(v: &Value) -> Result<Value> {
+pub(super) fn filters(v: &Value) -> Result<Value> {
     let values = v
         .as_array()
         .filter(|a| a.len() <= 128)
@@ -79,7 +79,7 @@ fn filters(v: &Value) -> Result<Value> {
     }
     Ok(v.clone())
 }
-fn matches(event: &Value, name: &str, filters: &Value) -> bool {
+pub(super) fn matches(event: &Value, name: &str, filters: &Value) -> bool {
     if !name.is_empty() && event["event"] != name {
         return false;
     }

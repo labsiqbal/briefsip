@@ -321,6 +321,13 @@ async fn canonical_request(
     request: Request,
     request_id: &mut String,
 ) -> Result<Response, Failure> {
+    if request.uri().path().starts_with("/api/projects/")
+        && request.uri().path().ends_with("/webhook-events")
+    {
+        return automation::project::event(state, request, request_id)
+            .await?
+            .ok_or_else(|| Failure::new(404, "resource_not_found", "Resource not found."));
+    }
     if text_header(request.headers(), "x-briefsip-protocol") != Some("1") {
         return Err(Failure::new(
             426,
@@ -346,7 +353,15 @@ async fn canonical_request(
         .and_then(web::id)
         .ok_or_else(|| Failure::new(400, "invalid_id", "requestId must be a UUID v4."))?;
     *request_id = id;
-    if request.uri().query().is_some() && request.uri().path() != "/api/sync" {
+    let feature = automation::project::feature(request.uri().path());
+    if feature && !automation::project::valid(request.uri().path()) {
+        return Err(Failure::new(
+            404,
+            "resource_not_found",
+            "Resource not found.",
+        ));
+    }
+    if request.uri().query().is_some() && request.uri().path() != "/api/sync" && !feature {
         return Err(Failure::new(400, "invalid_route", "Invalid route."));
     }
     let _capacity = data::limits::reserve(request.uri().path(), request.method())?;
@@ -398,6 +413,17 @@ async fn canonical_request(
     } else {
         json!({})
     };
+    if let Some(response) = automation::project::route(
+        state,
+        &path,
+        &method,
+        &body,
+        &actor.account,
+        &query,
+        &headers,
+    )? {
+        return Ok(response);
+    }
     if path == "/api/session" && method == Method::GET {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let active: i64 = guard.connection.query_row(

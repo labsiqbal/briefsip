@@ -51,6 +51,7 @@ pub fn initialize(database: &Database) -> crate::db::Result<()> {
             }
         }
         db.execute_batch(include_str!("schema.sql"))?;
+        environment::initialize(db)?;
         for (table, name, definition) in [
             ("local_projects", "archived", "INTEGER NOT NULL DEFAULT 0"),
             (

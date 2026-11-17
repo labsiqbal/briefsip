@@ -110,7 +110,7 @@ fn encrypt(state: &AppState, text: &str) -> Result<String> {
     .map_err(|_| Failure::storage())?;
     Ok(B64.encode([nonce.to_vec(), bytes].concat()))
 }
-fn decrypt(state: &AppState, text: &str) -> Result<String> {
+pub(crate) fn decrypt(state: &AppState, text: &str) -> Result<String> {
     let run = || -> Result<String> {
         let mut bytes = B64.decode(text).map_err(|_| Failure::storage())?;
         if bytes.len() < 28 {
@@ -502,6 +502,50 @@ pub async fn connections(state: &AppState, project: &str) -> Result<Vec<Value>> 
     }
     Ok(result)
 }
+
+pub async fn remove_project(state: &AppState, project: &str) -> Result<()> {
+    if !current(state).await?.0.is_empty() {
+        let _ = connections(state, project).await;
+    }
+    let accounts = {
+        let guard = lock(state)?;
+        let db = &guard.connection;
+        transaction(db, || {
+            let rows = all(
+                db,
+                "SELECT account FROM composio_project_accounts WHERE project=? AND removed=0",
+                [project],
+            )?;
+            db.execute(
+                "UPDATE composio_project_accounts SET removed=1 WHERE project=?",
+                [project],
+            )?;
+            db.execute(
+                "DELETE FROM composio_project_grants WHERE project=?",
+                [project],
+            )?;
+            db.execute("DELETE FROM composio_policies WHERE fingerprint IN(SELECT fingerprint FROM composio_policy_projects WHERE project=?)", [project])?;
+            db.execute(
+                "DELETE FROM composio_policy_projects WHERE project=?",
+                [project],
+            )?;
+            Ok(rows)
+        })?
+    };
+    for account in accounts {
+        let _ = request(
+            state,
+            &format!(
+                "/connected_accounts/{}",
+                encode(string(&account, "account"))
+            ),
+            reqwest::Method::DELETE,
+            None,
+        )
+        .await;
+    }
+    Ok(())
+}
 fn reset(db: &Connection, revision: i64, ciphertext: &str) -> Result<()> {
     db.execute("INSERT INTO composio_settings VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,ciphertext=excluded.ciphertext",params![revision+1,ciphertext])?;
     db.execute(
@@ -534,6 +578,18 @@ pub async fn route(
     q: &[(String, String)],
     v: &Value,
 ) -> Result<Value> {
+    let original = path.split('/').skip(1).collect::<Vec<_>>();
+    let mut scoped_query = q.to_vec();
+    let scoped_path;
+    let path = if let ["api", "projects", project, rest @ ..] = original.as_slice() {
+        scoped_query.retain(|(name, _)| name != "project");
+        scoped_query.push(("project".into(), project.to_string()));
+        scoped_path = format!("/api/{}", rest.join("/"));
+        scoped_path.as_str()
+    } else {
+        path
+    };
+    let q = scoped_query.as_slice();
     let parts: Vec<_> = path.split('/').skip(1).collect();
     let post = *method == Method::POST;
     let id = string(v, "id");
@@ -701,6 +757,33 @@ pub async fn route(
                 .collect::<Result<Vec<_>>>()?;
             Ok(
                 json!({"configured":true,"items":items,"categories":categories,"next_after":rows.get("next_cursor").cloned().unwrap_or(Value::Null)}),
+            )
+        }
+        ["api", "connected-apps", "grant-all", toolkit] if post && !project.is_empty() => {
+            ready(&key)?;
+            if !closed(v, &["id", "confirmed"]) || v["confirmed"] != true {
+                return Err(error(400, "Confirm granting app access to all members."));
+            }
+            if !slug(toolkit) {
+                return Err(error(400, "Invalid project or toolkit."));
+            }
+            let guard = lock(state)?;
+            let db = &guard.connection;
+            command(
+                db,
+                id,
+                &json!({"project":project,"toolkit":toolkit,"grantAll":true}),
+                || {
+                    let members = all(
+                        db,
+                        "SELECT agent FROM local_project_members WHERE project=?",
+                        [project],
+                    )?;
+                    for row in &members {
+                        db.execute("INSERT INTO composio_project_grants VALUES(?,?,?,1,1) ON CONFLICT(project,agent,toolkit) DO UPDATE SET enabled=1,revision=revision+1",[project,string(row,"agent"),toolkit])?;
+                    }
+                    Ok(json!({"granted":true,"members":members.len()}))
+                },
             )
         }
         ["api", "connected-apps", "accounts"] if !post => {
@@ -1252,7 +1335,15 @@ async fn run(state: &AppState, turn: &str, id: &str) -> Result<Value> {
                 lock(state)?.connection.execute("UPDATE composio_calls SET state='uncertain',result=?,revision=revision+1 WHERE turn=? AND call_id=?",params![json!({"error":UNCERTAIN,"uncertain":true}).to_string(),turn,id])?;
                 return Err(error(409, UNCERTAIN));
             }
-            let response = response?;
+            let mut response = response?;
+            let secrets = {
+                let guard = lock(state)?;
+                let project = turn_project(&guard.connection, turn)?;
+                crate::mcp::secrets::project(state, &guard.connection, Some(&project))?
+            };
+            for secret in secrets {
+                redact(&mut response, &secret);
+            }
             if response["successful"] == true {
                 json!({"successful":true,"data":response.get("data").cloned().unwrap_or(Value::Null)})
             } else {

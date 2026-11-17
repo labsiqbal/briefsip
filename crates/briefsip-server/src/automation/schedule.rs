@@ -64,16 +64,15 @@ pub fn once(value: &Value, zone: &str) -> Result<i64> {
 pub fn interval(value: &Value) -> i64 {
     match string(value, "kind") {
         "legacy_interval" => value["intervalMs"].as_i64().unwrap_or(0),
-        "interval" => value["amount"]
-            .as_i64()
-            .unwrap_or(0)
-            .checked_mul(match string(value, "unit") {
-                "minute" => 60000,
-                "hour" => 3600000,
-                "day" => 86400000,
-                _ => 0,
-            })
-            .unwrap_or(0),
+        "interval" => {
+            (value["amount"].as_f64().unwrap_or(0.)
+                * match string(value, "unit") {
+                    "minute" => 60000.,
+                    "hour" => 3600000.,
+                    "day" => 86400000.,
+                    _ => 0.,
+                }) as i64
+        }
         _ => 0,
     }
 }
