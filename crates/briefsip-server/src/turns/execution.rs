@@ -15,6 +15,19 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         let tools = tools::offered(state, db, &turn)?;
         let mut system =
             base_instructions(string(&profile, "model"), string(&turn, "agent"), &tools)?;
+        if let Some(channel) = turn["channel"].as_str() {
+            let room = one(
+                db,
+                "SELECT name,instructions FROM channels WHERE id=?",
+                [channel],
+            )?
+            .ok_or_else(Failure::storage)?;
+            system.push_str(&format!(
+                "\n\nChannel: {}\n{}",
+                string(&room, "name"),
+                string(&room, "instructions")
+            ));
+        }
         if let Some(workspace) = tools::workspace(state, db, &turn)? {
             match crate::files::workspace::download(&workspace.directory, "AGENTS.md") {
                 Ok((_, bytes)) => {
