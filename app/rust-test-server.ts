@@ -2,9 +2,9 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
-type Config = { database: string; port?: number; host?: string; tls?: { cert: string; key: string }; allowedOrigins?: string[]; dist?: string; auth?: { secretKey: string; publishableKey: string; issuer: string; origin: string; development?: boolean; audience?: string; jwtKey?: string; apiUrl?: string }; fixedClock?: number };
+type Config = { database: string; port?: number; host?: string; tls?: { cert: string; key: string }; allowedOrigins?: string[]; dist?: string; auth?: { secretKey: string; publishableKey: string; issuer: string; origin: string; development?: boolean; audience?: string; jwtKey?: string; apiUrl?: string }; fixedClock?: number; workspaces?: unknown };
 export async function startRustServer(options: Config) {
-  const supported = new Set(['database', 'port', 'host', 'tls', 'allowedOrigins', 'dist', 'auth', 'fixedClock']);
+  const supported = new Set(['database', 'port', 'host', 'tls', 'allowedOrigins', 'dist', 'auth', 'fixedClock', 'workspaces']);
   for (const key of Object.keys(options)) if (!supported.has(key)) throw new Error(`not ported: option ${key} (see crates/PORTING.md)`);
   const config = JSON.stringify(options, (key, value) => { if (typeof value === 'function') throw new Error(`not ported: function option ${key} (see crates/PORTING.md)`); return value; });
   const root = fileURLToPath(new URL('../', import.meta.url));

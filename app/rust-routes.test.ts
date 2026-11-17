@@ -5,6 +5,7 @@ import ts from 'typescript';
 
 test('Rust route inventory stays within Node matchers and reports ported coverage', t => {
   const source = ts.createSourceFile('server.ts', readFileSync(new URL('./server.ts', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true);
+  const publicMatchers: RegExp[] = [];
   const matchers = new Map<string, (path: string) => boolean>();
   const endpoints = new Map<string, (path: string) => boolean>();
   const visit = (node: ts.Node) => {
@@ -24,6 +25,7 @@ test('Rust route inventory stays within Node matchers and reports ported coverag
     if (ts.isRegularExpressionLiteral(node)) {
       const raw = node.getText(source), end = raw.lastIndexOf('/');
       const pattern = raw.slice(1, end);
+      if (pattern.startsWith('^\\/sites\\/')) publicMatchers.push(new RegExp(pattern, raw.slice(end + 1)));
       if (pattern.startsWith('^\\/api\\/') || pattern.startsWith('^\\/mcp')) {
         const matcher = new RegExp(pattern, raw.slice(end + 1)); matchers.set(raw, path => matcher.test(path));
         if (pattern.endsWith('$')) endpoints.set(raw, path => matcher.test(path));
@@ -40,6 +42,10 @@ test('Rust route inventory stays within Node matchers and reports ported coverag
   const ported = new Set<string>();
   for (const route of routes) {
     const witness = route.replace(/\{[^}]+\}/g, id);
+    if (!/^\/(?:api(?:\/|$)|mcp(?:\/|$))/.test(route)) {
+      assert(publicMatchers.some(matcher => matcher.test(witness)), `Rust public route absent from Node: ${route}`);
+      continue;
+    }
     const matches = [...endpoints].filter(([, matcher]) => matcher(witness));
     assert(matches.length > 0, `Rust route absent from Node: ${route}`);
     for (const [name] of matches) ported.add(name);
