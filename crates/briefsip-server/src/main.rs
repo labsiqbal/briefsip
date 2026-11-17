@@ -131,7 +131,7 @@ async fn local(state: &AppState, request: Request) -> Result<Response, Failure> 
         if request.method() != Method::GET {
             return Ok(local_error(405, "Streaming requires GET."));
         }
-        if request.uri().query().is_some() {
+        if request.uri().query().is_some() && request.uri().path() != "/api/sync" {
             return Ok(local_error(
                 400,
                 "Streaming does not accept query parameters.",
@@ -310,7 +310,7 @@ async fn canonical_request(
         .and_then(web::id)
         .ok_or_else(|| Failure::new(400, "invalid_id", "requestId must be a UUID v4."))?;
     *request_id = id;
-    if request.uri().query().is_some() {
+    if request.uri().query().is_some() && request.uri().path() != "/api/sync" {
         return Err(Failure::new(400, "invalid_route", "Invalid route."));
     }
     let _capacity = data::limits::reserve(request.uri().path(), request.method())?;
@@ -323,6 +323,7 @@ async fn canonical_request(
             state.config.now(),
         )
         .await?;
+    let query = data::query(&request);
     let path = request.uri().path().to_owned();
     let method = request.method().clone();
     let body = if method != Method::GET && method != Method::HEAD {
@@ -377,7 +378,7 @@ async fn canonical_request(
             json!({"ok":true,"data":{"accountId":actor.account,"projects":projects}}),
         ));
     }
-    if let Some(response) = data::canonical(state, &path, &method, &body, &actor.account)? {
+    if let Some(response) = data::canonical(state, &path, &method, &body, &actor, &query).await? {
         return Ok(response);
     }
     if path == "/api/session/logout" && method == Method::POST {

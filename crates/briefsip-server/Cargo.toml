@@ -25,6 +25,12 @@ uuid = { version = "1", features = ["v4"] }
 
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 rustix = { version = "1", features = ["fs"] }
+ring = "0.17"
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+subtle = "2"
+unicode-normalization = "0.1"
+idna = "1"
+libvips = "=2.3.0"
 
 [lints]
 workspace = true

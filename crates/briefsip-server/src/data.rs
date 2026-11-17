@@ -7,11 +7,15 @@ mod folders;
 mod history;
 pub(crate) mod limits;
 mod memory;
+pub mod options;
 mod panel;
 mod projects;
 mod providers;
 mod schema;
 mod sidebar;
+mod sync;
+mod sync_projection;
+pub(crate) mod wire;
 
 use crate::{json_response, web::Failure, AppState};
 use axum::{
@@ -29,13 +33,16 @@ use serde_json::{json, Value};
 
 pub fn maintenance(state: AppState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        if state.auth.is_some() {
-            return;
-        }
-        let period = std::time::Duration::from_secs(60);
+        let period = std::time::Duration::from_secs(if state.auth.is_some() { 5 } else { 60 });
         let mut timer = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
         loop {
             timer.tick().await;
+            if state.auth.is_some() {
+                if sync::maintain(&state).is_err() {
+                    eprintln!("Sync maintenance failed");
+                }
+                continue;
+            }
             let result = state
                 .database
                 .lock()
@@ -56,6 +63,46 @@ type Result<T> = std::result::Result<T, Failure>;
 fn digest_bytes(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(bytes))
+}
+pub(crate) fn normalize_email(v: &Value) -> Result<String> {
+    use unicode_normalization::UnicodeNormalization;
+    let fail = || Failure::new(400, "invalid_email", "Invalid email address.");
+    let raw = v
+        .as_str()
+        .filter(|s| s.len() <= 254 && !s.chars().any(|c| c < ' ' || c == '\u{7f}'))
+        .ok_or_else(fail)?;
+    let normalized = raw.nfc().collect::<String>();
+    let (local, domain) = normalized.trim().split_once('@').ok_or_else(fail)?;
+    if local.is_empty()
+        || local.len() > 64
+        || local.starts_with('.')
+        || local.ends_with('.')
+        || local.contains("..")
+        || local
+            .chars()
+            .any(|c| c.is_whitespace() || "<>(),;:\"\\".contains(c))
+    {
+        return Err(fail());
+    }
+    let domain = idna::domain_to_ascii(domain)
+        .map_err(|_| fail())?
+        .to_lowercase();
+    if domain.is_empty()
+        || domain.split('.').any(|part| {
+            part.is_empty()
+                || part.len() > 63
+                || !part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                || part.starts_with('-')
+                || part.ends_with('-')
+        })
+    {
+        return Err(fail());
+    }
+    let result = format!("{}@{domain}", local.to_lowercase());
+    if result.len() > 254 {
+        return Err(fail());
+    }
+    Ok(result)
 }
 fn image_header(hex: &str) -> bool {
     hex.len() >= 48 && hex.starts_with("89504E470D0A1A0A") && hex.get(24..32) == Some("49484452")
@@ -187,7 +234,7 @@ fn transaction<T>(db: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
     transaction.commit()?;
     Ok(value)
 }
-fn query(request: &Request) -> Vec<(String, String)> {
+pub(crate) fn query(request: &Request) -> Vec<(String, String)> {
     url::form_urlencoded::parse(request.uri().query().unwrap_or("").as_bytes())
         .into_owned()
         .collect()
@@ -236,6 +283,7 @@ pub fn handles(path: &str) -> bool {
                     | "threads"
                     | "memory"
                     | "panel"
+                    | "scripts"
             ]
             | ["api", "threads", _, "panel"]
             | ["api", "channels", _, "panel"]
@@ -384,6 +432,7 @@ fn route(
         ["api", "agents", id, "template"] if get => agents::template(db, id)?,
         ["api", "agents", id, "edit"] if post => agents::edit(state, db, id, v)?,
         ["api", "agents", id, "visibility"] if post => agents::visibility(state, db, id, v)?,
+        ["api", "agents", id, "scripts"] if get || post => agents::scripts(state, db, id, v, get)?,
         ["api", "agents", id, "delete"] if post => agents::delete(state, db, id, v, q, headers)?,
         ["api", "agents", id, "avatar"] if get => agents::avatar_read(db, id)?,
         ["api", "agents", id, "avatar"] if post => agents::avatar_save(db, id, v)?,
@@ -447,7 +496,7 @@ fn route(
             conversations::edit_thread(db, id, p[3], v)?
         }
         ["api", "threads", id, "fork-context"] if get => {
-            conversations::fork_context(state, db, id, headers)?
+            return conversations::fork_context(state, db, id, headers);
         }
         ["api", "channels"] if get => conversations::channels(db)?,
         ["api", "channels"] if post => {
@@ -468,20 +517,42 @@ fn route(
         }
         _ => return Err(error(404, "Route not found.")),
     };
+    if p == ["api", "sidebar", "summary"] {
+        return Ok(wire::sidebar(&value));
+    }
+    if matches!(p, ["api", _, _, "turns"]) && get {
+        return Ok(wire::history(&value));
+    }
     Ok(json_response(200, value))
 }
-pub fn canonical(
+pub async fn canonical(
     state: &AppState,
     path: &str,
     method: &Method,
     body: &Value,
-    account: &str,
+    actor: &crate::auth::Actor,
+    q: &[(String, String)],
 ) -> Result<Option<Response>> {
-    access::route(state, path, method, body, account)
+    if path == "/api/sync" && *method == Method::GET {
+        return sync::read(state, &actor.account, q).map(Some);
+    }
+    let parts = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
+    if let ["api", "invitations", invitation, "accept"] = parts.as_slice() {
+        if *method == Method::POST {
+            return access::accept(state, actor, &access::id(&json!(invitation))?, body)
+                .await
+                .map(Some);
+        }
+    }
+    access::route(state, path, method, body, &actor.account)
 }
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route("/api/sync", any(crate::dispatch))
+        .route("/api/projects/{id}/invitations", any(crate::dispatch))
+        .route("/api/invitations/{id}/accept", any(crate::dispatch))
+        .route("/api/invitations/{id}/revoke", any(crate::dispatch))
         .route("/api/projects", any(crate::dispatch))
         .route("/api/projects/{id}", any(crate::dispatch))
         .route("/api/projects/{id}/members/{account}", any(crate::dispatch))
@@ -511,6 +582,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/agents/{id}/edit", any(crate::dispatch))
         .route("/api/agents/{id}/delete", any(crate::dispatch))
         .route("/api/agents/{id}/visibility", any(crate::dispatch))
+        .route("/api/agents/{id}/scripts", any(crate::dispatch))
         .route("/api/agents/{id}/avatar", any(crate::dispatch))
         .route("/api/agents/{id}/avatar/image", any(crate::dispatch))
         .route("/api/agents/{id}/template", any(crate::dispatch))

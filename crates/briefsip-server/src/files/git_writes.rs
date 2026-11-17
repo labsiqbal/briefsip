@@ -426,7 +426,10 @@ async fn plan(state: &AppState, repo: &Repo, agent: &str, turn: &str) -> Result<
         repo.directory,
         repo.head,
         saved["hash"],
-        before,
+        before
+            .iter()
+            .map(|entry| json!({"mode":entry.mode,"hash":entry.hash,"path":entry.path}))
+            .collect::<Vec<_>>(),
         current
     ]));
     Ok(Plan {

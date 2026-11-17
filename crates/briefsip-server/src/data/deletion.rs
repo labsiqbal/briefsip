@@ -24,7 +24,7 @@ pub fn cleanup(db: &Connection, agent: &str) -> Result<()> {
         {
             return Err(error(409, "Invalid checkpoint cleanup record."));
         }
-        let status = std::process::Command::new("git")
+        let output = std::process::Command::new("/usr/bin/git")
             .args([
                 "-C",
                 string(&row, "directory"),
@@ -33,14 +33,29 @@ pub fn cleanup(db: &Connection, agent: &str) -> Result<()> {
                 reference,
                 hash,
             ])
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("LANG", "C.UTF-8")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GIT_OPTIONAL_LOCKS", "0")
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map_err(|_| Failure::storage())?;
-        if !status.success() {
-            return Err(Failure::storage());
+            .output()
+            .map_err(|_| error(400, "Git operation failed or exceeded its output limit."))?;
+        if !output.status.success() {
+            let message = std::str::from_utf8(&output.stderr)
+                .ok()
+                .map(str::trim)
+                .filter(|s| {
+                    !s.is_empty()
+                        && !s
+                            .chars()
+                            .any(|c| c.is_control() && c != '\n' && c != '\r' && c != '\t')
+                })
+                .map(|s| s.chars().take(1000).collect::<String>())
+                .unwrap_or_else(|| "Git operation failed or exceeded its output limit.".into());
+            return Err(error(400, message));
         }
         db.execute(
             "DELETE FROM agent_delete_checkpoints WHERE agent=? AND directory=? AND ref=?",
