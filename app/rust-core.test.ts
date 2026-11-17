@@ -36,7 +36,7 @@ test('core SSE wire format replays persisted snapshots, isolates scopes and clos
   const db = new DatabaseSync(database), agent = randomUUID(), other = randomUUID(), turn = randomUUID();
   db.prepare('INSERT INTO agents(id,name,model,instructions) VALUES(?,?,?,?)').run(agent, 'Fixture', 'fixture', 'Help');
   db.prepare('INSERT INTO agents(id,name,model,instructions) VALUES(?,?,?,?)').run(other, 'Other', 'fixture', 'Help');
-  db.prepare("INSERT INTO turns(id,agent,text,status,created) VALUES(?,?,?,'queued',?)").run(turn, agent, 'Fixture', new Date().toISOString());
+  db.prepare("INSERT INTO turns(id,agent,text,status,created) VALUES(?,?,?,'interrupted',?)").run(turn, agent, 'Fixture', new Date().toISOString());
   const call = db.prepare("INSERT INTO provider_calls(turn,agent,model,origin,purpose,status,created) VALUES(?,?,?,'test','completion','received',?)").run(turn, agent, 'fixture', new Date().toISOString()).lastInsertRowid;
   db.prepare('INSERT INTO provider_streams VALUES(?,?)').run(call, 'Saved answer');
   db.prepare("INSERT INTO provider_stream_segments VALUES(?,0,'text-0','text',?,'',1,3)").run(call, 'Saved answer'); db.close();

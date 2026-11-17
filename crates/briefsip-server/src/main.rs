@@ -6,6 +6,7 @@ mod data;
 mod db;
 mod events;
 mod files;
+mod turns;
 mod updates;
 mod web;
 
@@ -35,6 +36,7 @@ pub(crate) struct AppState {
     origin: String,
     auth: Option<auth::Auth>,
     events: events::Hub,
+    turns: turns::Runtime,
     computer: Arc<computer::Manager>,
     pub(crate) trial_pending: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
@@ -152,6 +154,9 @@ async fn local(state: &AppState, request: Request) -> Result<Response, Failure> 
     }
     if updates::handles(path) {
         return updates::local(state, request).await;
+    }
+    if turns::handles(path, request.method()) {
+        return turns::local(state, request).await;
     }
     if data::handles(path) {
         return data::local(state, request).await;
@@ -432,6 +437,7 @@ async fn main() -> db::Result<()> {
         if config.auth.is_none() {
             files::init(&guard.connection)?;
             data::initialize(&guard)?;
+            turns::initialize(&guard.connection).map_err(|e| e.message)?;
             computer::initialize(&guard.connection)?;
             updates::initialize(&guard.connection)?;
         }
@@ -458,8 +464,10 @@ async fn main() -> db::Result<()> {
         auth,
         events,
         trial_pending,
+        turns: turns::Runtime::new()?,
         computer: computer.clone(),
     };
+    let turn_task = turns::start(state.clone());
     let computer_maintenance = computer::maintenance(state.clone());
     let conversation_maintenance = data::maintenance(state.clone());
     let trial_watch = updates::watch_trial(state.clone());
@@ -473,11 +481,12 @@ async fn main() -> db::Result<()> {
             }
         }
     });
-    let shutdown_events = state.events.clone();
+    let shutdown_state = state.clone();
     let router = Router::new()
         .merge(computer::routes())
         .merge(files::routes())
         .merge(updates::routes())
+        .merge(turns::routes())
         .route("/api/session", any(dispatch))
         .route("/api/session/logout", any(dispatch))
         .route("/api/agents", any(dispatch))
@@ -498,7 +507,10 @@ async fn main() -> db::Result<()> {
         let stop = handle.clone();
         let task = tokio::spawn(async move {
             shutdown().await;
-            shutdown_events.close();
+            if let Err(error) = turns::stop(&shutdown_state) {
+                eprintln!("Turn shutdown failed: {}", error.message);
+            }
+            shutdown_state.events.close();
             stop.graceful_shutdown(Some(Duration::from_secs(5)));
         });
         let result = axum_server::from_tcp_rustls(listener.into_std()?, configuration)?
@@ -511,10 +523,14 @@ async fn main() -> db::Result<()> {
         axum::serve(listener, router)
             .with_graceful_shutdown(async move {
                 shutdown().await;
-                shutdown_events.close();
+                if let Err(error) = turns::stop(&shutdown_state) {
+                    eprintln!("Turn shutdown failed: {}", error.message);
+                }
+                shutdown_state.events.close();
             })
             .await
     };
+    turn_task.abort();
     maintenance.abort();
     conversation_maintenance.abort();
     for task in computer_maintenance {

@@ -300,9 +300,12 @@ fn message_rows(db: &Connection, id: &str) -> Result<Vec<Value>> {
             result["machine"] = row["remote_machine"].clone();
         }
         if !row["task_id"].is_null() {
+            let effective = crate::turns::messaging::effective(db, turn)?;
             result["taskId"] = row["task_id"].clone();
             result["wait"] = json!(row["task_wait"] == 1);
-            result["status"] = if row["status"] == "interrupted" {
+            result["status"] = if effective["status"] == "waiting" {
+                json!("waiting")
+            } else if row["status"] == "interrupted" {
                 json!("uncertain")
             } else if row["status"] == "queued"
                 && (row["paused"] == 1

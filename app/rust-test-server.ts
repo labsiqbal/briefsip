@@ -6,18 +6,18 @@ import { rustBinary } from './rust-binary.ts';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
-type Config = { scriptToken?: string; installationId?: string; mailFrom?: string; mailOrigin?: string; testKeyring?: Record<string, string>; testKeyringLocked?: boolean; updates?: { releasesDir?: string; launcherSocket?: string }; desktop?: ConstructorParameters<typeof AgentDesktopManager>[0]; peerTokenIssuer?: PeerTokenIssuer; machines?: { now?: () => number; healthIntervalMs?: number }; baseURL?: string; apiKey?: string; defaultModel?: string; provider?: string; accounts?: unknown; timeout?: number; concurrency?: number; workspaces?: unknown; projectRoot?: string; harness?: unknown; stream?: boolean; streamTermination?: string; maxTokens?: number; database: string; port?: number; host?: string; tls?: { cert: string; key: string }; allowedOrigins?: string[]; dist?: string; auth?: { secretKey: string; publishableKey: string; issuer: string; origin: string; development?: boolean; audience?: string; jwtKey?: string; apiUrl?: string }; fixedClock?: number };
-export async function startRustServer(options: Config) {
+type Config = { agentLimits?: unknown; imageProvider?: unknown; transcriptionProvider?: unknown; scriptToken?: string; installationId?: string; mailFrom?: string; mailOrigin?: string; testKeyring?: Record<string, string>; testKeyringLocked?: boolean; updates?: { releasesDir?: string; launcherSocket?: string }; desktop?: ConstructorParameters<typeof AgentDesktopManager>[0]; peerTokenIssuer?: PeerTokenIssuer; machines?: { now?: () => number; healthIntervalMs?: number }; baseURL?: string; apiKey?: string; defaultModel?: string; provider?: string; accounts?: unknown; timeout?: number; concurrency?: number; workspaces?: unknown; projectRoot?: string; harness?: unknown; stream?: boolean; streamTermination?: string; maxTokens?: number; database: string; port?: number; host?: string; tls?: { cert: string; key: string }; allowedOrigins?: string[]; dist?: string; auth?: { secretKey: string; publishableKey: string; issuer: string; origin: string; development?: boolean; audience?: string; jwtKey?: string; apiUrl?: string }; fixedClock?: number };
+export async function startRustServer(options: Config, attempt = 0): Promise<{ origin: string; close: () => Promise<void>; refreshMachines: () => Promise<void> }> {
   if (options.concurrency !== undefined && (!Number.isSafeInteger(options.concurrency) || options.concurrency < 1 || options.concurrency > 32)) throw new Error('BRIEFSIP_CONCURRENCY must be 1..32');
-  const supported = new Set(['scriptToken', 'installationId', 'mailFrom', 'mailOrigin', 'testKeyring', 'testKeyringLocked', 'updates', 'desktop', 'peerTokenIssuer', 'machines', 'database', 'port', 'host', 'tls', 'allowedOrigins', 'dist', 'auth', 'fixedClock', 'baseURL', 'apiKey', 'defaultModel', 'provider', 'accounts', 'timeout', 'concurrency', 'workspaces', 'projectRoot', 'harness', 'stream', 'streamTermination', 'maxTokens']);
+  const supported = new Set(['agentLimits', 'imageProvider', 'transcriptionProvider', 'scriptToken', 'installationId', 'mailFrom', 'mailOrigin', 'testKeyring', 'testKeyringLocked', 'updates', 'desktop', 'peerTokenIssuer', 'machines', 'database', 'port', 'host', 'tls', 'allowedOrigins', 'dist', 'auth', 'fixedClock', 'baseURL', 'apiKey', 'defaultModel', 'provider', 'accounts', 'timeout', 'concurrency', 'workspaces', 'projectRoot', 'harness', 'stream', 'streamTermination', 'maxTokens']);
   for (const key of Object.keys(options)) if (!supported.has(key)) throw new Error(`not ported: option ${key} (see crates/PORTING.md)`);
+  const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
   const bridge = await computerTestBridge(options);
   const { peerTokenIssuer: unusedIssuer, machines, desktop, ...serializable } = options;
   let config: string;
   try { config = JSON.stringify({ ...serializable, desktop: desktop ? { ...desktop, runtime: undefined, now: undefined, testRuntime: !!desktop.runtime } : undefined, machines: machines ? { healthIntervalMs: machines.healthIntervalMs } : undefined, testComputerBridge: bridge.config }, (key, value) => { if (typeof value === 'function') throw new Error(`not ported: function option ${key} (see crates/PORTING.md)`); return value; }); } catch (error) { await bridge.close(); throw error; }
   const root = fileURLToPath(new URL('../', import.meta.url));
-  const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
-  const child = spawn(binary, ['--test-config'], { cwd: root, env: { ...process.env, BRIEFSIP_TEST_SERVER: 'rust' }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(binary, ['--test-config'], { cwd: root, env: { ...process.env, BRIEFSIP_TEST_SERVER: 'rust', BRIEFSIP_TEST_PARENT: String(process.pid) }, stdio: ['pipe', 'pipe', 'pipe'] });
   const exited = new Promise<void>(closed => child.once('close', () => closed()));
   let stderr = '', stdout = '';
   child.stderr.setEncoding('utf8'); child.stderr.on('data', value => { stderr = (stderr + value).slice(-8192); });
@@ -38,5 +38,12 @@ export async function startRustServer(options: Config) {
       child.stdout.on('data', value => { stdout = (stdout + value).slice(-8192); const match = /^Briefsip: (https?:\/\/[^\r\n]+)$/m.exec(stdout); if (match) { clearTimeout(timeout); ready(match[1]); } });
     });
     return { origin, close, refreshMachines: async () => { const response = await fetch(origin + '/api/machines', { headers: { 'X-Briefsip-Test-Refresh': bridge.config.token } }); if (!response.ok) throw new Error(await response.text()); } };
-  } catch (error) { await close().catch(() => {}); throw error; }
+  } catch (error) {
+    await close().catch(() => {});
+    if (attempt < 20 && error instanceof Error && error.message.includes('Another canonical server is still running.')) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      return startRustServer(options, attempt + 1);
+    }
+    throw error;
+  }
 }

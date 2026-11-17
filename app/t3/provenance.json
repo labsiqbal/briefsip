@@ -184,6 +184,24 @@
       "dependencies": [],
       "adaptation": "Plain TypeScript POSIX startup hydration; fixed capture allowlist, shared five-second budget, bounded output, process-group cleanup, one redacted failure warning and per-process cache. Windows excluded; harnessEnv unchanged.",
       "compatibilityCheck": "app/path-hydration.test.ts"
+    },
+    {
+      "sourcePath": "app/self-verification.ts",
+      "symbols": [
+        "verificationNudge",
+        "checkCommand",
+        "createSelfVerification"
+      ],
+      "sourceRevision": "local-node-frozen",
+      "sourceSha256": "translated-into-crates-briefsip-server-src-turns-verification-rs",
+      "localPaths": [
+        "crates/briefsip-server/src/turns/verification.rs"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Rust-native durable evidence stamps and artifact receipts preserve self-verification behavior.",
+      "compatibilityCheck": "app/self-verification.test.ts"
     }
   ],
   "licenseSha256": "935d8f2af0c703f9c39517ee57cc4930b19d02d533be930b63f0e82f93614b43",
@@ -2458,6 +2476,22 @@
       "dependencies": [],
       "adaptation": "Adapt numbered application-context entries capped at 4000 UTF-8 bytes; Claude native system append and ACP prompt context preserve harness prompts.",
       "compatibilityCheck": "app/base-instructions.test.ts; app/harness.test.ts; app/acp-harness.test.ts"
+    },
+    {
+      "sourcePath": "app/base-instructions.ts",
+      "symbols": [
+        "baseInstructions"
+      ],
+      "sourceRevision": "local-node-frozen",
+      "sourceSha256": "translated-into-crates-briefsip-server-src-turns-instructions-json",
+      "localPaths": [
+        "crates/briefsip-server/src/turns/instructions.json"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Rust-owned JSON instruction layer preserves runtime safety and tool guidance; no Node runtime import.",
+      "compatibilityCheck": "app/base-instructions.test.ts; app/self-verification.test.ts"
     }
   ]
 }
