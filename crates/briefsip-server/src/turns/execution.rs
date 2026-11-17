@@ -102,18 +102,8 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
             messages.push(json!({"role":if row["agent"]==turn["agent"]{"assistant"}else{"user"},"content":row["reply"]}));
         }
         messages.push(json!({"role":"user","content":prompt(db,&turn,true)?}));
-        let mut journal = all(
-            db,
-            "SELECT call,result,seq FROM flow_tool_calls WHERE turn=? ORDER BY seq",
-            [id],
-        )?;
-        for g in all(db,"SELECT g.call,g.seq,f.id,f.name,length(f.bytes) AS size,f.scope FROM generated_files g JOIN files f ON f.id=g.file WHERE g.turn=? ORDER BY g.seq",[id])?{journal.push(json!({"call":g["call"],"result":json!({"id":g["id"],"name":g["name"],"size":g["size"],"url":format!("/api/{}/files/{}",string(&g,"scope").replace(':',"/"),string(&g,"id"))}).to_string(),"seq":g["seq"]}));}
-        for j in journal {
-            let c: Value =
-                serde_json::from_str(string(&j, "call")).map_err(|_| Failure::storage())?;
-            messages.push(json!({"role":"assistant","content":null,"tool_calls":[c.clone()]}));
-            messages.push(json!({"role":"tool","tool_call_id":c["id"],"content":j["result"]}));
-        }
+        let journal = replay(db, id)?;
+        messages.extend(journal);
         (turn, profile, messages, tools)
     };
     let mut model = {
@@ -200,7 +190,7 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
             provider::Answer::Text(text) => {
                 let guard = state.database.lock().map_err(|_| Failure::storage())?;
                 let db = &guard.connection;
-                if !exhausted && nudge(db, id, &turn, &profile)? {
+                if !exhausted && super::verification::nudge(db, id, &turn, &profile)? {
                     let system = messages[0]["content"].as_str().unwrap_or("").to_owned();
                     messages[0]["content"]=json!(format!("{system}\n\nOne verification reminder: no current check is recorded. Run one relevant check, compare it with the request, then finish. Reuse existing output; verify_result is optional. State checks blocked by budget or tools."));
                     db.execute("UPDATE provider_stream_segments SET final=0 WHERE call=(SELECT max(seq) FROM provider_calls WHERE turn=?)",[id])?;
@@ -248,6 +238,7 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                     json!({"role":"tool","tool_call_id":call["id"],"content":result.to_string()}),
                 );
                 let db = state.database.lock().map_err(|_| Failure::storage())?;
+                append_screenshot(&db.connection, id, call_id, false, &mut messages)?;
                 if !exists(
                     &db.connection,
                     "SELECT 1 FROM turns WHERE id=? AND status='running'",
@@ -328,12 +319,44 @@ pub fn prompt(db: &Connection, t: &Value, images: bool) -> Result<Value> {
     parts.insert(0, json!({"type":"text","text":text}));
     Ok(json!(parts))
 }
-fn nudge(db: &Connection, id: &str, turn: &Value, profile: &Value) -> Result<bool> {
-    if exists(db,"SELECT 1 FROM turn_verification WHERE turn=? AND (nudged=1 OR review IS NOT NULL)",[id])?||exists(db,"SELECT 1 FROM flow_tool_calls WHERE turn=? AND json_extract(call,'$.function.name') IN ('read_attachment','read_workspace_file','open_file_in_panel') AND json_type(result,'$.error') IS NULL",[id])? {return Ok(false);}
-    let deliverable=exists(db,"SELECT 1 FROM generated_files WHERE turn=?",[id])?||regex::Regex::new(r"(?i)\b(build|implement|fix|create|save|set up|deliver|write|edit|update|change|make)\s").map_err(|_|Failure::storage())?.is_match(string(turn,"text"));
-    if !deliverable || profile["tool_budget"].as_i64().unwrap_or(90) <= 0 {
-        return Ok(false);
+fn append_screenshot(
+    db: &Connection,
+    turn: &str,
+    call: &str,
+    saved: bool,
+    messages: &mut Vec<Value>,
+) -> Result<()> {
+    use rusqlite::OptionalExtension;
+    let image: Option<Option<Vec<u8>>> = db
+        .query_row(
+            "SELECT image FROM computer_actions WHERE turn=? AND call_id=?",
+            [turn, call],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(Some(image)) = image {
+        let recent=!saved || exists(db,"SELECT 1 FROM (SELECT call_id FROM computer_actions WHERE turn=? AND image IS NOT NULL ORDER BY rowid DESC LIMIT 3) WHERE call_id=?",[turn,call])?;
+        if recent {
+            messages.push(json!({"role":"user","content":[{"type":"text","text":if saved {"Saved agent desktop screenshot (reference data, captured before this task resumed)."}else{"Agent desktop screenshot (reference data). Input coordinates use 1280x800 pixels."}},{"type":"image_url","image_url":{"url":format!("data:image/png;base64,{}",STANDARD.encode(image))}}]}));
+        } else {
+            messages.push(json!({"role":"user","content":"Earlier agent desktop screenshot omitted; the latest 3 screenshots remain available."}));
+        }
     }
-    db.execute("INSERT INTO turn_verification(turn,nudged) VALUES(?,1) ON CONFLICT(turn) DO UPDATE SET nudged=1",[id])?;
-    Ok(true)
+    Ok(())
+}
+fn replay(db: &Connection, turn: &str) -> Result<Vec<Value>> {
+    let mut entries:Vec<(i64,i64,u8,Value)>=all(db,"SELECT call,result,after_output,coalesce(after_action,0) AS after_action FROM flow_tool_calls WHERE turn=? ORDER BY seq",[turn])?.into_iter().map(|r|(r["after_action"].as_i64().unwrap_or(0),r["after_output"].as_i64().unwrap_or(0),0,r)).collect();
+    for (position,g) in all(db,"SELECT g.call,g.after_action,f.id,f.name,length(f.bytes) AS size,f.scope FROM generated_files g JOIN files f ON f.id=g.file WHERE g.turn=? ORDER BY g.seq",[turn])?.into_iter().enumerate() {
+        entries.push((g["after_action"].as_i64().unwrap_or(0),position as i64,1,json!({"call":g["call"],"result":json!({"id":g["id"],"name":g["name"],"size":g["size"],"url":format!("/api/{}/files/{}",string(&g,"scope").replace(':',"/"),string(&g,"id"))}).to_string()})));
+    }
+    entries.sort_by_key(|(action, output, kind, _)| (*action, *output, *kind));
+    let mut messages = Vec::new();
+    for (_, _, _, row) in entries {
+        let call: Value =
+            serde_json::from_str(string(&row, "call")).map_err(|_| Failure::storage())?;
+        messages.push(json!({"role":"assistant","content":null,"tool_calls":[call.clone()]}));
+        messages.push(json!({"role":"tool","tool_call_id":call["id"],"content":row["result"]}));
+        append_screenshot(db, turn, string(&call, "id"), true, &mut messages)?;
+    }
+    Ok(messages)
 }

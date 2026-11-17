@@ -287,5 +287,17 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value, args: Value) -> R
         "UPDATE flow_tool_calls SET result=? WHERE turn=? AND call_id=?",
         params![result.to_string(), turn["id"].as_str(), call["id"].as_str()],
     )?;
+    super::verification::capture(
+        &guard.connection,
+        turn["id"].as_str().ok_or_else(Failure::storage)?,
+    )?;
+    let mut result = result;
+    if let Some(receipt) = super::verification::receipt(
+        &guard.connection,
+        turn["id"].as_str().ok_or_else(Failure::storage)?,
+        call["id"].as_str().ok_or_else(Failure::storage)?,
+    )? {
+        result["verification"] = receipt;
+    }
     Ok(result)
 }
