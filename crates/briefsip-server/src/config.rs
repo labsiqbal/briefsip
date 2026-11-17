@@ -1,0 +1,253 @@
+use serde::Deserialize;
+use std::{
+    env,
+    io::Read,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AuthConfig {
+    pub secret_key: String,
+    pub publishable_key: String,
+    pub issuer: String,
+    pub origin: String,
+    pub audience: Option<String>,
+    #[serde(default)]
+    pub development: bool,
+    pub jwt_key: Option<String>,
+    pub api_url: Option<String>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Config {
+    pub database: PathBuf,
+    #[serde(default = "default_port")]
+    pub port: u16,
+    #[serde(default = "default_host")]
+    pub host: String,
+    #[serde(default = "default_dist")]
+    pub dist: PathBuf,
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+    pub auth: Option<AuthConfig>,
+    pub fixed_clock: Option<i64>,
+    pub tls: Option<Tls>,
+}
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tls {
+    pub cert: String,
+    pub key: String,
+}
+fn default_port() -> u16 {
+    4317
+}
+fn default_host() -> String {
+    "127.0.0.1".to_owned()
+}
+fn default_dist() -> PathBuf {
+    if let Ok(executable) = env::current_exe() {
+        if let Some(root) = executable.parent().and_then(|directory| directory.parent()) {
+            for dist in [root.join("app/dist"), root.join("dist")] {
+                if dist.is_dir() {
+                    return dist;
+                }
+            }
+        }
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../app/dist")
+}
+pub fn now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_millis() as i64)
+        .unwrap_or(0)
+}
+pub fn trusted_origin(value: &str, development: bool) -> crate::db::Result<()> {
+    let url = url::Url::parse(value).map_err(|_| "Invalid public origin")?;
+    if url.origin().ascii_serialization() != value
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.scheme() != "https"
+            && !(development
+                && url.scheme() == "http"
+                && matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]")))
+    {
+        return Err("Public origin must be an exact HTTPS origin".into());
+    }
+    Ok(())
+}
+impl Config {
+    pub fn now(&self) -> i64 {
+        self.fixed_clock.unwrap_or_else(now)
+    }
+    pub fn read() -> crate::db::Result<Self> {
+        let args: Vec<_> = env::args().skip(1).collect();
+        if args == ["--test-config"] {
+            if env::var("BRIEFSIP_TEST_SERVER").as_deref() != Ok("rust") {
+                return Err("--test-config requires BRIEFSIP_TEST_SERVER=rust".into());
+            }
+            let mut input = String::new();
+            std::io::stdin()
+                .take(1024 * 1024)
+                .read_to_string(&mut input)?;
+            let config: Self = serde_json::from_str(&input)?;
+            config.validate()?;
+            return Ok(config);
+        }
+        if args.iter().any(|arg| arg != "--mode=canonical") {
+            return Err("Unsupported Briefsip mode".into());
+        }
+        for key in [
+            "BRIEFSIP_HUB_ORIGIN",
+            "BRIEFSIP_HUB_SIGNING_PUBLIC_KEY",
+            "BRIEFSIP_WORKSPACES",
+            "BRIEFSIP_PROVIDER_ACCOUNTS",
+            "BRIEFSIP_IMAGE_BASE_URL",
+            "BRIEFSIP_IMAGE_MODEL",
+            "BRIEFSIP_IMAGE_API_KEY",
+            "BRIEFSIP_TRANSCRIPTION_BASE_URL",
+            "BRIEFSIP_TRANSCRIPTION_MODEL",
+            "BRIEFSIP_TRANSCRIPTION_API_KEY",
+            "BRIEFSIP_SCRIPT_TOKEN",
+            "BRIEFSIP_SCRIPT_DIRECTORY",
+            "BRIEFSIP_RELEASES_DIR",
+            "BRIEFSIP_LAUNCHER_SOCKET",
+            "BRIEFSIP_UPDATE_TRIAL",
+            "OPENAI_BASE_URL",
+            "OPENAI_API_KEY",
+            "OPENAI_MODEL",
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_MODEL",
+            "GEMINI_BASE_URL",
+            "GEMINI_API_KEY",
+            "GEMINI_MODEL",
+            "BRIEFSIP_PROVIDER",
+            "BRIEFSIP_STREAM",
+            "BRIEFSIP_STREAM_TERMINATION",
+            "BRIEFSIP_MAX_TOKENS",
+            "BRIEFSIP_CONCURRENCY",
+            "RESEND_API_KEY",
+            "BRIEFSIP_INSTALLATION_ID",
+            "BRIEFSIP_AGENT_DESKTOP",
+            "BRIEFSIP_PROJECT_ROOT",
+            "BRIEFSIP_COMPOSIO",
+            "BRIEFSIP_MAIL_FROM",
+            "BRIEFSIP_MAIL_ENDPOINT",
+        ] {
+            if env::var_os(key).is_some() {
+                return Err(format!("not ported: {key} (see crates/PORTING.md)").into());
+            }
+        }
+        let port = env::var("PORT")
+            .unwrap_or_else(|_| "4317".to_owned())
+            .parse::<u16>()
+            .map_err(|_| "PORT must be 1..65535")?;
+        if port == 0 {
+            return Err("PORT must be 1..65535".into());
+        }
+        let required =
+            |key| env::var(key).map_err(|_| format!("{key} is required for canonical mode"));
+        let canonical_mode = args.iter().any(|arg| arg == "--mode=canonical");
+        let tls = match (
+            env::var("BRIEFSIP_TLS_CERT").ok(),
+            env::var("BRIEFSIP_TLS_KEY").ok(),
+        ) {
+            (Some(cert), Some(key)) => Some(Tls {
+                cert: std::fs::read_to_string(cert)?,
+                key: std::fs::read_to_string(key)?,
+            }),
+            (None, None) => None,
+            _ => return Err("Canonical TLS requires both certificate and key".into()),
+        };
+        let auth = if canonical_mode {
+            let server_url = required("BRIEFSIP_SERVER_URL")?;
+            let development = url::Url::parse(&server_url)?.scheme() == "http";
+            trusted_origin(&server_url, development)?;
+            Some(AuthConfig {
+                secret_key: required("CLERK_SECRET_KEY")?,
+                publishable_key: required("CLERK_PUBLISHABLE_KEY")?,
+                issuer: required("CLERK_ISSUER")?,
+                origin: required("BRIEFSIP_ORIGIN")?,
+                audience: env::var("CLERK_AUDIENCE")
+                    .ok()
+                    .filter(|value| !value.is_empty()),
+                development,
+                jwt_key: None,
+                api_url: None,
+            })
+        } else {
+            None
+        };
+        let database = if canonical_mode {
+            PathBuf::from(required("BRIEFSIP_CANONICAL_DB")?)
+        } else {
+            env::var_os("BRIEFSIP_DATA_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    PathBuf::from(env::var_os("HOME").unwrap_or_default())
+                        .join(".local/share/briefsip/new-app")
+                })
+                .join("briefsip.sqlite")
+        };
+        let config = Self {
+            database,
+            port,
+            host: default_host(),
+            dist: default_dist(),
+            auth,
+            allowed_origins: env::var("BRIEFSIP_ALLOWED_ORIGINS")
+                .unwrap_or_default()
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+                .collect(),
+            fixed_clock: None,
+            tls,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+    fn validate(&self) -> crate::db::Result<()> {
+        if self.tls.is_none() && !matches!(self.host.as_str(), "127.0.0.1" | "::1") {
+            return Err("HTTP development listener must use loopback".into());
+        }
+        if self.database.as_os_str().is_empty() || self.database.to_str() == Some(":memory:") {
+            return Err("Rust server needs a file database".into());
+        }
+        for origin in &self.allowed_origins {
+            trusted_origin(origin, false)?;
+        }
+        if let Some(auth) = &self.auth {
+            if auth.secret_key.is_empty() || auth.publishable_key.is_empty() {
+                return Err("Clerk configuration is required".into());
+            }
+            trusted_origin(&auth.origin, auth.development)?;
+            let issuer =
+                url::Url::parse(&auth.issuer).map_err(|_| "Invalid Clerk issuer configuration")?;
+            if !issuer.username().is_empty()
+                || issuer.password().is_some()
+                || issuer.query().is_some()
+                || issuer.fragment().is_some()
+                || issuer.scheme() != "https"
+                    && !(auth.development
+                        && issuer.scheme() == "http"
+                        && matches!(issuer.host_str(), Some("127.0.0.1" | "localhost" | "[::1]")))
+            {
+                return Err("Invalid Clerk issuer configuration".into());
+            }
+            if !auth.development && self.tls.is_none() {
+                return Err("Canonical server requires TLS outside development".into());
+            }
+            if let Some(api) = &auth.api_url {
+                trusted_origin(api, auth.development)?;
+            }
+        }
+        Ok(())
+    }
+}

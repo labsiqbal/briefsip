@@ -80,6 +80,35 @@ test('release without issues warns loudly', t => {
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
 });
 
+test('Rust resource failure prevents publication; successful staging retains Node and notices', () => {
+  const f = fixture(), bin = mkdtempSync(join(tmpdir(), 'release-cargo-')), previousPath = process.env.PATH;
+  try {
+    for (const directory of ['scripts', 'crates/briefsip-server', 'target/release']) mkdirSync(join(f.dir, directory), { recursive: true });
+    writeFileSync(join(f.dir, 'Cargo.toml'), '[workspace]\n');
+    writeFileSync(join(f.dir, 'crates/briefsip-server/provenance.json'), '{}');
+    writeFileSync(join(f.dir, 'target/release/briefsip-server'), 'fixture binary', { mode: 0o700 });
+    for (const name of ['LICENSE', 'agent-delegation.LICENSE']) writeFileSync(join(f.dir, 'app', name), 'Fixture notice');
+    writeFileSync(join(f.dir, 'app/package.json'), JSON.stringify({ version: '1.0.0', type: 'module', scripts: { lint: 'node -e "0"', build: 'node -e "0"', test: 'node -e "0"' } }));
+    writeFileSync(join(bin, 'cargo'), `#!${process.execPath}\nimport { appendFileSync } from 'node:fs';\nappendFileSync('cargo-checks', JSON.stringify(process.argv.slice(2)) + '\\n');\n`, { mode: 0o700 });
+    writeFileSync(join(f.dir, 'scripts/resource-gate.mjs'), "import { existsSync } from 'node:fs';\nif (existsSync('gate-fails')) throw new Error('Rust resource budget exceeded');\n");
+    writeFileSync(join(f.dir, 'scripts/budgets.json'), '{}');
+    writeFileSync(join(f.dir, 'gate-fails'), 'fail');
+    process.env.PATH = `${bin}:${previousPath}`;
+    const options = { ...f.options, build: true, allowDirty: true };
+    assert.throws(() => buildRelease(options), /resource-gate/);
+    assert.equal(existsSync(f.options.releases), false);
+    rmSync(join(f.dir, 'gate-fails'));
+    const info = buildRelease(options), stage = join(f.options.releases, info.id);
+    assert.equal(readFileSync(join(stage, 'server.ts'), 'utf8'), '// Fixture runtime\n');
+    assert.equal(readFileSync(join(stage, 'bin/briefsip-server'), 'utf8'), 'fixture binary');
+    for (const name of ['LICENSE', 'agent-delegation.LICENSE']) assert.equal(readFileSync(join(stage, 'bin', name), 'utf8'), 'Fixture notice');
+    assert.equal(readFileSync(join(stage, 'bin/provenance.json'), 'utf8'), '{}');
+    const checks = readFileSync(join(f.dir, 'cargo-checks'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(checks.length, 8);
+    assert(checks.some(args => args.join(' ') === 'build --release --locked'));
+  } finally { process.env.PATH = previousPath; rmSync(f.dir, { recursive: true, force: true }); rmSync(bin, { recursive: true, force: true }); }
+});
+
 test('release CLI demonstrates passing and failing --issues using a fixture gh reader', t => {
   const f = fixture(), bin = mkdtempSync(join(tmpdir(), 'release-gh-'));
   try {
