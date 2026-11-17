@@ -1,7 +1,8 @@
 use super::*;
 
 pub fn run(db: &Connection, turn: &Value, name: &str, args: &Value) -> Result<Value> {
-    let (kind, owner) = if let Some(channel) = turn["channel"].as_str() {
+    let context_channel = super::messaging::channel(db, string(turn, "id"))?;
+    let (kind, owner) = if let Some(channel) = context_channel.as_deref() {
         ("channels", channel)
     } else {
         ("agents", string(turn, "agent"))

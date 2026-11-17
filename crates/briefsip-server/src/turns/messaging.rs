@@ -3,8 +3,69 @@ use super::*;
 fn ancestors(db: &Connection, turn: &str) -> Result<Vec<Value>> {
     all(db,"WITH RECURSIVE tree AS(SELECT id,parent,agent,channel,thread,message_depth FROM turns WHERE id=? UNION ALL SELECT t.id,t.parent,t.agent,t.channel,t.thread,t.message_depth FROM turns t JOIN tree ON t.id=tree.parent) SELECT * FROM tree",[turn])
 }
+pub fn channel(db: &Connection, turn: &str) -> Result<Option<String>> {
+    Ok(ancestors(db, turn)?
+        .iter()
+        .find_map(|row| row["channel"].as_str().map(str::to_owned)))
+}
 pub fn allowed(db: &Connection, turn: &str) -> Result<bool> {
     Ok(!exists(db,"SELECT 1 FROM agent_deliveries d JOIN agent_requests r ON r.id=d.request WHERE d.turn=? AND r.expects_reply=0",[turn])?)
+}
+pub fn capture(db: &Connection, turn: &str) -> Result<Vec<Value>> {
+    if !exists(
+        db,
+        "SELECT 1 FROM agent_reply_captures WHERE turn=?",
+        [turn],
+    )? {
+        let current =
+            one(db, "SELECT * FROM turns WHERE id=?", [turn])?.ok_or_else(Failure::storage)?;
+        if current["routing"] == "pending" {
+            return Ok(Vec::new());
+        }
+        db.execute("INSERT INTO agent_reply_captures VALUES(?)", [turn])?;
+        if current["parent"].is_null() && current["routing"] != "pending" {
+            let rows = all(db,"SELECT d.turn AS delivery,r.turn AS source,r.id AS request,r.expects_reply,r.settled,t.id,t.agent,t.thread,a.name,a.role,substr(t.text,1,16000) AS task,t.status,t.paused,substr(t.reply,1,16000) AS reply,t.error,length(t.reply)>16000 AS truncated FROM agent_deliveries d JOIN agent_requests r ON r.id=d.request JOIN turns source ON source.id=r.turn JOIN turns t ON t.id=d.turn JOIN agents a ON a.id=t.agent WHERE r.expects_reply=1 AND r.settled=0 AND source.status='queued' AND source.paused=0 AND source.agent=? AND source.channel IS ? AND source.thread IS ? AND source.seq<? AND t.status IN('done','failed','interrupted','cancelled') AND t.paused=0 AND NOT EXISTS(SELECT 1 FROM delegation_tasks dt WHERE dt.delivery=d.turn) AND NOT EXISTS(SELECT 1 FROM agent_reply_claims c WHERE c.delivery=d.turn) ORDER BY t.seq LIMIT 8",params![string(&current,"agent"),current["channel"].as_str(),current["thread"].as_str(),current["seq"].as_i64()])?;
+            for mut snapshot in rows {
+                let source = string(&snapshot, "source");
+                let ancestors = all(db,"WITH RECURSIVE ancestors(id,parent) AS(SELECT id,parent FROM turns WHERE id=? UNION SELECT t.id,t.parent FROM turns t JOIN ancestors a ON t.id=a.parent) SELECT id FROM ancestors",[source])?;
+                let mut automated = false;
+                for table in ["routine_runs", "flow_steps", "workflow_steps"] {
+                    if data::table(db, table)? {
+                        for ancestor in &ancestors {
+                            automated |= exists(
+                                db,
+                                &format!("SELECT 1 FROM {table} WHERE turn=?"),
+                                [string(ancestor, "id")],
+                            )?;
+                        }
+                    }
+                }
+                if automated {
+                    continue;
+                }
+                snapshot["truncated"] = json!(snapshot["truncated"] == 1);
+                snapshot["generatedFiles"] =
+                    json!(history::requested_files(db, string(&snapshot, "id"))?);
+                let delivery = string(&snapshot, "delivery").to_owned();
+                snapshot
+                    .as_object_mut()
+                    .ok_or_else(Failure::storage)?
+                    .remove("delivery");
+                db.execute(
+                    "INSERT INTO agent_reply_claims VALUES(?,?,?)",
+                    params![delivery, turn, snapshot.to_string()],
+                )?;
+            }
+        }
+    }
+    all(
+        db,
+        "SELECT snapshot FROM agent_reply_claims WHERE consumer=? ORDER BY rowid",
+        [turn],
+    )?
+    .into_iter()
+    .map(|row| data::json(&row["snapshot"]))
+    .collect()
 }
 pub fn roster(db: &Connection, turn: &Value, after: &str) -> Result<Vec<Value>> {
     let lineage = ancestors(db, string(turn, "id"))?;
@@ -589,10 +650,30 @@ pub fn cancel(db: &Connection, roots: &[String], reason: &str) -> Result<Vec<Str
     }
     Ok(ids)
 }
+pub fn forwarded(db: &Connection, turn: &str) -> Result<Vec<Value>> {
+    let mut rows = all(db,"SELECT c.delivery,c.consumer,c.snapshot,CASE WHEN t.status='cancelled' THEN NULL ELSE t.text END AS user_message,CASE WHEN t.status='done' THEN substr(t.reply,1,16000) ELSE NULL END AS user_reply,t.status FROM agent_reply_claims c JOIN agent_deliveries d ON d.turn=c.delivery JOIN agent_requests r ON r.id=d.request JOIN turns t ON t.id=c.consumer WHERE r.turn=? ORDER BY c.rowid",[turn])?;
+    for row in &mut rows {
+        row["recovery_result"] = if row["status"] == "done" {
+            Value::Null
+        } else {
+            serde_json::from_str(string(row, "snapshot")).map_err(|_| Failure::storage())?
+        };
+        row.as_object_mut()
+            .ok_or_else(Failure::storage)?
+            .remove("snapshot");
+    }
+    Ok(rows)
+}
 pub fn settle(state: &AppState, db: &Connection) -> Result<()> {
     for request in all(db, "SELECT * FROM agent_requests WHERE settled=0", [])? {
         let mut rows=all(db,"SELECT t.id,t.agent,t.thread,a.name,t.status,t.paused,t.reply,t.error FROM agent_deliveries d JOIN turns t ON t.id=d.turn JOIN agents a ON a.id=t.agent WHERE d.request=? ORDER BY t.seq",[string(&request,"id")])?;
         for row in &mut rows {
+            row["truncated"] = json!(row["reply"]
+                .as_str()
+                .is_some_and(|reply| reply.encode_utf16().count() > 16000));
+            if let Some(reply) = row["reply"].as_str() {
+                row["reply"] = json!(history::slice(reply, 0, 16000));
+            }
             row["generatedFiles"] = json!(history::requested_files(db, string(row, "id"))?);
         }
         if rows
@@ -601,6 +682,15 @@ pub fn settle(state: &AppState, db: &Connection) -> Result<()> {
         {
             continue;
         }
+        let forwarded = forwarded(db, string(&request, "turn"))?
+            .into_iter()
+            .filter(|claim| rows.iter().any(|row| row["id"] == claim["delivery"]))
+            .collect::<Vec<_>>();
+        let replies = rows
+            .iter()
+            .filter(|row| !forwarded.iter().any(|claim| claim["delivery"] == row["id"]))
+            .cloned()
+            .collect::<Vec<_>>();
         if request["expects_reply"] == 1
             && !exists(
                 db,
@@ -608,7 +698,7 @@ pub fn settle(state: &AppState, db: &Connection) -> Result<()> {
                 [string(&request, "id")],
             )?
         {
-            db.execute("UPDATE flow_tool_calls SET result=? WHERE turn=? AND call_id=?",[json!({"request":request["id"],"status":"completed","replies":rows,"delivered_earlier":[]}).to_string(),string(&request,"turn").into(),string(&request,"call_id").into()])?;
+            db.execute("UPDATE flow_tool_calls SET result=? WHERE turn=? AND call_id=?",[json!({"request":request["id"],"status":"completed","replies":replies,"delivered_earlier":forwarded}).to_string(),string(&request,"turn").into(),string(&request,"call_id").into()])?;
         }
         db.execute(
             "UPDATE agent_requests SET settled=1 WHERE id=?",

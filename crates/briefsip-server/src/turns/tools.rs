@@ -16,14 +16,14 @@ pub fn workspace(
 pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Value>> {
     let mut specs: Vec<Value> =
         serde_json::from_str(include_str!("tool-specs.json")).map_err(|_| Failure::storage())?;
-    let private = turn["channel"].is_null();
+    let private = super::messaging::channel(db, string(turn, "id"))?.is_none();
     let binding = workspace(state, db, turn)?;
     let bound = binding.is_some() && private;
     let writable = bound && binding.as_ref().is_some_and(|b| b.write);
     specs.retain(|t| match string(&t["function"], "name") {
         "read_history" | "read_message" | "read_attachment" | "create_text_file"
         | "open_file_in_panel" | "ask_user" | "select_memory" | "remember_memory"
-        | "search_memory" | "verify_result" => true,
+        | "search_memory" | "verify_result" | "wait_for_event" => true,
         "read_provider_settings" => private,
         "generate_image" => state.config.turns.image_provider.is_some(),
         "list_agents" | "send_message" | "delegate_task" | "task_status" | "wait_task"
@@ -51,9 +51,9 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
         | "git_create_worktree" => writable,
         _ => false,
     });
-    if !private {
+    if !turn["channel"].is_null() {
         specs.retain(|t| t["function"]["name"] != "delegate_task");
-        specs.extend(super::coordination::tools(db, turn)?);
+        specs.splice(0..0, super::coordination::tools(db, turn)?);
     }
     if private {
         specs.push(json!({"type":"function","function":{"name":"set_provider_account","description":"Request a user-confirmed switch to an already configured provider account and explicit model. Pauses the task; no binding changes until the user approves through Briefsip. This may disclose conversation history to the selected provider. Backup model is cleared. Cannot create accounts or change credentials.","parameters":{"type":"object","properties":{"revision":{"type":"integer","minimum":1},"providerAccount":{"type":"string"},"model":{"type":"string","maxLength":160}},"required":["revision","providerAccount","model"],"additionalProperties":false}}}));
@@ -338,6 +338,7 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
             "read_skill",
             "read_skill_file",
             "ask_user",
+            "wait_for_event",
             "set_provider_account",
         ]
         .contains(&name)
@@ -467,6 +468,7 @@ pub(super) fn dispatch(
                 json!({"revision":a["revision"].as_i64().unwrap_or(0)+1,"model":model,"backupModel":backup,"providerAccount":a["provider_account"]}),
             )
         }
+        "wait_for_event" => super::waits::request(state, db, turn, call, args),
         "ask_user" => {
             if !closed(args, &["question", "choices"]) {
                 return Err(error(400, "Invalid question or choices."));

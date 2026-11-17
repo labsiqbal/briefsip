@@ -511,9 +511,28 @@ fn control(
         if ["done", "cancelled"].contains(&string(&t, "status")) {
             return Err(error(409, "Terminal tasks cannot be resumed or paused."));
         }
+        let branch = all(db,"WITH RECURSIVE tree(id) AS(SELECT id FROM turns WHERE id=? UNION ALL SELECT t.id FROM turns t JOIN tree ON t.parent=tree.id) SELECT t.* FROM turns t JOIN tree ON tree.id=t.id",[id])?;
+        let mut unfinished = Vec::new();
+        for item in &branch {
+            if ["done", "cancelled"].contains(&string(item, "status")) {
+                continue;
+            }
+            if item["id"] == id || !exists(db,"SELECT 1 FROM agent_deliveries d JOIN agent_requests r ON r.id=d.request WHERE d.turn=? AND(r.settled=1 OR EXISTS(SELECT 1 FROM agent_reply_claims WHERE delivery=d.turn))",[string(item,"id")])? {
+                unfinished.push(item);
+            }
+        }
+        if crate::computer::control::turn_wait(db, id)?.is_some() {
+            return Err(error(
+                409,
+                "Hand computer control back or dismiss its request before changing the task.",
+            ));
+        }
         if action == "pause" {
-            db.execute("UPDATE turns SET paused=1,revision=revision+1,status=CASE WHEN status='running' THEN 'interrupted' ELSE status END,error=CASE WHEN status='running' THEN 'Stop requested. Check the provider before resuming.' ELSE error END WHERE id=?",[id])?;
-            state.turns.cancel(id);
+            for item in &unfinished {
+                let child = string(item, "id");
+                db.execute("UPDATE turns SET paused=1,revision=revision+1,status=CASE WHEN status='running' THEN 'interrupted' ELSE status END,error=CASE WHEN status='running' THEN 'Stop requested. Check the provider before resuming.' ELSE error END WHERE id=?",[child])?;
+                state.turns.cancel(child);
+            }
         } else {
             if t["paused"] != 1 && !["interrupted", "failed"].contains(&string(&t, "status")) {
                 return Err(error(
@@ -521,7 +540,25 @@ fn control(
                     "Pause the task before resuming or changing its owner.",
                 ));
             }
-            if ["failed", "interrupted"].contains(&string(&t, "status"))
+            if exists(db,"WITH RECURSIVE tree(id,parent,paused,status) AS(SELECT id,parent,paused,status FROM turns WHERE id=? UNION ALL SELECT t.id,t.parent,t.paused,t.status FROM turns t JOIN tree ON t.id=tree.parent) SELECT 1 FROM tree WHERE id<>? AND(paused=1 OR status='cancelled')",[id,id])? {
+                return Err(error(409,"Resume the parent task first."));
+            }
+            if state
+                .turns
+                .active
+                .lock()
+                .map_err(|_| Failure::storage())?
+                .keys()
+                .any(|active| unfinished.iter().any(|item| item["id"] == *active))
+            {
+                return Err(error(
+                    409,
+                    "Previous request has not stopped yet. Try after the local stop completes.",
+                ));
+            }
+            if unfinished
+                .iter()
+                .any(|item| ["failed", "interrupted"].contains(&string(item, "status")))
                 && v["acknowledgeUncertain"] != true
             {
                 return Err(error(
@@ -529,21 +566,36 @@ fn control(
                     "Check provider results and effects, then confirm before resuming.",
                 ));
             }
-            if exists(
-                db,
-                "SELECT 1 FROM questions WHERE turn=? AND answer IS NULL",
-                [id],
-            )? {
-                return Err(error(
-                    409,
-                    "Answer the task question before resuming or reassigning.",
-                ));
+            for item in &branch {
+                if crate::computer::control::turn_wait(db, string(item, "id"))?.is_some() {
+                    return Err(error(409,"Hand computer control back or dismiss its request before resuming or reassigning."));
+                }
+                if !["done", "cancelled"].contains(&string(item, "status"))
+                    && exists(
+                        db,
+                        "SELECT 1 FROM questions WHERE turn=? AND answer IS NULL",
+                        [string(item, "id")],
+                    )?
+                {
+                    return Err(error(
+                        409,
+                        "Answer the task question before resuming or reassigning.",
+                    ));
+                }
             }
-            if crate::computer::control::turn_wait(db, id)?.is_some() {
-                return Err(error(
-                    409,
-                    "Hand computer control back or dismiss the request before resuming.",
-                ));
+            if action == "reassign" {
+                for item in &branch {
+                    if exists(
+                        db,
+                        "SELECT 1 FROM turn_waits WHERE turn=? AND status='waiting'",
+                        [string(item, "id")],
+                    )? {
+                        return Err(error(
+                            409,
+                            "Complete or cancel the event wait before reassigning the task.",
+                        ));
+                    }
+                }
             }
             let recipient = if action == "reassign" {
                 &v["recipient"]
@@ -551,8 +603,44 @@ fn control(
                 &t["agent"]
             };
             let (agent, _, _) = conversation(db, kind, owner, &json!({"recipient":recipient}))?;
-            account(state, db, &agent)?;
-            db.execute("UPDATE turns SET agent=?,paused=0,revision=revision+1,status='queued',error=NULL,tool_budget_used=0 WHERE id=?",[&agent,id])?;
+            for item in unfinished {
+                let child = string(item, "id");
+                if exists(db,"SELECT 1 FROM agent_deliveries d JOIN agent_requests r ON r.id=d.request WHERE d.turn=? AND(r.settled=1 OR EXISTS(SELECT 1 FROM agent_reply_claims WHERE delivery=d.turn))",[child])? {
+                    return Err(error(409,"Message result was already sent to the requester. Start a new request."));
+                }
+                if exists(
+                    db,
+                    "SELECT 1 FROM threads WHERE id=? AND(archived=1 OR deleted=1)",
+                    [item["thread"].as_str().unwrap_or("")],
+                )? {
+                    return Err(error(
+                        409,
+                        "Restore the subtask conversation before resuming.",
+                    ));
+                }
+                let owner = if child == id {
+                    agent.as_str()
+                } else {
+                    string(item, "agent")
+                };
+                if data::agents::hidden(db, owner)? {
+                    return Err(error(409, "Restore the agent before resuming the task."));
+                }
+                if let Some(channel) = t["channel"].as_str() {
+                    if !exists(
+                        db,
+                        "SELECT 1 FROM channel_members WHERE channel=? AND agent=?",
+                        [channel, owner],
+                    )? {
+                        return Err(error(409, "Task owner is no longer a channel member."));
+                    }
+                }
+                account(state, db, owner)?;
+                if db.query_row("SELECT count(*) FROM turns WHERE agent=? AND id<>? AND status IN('queued','running')",[owner,child],|r|r.get::<_,i64>(0))? >= 100 {
+                    return Err(error(429,"Recipient queue is full."));
+                }
+                db.execute("UPDATE turns SET agent=?,paused=0,revision=revision+1,status='queued',error=NULL,tool_budget_used=0,waiting_for=CASE WHEN waiting_for IN(SELECT id FROM turns WHERE status='cancelled') THEN NULL ELSE waiting_for END WHERE id=?",[owner,child])?;
+            }
         }
         let result =
             one(db, "SELECT * FROM turns WHERE id=?", [id])?.ok_or_else(Failure::storage)?;

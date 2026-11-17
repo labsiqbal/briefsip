@@ -19,6 +19,7 @@ mod stream;
 mod tools;
 pub(crate) mod transcription;
 mod verification;
+mod waits;
 
 use crate::{data, web::Failure, AppState};
 use axum::{extract::Request, http::Method, response::Response, routing::any, Router};
@@ -67,6 +68,7 @@ impl Runtime {
 
 pub fn initialize(db: &Connection) -> Result<()> {
     db.execute_batch(include_str!("schema.sql"))?;
+    waits::initialize(db)?;
     db.execute("UPDATE turns SET status='interrupted',error='Server stopped during this turn. Check the result before resuming.',revision=revision+1 WHERE status='running'", [])?;
     db.execute("UPDATE provider_calls SET status='interrupted',finished=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE status='pending'", [])?;
     Ok(())
@@ -126,6 +128,7 @@ fn schedule(state: &AppState) -> Result<()> {
         return Ok(());
     }
     queue::expire(db)?;
+    waits::expire(db, state.config.now())?;
     messaging::settle(state, db)?;
     coordination::settle(db)?;
     room::settle(db)?;
@@ -155,7 +158,7 @@ fn schedule(state: &AppState) -> Result<()> {
         .as_ref()
         .and_then(Value::as_u64)
         .unwrap_or(4) as usize;
-    let queued = all(db, "SELECT t.*,a.thread_limit FROM turns t JOIN agents a ON a.id=t.agent WHERE t.status='queued' AND t.paused=0 AND t.waiting_for IS NULL AND NOT EXISTS(SELECT 1 FROM questions q WHERE q.turn=t.id AND q.answer IS NULL) AND NOT EXISTS(SELECT 1 FROM remote_agent_calls WHERE delivery=t.id) AND NOT EXISTS(SELECT 1 FROM agent_requests r WHERE r.turn=t.id AND r.expects_reply=1 AND r.settled=0 AND NOT EXISTS(SELECT 1 FROM delegation_tasks d WHERE d.request=r.id)) AND NOT EXISTS(SELECT 1 FROM delegation_waits w WHERE w.turn=t.id AND w.status='waiting') AND NOT EXISTS(SELECT 1 FROM delegation_tasks d WHERE d.creator_turn=t.id AND d.wait=1 AND d.wake_delivered=0) AND t.dispatch_mode<>'steer' AND NOT EXISTS(SELECT 1 FROM agent_visibility v WHERE v.agent=t.agent AND v.hidden=1) AND NOT EXISTS(SELECT 1 FROM queue_edits e JOIN turns h ON h.id=e.turn WHERE e.state='held' AND e.expires_at>unixepoch('subsec')*1000 AND h.agent=t.agent AND h.thread IS t.thread AND coalesce((SELECT position FROM queue_positions WHERE turn=h.id),h.seq)<=coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)) ORDER BY coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)", [])?;
+    let queued = all(db, "SELECT t.*,a.thread_limit FROM turns t JOIN agents a ON a.id=t.agent WHERE t.status='queued' AND t.paused=0 AND t.waiting_for IS NULL AND NOT EXISTS(SELECT 1 FROM turn_waits w WHERE w.turn=t.id AND w.status='waiting') AND NOT EXISTS(SELECT 1 FROM questions q WHERE q.turn=t.id AND q.answer IS NULL) AND NOT EXISTS(SELECT 1 FROM remote_agent_calls WHERE delivery=t.id) AND NOT EXISTS(SELECT 1 FROM agent_requests r WHERE r.turn=t.id AND r.expects_reply=1 AND r.settled=0 AND NOT EXISTS(SELECT 1 FROM delegation_tasks d WHERE d.request=r.id)) AND NOT EXISTS(SELECT 1 FROM delegation_waits w WHERE w.turn=t.id AND w.status='waiting') AND NOT EXISTS(SELECT 1 FROM delegation_tasks d WHERE d.creator_turn=t.id AND d.wait=1 AND d.wake_delivered=0) AND t.dispatch_mode<>'steer' AND NOT EXISTS(SELECT 1 FROM agent_visibility v WHERE v.agent=t.agent AND v.hidden=1) AND NOT EXISTS(SELECT 1 FROM queue_edits e JOIN turns h ON h.id=e.turn WHERE e.state='held' AND e.expires_at>unixepoch('subsec')*1000 AND h.agent=t.agent AND h.thread IS t.thread AND coalesce((SELECT position FROM queue_positions WHERE turn=h.id),h.seq)<=coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)) ORDER BY coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)", [])?;
     for row in queued {
         if active.len() >= capacity {
             break;
@@ -215,7 +218,8 @@ fn schedule(state: &AppState) -> Result<()> {
 
 pub fn handles(path: &str, method: &Method) -> bool {
     let p: Vec<_> = path.split('/').skip(1).collect();
-    matches!(p.as_slice(),["api","agents"|"threads"|"channels",_,"turns"] if *method==Method::POST)
+    matches!(p.as_slice(), ["api", "turn-waits", _])
+        || matches!(p.as_slice(),["api","agents"|"threads"|"channels",_,"turns"] if *method==Method::POST)
         || matches!(p.as_slice(),["api","channels",_,"discussions",_,"stop"] if *method==Method::POST)
         || matches!(p.as_slice(),["api","agents"|"threads"|"channels",_,"compaction"] if *method==Method::GET)
         || matches!(
@@ -250,6 +254,9 @@ pub fn handles(path: &str, method: &Method) -> bool {
         )
 }
 pub async fn local(state: &AppState, request: Request) -> Result<Response> {
+    if request.uri().path().starts_with("/api/turn-waits/") {
+        return waits::local(state, request).await;
+    }
     let path = request.uri().path().to_owned();
     let p: Vec<_> = path.split('/').skip(1).collect();
     let method = request.method().clone();
@@ -327,6 +334,7 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
 }
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route("/api/turn-waits/{id}", any(crate::dispatch))
         .route(
             "/api/agents/{id}/turns/{turn}/harness-approvals/{approval}",
             any(crate::dispatch),

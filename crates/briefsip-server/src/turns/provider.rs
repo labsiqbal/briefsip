@@ -326,7 +326,10 @@ fn translate(
                     .map_err(|_| error(502, MALFORMED))?;
                 if family == "anthropic" {
                     content.push(json!({"type":"tool_use","id":call["id"],"name":call["function"]["name"],"input":args}));
-                } else if let Some(parts) = call["geminiParts"].as_array() {
+                } else if let Some(parts) = call["geminiParts"]
+                    .as_array()
+                    .filter(|parts| !parts.is_empty())
+                {
                     content.extend(parts.clone());
                 } else {
                     content.push(json!({"functionCall":{"name":call["function"]["name"],"args":args},"thoughtSignature":"context_engineering_is_the_way to_go"}));

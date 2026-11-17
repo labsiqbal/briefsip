@@ -63,6 +63,25 @@ pub fn readable_file(
     params.extend([position(db, turn)?.into(), id.to_owned().into()]);
     let image=exists(db,&format!("SELECT 1 FROM image_generations g JOIN turns t ON t.id=g.turn WHERE {clause} AND coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)<=? AND file=?"),rusqlite::params_from_iter(params))?;
     if !sent && !generated && !image {
+        for row in all(
+            db,
+            "SELECT delivery,snapshot FROM agent_reply_claims WHERE consumer=?",
+            [string(turn, "id")],
+        )? {
+            let reply = data::json(&row["snapshot"])?;
+            if reply["generatedFiles"]
+                .as_array()
+                .is_some_and(|files| files.iter().any(|file| file["id"] == id))
+                && requested_files(db, string(&row, "delivery"))?
+                    .iter()
+                    .any(|file| file["id"] == id && file["deleted"] != true)
+            {
+                if let Some(source) = one(db, "SELECT scope FROM files WHERE id=?", [id])? {
+                    return crate::files::attachments::file(db, id, string(&source, "scope"))
+                        .map(Some);
+                }
+            }
+        }
         for reply in all(db,"SELECT reply.value FROM flow_tool_calls c,json_each(c.result,'$.replies') reply WHERE c.turn=? AND json_extract(c.call,'$.function.name')='send_message'",[string(turn,"id")])? {
             let reply = data::json(&reply["value"])?;
             if reply["generatedFiles"].as_array().is_some_and(|files| files.iter().any(|file| file["id"]==id)) && requested_files(db,string(&reply,"id"))?.iter().any(|file| file["id"]==id && file["deleted"]!=true) {
