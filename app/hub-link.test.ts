@@ -250,6 +250,28 @@ test('foreign project and forged signed hub frames never reach local engine', as
     assert.equal(f.calls, 0);
 });
 test('local owner endpoints require exact Origin and refuse bearer callers; unenrolled app stays idle', async (t) => { const f = await fixture(t), node = await f.node('Boundary', f.alice); const r = await fetch(node.app.origin + '/api/hub-link', { headers: { Origin: 'https://foreign.test', Connection: 'close' } }); assert.equal(r.status, 403); const bearer = await fetch(node.app.origin + '/api/hub-link', { headers: { Origin: node.app.origin, Authorization: 'Bearer rejected', Connection: 'close' } }); assert.equal(bearer.status, 403); assert.equal(f.calls, 0); await api(node.app, '/api/hub-link/revoke', {}); await until(() => f.a.one('SELECT status FROM nodes WHERE id=?', node.nodeId)!.status === 'revoked'); assert.equal(node.app.hubLink!.status().disabled, true); });
+test('node revocation drains its signed frame before closing transport', async t => {
+    const f = await fixture(t), node = await f.node('Delayed revoke', f.alice);
+    const original = WebSocket.prototype.send;
+    let delayed = false;
+    WebSocket.prototype.send = function(data: any, ...args: any[]) {
+        const wire = typeof data === 'string' ? JSON.parse(data) : undefined;
+        if (wire?.body?.kind === 'node.revoke') {
+            delayed = true;
+            setTimeout(() => {
+                if (this.readyState === WebSocket.OPEN) Reflect.apply(original, this, [data, ...args]);
+            }, 50);
+            return;
+        }
+        return Reflect.apply(original, this, [data, ...args]);
+    };
+    t.after(() => { WebSocket.prototype.send = original; });
+    await api(node.app, '/api/hub-link/revoke', {});
+    assert(delayed);
+    await until(() => f.a.one('SELECT status FROM nodes WHERE id=?', node.nodeId)!.status === 'revoked');
+    assert.equal(node.app.hubLink!.status().disabled, true);
+    assert.equal(f.calls, 0);
+});
 async function childApp(options: Record<string, unknown>, keys: Map<string, string>, localOrigin: string, clock: number) {
     const code = `import {request} from 'node:http'; import WebSocket from 'ws'; import {startApp} from ${JSON.stringify(new URL('./server.ts', import.meta.url).href)};process.on('message',async message=>{try{const keys=new Map(message.keys), origin=message.options.hubLink.origin, host=new URL(origin).host;
 const hubFetch=(url,init)=>new Promise((resolve,reject)=>{const req=request(message.localOrigin+new URL(url).pathname,{method:init.method,headers:{...init.headers,Host:host}},res=>{const chunks=[];res.on('data',c=>chunks.push(c));res.on('end',()=>resolve(new Response(Buffer.concat(chunks),{status:res.statusCode})));});req.on('error',reject);req.end(init.body);});

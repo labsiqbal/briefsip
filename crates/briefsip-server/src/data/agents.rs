@@ -672,6 +672,18 @@ pub fn delete(
         if table(db,"workflow_runs")? && exists(db,"SELECT 1 FROM workflow_runs WHERE agent=? AND status NOT IN('done','failed','cancelled')",[id])? || exists(db,"SELECT 1 FROM room_discussions r JOIN turns t ON t.channel IS NOT NULL AND(t.id=r.root OR t.id IN(SELECT turn FROM room_turns WHERE root=r.root)) WHERE(r.lead=? OR EXISTS(SELECT 1 FROM json_each(r.members) WHERE value=?)) AND(t.status IN('queued','running') OR t.paused=1) LIMIT 1",[id,id])? {
             return Err(error(409,"Stop or finish agent work before deleting."));
         }
+        for grant in all(
+            db,
+            "SELECT project_id,participation_id,value FROM hub_link_grants WHERE json_extract(value,'$.localAgentId')=? UNION ALL SELECT project_id,participation_id,json_extract(value,'$.grant') AS value FROM hub_link_requests WHERE json_extract(value,'$.grant.localAgentId')=?",
+            [id, id],
+        )? {
+            let value: Value = serde_json::from_str(string(&grant, "value")).map_err(|_| Failure::storage())?;
+            let revision = value["revision"].as_i64().filter(|revision| *revision > 0).ok_or_else(Failure::storage)?;
+            db.execute(
+                    "INSERT INTO hub_link_withdrawals(project_id,participation_id,revision) VALUES(?,?,?) ON CONFLICT(project_id,participation_id) DO UPDATE SET revision=excluded.revision",
+                    rusqlite::params![string(&grant, "project_id"), string(&grant, "participation_id"), revision],
+            )?;
+        }
         super::deletion::remove(db, id)?;
     }
     Ok(json!({"deleted":true}))

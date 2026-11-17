@@ -59,7 +59,6 @@ for(const pdf of [false,true]) test(`requester reads returned teammate ${pdf?'PD
   let started!:()=>void;const spawned=new Promise<void>(resolve=>{started=resolve;});
   try{
    if(pdf){
-    assert.notEqual(process.env.BRIEFSIP_TEST_SERVER,'rust','not ported: PDF parser cancellation uses Node child_process.spawn; Rust child requires harness/MCP fixture bridge (lane 2f).');
     childProcess.spawn=((...args:Parameters<typeof childProcess.spawn>)=>{const child=originalSpawn(...args);if(args[0]==='/usr/bin/bwrap'){frozen=child;child.kill('SIGSTOP');started();}return child;}) as typeof childProcess.spawn;syncBuiltinESMExports();
     hold=false;release?.();await spawned;
    }

@@ -18,10 +18,16 @@ pub fn initialize(database: &Database) -> crate::db::Result<()> {
     db.execute_batch("BEGIN IMMEDIATE")?;
     let result = (|| -> crate::db::Result<()> {
         db.execute_batch("CREATE TABLE IF NOT EXISTS channel_members(channel TEXT NOT NULL REFERENCES channels(id),agent TEXT NOT NULL REFERENCES agents(id),PRIMARY KEY(channel,agent)) STRICT;")?;
+        let legacy_activity = !all(db, "PRAGMA table_info(channels)", [])
+            .map_err(|_| "Cannot read channel columns")?
+            .iter()
+            .any(|column| column["name"] == "activity");
         for (table, cols) in [
             (
                 "channels",
                 vec![
+                    ("revision", "INTEGER NOT NULL DEFAULT 1"),
+                    ("archived", "INTEGER NOT NULL DEFAULT 0"),
                     ("activity", "INTEGER NOT NULL DEFAULT 0"),
                     ("read_position", "INTEGER NOT NULL DEFAULT 0"),
                 ],
@@ -96,6 +102,28 @@ pub fn initialize(database: &Database) -> crate::db::Result<()> {
                         .to_string()
                 ],
             )?;
+        }
+        for c in all(
+            db,
+            "SELECT * FROM channels WHERE id NOT IN(SELECT id FROM channel_creations)",
+            [],
+        )
+        .map_err(|_| "Cannot read channel creations")?
+        {
+            let members = all(
+                db,
+                "SELECT agent FROM channel_members WHERE channel=? ORDER BY agent",
+                [string(&c, "id")],
+            )
+            .map_err(|_| "Cannot read channel members")?
+            .into_iter()
+            .map(|member| member["agent"].clone())
+            .collect::<Vec<_>>();
+            db.execute("INSERT INTO channel_creations VALUES(?,?)", rusqlite::params![string(&c, "id"),
+                json!({"name":c["name"],"instructions":c["instructions"],"members":members,"lead":c["lead"]}).to_string()])?;
+        }
+        if legacy_activity {
+            db.execute_batch("UPDATE channels SET activity=(SELECT count(*) FROM turns WHERE channel=channels.id)")?;
         }
         projects::migrate(db, crate::config::now()).map_err(|_| "Project migration failed")?;
         delivery::migrate(db, crate::config::now()).map_err(|_| "Conversation migration failed")?;

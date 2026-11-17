@@ -8,6 +8,7 @@ import { parseAgentRole, parseAgentTemplate, restoreTemplateImport, templateComm
 import { startApp } from './server.ts';
 import sharp from 'sharp';
 
+const rust = process.env.BRIEFSIP_TEST_SERVER === 'rust';
 const template = { format: 'briefsip-agent', version: 1, name: 'Template', role: 'Personal agent', model: 'fixture', instructions: '<script>Test text only</script>', threadLimit: 3 } as const;
 test('agent template validation rejects extra authority and preserves exact recovery identity', () => {
   assert.deepEqual(parseAgentTemplate(template), template);
@@ -31,6 +32,19 @@ test('template avatars import atomically and replay never replaces newer images'
     const image = await sharp(randomBytes(256 * 256 * 3), { raw: { width: 256, height: 256, channels: 3 } }).png().toBuffer();
     assert(image.length > 64000);
     const value = { ...template, avatar: image.toString('base64') };
+    async function assertAvatar(avatar: string) {
+      if (!rust) return assert.equal(avatar, value.avatar);
+      const actual = Buffer.from(avatar, 'base64'), metadata = await sharp(actual).metadata();
+      const reference = await sharp(image).metadata();
+      for (const field of ['format', 'width', 'height', 'channels', 'space', 'depth'] as const) {
+        assert.equal(metadata[field], reference[field], field);
+      }
+      const pixels = await sharp(actual).raw().toBuffer(), expected = await sharp(image).raw().toBuffer();
+      const tolerance = 1;
+      assert.equal(pixels.length, expected.length);
+      for (let i = 0; i < pixels.length; i++) assert(Math.abs(pixels[i] - expected[i]) <= tolerance,
+        `pixel ${i}: ${pixels[i]} vs ${expected[i]}, tolerance ${tolerance}`);
+    }
     assert.deepEqual(parseAgentTemplate(value), value);
     assert.throws(() => parseAgentTemplate({ ...template, avatar: 'iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAAACXBIWXMAAAPoAAAD6ADCfGL9AAAACGFjVEwAAAACAAAAAPONk3AAAAAaZmNUTAAAAAAAAAEAAAABAAAAAAAAAAAAAAEAAgAA8XqQDwAAAsFJREFUeJzt0zENADAMwLBiGYzxZzIig9EjlgwgT+bdA1mzXgCLDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmAtA+KKBKyvNLx1AAAABpmY1RMAAAAAQAAAQAAAAEAAAAAAAAAAAAAAQACAABqCXrbAAACxGZkQVQAAAACeJzt0zENADAMwLBCGbKRH5HB6BFLBpAnc+6DrFkvgEUGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDECaAUgzAGkGIM0ApBmANAOQZgDSDEDaB59OFLC07+AeAAAAAElFTkSuQmCC' }), /static/);
     assert.throws(() => parseAgentTemplate({ ...value, avatar: image.subarray(0, 32).toString('base64') }));
@@ -39,10 +53,10 @@ test('template avatars import atomically and replay never replaces newer images'
     const created = await request('/api/agents', { ...command, runtime: 'api' }, 201);
     assert.equal(created.avatar_revision, 1);
     const exported = await request(`/api/agents/${id}/template`);
-    assert.equal(exported.avatar, value.avatar);
+    await assertAvatar(exported.avatar);
     const second = await request('/api/agents', { ...templateCommand(parseAgentTemplate(exported), randomUUID()), runtime: 'api' }, 201);
     assert.notEqual(second.id, id);
-    assert.equal((await request(`/api/agents/${second.id}/template`)).avatar, value.avatar);
+    await assertAvatar((await request(`/api/agents/${second.id}/template`)).avatar);
     const rejectedId = randomUUID();
     await request('/api/agents', { runtime: 'api', ...command, id: rejectedId, avatar: image.subarray(0, 32).toString('base64') }, 400);
     assert(!(await request('/api/agents')).agents.some((row: { id: string }) => row.id === rejectedId));

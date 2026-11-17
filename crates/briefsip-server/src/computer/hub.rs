@@ -2102,7 +2102,7 @@ async fn connection(state: &AppState) -> Result<()> {
             tokio::select!{
                 Some(out)=rx.recv()=>{let Outgoing::Frame(out)=out else{return Err(unavailable());};if fixture{machines::bridge(state,"hub-send",json!({"id":socket_id,"frame":out})).await?;}else if let Some(socket)=socket.as_mut(){socket.send(Message::Text(out.into())).await.map_err(|_|unavailable())?;}},
                 _=interval.tick()=>{
-                    if state.computer.hub.stopped.load(Ordering::Acquire)||state.computer.hub.sender.lock().map_err(|_|Failure::storage())?.is_none()||identity(state)?.is_some_and(|i|i["disabled"]==1){return Ok(());}
+                    if state.computer.hub.stopped.load(Ordering::Acquire)||state.computer.hub.sender.lock().map_err(|_|Failure::storage())?.is_none(){return Ok(());}
                     if fixture{let polled=machines::bridge(state,"hub-poll",json!({"id":socket_id})).await?;for frame in polled["frames"].as_array().into_iter().flatten(){if let Some(body)=incoming(state,frame.as_str().ok_or_else(denied)?,&mut requests,&mut request_snapshot).await?{enqueue(body)?;}}if polled["closed"]==true{return Err(unavailable());}}
                 },
                 frame=async{match socket.as_mut(){Some(s)=>s.next().await,None=>std::future::pending().await}}=>{
