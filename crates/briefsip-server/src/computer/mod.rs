@@ -102,26 +102,43 @@ async fn entry(State(state): State<AppState>, request: Request) -> Response {
     crate::security_headers(&mut response);
     response
 }
-pub fn maintenance(state: AppState) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let interval = state
-            .config
-            .computer
-            .machines
-            .as_ref()
-            .and_then(|m| m.health_interval_ms)
-            .unwrap_or(30000)
-            .max(1);
-        let mut timer = tokio::time::interval_at(
-            tokio::time::Instant::now() + std::time::Duration::from_millis(interval),
-            std::time::Duration::from_millis(interval),
-        );
-        loop {
-            timer.tick().await;
-            let _ = machines::health(&state).await;
-            let _ = state.computer.maintain(state.config.now()).await;
-        }
-    })
+pub fn maintenance(state: AppState) -> Vec<tokio::task::JoinHandle<()>> {
+    let desktop = state.clone();
+    vec![
+        tokio::spawn(async move {
+            let interval = state
+                .config
+                .computer
+                .machines
+                .as_ref()
+                .and_then(|m| m.health_interval_ms)
+                .unwrap_or(30000)
+                .max(1);
+            let mut timer = tokio::time::interval_at(
+                tokio::time::Instant::now() + std::time::Duration::from_millis(interval),
+                std::time::Duration::from_millis(interval),
+            );
+            loop {
+                timer.tick().await;
+                let _ = machines::health(&state).await;
+            }
+        }),
+        tokio::spawn(async move {
+            let interval = desktop
+                .config
+                .computer
+                .desktop
+                .as_ref()
+                .and_then(|d| d.idle_ms)
+                .unwrap_or(900000)
+                .clamp(1, 10000) as u64;
+            let mut timer = tokio::time::interval(std::time::Duration::from_millis(interval));
+            loop {
+                timer.tick().await;
+                let _ = desktop.computer.maintain(desktop.config.now()).await;
+            }
+        }),
+    ]
 }
 
 async fn handle_computer(state: &AppState, request: Request) -> Result<Response> {
