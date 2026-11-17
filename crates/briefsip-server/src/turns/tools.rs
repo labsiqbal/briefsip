@@ -44,6 +44,22 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
         specs.push(json!({"type":"function","function":{"name":"list_provider_accounts","description":"List your configured provider account choices without credentials or endpoint paths. Returns account ID, display name, provider family, origin and default model. Use set_provider_account only after the user requests a switch.","parameters":{"type":"object","properties":{},"additionalProperties":false}}}));
         specs.push(json!({"type":"function","function":{"name":"set_provider_model","description":"Change your own primary or backup model only when the user requests it. Supply current revision from read_provider_settings. Current execution keeps its model.","parameters":{"type":"object","properties":{"revision":{"type":"integer","minimum":1},"model":{"type":"string","maxLength":160},"backupModel":{"type":"string","maxLength":160}},"required":["revision"],"additionalProperties":false}}}));
     }
+    if private
+        && state.computer.enabled
+        && exists(
+            db,
+            "SELECT 1 FROM agent_computers WHERE agent=? AND enabled=1",
+            [string(turn, "agent")],
+        )?
+    {
+        specs.extend(
+            crate::computer::actions::tools(state.computer.width, state.computer.height)
+                .as_array()
+                .ok_or_else(Failure::storage)?
+                .iter()
+                .cloned(),
+        );
+    }
     if turn["profile_setup"] == 1 {
         specs.retain(|t| ["edit_profile", "ask_user"].contains(&string(&t["function"], "name")));
     }
@@ -61,6 +77,41 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
     let name = string(&call["function"], "name");
     if name == "run_shell" {
         return super::shell::run(state, turn, call, args).await;
+    }
+    if name.starts_with("computer_") {
+        if !turn["channel"].is_null() {
+            return Err(error(
+                403,
+                "Computer tools are only available in a private agent conversation.",
+            ));
+        }
+        let (outputs, actions) = {
+            let guard = state.database.lock().map_err(|_| Failure::storage())?;
+            let db = &guard.connection;
+            (
+                db.query_row(
+                    "SELECT count(*) FROM generated_files WHERE turn=?",
+                    [string(turn, "id")],
+                    |r| r.get::<_, i64>(0),
+                )?,
+                db.query_row(
+                    "SELECT count(*) FROM coordination WHERE turn=?",
+                    [string(turn, "id")],
+                    |r| r.get::<_, i64>(0),
+                )?,
+            )
+        };
+        let outcome = crate::computer::control::action(
+            state,
+            string(turn, "agent"),
+            string(turn, "id"),
+            call,
+            &args,
+            outputs,
+            actions,
+        )
+        .await?;
+        return Ok(outcome.result);
     }
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let db = &guard.connection;

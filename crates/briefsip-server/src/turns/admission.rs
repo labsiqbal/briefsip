@@ -453,6 +453,13 @@ fn control(
                     "Answer the task question before resuming or reassigning.",
                 ));
             }
+            crate::computer::control::assert_recoverable(db, id)?;
+            if crate::computer::control::turn_wait(db, id)?.is_some() {
+                return Err(error(
+                    409,
+                    "Hand computer control back or dismiss the request before resuming.",
+                ));
+            }
             conversation(db, kind, owner, &json!({"recipient":t["agent"]}))?;
             db.execute("UPDATE turns SET paused=0,revision=revision+1,status='queued',error=NULL,tool_budget_used=0 WHERE id=?",[id])?;
         }
