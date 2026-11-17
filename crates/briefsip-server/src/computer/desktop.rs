@@ -289,7 +289,7 @@ impl Manager {
                 } else if d.starting.load(Ordering::SeqCst) {
                     "starting"
                 } else if d.busy.load(Ordering::SeqCst) == 0
-                    && now - d.activity.load(Ordering::SeqCst) >= self.idle
+                    && now - d.activity.load(Ordering::SeqCst) >= 1000
                 {
                     "idle"
                 } else {

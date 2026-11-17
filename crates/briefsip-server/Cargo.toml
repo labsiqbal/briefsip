@@ -11,6 +11,8 @@ ring = "0.17"
 axum = { version = "0.8", features = ["http1", "json", "tokio", "ws"] }
 axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
 async-stream = "0.3"
+hyper = { version = "1", features = ["client", "http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 base64 = "0.22"
 jsonwebtoken = "9"
 rusqlite = { version = "0.31", features = ["bundled", "functions", "backup", "hooks"] }

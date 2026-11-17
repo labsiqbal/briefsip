@@ -5,9 +5,9 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpStream, UnixListener, UnixStream},
-    sync::watch,
+    io::copy_bidirectional,
+    net::{TcpStream, UnixListener},
+    sync::{watch, Semaphore},
 };
 
 #[derive(Clone, Deserialize)]
@@ -101,119 +101,224 @@ pub fn serve(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let fixture = Arc::new(fixture);
+        let slots = Arc::new(Semaphore::new(128));
         loop {
-            tokio::select! {_=stop.changed()=>break,accepted=listener.accept()=>{let Ok((socket,_))=accepted else{break;};let fixture=fixture.clone();let mut stopped=stop.clone();tokio::spawn(async move{tokio::select!{_=stopped.changed()=>{},_=handle(socket,fixture.as_ref().as_ref())=>{}}});}}
+            tokio::select! {
+                _ = stop.changed() => break,
+                accepted = listener.accept() => {
+                    let Ok((socket,_)) = accepted else { break; };
+                    let Ok(slot) = slots.clone().try_acquire_owned() else { continue; };
+                    let fixture = fixture.clone();
+                    let mut stopped = stop.clone();
+                    tokio::spawn(async move {
+                        let slot = Arc::new(slot);
+                        let shutdown = stopped.clone();
+                        let service = hyper::service::service_fn(move |request| {
+                            let fixture = fixture.clone();
+                            let shutdown = shutdown.clone();
+                            let slot = slot.clone();
+                            async move {
+                                Ok::<_, std::convert::Infallible>(handle(request, fixture, shutdown, slot).await.unwrap_or_else(|_| {
+                                    response(502, "Proxy connection failed")
+                                }))
+                            }
+                        });
+                        let connection = hyper::server::conn::http1::Builder::new()
+                            .max_buf_size(16384).serve_connection(hyper_util::rt::TokioIo::new(socket),service).with_upgrades();
+                        tokio::select! { _ = stopped.changed() => {}, _ = tokio::time::timeout(Duration::from_secs(60),connection) => {} }
+                    });
+                }
+            }
         }
     })
 }
-async fn handle(mut client: UnixStream, fixture: Option<&TestTarget>) -> std::io::Result<()> {
-    let operation = async {
-        let mut bytes = Vec::new();
-        let mut byte = [0];
-        while !bytes.ends_with(b"\r\n\r\n") {
-            if bytes.len() >= 16384 {
-                return Err(std::io::ErrorKind::InvalidData.into());
-            }
-            client.read_exact(&mut byte).await?;
-            bytes.push(byte[0]);
-        }
-        let header = String::from_utf8_lossy(&bytes);
-        let mut lines = header.split("\r\n");
-        let first = lines
-            .next()
+fn response(status: u16, body: &'static str) -> hyper::Response<axum::body::Body> {
+    let mut response = hyper::Response::new(axum::body::Body::from(body));
+    *response.status_mut() =
+        hyper::StatusCode::from_u16(status).unwrap_or(hyper::StatusCode::BAD_GATEWAY);
+    response.headers_mut().insert(
+        "content-type",
+        hyper::header::HeaderValue::from_static("text/plain"),
+    );
+    response.headers_mut().insert(
+        "connection",
+        hyper::header::HeaderValue::from_static("close"),
+    );
+    response
+}
+fn strip_headers(headers: &mut hyper::HeaderMap) {
+    let names = headers
+        .get("connection")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .split(',')
+        .map(|v| v.trim().to_owned())
+        .collect::<Vec<_>>();
+    for name in names.iter().map(String::as_str).chain([
+        "connection",
+        "proxy-connection",
+        "proxy-authorization",
+        "proxy-authenticate",
+        "keep-alive",
+        "upgrade",
+        "te",
+        "trailer",
+        "transfer-encoding",
+    ]) {
+        headers.remove(name);
+    }
+}
+async fn handle(
+    mut request: hyper::Request<hyper::body::Incoming>,
+    fixture: Arc<Option<TestTarget>>,
+    mut stop: watch::Receiver<bool>,
+    slot: Arc<tokio::sync::OwnedSemaphorePermit>,
+) -> std::io::Result<hyper::Response<axum::body::Body>> {
+    let connect = request.method() == hyper::Method::CONNECT;
+    let url = url::Url::parse(&if connect {
+        format!("https://{}/", request.uri())
+    } else {
+        request.uri().to_string()
+    });
+    let (url, address) = if let Ok(url) = url {
+        let host = url
+            .host_str()
             .unwrap_or("")
-            .split_whitespace()
-            .collect::<Vec<_>>();
-        if first.len() != 3 {
-            return Err(std::io::ErrorKind::InvalidData.into());
-        }
-        let connect = first[0] == "CONNECT";
-        let url = if connect {
-            url::Url::parse(&format!("https://{}/", first[1]))
+            .trim_matches(['[', ']'])
+            .trim_end_matches('.')
+            .to_ascii_lowercase();
+        let address = if url.username().is_empty()
+            && url.password().is_none()
+            && (connect && url.scheme() == "https" || !connect && url.scheme() == "http")
+        {
+            target(
+                &host,
+                url.port_or_known_default().unwrap_or(0),
+                fixture.as_ref().as_ref(),
+            )
+            .await
         } else {
-            url::Url::parse(first[1])
+            None
         };
-        let (url, address) = if let Ok(url) = url {
-            let host = url.host_str().unwrap_or("").trim_matches(['[', ']']);
-            let port = url.port_or_known_default().unwrap_or(0);
-            let addr = if url.username().is_empty()
-                && url.password().is_none()
-                && (connect && url.scheme() == "https" || !connect && url.scheme() == "http")
-            {
-                target(host, port, fixture).await
-            } else {
-                None
-            };
-            (Some(url), addr)
-        } else {
-            (None, None)
-        };
-        let (Some(url), Some(address)) = (url, address) else {
-            client.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 20\r\nConnection: close\r\n\r\nProxy request denied").await?;
-            return Ok(());
-        };
-        let mut upstream = TcpStream::connect(address).await?;
-        if connect {
-            client
-                .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-                .await?;
-        } else {
-            let mut head = format!(
-                "{} {}{} HTTP/1.1\r\n",
-                first[0],
-                url.path(),
-                url.query().map(|v| format!("?{v}")).unwrap_or_default()
-            );
-            let connections = lines
-                .clone()
-                .filter_map(|l| l.split_once(':'))
-                .find(|(k, _)| k.eq_ignore_ascii_case("connection"))
-                .map(|(_, v)| {
-                    v.split(',')
-                        .map(|s| s.trim().to_ascii_lowercase())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            for line in lines {
-                if let Some((name, _)) = line.split_once(':') {
-                    let name = name.to_ascii_lowercase();
-                    if ![
-                        "host",
-                        "connection",
-                        "proxy-connection",
-                        "proxy-authorization",
-                        "proxy-authenticate",
-                        "keep-alive",
-                        "upgrade",
-                        "te",
-                        "trailer",
-                        "transfer-encoding",
-                    ]
-                    .contains(&name.as_str())
-                        && !connections.contains(&name)
-                    {
-                        head.push_str(line);
-                        head.push_str("\r\n");
-                    }
+        (Some(url), address)
+    } else {
+        (None, None)
+    };
+    let (Some(url), Some(address)) = (url, address) else {
+        return Ok(response(403, "Proxy request denied"));
+    };
+    let mut upstream =
+        tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(address)).await??;
+    if connect {
+        let upgraded = hyper::upgrade::on(&mut request);
+        tokio::spawn(async move {
+            let _slot = slot;
+            if let Ok(connection) = upgraded.await {
+                let mut client = hyper_util::rt::TokioIo::new(connection);
+                tokio::select! {
+                    _ = stop.changed() => {},
+                    _ = tokio::time::timeout(Duration::from_secs(60),copy_bidirectional(&mut client, &mut upstream)) => {}
                 }
             }
-            let host = url.host_str().unwrap_or("");
-            head.push_str(&format!(
-                "Host: {host}{}\r\nConnection: close\r\n\r\n",
-                url.port().map(|p| format!(":{p}")).unwrap_or_default()
-            ));
-            upstream.write_all(head.as_bytes()).await?;
-        }
-        tokio::io::copy_bidirectional(&mut client, &mut upstream).await?;
-        Ok(())
-    };
-    tokio::time::timeout(Duration::from_secs(120), operation)
+        });
+        return Ok(hyper::Response::new(axum::body::Body::empty()));
+    }
+    let path = format!(
+        "{}{}",
+        url.path(),
+        url.query().map(|q| format!("?{q}")).unwrap_or_default()
+    );
+    *request.uri_mut() = path.parse().map_err(|_| std::io::ErrorKind::InvalidData)?;
+    strip_headers(request.headers_mut());
+    let host = format!(
+        "{}{}",
+        url.host_str().unwrap_or(""),
+        url.port().map(|p| format!(":{p}")).unwrap_or_default()
+    );
+    request.headers_mut().insert(
+        "host",
+        host.parse().map_err(|_| std::io::ErrorKind::InvalidData)?,
+    );
+    request.headers_mut().insert(
+        "connection",
+        hyper::header::HeaderValue::from_static("close"),
+    );
+    let (mut sender, connection) =
+        hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(upstream))
+            .await
+            .map_err(std::io::Error::other)?;
+    tokio::spawn(async move {
+        let _slot = slot;
+        tokio::select! { _ = stop.changed() => {}, _ = tokio::time::timeout(Duration::from_secs(60),connection) => {} }
+    });
+    let mut response = sender
+        .send_request(request)
         .await
-        .unwrap_or_else(|_| Err(std::io::ErrorKind::TimedOut.into()))
+        .map_err(std::io::Error::other)?;
+    strip_headers(response.headers_mut());
+    response.headers_mut().insert(
+        "connection",
+        hyper::header::HeaderValue::from_static("close"),
+    );
+    Ok(response.map(axum::body::Body::new))
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn framing_and_checked_connect() -> crate::db::Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let directory =
+            std::env::temp_dir().join(format!("briefsip-proxy-check-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory)?;
+        let upstream = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let port = upstream.local_addr()?.port();
+        let service = axum::Router::new().fallback(|request: axum::extract::Request| async move {
+            let body = axum::body::to_bytes(request.into_body(), 1024)
+                .await
+                .unwrap_or_default();
+            axum::body::Body::from(body)
+        });
+        let upstream_task = tokio::spawn(async move { axum::serve(upstream, service).await });
+        let path = directory.join("proxy.sock");
+        let (stop, stopped) = watch::channel(false);
+        let proxy = serve(
+            UnixListener::bind(&path)?,
+            Some(TestTarget {
+                hostname: "public.test".into(),
+                port,
+                https_port: None,
+            }),
+            stopped,
+        );
+        let mut client = tokio::net::UnixStream::connect(&path).await?;
+        client.write_all(format!("POST http://public.test:{port}/ HTTP/1.1\r\nHost: attacker.invalid\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\nabc\r\n0\r\n\r\n").as_bytes()).await?;
+        let mut response = Vec::new();
+        tokio::time::timeout(Duration::from_secs(3), client.read_to_end(&mut response)).await??;
+        assert!(response.starts_with(b"HTTP/1.1 200"));
+        assert!(response.ends_with(b"abc"));
+        let mut tunnel = tokio::net::UnixStream::connect(&path).await?;
+        tunnel
+            .write_all(
+                format!("CONNECT public.test:{port} HTTP/1.1\r\nHost: public.test\r\n\r\n")
+                    .as_bytes(),
+            )
+            .await?;
+        let mut head = Vec::new();
+        while !head.ends_with(b"\r\n\r\n") {
+            head.push(tunnel.read_u8().await?);
+        }
+        assert!(head.starts_with(b"HTTP/1.1 200"));
+        tunnel.write_all(b"POST / HTTP/1.1\r\nHost: public.test\r\nContent-Length: 3\r\nConnection: close\r\n\r\nxyz").await?;
+        response.clear();
+        tokio::time::timeout(Duration::from_secs(3), tunnel.read_to_end(&mut response)).await??;
+        assert!(response.ends_with(b"xyz"));
+        let _ = stop.send(true);
+        proxy.await?;
+        upstream_task.abort();
+        std::fs::remove_dir_all(directory)?;
+        Ok(())
+    }
     #[test]
     fn private_ranges_and_mapped_forms() {
         for ip in [

@@ -213,6 +213,8 @@ dependencies = [
  "axum-server",
  "base64 0.22.1",
  "getrandom 0.2.17",
+ "hyper",
+ "hyper-util",
  "image",
  "jsonwebtoken",
  "regex",
