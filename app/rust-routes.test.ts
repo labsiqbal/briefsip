@@ -38,6 +38,8 @@ test('Rust route inventory stays within Node matchers and reports ported coverag
   const rust = readdirSync(src, { recursive: true }).filter(name => String(name).endsWith('.rs')).map(name => readFileSync(new URL(String(name), src), 'utf8')).join('\n');
   const routes = [...rust.matchAll(/\.route\(\s*"([^"\n]+)"/g)].map(match => match[1]);
   assert(routes.length > 0);
+  const duplicates = routes.filter((route, index) => routes.indexOf(route) !== index);
+  assert.deepEqual(duplicates, [], `Rust routes registered twice: ${duplicates.join(', ')}`);
   const id = '00000000-0000-4000-8000-000000000001';
   const ported = new Set<string>();
   for (const route of routes) {

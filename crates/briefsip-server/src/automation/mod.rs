@@ -1,4 +1,3 @@
-mod calendar;
 mod flows;
 pub mod options;
 mod routines;
@@ -65,7 +64,6 @@ pub fn routes() -> Router<AppState> {
         .route("/api/routines", any(entry))
         .route("/api/routine-schedule", any(entry))
         .route("/api/agents/{id}/routines", any(entry))
-        .route("/api/agents/{id}/routines/calendar.ics", any(entry))
         .route("/api/routines/{id}/edit", any(entry))
         .route("/api/routines/{id}/delete", any(entry))
         .route("/api/routines/{id}/test", any(entry))
@@ -160,9 +158,6 @@ async fn local(state: &AppState, request: Request) -> Result<Response> {
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let db = &guard.connection;
     let p: Vec<_> = path.split('/').skip(1).collect();
-    if method == Method::GET && p.last() == Some(&"calendar.ics") {
-        return calendar::export(db, p[2], state.config.now());
-    }
     if method == Method::GET && path == "/api/routine-schedule" {
         return Ok(crate::json_response(
             200,

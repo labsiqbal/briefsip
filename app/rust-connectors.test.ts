@@ -254,7 +254,8 @@ test('Rust calendar matches Node bytes for folding, escaping, intervals and IANA
   ];
   const db = new DatabaseSync(database);
   try {
-    db.exec('ALTER TABLE routines ADD COLUMN schedule_json TEXT; ALTER TABLE routines ADD COLUMN schedule_zone TEXT');
+    const columns = new Set(db.prepare('PRAGMA table_info(routines)').all().map(row => String(row.name)));
+    for (const column of ['schedule_json', 'schedule_zone']) if (!columns.has(column)) db.exec(`ALTER TABLE routines ADD COLUMN ${column} TEXT`);
     for (const row of entries) db.prepare("INSERT INTO routines(id,agent,name,next_at,interval_ms,revision,schedule_json,schedule_zone,prompt,enabled,trigger) VALUES(?,?,?,?,?,?,?,?,'Fixture',1,'schedule')").run(row.id, agent, row.name, row.next_at, row.interval_ms, row.revision, 'schedule' in row ? JSON.stringify(row.schedule) : null, 'zone' in row ? row.zone : null);
     const calendar = await fetch(app.origin + `/api/agents/${agent}/routines/calendar.ics`);
     assert.equal(calendar.status, 200); assert.equal(calendar.headers.get('content-type'), 'text/calendar; charset=utf-8');
