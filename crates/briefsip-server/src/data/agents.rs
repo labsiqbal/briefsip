@@ -1,7 +1,6 @@
 use super::*;
 use axum::response::IntoResponse;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use image::ImageDecoder;
 use rusqlite::OptionalExtension;
 use std::{io::Cursor, os::unix::fs::PermissionsExt, path::PathBuf};
 
@@ -426,7 +425,7 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
     )?;
     Ok(updated)
 }
-pub fn visibility(_state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Value> {
+pub fn visibility(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Value> {
     if !v["hidden"].is_boolean() || !integer(&v["revision"], 0, 9_007_199_254_740_991) {
         return Err(error(400, "Invalid agent status."));
     }
@@ -457,6 +456,22 @@ pub fn visibility(_state: &AppState, db: &Connection, id: &str, v: &Value) -> Re
             409,
             "Agent status changed. Reload before trying again.",
         ));
+    }
+    if v["hidden"] == false && current.as_ref().is_some_and(|r| r["hidden"] == 1) {
+        let now = state.config.now();
+        if table(db, "routines")? {
+            db.execute("INSERT OR IGNORE INTO agent_visibility_skips SELECT agent,id,next_at,CASE WHEN interval_ms IS NULL THEN 0 ELSE CAST((?-next_at)/interval_ms AS INTEGER) END FROM routines WHERE agent=? AND enabled=1 AND trigger='schedule' AND next_at<=?", rusqlite::params![now,id,now])?;
+            db.execute("UPDATE routines SET enabled=CASE WHEN interval_ms IS NULL THEN 0 ELSE enabled END,next_at=CASE WHEN interval_ms IS NULL THEN next_at ELSE next_at+(CAST((?-next_at)/interval_ms AS INTEGER)+1)*interval_ms END,revision=revision+1 WHERE agent=? AND enabled=1 AND trigger='schedule' AND next_at<=?",rusqlite::params![now,id,now])?;
+        }
+        if table(db, "workflow_schedules")? && table(db, "workflows")? {
+            for row in all(db,"SELECT workflow_schedules.* FROM workflow_schedules JOIN workflows ON workflows.id=workflow_schedules.workflow WHERE workflows.agent=? AND enabled=1 AND next_at<=?",rusqlite::params![id,now])? {
+                let at = row["next_at"].as_i64().ok_or_else(Failure::storage)?;
+                let interval = row["interval_ms"].as_i64();
+                let missed = interval.filter(|i| *i > 0).map_or(0, |i| (now-at)/i);
+                db.execute("INSERT OR IGNORE INTO workflow_occurrences VALUES (?,?,NULL,?,'hidden')",rusqlite::params![row["workflow"].as_str(),at,missed])?;
+                db.execute("UPDATE workflow_schedules SET enabled=?,next_at=?,revision=revision+1 WHERE workflow=?",rusqlite::params![interval.is_some() as i64,interval.map_or(at, |i|at+(missed+1)*i),row["workflow"].as_str()])?;
+            }
+        }
     }
     db.execute("INSERT INTO agent_visibility VALUES(?,?,?) ON CONFLICT(agent) DO UPDATE SET hidden=excluded.hidden,revision=excluded.revision",rusqlite::params![id,(v["hidden"]==true)as i64,revision+1])?;
     let result = json!({"hidden":v["hidden"],"revision":revision+1});
@@ -578,29 +593,108 @@ pub(super) fn normalize(bytes: &[u8]) -> Result<Vec<u8>> {
     {
         return Err(failed());
     }
-    let mut decoder = image::ImageReader::new(Cursor::new(bytes))
-        .with_guessed_format()
-        .map_err(|_| failed())?
-        .into_decoder()
+    use libvips::{ops, VipsApp, VipsImage};
+    static VIPS: std::sync::OnceLock<std::result::Result<VipsApp, String>> =
+        std::sync::OnceLock::new();
+    let app = VIPS
+        .get_or_init(|| {
+            let app = VipsApp::new("briefsip-avatar", false).map_err(|e| e.to_string())?;
+            app.cache_set_max(0);
+            app.concurrency_set(1);
+            Ok(app)
+        })
+        .as_ref()
         .map_err(|_| failed())?;
-    let orientation = decoder.orientation().map_err(|_| failed())?;
-    let mut image = image::DynamicImage::from_decoder(decoder).map_err(|_| failed())?;
-    image.apply_orientation(orientation);
-    if width == 256
-        && height == 256
-        && bytes.starts_with(b"\x89PNG\r\n\x1a\n")
-        && !bytes
-            .windows(4)
-            .any(|w| w == b"eXIf" || w == b"iCCP" || w == b"tEXt" || w == b"zTXt" || w == b"iTXt")
-    {
-        return Ok(bytes.to_vec());
-    }
-    let image = image.resize_to_fill(256, 256, image::imageops::FilterType::Lanczos3);
-    let mut out = Cursor::new(Vec::new());
-    image
-        .write_to(&mut out, image::ImageFormat::Png)
-        .map_err(|_| failed())?;
-    Ok(out.into_inner())
+    app.error_clear();
+    let normalized = (|| -> libvips::Result<Vec<u8>> {
+        let mut image = VipsImage::new_from_buffer(bytes, "[fail-on=warning]")?;
+        if image.get_n_pages() > 1 {
+            return Err(libvips::error::Error::IOError("Animated image"));
+        }
+        let shrink = f64::from(width.min(height)) / 256.0;
+        if bytes.starts_with(&[255, 216]) {
+            let mut factor = if shrink >= 8.0 {
+                8
+            } else if shrink >= 4.0 {
+                4
+            } else if shrink >= 2.0 {
+                2
+            } else {
+                1
+            };
+            if factor > 1 && shrink as i32 == factor {
+                factor /= 2;
+            }
+            if factor > 1 {
+                image = VipsImage::new_from_buffer(
+                    bytes,
+                    &format!("[shrink={factor},fail-on=warning]"),
+                )?;
+            }
+        } else if bytes.starts_with(b"RIFF") && shrink > 1.0 {
+            image = VipsImage::new_from_buffer(
+                bytes,
+                &format!("[scale={},fail-on=warning]", 1.0 / shrink),
+            )?;
+        }
+        let interpretation = image.get_interpretation()?;
+        if image.get_as_string("icc-profile-data").is_ok()
+            || matches!(interpretation, ops::Interpretation::Cmyk)
+        {
+            image = ops::icc_transform_with_opts(
+                &image,
+                if matches!(interpretation, ops::Interpretation::Rgb16) {
+                    "p3"
+                } else {
+                    "srgb"
+                },
+                &ops::IccTransformOptions {
+                    embedded: true,
+                    input_profile: (matches!(interpretation, ops::Interpretation::Cmyk))
+                        .then(|| "cmyk".into()),
+                    depth: if matches!(interpretation, ops::Interpretation::Rgb16) {
+                        16
+                    } else {
+                        8
+                    },
+                    intent: ops::Intent::Perceptual,
+                    ..Default::default()
+                },
+            )?;
+        }
+        let scale = 256.0 / f64::from(image.get_width().min(image.get_height()));
+        let format = image.get_format()?;
+        let premultiplied = image.image_hasalpha() && scale != 1.0;
+        if premultiplied {
+            image = ops::cast(&ops::premultiply(&image)?, format)?;
+        }
+        if scale != 1.0 {
+            image = ops::resize_with_opts(
+                &image,
+                scale,
+                &ops::ResizeOptions {
+                    vscale: scale,
+                    kernel: ops::Kernel::Lanczos3,
+                    ..Default::default()
+                },
+            )?;
+        }
+        image = ops::autorot(&image)?;
+        image = ops::extract_area(
+            &image,
+            (image.get_width() - 255) / 2,
+            (image.get_height() - 255) / 2,
+            256,
+            256,
+        )?;
+        if premultiplied {
+            image = ops::cast(&ops::unpremultiply(&image)?, format)?;
+        }
+        image = ops::colourspace(&image, ops::Interpretation::Srgb)?;
+        image.image_write_to_buffer(".png[keep=none,compression=6,filter=none]")
+    })();
+    app.error_clear();
+    normalized.map_err(|_| failed())
 }
 pub fn avatar_save(db: &Connection, id: &str, v: &Value) -> Result<Value> {
     read(db, id)?;
@@ -686,4 +780,50 @@ pub fn delete(
         super::deletion::remove(db, id)?;
     }
     Ok(json!({"deleted":true}))
+}
+
+pub fn scripts(state: &AppState, db: &Connection, id: &str, v: &Value, get: bool) -> Result<Value> {
+    read(db, id)?;
+    let current = one(
+        db,
+        "SELECT enabled,revision FROM script_permissions WHERE agent=?",
+        [id],
+    )?
+    .unwrap_or(json!({"enabled":0,"revision":0}));
+    if get {
+        let mut result = current;
+        result["configured"] = json!(state.config.remaining_data.script_token.is_some());
+        return Ok(result);
+    }
+    if !integer(&v["revision"], 0, 9_007_199_254_740_991) || !v["enabled"].is_boolean() {
+        return Err(error(400, "Invalid script permission."));
+    }
+    let request = json!({"path":format!("/api/agents/{id}/scripts"),"enabled":v["enabled"],"revision":v["revision"]});
+    if let Some(old) = receipt(
+        db,
+        "script_commands",
+        string(v, "id"),
+        &request,
+        "ID was already used for a different change.",
+    )? {
+        return Ok(old);
+    }
+    if current["revision"] != v["revision"] {
+        return Err(error(
+            409,
+            "Script permission changed. Reload before saving.",
+        ));
+    }
+    if v["enabled"] == true && state.config.remaining_data.script_token.is_none() {
+        return Err(error(
+            409,
+            "Script token is not configured on the server yet.",
+        ));
+    }
+    let revision = current["revision"].as_i64().ok_or_else(Failure::storage)? + 1;
+    let enabled = i64::from(v["enabled"] == true);
+    db.execute("INSERT INTO script_permissions VALUES (?,?,?) ON CONFLICT(agent) DO UPDATE SET enabled=excluded.enabled,revision=excluded.revision", rusqlite::params![id,enabled,revision])?;
+    let result = json!({"enabled":enabled,"revision":revision});
+    save_receipt(db, "script_commands", string(v, "id"), &request, &result)?;
+    Ok(result)
 }

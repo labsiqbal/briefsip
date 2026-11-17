@@ -199,15 +199,21 @@ pub fn read(root: &Path, listing: bool, args: &[(String, String)]) -> Result<Val
     if parameter(args, "digest").is_some_and(|d| d != digest) {
         return Err(error(409,"File changed since the previous page. Reload from the start to read the latest version."));
     }
-    let units: Vec<u16> = text.encode_utf16().collect();
-    let page = String::from_utf16_lossy(
-        units
-            .get(offset..std::cmp::min(offset.saturating_add(8000), units.len()))
-            .unwrap_or(&[]),
-    );
+    let length = text.encode_utf16().count();
     Ok(
-        json!({"path":path,"digest":digest,"text":page,"next_offset":if offset.saturating_add(8000)<units.len(){Some(offset+8000)}else{None}}),
+        json!({"path":path,"digest":digest,"text":text,"next_offset":if offset.saturating_add(8000)<length{Some(offset+8000)}else{None}}),
     )
+}
+pub(super) fn response(root: &Path, listing: bool, args: &[(String, String)]) -> Result<Response> {
+    let value = read(root, listing, args)?;
+    if listing {
+        return Ok(json_response(200, value));
+    }
+    let offset = parameter(args, "offset")
+        .unwrap_or("0")
+        .parse::<usize>()
+        .map_err(|_| unavailable())?;
+    Ok(crate::data::wire::workspace(&value, offset))
 }
 pub async fn handle(state: &AppState, req: Request, parts: &[&str]) -> Result<Response> {
     if req.method() != Method::GET {
@@ -259,8 +265,5 @@ pub async fn handle(state: &AppState, req: Request, parts: &[&str]) -> Result<Re
         let (name,bytes)=download(&binding.directory,parameter(&args,"path").unwrap_or("")).map_err(|_|error(400,"Cannot download the file. Download limit is 10 MiB; directories, links, and special files are unsupported."))?;
         return Ok(attachments::download(&name, bytes));
     }
-    Ok(json_response(
-        200,
-        read(&binding.directory, kind == "entries", &args)?,
-    ))
+    response(&binding.directory, kind == "entries", &args)
 }

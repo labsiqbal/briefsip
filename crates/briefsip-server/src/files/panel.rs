@@ -27,16 +27,22 @@ fn condition(kind: &str) -> &'static str {
 fn scope(state: &AppState, kind: &str, id: &str) -> Result<Scope> {
     let db = state.database.lock().map_err(|_| Failure::storage())?;
     let db = &db.connection;
-    scope_db(state, db, kind, id)
+    scope_db(state, db, kind, id, None)
 }
-fn scope_db(state: &AppState, db: &Connection, kind: &str, id: &str) -> Result<Scope> {
+fn scope_db(
+    state: &AppState,
+    db: &Connection,
+    kind: &str,
+    id: &str,
+    turn_agent: Option<&str>,
+) -> Result<Scope> {
     let current = context(db, kind, id)?;
     let mut agent = if kind == "agents" {
         Some(id.to_owned())
     } else if kind == "threads" {
         Some(text(&current, "agent").to_owned())
     } else {
-        None
+        turn_agent.map(str::to_owned)
     };
     let project = if kind == "threads" && table(db, "local_project_threads")? {
         one(
@@ -71,7 +77,7 @@ fn scope_db(state: &AppState, db: &Connection, kind: &str, id: &str) -> Result<S
             "SELECT agent,write FROM local_project_members WHERE project=? ORDER BY rowid",
             [p],
         )?;
-        if kind == "channels" {
+        if kind == "channels" && agent.is_none() {
             let channel = rows(
                 db,
                 "SELECT agent FROM channel_members WHERE channel=?",
@@ -124,6 +130,38 @@ fn scope_db(state: &AppState, db: &Connection, kind: &str, id: &str) -> Result<S
         workspace,
     })
 }
+pub(super) fn binding_for_turn(
+    state: &AppState,
+    agent: &str,
+    turn: &str,
+) -> Result<Option<WorkspaceConfig>> {
+    let db = state.database.lock().map_err(|_| Failure::storage())?;
+    let row = one(
+        &db.connection,
+        "SELECT agent,channel,thread FROM turns WHERE id=?",
+        [turn],
+    )?;
+    if let Some(row) = row {
+        if row["agent"] != agent {
+            return Err(error(404, "Checkpoint not found."));
+        }
+        if let Some(thread) = row["thread"].as_str() {
+            return Ok(scope_db(state, &db.connection, "threads", thread, Some(agent))?.workspace);
+        }
+        if let Some(channel) = row["channel"].as_str() {
+            let scope = scope_db(state, &db.connection, "channels", channel, Some(agent))?;
+            if scope.project.is_some() {
+                return Ok(scope.workspace);
+            }
+        }
+    }
+    Ok(state
+        .config
+        .workspaces
+        .iter()
+        .find(|w| w.agent == agent)
+        .cloned())
+}
 fn outputs(db: &Connection, scope: &Scope) -> Result<HashSet<String>> {
     let mut result = HashSet::new();
     let turn_rows = rows(
@@ -167,7 +205,7 @@ pub fn authorize_file(
     file: &str,
     deleted: bool,
 ) -> Result<String> {
-    let scope = scope_db(state, db, kind, id)?;
+    let scope = scope_db(state, db, kind, id, None)?;
     let row = one(
         db,
         if deleted {
@@ -362,10 +400,7 @@ pub async fn handle(state: &AppState, req: Request, parts: &[&str]) -> Result<Re
     let op = operation.unwrap_or("");
     let preview = parameter(&q, "preview");
     if op == "entries" || op == "file" && preview.is_none() {
-        return Ok(json_response(
-            200,
-            workspace::read(&binding.directory, op == "entries", &args)?,
-        ));
+        return workspace::response(&binding.directory, op == "entries", &args);
     }
     let (name, bytes) =
         workspace::download(&binding.directory, parameter(&args, "path").unwrap_or(""))?;
@@ -393,11 +428,11 @@ pub async fn handle(state: &AppState, req: Request, parts: &[&str]) -> Result<Re
                 .into_response()
         }
         Some("text") => {
-            let result = if bytes.starts_with(b"%PDF-") {
-                json!({"text":preview::extract_pdf(&bytes).await?,"source":"pdf-text"})
-            } else {
-                workspace::read(&binding.directory, false, &args)?
-            };
+            if !bytes.starts_with(b"%PDF-") {
+                check_scope(state, &scope)?;
+                return workspace::response(&binding.directory, false, &args);
+            }
+            let result = json!({"text":preview::extract_pdf(&bytes).await?,"source":"pdf-text"});
             check_scope(state, &scope)?;
             json_response(200, result)
         }

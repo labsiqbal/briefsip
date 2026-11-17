@@ -1,5 +1,5 @@
 {
-  "scope": "SQLite schema, provider snapshot delivery, persisted delegation/room history, silence filtering, fork context and workspace Git carried from Briefsip existing adaptations.",
+  "scope": "SQLite schema, provider snapshot delivery, persisted delegation/room history, silence filtering, fork context and workspace Git carried from Briefsip existing adaptations; canonical invitation encryption/mailbox verification, application sync cursors and visibility schedule fences",
   "manifest": "app/agent-delegation.provenance.json",
   "localPaths": [
     "crates/briefsip-server/build.rs",
@@ -9,9 +9,20 @@
     "crates/briefsip-server/src/files/git_writes.rs",
     "crates/briefsip-server/src/data/history.rs",
     "crates/briefsip-server/src/data/conversations.rs",
-    "crates/briefsip-server/src/data/schema.sql"
+    "crates/briefsip-server/src/data/schema.sql",
+    "crates/briefsip-server/src/data/access/invitations.rs",
+    "crates/briefsip-server/src/data/sync.rs",
+    "crates/briefsip-server/src/data/options.rs",
+    "crates/briefsip-server/src/data/sync_projection.rs"
   ],
   "sources": [
+    {
+      "repository": "https://github.com/olxgroup-oss/libvips-rust-bindings",
+      "revision": "d55a25145d33614fdba3c07b999991d712c911ca",
+      "license": "MIT",
+      "notice": "https://github.com/olxgroup-oss/libvips-rust-bindings/blob/d55a25145d33614fdba3c07b999991d712c911ca/LICENSE",
+      "version": "2.3.0"
+    },
     {
       "repository": "https://github.com/pingdotgg/t3code",
       "revision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",

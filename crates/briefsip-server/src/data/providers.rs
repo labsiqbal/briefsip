@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::{collections::BTreeSet, time::Duration};
 
 #[derive(Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
 pub struct Options {
     #[serde(rename = "baseURL")]

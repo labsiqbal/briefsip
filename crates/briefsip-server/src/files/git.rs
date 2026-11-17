@@ -592,22 +592,17 @@ pub async fn handle(state: &AppState, req: Request, parts: &[&str]) -> Result<Re
                 ));
             }
         }
-        let binding = state
-            .config
-            .workspaces
-            .iter()
-            .find(|w| w.agent == agent)
-            .ok_or_else(|| {
-                error(
-                    403,
-                    "Agent workspace is not connected by the host owner yet.",
-                )
-            })?;
+        let binding = super::panel::binding_for_turn(state, agent, parts[5])?.ok_or_else(|| {
+            error(
+                403,
+                "Agent workspace is not connected by the host owner yet.",
+            )
+        })?;
         return Ok(json_response(
             200,
             writes::restore(
                 state,
-                binding,
+                &binding,
                 id,
                 &json!({"checkpointId":value["checkpointId"],"digest":value["digest"]}),
             )
@@ -630,7 +625,17 @@ pub async fn handle(state: &AppState, req: Request, parts: &[&str]) -> Result<Re
     if req.method() != Method::GET {
         return Err(error(405, "Use GET for Git reads."));
     }
-    let binding = state.config.workspaces.iter().find(|w| w.agent == agent);
+    let selected = if op == "checkpoints" {
+        super::panel::binding_for_turn(state, agent, parts[5])?
+    } else {
+        state
+            .config
+            .workspaces
+            .iter()
+            .find(|w| w.agent == agent)
+            .cloned()
+    };
+    let binding = selected.as_ref();
     let result = if op == "status" {
         status(binding).await?
     } else {

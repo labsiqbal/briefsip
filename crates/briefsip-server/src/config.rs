@@ -43,6 +43,8 @@ pub struct Config {
     pub computer: crate::computer::options::Options,
     #[serde(flatten)]
     pub update: crate::updates::config::Config,
+    #[serde(flatten)]
+    pub remaining_data: crate::data::options::Options,
 }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -142,13 +144,10 @@ impl Config {
             "BRIEFSIP_TRANSCRIPTION_BASE_URL",
             "BRIEFSIP_TRANSCRIPTION_MODEL",
             "BRIEFSIP_TRANSCRIPTION_API_KEY",
-            "BRIEFSIP_SCRIPT_TOKEN",
             "BRIEFSIP_SCRIPT_DIRECTORY",
             "RESEND_API_KEY",
-            "BRIEFSIP_INSTALLATION_ID",
             "BRIEFSIP_AGENT_DESKTOP",
             "BRIEFSIP_COMPOSIO",
-            "BRIEFSIP_MAIL_FROM",
             "BRIEFSIP_MAIL_ENDPOINT",
         ] {
             if env::var_os(key).is_some() {
@@ -234,6 +233,7 @@ impl Config {
             data: crate::data::Options::environment()?,
             computer: crate::computer::options::Options::environment()?,
             update: crate::updates::config::Config::environment()?,
+            remaining_data: crate::data::options::Options::environment(),
         };
         config.validate()?;
         Ok(config)
@@ -242,6 +242,7 @@ impl Config {
         crate::files::validate_workspaces(&self.workspaces)?;
         self.data.validate()?;
         self.computer.validate()?;
+        self.remaining_data.validate()?;
         if self.tls.is_none() && !matches!(self.host.as_str(), "127.0.0.1" | "::1") {
             return Err("HTTP development listener must use loopback".into());
         }
@@ -284,6 +285,24 @@ impl Config {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn flattened_data_options_reject_unknown_keys_and_validate_credentials() -> crate::db::Result<()>
+    {
+        let base = json!({"database":"/tmp/config-fixture.sqlite","scriptToken":"fixture-script-token-abcdefghijklmnopqrstuvwxyz","testKeyring":{}});
+        let mut config: Config = serde_json::from_value(base.clone())?;
+        config.validate()?;
+        let mut invalid = base.clone();
+        invalid["unportedOption"] = json!(true);
+        assert!(serde_json::from_value::<Config>(invalid).is_err());
+        for token in ["", "short", "a token with whitespace 1234567890123456789"] {
+            let mut invalid = base.clone();
+            invalid["scriptToken"] = json!(token);
+            let mut config: Config = serde_json::from_value(invalid)?;
+            assert!(config.validate().is_err());
+        }
+        Ok(())
+    }
 
     #[test]
     fn shared_config_normalizes_accounts_and_preserves_workspace_errors() -> crate::db::Result<()> {

@@ -2,6 +2,37 @@ use std::{env, fs, path::Path};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Path::new("../../app");
+    let arch = match env::var("CARGO_CFG_TARGET_ARCH")?.as_str() {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        _ => return Err("Avatar encoder supports Linux x64 and arm64".into()),
+    };
+    let relative = format!("node_modules/@img/sharp-libvips-linux-{arch}/lib");
+    let native = app
+        .join(&relative)
+        .canonicalize()
+        .map_err(|_| "Run npm ci in app before cargo build")?;
+    let library = fs::read_dir(&native)?
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with("libvips-cpp.so."))
+        })
+        .ok_or("Missing Sharp libvips shared library")?;
+    let out = std::path::PathBuf::from(env::var("OUT_DIR")?);
+    for name in ["vips", "glib-2.0", "gobject-2.0"] {
+        let link = out.join(format!("lib{name}.so"));
+        if link.symlink_metadata().is_ok() {
+            fs::remove_file(&link)?;
+        }
+        std::os::unix::fs::symlink(&library, link)?;
+    }
+    println!("cargo:rerun-if-changed={}", library.display());
+    println!("cargo:rustc-link-search=native={}", out.display());
+    for root in ["$ORIGIN/..", "$ORIGIN/../../app", "$ORIGIN/../../../app"] {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{root}/{relative}");
+    }
     let mut generated = String::new();
     let source = fs::read_to_string(app.join("schema.ts"))?;
     println!("cargo:rerun-if-changed=../../app/schema.ts");

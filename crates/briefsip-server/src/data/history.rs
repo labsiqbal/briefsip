@@ -195,12 +195,6 @@ fn decorate(state: &AppState, db: &Connection, turn: &mut Value, channel: bool) 
         reply["truncated"] = json!(
             reply["truncated"] == true || string(&reply, "reply").encode_utf16().count() > 1000
         );
-        if reply["reply"].is_string() {
-            reply["reply"] = json!(string(&reply, "reply")
-                .chars()
-                .take(1000)
-                .collect::<String>());
-        }
         let available = links(db, string(&reply, "id"))?;
         reply["generatedFiles"] = json!(reply["generatedFiles"]
             .as_array()
@@ -450,26 +444,22 @@ fn room(db: &Connection, id: &str) -> Result<Value> {
     r["quiet"]=json!(all(db,"SELECT t.agent,coalesce(a.name,'Deleted agent') AS name,rt.silent FROM room_turns rt JOIN turns t ON t.id=rt.turn LEFT JOIN agents a ON a.id=t.agent WHERE root=? AND silent IS NOT NULL",[&root])?);
     Ok(r)
 }
-fn bounded(v: &str, max: usize, truncated: &mut bool) -> String {
-    let mut text = v.to_owned();
-    while json!(text).to_string().len() > max {
-        text = text.chars().take(text.chars().count() / 2).collect();
+fn bounded(v: &str, max: usize, truncated: &mut bool) -> usize {
+    let mut length = v.encode_utf16().count();
+    while super::wire::slice(v, 0..length).len() > max {
+        length /= 2;
         *truncated = true;
     }
-    text
+    length
 }
-pub fn transcript(db: &Connection, kind: &str, id: &str, cutoff: i64) -> Result<Value> {
+pub fn transcript(db: &Connection, kind: &str, id: &str, cutoff: i64) -> Result<String> {
     let rows=all(db,&format!("SELECT id,agent,text,coalesce(reply,(SELECT s.text FROM provider_streams s JOIN provider_calls c ON c.seq=s.call WHERE c.turn=turns.id AND s.text<>'' ORDER BY c.seq DESC LIMIT 1)) AS reply,status,created FROM turns WHERE {} AND seq<=? AND status IN('done','failed','cancelled','interrupted') ORDER BY seq DESC LIMIT 41",clause(kind)),rusqlite::params![id,cutoff])?;
     let mut truncated = rows.len() > 40;
     let mut turns = rows.into_iter().take(40).collect::<Vec<_>>();
     turns.reverse();
     for t in &mut turns {
-        t["text"] = json!(bounded(string(t, "text"), 16000, &mut truncated));
-        if !t["reply"].is_null() {
-            t["reply"] = json!(bounded(string(t, "reply"), 24000, &mut truncated));
-        }
         let guidance=all(db,"SELECT id,text,attachments FROM turns WHERE dispatch_target=? AND dispatch_mode='steer' AND status='done' ORDER BY seq",[string(t,"id")])?;
-        t["guidance"] = json!(bounded(&json!(guidance).to_string(), 16000, &mut truncated));
+        t["guidance"] = json!(guidance).to_string().into();
     }
     let scope = format!("{kind}:{id}");
     let summary = if table(db, "compaction_sources")?
@@ -498,13 +488,41 @@ pub fn transcript(db: &Connection, kind: &str, id: &str, cutoff: i64) -> Result<
         None
     };
     let inherited = inherited
-        .map(|v| json!(bounded(string(&v, "transcript"), 24000, &mut truncated)))
+        .map(|v| v["transcript"].clone())
         .unwrap_or(Value::Null);
     loop {
-        let snapshot =
+        let mut snapshot =
             json!({"summary":summary,"inherited":inherited,"turns":turns,"truncated":truncated});
-        if snapshot.to_string().len() <= 128 * 1024 || turns.len() <= 1 {
-            return Ok(snapshot);
+        let mut ranges = Vec::new();
+        for turn in snapshot["turns"].as_array().into_iter().flatten() {
+            for (key, max) in [("text", 16000), ("reply", 24000), ("guidance", 16000)] {
+                if let Some(text) = turn[key].as_str() {
+                    ranges.push(bounded(text, max, &mut truncated));
+                }
+            }
+        }
+        if let Some(text) = snapshot["inherited"].as_str() {
+            ranges.push(bounded(text, 24000, &mut truncated));
+        }
+        snapshot["truncated"] = json!(truncated);
+        let mut ranges = ranges.into_iter();
+        let mut rules = Vec::new();
+        for turn in snapshot["turns"].as_array().into_iter().flatten() {
+            for key in ["text", "reply", "guidance"] {
+                if turn[key].is_string() {
+                    rules.push((&turn[key], 0..ranges.next().ok_or_else(Failure::storage)?));
+                }
+            }
+        }
+        if snapshot["inherited"].is_string() {
+            rules.push((
+                &snapshot["inherited"],
+                0..ranges.next().ok_or_else(Failure::storage)?,
+            ));
+        }
+        let encoded = super::wire::json(&snapshot, &rules);
+        if encoded.len() <= 128 * 1024 || turns.len() <= 1 {
+            return Ok(encoded);
         }
         turns.remove(0);
         truncated = true;

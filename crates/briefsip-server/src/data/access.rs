@@ -32,7 +32,7 @@ fn fields(v: &Value, keys: &[&str]) -> Result<()> {
     }
     Ok(())
 }
-fn id(v: &Value) -> Result<String> {
+pub(super) fn id(v: &Value) -> Result<String> {
     v.as_str()
         .and_then(crate::web::id)
         .ok_or_else(|| Failure::new(400, "invalid_id", "ID must be a UUID v4."))
@@ -65,7 +65,7 @@ fn label(v: &Value) -> Result<String> {
         .map(|s| s.trim().to_owned())
         .ok_or_else(|| Failure::new(400, "invalid_label", "Label is invalid."))
 }
-fn active(db: &Connection) -> Result<()> {
+pub(super) fn active(db: &Connection) -> Result<()> {
     if !exists(
         db,
         "SELECT 1 FROM authority_state WHERE id=1 AND serving_state='active'",
@@ -147,6 +147,7 @@ impl Commit<'_> {
                 now
             ],
         )?;
+        super::sync::append_mutation(db, self.project, self.scope, record, &result["data"], now)?;
         Ok(result)
     }
 }
@@ -157,11 +158,13 @@ fn envelope(result: Value) -> Result<Response> {
         json!({"ok":true,"data":result["data"],"revision":result["receipt"]["recordRevision"],"receipt":result["receipt"]}),
     ))
 }
-fn digest(v: Value) -> String {
+pub(super) fn digest(v: Value) -> String {
     crate::db::digest(&crate::db::canonical(&v))
 }
 
 mod grants;
+mod invitations;
+pub(crate) use invitations::accept;
 
 fn agent(db: &Connection, project: &str, agent: &str) -> Result<Value> {
     if !exists(db,"SELECT 1 FROM record_scopes s JOIN projects p ON p.account=s.account WHERE s.table_name='agents' AND s.key_json=? AND p.id=? AND s.root_kind='agent' AND s.root_id=?",rusqlite::params![json!([agent]).to_string(),project,agent])? {return Err(missing());}
@@ -396,6 +399,8 @@ pub fn route(
         ["api", "agents"]
             | ["api", "projects"]
             | ["api", "projects", _]
+            | ["api", "projects", _, "invitations"]
+            | ["api", "invitations", _, "revoke"]
             | ["api", "projects", _, "members", _]
             | ["api", "projects", _, "agents", _]
             | [
@@ -412,6 +417,32 @@ pub fn route(
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let db = &guard.connection;
     active(db)?;
+    if *method == Method::POST
+        && parts.len() == 4
+        && parts[1] == "projects"
+        && parts[3] == "invitations"
+    {
+        return Ok(Some(envelope(invitations::create(
+            state,
+            db,
+            account,
+            &id(&json!(parts[2]))?,
+            v,
+        )?)?));
+    }
+    if *method == Method::POST
+        && parts.len() == 4
+        && parts[1] == "invitations"
+        && parts[3] == "revoke"
+    {
+        return Ok(Some(envelope(invitations::revoke(
+            state,
+            db,
+            account,
+            &id(&json!(parts[2]))?,
+            v,
+        )?)?));
+    }
     if parts.as_slice() == ["api", "agents"] && *method == Method::POST {
         let result = grants::create(state, db, account, v)?;
         state.events.publish(path.to_owned());

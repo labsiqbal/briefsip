@@ -194,6 +194,72 @@ impl Auth {
             expires: exp,
         })
     }
+    pub fn require_current(
+        &self,
+        db: &Mutex<Database>,
+        actor: &Actor,
+        now: i64,
+    ) -> Result<(), Failure> {
+        let guard = db.lock().map_err(|_| Failure::storage())?;
+        if actor.expires <= now || guard.connection.query_row("SELECT 1 FROM accounts WHERE id=? AND issuer=? AND clerk_sub=? AND blocked=0 AND NOT EXISTS(SELECT 1 FROM session_denials WHERE issuer=? AND sid=?)",rusqlite::params![actor.account,self.config.issuer,actor.subject,self.config.issuer,actor.session], |_|Ok(())).optional()?.is_none() { return Err(denied()); }
+        Ok(())
+    }
+    pub async fn verified_mailboxes(
+        &self,
+        db: &Mutex<Database>,
+        actor: &Actor,
+        now: i64,
+    ) -> Result<Vec<String>, Failure> {
+        self.require_current(db, actor, now)?;
+        let base = self
+            .config
+            .api_url
+            .as_deref()
+            .unwrap_or("https://api.clerk.com");
+        let failed = || {
+            let mut e = Failure::new(
+                503,
+                "identity_unavailable",
+                "Mailbox verification is not available yet.",
+            );
+            e.retryable = true;
+            e
+        };
+        let mut url = url::Url::parse(&format!("{base}/v1/users/")).map_err(|_| failed())?;
+        url.path_segments_mut()
+            .map_err(|_| failed())?
+            .push(&actor.subject);
+        let response = self
+            .client
+            .get(url)
+            .bearer_auth(&self.config.secret_key)
+            .send()
+            .await
+            .map_err(|_| failed())?;
+        if !response.status().is_success() {
+            return Err(failed());
+        }
+        let mut response = response;
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|_| failed())? {
+            if bytes.len() + chunk.len() > 1024 * 1024 {
+                return Err(failed());
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let user: Value = serde_json::from_slice(&bytes).map_err(|_| failed())?;
+        self.require_current(db, actor, now)?;
+        if user["id"] != actor.subject || user["banned"] == true || user["locked"] == true {
+            return Err(denied());
+        }
+        let mut emails = Vec::new();
+        for email in user["email_addresses"].as_array().into_iter().flatten() {
+            if email["verification"]["status"] == "verified" {
+                emails.push(crate::data::normalize_email(&email["email_address"])?);
+            }
+        }
+        Ok(emails)
+    }
     pub async fn logout(
         &self,
         db: &Mutex<Database>,

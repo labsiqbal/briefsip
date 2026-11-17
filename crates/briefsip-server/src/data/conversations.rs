@@ -307,7 +307,12 @@ pub fn owner(db: &Connection, kind: &str, id: &str) -> Result<Value> {
 pub fn fork_header(db: &Connection, id: &str) -> Result<Value> {
     Ok(one(db,"SELECT t.source_kind,t.source_id,t.cutoff_turn,t.created,coalesce(th.name,c.name,'Main chat') AS source_name,coalesce(th.agent,a.id,t.agent) AS source_agent FROM context_transfers t LEFT JOIN threads th ON t.source_kind='thread' AND th.id=t.source_id LEFT JOIN channels c ON t.source_kind='channel' AND c.id=t.source_id LEFT JOIN agents a ON t.source_kind='agent' AND a.id=t.source_id WHERE t.target_thread=?",[id])?.unwrap_or(Value::Null))
 }
-pub fn fork_context(state: &AppState, db: &Connection, id: &str, h: &HeaderMap) -> Result<Value> {
+pub fn fork_context(
+    state: &AppState,
+    db: &Connection,
+    id: &str,
+    h: &HeaderMap,
+) -> Result<Response> {
     if h.contains_key("authorization") || h.contains_key("origin") && !origin(state, h) {
         return Err(error(
             403,
@@ -315,14 +320,22 @@ pub fn fork_context(state: &AppState, db: &Connection, id: &str, h: &HeaderMap) 
         ));
     }
     thread(db, id)?;
-    one(
+    use axum::response::IntoResponse;
+    let body = one(
         db,
         "SELECT transcript FROM context_transfers WHERE target_thread=?",
         [id],
     )?
-    .map(|v| json(&v["transcript"]))
-    .transpose()
-    .map(|v| v.unwrap_or(Value::Null))
+    .map(|v| string(&v, "transcript").to_owned())
+    .unwrap_or_else(|| "null".into());
+    Ok((
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/json; charset=utf-8",
+        )],
+        body,
+    )
+        .into_response())
 }
 pub fn fork(
     state: &AppState,
@@ -381,7 +394,7 @@ pub fn fork(
             turn,
             target,
             cutoff["agent"].as_str(),
-            transcript.to_string(),
+            transcript,
             created,
             string(v, "id")
         ],

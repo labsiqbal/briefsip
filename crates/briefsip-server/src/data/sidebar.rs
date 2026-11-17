@@ -90,10 +90,13 @@ pub fn summary(
     if h.contains_key("origin") && !origin(state, h) {
         return Err(error(403, "Origin is not allowed."));
     }
-    let secrets = providers::accounts(state)?
+    let mut secrets = providers::accounts(state)?
         .into_iter()
         .filter_map(|a| a.key)
         .collect::<Vec<_>>();
+    if let Some(token) = &state.config.remaining_data.script_token {
+        secrets.push(token.clone());
+    }
     let pattern=Regex::new(r#"(?i)\b(?:sk-[A-Za-z0-9_-]{16,}|Bearer\s+[A-Za-z0-9._~+/-]+=*|(?:api[_-]?key|token|secret|password)["']?\s*[:=]\s*["']?[^\s,"'}]+)"#).map_err(|_|Failure::storage())?;
     let redact = |v: &str| {
         let mut text = v.to_owned();
@@ -103,12 +106,7 @@ pub fn summary(
             }
         }
         let text = pattern.replace_all(&text, "[redacted]");
-        text.split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .chars()
-            .take(180)
-            .collect::<String>()
+        text.split_whitespace().collect::<Vec<_>>().join(" ")
     };
     let local=all(db,"SELECT agents.id AS agent,substr(t.reply,1,8192) AS reply,substr(t.text,1,8192) AS text,t.created,CASE WHEN EXISTS(SELECT 1 FROM turns WHERE agent=agents.id AND channel IS NULL AND status='running') THEN 'running' ELSE 'idle' END AS status FROM agents LEFT JOIN turns t ON t.seq=(SELECT seq FROM turns WHERE agent=agents.id AND channel IS NULL ORDER BY seq DESC LIMIT 1) ORDER BY agents.rowid LIMIT 500",[])?;
     let mut summaries=local.into_iter().map(|r|json!({"agent":r["agent"],"preview":redact(if string(&r,"reply").is_empty(){string(&r,"text")}else{string(&r,"reply")}),"time":r["created"],"status":r["status"]})).collect::<Vec<_>>();
