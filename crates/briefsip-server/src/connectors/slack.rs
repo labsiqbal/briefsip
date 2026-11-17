@@ -874,7 +874,7 @@ if [404,409].contains(&e.status){db.execute("INSERT OR IGNORE INTO slack_closed_
     }
     Ok(())
 }
-async fn socket(db: &Connection, options: &Options, url: &str) -> Result<()> {
+async fn socket(db: &Connection, options: &Options, url: &str) -> Result<bool> {
     let endpoint = url::Url::parse(url).map_err(|_| error(400, "Invalid Slack socket endpoint"))?;
     if !endpoint.username().is_empty()
         || endpoint.password().is_some()
@@ -912,7 +912,7 @@ async fn socket(db: &Connection, options: &Options, url: &str) -> Result<()> {
                 .map_err(|_| error(502, "Slack socket handshake timed out"))?
         };
         let Some(message) = next else {
-            return Ok(());
+            return Ok(false);
         };
         let message = message.map_err(|_| error(502, "Slack socket connection failed"))?;
         match message {
@@ -936,7 +936,7 @@ async fn socket(db: &Connection, options: &Options, url: &str) -> Result<()> {
                     if v["reason"] == "link_disabled" {
                         return Err(error(400, "Slack Socket Mode disabled"));
                     }
-                    return Ok(());
+                    return Ok(v["reason"] == "refresh_requested");
                 }
                 if let Some(id) = record(db, &v, options)? {
                     socket
@@ -947,7 +947,7 @@ async fn socket(db: &Connection, options: &Options, url: &str) -> Result<()> {
                         .map_err(|_| error(502, "Slack socket acknowledgement failed"))?;
                 }
             }
-            tokio_tungstenite::tungstenite::Message::Close(_) => return Ok(()),
+            tokio_tungstenite::tungstenite::Message::Close(_) => return Ok(false),
             _ => (),
         }
     }
@@ -1006,8 +1006,9 @@ pub async fn run(db: &Connection, options: &Options) -> Result<()> {
     let listen = async {
         loop {
             let connection = session(db, &api, "apps.connections.open").await?;
-            socket(db, options, string(&connection, "url")).await?;
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            if !socket(db, options, string(&connection, "url")).await? {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
         }
         #[allow(unreachable_code)]
         Ok::<(), Failure>(())
