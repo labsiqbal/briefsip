@@ -303,7 +303,7 @@ pub fn execute(
         "INSERT INTO workspace_writes VALUES(?,?,?,?,?)",
         rusqlite::params![turn, call_id, call.to_string(), count, after_action],
     )?;
-    let result=perform(db,&binding.directory,&binding.agent,name,&args).unwrap_or_else(|_|json!({"uncertain":true,"error":"Workspace operation did not confirm success. Existing files are never replaced. Ask the host owner to inspect the requested path and orphan .briefsip-*.tmp staging links before trying again."}));
+    let result=perform(db,&binding.directory,&binding.agent,name,&args).unwrap_or_else(|_|json!({"uncertain":true,"error":if name=="delete_workspace_file" {"Removal did not confirm success. Inspect the original path and sibling .briefsip-removed-* recovery directories before retrying."}else{"Workspace operation did not confirm success. Existing files are never replaced. Ask the host owner to inspect the requested path and orphan .briefsip-*.tmp staging links before trying again."}}));
     db.execute("INSERT INTO flow_tool_calls(turn,call_id,call,result,after_output,after_action) VALUES(?,?,?,?,?,?)",rusqlite::params![turn,call_id,call.to_string(),result.to_string(),count,after_action])?;
     Ok(result)
 }

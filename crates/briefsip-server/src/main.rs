@@ -449,7 +449,7 @@ async fn main() -> db::Result<()> {
         origin: origin.clone(),
         auth,
         events,
-        turns: turns::Runtime::default(),
+        turns: turns::Runtime::new()?,
         trial_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         computer: computer.clone(),
     };
@@ -466,7 +466,7 @@ async fn main() -> db::Result<()> {
             }
         }
     });
-    let shutdown_events = state.events.clone();
+    let shutdown_state = state.clone();
     let router = Router::new()
         .merge(computer::routes())
         .merge(files::routes())
@@ -491,7 +491,10 @@ async fn main() -> db::Result<()> {
         let stop = handle.clone();
         let task = tokio::spawn(async move {
             shutdown().await;
-            shutdown_events.close();
+            if let Err(error) = turns::stop(&shutdown_state) {
+                eprintln!("Turn shutdown failed: {}", error.message);
+            }
+            shutdown_state.events.close();
             stop.graceful_shutdown(Some(Duration::from_secs(5)));
         });
         let result = axum_server::from_tcp_rustls(listener.into_std()?, configuration)?
@@ -504,7 +507,10 @@ async fn main() -> db::Result<()> {
         axum::serve(listener, router)
             .with_graceful_shutdown(async move {
                 shutdown().await;
-                shutdown_events.close();
+                if let Err(error) = turns::stop(&shutdown_state) {
+                    eprintln!("Turn shutdown failed: {}", error.message);
+                }
+                shutdown_state.events.close();
             })
             .await
     };

@@ -1,6 +1,16 @@
 use super::*;
 use base64::{engine::general_purpose::STANDARD, Engine};
 
+pub fn setup(db: &Connection, turn: &Value) -> Result<bool> {
+    Ok(turn["profile_setup"] == 1
+        || turn["id"] == turn["agent"]
+            && exists(
+                db,
+                "SELECT 1 FROM agent_creations WHERE id=? AND json_extract(request,'$.setup')=1",
+                [string(turn, "agent")],
+            )?)
+}
+
 pub fn execute(
     state: &AppState,
     db: &Connection,

@@ -1,5 +1,5 @@
 use super::*;
-use reqwest::{Client, Response};
+use reqwest::Response;
 
 pub const MALFORMED: &str =
     "The provider returned a malformed response. Check provider compatibility before retrying.";
@@ -24,11 +24,18 @@ pub async fn call(
     let (account, seq) = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
-        let row = one(db, "SELECT agent,status FROM turns WHERE id=?", [turn])?
-            .filter(|r| r["status"] == "running")
-            .ok_or_else(|| error(409, "Task has stopped."))?;
+        let row = one(
+            db,
+            "SELECT agent,status,paused FROM turns WHERE id=?",
+            [turn],
+        )?
+        .filter(|r| (r["status"] == "running" || r["status"] == "queued") && r["paused"] == 0)
+        .ok_or_else(|| error(409, "Task has stopped."))?;
         let account = admission::account(state, db, string(&row, "agent"))?;
-        if phase != "compaction" && super::messaging::allowed(db, turn)? {
+        if !["compaction", "routing"].contains(&phase)
+            && !super::profile::setup(db, &json!({"id":turn,"agent":row["agent"]}))?
+            && super::messaging::allowed(db, turn)?
+        {
             let turn_row =
                 one(db, "SELECT * FROM turns WHERE id=?", [turn])?.ok_or_else(Failure::storage)?;
             if let Some(first) = messages.first_mut().filter(|m| m["role"] == "system") {
@@ -44,8 +51,15 @@ pub async fn call(
             .map_err(|_| error(502, MALFORMED))?
             .origin()
             .ascii_serialization();
-        db.execute("INSERT INTO provider_calls(turn,agent,model,origin,purpose,phase,family,account,status,created) VALUES (?,?,?,?,?,?,?,?, 'pending',?)",params![turn,row["agent"].as_str(),model,origin,"completion",phase,account.family,account.id,iso(db,state.config.now())?])?;
-        (account, db.last_insert_rowid())
+        let purpose = if phase == "routing" {
+            "routing"
+        } else {
+            "completion"
+        };
+        db.execute("INSERT INTO provider_calls(turn,agent,model,origin,purpose,phase,family,account,status,created) VALUES (?,?,?,?,?,?,?,?, 'pending',?)",params![turn,row["agent"].as_str(),model,origin,purpose,phase,account.family,account.id,iso(db,state.config.now())?])?;
+        let seq = db.last_insert_rowid();
+        state.events.turn(db, turn)?;
+        (account, seq)
     };
     let streamed = account.stream;
     let max_tokens = account.max_tokens;
@@ -83,11 +97,7 @@ pub async fn call(
         max_tokens,
         streamed,
     )?;
-    let client = Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|_| Failure::storage())?;
-    let mut request = client.post(endpoint).json(&body);
+    let mut request = state.turns.client.post(endpoint).json(&body);
     if account.family == "anthropic" {
         request = request.header("anthropic-version", "2023-06-01");
     }
@@ -100,6 +110,13 @@ pub async fn call(
     }
     let mut tokens = [None; 3];
     let operation = async {
+        {
+            let guard = state.database.lock().map_err(|_| Failure::storage())?;
+            if pending(state) || guard.connection.execute("UPDATE turns SET status='running',started_at=coalesce(started_at,?) WHERE id=? AND status IN('queued','running') AND paused=0",params![iso(&guard.connection,state.config.now())?,turn])? == 0 {
+                return Err(error(409,"Task has stopped."));
+            }
+            state.events.turn(&guard.connection, turn)?;
+        }
         let response=request.send().await.map_err(|_|error(502,"The provider could not be reached. Check the provider URL and network before retrying; completion may be uncertain."))?;
         let status = response.status().as_u16();
         if !(200..300).contains(&status) {
@@ -242,7 +259,17 @@ fn translate(
     stream: bool,
 ) -> Result<Value> {
     if family == "openai-compatible" {
-        let mut v = json!({"model":model,"stream":stream,"messages":messages});
+        let mut clean = messages.to_vec();
+        for message in &mut clean {
+            if let Some(calls) = message["tool_calls"].as_array_mut() {
+                for call in calls {
+                    if let Some(object) = call.as_object_mut() {
+                        object.remove("geminiParts");
+                    }
+                }
+            }
+        }
+        let mut v = json!({"model":model,"stream":stream,"messages":clean});
         if stream {
             v["stream_options"] = json!({"include_usage":true});
         }

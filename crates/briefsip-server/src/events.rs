@@ -101,6 +101,22 @@ impl Hub {
     pub fn publish(&self, scope: String) {
         let _ = self.changes.send(scope);
     }
+    pub fn turn(&self, db: &rusqlite::Connection, id: &str) -> Result<(), Failure> {
+        let Some(mut turn) = crate::data::one(
+            db,
+            "SELECT id,agent,thread,channel FROM turns WHERE id=? AND status='running'",
+            [id],
+        )?
+        else {
+            return Ok(());
+        };
+        let partial = crate::data::partial(db, id)?;
+        if !partial.is_null() {
+            turn["partial"] = partial;
+            self.publish(turn.to_string());
+        }
+        Ok(())
+    }
     pub fn subscribe(&self) -> broadcast::Receiver<String> {
         self.changes.subscribe()
     }
@@ -129,11 +145,27 @@ impl Hub {
                 tokio::select! {
                     _ = shutdown.changed() => break,
                     _ = heartbeat.tick() => yield Ok::<_, Infallible>(": keepalive\n\n".to_owned()),
-                    _ = async { if initial { initial = false; } else { let _ = changes.recv().await; } } => {
+                    event = async { if initial { initial = false; None } else { changes.recv().await.ok() } } => {
                         let result = db.lock().map_err(|_| Failure::storage()).and_then(|db| if exists(&db, &scope)? { snapshots(&db, &scope).map(Some) } else { Ok(None) });
-                        let frames = match result { Ok(Some(frames)) => frames, _ => break };
-                        previous.retain(|turn, _| frames.iter().any(|(current, _)| current == turn));
+                        let current = match result { Ok(Some(frames)) => frames, _ => break };
+                        let mut events=event.into_iter().collect::<Vec<_>>();
+                        while let Ok(event)=changes.try_recv() {events.push(event);}
+                        let mut frames=Vec::new();
+                        for event in events {
+                            if let Ok(turn)=serde_json::from_str::<serde_json::Value>(&event) {
+                                let visible=match scope.table {
+                                    "channels"=>turn["channel"]==scope.id,
+                                    "threads"=>turn["thread"]==scope.id && turn["channel"].is_null(),
+                                    _=>turn["agent"]==scope.id && turn["thread"].is_null() && turn["channel"].is_null(),
+                                };
+                                if visible {
+                                    if let Some(id)=turn["id"].as_str() {frames.push((id.to_owned(),format!("data: {}\n\n",json!({"id":id,"partial":turn["partial"]}))));}
+                                }
+                            }
+                        }
+                        frames.extend(current);
                         for (turn, frame) in frames { if previous.get(&turn) != Some(&frame) { previous.insert(turn, frame.clone()); yield Ok(frame); } }
+                        if previous.len()>100 {previous.clear();}
                     }
                 }
             }

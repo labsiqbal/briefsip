@@ -104,7 +104,7 @@ pub(super) fn conversation(
             }
             let members = all(
                 db,
-                "SELECT agent FROM channel_members WHERE channel=? ORDER BY agent",
+                "SELECT m.agent,coalesce(v.hidden,0) AS hidden FROM channel_members m LEFT JOIN agent_visibility v ON v.agent=m.agent WHERE m.channel=? ORDER BY m.agent",
                 [owner],
             )?;
             let recipient = v["recipient"].as_str().filter(|s| !s.is_empty());
@@ -116,12 +116,23 @@ pub(super) fn conversation(
             if recipient.is_some_and(|r| !members.iter().any(|m| m["agent"] == r)) {
                 return Err(error(400, "Recipient is not a channel member."));
             }
-            let lead = c["lead"]
-                .as_str()
-                .filter(|s| members.iter().any(|m| m["agent"] == *s));
+            let lead = c["lead"].as_str().filter(|s| {
+                members
+                    .iter()
+                    .any(|m| m["agent"] == *s && (v["automatic"] == true || m["hidden"] != 1))
+            });
             let agent = recipient
                 .or(lead)
-                .or_else(|| members.first().and_then(|m| m["agent"].as_str()))
+                .or_else(|| {
+                    (v["automatic"] != true)
+                        .then(|| {
+                            members
+                                .iter()
+                                .find(|m| m["hidden"] != 1)
+                                .and_then(|m| m["agent"].as_str())
+                        })
+                        .flatten()
+                })
                 .ok_or_else(|| error(409, "This channel has no available members."))?;
             Ok((agent.to_owned(), None, Some(owner.to_owned())))
         }
@@ -210,12 +221,16 @@ pub fn route(
         ["api", kind, owner, "turns", turn, "edit"] if *method == Method::POST => {
             Ok((200, queue::edit(state, db, path, kind, owner, turn, v)?))
         }
+        ["api", kind, owner, "turns", turn, "dispatch"] if *method == Method::POST => Ok((
+            200,
+            dispatch::promote(state, db, path, kind, owner, turn, v)?,
+        )),
         ["api", kind, owner, "turns", turn, "questions", question, "answer"]
             if *method == Method::POST =>
         {
             Ok((
                 200,
-                questions::answer(db, path, kind, owner, turn, question, v)?,
+                questions::answer(state, db, path, (kind, owner), turn, question, v)?,
             ))
         }
         ["api", kind, owner, "queue"] if *method == Method::POST => {
@@ -284,12 +299,19 @@ fn create(
     }
     let request = json!({"path":path,"text":text,"files":f,"recipient":v["recipient"].as_str().filter(|s|!s.is_empty()),"automatic":automatic,"mode":mode,"target":target});
     if let Some(old) = one(db, "SELECT * FROM turns WHERE id=?", [id])? {
-        if let Some(receipt) = one(db, "SELECT request FROM dispatch_commands WHERE id=?", [id])? {
+        if let Some(receipt) = one(
+            db,
+            "SELECT request,result FROM dispatch_commands WHERE id=?",
+            [id],
+        )? {
             if data::json(&receipt["request"])? != request {
                 return Err(error(
                     409,
                     "ID was already used for a different message or dispatch mode.",
                 ));
+            }
+            if mode != "queue" {
+                return Ok((202, data::json(&receipt["result"])?));
             }
         } else if old["text"] != text || data::json(&old["attachments"])? != f {
             return Err(error(409, "ID was already used for a different message."));
@@ -324,12 +346,39 @@ fn create(
         ));
     }
     validate_files(db, &f, &format!("{kind}:{owner}"))?;
+    if channel.is_some() && v["recipient"].as_str().is_none_or(str::is_empty) && automatic == 0 {
+        let members=all(db,"SELECT agent FROM channel_members m WHERE channel=? AND NOT EXISTS(SELECT 1 FROM agent_visibility v WHERE v.agent=m.agent AND v.hidden=1)",[owner])?;
+        if members.len() > 6 {
+            return Err(error(400, "Chatrooms support at most 6 active members."));
+        }
+        for member in members {
+            let member = string(&member, "agent");
+            account(state, db, member)?;
+            if db.query_row(
+                "SELECT count(*) FROM turns WHERE agent=? AND status IN('queued','running')",
+                [member],
+                |r| r.get::<_, i64>(0),
+            )? >= 100
+            {
+                return Err(error(429, "A room member queue is full."));
+            }
+        }
+    }
     let routing = if channel.is_some() && v["recipient"].as_str().is_none_or(str::is_empty) {
         Some(if automatic == 1 { "pending" } else { "room" })
     } else {
         None
     };
     db.execute("INSERT INTO turns(id,agent,thread,channel,recipient,automatic,routing,text,attachments,status,created) VALUES (?,?,?,?,?,?,?,?,?,'queued',?)",params![id,agent,thread,channel,v["recipient"].as_str().filter(|s|!s.is_empty()),automatic,routing,text,f.to_string(),iso(db,state.config.now())?])?;
+    if channel.is_some() && v["recipient"].as_str().is_none_or(str::is_empty) && automatic == 0 {
+        let lead = one(
+            db,
+            "SELECT lead FROM channels WHERE id=?",
+            [channel.as_deref().unwrap_or("")],
+        )?
+        .and_then(|r| r["lead"].as_str().map(str::to_owned));
+        room::start(db, id, lead.as_deref())?;
+    }
     if let Some(thread) = &thread {
         db.execute("UPDATE threads SET name=?,revision=revision+1 WHERE id=? AND name='New conversation' AND NOT EXISTS(SELECT 1 FROM turns WHERE thread=? AND id<>?)",params![text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(80).collect::<String>(),thread,thread,id])?;
     }
@@ -345,6 +394,17 @@ fn create(
         } else {
             one(db,"SELECT * FROM turns WHERE agent=? AND thread IS ? AND channel IS ? AND status='running' AND id<>? ORDER BY seq DESC LIMIT 1",params![agent,thread,channel,id])?
         };
+        if let Some(a) = &active {
+            if a["agent"] != agent {
+                return Err(error(404, "Active turn not found in this conversation."));
+            }
+            if room::stopped(db, string(a, "id"))? {
+                return Err(error(409, "Discussion is stopped. Send a new message."));
+            }
+            if let Some(root) = room::generation(db, string(a, "id"))? {
+                db.execute("INSERT INTO room_dispatches VALUES(?,?)", params![id, root])?;
+            }
+        }
         if let Some(a) = active.filter(|a| a["status"] == "running") {
             let active = string(&a, "id");
             db.execute(
@@ -367,7 +427,8 @@ fn create(
                 }
                 db.execute("UPDATE turns SET dispatch_mode='steer',dispatch_target=?,dispatch_label='Waiting for steering safe point' WHERE id=?",[active,id])?;
             } else {
-                db.execute("UPDATE turns SET status='cancelled',paused=0,revision=revision+1,error='Stopped for restart. Provider effects may already have happened; uncertain operations were not replayed.' WHERE id=?",[active])?;
+                dispatch::cancel(db, active, "Stopped for restart. Provider effects may already have happened; uncertain operations were not replayed.")?;
+                db.execute("INSERT INTO queue_positions VALUES(?,?) ON CONFLICT(turn) DO UPDATE SET position=excluded.position",params![id,history::position(db,&a)?])?;
                 state.turns.cancel(active);
                 db.execute("UPDATE turns SET dispatch_mode='restart',dispatch_target=?,dispatch_label='Restarted from interrupted turn' WHERE id=?",[active,id])?;
             }
@@ -484,8 +545,14 @@ fn control(
                     "Hand computer control back or dismiss the request before resuming.",
                 ));
             }
-            conversation(db, kind, owner, &json!({"recipient":t["agent"]}))?;
-            db.execute("UPDATE turns SET paused=0,revision=revision+1,status='queued',error=NULL,tool_budget_used=0 WHERE id=?",[id])?;
+            let recipient = if action == "reassign" {
+                &v["recipient"]
+            } else {
+                &t["agent"]
+            };
+            let (agent, _, _) = conversation(db, kind, owner, &json!({"recipient":recipient}))?;
+            account(state, db, &agent)?;
+            db.execute("UPDATE turns SET agent=?,paused=0,revision=revision+1,status='queued',error=NULL,tool_budget_used=0 WHERE id=?",[&agent,id])?;
         }
         let result =
             one(db, "SELECT * FROM turns WHERE id=?", [id])?.ok_or_else(Failure::storage)?;

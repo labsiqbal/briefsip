@@ -9,7 +9,16 @@ pub fn allowed(db: &Connection, turn: &str) -> Result<bool> {
 pub fn roster(db: &Connection, turn: &Value, after: &str) -> Result<Vec<Value>> {
     let lineage = ancestors(db, string(turn, "id"))?;
     let channel = lineage.iter().find_map(|r| r["channel"].as_str());
-    let excluded: Vec<_> = lineage.iter().map(|r| r["agent"].clone()).collect();
+    let room = exists(
+        db,
+        "SELECT 1 FROM room_turns WHERE turn=?",
+        [string(turn, "id")],
+    )?;
+    let excluded: Vec<_> = lineage
+        .iter()
+        .take(if room { 1 } else { lineage.len() })
+        .map(|r| r["agent"].clone())
+        .collect();
     let mut rows=all(db,"SELECT id,name,role,substr(instructions,1,300) AS description FROM agents WHERE id>? AND id NOT IN(SELECT value FROM json_each(?)) AND NOT EXISTS(SELECT 1 FROM agent_visibility WHERE agent=agents.id AND hidden=1) AND (? IS NULL OR id IN(SELECT agent FROM channel_members WHERE channel=?)) ORDER BY id LIMIT 11",params![after,json!(excluded).to_string(),channel,channel])?;
     for row in &mut rows {
         let active=all(db,"SELECT status,channel FROM turns WHERE agent=? AND (status IN('queued','running') OR paused=1)",[string(row,"id")])?;
@@ -88,7 +97,7 @@ fn enforce(state: &AppState, db: &Connection, turn: &Value, count: usize) -> Res
         .collect();
     let children = all(
         db,
-        "SELECT id FROM turns WHERE parent IN(SELECT value FROM json_each(?))",
+        "SELECT id FROM turns WHERE parent IN(SELECT value FROM json_each(?)) AND (NOT EXISTS(SELECT 1 FROM room_turns WHERE turn=turns.id) OR EXISTS(SELECT 1 FROM agent_deliveries WHERE turn=turns.id))",
         [json!(owned).to_string()],
     )?;
     let mut active = 0i64;
@@ -145,7 +154,14 @@ fn delivery(
     turn: &Value,
     target: &str,
     text: &str,
-) -> Result<String> {
+) -> Result<Option<String>> {
+    if exists(
+        db,
+        "SELECT 1 FROM room_turns WHERE turn=?",
+        [string(turn, "id")],
+    )? {
+        return super::room::delivery(db, string(turn, "id"), target, text);
+    }
     let remote = if target.contains('@') {
         crate::computer::remote::resolve(db, target)?
     } else {
@@ -195,7 +211,7 @@ fn delivery(
         remote["delivery"] = json!(id);
         crate::computer::remote::journal(db, &remote, state.config.now())?;
     }
-    Ok(id)
+    Ok(Some(id))
 }
 fn send(
     state: &AppState,
@@ -234,16 +250,25 @@ fn send(
         ],
     )?;
     for recipient in recipients {
-        let child = delivery(state, db, turn, recipient, text)?;
+        let Some(child) = delivery(state, db, turn, recipient, text)? else {
+            continue;
+        };
         db.execute(
             "INSERT INTO agent_deliveries VALUES(?,?)",
             [&request, &child],
         )?;
     }
-    let result =
-        json!({"request":request,"status":if reply{"waiting"}else{"sent"},"expects_reply":reply});
+    let bounded = !exists(
+        db,
+        "SELECT 1 FROM agent_deliveries WHERE request=?",
+        [&request],
+    )?;
+    if bounded {
+        db.execute("UPDATE agent_requests SET settled=1 WHERE id=?", [&request])?;
+    }
+    let result = json!({"request":request,"status":if bounded{"bounded"}else if reply{"waiting"}else{"sent"},"expects_reply":reply});
     tools::journal(db, turn, call, &result)?;
-    if reply {
+    if reply && !bounded {
         db.execute(
             "UPDATE turns SET status='queued' WHERE id=?",
             [string(turn, "id")],
@@ -435,12 +460,23 @@ pub fn run(
                 .ok_or_else(|| error(400, "Task is invalid or exceeds 16,000 characters."))?
                 .to_owned();
             let sent = send(state, db, turn, call, &[target], &text, true)?;
-            let child = one(
+            let Some(child) = one(
                 db,
                 "SELECT turn FROM agent_deliveries WHERE request=?",
                 [string(&sent, "request")],
             )?
-            .ok_or_else(Failure::storage)?;
+            else {
+                let result = json!({"status":"bounded"});
+                db.execute(
+                    "UPDATE flow_tool_calls SET result=? WHERE turn=? AND call_id=?",
+                    [
+                        result.to_string(),
+                        string(turn, "id").into(),
+                        string(call, "id").into(),
+                    ],
+                )?;
+                return Ok(result);
+            };
             let id = uuid::Uuid::new_v4().to_string();
             let parent = one(
                 db,
@@ -555,7 +591,10 @@ pub fn cancel(db: &Connection, roots: &[String], reason: &str) -> Result<Vec<Str
 }
 pub fn settle(state: &AppState, db: &Connection) -> Result<()> {
     for request in all(db, "SELECT * FROM agent_requests WHERE settled=0", [])? {
-        let rows=all(db,"SELECT t.id,t.agent,t.thread,a.name,t.status,t.paused,t.reply,t.error FROM agent_deliveries d JOIN turns t ON t.id=d.turn JOIN agents a ON a.id=t.agent WHERE d.request=? ORDER BY t.seq",[string(&request,"id")])?;
+        let mut rows=all(db,"SELECT t.id,t.agent,t.thread,a.name,t.status,t.paused,t.reply,t.error FROM agent_deliveries d JOIN turns t ON t.id=d.turn JOIN agents a ON a.id=t.agent WHERE d.request=? ORDER BY t.seq",[string(&request,"id")])?;
+        for row in &mut rows {
+            row["generatedFiles"] = json!(history::requested_files(db, string(row, "id"))?);
+        }
         if rows
             .iter()
             .any(|r| r["paused"] == 1 || ["queued", "running"].contains(&string(r, "status")))

@@ -29,7 +29,7 @@ fn clause(kind: &str) -> &'static str {
 pub fn editing(db: &Connection, turn: &str) -> Result<bool> {
     exists(db,"SELECT 1 FROM queue_edits WHERE turn=? AND state='held' AND expires_at>unixepoch('subsec')*1000",[turn])
 }
-fn editable(db: &Connection, row: &Value) -> Result<bool> {
+pub(super) fn editable(db: &Connection, row: &Value) -> Result<bool> {
     let id = string(row, "id");
     Ok(row["dispatch_mode"]!="steer" && row["status"]=="queued" && row["parent"].is_null() && row["waiting_for"].is_null()
         && !exists(db,"SELECT 1 FROM provider_calls WHERE turn=? UNION ALL SELECT 1 FROM agent_deliveries WHERE turn=?",[id,id])?

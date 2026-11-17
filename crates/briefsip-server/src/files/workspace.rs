@@ -209,6 +209,7 @@ pub fn read(root: &Path, listing: bool, args: &[(String, String)]) -> Result<Val
         json!({"path":path,"digest":digest,"text":page,"next_offset":if offset.saturating_add(8000)<units.len(){Some(offset+8000)}else{None}}),
     )
 }
+
 pub async fn handle(state: &AppState, req: Request, parts: &[&str]) -> Result<Response> {
     if req.method() != Method::GET {
         return Err(error(404, "Route not found."));

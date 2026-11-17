@@ -1,6 +1,8 @@
+mod accounts;
 mod admission;
 mod compaction;
 mod coordination;
+mod dispatch;
 mod execution;
 mod history;
 pub(crate) mod media;
@@ -11,6 +13,7 @@ mod profile;
 mod provider;
 mod questions;
 mod queue;
+mod room;
 mod shell;
 mod stream;
 mod tools;
@@ -37,8 +40,22 @@ pub struct Runtime {
     active: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,
     media: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,
     wake: Arc<Notify>,
+    client: reqwest::Client,
+    stopping: Arc<std::sync::atomic::AtomicBool>,
 }
 impl Runtime {
+    pub fn new() -> std::result::Result<Self, String> {
+        Ok(Self {
+            active: Default::default(),
+            media: Default::default(),
+            wake: Default::default(),
+            stopping: Default::default(),
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(|_| "Cannot initialize provider HTTP client.".to_owned())?,
+        })
+    }
     fn cancel(&self, turn: &str) {
         if let Ok(active) = self.active.lock() {
             if let Some(cancel) = active.get(turn) {
@@ -56,7 +73,26 @@ pub fn initialize(db: &Connection) -> Result<()> {
 }
 
 pub fn pending(state: &AppState) -> bool {
-    state.trial_pending.load(Ordering::Acquire)
+    state.trial_pending.load(Ordering::Acquire) || state.turns.stopping.load(Ordering::Acquire)
+}
+pub fn stop(state: &AppState) -> Result<()> {
+    state.turns.stopping.store(true, Ordering::Release);
+    let guard = state.database.lock().map_err(|_| Failure::storage())?;
+    let db = &guard.connection;
+    transaction(db, || {
+        db.execute("UPDATE turns SET status='interrupted',error='Server stopped during this turn. Check the result before resuming.',revision=revision+1 WHERE status='running'",[])?;
+        db.execute(
+            "UPDATE provider_calls SET status='interrupted',finished=? WHERE status='pending'",
+            [iso(db, state.config.now())?],
+        )?;
+        Ok(())
+    })?;
+    if let Ok(active) = state.turns.active.lock() {
+        for cancel in active.values() {
+            cancel.send_replace(true);
+        }
+    }
+    Ok(())
 }
 
 pub fn start(state: AppState) -> tokio::task::JoinHandle<()> {
@@ -92,6 +128,10 @@ fn schedule(state: &AppState) -> Result<()> {
     queue::expire(db)?;
     messaging::settle(state, db)?;
     coordination::settle(db)?;
+    room::settle(db)?;
+    for steer in all(db,"SELECT DISTINCT dispatch_target FROM turns WHERE dispatch_mode='steer' AND status='queued' AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.id=turns.dispatch_target AND t.status='running')",[])? {
+        db.execute("UPDATE turns SET dispatch_mode='queue',dispatch_target=NULL,dispatch_label='Queued after active turn',revision=revision+1 WHERE dispatch_mode='steer' AND dispatch_target=? AND status='queued'",[string(&steer,"dispatch_target")])?;
+    }
     for approval in all(db,"SELECT id FROM harness_approvals WHERE state='approval' AND turn IN (SELECT id FROM turns WHERE status<>'running')",[])? {
         db.execute("UPDATE harness_approvals SET state='expired',revision=revision+1 WHERE id=?",[string(&approval,"id")])?;
     }
@@ -99,7 +139,7 @@ fn schedule(state: &AppState) -> Result<()> {
     for (id, cancel) in active.iter() {
         if !exists(
             db,
-            "SELECT 1 FROM turns WHERE id=? AND status='running' AND paused=0",
+            "SELECT 1 FROM turns WHERE id=? AND status IN('queued','running') AND paused=0",
             [id],
         )? {
             cancel.send_replace(true);
@@ -124,21 +164,34 @@ fn schedule(state: &AppState) -> Result<()> {
         if active.contains_key(id) {
             continue;
         }
+        if !room::can_run(db, id)? {
+            continue;
+        }
         let agent = string(&row, "agent");
+        let reserved = json!(active.keys().collect::<Vec<_>>()).to_string();
         if exists(
             db,
-            "SELECT 1 FROM turns WHERE agent=? AND thread IS ? AND status='running'",
-            params![agent, row["thread"].as_str()],
+            "SELECT 1 FROM turns WHERE agent=? AND thread IS ? AND(status='running' OR id IN(SELECT value FROM json_each(?)))",
+            params![agent, row["thread"].as_str(), reserved],
         )? {
             continue;
         }
         if !row["thread"].is_null() {
-            let count:i64 = db.query_row("SELECT count(*) FROM turns WHERE agent=? AND thread IS NOT NULL AND status='running'", [agent], |r|r.get(0))?;
+            let count:i64 = db.query_row("SELECT count(*) FROM turns WHERE agent=? AND thread IS NOT NULL AND(status='running' OR id IN(SELECT value FROM json_each(?)))", params![agent,reserved], |r|r.get(0))?;
             if count >= row["thread_limit"].as_i64().unwrap_or(2) {
                 continue;
             }
         }
-        if db.execute("UPDATE turns SET status='running',started_at=coalesce(started_at,?) WHERE id=? AND status='queued' AND paused=0",params![iso(db,state.config.now())?,id])? == 0 { continue; }
+        if !transaction(db, || {
+            room::admit(db, id)?;
+            exists(
+                db,
+                "SELECT 1 FROM turns WHERE id=? AND status='queued' AND paused=0",
+                [id],
+            )
+        })? {
+            continue;
+        }
         let (cancel, mut receiver) = watch::channel(false);
         active.insert(id.to_owned(), cancel);
         let task_state = state.clone();
@@ -147,7 +200,7 @@ fn schedule(state: &AppState) -> Result<()> {
             let result = tokio::select! { result=execution::run(&task_state,&id) => result, _=receiver.changed()=>Err(error(409,"Turn stopped.")) };
             if let Err(failure) = result {
                 if let Ok(db) = task_state.database.lock() {
-                    let _=db.connection.execute("UPDATE turns SET status='failed',error=?,stopped_at=? WHERE id=? AND status='running'",params![failure.message,iso(&db.connection,task_state.config.now()).ok(),id]);
+                    let _=db.connection.execute("UPDATE turns SET status='failed',error=?,stopped_at=? WHERE id=? AND status IN('queued','running') AND paused=0",params![failure.message,iso(&db.connection,task_state.config.now()).ok(),id]);
                     let _=db.connection.execute("UPDATE provider_calls SET status='failed',finished=? WHERE turn=? AND status='pending'",params![iso(&db.connection,task_state.config.now()).ok(),id]);
                 }
             }
@@ -163,6 +216,7 @@ fn schedule(state: &AppState) -> Result<()> {
 pub fn handles(path: &str, method: &Method) -> bool {
     let p: Vec<_> = path.split('/').skip(1).collect();
     matches!(p.as_slice(),["api","agents"|"threads"|"channels",_,"turns"] if *method==Method::POST)
+        || matches!(p.as_slice(),["api","channels",_,"discussions",_,"stop"] if *method==Method::POST)
         || matches!(p.as_slice(),["api","agents"|"threads"|"channels",_,"compaction"] if *method==Method::GET)
         || matches!(
             p.as_slice(),
@@ -200,6 +254,18 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
     let p: Vec<_> = path.split('/').skip(1).collect();
     let method = request.method().clone();
     let q = data::query(&request);
+    let room_stop = matches!(
+        p.as_slice(),
+        ["api", "channels", _, "discussions", _, "stop"]
+    );
+    if room_stop
+        && (request.headers().contains_key("authorization") || request.uri().query().is_some())
+    {
+        return Err(error(
+            403,
+            "Room controls require the local Owner in Briefsip.",
+        ));
+    }
     let v = if method == Method::POST {
         if !data::origin(state, request.headers())
             || crate::text_header(request.headers(), "content-type")
@@ -228,9 +294,34 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
         transaction(db, || {
+            if room_stop {
+                if !closed(&v, &["id", "generation"]) || !v["generation"].as_str().is_some_and(uuid)
+                {
+                    return Err(error(400, "Invalid discussion generation."));
+                }
+                let channel = one(db, "SELECT archived FROM channels WHERE id=?", [p[2]])?
+                    .ok_or_else(|| error(404, "Channel not found."))?;
+                if channel["archived"] == 1 {
+                    return Err(error(
+                        409,
+                        "Restore the channel before changing its discussion.",
+                    ));
+                }
+                return Ok((
+                    200,
+                    room::stop(db, p[2], p[4], string(&v, "id"), string(&v, "generation"))?,
+                ));
+            }
             admission::route(state, db, &path, &p, &method, &q, &v)
         })?
     };
+    if room_stop {
+        if let Some(cancelled) = value["cancelled"].as_array() {
+            for id in cancelled.iter().filter_map(Value::as_str) {
+                state.turns.cancel(id);
+            }
+        }
+    }
     state.turns.wake.notify_one();
     Ok(crate::json_response(status, value))
 }
@@ -251,6 +342,10 @@ pub fn routes() -> Router<AppState> {
         .route("/api/agents/{id}/turns", any(crate::dispatch))
         .route("/api/threads/{id}/turns", any(crate::dispatch))
         .route("/api/channels/{id}/turns", any(crate::dispatch))
+        .route(
+            "/api/channels/{id}/discussions/{root}/stop",
+            any(crate::dispatch),
+        )
         .route("/api/agents/{id}/turns/{turn}/cancel", any(crate::dispatch))
         .route(
             "/api/threads/{id}/turns/{turn}/cancel",

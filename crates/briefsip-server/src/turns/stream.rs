@@ -23,7 +23,11 @@ pub fn text(state: &AppState, call: i64, text: &str, final_text: bool) -> Result
         )?;
         db.execute("INSERT INTO provider_streams VALUES(?,?) ON CONFLICT(call) DO UPDATE SET text=excluded.text",params![call,text])?;
         Ok(())
-    })
+    })?;
+    if let Some(turn) = one(db, "SELECT turn FROM provider_calls WHERE seq=?", [call])? {
+        state.events.turn(db, string(&turn, "turn"))?;
+    }
+    Ok(())
 }
 pub fn tool(state: &AppState, call: i64, id: &str, name: &str) -> Result<()> {
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
@@ -48,7 +52,11 @@ pub fn tool(state: &AppState, call: i64, id: &str, name: &str) -> Result<()> {
             [call],
         )?;
         Ok(())
-    })
+    })?;
+    if let Some(turn) = one(db, "SELECT turn FROM provider_calls WHERE seq=?", [call])? {
+        state.events.turn(db, string(&turn, "turn"))?;
+    }
+    Ok(())
 }
 #[derive(Default)]
 struct Decoder {
