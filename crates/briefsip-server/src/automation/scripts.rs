@@ -737,17 +737,26 @@ pub(crate) async fn local(state: &AppState, request: Request) -> Result<Response
             .split('/')
             .collect::<Vec<_>>();
         crate::turns::prepare_script(state, &mapped_parts, &Method::POST, &body).await?;
-        let guard = state.database.lock().map_err(|_| Failure::storage())?;
-        let db = &guard.connection;
-        let (status, value) = transaction(db, || {
-            allowed(db, p[3])?;
-            if !data::exists(db, "SELECT 1 FROM turns WHERE id=?", [string(&body, "id")])? {
-                admit(db, p[3], string(&body, "id"), state.config.now())?;
-            }
-            crate::turns::script_route(state, db, &mapped, &mapped_parts, &Method::POST, &q, &body)
-        })?;
-        drop(guard);
-        crate::turns::schedule(state)?;
+        let (status, value) = {
+            let guard = state.database.lock().map_err(|_| Failure::storage())?;
+            let db = &guard.connection;
+            transaction(db, || {
+                allowed(db, p[3])?;
+                if !data::exists(db, "SELECT 1 FROM turns WHERE id=?", [string(&body, "id")])? {
+                    admit(db, p[3], string(&body, "id"), state.config.now())?;
+                }
+                crate::turns::script_route(
+                    state,
+                    db,
+                    &mapped,
+                    &mapped_parts,
+                    &Method::POST,
+                    &q,
+                    &body,
+                )
+            })?
+        };
+        crate::turns::start_script(state, string(&body, "id")).await?;
         return Ok(crate::json_response(status, value));
     }
     parts.headers.remove(header::AUTHORIZATION);

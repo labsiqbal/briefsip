@@ -86,7 +86,7 @@ async fn prepare(
         )?
     };
     let mut payload = request.clone();
-    payload["owner"] = Value::Null;
+    payload["owner"] = request.get("owner").cloned().unwrap_or(Value::Null);
     payload["readonly"] = json!(readonly);
     payload["admin"] = json!(admin);
     payload["image"] = image
@@ -167,6 +167,48 @@ async fn prepare(
             Err(error(status, "Query timed out."))
         }
     }
+}
+pub async fn tool(state: &AppState, turn: &Value, call: &Value, args: &Value) -> Result<Value> {
+    let prepared = async {
+        let mut request = input(
+            if call["function"]["name"] == "list_data_tables" {
+                "list"
+            } else {
+                "query"
+            },
+            args,
+        )?;
+        request["owner"] = turn["agent"].clone();
+        prepare(state, &request, false, false, 400).await
+    }
+    .await;
+    let mut db = state.database.lock().map_err(|_| Failure::storage())?;
+    transaction(&mut db.connection, |db| {
+        if !crate::data::exists(
+            db,
+            "SELECT 1 FROM turns WHERE id=? AND agent=? AND status='running'",
+            rusqlite::params![turn["id"].as_str(), turn["agent"].as_str()],
+        )? {
+            return Err(error(409, "Query cancelled before saving."));
+        }
+        let result = match prepared {
+            Ok((revision, image, mut result)) => {
+                if let Some(image) = image {
+                    if db.execute("UPDATE shared_data SET image=?,revision=revision+1 WHERE id=1 AND revision=?", rusqlite::params![image, revision])? == 0 {
+                        result = json!({"error":"Data changed while the query was running. Reload and try as a new query."});
+                    } else {
+                        result["revision"] = json!(revision + 1);
+                    }
+                } else {
+                    result["revision"] = json!(revision);
+                }
+                result
+            }
+            Err(failure) => json!({"error":failure.message}),
+        };
+        crate::turns::tools::journal(db, turn, call, &result)?;
+        Ok(result)
+    })
 }
 pub async fn handle(state: &AppState, req: Request) -> Result<Response> {
     let path = req.uri().path().to_owned();
