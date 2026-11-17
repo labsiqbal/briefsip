@@ -2043,6 +2043,22 @@ async fn connection(state: &AppState) -> Result<()> {
                 pending.remove(text(&frame, "eventId"));
             }
             if result.is_err() {
+                let stale_event = frame["kind"] == "section.event"
+                    && result
+                        .as_ref()
+                        .is_err_and(|e| e.code == "local_policy_denied")
+                    && db(&s, |db| {
+                        Ok(one(
+                            db,
+                            "SELECT 1 FROM hub_link_withdrawals WHERE project_id=? AND participation_id=?",
+                            [text(&frame, "projectId"), text(&frame, "participationId")],
+                        )?
+                        .is_some())
+                    })
+                    .unwrap_or(false);
+                if stale_event {
+                    continue;
+                }
                 let queued = s
                     .computer
                     .hub

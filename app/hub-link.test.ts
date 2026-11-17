@@ -664,6 +664,29 @@ test('human post rate leaves capacity for withdrawal controls', async t => {
     assert.equal(f.calls, 0);
 });
 
+if (process.env.BRIEFSIP_TEST_SERVER === 'rust') test('withdrawal drains its control frame before queued section delivery closes transport', async t => {
+    const f = await fixture(t), node = await f.node('Queued withdrawal', f.alice), p = await node.participate();
+    const original = WebSocket.prototype.send;
+    let delayed = false;
+    WebSocket.prototype.send = function(data: any, ...args: any[]) {
+        const wire = typeof data === 'string' ? JSON.parse(data) : undefined;
+        if (wire?.body?.kind === 'participation.withdraw') {
+            delayed = true;
+            f.post(f.alice, []);
+            setTimeout(() => {
+                if (this.readyState === WebSocket.OPEN) Reflect.apply(original, this, [data, ...args]);
+            }, 500);
+            return;
+        }
+        return Reflect.apply(original, this, [data, ...args]);
+    };
+    t.after(() => { WebSocket.prototype.send = original; });
+    await api(node.app, '/api/hub-link/grants/revoke', { projectId: f.project.projectId, participationId: p.participationId });
+    assert(delayed);
+    assert.equal(f.a.one('SELECT state FROM participations WHERE id=?', p.participationId)!.state, 'revoked');
+    assert.equal(f.calls, 0);
+});
+
 test('signed pending requests stay node-scoped; approval, stale revision, offline decline and reconnect preserve consent', async t => {
     const f = await fixture(t), bob = await f.node('Pending Bob', f.bob), alice = await f.node('Other Alice', f.alice), web = createHubWebApi(f.a);
     web.registerAgent(f.bob, { agentId: bob.agent.id, nodeId: bob.nodeId, name: 'Bob local' });
