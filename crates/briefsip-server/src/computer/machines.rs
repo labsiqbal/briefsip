@@ -909,6 +909,152 @@ pub async fn update_remote(
     )?;
     Ok(value)
 }
+pub async fn call_tool(s: &AppState, machine: &str, tool: &str, args: &Value) -> Result<Value> {
+    let operation = async {
+        let r = row(s, machine).map_err(|_| error(404, "Paired machine is unavailable."))?;
+        if r["state"] != "paired" {
+            return Err(error(404, "Paired machine is unavailable."));
+        }
+        let origin = text(&r, "origin");
+        let peer = descriptor(&remote(origin, "/api/environment", None, None).await?)?;
+        if peer["id"] != machine || peer["origin"] != origin {
+            return Err(error(401, "Remote machine identity changed."));
+        }
+        let token = crypt(s, text(&r, "token"), origin, false)?;
+        let return_token = crypt(
+            s,
+            text(&r, "return_token"),
+            &format!("{origin}:return"),
+            false,
+        )?;
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(10))
+            .build()
+            .map_err(|_| Failure::storage())?;
+        let mut session = None;
+        let mut protocol = "2025-03-26".to_owned();
+        let mut result = Value::Null;
+        for message in [
+            json!({"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"briefsip-peer","version":version()}}}),
+            json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+            json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":tool,"arguments":args}}),
+        ] {
+            if !row(s, machine)
+                .is_ok_and(|current| current["local_token_id"] == r["local_token_id"])
+            {
+                return Err(error(401, "Pairing was revoked."));
+            }
+            let mut request = client
+                .post(format!("{origin}/mcp"))
+                .bearer_auth(&token)
+                .header("Accept", "application/json, text/event-stream")
+                .header("MCP-Protocol-Version", &protocol)
+                .json(&message);
+            if let Some(session) = &session {
+                request = request.header("Mcp-Session-Id", session);
+            }
+            let mut response = request.send().await.map_err(|_| {
+                error(
+                    502,
+                    "Remote machine is offline or MCP request exceeded its bounds.",
+                )
+            })?;
+            if !response.status().is_success() {
+                return Err(error(
+                    if [401, 403].contains(&response.status().as_u16()) {
+                        401
+                    } else {
+                        502
+                    },
+                    "Remote MCP request was rejected.",
+                ));
+            }
+            if let Some(id) = response
+                .headers()
+                .get("mcp-session-id")
+                .and_then(|v| v.to_str().ok())
+            {
+                session = Some(id.to_owned());
+            }
+            if response.url().origin().ascii_serialization() != origin
+                || response.content_length().is_some_and(|n| n > 128 * 1024)
+            {
+                return Err(error(
+                    502,
+                    "Remote machine is offline or MCP request exceeded its bounds.",
+                ));
+            }
+            if matches!(response.status().as_u16(), 202 | 204) {
+                continue;
+            }
+            if !response
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v.starts_with("application/json"))
+            {
+                return Err(error(
+                    502,
+                    "Remote machine is offline or MCP request exceeded its bounds.",
+                ));
+            }
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response.chunk().await.map_err(|_| Failure::storage())? {
+                if bytes.len() + chunk.len() > 128 * 1024 {
+                    return Err(error(
+                        502,
+                        "Remote machine is offline or MCP request exceeded its bounds.",
+                    ));
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            let value: Value = serde_json::from_slice(&bytes)
+                .map_err(|_| error(502, "Remote MCP returned an invalid result."))?;
+            no_secrets(&value, &[&token, &return_token])?;
+            if message["id"] == 0 {
+                protocol = value["result"]["protocolVersion"]
+                    .as_str()
+                    .unwrap_or("2025-03-26")
+                    .to_owned();
+            } else if message["id"] == 1 {
+                if value["result"]["isError"] == true {
+                    let content = value["result"]["content"]
+                        .as_array()
+                        .and_then(|a| a.iter().find(|v| v["type"] == "text"));
+                    let status = content
+                        .and_then(|v| serde_json::from_str::<Value>(text(v, "text")).ok())
+                        .and_then(|v| v["status"].as_u64())
+                        .filter(|s| [400, 401, 403, 404, 409, 429].contains(s))
+                        .unwrap_or(502);
+                    return Err(error(status as u16, "Remote agent request was rejected."));
+                }
+                result = value["result"]["structuredContent"].clone();
+                if !result.is_object() {
+                    return Err(error(502, "Remote MCP returned an invalid result."));
+                }
+            }
+        }
+        if let Some(session) = session {
+            let _ = client
+                .delete(format!("{origin}/mcp"))
+                .bearer_auth(&token)
+                .header("Mcp-Session-Id", session)
+                .send()
+                .await;
+        }
+        Ok(result)
+    };
+    tokio::time::timeout(Duration::from_secs(10), operation)
+        .await
+        .map_err(|_| {
+            error(
+                502,
+                "Remote machine is offline or MCP request exceeded its bounds.",
+            )
+        })?
+}
 pub async fn download_release(
     s: &AppState,
     machine: &str,
