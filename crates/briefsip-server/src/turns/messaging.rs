@@ -19,7 +19,7 @@ pub fn capture(db: &Connection, turn: &str) -> Result<Vec<Value>> {
     )? {
         let current =
             one(db, "SELECT * FROM turns WHERE id=?", [turn])?.ok_or_else(Failure::storage)?;
-        if current["routing"] == "pending" {
+        if ["pending", "room"].contains(&string(&current, "routing")) {
             return Ok(Vec::new());
         }
         db.execute("INSERT INTO agent_reply_captures VALUES(?)", [turn])?;
