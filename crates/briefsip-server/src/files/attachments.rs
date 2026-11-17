@@ -136,6 +136,10 @@ pub async fn handle(state: &AppState, req: Request, parts: &[&str]) -> Result<Re
         let oversized = crate::text_header(req.headers(), "content-length")
             .and_then(|v| v.parse::<u64>().ok())
             .is_some_and(|n| n > 10 * 1024 * 1024);
+        let script_agent = req
+            .extensions()
+            .get::<crate::automation::scripts::UploadAgent>()
+            .cloned();
         let bytes = axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024)
             .await
             .map_err(|_| {
@@ -155,6 +159,12 @@ pub async fn handle(state: &AppState, req: Request, parts: &[&str]) -> Result<Re
         let mut db = state.database.lock().map_err(|_| Failure::storage())?;
         let result = transaction(&mut db.connection, |db| {
             let current = context(db, kind, owner)?;
+            if let Some(agent) = &script_agent {
+                crate::automation::scripts::allowed(db, &agent.0)?;
+                if kind != "threads" || current["agent"] != agent.0 {
+                    return Err(error(404, "Side thread not found for this agent."));
+                }
+            }
             let old=one(db,"SELECT seq,id,scope,name,digest,length(bytes) AS size,created,deleted FROM files WHERE id=?",[id])?;
             let mut result = if let Some(mut old) = old {
                 if old["deleted"] != 0
@@ -229,12 +239,12 @@ pub async fn handle(state: &AppState, req: Request, parts: &[&str]) -> Result<Re
         let db = state.database.lock().map_err(|_| Failure::storage())?;
         file(&db.connection, id, &scope)?
     };
-    let response = read(state, file, &q).await?;
+    let response = read(state, file, &q).await;
     {
         let db = state.database.lock().map_err(|_| Failure::storage())?;
         context(&db.connection, kind, owner)?;
     }
-    Ok(response)
+    response
 }
 pub async fn read(state: &AppState, file: File, q: &[(String, String)]) -> Result<Response> {
     if parameter(q, "metadata") == Some("1") {

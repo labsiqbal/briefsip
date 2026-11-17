@@ -53,6 +53,8 @@ pub struct Config {
     pub connectors: crate::connectors::config::Options,
     #[serde(flatten)]
     pub automation: crate::automation::options::Options,
+    #[serde(flatten)]
+    pub harness: crate::harness::config::Config,
 }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -137,6 +139,7 @@ impl Config {
                 .take(1024 * 1024)
                 .read_to_string(&mut input)?;
             let mut config: Self = serde_json::from_str(&input)?;
+            config.harness.test_mode = true;
             config.validate()?;
             return Ok(config);
         }
@@ -237,6 +240,7 @@ impl Config {
             media: crate::media::Options::environment()?,
             connectors: crate::connectors::config::Options::environment(),
             automation: crate::automation::options::Options::environment(),
+            harness: crate::harness::config::Config::default(),
         };
         config.validate()?;
         Ok(config)

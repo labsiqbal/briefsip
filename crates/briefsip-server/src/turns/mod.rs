@@ -1,3 +1,4 @@
+pub(crate) use admission::prepare as prepare_script;
 pub(crate) use admission::route as script_route;
 pub(crate) use history::requested_files;
 mod accounts;
@@ -6,6 +7,7 @@ mod compaction;
 mod coordination;
 mod dispatch;
 pub(crate) mod execution;
+pub(crate) mod harness;
 mod history;
 pub(crate) use crate::media::images as media;
 mod memory;
@@ -15,9 +17,9 @@ mod profile;
 mod provider;
 mod questions;
 mod queue;
-mod room;
+pub(crate) mod room;
 mod shell;
-mod stream;
+pub(crate) mod stream;
 pub(crate) mod tools;
 pub(crate) use crate::media::transcription;
 mod verification;
@@ -211,6 +213,20 @@ pub(crate) fn schedule(state: &AppState) -> Result<()> {
             let result = tokio::select! { result=execution::run(&task_state,&id) => result, _=receiver.changed()=>Err(error(409,"Turn stopped.")) };
             if let Err(failure) = result {
                 if let Ok(db) = task_state.database.lock() {
+                    if failure.message == "Turn stopped."
+                        && exists(
+                            &db.connection,
+                            "SELECT 1 FROM computer_waits WHERE turn=?",
+                            [&id],
+                        )
+                        .unwrap_or(false)
+                    {
+                        if let Ok(mut active) = task_state.turns.active.lock() {
+                            active.remove(&id);
+                        }
+                        task_state.turns.wake.notify_one();
+                        return;
+                    }
                     let _=db.connection.execute("UPDATE turns SET status='failed',error=?,stopped_at=? WHERE id=? AND status IN('queued','running') AND paused=0",params![failure.message,iso(&db.connection,task_state.config.now()).ok(),id]);
                     let _=db.connection.execute("UPDATE provider_calls SET status='failed',finished=? WHERE turn=? AND status='pending'",params![iso(&db.connection,task_state.config.now()).ok(),id]);
                 }
@@ -327,6 +343,7 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
     } else {
         json!({})
     };
+    admission::prepare(state, &p, &method, &v).await?;
     let (status, value) = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;

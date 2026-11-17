@@ -17,6 +17,19 @@ pub async fn call(
     tools: &[Value],
     phase: &str,
 ) -> Result<Answer> {
+    let native = {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        exists(
+            &guard.connection,
+            "SELECT 1 FROM turns t JOIN agents a ON a.id=t.agent WHERE t.id=? AND a.runtime<>'api'",
+            [turn],
+        )?
+    };
+    if native {
+        return crate::harness::run(state, turn, model, messages, phase)
+            .await
+            .map(Answer::Text);
+    }
     if pending(state) {
         return Err(error(503, "Update trial is pending."));
     }

@@ -8,6 +8,8 @@ mod data;
 mod db;
 mod events;
 mod files;
+mod harness;
+mod mcp;
 mod media;
 mod turns;
 mod updates;
@@ -80,7 +82,7 @@ fn security_headers(response: &mut Response) {
 fn text_header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers.get(name).and_then(|value| value.to_str().ok())
 }
-fn allowed(state: &AppState, value: Option<&str>) -> bool {
+pub(crate) fn allowed(state: &AppState, value: Option<&str>) -> bool {
     value.is_some_and(|value| {
         value == state.origin
             || state
@@ -163,6 +165,12 @@ async fn local(state: &AppState, request: Request) -> Result<Response, Failure> 
     }
     if updates::handles(path) {
         return updates::local(state, request).await;
+    }
+    if harness::handles(path, request.method()) {
+        return harness::local(state, request).await;
+    }
+    if mcp::handles(path) {
+        return mcp::local(state, request).await;
     }
     if turns::handles(path, request.method()) {
         return turns::local(state, request).await;
@@ -449,7 +457,11 @@ async fn main() -> db::Result<()> {
     if std::env::args().nth(1).as_deref() == Some("--connector-config") {
         return connectors::runner::run().await;
     }
-    let config = Config::read()?;
+    if std::env::args().nth(1).as_deref() == Some("--mcp-stdio") {
+        return mcp::stdio().await;
+    }
+    let mut config = Config::read()?;
+    harness::hydrate(&mut config.harness).await;
     let _script_discovery = automation::scripts::open(&config)?;
     let database = Arc::new(Mutex::new(db::open(
         &config.database,
@@ -465,6 +477,8 @@ async fn main() -> db::Result<()> {
             turns::initialize(&guard.connection).map_err(|e| e.message)?;
             connectors::initialize(&guard.connection).map_err(|e| e.message)?;
             automation::initialize(&guard.connection).map_err(|e| e.message)?;
+            harness::initialize(&guard.connection).map_err(|e| e.message)?;
+            mcp::initialize(&guard.connection).map_err(|e| e.message)?;
             computer::initialize(&guard.connection)?;
             updates::initialize(&guard.connection)?;
         }
@@ -515,6 +529,8 @@ async fn main() -> db::Result<()> {
     let connector_maintenance = connectors::mail::start(state.clone());
     let router = Router::new()
         .merge(computer::routes())
+        .merge(harness::routes())
+        .merge(mcp::routes())
         .merge(files::routes())
         .merge(updates::routes())
         .merge(turns::routes())
@@ -546,6 +562,7 @@ async fn main() -> db::Result<()> {
             if let Err(error) = computer::devices::close(&shutdown_state) {
                 eprintln!("Device shutdown failed: {}", error.message);
             }
+            harness::stop(&shutdown_state).await;
             shutdown_state.events.close();
             stop.graceful_shutdown(Some(Duration::from_secs(5)));
         });
@@ -565,6 +582,7 @@ async fn main() -> db::Result<()> {
                 if let Err(error) = computer::devices::close(&shutdown_state) {
                     eprintln!("Device shutdown failed: {}", error.message);
                 }
+                harness::stop(&shutdown_state).await;
                 shutdown_state.events.close();
             })
             .await
@@ -582,6 +600,7 @@ async fn main() -> db::Result<()> {
     result?;
     Ok(())
 }
+
 async fn shutdown() {
     let interrupt = tokio::signal::ctrl_c();
     let terminate = async {

@@ -19,24 +19,7 @@ pub fn capabilities(runtime: &str) -> Value {
     json!({"queue":true,"restart":true,"steer":runtime=="api"})
 }
 pub fn executable(state: &AppState, runtime: &str) -> Option<PathBuf> {
-    if let Some(path) = state
-        .config
-        .data
-        .harness
-        .as_ref()
-        .and_then(|v| v["executables"][runtime].as_str())
-    {
-        return Some(path.into());
-    }
-    std::env::var_os("PATH").and_then(|p| {
-        std::env::split_paths(&p)
-            .map(|p| p.join(runtime))
-            .find(|p| {
-                p.is_file()
-                    && p.metadata()
-                        .is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
-            })
-    })
+    crate::harness::executable(state, runtime)
 }
 pub fn workspace(state: &AppState, id: &str) -> Option<Value> {
     state
@@ -267,7 +250,7 @@ pub fn create(
         return Err(error(400, "Provider account not found."));
     }
     let image = avatar.get(input)?;
-    if runtime != "api" && workspace(state, id).is_none() {
+    if runtime != "api" && workspace(state, id).is_none() && !exists(db,"SELECT 1 FROM local_project_members m JOIN local_projects p ON p.id=m.project WHERE m.agent=? AND p.deleted=0 AND p.archived=0",[id])? {
         let dir = state
             .config
             .database
@@ -391,7 +374,7 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
                     "Coding runtime requires an installed executable on PATH.",
                 ));
             }
-            if runtime != "api" && workspace(state, id).is_none() {
+            if runtime != "api" && workspace(state, id).is_none() && !exists(db,"SELECT 1 FROM local_project_members m JOIN local_projects p ON p.id=m.project WHERE m.agent=? AND p.deleted=0 AND p.archived=0",[id])? {
                 std::fs::create_dir_all(
                     state
                         .config
@@ -411,11 +394,31 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
             }
         }
     }
-    if v.get("harnessModel").is_some() {
-        return Err(error(
-            501,
-            "not ported: harness models (see crates/PORTING.md)",
-        ));
+    if let Some(raw) = v.get("harnessModel") {
+        let harness_model = raw
+            .as_str()
+            .filter(|v| {
+                v.encode_utf16().count() <= 160 && !v.chars().any(|c| c < ' ' || c == '\u{7f}')
+            })
+            .ok_or_else(|| error(400, "Invalid harness model."))?
+            .trim();
+        let selected = runtime.unwrap_or_else(|| string(&current, "runtime"));
+        if matches!(selected, "api" | "codex" | "claude") {
+            return Err(error(400, "Harness model is unavailable for this runtime."));
+        }
+        if one(
+            db,
+            "SELECT model FROM harness_models WHERE agent=? AND runtime=?",
+            [id, selected],
+        )?
+        .is_none_or(|r| r["model"] != harness_model)
+        {
+            db.execute(
+                "DELETE FROM harness_sessions WHERE agent=? AND runtime=?",
+                [id, selected],
+            )?;
+        }
+        db.execute("INSERT INTO harness_models(agent,runtime,model) VALUES(?,?,?) ON CONFLICT(agent,runtime) DO UPDATE SET model=excluded.model",[id,selected,harness_model])?;
     }
     db.execute("UPDATE agents SET name=?,role=coalesce(?,role),model=?,instructions=?,thread_limit=coalesce(?,thread_limit),tool_budget=coalesce(?,tool_budget),backup_model=coalesce(?,backup_model),provider_account=coalesce(?,provider_account),revision=revision+1 WHERE id=?",rusqlite::params![name,role,model,instructions,v["threadLimit"].as_i64(),v["toolBudget"].as_i64(),backup,account,id])?;
     if account.is_some_and(|a| a != string(&current, "provider_account"))

@@ -38,7 +38,7 @@ pub fn context_position(db: &Connection, turn: &Value) -> Result<i64> {
     }
 }
 pub fn requested_files(db: &Connection, turn: &str) -> Result<Vec<Value>> {
-    let mut files = all(db,"WITH RECURSIVE results(id) AS(SELECT t.id FROM turns t JOIN threads th ON th.id=t.thread AND th.deleted=0 WHERE t.id=? UNION SELECT t.id FROM results JOIN agent_requests r ON r.turn=results.id AND r.expects_reply=1 JOIN agent_deliveries d ON d.request=r.id JOIN turns t ON t.id=d.turn JOIN threads th ON th.id=t.thread AND th.deleted=0) SELECT DISTINCT f.id,f.name,length(f.bytes) AS size,substr(f.scope,9) AS thread,f.deleted FROM(SELECT turn,file FROM generated_files UNION ALL SELECT turn,file FROM image_generations WHERE file IS NOT NULL) outputs JOIN files f ON f.id=outputs.file WHERE outputs.turn IN(SELECT id FROM results) AND f.scope LIKE 'threads:%' ORDER BY f.seq",[turn])?;
+    let mut files = all(db,"WITH RECURSIVE results(id) AS(SELECT t.id FROM turns t JOIN threads th ON th.id=t.thread AND th.deleted=0 WHERE t.id=? UNION SELECT t.id FROM results JOIN agent_requests r ON r.turn=results.id AND r.expects_reply=1 JOIN agent_deliveries d ON d.request=r.id JOIN turns t ON t.id=d.turn JOIN threads th ON th.id=t.thread AND th.deleted=0) SELECT DISTINCT f.id,f.name,length(f.bytes) AS size,substr(f.scope,9) AS thread,f.deleted FROM(SELECT turn,file FROM generated_files UNION ALL SELECT turn,file FROM mcp_files UNION ALL SELECT turn,file FROM image_generations WHERE file IS NOT NULL) outputs JOIN files f ON f.id=outputs.file WHERE outputs.turn IN(SELECT id FROM results) AND f.scope LIKE 'threads:%' ORDER BY f.seq",[turn])?;
     for file in &mut files {
         if file["deleted"] == 1 {
             file["deleted"] = json!(true);
@@ -58,7 +58,7 @@ pub fn readable_file(
     let sent=exists(db,&format!("SELECT 1 FROM turns t JOIN json_each(t.attachments) attachment WHERE {clause} AND coalesce((SELECT position FROM queue_positions WHERE turn=t.id),seq)<=? AND attachment.value=?"),rusqlite::params_from_iter(params))?;
     let (clause, mut params) = scope(turn);
     params.extend([position(db, turn)?.into(), id.to_owned().into()]);
-    let generated=exists(db,&format!("SELECT 1 FROM generated_files g JOIN turns t ON t.id=g.turn WHERE {clause} AND coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)<=? AND file=?"),rusqlite::params_from_iter(params))?;
+    let generated=exists(db,&format!("SELECT 1 FROM (SELECT turn,file FROM generated_files UNION ALL SELECT turn,file FROM mcp_files) g JOIN turns t ON t.id=g.turn WHERE {clause} AND coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)<=? AND file=?"),rusqlite::params_from_iter(params))?;
     let (clause, mut params) = scope(turn);
     params.extend([position(db, turn)?.into(), id.to_owned().into()]);
     let image=exists(db,&format!("SELECT 1 FROM image_generations g JOIN turns t ON t.id=g.turn WHERE {clause} AND coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)<=? AND file=?"),rusqlite::params_from_iter(params))?;

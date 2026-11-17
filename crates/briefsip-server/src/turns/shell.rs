@@ -60,7 +60,7 @@ pub fn decide(db: &Connection, turn: &str, approval: &str, v: &Value) -> Result<
             "INSERT OR IGNORE INTO harness_policies VALUES (?,?,?,?)",
             params![
                 row["agent"].as_str(),
-                "api",
+                row["runtime"].as_str(),
                 row["workspace"].as_str(),
                 row["prefix"].as_str()
             ],
@@ -77,6 +77,27 @@ async fn approval(
     command: &str,
     args: &Value,
 ) -> Result<bool> {
+    let native = {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        data::agents::read(&guard.connection, string(turn, "agent"))?["runtime"] != "api"
+            && !harness::peer(&guard.connection, string(turn, "id"))?
+    };
+    if native {
+        let safe=regex::Regex::new(r"(?i)(?:\b(?:rm|rmdir|shred|dd|mkfs|sudo|su|mount|umount|chmod|chown|kill|pkill|killall|curl|wget|ssh|scp|sftp|sendmail|mail)\b|\bgit\s+(?:push|reset|clean|restore|checkout)\b|\bnpm\s+(?:publish|unpublish|login|token)\b|\b(?:printenv|env)\b|\.(?:ssh|aws|codex)|credentials|secrets?\b)").map_err(|_|Failure::storage())?;
+        if binding.write && !safe.is_match(command) {
+            return Ok(true);
+        }
+        return crate::harness::approve(
+            state,
+            string(turn, "id"),
+            "command",
+            Some(command),
+            "Run workspace shell command?",
+            args,
+            "",
+        )
+        .await;
+    }
     let id = uuid::Uuid::new_v4().to_string();
     let mut changes = state.events.subscribe();
     {
@@ -193,11 +214,8 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value, args: Value) -> R
                 "/home",
                 if binding.write { "--bind" } else { "--ro-bind" },
             ])
-            .arg(format!(
-                "/proc/{}/fd/{}",
-                std::process::id(),
-                pinned.as_raw_fd()
-            ))
+            .current_dir(format!("/proc/self/fd/{}", pinned.as_raw_fd()))
+            .arg("/proc/self/cwd")
             .arg("/workspace")
             .args([
                 "--chdir",
@@ -229,7 +247,7 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value, args: Value) -> R
             .map_err(|_| error(503, "Shell sandbox is unavailable."))?;
         if let Some(mut stdin) = child.stdin.take() {
             stdin
-                .write_all(format!("{command}\n").as_bytes())
+                .write_all(format!("{}\n", command).as_bytes())
                 .await
                 .map_err(|_| {
                     error(
