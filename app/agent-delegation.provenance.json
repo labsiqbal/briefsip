@@ -23,7 +23,11 @@
         ]
       }
     ],
-    "localPath": "app/agent-delegation.ts"
+    "localPath": "app/agent-delegation.ts",
+    "localPaths": [
+      "app/agent-delegation.ts",
+      "crates/briefsip-server/src/turns/messaging.rs"
+    ]
   },
   "hermes": {
     "repository": "https://github.com/NousResearch/hermes-agent",
@@ -110,7 +114,9 @@
       "app/room-chat.ts",
       "app/server.ts",
       "app/dispatch.ts",
-      "app/agent-messages.ts"
+      "app/agent-messages.ts",
+      "crates/briefsip-server/src/turns/messaging.rs",
+      "crates/briefsip-server/src/turns/room.rs"
     ]
   },
   "remote": {
@@ -178,7 +184,8 @@
       "app/turn-stream.ts",
       "app/src/ui/transcript.ts",
       "app/src/ui/TurnActivity.tsx",
-      "app/src/ui/AgentConversation.tsx"
+      "app/src/ui/AgentConversation.tsx",
+      "crates/briefsip-server/src/turns/stream.rs"
     ],
     "adaptation": "Briefsip-owned TypeScript snapshot writer and SQLite delivery seam. Latest admitted provider call, ordered segments, provisional/final reconciliation and isolated display failures. Hermes remains read-only logic evidence; no runtime, UI, reasoning, platform transport or quota copied."
   }

@@ -187,8 +187,8 @@ const gate = () => { let release!: () => void; const promise = new Promise<void>
 test('room Stop fences a completed root with live/queued invited members; exact lost-response retry survives restart and new generation', async () => fixture(async ({room,members,request,wait,setRespond,restart,calls}:any) => {
   const held=gate();
   setRespond(async (body:any) => {
+    if (body.model==='Right Hand' && ['Old generation','@Right Hand, investigate.'].includes(latest(body))) { await held.promise; return '@Reviewer, late invitation must not publish.'; }
     if (latest(body)==='Old generation') return body.model==='Assistant' ? '@Right Hand, investigate.' : 'NO_REPLY';
-    if (latest(body)==='@Right Hand, investigate.') { await held.promise; return '@Reviewer, late invitation must not publish.'; }
     return 'Fresh reply.';
   });
   const path=await room(3,members[0].id), other=await room(1,null), root=randomUUID();

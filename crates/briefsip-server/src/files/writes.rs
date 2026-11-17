@@ -245,8 +245,16 @@ pub fn perform(
 }
 
 pub fn initialize(db: &Connection) -> crate::db::Result<()> {
-    db.execute_batch("CREATE TABLE IF NOT EXISTS flow_tool_calls(seq INTEGER PRIMARY KEY AUTOINCREMENT,turn TEXT NOT NULL REFERENCES turns(id),call_id TEXT NOT NULL,call TEXT NOT NULL,result TEXT NOT NULL,after_output INTEGER NOT NULL,after_action INTEGER,UNIQUE(turn,call_id)) STRICT;
-        CREATE TABLE IF NOT EXISTS workspace_writes(turn TEXT NOT NULL REFERENCES turns(id),call_id TEXT NOT NULL,call TEXT NOT NULL,after_output INTEGER NOT NULL,after_action INTEGER NOT NULL,PRIMARY KEY(turn,call_id)) STRICT;
+    db.execute_batch("CREATE TABLE IF NOT EXISTS flow_tool_calls(seq INTEGER PRIMARY KEY AUTOINCREMENT,turn TEXT NOT NULL REFERENCES turns(id),call_id TEXT NOT NULL,call TEXT NOT NULL,result TEXT NOT NULL,after_output INTEGER NOT NULL,after_action INTEGER,UNIQUE(turn,call_id)) STRICT;")?;
+    let columns =
+        crate::files::rows(db, "PRAGMA table_info(flow_tool_calls)", []).map_err(|e| e.message)?;
+    if !columns.iter().any(|row| row["name"] == "after_action") {
+        db.execute(
+            "ALTER TABLE flow_tool_calls ADD COLUMN after_action INTEGER",
+            [],
+        )?;
+    }
+    db.execute_batch("CREATE TABLE IF NOT EXISTS workspace_writes(turn TEXT NOT NULL REFERENCES turns(id),call_id TEXT NOT NULL,call TEXT NOT NULL,after_output INTEGER NOT NULL,after_action INTEGER NOT NULL,PRIMARY KEY(turn,call_id)) STRICT;
         INSERT INTO flow_tool_calls(turn,call_id,call,result,after_output,after_action)
         SELECT turn,call_id,call,'{\"uncertain\":true,\"error\":\"Workspace operation was interrupted. Ask the host owner to inspect the requested path, sibling .briefsip-removed-* recovery directories and orphan .briefsip-*.tmp staging links before any new write; no automatic replay occurred.\"}',after_output,after_action
         FROM workspace_writes w WHERE NOT EXISTS (SELECT 1 FROM flow_tool_calls f WHERE f.turn=w.turn AND f.call_id=w.call_id);")?;
@@ -295,7 +303,7 @@ pub fn execute(
         "INSERT INTO workspace_writes VALUES(?,?,?,?,?)",
         rusqlite::params![turn, call_id, call.to_string(), count, after_action],
     )?;
-    let result=perform(db,&binding.directory,&binding.agent,name,&args).unwrap_or_else(|_|json!({"uncertain":true,"error":"Workspace operation did not confirm success. Existing files are never replaced. Ask the host owner to inspect the requested path and orphan .briefsip-*.tmp staging links before trying again."}));
+    let result=perform(db,&binding.directory,&binding.agent,name,&args).unwrap_or_else(|_|json!({"uncertain":true,"error":if name=="delete_workspace_file" {"Removal did not confirm success. Inspect the original path and sibling .briefsip-removed-* recovery directories before retrying."}else{"Workspace operation did not confirm success. Existing files are never replaced. Ask the host owner to inspect the requested path and orphan .briefsip-*.tmp staging links before trying again."}}));
     db.execute("INSERT INTO flow_tool_calls(turn,call_id,call,result,after_output,after_action) VALUES(?,?,?,?,?,?)",rusqlite::params![turn,call_id,call.to_string(),result.to_string(),count,after_action])?;
     Ok(result)
 }

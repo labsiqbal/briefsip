@@ -115,6 +115,7 @@ test('PDF HTTP preview and messages preserve source, scope, retry, routing, tool
     const noPreview = await upload(scopes[0], document('AUTO_EXTRACT'));
     const auto = randomUUID(); await request(`${scopes[0]}/turns`, { id: auto, text: 'No preview needed', files: [noPreview] }); await done(scopes[0], auto); assert(JSON.stringify(payloads.at(-1)).includes('AUTO_EXTRACT'));
     {
+      assert.notEqual(process.env.BRIEFSIP_TEST_SERVER, 'rust', 'not ported: PDF sandbox fault injection uses Node child_process.spawn; Rust child requires harness/MCP fixture bridge (lane 2f).');
       const file = await upload(scopes[0], document('RETRY_SANDBOX')), command = { id: randomUUID(), text: 'Retry after sandbox repair', files: [file] };
       const originalSpawn = childProcess.spawn;
       childProcess.spawn = ((...args: Parameters<typeof childProcess.spawn>) => args[0] === '/usr/bin/bwrap'

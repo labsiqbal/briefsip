@@ -1,0 +1,419 @@
+mod accounts;
+mod admission;
+mod compaction;
+mod coordination;
+mod dispatch;
+mod execution;
+mod history;
+pub(crate) mod media;
+mod memory;
+pub(crate) mod messaging;
+pub mod options;
+mod profile;
+mod provider;
+mod questions;
+mod queue;
+mod room;
+mod shell;
+mod stream;
+mod tools;
+pub(crate) mod transcription;
+mod verification;
+mod waits;
+
+use crate::{data, web::Failure, AppState};
+use axum::{extract::Request, http::Method, response::Response, routing::any, Router};
+use rusqlite::{params, Connection};
+use serde_json::{json, Value};
+use std::{
+    collections::HashMap,
+    sync::{atomic::Ordering, Arc, Mutex},
+};
+use tokio::sync::{watch, Notify};
+
+use crate::data::{
+    all, closed, error, exists, field, integer, iso, one, string, transaction, uuid,
+};
+type Result<T> = std::result::Result<T, Failure>;
+
+#[derive(Clone, Default)]
+pub struct Runtime {
+    active: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,
+    media: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,
+    wake: Arc<Notify>,
+    client: reqwest::Client,
+    stopping: Arc<std::sync::atomic::AtomicBool>,
+}
+impl Runtime {
+    pub fn new() -> std::result::Result<Self, String> {
+        Ok(Self {
+            active: Default::default(),
+            media: Default::default(),
+            wake: Default::default(),
+            stopping: Default::default(),
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(|_| "Cannot initialize provider HTTP client.".to_owned())?,
+        })
+    }
+    fn cancel(&self, turn: &str) {
+        if let Ok(active) = self.active.lock() {
+            if let Some(cancel) = active.get(turn) {
+                cancel.send_replace(true);
+            }
+        }
+    }
+}
+
+pub fn initialize(db: &Connection) -> Result<()> {
+    db.execute_batch(include_str!("schema.sql"))?;
+    waits::initialize(db)?;
+    db.execute("UPDATE turns SET status='interrupted',error='Server stopped during this turn. Check the result before resuming.',revision=revision+1 WHERE status='running'", [])?;
+    db.execute("UPDATE provider_calls SET status='interrupted',finished=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE status='pending'", [])?;
+    Ok(())
+}
+
+pub fn pending(state: &AppState) -> bool {
+    state.trial_pending.load(Ordering::Acquire) || state.turns.stopping.load(Ordering::Acquire)
+}
+pub fn stop(state: &AppState) -> Result<()> {
+    state.turns.stopping.store(true, Ordering::Release);
+    let guard = state.database.lock().map_err(|_| Failure::storage())?;
+    let db = &guard.connection;
+    transaction(db, || {
+        db.execute("UPDATE turns SET status='interrupted',error='Server stopped during this turn. Check the result before resuming.',revision=revision+1 WHERE status='running'",[])?;
+        db.execute(
+            "UPDATE provider_calls SET status='interrupted',finished=? WHERE status='pending'",
+            [iso(db, state.config.now())?],
+        )?;
+        Ok(())
+    })?;
+    if let Ok(active) = state.turns.active.lock() {
+        for cancel in active.values() {
+            cancel.send_replace(true);
+        }
+    }
+    Ok(())
+}
+
+pub fn start(state: AppState) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        if state.auth.is_some() {
+            return;
+        }
+        let mut changes = state.events.subscribe();
+        let mut timer = tokio::time::interval(std::time::Duration::from_secs(1));
+        loop {
+            if std::env::var("BRIEFSIP_TEST_SERVER").as_deref() == Ok("rust") {
+                if let Ok(parent) = std::env::var("BRIEFSIP_TEST_PARENT") {
+                    if parent.bytes().all(|b| b.is_ascii_digit())
+                        && !std::path::Path::new(&format!("/proc/{parent}")).exists()
+                    {
+                        std::process::exit(0);
+                    }
+                }
+            }
+            if let Err(error) = schedule(&state) {
+                eprintln!("Turn scheduling failed: {}", error.message);
+            }
+            tokio::select! { _ = changes.recv() => (), _ = state.turns.wake.notified() => (), _ = timer.tick() => () }
+        }
+    })
+}
+fn schedule(state: &AppState) -> Result<()> {
+    let guard = state.database.lock().map_err(|_| Failure::storage())?;
+    let db = &guard.connection;
+    if pending(state) {
+        return Ok(());
+    }
+    queue::expire(db)?;
+    waits::expire(db, state.config.now())?;
+    messaging::settle(state, db)?;
+    coordination::settle(db)?;
+    room::settle(db)?;
+    for steer in all(db,"SELECT DISTINCT dispatch_target FROM turns WHERE dispatch_mode='steer' AND status='queued' AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.id=turns.dispatch_target AND t.status='running')",[])? {
+        db.execute("UPDATE turns SET dispatch_mode='queue',dispatch_target=NULL,dispatch_label='Queued after active turn',revision=revision+1 WHERE dispatch_mode='steer' AND dispatch_target=? AND status='queued'",[string(&steer,"dispatch_target")])?;
+    }
+    for approval in all(db,"SELECT id FROM harness_approvals WHERE state='approval' AND turn IN (SELECT id FROM turns WHERE status<>'running')",[])? {
+        db.execute("UPDATE harness_approvals SET state='expired',revision=revision+1 WHERE id=?",[string(&approval,"id")])?;
+    }
+    let mut active = state.turns.active.lock().map_err(|_| Failure::storage())?;
+    for (id, cancel) in active.iter() {
+        if !exists(
+            db,
+            "SELECT 1 FROM turns WHERE id=? AND status IN('queued','running') AND paused=0",
+            [id],
+        )? {
+            cancel.send_replace(true);
+        }
+    }
+    if pending(state) {
+        return Ok(());
+    }
+    let capacity = state
+        .config
+        .data
+        .concurrency
+        .as_ref()
+        .and_then(Value::as_u64)
+        .unwrap_or(4) as usize;
+    let queued = all(db, "SELECT t.*,a.thread_limit FROM turns t JOIN agents a ON a.id=t.agent WHERE t.status='queued' AND t.paused=0 AND t.waiting_for IS NULL AND NOT EXISTS(SELECT 1 FROM turn_waits w WHERE w.turn=t.id AND w.status='waiting') AND NOT EXISTS(SELECT 1 FROM questions q WHERE q.turn=t.id AND q.answer IS NULL) AND NOT EXISTS(SELECT 1 FROM remote_agent_calls WHERE delivery=t.id) AND NOT EXISTS(SELECT 1 FROM agent_requests r WHERE r.turn=t.id AND r.expects_reply=1 AND r.settled=0 AND NOT EXISTS(SELECT 1 FROM delegation_tasks d WHERE d.request=r.id)) AND NOT EXISTS(SELECT 1 FROM delegation_waits w WHERE w.turn=t.id AND w.status='waiting') AND NOT EXISTS(SELECT 1 FROM delegation_tasks d WHERE d.creator_turn=t.id AND d.wait=1 AND d.wake_delivered=0) AND t.dispatch_mode<>'steer' AND NOT EXISTS(SELECT 1 FROM agent_visibility v WHERE v.agent=t.agent AND v.hidden=1) AND NOT EXISTS(SELECT 1 FROM queue_edits e JOIN turns h ON h.id=e.turn WHERE e.state='held' AND e.expires_at>unixepoch('subsec')*1000 AND h.agent=t.agent AND h.thread IS t.thread AND coalesce((SELECT position FROM queue_positions WHERE turn=h.id),h.seq)<=coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)) ORDER BY coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)", [])?;
+    for row in queued {
+        if active.len() >= capacity {
+            break;
+        }
+        let id = string(&row, "id");
+        if active.contains_key(id) {
+            continue;
+        }
+        if !room::can_run(db, id)? {
+            continue;
+        }
+        let agent = string(&row, "agent");
+        let reserved = json!(active.keys().collect::<Vec<_>>()).to_string();
+        if exists(
+            db,
+            "SELECT 1 FROM turns WHERE agent=? AND thread IS ? AND(status='running' OR id IN(SELECT value FROM json_each(?)))",
+            params![agent, row["thread"].as_str(), reserved],
+        )? {
+            continue;
+        }
+        if !row["thread"].is_null() {
+            let count:i64 = db.query_row("SELECT count(*) FROM turns WHERE agent=? AND thread IS NOT NULL AND(status='running' OR id IN(SELECT value FROM json_each(?)))", params![agent,reserved], |r|r.get(0))?;
+            if count >= row["thread_limit"].as_i64().unwrap_or(2) {
+                continue;
+            }
+        }
+        if !transaction(db, || {
+            room::admit(db, id)?;
+            exists(
+                db,
+                "SELECT 1 FROM turns WHERE id=? AND status='queued' AND paused=0",
+                [id],
+            )
+        })? {
+            continue;
+        }
+        let (cancel, mut receiver) = watch::channel(false);
+        active.insert(id.to_owned(), cancel);
+        let task_state = state.clone();
+        let id = id.to_owned();
+        tokio::spawn(async move {
+            let result = tokio::select! { result=execution::run(&task_state,&id) => result, _=receiver.changed()=>Err(error(409,"Turn stopped.")) };
+            if let Err(failure) = result {
+                if let Ok(db) = task_state.database.lock() {
+                    let _=db.connection.execute("UPDATE turns SET status='failed',error=?,stopped_at=? WHERE id=? AND status IN('queued','running') AND paused=0",params![failure.message,iso(&db.connection,task_state.config.now()).ok(),id]);
+                    let _=db.connection.execute("UPDATE provider_calls SET status='failed',finished=? WHERE turn=? AND status='pending'",params![iso(&db.connection,task_state.config.now()).ok(),id]);
+                }
+            }
+            if let Ok(mut active) = task_state.turns.active.lock() {
+                active.remove(&id);
+            }
+            task_state.turns.wake.notify_one();
+        });
+    }
+    Ok(())
+}
+
+pub fn handles(path: &str, method: &Method) -> bool {
+    let p: Vec<_> = path.split('/').skip(1).collect();
+    matches!(p.as_slice(), ["api", "turn-waits", _])
+        || matches!(p.as_slice(),["api","agents"|"threads"|"channels",_,"turns"] if *method==Method::POST)
+        || matches!(p.as_slice(),["api","channels",_,"discussions",_,"stop"] if *method==Method::POST)
+        || matches!(p.as_slice(),["api","agents"|"threads"|"channels",_,"compaction"] if *method==Method::GET)
+        || matches!(
+            p.as_slice(),
+            [
+                "api",
+                "agents" | "threads" | "channels",
+                _,
+                "turns",
+                _,
+                "cancel" | "pause" | "resume" | "reassign" | "dispatch" | "edit"
+            ] | ["api", "agents" | "threads" | "channels", _, "queue"]
+                | [
+                    "api",
+                    "agents" | "threads" | "channels",
+                    _,
+                    "turns",
+                    _,
+                    "harness-approvals",
+                    _
+                ]
+                | [
+                    "api",
+                    "agents" | "threads" | "channels",
+                    _,
+                    "turns",
+                    _,
+                    "questions",
+                    _,
+                    "answer"
+                ]
+        )
+}
+pub async fn local(state: &AppState, request: Request) -> Result<Response> {
+    if request.uri().path().starts_with("/api/turn-waits/") {
+        return waits::local(state, request).await;
+    }
+    let path = request.uri().path().to_owned();
+    let p: Vec<_> = path.split('/').skip(1).collect();
+    let method = request.method().clone();
+    let q = data::query(&request);
+    let room_stop = matches!(
+        p.as_slice(),
+        ["api", "channels", _, "discussions", _, "stop"]
+    );
+    if room_stop
+        && (request.headers().contains_key("authorization") || request.uri().query().is_some())
+    {
+        return Err(error(
+            403,
+            "Room controls require the local Owner in Briefsip.",
+        ));
+    }
+    let v = if method == Method::POST {
+        if !data::origin(state, request.headers())
+            || crate::text_header(request.headers(), "content-type")
+                .unwrap_or("")
+                .split(';')
+                .next()
+                != Some("application/json")
+        {
+            return Err(error(403, "Request must originate from Briefsip."));
+        }
+        let bytes = axum::body::to_bytes(request.into_body(), 64000)
+            .await
+            .map_err(|_| error(413, "Request is too large."))?;
+        let v: Value = serde_json::from_slice(&bytes).map_err(|_| error(400, "Invalid JSON."))?;
+        if !v.is_object() {
+            return Err(error(400, "JSON object is required."));
+        }
+        if !uuid(&field(&v, "id", 36)?) {
+            return Err(error(400, "Invalid request ID."));
+        }
+        v
+    } else {
+        json!({})
+    };
+    let (status, value) = {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        let db = &guard.connection;
+        transaction(db, || {
+            if room_stop {
+                if !closed(&v, &["id", "generation"]) || !v["generation"].as_str().is_some_and(uuid)
+                {
+                    return Err(error(400, "Invalid discussion generation."));
+                }
+                let channel = one(db, "SELECT archived FROM channels WHERE id=?", [p[2]])?
+                    .ok_or_else(|| error(404, "Channel not found."))?;
+                if channel["archived"] == 1 {
+                    return Err(error(
+                        409,
+                        "Restore the channel before changing its discussion.",
+                    ));
+                }
+                return Ok((
+                    200,
+                    room::stop(db, p[2], p[4], string(&v, "id"), string(&v, "generation"))?,
+                ));
+            }
+            admission::route(state, db, &path, &p, &method, &q, &v)
+        })?
+    };
+    if room_stop {
+        if let Some(cancelled) = value["cancelled"].as_array() {
+            for id in cancelled.iter().filter_map(Value::as_str) {
+                state.turns.cancel(id);
+            }
+        }
+    }
+    state.turns.wake.notify_one();
+    Ok(crate::json_response(status, value))
+}
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/turn-waits/{id}", any(crate::dispatch))
+        .route(
+            "/api/agents/{id}/turns/{turn}/harness-approvals/{approval}",
+            any(crate::dispatch),
+        )
+        .route(
+            "/api/threads/{id}/turns/{turn}/harness-approvals/{approval}",
+            any(crate::dispatch),
+        )
+        .route(
+            "/api/channels/{id}/turns/{turn}/harness-approvals/{approval}",
+            any(crate::dispatch),
+        )
+        .route("/api/agents/{id}/turns", any(crate::dispatch))
+        .route("/api/threads/{id}/turns", any(crate::dispatch))
+        .route("/api/channels/{id}/turns", any(crate::dispatch))
+        .route(
+            "/api/channels/{id}/discussions/{root}/stop",
+            any(crate::dispatch),
+        )
+        .route("/api/agents/{id}/turns/{turn}/cancel", any(crate::dispatch))
+        .route(
+            "/api/threads/{id}/turns/{turn}/cancel",
+            any(crate::dispatch),
+        )
+        .route(
+            "/api/channels/{id}/turns/{turn}/cancel",
+            any(crate::dispatch),
+        )
+        .route("/api/agents/{id}/turns/{turn}/pause", any(crate::dispatch))
+        .route("/api/threads/{id}/turns/{turn}/pause", any(crate::dispatch))
+        .route(
+            "/api/channels/{id}/turns/{turn}/pause",
+            any(crate::dispatch),
+        )
+        .route("/api/agents/{id}/turns/{turn}/resume", any(crate::dispatch))
+        .route(
+            "/api/threads/{id}/turns/{turn}/resume",
+            any(crate::dispatch),
+        )
+        .route(
+            "/api/channels/{id}/turns/{turn}/resume",
+            any(crate::dispatch),
+        )
+        .route(
+            "/api/agents/{id}/turns/{turn}/reassign",
+            any(crate::dispatch),
+        )
+        .route(
+            "/api/threads/{id}/turns/{turn}/reassign",
+            any(crate::dispatch),
+        )
+        .route(
+            "/api/channels/{id}/turns/{turn}/reassign",
+            any(crate::dispatch),
+        )
+        .route(
+            "/api/agents/{id}/turns/{turn}/dispatch",
+            any(crate::dispatch),
+        )
+        .route(
+            "/api/threads/{id}/turns/{turn}/dispatch",
+            any(crate::dispatch),
+        )
+        .route("/api/agents/{id}/turns/{turn}/edit", any(crate::dispatch))
+        .route("/api/threads/{id}/turns/{turn}/edit", any(crate::dispatch))
+        .route("/api/channels/{id}/turns/{turn}/edit", any(crate::dispatch))
+        .route("/api/agents/{id}/queue", any(crate::dispatch))
+        .route("/api/threads/{id}/queue", any(crate::dispatch))
+        .route("/api/channels/{id}/queue", any(crate::dispatch))
+        .route(
+            "/api/agents/{id}/turns/{turn}/questions/{question}/answer",
+            any(crate::dispatch),
+        )
+        .route(
+            "/api/threads/{id}/turns/{turn}/questions/{question}/answer",
+            any(crate::dispatch),
+        )
+        .route(
+            "/api/channels/{id}/turns/{turn}/questions/{question}/answer",
+            any(crate::dispatch),
+        )
+}
