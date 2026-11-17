@@ -227,6 +227,7 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                     )?;
                 }
                 let result = match tools::run(state, &turn, &call).await {
+                    Err(e) if call["function"]["name"] == "interrupt_agent" => return Err(e),
                     Err(e)
                         if call["function"]["name"] == "send_message"
                             && e.message.starts_with("Concurrent child limit") =>

@@ -7,9 +7,9 @@ pub fn allowed(db: &Connection, turn: &str) -> Result<bool> {
     Ok(!exists(db,"SELECT 1 FROM agent_deliveries d JOIN agent_requests r ON r.id=d.request WHERE d.turn=? AND r.expects_reply=0",[turn])?)
 }
 pub fn roster(db: &Connection, turn: &Value, after: &str) -> Result<Vec<Value>> {
-    let ancestors = ancestors(db, string(turn, "id"))?;
-    let channel = ancestors.iter().find_map(|r| r["channel"].as_str());
-    let excluded: Vec<_> = ancestors.iter().map(|r| r["agent"].clone()).collect();
+    let lineage = ancestors(db, string(turn, "id"))?;
+    let channel = lineage.iter().find_map(|r| r["channel"].as_str());
+    let excluded: Vec<_> = lineage.iter().map(|r| r["agent"].clone()).collect();
     let mut rows=all(db,"SELECT id,name,role,substr(instructions,1,300) AS description FROM agents WHERE id>? AND id NOT IN(SELECT value FROM json_each(?)) AND NOT EXISTS(SELECT 1 FROM agent_visibility WHERE agent=agents.id AND hidden=1) AND (? IS NULL OR id IN(SELECT agent FROM channel_members WHERE channel=?)) ORDER BY id LIMIT 11",params![after,json!(excluded).to_string(),channel,channel])?;
     for row in &mut rows {
         let active=all(db,"SELECT status,channel FROM turns WHERE agent=? AND (status IN('queued','running') OR paused=1)",[string(row,"id")])?;
@@ -20,10 +20,21 @@ pub fn roster(db: &Connection, turn: &Value, after: &str) -> Result<Vec<Value>> 
         } else {
             "waiting"
         });
-        row["queuedMessages"] = json!(active
-            .iter()
-            .filter(|r| r["status"] == "queued" && r["channel"].is_null())
-            .count());
+        let queued = all(
+            db,
+            "SELECT id FROM turns WHERE agent=? AND status='queued' AND channel IS NULL",
+            [string(row, "id")],
+        )?;
+        let mut count = 0;
+        for item in queued {
+            if ancestors(db, string(&item, "id"))?
+                .iter()
+                .all(|r| r["channel"].is_null())
+            {
+                count += 1;
+            }
+        }
+        row["queuedMessages"] = json!(count);
     }
     if channel.is_none() {
         for mut row in crate::computer::remote::roster(db, true)? {
@@ -359,6 +370,52 @@ pub fn run(
                 &text,
                 args["expects_reply"] == true,
             )
+        }
+        "interrupt_agent" => {
+            let recipient = string(args, "recipient");
+            let reason = field(args, "reason", 2000)?;
+            if !closed(args, &["recipient", "reason"])
+                || !turn["channel"].is_null()
+                || !allowed(db, string(turn, "id"))?
+                || !roster(db, turn, "")?
+                    .iter()
+                    .any(|row| row["id"] == recipient)
+            {
+                return Err(error(
+                    409,
+                    "You can only stop teammate work you requested in a private conversation.",
+                ));
+            }
+            let rows = all(db,"SELECT t.id FROM agent_deliveries d JOIN agent_requests r ON r.id=d.request JOIN turns source ON source.id=r.turn JOIN turns t ON t.id=d.turn WHERE source.agent=? AND t.agent=? AND (t.status IN('queued','running') OR t.paused=1) AND r.settled=0 AND t.channel IS NULL",[string(turn,"agent"),recipient])?;
+            if rows.is_empty() {
+                return Err(error(409, "You have no active work for this recipient."));
+            }
+            let mut roots = Vec::new();
+            for row in rows {
+                if ancestors(db, string(&row, "id"))?
+                    .iter()
+                    .all(|r| r["channel"].is_null())
+                {
+                    roots.push(string(&row, "id").to_owned());
+                }
+            }
+            if roots.is_empty() {
+                return Err(error(409, "You have no active work for this recipient."));
+            }
+            let cancelled = cancel(db, &roots, &format!("Stopped by requester: {reason}"))?;
+            let mut result = send(state,db,turn,call,&[recipient.to_owned()],&format!("The work I asked for has been stopped. Reason: {reason}\nNotice only; do not continue the work or send a reply."),false)?;
+            result["status"] = json!("interrupted");
+            result["recipient"] = json!(recipient);
+            result["cancelled"] = json!(cancelled);
+            db.execute(
+                "UPDATE flow_tool_calls SET result=? WHERE turn=? AND call_id=?",
+                [
+                    result.to_string(),
+                    string(turn, "id").into(),
+                    string(call, "id").into(),
+                ],
+            )?;
+            Ok(result)
         }
         "delegate_task" => {
             if !closed(args, &["agent", "task", "wait"])

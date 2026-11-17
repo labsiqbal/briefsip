@@ -25,6 +25,9 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
         "generate_image" => state.config.turns.image_provider.is_some(),
         "list_agents" | "send_message" | "delegate_task" | "task_status" | "wait_task"
         | "cancel_task" => super::messaging::allowed(db, string(turn, "id")).unwrap_or(false),
+        "interrupt_agent" => {
+            private && super::messaging::allowed(db, string(turn, "id")).unwrap_or(false)
+        }
         "read_provider_settings"
         | "edit_profile"
         | "list_skills"
@@ -315,7 +318,7 @@ fn dispatch(
             super::coordination::execute(state, db, turn, call, args)
         }
         "list_agents" | "send_message" | "delegate_task" | "task_status" | "wait_task"
-        | "cancel_task" => super::messaging::run(state, db, turn, call, args),
+        | "cancel_task" | "interrupt_agent" => super::messaging::run(state, db, turn, call, args),
         "verify_result" => super::verification::review(db, turn, args),
         "edit_profile" | "set_avatar" | "list_sites" | "publish_site" | "delete_site" => {
             super::profile::execute(state, db, turn, name, args)
