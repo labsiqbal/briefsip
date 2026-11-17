@@ -3,6 +3,7 @@ pub mod actions;
 #[allow(dead_code)]
 pub mod control;
 mod desktop;
+pub mod devices;
 #[allow(dead_code)]
 pub mod machines;
 pub mod options;
@@ -55,6 +56,7 @@ async fn body(request: Request, limit: usize) -> Result<Value> {
 }
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .merge(devices::routes())
         .route("/api/agents/{id}/computer", any(entry))
         .route("/api/agents/{id}/computer/start", any(entry))
         .route("/api/agents/{id}/computer/stop", any(entry))

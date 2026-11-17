@@ -14,7 +14,8 @@ mod projects;
 pub(crate) mod providers;
 mod schema;
 mod sidebar;
-mod sync;
+pub(crate) mod sync;
+pub(crate) use sync::append_device;
 mod sync_projection;
 pub(crate) mod wire;
 
