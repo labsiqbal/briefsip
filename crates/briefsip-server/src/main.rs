@@ -511,7 +511,9 @@ async fn main() -> db::Result<()> {
     turn_task.abort();
     maintenance.abort();
     conversation_maintenance.abort();
-    computer_maintenance.abort();
+    for task in computer_maintenance {
+        task.abort();
+    }
     computer.close().await;
     result?;
     Ok(())

@@ -118,13 +118,30 @@ pub fn sandbox(profile: &Path, proxy: &Path) -> Vec<String> {
     );
     a
 }
+struct Busy<'a>(&'a AtomicUsize);
+impl<'a> Busy<'a> {
+    fn new(value: &'a AtomicUsize) -> Self {
+        value.fetch_add(1, Ordering::SeqCst);
+        Self(value)
+    }
+}
+impl Drop for Busy<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 struct Helper {
-    child: Child,
+    child: Option<Child>,
     input: Option<ChildStdin>,
-    output: Lines<BufReader<ChildStdout>>,
+    output: Option<Lines<BufReader<ChildStdout>>>,
     sequence: u64,
 }
+struct Fixture {
+    bridge: super::options::TestBridge,
+    id: String,
+}
 pub struct Desktop {
+    fixture: Option<Fixture>,
     helper: AsyncMutex<Helper>,
     gate: AsyncMutex<()>,
     slots: Semaphore,
@@ -138,6 +155,7 @@ pub struct Desktop {
 }
 pub struct Manager {
     pub viewers: super::vnc::Viewers,
+    test_bridge: Option<super::options::TestBridge>,
     pub enabled: bool,
     pub width: u32,
     pub height: u32,
@@ -175,6 +193,11 @@ impl Manager {
         let (stop, _) = watch::channel(false);
         let mut manager = Self {
             viewers: super::vnc::Viewers::default(),
+            test_bridge: if d.test_runtime {
+                config.computer.test_computer_bridge.clone()
+            } else {
+                None
+            },
             enabled,
             width,
             height,
@@ -468,21 +491,61 @@ impl Manager {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true);
-        let mut child = match command.spawn() {
-            Ok(v) => v,
-            Err(_) => {
+        let (child, input, output, fixture) = if let Some(bridge) = &self.test_bridge {
+            let env = command
+                .as_std()
+                .get_envs()
+                .filter_map(|(k, v)| {
+                    Some((
+                        k.to_string_lossy().into_owned(),
+                        v?.to_string_lossy().into_owned(),
+                    ))
+                })
+                .collect::<std::collections::BTreeMap<_, _>>();
+            let id = uuid::Uuid::new_v4().to_string();
+            if let Err(error) = bridge
+                .call(
+                    "desktop-launch",
+                    json!({"id":id,"env":env,"profile":profile,"proxy":self.proxy_path}),
+                )
+                .await
+            {
                 self.release(agent)?;
-                return Err(error(503,"Desktop sandbox could not start. Install bwrap and enable unprivileged user namespaces."));
+                return Err(error);
             }
+            (
+                None,
+                None,
+                None,
+                Some(Fixture {
+                    bridge: bridge.clone(),
+                    id,
+                }),
+            )
+        } else {
+            let mut child = match command.spawn() {
+                Ok(v) => v,
+                Err(_) => {
+                    self.release(agent)?;
+                    return Err(error(503,"Desktop sandbox could not start. Install bwrap and enable unprivileged user namespaces."));
+                }
+            };
+            let input = child.stdin.take();
+            let output = child.stdout.take().ok_or_else(Failure::storage)?;
+            (
+                Some(child),
+                input,
+                Some(BufReader::new(output).lines()),
+                None,
+            )
         };
-        let input = child.stdin.take();
-        let output = child.stdout.take().ok_or_else(Failure::storage)?;
         let (disconnected, _) = watch::channel(0);
         let d = Arc::new(Desktop {
+            fixture,
             helper: AsyncMutex::new(Helper {
                 child,
                 input,
-                output: BufReader::new(output).lines(),
+                output,
                 sequence: 0,
             }),
             gate: AsyncMutex::new(()),
@@ -499,7 +562,7 @@ impl Manager {
             .lock()
             .map_err(|_| Failure::storage())?
             .insert(agent.into(), d.clone());
-        let ready=tokio::time::timeout(Duration::from_secs(65),async{let mut h=d.helper.lock().await;loop{match h.output.next_line().await{Ok(Some(line)) if line=="ready"=>return Ok(()),Ok(Some(line)) if line!="failed"=>continue,_=>return Err(error(503,"Desktop sandbox stopped before becoming ready. Check bwrap and desktop programs."))}}}).await.unwrap_or_else(|_|Err(error(503,"Desktop startup timed out. Check bwrap and installed desktop programs.")));
+        let ready=tokio::time::timeout(Duration::from_secs(65),async{if d.fixture.is_some(){return Ok(());}let mut h=d.helper.lock().await;loop{match h.output.as_mut().ok_or_else(Failure::storage)?.next_line().await{Ok(Some(line)) if line=="ready"=>return Ok(()),Ok(Some(line)) if line!="failed"=>continue,_=>return Err(error(503,"Desktop sandbox stopped before becoming ready. Check bwrap and desktop programs."))}}}).await.unwrap_or_else(|_|Err(error(503,"Desktop startup timed out. Check bwrap and installed desktop programs.")));
         if let Err(e) = ready {
             let _ = self.stop(agent).await;
             return Err(e);
@@ -515,20 +578,36 @@ impl Manager {
         };
         d.stopped.store(true, Ordering::SeqCst);
         d.disconnected.send_modify(|v| *v += 1);
-        let mut h = d.helper.lock().await;
-        if let Some(mut input) = h.input.take() {
-            let _ = input.shutdown().await;
-        }
-        if tokio::time::timeout(Duration::from_secs(3), h.child.wait())
+        let stopped = if let Some(fixture) = &d.fixture {
+            tokio::time::timeout(
+                Duration::from_secs(3),
+                fixture
+                    .bridge
+                    .call("desktop-stop", json!({"id":fixture.id})),
+            )
             .await
-            .is_err()
-        {
-            return Err(error(
-                503,
-                "Computer is still stopping. Its display lease remains reserved.",
-            ));
+            .map(|v| v.map(|_| ()))
+        } else {
+            let mut h = d.helper.lock().await;
+            if let Some(mut input) = h.input.take() {
+                let _ = input.shutdown().await;
+            }
+            tokio::time::timeout(
+                Duration::from_secs(3),
+                h.child.as_mut().ok_or_else(Failure::storage)?.wait(),
+            )
+            .await
+            .map(|v| v.map(|_| ()).map_err(|_| Failure::storage()))
+        };
+        match stopped {
+            Ok(result) => result?,
+            Err(_) => {
+                return Err(error(
+                    503,
+                    "Computer is still stopping. Its display lease remains reserved.",
+                ))
+            }
         }
-        drop(h);
         self.desktops
             .lock()
             .map_err(|_| Failure::storage())?
@@ -542,6 +621,21 @@ impl Manager {
     async fn request(d: &Desktop, operation: &str, args: &[String]) -> Result<Vec<u8>> {
         if d.stopped.load(Ordering::SeqCst) {
             return Err(error(409, "Computer was stopped."));
+        }
+        if let Some(fixture) = &d.fixture {
+            let value = fixture
+                .bridge
+                .call(
+                    &format!("desktop-{operation}"),
+                    json!({"id":fixture.id,"args":args}),
+                )
+                .await?;
+            if d.stopped.load(Ordering::SeqCst) {
+                return Err(error(409, "Computer was stopped."));
+            }
+            return STANDARD
+                .decode(value.as_str().unwrap_or(""))
+                .map_err(|_| Failure::storage());
         }
         let mut h = d.helper.lock().await;
         h.sequence += 1;
@@ -562,6 +656,8 @@ impl Manager {
             loop {
                 let line = h
                     .output
+                    .as_mut()
+                    .ok_or_else(Failure::storage)?
                     .next_line()
                     .await
                     .map_err(|_| Failure::storage())?
@@ -610,6 +706,7 @@ impl Manager {
             .slots
             .try_acquire()
             .map_err(|_| error(429, "Computer is busy."))?;
+        let _busy = Busy::new(&d.busy);
         let _gate = d.gate.lock().await;
         let bytes = Self::request(&d, "capture", &[]).await?;
         if jpeg {
@@ -665,7 +762,7 @@ impl Manager {
             .try_acquire()
             .map_err(|_| error(429, "Computer is busy."))?;
         let _gate = d.gate.lock().await;
-        d.busy.fetch_add(1, Ordering::SeqCst);
+        let _busy = Busy::new(&d.busy);
         let result = async {
             if name == "computer_open_url" {
                 for cmd in [
@@ -725,7 +822,6 @@ impl Manager {
             }
         }
         .await;
-        d.busy.fetch_sub(1, Ordering::SeqCst);
         d.activity.store(crate::config::now(), Ordering::SeqCst);
         result
     }
@@ -738,11 +834,19 @@ impl Manager {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect::<Vec<_>>();
         for (agent, d) in rows {
-            let exited = d
-                .helper
-                .try_lock()
-                .ok()
-                .is_some_and(|mut h| h.child.try_wait().ok().flatten().is_some());
+            let exited = if let Some(fixture) = &d.fixture {
+                fixture
+                    .bridge
+                    .call("desktop-status", json!({"id":fixture.id}))
+                    .await?
+                    == true
+            } else {
+                d.helper.try_lock().ok().is_some_and(|mut h| {
+                    h.child
+                        .as_mut()
+                        .is_some_and(|child| child.try_wait().ok().flatten().is_some())
+                })
+            };
             if exited
                 || (!d.starting.load(Ordering::SeqCst)
                     && d.busy.load(Ordering::SeqCst) == 0

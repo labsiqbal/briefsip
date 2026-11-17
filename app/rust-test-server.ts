@@ -1,18 +1,19 @@
+import type { AgentDesktopManager } from './agent-desktop.ts';
 import { computerTestBridge } from './rust-computer-test-bridge.ts';
 import type { PeerTokenIssuer } from './machines.ts';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
-type Config = { peerTokenIssuer?: PeerTokenIssuer; machines?: { now?: () => number; healthIntervalMs?: number }; baseURL?: string; apiKey?: string; defaultModel?: string; provider?: string; accounts?: unknown; timeout?: number; concurrency?: number; workspaces?: unknown; projectRoot?: string; harness?: unknown; stream?: boolean; streamTermination?: string; maxTokens?: number; database: string; port?: number; host?: string; tls?: { cert: string; key: string }; allowedOrigins?: string[]; dist?: string; auth?: { secretKey: string; publishableKey: string; issuer: string; origin: string; development?: boolean; audience?: string; jwtKey?: string; apiUrl?: string }; fixedClock?: number };
+type Config = { desktop?: ConstructorParameters<typeof AgentDesktopManager>[0]; peerTokenIssuer?: PeerTokenIssuer; machines?: { now?: () => number; healthIntervalMs?: number }; baseURL?: string; apiKey?: string; defaultModel?: string; provider?: string; accounts?: unknown; timeout?: number; concurrency?: number; workspaces?: unknown; projectRoot?: string; harness?: unknown; stream?: boolean; streamTermination?: string; maxTokens?: number; database: string; port?: number; host?: string; tls?: { cert: string; key: string }; allowedOrigins?: string[]; dist?: string; auth?: { secretKey: string; publishableKey: string; issuer: string; origin: string; development?: boolean; audience?: string; jwtKey?: string; apiUrl?: string }; fixedClock?: number };
 export async function startRustServer(options: Config) {
   if (options.concurrency !== undefined && (!Number.isSafeInteger(options.concurrency) || options.concurrency < 1 || options.concurrency > 32)) throw new Error('BRIEFSIP_CONCURRENCY must be 1..32');
-  const supported = new Set(['peerTokenIssuer', 'machines', 'database', 'port', 'host', 'tls', 'allowedOrigins', 'dist', 'auth', 'fixedClock', 'baseURL', 'apiKey', 'defaultModel', 'provider', 'accounts', 'timeout', 'concurrency', 'workspaces', 'projectRoot', 'harness', 'stream', 'streamTermination', 'maxTokens']);
+  const supported = new Set(['desktop', 'peerTokenIssuer', 'machines', 'database', 'port', 'host', 'tls', 'allowedOrigins', 'dist', 'auth', 'fixedClock', 'baseURL', 'apiKey', 'defaultModel', 'provider', 'accounts', 'timeout', 'concurrency', 'workspaces', 'projectRoot', 'harness', 'stream', 'streamTermination', 'maxTokens']);
   for (const key of Object.keys(options)) if (!supported.has(key)) throw new Error(`not ported: option ${key} (see crates/PORTING.md)`);
   const bridge = await computerTestBridge(options);
-  const { peerTokenIssuer: unusedIssuer, machines, ...serializable } = options;
+  const { peerTokenIssuer: unusedIssuer, machines, desktop, ...serializable } = options;
   let config: string;
-  try { config = JSON.stringify({ ...serializable, machines: machines ? { healthIntervalMs: machines.healthIntervalMs } : undefined, testComputerBridge: bridge.config }, (key, value) => { if (typeof value === 'function') throw new Error(`not ported: function option ${key} (see crates/PORTING.md)`); return value; }); } catch (error) { await bridge.close(); throw error; }
+  try { config = JSON.stringify({ ...serializable, desktop: desktop ? { ...desktop, runtime: undefined, now: undefined, testRuntime: !!desktop.runtime } : undefined, machines: machines ? { healthIntervalMs: machines.healthIntervalMs } : undefined, testComputerBridge: bridge.config }, (key, value) => { if (typeof value === 'function') throw new Error(`not ported: function option ${key} (see crates/PORTING.md)`); return value; }); } catch (error) { await bridge.close(); throw error; }
   const root = fileURLToPath(new URL('../', import.meta.url));
   const binary = process.env.BRIEFSIP_RUST_BINARY ?? resolve(root, 'target/debug/briefsip-server');
   const child = spawn(binary, ['--test-config'], { cwd: root, env: { ...process.env, BRIEFSIP_TEST_SERVER: 'rust', BRIEFSIP_TEST_PARENT: String(process.pid) }, stdio: ['pipe', 'pipe', 'pipe'] });

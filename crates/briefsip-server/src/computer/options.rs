@@ -14,6 +14,8 @@ pub struct Options {
 #[allow(dead_code)]
 pub struct DesktopOptions {
     pub data_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub test_runtime: bool,
     pub enabled: Option<bool>,
     pub max: Option<usize>,
     pub idle_ms: Option<i64>,
@@ -60,6 +62,9 @@ impl Options {
             return Err("Desktop limits: max 1..16; idle timeout 1000..86400000 ms.".into());
         }
         dimensions(d.geometry.as_deref().unwrap_or("1280x800"))?;
+        if d.test_runtime && self.test_computer_bridge.is_none() {
+            return Err("Desktop fixture runtime requires test bridge".into());
+        }
         if let Some(target) = &d.test_only_proxy_target {
             if env::var("BRIEFSIP_TEST_SERVER").as_deref() != Ok("rust") || !target.valid() {
                 return Err("Invalid test-only proxy fixture.".into());
@@ -92,4 +97,37 @@ pub struct MachineOptions {
 pub struct TestBridge {
     pub origin: String,
     pub token: String,
+}
+
+impl TestBridge {
+    pub async fn call(
+        &self,
+        operation: &str,
+        args: serde_json::Value,
+    ) -> super::Result<serde_json::Value> {
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(70))
+            .build()
+            .map_err(|_| crate::web::Failure::storage())?
+            .post(&self.origin)
+            .bearer_auth(&self.token)
+            .json(&serde_json::json!({"operation":operation,"args":args}))
+            .send()
+            .await
+            .map_err(|_| crate::web::Failure::storage())?;
+        let value: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|_| crate::web::Failure::storage())?;
+        if let Some(error) = value.get("error") {
+            return Err(super::error(
+                error["status"].as_u64().unwrap_or(503) as u16,
+                error["message"]
+                    .as_str()
+                    .unwrap_or("Desktop fixture failed."),
+            ));
+        }
+        Ok(value["value"].clone())
+    }
 }
