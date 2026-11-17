@@ -1,0 +1,8 @@
+{
+  "rust": {
+    "idleRssMiB": 100,
+    "p95LatencyMs": 10,
+    "warmupRequests": 25,
+    "measuredRequests": 200
+  }
+}
