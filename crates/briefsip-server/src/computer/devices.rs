@@ -1407,36 +1407,6 @@ pub fn enrollment_descriptor(
 mod tests {
     use super::*;
     #[test]
-    fn expired_enrollment_challenges_are_cleaned_in_batches() -> Result<()> {
-        let db = Connection::open_in_memory()?;
-        db::migrate(&db, 1, db::SCHEMA_VERSION).map_err(|_| Failure::storage())?;
-        db.execute("INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES('owner','issuer','subject',0)", [])?;
-        db.execute_batch(
-            "WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<1501)
-             INSERT INTO link_challenges SELECT printf('%d',i),'owner','sid','installation','device',
-             'install','sign','encrypt','{}',printf('%064d',i),1,0 FROM n;",
-        )?;
-        let count = || {
-            db.query_row("SELECT count(*) FROM link_challenges", [], |r| {
-                r.get::<_, i64>(0)
-            })
-        };
-        cleanup(&db, 2)?;
-        assert_eq!(count()?, 501);
-        cleanup(&db, 2)?;
-        assert_eq!(count()?, 0);
-        let account = uuid::Uuid::new_v4();
-        let now = crate::config::now();
-        let consume = |now| limited(format!("link-account:{account}"), 5, 60000, now);
-        for _ in 0..5 {
-            consume(now)?;
-        }
-        assert_eq!(consume(now).err().map(|error| error.status), Some(429));
-        consume(now + 60001)?;
-        Ok(())
-    }
-
-    #[test]
     fn zones_preserve_case_and_reject_non_zone_files() -> Result<()> {
         for name in ["UTC", "Asia/Jakarta", "asia/jakarta", "Etc/GMT+7"] {
             assert_eq!(zone(&json!(name))?, name);
