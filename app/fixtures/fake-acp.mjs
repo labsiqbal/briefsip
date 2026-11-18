@@ -42,7 +42,7 @@ for await (const line of createInterface({ input: process.stdin })) {
   if (value.method === 'session/set_mode') { mode = value.params.modeId; reply(value.id, {}); continue; }
   if (value.method === 'authenticate') { reply(value.id, {}); continue; }
   if (value.method === 'session/set_model') { reply(value.id, {}); continue; }
-  if (value.method === 'session/cancel') { writeFileSync('cancel-received', 'yes'); if (prompt) reply(prompt, { stopReason: 'cancelled' }); continue; }
+  if (value.method === 'session/cancel') { await new Promise(resolve => setTimeout(resolve, 50)); writeFileSync('cancel-received', 'yes'); if (prompt) reply(prompt, { stopReason: 'cancelled' }); continue; }
   if (value.method !== 'session/prompt') { if (value.id) send({ id: value.id, error: { code: -32601, message: 'unsupported' } }); continue; }
   prompt = value.id;
   const content = value.params.prompt.map(block => block.text ?? '').join('\n');

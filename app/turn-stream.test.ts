@@ -8,40 +8,8 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { startApp } from './test-bridge.ts';
 import { DatabaseSync } from 'node:sqlite';
-import { initializeHarness, streamSnapshot } from './harness-store.ts';
 import { newestPartial, parseTurnSnapshot, type StreamPartial } from './shared/turn-stream.ts';
 import { streamWork } from './src/ui/transcript.ts';
-
-test('snapshot timer bounds writes, flushes terminal tails and isolates delivery failures', t => {
-  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
-  const db = new DatabaseSync(':memory:');
-  try {
-    db.exec(`CREATE TABLE agents(id TEXT PRIMARY KEY,runtime TEXT); CREATE TABLE turns(id TEXT PRIMARY KEY);
-      CREATE TABLE provider_calls(seq INTEGER PRIMARY KEY); INSERT INTO provider_calls VALUES (1),(2);
-      CREATE TABLE provider_streams(call INTEGER PRIMARY KEY,text TEXT);
-      CREATE TABLE writes(n INTEGER); CREATE TRIGGER inserted AFTER INSERT ON provider_streams BEGIN INSERT INTO writes VALUES (1); END;
-      CREATE TRIGGER updated AFTER UPDATE ON provider_streams BEGIN INSERT INTO writes VALUES (1); END;`);
-    initializeHarness(db);
-    const read = (call: number) => db.prepare('SELECT text FROM provider_streams WHERE call=?').get(call)?.text;
-    const count = () => Number(db.prepare('SELECT count(*) AS n FROM writes').get()!.n);
-    const writer = streamSnapshot(db, 1, text => text, () => { throw new Error('Display unavailable'); });
-    writer.text('A');
-    for (let n = 0; n < 200; n++) writer.text('x');
-    assert.equal(count(), 1); assert.equal(read(1), 'A');
-    t.mock.timers.tick(39); assert.equal(count(), 1);
-    t.mock.timers.tick(1); assert.equal(count(), 2); assert.equal(read(1), 'A' + 'x'.repeat(200));
-    writer.tool('tool', 'Read', 'running');
-    writer.text('Draft'); assert.equal(read(1), '');
-    writer.finish('OK'); assert.equal(read(1), 'OK'); assert.equal(count(), 4);
-    assert.deepEqual(db.prepare('SELECT ordinal,kind,text,final FROM provider_stream_segments WHERE call=1 ORDER BY ordinal').all().map(row => Object.values(row)), [[0, 'text', 'A' + 'x'.repeat(200), 0], [1, 'tool', 'Read', 0], [2, 'text', 'OK', 1]]);
-    const interrupted = streamSnapshot(db, 2, text => text, () => {});
-    interrupted.text('First'); interrupted.text(' buffered tail'); assert.equal(read(2), 'First');
-    interrupted.finish(); assert.equal(read(2), 'First buffered tail');
-    assert.equal(db.prepare('SELECT final FROM provider_stream_segments WHERE call=2').get()!.final, 0);
-    const writes = count(); t.mock.timers.tick(1000); assert.equal(count(), writes);
-    assert.throws(() => interrupted.text('Late'), /closed/);
-  } finally { t.mock.timers.reset(); db.close(); }
-});
 
 test('snapshot merge rejects stale calls, duplicate reconnects and late polling regressions', () => {
   const partial: StreamPartial = { seq: 1, text: 'Hello', model: 'fixture', status: 'pending' };

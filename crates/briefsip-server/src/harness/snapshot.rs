@@ -144,7 +144,7 @@ impl Snapshot {
         self.state.events.turn(db, &self.turn)?;
         Ok(())
     }
-    pub fn finish(&mut self) -> Result<String> {
+    pub fn finish(mut self) -> Result<String> {
         let text = self.current().to_owned();
         if text.trim().is_empty() {
             return Err(error(502,"Coding harness returned no complete text answer. Check workspace changes before retrying."));
@@ -172,6 +172,93 @@ impl Drop for Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshot_coalesces_writes_and_flushes_terminal_tails_without_subscribers(
+    ) -> crate::db::Result<()> {
+        use std::sync::{Arc, Mutex};
+
+        let scratch = process::ProbeHome::new()?;
+        let config: crate::config::Config =
+            serde_json::from_value(json!({"database":scratch.0.join("state.sqlite")}))?;
+        let database = crate::db::open(&config.database, false, 0)?;
+        database.connection.execute_batch("INSERT INTO agents(id,name,model,instructions) VALUES('agent','Test','','');
+            INSERT INTO turns(id,agent,text,status,created) VALUES('turn','agent','','running','');
+            INSERT INTO provider_calls(seq,turn,agent,model,origin,purpose,status,created)
+                VALUES (1,'turn','agent','','','completion','pending',''), (2,'turn','agent','','','completion','pending','');
+            CREATE TABLE room_turns (turn TEXT);
+            CREATE TABLE writes (n INTEGER);
+            CREATE TRIGGER stream_insert AFTER INSERT ON provider_streams BEGIN INSERT INTO writes VALUES (1); END;
+            CREATE TRIGGER stream_update AFTER UPDATE ON provider_streams BEGIN INSERT INTO writes VALUES (1); END;")?;
+        let state = AppState {
+            computer: Arc::new(crate::computer::Manager::new(&config)?),
+            config: Arc::new(config),
+            database: Arc::new(Mutex::new(database)),
+            origin: "http://127.0.0.1".to_owned(),
+            auth: None,
+            events: crate::events::Hub::new(),
+            turns: crate::turns::Runtime::default(),
+            trial_pending: Arc::default(),
+        };
+        let read = |call: i64| -> crate::db::Result<(i64, String)> {
+            let db = state
+                .database
+                .lock()
+                .map_err(|_| "database lock poisoned")?;
+            Ok(db.connection.query_row(
+                "SELECT (SELECT count(*) FROM writes), text FROM provider_streams WHERE call=?",
+                [call],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?)
+        };
+        let mut writer = Snapshot::new(&state, 1, "turn", Vec::new());
+        writer.text("A", None, false).map_err(|e| e.message)?;
+        writer.last = Instant::now() + Duration::from_secs(60);
+        for _ in 0..199 {
+            writer.text("x", None, false).map_err(|e| e.message)?;
+        }
+        assert_eq!(read(1)?, (1, "A".to_owned()));
+        writer.last = Instant::now() - Duration::from_millis(40);
+        writer.text("x", None, false).map_err(|e| e.message)?;
+        assert_eq!(read(1)?, (2, format!("A{}", "x".repeat(200))));
+        writer
+            .tool("tool", "Read", "running")
+            .map_err(|e| e.message)?;
+        writer.last = Instant::now() + Duration::from_secs(60);
+        writer.text("Draft", None, false).map_err(|e| e.message)?;
+        assert_eq!(read(1)?, (3, String::new()));
+        writer.text("OK", None, true).map_err(|e| e.message)?;
+        assert_eq!(writer.finish().map_err(|e| e.message)?, "OK");
+        assert_eq!(read(1)?, (4, "OK".to_owned()));
+
+        let mut interrupted = Snapshot::new(&state, 2, "turn", Vec::new());
+        interrupted
+            .text("First", None, false)
+            .map_err(|e| e.message)?;
+        interrupted.last = Instant::now() + Duration::from_secs(60);
+        interrupted
+            .text(" buffered tail", None, false)
+            .map_err(|e| e.message)?;
+        assert_eq!(read(2)?, (5, "First".to_owned()));
+        drop(interrupted);
+        assert_eq!(read(2)?, (6, "First buffered tail".to_owned()));
+
+        let db = state
+            .database
+            .lock()
+            .map_err(|_| "database lock poisoned")?;
+        let segments = all(&db.connection, "SELECT call,ordinal,kind,text,final FROM provider_stream_segments ORDER BY call,ordinal", []).map_err(|e| e.message)?;
+        assert_eq!(
+            json!(segments),
+            json!([
+                {"call":1,"ordinal":0,"kind":"text","text":format!("A{}", "x".repeat(200)),"final":0},
+                {"call":1,"ordinal":1,"kind":"tool","text":"Read","final":0},
+                {"call":1,"ordinal":2,"kind":"text","text":"OK","final":1},
+                {"call":2,"ordinal":0,"kind":"text","text":"First buffered tail","final":0}
+            ])
+        );
+        Ok(())
+    }
 
     #[test]
     fn redact_masks_complete_escaped_and_partial_streaming_values() {

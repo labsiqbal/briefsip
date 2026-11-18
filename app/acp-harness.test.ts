@@ -3,11 +3,9 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
-import { createHarnessAdapter, type HarnessStart } from './harness.ts';
+import { execFileSync } from 'node:child_process';
 import { harnessRuntimes, type HarnessRuntime } from './shared/runtime.ts';
-import { initializeHarness } from './harness-store.ts';
 import { startApp } from './test-bridge.ts';
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const source = readFileSync(new URL('./fixtures/fake-acp.mjs', import.meta.url), 'utf8');
@@ -15,12 +13,6 @@ function executableFixture(room = false) {
   const workspace = mkdtempSync(join(room ? join(import.meta.dirname, 'node_modules') : tmpdir(), 'briefsip-acp-')), executable = join(workspace, 'fake-acp');
   writeFileSync(executable, `#!${process.execPath}\n` + source.split('\n').slice(1).join('\n')); chmodSync(executable, 0o700);
   return { workspace, executable, close() { rmSync(workspace, { recursive: true, force: true }); } };
-}
-function fixture(runtime: HarnessRuntime = 'hermes', overrides: Partial<HarnessStart> = {}) {
-  const files = executableFixture(), { workspace, executable } = files;
-  const controller = new AbortController(), approvals: unknown[] = [];
-  const adapter = createHarnessAdapter(runtime, { workspace, write: true, executable, mcpURL: 'http://127.0.0.1:1/mcp', token: 'test-session-secret', signal: controller.signal, approve: async request => { approvals.push(request); return true; }, ...overrides });
-  return { workspace, executable, controller, approvals, adapter, async close() { await adapter.close(); files.close(); } };
 }
 async function rustFixture(runtime: HarnessRuntime, { write = true, timeout = 15_000, model = 'fixture-model' } = {}) {
   const f = executableFixture(), directory = mkdtempSync(join(tmpdir(), 'briefsip-acp-state-')), agent = randomUUID();
@@ -177,30 +169,30 @@ for (const mode of ['CRASH', 'INVALID', 'WAIT']) test(`ACP ${mode}: fail bounded
   } finally { await f.close(); }
 });
 test('ACP cancel notification reaches child and cleanup kills detached tool process', async () => {
-  const f = fixture();
-  let pid = 0;
+  const f = await rustFixture('hermes');
   try {
-    await f.adapter.startSession(); const iterator = f.adapter.sendTurn('TREE')[Symbol.asyncIterator](); await iterator.next();
-    pid = Number(readFileSync(join(f.workspace, 'child-pid'), 'utf8')); await delay(200);
-    const waiting = iterator.next(); f.controller.abort(); await assert.rejects(waiting, /stopped|closed/); await f.adapter.close();
-    for (let i = 0; i < 50; i++) { try { const stat = readFileSync(`/proc/${pid}/stat`, 'utf8'); if (stat.split(') ')[1].startsWith('Z ')) break; } catch { break; } await delay(20); }
-    let alive = false; try { alive = !readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ')[1].startsWith('Z '); } catch { /* Reaped. */ }
-    assert.equal(alive, false); assert(existsSync(join(f.workspace, 'cancel-received')));
+    const id = await f.send('TREE');
+    await f.until(id, row => row.partial?.text === 'Waiting.');
+    const pid = Number(readFileSync(join(f.workspace, 'child-pid'), 'utf8'));
+    const stat = () => {
+      try { return readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ').at(-1)?.split(' '); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    };
+    const start = stat()?.[19];
+    assert(start, 'Detached tool did not start');
+    const alive = () => { const current = stat(); return current?.[19] === start && current[0] !== 'Z'; };
+    assert(alive());
+    await f.request(`${f.agentPath}/turns/${id}/cancel`, { id: randomUUID() });
+    const stopped = await f.until(id, row => row.status === 'cancelled');
+    assert.equal(stopped.reply, null);
+    const deadline = performance.now() + 5_000;
+    const received = () => existsSync(join(f.workspace, 'cancel-received'));
+    while ((alive() || !received()) && performance.now() < deadline) await delay(20);
+    assert.equal(alive(), false, 'Detached tool survived cancellation');
+    assert(received(), 'Child had no time to handle session/cancel');
+    const notices = f.log().filter(row => row.method === 'session/cancel');
+    assert.deepEqual(notices, [{ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId: 'fixture-session' } }]);
   } finally { await f.close(); }
-});
-test('ACP abort before launch spawns nothing', async () => {
-  const f = fixture(); f.controller.abort();
-  try { await assert.rejects(f.adapter.startSession()); assert(!existsSync(join(f.workspace, 'fake-acp-log.jsonl'))); } finally { await f.close(); }
-});
-test('runtime migration preserves agents, references, existing sessions, and closed runtime constraint', () => {
-  const db = new DatabaseSync(':memory:');
-  try {
-    db.exec("PRAGMA foreign_keys=ON; CREATE TABLE agents(id TEXT PRIMARY KEY,runtime TEXT NOT NULL DEFAULT 'api' CHECK(runtime IN ('api','codex','claude'))) STRICT; CREATE TABLE turns(id TEXT PRIMARY KEY,agent TEXT REFERENCES agents(id)); INSERT INTO agents VALUES ('agent','codex'); INSERT INTO turns VALUES ('turn','agent');");
-    initializeHarness(db); db.prepare('INSERT INTO harness_sessions VALUES (?,?,?,?,?)').run('agent', 'chat', 'codex', '/workspace', 'session'); initializeHarness(db);
-    for (const runtime of harnessRuntimes) db.prepare('UPDATE agents SET runtime=?').run(runtime);
-    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []); assert.equal(db.prepare('SELECT count(*) AS n FROM harness_sessions').get()!.n, 1);
-    assert.throws(() => db.exec("UPDATE agents SET runtime='invalid'"), /CHECK/);
-  } finally { db.close(); }
 });
 test('ACP runtimes work through server: approvals, segments and runtime picker', async () => {
   const f = executableFixture(), directory = mkdtempSync(join(tmpdir(), 'briefsip-acp-server-')), agent = randomUUID();
@@ -228,6 +220,11 @@ test('ACP runtimes work through server: approvals, segments and runtime picker',
 
 test('ACP room queue, checkpoints and stop preserve peer approvals', async () => {
   const f = executableFixture(true), directory = mkdtempSync(join(tmpdir(), 'briefsip-acp-room-'));
+  const git = (...args: string[]) => execFileSync('git', ['-c', 'core.hooksPath=/dev/null', ...args], {
+    cwd: f.workspace, env: { PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
+  });
+  git('init', '-q');
+  git('-c', 'user.name=ACP Test', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-qm', 'Fixture');
   const app = await startApp({ database: join(directory, 'db.sqlite'), port: 0, timeout: 20_000, harness: { executables: { hermes: f.executable }, issuer: { mintAgentSession: () => ({ id: randomUUID(), token: 'test-session-secret' }), revokeAgentSession() {} } } });
   const request = async (path: string, body?: unknown) => { const res = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); const data = await res.json(); assert(res.ok, JSON.stringify(data)); return data; };
   try {

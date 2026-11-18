@@ -1,9 +1,4 @@
 {
-  "harness.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 8
-    }
-  },
   "test-support/script-client.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
