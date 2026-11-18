@@ -194,6 +194,12 @@ fn snapshots() -> &'static Mutex<HashMap<String, Snapshot>> {
     static STORE: OnceLock<Mutex<HashMap<String, Snapshot>>> = OnceLock::new();
     STORE.get_or_init(Default::default)
 }
+pub(crate) fn discard_account_snapshots(account: &str) {
+    if let Ok(mut entries) = snapshots().lock() {
+        entries.retain(|_, snapshot| snapshot.scope["accountId"] != account);
+    }
+}
+
 fn wal_size(state: &AppState) -> u64 {
     std::fs::metadata(format!("{}-wal", state.config.database.display()))
         .map(|m| m.len())
@@ -314,7 +320,7 @@ fn snapshot_page(
     snapshot.cache = Some(result.clone());
     Ok(result)
 }
-pub(super) fn read(state: &AppState, account: &str, q: &[(String, String)]) -> Result<Response> {
+pub(crate) fn read(state: &AppState, account: &str, q: &[(String, String)]) -> Result<Response> {
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     transaction(&guard.connection, || {
         read_locked(state, &guard.connection, account, q)

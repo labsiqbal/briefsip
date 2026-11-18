@@ -363,11 +363,17 @@ fn workflow_schedule(s: &Scope, row: &Value) -> Result<()> {
     let mut due = row["next_at"].as_i64();
     if row["zone"] != device["zone"] || row["zone_revision"] != device["zone_revision"] {
         if pending.is_none() && due.is_some() && ["once", "cron"].contains(&string(&spec, "kind")) {
-            due = Some(routines::timing(
-                &spec,
-                string(&device, "zone"),
-                s.state.config.now(),
-            )?);
+            due = Some(if spec["kind"] == "cron" {
+                schedule::next_cron(
+                    string(&spec, "expression"),
+                    string(&device, "zone"),
+                    s.state.config.now(),
+                    false,
+                )
+                .map_err(routines::schedule_error)?
+            } else {
+                routines::timing(&spec, string(&device, "zone"), s.state.config.now())?
+            });
         }
         s.db.execute(
             "UPDATE schedules SET zone=?,zone_revision=?,next_at=? WHERE id=?",

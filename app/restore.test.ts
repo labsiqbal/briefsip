@@ -1,29 +1,32 @@
 import test from 'node:test';
+import { createClerkClient } from '@clerk/backend';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { initializeCanonicalSchema } from './schema.ts';
 import { checkedRestore, restoreCommand, restoreWorkspace, workspaceSnapshot } from './test-support/backup.ts';
-import { createProjectAccess } from './project-access.ts';
 import { createMailWorker } from './mail.ts';
 import { startApp } from './test-bridge.ts';
 import { restoreIdentity } from './test-support/restore-identity.ts';
-import { sha256, ProtocolError } from './shared/protocol.ts';
+import { sha256 } from './shared/protocol.ts';
+import { canonicalHttp } from './test-support/canonical-http.ts';
 import type { HumanActor } from './test-support/auth.ts';
 
 test('canonical backup restores private evidence with fresh authority and no revived invitation or execution', async () => {
-  const dir=mkdtempSync(join(tmpdir(),'briefsip-restore-')),source=join(dir,'source.sqlite'),destination=join(dir,'restored.sqlite');
-  const db=new DatabaseSync(source);initializeCanonicalSchema(db);
-  const actor=(subject:string):HumanActor=>({accountId:randomUUID(),issuer:'https://fixture.example',subject,sessionId:`sess_${subject}`,expiresAt:Date.now()+60000});
-  const owner=actor('owner'),member=actor('member');
-  for(const a of [owner,member])db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(a.accountId,a.issuer,a.subject,Date.now());
-  const auth={requireCurrent:(a:HumanActor)=>a,verifiedMailboxes:async()=>['member@example.com']};
+  const f = canonicalHttp('briefsip-restore-');
+  const { dir, db, owner } = f, destination = join(dir, 'restored.sqlite');
+  const member = f.addAccount('user_member');
   const mail={keyId:randomUUID(),key:Buffer.alloc(32,7),lookupKey:Buffer.alloc(32,8),from:'Briefsip <owner@example.com>',origin:'https://briefsip.example'};
-  const access=createProjectAccess(db,auth,()=>mail),project=randomUUID();
-  access.createProject(owner,{requestId:randomUUID(),id:project,name:'Private recovery'});
+  const clerk = createClerkClient({ ...f.auth, telemetry: { disabled: true } });
+  clerk.users.getUser = async subject => ({ id: subject, banned: false, locked: false, emailAddresses: [{ emailAddress: 'member@example.com', verification: { status: 'verified' } }] }) as Awaited<ReturnType<typeof clerk.users.getUser>>;
+  const options = { clerk, mail: () => mail, mailFrom: mail.from, mailOrigin: mail.origin };
+  await f.start(options);
+  const project = randomUUID();
+  await f.request('/api/projects', 'POST', {requestId:randomUUID(),id:project,name:'Private recovery'});
   db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(project,member.accountId);
   const invitation=randomUUID(),token=Buffer.alloc(32,1).toString('base64url'),authority=String(db.prepare('SELECT generation FROM authority_state').get()!.generation);
   db.prepare("INSERT INTO invitations VALUES (?,?,?,? ,NULL,'sent',?,'[]',?,NULL,1)").run(invitation,project,authority,sha256('member@example.com'),sha256(Buffer.from(token,'base64url')),Date.now()+60000);
@@ -47,7 +50,7 @@ test('canonical backup restores private evidence with fresh authority and no rev
     const retained={receipts:db.prepare('SELECT * FROM receipts ORDER BY request_id').all(),context:db.prepare('SELECT * FROM task_context_snapshots').all(),history:db.prepare('SELECT id,agent,text,reply,created FROM turns').all(),payload:db.prepare('SELECT id,logical_turn,project,agent,initiator_account,home_device,payload_digest,payload_json FROM tasks').all()};
     backup=await workspaceSnapshot(db);const bytes=readFileSync(backup.file);
     // Revocations newer than this backup are unavailable to its restored copy.
-    access.revokeInvitation(owner,invitation,{requestId:randomUUID(),expectedRevision:1});
+    await f.request(`/api/invitations/${invitation}/revoke`, 'POST', {requestId:randomUUID(),expectedRevision:1});
     restoreWorkspace(backup.file,destination);
     assert.deepEqual(readFileSync(backup.file),bytes);assert.equal(statSync(destination).mode&0o777,0o600);
     const restored=new DatabaseSync(destination);
@@ -73,20 +76,36 @@ test('canonical backup restores private evidence with fresh authority and no rev
       assert.deepEqual(restored.prepare('SELECT id,agent,text,reply,created FROM turns').all(),retained.history);
       assert.deepEqual(restored.prepare('SELECT id,logical_turn,project,agent,initiator_account,home_device,payload_digest,payload_json FROM tasks').all(),retained.payload);
       assert.deepEqual(restored.prepare('PRAGMA foreign_key_check').all(),[]);
-      const recovered=createProjectAccess(restored,auth,()=>mail);
-      await assert.rejects(recovered.acceptInvitation(member,invitation,{requestId:randomUUID(),mailboxProof:token,expectedRevision:1}),error=>error instanceof ProtocolError&&error.code==='authority_unavailable');
+      await f.start({ ...options, database: destination });
+      const accept = () => f.request(`/api/invitations/${invitation}/accept`, 'POST', {requestId:randomUUID(),mailboxProof:token,expectedRevision:1}, member);
+      await assert.rejects(accept, {code:'authority_unavailable'});
       restored.exec("UPDATE authority_state SET serving_state='active'");
-      await assert.rejects(recovered.acceptInvitation(member,invitation,{requestId:randomUUID(),mailboxProof:token,expectedRevision:1}),error=>error instanceof ProtocolError&&error.code==='resource_not_found');
+      await assert.rejects(accept, {code:'resource_not_found'});
       restored.exec("UPDATE authority_state SET serving_state='read_only_recovery'");
-      let deliveries=0;
-      const originalFetch=globalThis.fetch;
-      globalThis.fetch=async()=>{deliveries++;throw new Error('No old delivery');};
-      try{const worker=createMailWorker(restored,{apiKey:'fixture',key:()=>mail.key});await worker.deliver(invitation);assert.equal(deliveries,0);}finally{globalThis.fetch=originalFetch;}
+      await f.stop();
+      let deliveries = 0;
+      const provider = createServer((_req, res) => {
+        deliveries++;
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"id":"unexpected-restore-delivery"}');
+      });
+      await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+      try {
+        const address = provider.address();
+        assert(address && typeof address !== 'string');
+        await f.start({ ...options, database: destination, mailApiKey: 'fixture', mailEndpoint: `http://127.0.0.1:${address.port}/emails` });
+        await new Promise(resolve => setTimeout(resolve, 1100));
+        assert.equal(deliveries, 0);
+        assert.equal(restored.prepare('SELECT state FROM mail_outbox WHERE id=?').get(invitation)!.state, 'revoked');
+      } finally {
+        await f.stop();
+        provider.closeAllConnections();
+        await new Promise<void>(resolve => provider.close(() => resolve()));
+      }
       const second=join(dir,'second.sqlite'),again=await workspaceSnapshot(restored);
       try{restoreWorkspace(again.file,second);const reloaded=new DatabaseSync(second);try{assert.notEqual(reloaded.prepare('SELECT generation FROM authority_state').get()!.generation,current.generation);}finally{reloaded.close();}}finally{again.cleanup();}
     }finally{restored.close();}
     await assert.rejects(startApp({database:destination}),/canonical/i);
-  }finally{backup?.cleanup();db.close();rmSync(dir,{recursive:true,force:true});}
+  }finally{backup?.cleanup();await f.close();}
 });
 
 test('pre-v3 canonical restore disables retained automation and rejects downgraded or changed backup authority',async()=>{
@@ -155,9 +174,11 @@ test('local restore bootstrap requires recorded owner identity and issues expiri
   const owner: HumanActor = { accountId: randomUUID(), issuer: 'https://fixture.example', subject: 'owner', sessionId: 'owner-session', expiresAt: Date.now() + 60_000 };
   const stranger = { ...owner, accountId: randomUUID(), subject: 'stranger' };
   for (const actor of [owner, stranger]) db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(actor.accountId, actor.issuer, actor.subject, Date.now());
-  const access = createProjectAccess(db, { requireCurrent: (actor: HumanActor) => actor, verifiedMailboxes: async () => [] }, () => { throw new Error('No mail'); });
-  access.createProject(owner, { requestId: randomUUID(), id: randomUUID(), name: 'Owner only' });
-  access.createProject(stranger, { requestId: randomUUID(), id: randomUUID(), name: 'Other project' });
+  for (const [actor, name] of [[owner, 'Owner only'], [stranger, 'Other project']] as const) {
+    const id = randomUUID();
+    db.prepare('INSERT INTO projects(id,account,name,private) VALUES (?,?,?,0)').run(id, actor.accountId, name);
+    db.prepare("INSERT INTO project_members VALUES (?,?,'owner',1,0)").run(id, actor.accountId);
+  }
   db.exec('CREATE TABLE briefsip_backup_authority(generation TEXT,owner_account TEXT)');
   db.prepare('INSERT INTO briefsip_backup_authority SELECT generation,? FROM authority_state').run(owner.accountId);
   const identity = restoreIdentity(owner, 'https://briefsip.example');

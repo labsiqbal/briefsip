@@ -182,7 +182,10 @@ impl Auth {
             )
             .optional()?;
         let account = match existing {
-            Some((_, blocked)) if blocked != 0 => return Err(denied()),
+            Some((account, blocked)) if blocked != 0 => {
+                crate::data::sync::discard_account_snapshots(&account);
+                return Err(denied());
+            }
             Some((id, _)) => id,
             None => {
                 let id = uuid::Uuid::new_v4().to_string();
