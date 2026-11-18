@@ -4,6 +4,7 @@ pub(crate) mod avatar;
 pub(crate) mod conversations;
 mod deletion;
 pub(crate) mod delivery;
+pub(crate) mod device_pairing;
 pub(crate) mod environment;
 mod folders;
 pub(crate) mod history;

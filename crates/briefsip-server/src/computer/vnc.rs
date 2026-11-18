@@ -129,6 +129,10 @@ fn socket(s: &AppState, agent: &str) -> Result<File> {
     Ok(file)
 }
 pub async fn upgrade(s: AppState, request: Request, agent: String) -> Result<Response> {
+    let pairing = request
+        .extensions()
+        .get::<crate::auth::pairing::BrowserAccess>()
+        .cloned();
     let q = crate::files::query(&request);
     let token = crate::files::parameter(&q, "ticket").ok_or_else(|| error(403, "Forbidden"))?;
     let origin = crate::text_header(request.headers(), "origin")
@@ -212,6 +216,11 @@ pub async fn upgrade(s: AppState, request: Request, agent: String) -> Result<Res
             let mut buffer = vec![0; SAMPLE_BYTES];
             let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
             let mut received = tokio::time::Instant::now();
+            let signed_in = async {
+                if let Some(pairing) = pairing { pairing.wait_until_denied(&s).await; }
+                else { std::future::pending::<()>().await; }
+            };
+            tokio::pin!(signed_in);
             let sample_sent = !measured || matches!(
                 tokio::time::timeout(WRITE_TIMEOUT, ws.send(Message::Binary(buffer.clone().into()))).await,
                 Ok(Ok(()))
@@ -219,6 +228,7 @@ pub async fn upgrade(s: AppState, request: Request, agent: String) -> Result<Res
             let code = if sample_sent {
                 loop {
                     tokio::select! {
+                        _ = &mut signed_in => break 4401,
                         _ = revoked.changed() => {
                             break if desktop.stopped.load(Ordering::SeqCst) { 4409 } else { 1000 };
                         }
