@@ -63,7 +63,7 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
   try {
     // Runtime source only. Never include workspace data, .env, test fixtures or development bundles.
     stageRuntime(source, stage);
-    if (build && rust) {
+    if (rust && existsSync(join(repository, 'target/release/briefsip-server')) && existsSync(join(repository, 'target/release/briefsip-launcher'))) {
       mkdirSync(join(stage, 'bin'), { mode: 0o700 }); cpSync(join(repository, 'target/release/briefsip-server'), join(stage, 'bin/briefsip-server'));
       cpSync(join(repository, 'target/release/briefsip-launcher'), join(stage, 'bin/briefsip-launcher'));
       for (const name of ['briefsip-server', 'briefsip-launcher']) assertNativeDependencies(join(stage, 'bin', name));
