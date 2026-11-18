@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { initializeCanonicalSchema } from './schema.ts';
+import { initializeCanonicalSchema } from './test-support/legacy-schema.ts';
 import { checkedRestore, restoreCommand, workspaceSnapshot } from './test-support/backup.ts';
 import { restoreIdentity } from './test-support/restore-identity.ts';
 import type { HumanActor } from './test-support/auth.ts';

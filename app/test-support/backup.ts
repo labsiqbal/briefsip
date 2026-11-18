@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { HumanActor, HumanAuth } from './auth.ts';
 import { constantTimeEqualHex, digestCommand, ProtocolError, sha256 } from '../shared/protocol.ts';
-import { schemaVersion, transaction } from '../schema.ts';
+import { schemaVersion, transaction } from './legacy-schema.ts';
 import { rustBinary } from '../rust-binary.ts';
 
 export function restoreCommand(args: string[], options: { env?: NodeJS.ProcessEnv; input?: string } = {}) {

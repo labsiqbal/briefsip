@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { HumanActor } from './test-support/auth.ts';
-import { transaction } from './schema.ts';
+import { transaction } from './test-support/legacy-schema.ts';
 import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
 import { initializeMemory, rememberMemory } from './test-support/memory.ts';
 import { requireSkillSchema as initializeSkills, seedSkillVersion as saveSkill } from './test-support/skill-fixture.ts';
