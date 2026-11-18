@@ -154,20 +154,34 @@ pub fn start(db: &Connection, root: &str, lead: Option<&str>) -> Result<()> {
     }
     Ok(())
 }
-pub fn can_run(db: &Connection, id: &str) -> Result<bool> {
-    if generation(db, id)?.is_none() {
+pub fn can_run(
+    db: &Connection,
+    id: &str,
+    channel: Option<&str>,
+    heads: &mut HashMap<String, Option<String>>,
+) -> Result<bool> {
+    let Some(root) = generation(db, id)? else {
         return Ok(true);
-    }
-    if stopped(db, id)? {
+    };
+    if exists(
+        db,
+        "SELECT 1 FROM room_discussions WHERE root=? AND stopped=1",
+        [&root],
+    )? {
         return Ok(false);
     }
     if exists(db, "SELECT 1 FROM agent_deliveries WHERE turn=?", [id])? {
         return Ok(true);
     }
-    let channel =
-        one(db, "SELECT channel FROM turns WHERE id=?", [id])?.ok_or_else(Failure::storage)?;
-    let first=one(db,"SELECT turns.id FROM turns JOIN(SELECT turn,root FROM room_turns UNION SELECT turn,root FROM room_dispatches) lane ON lane.turn=turns.id JOIN turns human ON human.id=lane.root JOIN room_discussions d ON d.root=lane.root WHERE turns.channel=? AND d.stopped=0 AND(turns.status IN('queued','running') OR turns.paused=1) AND NOT EXISTS(SELECT 1 FROM agent_deliveries WHERE turn=turns.id) AND(turns.status='running' OR(turns.waiting_for IS NULL AND NOT EXISTS(SELECT 1 FROM agent_requests r WHERE r.turn=turns.id AND r.expects_reply=1 AND r.settled=0 AND NOT EXISTS(SELECT 1 FROM delegation_tasks dt WHERE dt.request=r.id)) AND NOT EXISTS(SELECT 1 FROM delegation_waits w WHERE w.turn=turns.id AND w.status='waiting') AND NOT EXISTS(SELECT 1 FROM delegation_tasks dt WHERE dt.creator_turn=turns.id AND dt.wait=1 AND dt.wake_delivered=0))) AND turns.dispatch_mode<>'steer' ORDER BY(turns.status='running') DESC,coalesce((SELECT position FROM queue_positions WHERE turn=human.id),human.seq),(turns.id IN(SELECT turn FROM room_dispatches)) DESC,turns.seq LIMIT 1",[string(&channel,"channel")])?;
-    Ok(first.is_some_and(|r| r["id"] == id))
+    let channel = channel.unwrap_or_default();
+    if let Some(head) = heads.get(channel) {
+        return Ok(head.as_deref() == Some(id));
+    }
+    let first=one(db,"SELECT turns.id FROM turns JOIN(SELECT turn,root FROM room_turns UNION SELECT turn,root FROM room_dispatches) lane ON lane.turn=turns.id JOIN turns human ON human.id=lane.root JOIN room_discussions d ON d.root=lane.root WHERE turns.channel=? AND d.stopped=0 AND(turns.status IN('queued','running') OR turns.paused=1) AND NOT EXISTS(SELECT 1 FROM agent_deliveries WHERE turn=turns.id) AND(turns.status='running' OR(turns.waiting_for IS NULL AND NOT EXISTS(SELECT 1 FROM agent_requests r WHERE r.turn=turns.id AND r.expects_reply=1 AND r.settled=0 AND NOT EXISTS(SELECT 1 FROM delegation_tasks dt WHERE dt.request=r.id)) AND NOT EXISTS(SELECT 1 FROM delegation_waits w WHERE w.turn=turns.id AND w.status='waiting') AND NOT EXISTS(SELECT 1 FROM delegation_tasks dt WHERE dt.creator_turn=turns.id AND dt.wait=1 AND dt.wake_delivered=0))) AND turns.dispatch_mode<>'steer' ORDER BY(turns.status='running') DESC,coalesce((SELECT position FROM queue_positions WHERE turn=human.id),human.seq),(turns.id IN(SELECT turn FROM room_dispatches)) DESC,turns.seq LIMIT 1",[channel])?;
+    let first = first.map(|row| string(&row, "id").to_owned());
+    let ready = first.as_deref() == Some(id);
+    heads.insert(channel.to_owned(), first);
+    Ok(ready)
 }
 pub fn admit(db: &Connection, id: &str) -> Result<()> {
     let Some(room) = row(db, id)? else {
@@ -337,30 +351,82 @@ pub fn finish(db: &Connection, id: &str, reply: &str) -> Result<()> {
     }
     Ok(())
 }
+const SETTLEMENT: &str = "d.note IS NULL AND d.stopped=0 AND(
+    EXISTS(SELECT 1 FROM room_invitations i WHERE i.root=d.root AND i.resolved IS NULL)
+    OR (d.fallback=0 AND NOT EXISTS(
+        SELECT 1 FROM room_turns rt JOIN turns t ON t.id=rt.turn
+        WHERE rt.root=d.root AND(t.status IN('queued','running') OR t.paused=1)
+    ))
+)";
+
+pub fn settlements(db: &Connection) -> Result<Vec<String>> {
+    let mut statement = db.prepare_cached(&format!(
+        "SELECT d.root FROM room_discussions d WHERE {SETTLEMENT} ORDER BY d.rowid"
+    ))?;
+    let roots = statement.query_map([], |row| row.get(0))?;
+    roots
+        .collect::<std::result::Result<_, _>>()
+        .map_err(Into::into)
+}
+
 pub fn settle(db: &Connection) -> Result<()> {
-    for room in all(db,"SELECT * FROM room_discussions WHERE note IS NULL AND stopped=0 AND(fallback=0 OR EXISTS(SELECT 1 FROM room_invitations i WHERE i.root=room_discussions.root AND i.resolved IS NULL))",[])? {
-        let root=string(&room,"root");
-        for invitation in all(db,"SELECT i.source,i.target,(SELECT t.id FROM turns t JOIN room_admissions a ON a.turn=t.id JOIN room_turns rt ON rt.turn=t.id WHERE rt.root=i.root AND t.agent=i.target AND a.cutoff>=i.seq AND t.status IN('done','failed','interrupted','cancelled') ORDER BY t.seq LIMIT 1) AS resolved FROM room_invitations i WHERE i.root=? AND i.resolved IS NULL",[root])? {
-            if let Some(resolved)=invitation["resolved"].as_str() {
-            db.execute("UPDATE room_invitations SET resolved=? WHERE source=? AND target=?",[resolved,string(&invitation,"source"),string(&invitation,"target")])?;
-            }
-        }
-        if exists(db,"SELECT 1 FROM room_turns rt JOIN turns t ON t.id=rt.turn WHERE root=? AND(t.status IN('queued','running') OR t.paused=1)",[root])? {continue;}
-        let invitations=all(db,"SELECT target,max(round) AS round FROM room_invitations WHERE root=? AND resolved IS NULL GROUP BY target ORDER BY target",[root])?;
-        if !invitations.is_empty() {
-            for invitation in invitations {
-                let target=string(&invitation,"target");
-                let source=one(db,"SELECT i.source,t.agent,t.reply FROM room_invitations i JOIN turns t ON t.id=i.source WHERE i.root=? AND i.target=? AND i.resolved IS NULL ORDER BY i.seq DESC LIMIT 1",[root,target])?.ok_or_else(Failure::storage)?;
-                reserve(db,string(&source,"source"),target,string(&source,"reply"),source["agent"].as_str(),invitation["round"].as_i64().unwrap_or(0),false)?;
-            }
-            continue;
-        }
-        if room["fallback"]==1 {continue;}
-        db.execute("UPDATE room_discussions SET fallback=1 WHERE root=?",[root])?;
-        if room["mentioned"]==1 || room["lead"].is_null() || exists(db,"SELECT 1 FROM room_messages WHERE root=? AND kind='reply'",[root])? || exists(db,"SELECT 1 FROM room_turns rt JOIN turns t ON t.id=rt.turn WHERE root=? AND t.status<>'done'",[root])? {continue;}
-        let brief=one(db,"SELECT text FROM turns WHERE id=?",[root])?.ok_or_else(Failure::storage)?;
-        reserve(db,root,string(&room,"lead"),string(&brief,"text"),None,2,true)?;
+    for root in settlements(db)? {
+        settle_root(db, &root)?;
     }
+    Ok(())
+}
+
+pub fn settle_root(db: &Connection, root: &str) -> Result<()> {
+    let Some(room) = one(
+        db,
+        &format!("SELECT d.* FROM room_discussions d WHERE d.root=? AND {SETTLEMENT}"),
+        [root],
+    )?
+    else {
+        return Ok(());
+    };
+    for invitation in all(db,"SELECT i.source,i.target,(SELECT t.id FROM turns t JOIN room_admissions a ON a.turn=t.id JOIN room_turns rt ON rt.turn=t.id WHERE rt.root=i.root AND t.agent=i.target AND a.cutoff>=i.seq AND t.status IN('done','failed','interrupted','cancelled') ORDER BY t.seq LIMIT 1) AS resolved FROM room_invitations i WHERE i.root=? AND i.resolved IS NULL",[root])? {
+        if let Some(resolved)=invitation["resolved"].as_str() {
+        db.execute("UPDATE room_invitations SET resolved=? WHERE source=? AND target=?",[resolved,string(&invitation,"source"),string(&invitation,"target")])?;
+        }
+    }
+    if exists(db,"SELECT 1 FROM room_turns rt JOIN turns t ON t.id=rt.turn WHERE root=? AND(t.status IN('queued','running') OR t.paused=1)",[root])? {return Ok(());}
+    let invitations=all(db,"SELECT target,max(round) AS round FROM room_invitations WHERE root=? AND resolved IS NULL GROUP BY target ORDER BY target",[root])?;
+    if !invitations.is_empty() {
+        for invitation in invitations {
+            let target = string(&invitation, "target");
+            let source=one(db,"SELECT i.source,t.agent,t.reply FROM room_invitations i JOIN turns t ON t.id=i.source WHERE i.root=? AND i.target=? AND i.resolved IS NULL ORDER BY i.seq DESC LIMIT 1",[root,target])?.ok_or_else(Failure::storage)?;
+            reserve(
+                db,
+                string(&source, "source"),
+                target,
+                string(&source, "reply"),
+                source["agent"].as_str(),
+                invitation["round"].as_i64().unwrap_or(0),
+                false,
+            )?;
+        }
+        return Ok(());
+    }
+    if room["fallback"] == 1 {
+        return Ok(());
+    }
+    db.execute(
+        "UPDATE room_discussions SET fallback=1 WHERE root=?",
+        [root],
+    )?;
+    if room["mentioned"]==1 || room["lead"].is_null() || exists(db,"SELECT 1 FROM room_messages WHERE root=? AND kind='reply'",[root])? || exists(db,"SELECT 1 FROM room_turns rt JOIN turns t ON t.id=rt.turn WHERE root=? AND t.status<>'done'",[root])? {return Ok(());}
+    let brief =
+        one(db, "SELECT text FROM turns WHERE id=?", [root])?.ok_or_else(Failure::storage)?;
+    reserve(
+        db,
+        root,
+        string(&room, "lead"),
+        string(&brief, "text"),
+        None,
+        2,
+        true,
+    )?;
     Ok(())
 }
 pub fn stop(

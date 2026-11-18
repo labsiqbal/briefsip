@@ -684,7 +684,7 @@ async fn main() -> db::Result<()> {
         computer: computer.clone(),
     };
     automation::scripts::sync(&state).map_err(|e| e.message)?;
-    let turn_task = turns::start(state.clone());
+    let turn_task = turns::start(state.clone()).map_err(|e| e.message)?;
     let automation_task = automation::start(state.clone());
     let computer_maintenance = computer::maintenance(state.clone());
     let conversation_maintenance = data::maintenance(state.clone());
