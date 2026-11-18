@@ -3,7 +3,7 @@ import type { HubLinkOptions } from './hub-link.ts';
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import type { AgentDesktopManager } from './agent-desktop.ts';
-import type { PeerTokenIssuer } from './machines.ts';
+import { peerUpdateTimeoutMs, type PeerTokenIssuer } from './machines.ts';
 
 type Options = { hubLink?: HubLinkOptions; desktop?: ConstructorParameters<typeof AgentDesktopManager>[0]; peerTokenIssuer?: PeerTokenIssuer; machines?: { now?: () => number; healthIntervalMs?: number } };
 export async function computerTestBridge(options: Options) {
@@ -23,7 +23,7 @@ export async function computerTestBridge(options: Options) {
       else if (operation === 'peer-http') {
         const url = new URL(args.url);
         if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) throw new Error('Peer fixture requires loopback.');
-        const result = await fetch(args.url, { method: args.method, headers: args.headers, body: args.body ?? undefined, redirect: 'manual', signal: AbortSignal.timeout(10000) });
+        const result = await fetch(args.url, { method: args.method, headers: args.headers, body: args.body ?? undefined, redirect: 'manual', signal: AbortSignal.timeout(url.pathname === '/api/peer/updates/apply' ? peerUpdateTimeoutMs : 10000) });
         const chunks: Uint8Array[] = []; let size = 0;
         for await (const chunk of result.body ?? []) { size += chunk.length; if (size > 128 * 1024) throw new Error('Peer fixture response exceeded.'); chunks.push(chunk); }
         value = { status: result.status, headers: Object.fromEntries(result.headers), body: Buffer.concat(chunks).toString('base64') };

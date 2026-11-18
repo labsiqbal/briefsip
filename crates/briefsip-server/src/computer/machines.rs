@@ -281,7 +281,13 @@ pub async fn bridge(s: &AppState, operation: &str, args: Value) -> Result<Value>
         .ok_or_else(Failure::storage)?;
     let client = reqwest::Client::builder()
         .no_proxy()
-        .timeout(Duration::from_secs(15))
+        .timeout(
+            if operation == "peer-http" && text(&args, "url").ends_with("/api/peer/updates/apply") {
+                UPDATE_TIMEOUT + Duration::from_secs(5)
+            } else {
+                Duration::from_secs(15)
+            },
+        )
         .build()
         .map_err(|_| Failure::storage())?;
     let value: Value = client
@@ -388,6 +394,34 @@ fn no_secrets(value: &Value, tokens: &[&str]) -> Result<()> {
     }
     Ok(())
 }
+pub const UPDATE_TIMEOUT: Duration = Duration::from_secs(300);
+fn rejection(status: u16, update: bool, value: Option<&Value>) -> Failure {
+    let message = if update {
+        let reason =
+            value.and_then(|v| v["error"].as_str()).filter(|v| {
+                matches!(*v,
+            "Another update is already running."
+            | "Release version is not an update."
+            | "Receiving machine is not running under the Briefsip launcher."
+            | "Peer release download failed integrity, permission, time or size checks."
+            | "Machine updates require permission from both owners in Settings > Machines.")
+            });
+        format!(
+            "Remote machine rejected the update (HTTP {status}).{}",
+            reason.map(|r| format!(" {r}")).unwrap_or_default()
+        )
+    } else {
+        "Remote machine rejected the request.".to_owned()
+    };
+    error(
+        if [401, 403].contains(&status) {
+            401
+        } else {
+            502
+        },
+        message,
+    )
+}
 async fn remote(
     s: &AppState,
     origin: &str,
@@ -395,15 +429,16 @@ async fn remote(
     token: Option<&str>,
     body: Option<&Value>,
 ) -> Result<Value> {
+    let timeout = if path == "/api/peer/updates/apply" {
+        UPDATE_TIMEOUT
+    } else {
+        Duration::from_secs(10)
+    };
     let operation = async {
         let client = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(if path == "/api/peer/updates/apply" {
-                120
-            } else {
-                10
-            }))
+            .timeout(timeout)
             .build()
             .map_err(|_| Failure::storage())?;
         let mut req = if let Some(body) = body {
@@ -423,15 +458,10 @@ async fn remote(
                 "Remote machine is unavailable or exceeded its time, size, or JSON limits.",
             )
         })?;
-        if !response.status().is_success() {
-            return Err(error(
-                if [401, 403].contains(&response.status().as_u16()) {
-                    401
-                } else {
-                    502
-                },
-                "Remote machine rejected the request.",
-            ));
+        let status = response.status();
+        let update = path == "/api/peer/updates/apply";
+        if !status.is_success() && !update {
+            return Err(rejection(status.as_u16(), false, None));
         }
         if response.url().origin().ascii_serialization() != origin
             || response.content_length().is_some_and(|n| n > 128 * 1024)
@@ -441,10 +471,14 @@ async fn remote(
                 .and_then(|v| v.to_str().ok())
                 .is_some_and(|v| v.starts_with("application/json"))
         {
-            return Err(error(
-                502,
-                "Remote machine is unavailable or exceeded its time, size, or JSON limits.",
-            ));
+            return Err(if !status.is_success() {
+                rejection(status.as_u16(), update, None)
+            } else {
+                error(
+                    502,
+                    "Remote machine is unavailable or exceeded its time, size, or JSON limits.",
+                )
+            });
         }
         let mut bytes = Vec::new();
         while let Some(chunk) = response.chunk().await.map_err(|_| Failure::storage())? {
@@ -456,28 +490,25 @@ async fn remote(
             }
             bytes.extend_from_slice(&chunk);
         }
-        serde_json::from_slice(&bytes).map_err(|_| {
+        let value = serde_json::from_slice(&bytes);
+        if !status.is_success() {
+            return Err(rejection(status.as_u16(), update, value.as_ref().ok()));
+        }
+        value.map_err(|_| {
             error(
                 502,
                 "Remote machine is unavailable or exceeded its time, size, or JSON limits.",
             )
         })
     };
-    tokio::time::timeout(
-        Duration::from_secs(if path == "/api/peer/updates/apply" {
-            120
-        } else {
-            10
-        }),
-        operation,
-    )
-    .await
-    .map_err(|_| {
-        error(
-            502,
-            "Remote machine is unavailable or exceeded its time, size, or JSON limits.",
-        )
-    })?
+    tokio::time::timeout(timeout, operation)
+        .await
+        .map_err(|_| {
+            error(
+                502,
+                "Remote machine is unavailable or exceeded its time, size, or JSON limits.",
+            )
+        })?
 }
 fn agents(value: &Value) -> Result<Value> {
     fields(value, &["agents", "messagingAllowed"])?;
@@ -1106,7 +1137,7 @@ pub async fn download_release(
     reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(120))
+        .timeout(UPDATE_TIMEOUT)
         .build()
         .map_err(|_| Failure::storage())?
         .get(format!("{}{path}", text(&r, "origin")))

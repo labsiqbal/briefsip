@@ -258,7 +258,7 @@ async fn handle(state: &AppState, request: Request) -> Result<Response> {
     let hash = archive.sha256.clone();
     let stream = async_stream::stream! {
         let _download=download;
-        let _directory=archive.directory;
+        let _archive=archive;
         loop {
             let mut bytes=vec![0;65536];
             match tokio::time::timeout(std::time::Duration::from_secs(120),file.read(&mut bytes)).await {

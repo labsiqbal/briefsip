@@ -218,7 +218,7 @@ pub async fn peer(state: &AppState, request: Request) -> Result<Response> {
             .map_err(|_| error(500, "Could not read release."))?;
         let sha256 = archive.sha256.clone();
         let stream = async_stream::stream! {
-            let _directory=archive.directory;
+            let _archive=archive;
             loop {
                 let mut bytes=vec![0;65536];
                 match file.read(&mut bytes).await {
