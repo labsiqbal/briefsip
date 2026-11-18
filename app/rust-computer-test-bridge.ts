@@ -2,10 +2,10 @@ import { hubTestTransport } from './rust-hub-test-bridge.ts';
 import type { HubLinkOptions } from './rust-hub-test-bridge.ts';
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import type { AgentDesktopManager } from './agent-desktop.ts';
+import type { DesktopOptions } from './test-support/desktop-types.ts';
 import { peerUpdateTimeoutMs, type PeerTokenIssuer } from './test-support/peer-token-issuer.ts';
 
-type Options = { hubLink?: HubLinkOptions; desktop?: ConstructorParameters<typeof AgentDesktopManager>[0]; peerTokenIssuer?: PeerTokenIssuer; machines?: { now?: () => number; healthIntervalMs?: number } };
+type Options = { hubLink?: HubLinkOptions; desktop?: DesktopOptions; peerTokenIssuer?: PeerTokenIssuer; machines?: { now?: () => number; healthIntervalMs?: number } };
 export async function computerTestBridge(options: Options) {
   const hub = hubTestTransport(options.hubLink);
   const token = randomBytes(32).toString('hex');

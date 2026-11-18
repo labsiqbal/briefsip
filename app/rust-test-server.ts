@@ -1,19 +1,19 @@
 import { rustHubFacade } from './rust-hub-test-bridge.ts';
 import type { HubLinkOptions } from './rust-hub-test-bridge.ts';
 import { connectorsTestBridge } from './rust-connectors-test-bridge.ts';
-import type { AgentDesktopManager } from './agent-desktop.ts';
+import type { DesktopOptions } from './test-support/desktop-types.ts';
 import { computerTestBridge } from './rust-computer-test-bridge.ts';
 import type { PeerTokenIssuer } from './test-support/peer-token-issuer.ts';
 import { spawn } from 'node:child_process';
 import { rustBinary } from './rust-binary.ts';
-import type { AgentSessionIssuer } from './harness.ts';
+import type { AgentSessionIssuer } from './test-support/harness-types.ts';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { harnessTestBridge, pdfTestBridge, rustMcpFacade } from './rust-harness-test-bridge.ts';
 import { ProtocolError } from './shared/protocol.ts';
 import { fixPath } from './t3/path.ts';
 
-type Config = { testPathPrefix?: string; testCanonicalBridge?: { origin: string; token: string; clerk: boolean; mail: boolean; webhook: boolean }; hubLink?: HubLinkOptions; composio?: { baseURL?: string; timeout?: number }; mailApiKey?: string; mailEndpoint?: string; scriptDirectory?: string; agentLimits?: unknown; imageProvider?: unknown; transcriptionProvider?: unknown; scriptToken?: string; installationId?: string; mailFrom?: string; mailOrigin?: string; testKeyring?: Record<string, string>; testKeyringLocked?: boolean; updates?: { releasesDir?: string; launcherSocket?: string }; desktop?: ConstructorParameters<typeof AgentDesktopManager>[0]; peerTokenIssuer?: PeerTokenIssuer; machines?: { now?: () => number; healthIntervalMs?: number }; baseURL?: string; apiKey?: string; defaultModel?: string; provider?: string; accounts?: unknown; timeout?: number; concurrency?: number; workspaces?: unknown; projectRoot?: string; harness?: { issuer?: AgentSessionIssuer; executables?: Partial<Record<import('./harness.ts').HarnessRuntime, string>>; mcpURL?: string }; stream?: boolean; streamTermination?: string; maxTokens?: number; database: string; port?: number; host?: string; tls?: { cert: string; key: string }; allowedOrigins?: string[]; dist?: string; auth?: { secretKey: string; publishableKey: string; issuer: string; origin: string; development?: boolean; audience?: string; jwtKey?: string; apiUrl?: string }; fixedClock?: number };
+type Config = { testPathPrefix?: string; testCanonicalBridge?: { origin: string; token: string; clerk: boolean; mail: boolean; webhook: boolean }; hubLink?: HubLinkOptions; composio?: { baseURL?: string; timeout?: number }; mailApiKey?: string; mailEndpoint?: string; scriptDirectory?: string; agentLimits?: unknown; imageProvider?: unknown; transcriptionProvider?: unknown; scriptToken?: string; installationId?: string; mailFrom?: string; mailOrigin?: string; testKeyring?: Record<string, string>; testKeyringLocked?: boolean; updates?: { releasesDir?: string; launcherSocket?: string }; desktop?: DesktopOptions; peerTokenIssuer?: PeerTokenIssuer; machines?: { now?: () => number; healthIntervalMs?: number }; baseURL?: string; apiKey?: string; defaultModel?: string; provider?: string; accounts?: unknown; timeout?: number; concurrency?: number; workspaces?: unknown; projectRoot?: string; harness?: { issuer?: AgentSessionIssuer; executables?: Partial<Record<import('./shared/runtime.ts').HarnessRuntime, string>>; mcpURL?: string }; stream?: boolean; streamTermination?: string; maxTokens?: number; database: string; port?: number; host?: string; tls?: { cert: string; key: string }; allowedOrigins?: string[]; dist?: string; auth?: { secretKey: string; publishableKey: string; issuer: string; origin: string; development?: boolean; audience?: string; jwtKey?: string; apiUrl?: string }; fixedClock?: number };
 export async function startRustServer(options: Config, attempt = 0): Promise<{ origin: string; close: () => Promise<void>; crash: () => Promise<void>; refreshMachines: () => Promise<void>; mcpServer: ReturnType<typeof rustMcpFacade>; hubLink?: ReturnType<typeof rustHubFacade> }> {
   await fixPath();
   if (options.concurrency !== undefined && (!Number.isSafeInteger(options.concurrency) || options.concurrency < 1 || options.concurrency > 32)) throw new Error('BRIEFSIP_CONCURRENCY must be 1..32');
