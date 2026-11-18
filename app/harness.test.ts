@@ -106,17 +106,22 @@ for(const runtime of ['codex','claude'] as const) {
     } finally { await f.close(); }
   });
   test(`${runtime}: stream, tool activity, MCP lifetime, follow-up and restart resume`,async()=>{
-    const f=await fixture(runtime);try {
-      const streamController = new AbortController();
+    const f=await fixture(runtime);
+    const streamController = new AbortController();
+    try {
       const stream = await fetch(f.app.origin + f.path + '/turns/stream', { signal: streamController.signal });
       const reader = stream.body!.getReader();
-      const first=await f.send('FIRST'),partial=await f.until(first,row=>row.partial?.text||row.status==='failed');assert.equal(partial.status,'running',partial.error);
+      const first = await f.send('FIRST_PARTIAL_GATE');
+      const partial = await f.until(first, row => row.partial?.text || ['done', 'failed', 'cancelled'].includes(row.status));
+      assert.equal(partial.status, 'running', partial.error);
+      assert.equal(partial.partial.text, 'Harness ');
       try {
         const frame = new TextDecoder().decode((await reader.read()).value);
         assert(frame.startsWith('data: '));
         const snapshot = JSON.parse(frame.split('\n\n')[0].slice(6));
         assert.equal(snapshot.id, first); assert.equal(snapshot.partial.text, ''); assert.equal(snapshot.partial.seq, partial.partial.seq);
       } finally { streamController.abort(); }
+      writeFileSync(join(f.workspace, 'stream-release'), '');
 
       const done=await f.until(first,row=>['done','failed'].includes(row.status));assert.equal(done.status,'done',done.error);assert.equal(done.reply,'finished');assert(done.activity.harness.length);assert.equal(done.activity.harness[0].state,'completed');
       const second=await f.send('SECOND');assert.equal((await f.until(second,row=>['done','failed'].includes(row.status))).status,'done');
@@ -126,7 +131,7 @@ for(const runtime of ['codex','claude'] as const) {
       assert(contexts.length >= 3);
       for (const context of contexts) { assert.match(context, /<runtime_info>/); assert.match(context, /open_file_in_panel/); assert.doesNotMatch(context, /computer_screenshot/); assert.match(context, /run_shell/); }
       const usage=await f.request('/api/usage');assert(usage.calls.some((call:any)=>call.input_tokens===11&&call.output_tokens===7));
-    } finally {await f.close();}
+    } finally {streamController.abort();await f.close();}
   });
   test(`${runtime}: Steer degrades to linked Restart with partial context and fresh native session`, async () => {
     const f = await fixture(runtime); try {
