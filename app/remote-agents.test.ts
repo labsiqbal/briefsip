@@ -1,5 +1,4 @@
-import { remoteRoster } from './remote-agents.ts';
-import { peerAgentRole } from './machines.ts';
+import { remoteRoster, peerAgentRole } from './remote-agents.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';

@@ -181,16 +181,12 @@ impl Options {
             .ok_or_else(|| unavailable(mail))
     }
     pub(super) fn sync_key(&self) -> Result<Vec<u8>> {
-        if self.read("sync-hmac/v1", false)?.is_none() {
-            let mut key = [0; 32];
-            getrandom::getrandom(&mut key).map_err(|_| unavailable(false))?;
-            let encoded = B64.encode(key);
-            self.write("sync-hmac/v1", &encoded, false)?;
-            if self.read("sync-hmac/v1", false)?.as_deref() != Some(&encoded) {
-                return Err(unavailable(false));
-            }
-        }
-        self.key("sync-hmac/v1", false)
+        let name = "sync-hmac/v1";
+        ensure_sync_key(
+            || self.read(name, false),
+            |encoded| self.write(name, encoded, false),
+        )?;
+        self.key(name, false)
     }
     pub(super) fn mail(&self) -> Result<(String, Vec<u8>, Vec<u8>)> {
         let id = self
@@ -202,5 +198,73 @@ impl Options {
             self.key(&format!("mail-aead/{id}"), true)?,
             self.key("mail-lookup/v1", true)?,
         ))
+    }
+}
+
+fn ensure_sync_key(
+    read: impl Fn() -> Result<Option<String>>,
+    write: impl FnOnce(&str) -> Result<()>,
+) -> Result<()> {
+    if read()?.is_none() {
+        let mut key = [0; 32];
+        getrandom::getrandom(&mut key).map_err(|_| unavailable(false))?;
+        let encoded = B64.encode(key);
+        write(&encoded)?;
+        if read()?.as_deref() != Some(&encoded) {
+            return Err(unavailable(false));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sync_keyring_retains_one_verified_key_and_rejects_unavailable_storage() -> Result<()> {
+        let installation = uuid::Uuid::new_v4().to_string();
+        let mut options = Options {
+            installation_id: Some(installation.clone()),
+            test_keyring: Some(HashMap::new()),
+            ..Options::default()
+        };
+        let name = "sync-hmac/v1";
+        assert_eq!(
+            options.service(name, false)?,
+            format!("briefsip/server/{installation}")
+        );
+        let key = options.sync_key()?;
+        assert_eq!(key.len(), 32);
+        assert_eq!(options.sync_key()?, key);
+        let stored = options.stored.lock().map_err(|_| unavailable(false))?;
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored.get(name), Some(&B64.encode(&key)));
+        drop(stored);
+        options.write(name, "corrupt", false)?;
+        assert_eq!(
+            options.sync_key().err().map(|error| error.code),
+            Some("keystore_unavailable")
+        );
+        options.test_keyring_locked = true;
+        let writes = std::cell::Cell::new(0);
+        let locked = ensure_sync_key(
+            || options.read(name, false),
+            |_| {
+                writes.set(writes.get() + 1);
+                Ok(())
+            },
+        );
+        assert_eq!(
+            locked.err().map(|error| error.code),
+            Some("keystore_unavailable")
+        );
+        assert_eq!(writes.get(), 0);
+        let lost_write = ensure_sync_key(|| Ok(None), |_| Ok(()));
+        assert_eq!(
+            lost_write.err().map(|error| error.code),
+            Some("keystore_unavailable")
+        );
+        Ok(())
     }
 }

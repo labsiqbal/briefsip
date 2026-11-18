@@ -17,7 +17,7 @@ import { initializeHubSchema } from './hub/schema.ts';
 import { createHubAuthority, type ParticipationPolicy, type InvocationPolicy } from './hub/project-authority.ts';
 import { createHubWebApi } from './hub/web.ts';
 import { createHubRouting, type RoutingFrame } from './hub/routing.ts';
-import { canonicalJson, ProtocolError, sha256 } from './protocol.ts';
+import { canonicalJson, ProtocolError, sha256 } from './shared/protocol.ts';
 type App = Awaited<ReturnType<typeof startApp>>;
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check: () => unknown | Promise<unknown>, label = 'condition') {

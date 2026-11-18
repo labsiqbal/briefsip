@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { createClerkClient } from '@clerk/backend';
-import { createAuth, type AuthConfig } from './auth.ts';
-import { initializeCanonicalSchema } from './schema.ts';
+import type { AuthConfig } from './auth.ts';
+import { startRustServer } from './rust-test-server.ts';
 import { startCanonicalApp } from './test-bridge.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -21,48 +21,113 @@ function jwt(overrides: Record<string, unknown> = {}, privateKey = keys.privateK
   const input = `${header}.${claims}`;
   return `${input}.${sign('RSA-SHA256', Buffer.from(input), privateKey).toString('base64url')}`;
 }
-const request = (token?: string, method = 'GET', origin = config.origin) => new Request(`${config.origin}/api/session`, { method, headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), Origin: origin } });
+const rustAuth = {
+  ...config,
+  jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+  development: true,
+};
 
-test('Clerk SDK verifies signed human sessions before internal account mapping', async () => {
-  const db = new DatabaseSync(':memory:'); initializeCanonicalSchema(db);
-  const clerk = createClerkClient({ secretKey: config.secretKey, publishableKey: config.publishableKey, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), telemetry: { disabled: true } });
-  const auth = createAuth(db, config, clerk);
-  try {
-    const actor = await auth.authenticate(request(jwt()));
-    assert.equal(actor.subject, 'user_fixture'); assert.equal((await auth.authenticate(request(jwt()))).accountId, actor.accountId);
-    assert.equal(db.prepare('SELECT count(*) AS n FROM projects').get()!.n, 0);
-    assert.equal(db.prepare('SELECT count(*) AS n FROM record_scopes').get()!.n, 0);
-    const other = await auth.authenticate(request(jwt({ sub: 'user_other' }))); assert.notEqual(other.accountId, actor.accountId);
-    await assert.rejects(auth.authenticate(request()), /Session/);
-    await assert.rejects(auth.authenticate(new Request(`${config.origin}/api/session`, { headers: { Cookie: `__session=${jwt()}` } })), /Session/);
-    await assert.rejects(auth.authenticate(request(jwt(), 'POST', 'https://evil.example')), /Origin/);
-    const now = Math.floor(Date.now() / 1000);
-    const wrongKey = generateKeyPairSync('rsa', { modulusLength: 2048 });
-    for (const claims of [{ iss: 'https://wrong.example' }, { exp: now }, { nbf: now + 30 }, { azp: 'https://wrong.example' }, { sid: '' }, { sub: '' }, { sts: 'pending' }]) await assert.rejects(auth.authenticate(request(jwt(claims))), /Session/);
-    await assert.rejects(auth.authenticate(request(jwt({}, wrongKey.privateKey))), /Session/);
-    db.prepare('UPDATE accounts SET blocked=1 WHERE id=?').run(actor.accountId);
-    await assert.rejects(auth.authenticate(request(jwt())), /Session/);
-    assert.throws(() => auth.requireCurrent(actor), /Session/);
-  } finally { db.close(); }
+async function session(origin: string, token?: string, options: { method?: string; origin?: string; cookie?: string; path?: string } = {}) {
+  const requestId = randomUUID();
+  const response = await fetch(origin + (options.path ?? '/api/session'), {
+    method: options.method ?? 'GET',
+    ...(options.method === 'POST' ? { body: JSON.stringify({ requestId }) } : {}),
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Briefsip-Protocol': '1',
+      'X-Briefsip-Request-Id': requestId,
+      Origin: options.origin ?? config.origin,
+      ...(options.cookie ? { Cookie: options.cookie } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  return { status: response.status, body: await response.json() };
+}
+
+test('Rust verifies signed human sessions before internal account mapping', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-rust-auth-')), database = join(dir, 'db.sqlite');
+  let app: Awaited<ReturnType<typeof startRustServer>> | undefined;
+  let db: DatabaseSync | undefined;
+  t.after(async () => {
+    db?.close();
+    await app?.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  app = await startRustServer({ database, auth: rustAuth });
+  db = new DatabaseSync(database);
+
+  const first = await session(app.origin, jwt());
+  assert.equal(first.status, 200);
+  const { accountId } = first.body.data;
+  assert.equal(db.prepare('SELECT clerk_sub FROM accounts WHERE id=?').get(accountId)?.clerk_sub, 'user_fixture');
+  assert.equal((await session(app.origin, jwt())).body.data.accountId, accountId);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM projects').get()!.n, 0);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM record_scopes').get()!.n, 0);
+  const other = await session(app.origin, jwt({ sub: 'user_other' }));
+  assert.equal(other.status, 200);
+  assert.notEqual(other.body.data.accountId, accountId);
+  assert.equal((await session(app.origin)).status, 401);
+  assert.equal((await session(app.origin, undefined, { cookie: `__session=${jwt()}` })).status, 401);
+  assert.equal((await session(app.origin, jwt(), { method: 'POST', origin: 'https://evil.example', path: '/api/session/logout' })).status, 403);
+
+  const now = Math.floor(Date.now() / 1000);
+  const wrongKey = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  for (const claims of [{ iss: 'https://wrong.example' }, { exp: now }, { nbf: now + 30 }, { azp: 'https://wrong.example' }, { sid: '' }, { sub: '' }, { sts: 'pending' }]) {
+    assert.equal((await session(app.origin, jwt(claims))).status, 401, JSON.stringify(claims));
+  }
+  assert.equal((await session(app.origin, jwt({}, wrongKey.privateKey))).status, 401);
+  db.prepare('UPDATE accounts SET blocked=1 WHERE id=?').run(accountId);
+  assert.equal((await session(app.origin, jwt())).status, 401);
 });
 
-test('local logout denial survives disk reopen, old JWT expiry and upstream recovery', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-logout-'));
-  let db = new DatabaseSync(join(dir, 'db.sqlite')); initializeCanonicalSchema(db);
-  const clerk = createClerkClient({ secretKey: config.secretKey, publishableKey: config.publishableKey, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), telemetry: { disabled: true } });
-  let upstream = false;
-  const authClient = { ...clerk, sessions: { revokeSession: async () => { assert.equal(db.prepare('SELECT count(*) AS n FROM session_denials').get()!.n, 1); if (!upstream) throw new Error('synthetic upstream unavailable'); } } };
-  const auth = createAuth(db, config, authClient);
+test('Rust logout denial survives disk reopen, old JWT expiry and upstream recovery', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-rust-logout-')), database = join(dir, 'db.sqlite');
+  let upstream = false, observedDenial: string | undefined;
+  const api = createServer((req, res) => {
+    if (req.method !== 'POST' || req.url !== '/v1/sessions/sess_fixture/revoke') {
+      res.writeHead(404).end();
+      return;
+    }
+    const db = new DatabaseSync(database, { readOnly: true });
+    try { observedDenial = String(db.prepare('SELECT reason FROM session_denials').get()?.reason); }
+    finally { db.close(); }
+    res.writeHead(upstream ? 200 : 503).end('{}');
+  });
+  await new Promise<void>(resolve => api.listen(0, '127.0.0.1', resolve));
+  const address = api.address();
+  assert(address && typeof address !== 'string');
+  const auth = { ...rustAuth, apiUrl: `http://127.0.0.1:${address.port}` };
+  let app: Awaited<ReturnType<typeof startRustServer>> | undefined;
   try {
-    const actor = await auth.authenticate(request(jwt())); assert.deepEqual(await auth.logout(actor), { state: 'upstream_pending' });
-    db.prepare('UPDATE session_denials SET expires_at=?').run(Date.now() - 60000);
-    db.close(); db = new DatabaseSync(join(dir, 'db.sqlite')); initializeCanonicalSchema(db);
-    await assert.rejects(createAuth(db, config, authClient).authenticate(request(jwt())), /Session/);
-    assert.equal(db.prepare('SELECT count(*) AS n FROM session_denials').get()!.n, 1);
-    upstream = true; assert.deepEqual(await createAuth(db, config, authClient).retryPendingLogouts(), { attempted: 1, completed: 1 });
-    assert.equal(db.prepare('SELECT reason FROM session_denials').get()!.reason, 'logout_complete');
-    await assert.rejects(createAuth(db, config, authClient).authenticate(request(jwt())), /Session/);
-  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+    app = await startRustServer({ database, auth });
+    assert.equal((await session(app.origin, jwt())).status, 200);
+    const logout = await session(app.origin, jwt(), { method: 'POST', path: '/api/session/logout' });
+    assert.equal(logout.status, 200);
+    assert.deepEqual(logout.body.data, { state: 'upstream_pending' });
+    assert.equal(observedDenial, 'logout_pending');
+    await app.close();
+    const db = new DatabaseSync(database);
+    try { db.prepare('UPDATE session_denials SET expires_at=?').run(Date.now() - 60000); }
+    finally { db.close(); }
+    app = await startRustServer({ database, auth });
+    assert.equal((await session(app.origin, jwt())).status, 401);
+    await app.close();
+    upstream = true;
+    app = await startRustServer({ database, auth });
+    const reopened = new DatabaseSync(database, { readOnly: true });
+    try {
+      for (let n = 0; n < 100 && reopened.prepare('SELECT reason FROM session_denials').get()?.reason !== 'logout_complete'; n++) {
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      assert.equal(reopened.prepare('SELECT reason FROM session_denials').get()?.reason, 'logout_complete');
+    } finally { reopened.close(); }
+    assert.equal((await session(app.origin, jwt())).status, 401);
+  } finally {
+    await app?.close();
+    api.closeAllConnections();
+    await new Promise<void>(resolve => api.close(() => resolve()));
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('canonical listen failure leaves no maintenance running on a closed database', async () => {
@@ -72,7 +137,8 @@ test('canonical listen failure leaves no maintenance running on a closed databas
   const address = occupied.address(); assert(address && typeof address !== 'string');
   try {
     await assert.rejects(startCanonicalApp({ database: join(dir, 'db.sqlite'), auth: { ...config, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), development: true }, port: address.port }), { code: 'EADDRINUSE' });
-    await new Promise(resolve => setTimeout(resolve, 1100));
+    const restarted = await startRustServer({ database: join(dir, 'db.sqlite'), auth: rustAuth });
+    await restarted.close();
   } finally { await new Promise<void>(resolve => occupied.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -100,32 +166,6 @@ test('canonical HTTP verifies identity, isolates projects and cannot dispatch le
     const duplicate = await fetch(app.origin + '/api/projects', { method: 'POST', headers: { Authorization: `Bearer ${jwt()}`, Origin: config.origin, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': duplicateId }, body: `{"requestId":"${duplicateId}","id":"${randomUUID()}","name":"First","name":"Second"}` });
     assert.equal(duplicate.status, 400); assert.equal((await duplicate.json()).error.code, 'duplicate_key');
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
-});
-
-test('Clerk rotating JWKS and server-side mailbox verification fail closed', async () => {
-  const db = new DatabaseSync(':memory:'); initializeCanonicalSchema(db);
-  const rotated = generateKeyPairSync('rsa', { modulusLength: 2048 }); let includeRotated = false, verified = true, jwksCalls = 0;
-  const api = createServer((req, res) => {
-    res.setHeader('Content-Type', 'application/json');
-    if (req.url?.endsWith('/jwks')) {
-      jwksCalls++;
-      res.end(JSON.stringify({ keys: [{ ...keys.publicKey.export({ format: 'jwk' }), kid: 'fixture', use: 'sig', alg: 'RS256' }, ...(includeRotated ? [{ ...rotated.publicKey.export({ format: 'jwk' }), kid: 'rotated', use: 'sig', alg: 'RS256' }] : [])] }));
-    } else if (req.url?.includes('/users/')) res.end(JSON.stringify({ object: 'user', id: 'user_fixture', banned: false, locked: false, external_accounts: [], saml_accounts: [], phone_numbers: [], web3_wallets: [], enterprise_accounts: [], email_addresses: [{ id: 'email_fixture', object: 'email_address', linked_to: [], email_address: 'Member@Example.COM', verification: { status: verified ? 'verified' : 'unverified', strategy: 'admin' } }] }));
-    else { res.statusCode = 404; res.end(JSON.stringify({ errors: [{ message: req.url }] })); }
-  });
-  await new Promise<void>(resolve => api.listen(0, '127.0.0.1', resolve)); const address = api.address(); assert(address && typeof address !== 'string');
-  const clerk = createClerkClient({ secretKey: config.secretKey, publishableKey: config.publishableKey, apiUrl: `http://127.0.0.1:${address.port}`, telemetry: { disabled: true } });
-  const auth = createAuth(db, config, clerk);
-  try {
-    const actor = await auth.authenticate(request(jwt())); assert(jwksCalls > 0);
-    assert.equal((await clerk.users.getUser(actor.subject).catch(error => assert.fail(JSON.stringify({ status: error.status, errors: error.errors })))).id, actor.subject);
-    assert.deepEqual(await auth.verifiedMailboxes(actor), ['member@example.com']); verified = false; assert.deepEqual(await auth.verifiedMailboxes(actor), []);
-    includeRotated = true; const before = jwksCalls; assert.equal((await auth.authenticate(request(jwt({}, rotated.privateKey, 'rotated')))).accountId, actor.accountId); assert(jwksCalls > before);
-    await assert.rejects(auth.authenticate(request(jwt({}, keys.privateKey, 'unknown'))), /Session/);
-    const audience = createAuth(db, { ...config, audience: 'briefsip' }, clerk);
-    await assert.rejects(audience.authenticate(request(jwt())), /Session/); await assert.rejects(audience.authenticate(request(jwt({ aud: 'other' }))), /Session/);
-    assert.equal((await audience.authenticate(request(jwt({ aud: 'briefsip' })))).accountId, actor.accountId);
-  } finally { api.closeAllConnections(); await new Promise<void>(resolve => api.close(() => resolve())); db.close(); }
 });
 
 test('canonical invitation creates durable outbox and worker delivers through configured provider', async () => {

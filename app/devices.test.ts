@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, randomBytes, randomUUID, sign, type KeyObject } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { createDevices, descriptorBody, deviceLinkBody, deviceProofBody, parseLinkChallenge, type DeviceDescriptor, type DeviceProof } from './devices.ts';
+import { createDevices } from './devices.ts';
+import { descriptorBody, deviceLinkBody, deviceProofBody, parseLinkChallenge, type DeviceDescriptor, type DeviceProof } from './test-support/device-protocol.ts';
 import { initializeCanonicalSchema } from './schema.ts';
-import { sha256, digestCommand, ProtocolError } from './protocol.ts';
+import { sha256, digestCommand, ProtocolError } from './shared/protocol.ts';
 import type { HumanActor } from './auth.ts';
 import type { WaitRevealRequest } from './wait-connection.ts';
 

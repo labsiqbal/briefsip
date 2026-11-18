@@ -69,11 +69,12 @@ test('prompt creation atomically queues one restricted setup and recovers withou
 });
 
 import { createProjectAccess } from './project-access.ts';
-import { createDevices, descriptorBody, deviceLinkBody, parseLinkChallenge, type DeviceDescriptor } from './devices.ts';
+import { createDevices } from './devices.ts';
+import { descriptorBody, deviceLinkBody, parseLinkChallenge, type DeviceDescriptor } from './test-support/device-protocol.ts';
 import { initializeCanonicalSchema } from './schema.ts';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import type { HumanActor } from './auth.ts';
-import { ProtocolError, digestCommand, sha256 } from './protocol.ts';
+import { ProtocolError, digestCommand, sha256 } from './shared/protocol.ts';
 import { parseCanonicalAgentCreation, restoreCanonicalAgentCreation } from './agent-create.ts';
 import { retainedToolNames } from './test-bridge.ts';
 import sharp from 'sharp';

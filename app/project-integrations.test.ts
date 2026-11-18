@@ -7,7 +7,6 @@ import { resolve, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './test-bridge.ts';
 import { composioToolName } from './composio.ts';
-import { validateProjectEnvironment, redactSecrets } from './project-environment.ts';
 const secret='PROJECT_CANARY_j4W8sK3p';
 const listen=async(server:ReturnType<typeof createServer>)=>{await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));return `http://127.0.0.1:${(server.address() as {port:number}).port}`;};
 async function body(req:AsyncIterable<Uint8Array>){let raw='';for await(const chunk of req)raw+=chunk;return raw?JSON.parse(raw):{};}
@@ -24,13 +23,20 @@ async function fixture(extra:Record<string,any>={}){
   return {directory,database,request,responses,until,run,agent,project,get app(){return app;},async restart(){await app.close();app=await startApp(options);},async shutdown(){if(!closed){await app.close();closed=true;}},async close(){if(!closed)await app.close();rmSync(directory,{recursive:true,force:true});}};
 }
 
-test('project environment: closed names, byte bounds and split/escaped output redaction',()=>{
-  for(const name of ['PATH','HOME','LD_PRELOAD','NODE_OPTIONS','BRIEFSIP_TOKEN','BASH_ENV','bad','A-B','A'.repeat(65)])assert.throws(()=>validateProjectEnvironment(name,'x'));
-  assert.equal(validateProjectEnvironment('_TOKEN_1',''), '_TOKEN_1');
-  assert.throws(()=>validateProjectEnvironment('TOKEN','é'.repeat(8193)));assert.throws(()=>validateProjectEnvironment('TOKEN','a\0b'));
-  assert.equal(redactSecrets('prefix '+secret,[secret],true),'prefix [REDACTED]');
-  assert.equal(redactSecrets('prefix '+secret.slice(0,10),[secret],true),'prefix ');
-  assert.equal(redactSecrets(JSON.stringify({value:'line\nsecret'}),['line\nsecret']),'{"value":"[REDACTED]"}');
+test('Rust project environment validates names and UTF-8 byte bounds', async () => {
+  const f = await fixture();
+  try {
+    const agent = await f.agent(), project = await f.project(agent.id, 'Environment validation');
+    const path = `/api/projects/${project.id}/environment`;
+    for (const name of ['PATH', 'HOME', 'LD_PRELOAD', 'NODE_OPTIONS', 'BRIEFSIP_TOKEN', 'BASH_ENV', 'bad', 'A-B', 'A'.repeat(65)]) {
+      await f.request(path, { id: randomUUID(), name, value: 'x' }, 400);
+    }
+    for (const value of ['é'.repeat(8193), 'a\0b']) {
+      await f.request(path, { id: randomUUID(), name: 'TOKEN', value }, 400);
+    }
+    const result = await f.request(path, { id: randomUUID(), name: '_TOKEN_1', value: '' });
+    assert.equal(result.name, '_TOKEN_1');
+  } finally { await f.close(); }
 });
 
 test('project environment settings and removal preserve consent, replay and stale-write fences', async () => {

@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { ProtocolError } from './protocol.ts';
+import { ProtocolError } from './shared/protocol.ts';
 import type WebSocket from 'ws';
 import type { ClientOptions } from 'ws';
 

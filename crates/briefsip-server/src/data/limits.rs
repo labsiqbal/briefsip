@@ -99,22 +99,36 @@ pub fn task_capacity(db: &Connection, project: &str, agent: &str) -> Result<()> 
     if path.is_empty() {
         return Ok(());
     }
-    let space = rustix::fs::statvfs(path.as_str()).map_err(|_| {
-        let mut e = Failure::new(503, "storage_unavailable", "Storage is not available yet.");
-        e.retryable = true;
-        e
+    let space = rustix::fs::statvfs(path.as_str()).map(|space| {
+        let size = u128::from(space.f_bsize);
+        (
+            u128::from(space.f_bavail) * size,
+            u128::from(space.f_blocks) * size,
+        )
+    });
+    require_storage_capacity(space)
+}
+
+fn require_storage_capacity(
+    bytes: std::result::Result<(u128, u128), rustix::io::Errno>,
+) -> Result<()> {
+    let (free, total) = bytes.map_err(|_| {
+        let mut error = Failure::new(503, "storage_unavailable", "Storage is not available yet.");
+        error.retryable = true;
+        error
     })?;
-    let free = u128::from(space.f_bavail) * u128::from(space.f_bsize);
-    let total = u128::from(space.f_blocks) * u128::from(space.f_bsize);
-    if free < 1_073_741_824 || free * 20 < total {
-        return Err(Failure::new(
+    if free < 1_073_741_824 || free < total.div_ceil(20) {
+        let mut error = Failure::new(
             507,
             "storage_pressure",
             "Storage is almost full. Task has not been accepted.",
-        ));
+        );
+        error.retryable = true;
+        return Err(error);
     }
     Ok(())
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,14 +141,24 @@ mod tests {
             permit(&REQUEST).err().map(|e| e.code),
             Some("server_capacity")
         );
-        let control = permit(&CONTROL)?;
+        let controls = (0..32)
+            .map(|_| permit(&CONTROL))
+            .collect::<Result<Vec<_>>>()?;
+        assert_eq!(
+            permit(&CONTROL).err().map(|e| e.code),
+            Some("server_capacity")
+        );
         let context = permit(&CONTEXT)?;
         let result = permit(&RESULT)?;
         assert!(permit(&CONTEXT).is_err());
         assert!(permit(&RESULT).is_err());
         requests.pop();
-        assert!(permit(&REQUEST).is_ok());
-        drop((requests, control, context, result));
+        let next = permit(&REQUEST)?;
+        assert!(permit(&REQUEST).is_err());
+        drop((requests, controls, context, result, next));
+        for lane in [&REQUEST, &CONTROL, &CONTEXT, &RESULT] {
+            let _next = permit(lane)?;
+        }
         let db = Connection::open_in_memory()?;
         db.execute_batch("CREATE TABLE tasks(project TEXT,agent TEXT,state TEXT)")?;
         for _ in 0..100 {
@@ -146,8 +170,37 @@ mod tests {
         );
         task_capacity(&db, "B", "busy")?;
         task_capacity(&db, "A", "free")?;
+        db.execute_batch(
+            "WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<900)
+             INSERT INTO tasks SELECT 'A','agent-'||i,'waiting_device' FROM n;",
+        )?;
+        let error = task_capacity(&db, "A", "free")
+            .err()
+            .map(|error| (error.code, error.retryable));
+        assert_eq!(error, Some(("queue_full", true)));
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM tasks", [], |row| row.get::<_, i64>(0))?,
+            1000
+        );
         db.execute("UPDATE tasks SET state='transferred' WHERE rowid=1", [])?;
         task_capacity(&db, "A", "busy")?;
+        Ok(())
+    }
+
+    #[test]
+    fn storage_admission_requires_a_readable_volume_and_both_floors() -> Result<()> {
+        const GIB: u128 = 1 << 30;
+        require_storage_capacity(Ok((GIB, 20 * GIB)))?;
+        for (free, total) in [(GIB - 1, 20 * GIB - 20), (2 * GIB, 41 * GIB)] {
+            let error = require_storage_capacity(Ok((free, total)))
+                .err()
+                .map(|error| (error.status, error.code, error.retryable));
+            assert_eq!(error, Some((507, "storage_pressure", true)));
+        }
+        let error = require_storage_capacity(Err(rustix::io::Errno::NOENT))
+            .err()
+            .map(|error| (error.status, error.code, error.retryable));
+        assert_eq!(error, Some((503, "storage_unavailable", true)));
         Ok(())
     }
 }

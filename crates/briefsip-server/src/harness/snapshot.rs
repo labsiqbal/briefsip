@@ -168,3 +168,30 @@ impl Drop for Snapshot {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redact_masks_complete_escaped_and_partial_streaming_values() {
+        let secret = "PROJECT_CANARY_j4W8sK3p".to_owned();
+        let secrets = [secret.clone()];
+        assert_eq!(
+            redact(&format!("prefix {secret}"), &secrets, true),
+            "prefix [REDACTED]"
+        );
+        assert_eq!(
+            redact(&format!("prefix {}", &secret[..10]), &secrets, true),
+            "prefix "
+        );
+        assert_eq!(
+            redact(
+                r#"{"value":"line\nsecret"}"#,
+                &["line\nsecret".to_owned()],
+                false
+            ),
+            r#"{"value":"[REDACTED]"}"#
+        );
+    }
+}

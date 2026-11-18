@@ -1495,3 +1495,29 @@ pub(crate) fn pairing_code(
     })?;
     Ok(json!({"code":code,"expiresAt":expires}))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn peer_origins_require_https_or_loopback_without_url_extras() -> Result<()> {
+        for origin in [
+            "http://example.ts.net",
+            "https://user:pass@machine.ts.net",
+            "https://host/path",
+            "https://host?x=1",
+            "https://host#x",
+            "https://host\\evil",
+            " https://host",
+            "https://host?",
+            "https://host#",
+        ] {
+            assert!(machine_origin(origin).is_err(), "{origin}");
+        }
+        for origin in ["https://machine.ts.net:4317", "http://[::1]:1234"] {
+            assert_eq!(machine_origin(origin)?, origin);
+        }
+        Ok(())
+    }
+}

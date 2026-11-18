@@ -123,7 +123,7 @@ test('Rust deletion rolls back FK closure, preserves room history and retries ex
 
 test('Rust canonical projects preserve ownership, CAS and durable command receipts', { timeout: 20000 }, async () => {
   const { generateKeyPairSync, sign } = await import('node:crypto');
-  const { initializeCanonicalSchema } = await import('./schema.ts');
+  const { installFrozenNodeSchema } = await import('./test-support/canonical-schema.ts');
   const { createProjectAccess } = await import('./project-access.ts');
   const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-projects-')), database = join(root, 'db.sqlite');
   const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -132,7 +132,7 @@ test('Rust canonical projects preserve ownership, CAS and durable command receip
   const input = `${Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'fixture' })).toString('base64url')}.${Buffer.from(JSON.stringify({ iss: auth.issuer, sub: 'user_fixture', sid: 'sess_fixture', azp: auth.origin, exp: now + 60, nbf: now - 1, iat: now - 1 })).toString('base64url')}`;
   const token = `${input}.${sign('RSA-SHA256', Buffer.from(input), keys.privateKey).toString('base64url')}`;
   const reference = new DatabaseSync(':memory:'), disk = new DatabaseSync(database);
-  for (const db of [reference, disk]) { initializeCanonicalSchema(db); db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,?,?,?)').run(account, auth.issuer, 'user_fixture', Date.now()); }
+  for (const db of [reference, disk]) { installFrozenNodeSchema(db); db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,?,?,?)').run(account, auth.issuer, 'user_fixture', Date.now()); }
   disk.close();
   const actor = { accountId: account, issuer: auth.issuer, subject: 'user_fixture', sessionId: 'sess_fixture', expiresAt: Date.now() + 60000 };
   const { retainedToolNames } = await import('./test-bridge.ts');

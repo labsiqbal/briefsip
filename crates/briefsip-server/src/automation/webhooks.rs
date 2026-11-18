@@ -489,3 +489,56 @@ pub async fn wait(state: &AppState, request: Request) -> Result<Response> {
     })?;
     Ok(crate::json_response(200, result))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn webhook_filters_require_strict_scalars_and_json_pointer_paths() -> Result<()> {
+        let mut event = json!({
+            "event": "report.ready",
+            "payload": {"a/b": {"~key": [4, false, null]}, "__proto__": "own value"}
+        });
+        let validated = filters(&json!([
+            {"pointer":"/a~1b/~0key/0","equals":4},
+            {"pointer":"/a~1b/~0key/1","equals":false},
+            {"pointer":"/a~1b/~0key/2","equals":null},
+            {"pointer":"/__proto__","equals":"own value"}
+        ]))?;
+        assert!(matches(&event, "report.ready", &validated));
+        assert!(matches(&event, "", &validated));
+        assert!(!matches(&event, "other", &validated));
+        for (pointer, equals) in [
+            ("/a~1b/~0key/0", json!("4")),
+            ("/missing", Value::Null),
+            ("/a~1b/~0key/00", json!(4)),
+            ("/a~1b/~0key/length", json!(3)),
+            ("/toString", Value::Null),
+        ] {
+            assert!(!matches(
+                &event,
+                "",
+                &filters(&json!([{"pointer":pointer,"equals":equals}]))?,
+            ));
+        }
+        event["payload"] = json!(false);
+        assert!(matches(
+            &event,
+            "",
+            &filters(&json!([{"pointer":"","equals":false}]))?,
+        ));
+        for invalid in [
+            Value::Null,
+            json!(vec![json!({"pointer":"","equals":null}); 129]),
+            json!([{"pointer":"/bad~2","equals":1}]),
+            json!([{"pointer":"bad","equals":1}]),
+            json!([{"pointer":"","equals":{}}]),
+            json!([{"pointer":""}]),
+        ] {
+            assert!(filters(&invalid).is_err());
+        }
+        assert!(serde_json::from_str::<Value>(r#"[{"pointer":"","equals":1e999}]"#).is_err());
+        Ok(())
+    }
+}

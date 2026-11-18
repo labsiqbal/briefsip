@@ -6,7 +6,7 @@ import { createProjectAccess, parseInvitationCreate, parseMemberEdit, parseRespo
 import { initializeCanonicalSchema } from './schema.ts';
 import { decryptMail } from './mail.ts';
 import type { HumanActor } from './auth.ts';
-import { ProtocolError } from './protocol.ts';
+import { ProtocolError } from './shared/protocol.ts';
 
 function fixture() {
   const db = new DatabaseSync(':memory:');

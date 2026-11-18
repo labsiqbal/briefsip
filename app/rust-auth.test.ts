@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { initializeCanonicalSchema } from './schema.ts';
+import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
 import { startRustServer } from './rust-test-server.ts';
 
 test('Rust JWKS rotates keys, rejects unknown signatures and enforces audience', async () => {
@@ -51,7 +51,7 @@ test('Rust opens every canonical schema version and rejects migration drift', as
     const expected = inspect(database);
     for (const version of [1, 2, 3, 4] as const) {
       const upgrade = join(root, `v${version}`), db = new DatabaseSync(upgrade);
-      initializeCanonicalSchema(db, 123, version);
+      installFrozenNodeSchema(db, version);
       db.close();
       const server = await startRustServer({ database: upgrade, auth });
       await server.close();

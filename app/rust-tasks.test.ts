@@ -5,35 +5,26 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
-import { initializeCanonicalSchema } from './schema.ts';
-import { createProjectAccess } from './project-access.ts';
-import { createDevices, descriptorBody, deviceLinkBody, deviceProofBody, parseLinkChallenge } from './devices.ts';
-import { canonicalToolDigest, createTaskRecovery, journalEntryBody, recoveryEnvelopeBody, stopEvidenceBody } from './task-recovery.ts';
-import { canonicalJson, digestCommand, sha256 } from './protocol.ts';
+import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
+import { descriptorBody, deviceLinkBody, deviceProofBody, parseLinkChallenge, type LinkChallengeResponse } from './test-support/device-protocol.ts';
+import { canonicalToolDigest, journalEntryBody, recoveryEnvelopeBody, stopEvidenceBody } from './test-support/task-protocol.ts';
+import { canonicalJson, digestCommand, sha256 } from './shared/protocol.ts';
 import { initializeMemory } from './memory.ts';
-import { prepareRestoreBootstrap, issueRestoreSession } from './backup.ts';
+import { prepareRestoreBootstrap } from './backup.ts';
 import { startRustServer } from './rust-test-server.ts';
 
 test('Rust signed task admission, context fencing, one-use commits and durable results', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-rust-tasks-')), database = join(directory, 'db');
-  const db = new DatabaseSync(database); initializeCanonicalSchema(db); initializeMemory(db);
+  const db = new DatabaseSync(database); installFrozenNodeSchema(db); initializeMemory(db);
   const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const authConfig = { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://briefsip.example', development: true, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString() };
   const owner = { accountId: randomUUID(), issuer: authConfig.issuer, subject: 'user_fixture', sessionId: 'sess_fixture', expiresAt: Date.now() + 600000 };
   db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,?,?,?)').run(owner.accountId, owner.issuer, owner.subject, Date.now());
-  const auth = { requireCurrent() { return owner; }, async verifiedMailboxes() { return []; } };
-  const access = createProjectAccess(db, auth, () => { throw new Error('No mail'); }, ['ask_user', 'edit_profile', 'read_provider_settings', 'set_avatar', 'search_memory', 'remember_memory', 'select_memory']);
-  const devices = createDevices(db, auth), signing = generateKeyPairSync('ed25519'), installation = generateKeyPairSync('ed25519'), encryption = generateKeyPairSync('x25519');
+  const signing = generateKeyPairSync('ed25519'), installation = generateKeyPairSync('ed25519'), encryption = generateKeyPairSync('x25519');
   const encoded = (key: typeof signing.publicKey) => key.export({ type: 'spki', format: 'der' }).toString('base64url');
   const candidate = parseLinkChallenge({ requestId: randomUUID(), installationId: randomUUID(), deviceId: randomUUID(), mode: 'new', installationPublicKey: encoded(installation.publicKey), deviceSigningKey: encoded(signing.publicKey), deviceEncryptionKey: encoded(encryption.publicKey), deviceLabel: 'Fixture', requestedCapabilities: ['execution'], zone: 'Asia/Jakarta', zoneRevision: 1 });
-  const challenge = devices.createChallenge(owner, candidate, owner.accountId), bytes = Buffer.from(JSON.stringify(deviceLinkBody(candidate, challenge)));
-  const descriptor = { v: 1 as const, accountId: owner.accountId, installationId: candidate.installationId, deviceId: candidate.deviceId, authorityGeneration: challenge.authorityGeneration, deviceGeneration: 1, keyRevision: 1, zone: candidate.zone, zoneRevision: 1, signingPublicKey: candidate.deviceSigningKey, encryptionPublicKey: candidate.deviceEncryptionKey };
-  const linked = devices.link(owner, { requestId: randomUUID(), challengeId: challenge.challengeId, nonce: challenge.nonce, installationSignature: sign(null, bytes, installation.privateKey).toString('base64url'), deviceSignature: sign(null, bytes, signing.privateKey).toString('base64url'), descriptor: { ...descriptor, signature: sign(null, Buffer.from(JSON.stringify(descriptorBody(descriptor))), signing.privateKey).toString('base64url') } }, owner.accountId);
   const project = randomUUID(), agent = randomUUID(), home = candidate.deviceId;
-  access.createProject(owner, { requestId: randomUUID(), id: project, name: 'Fixture' });
-  await access.createAgent(owner, { requestId: agent, id: agent, name: 'Agent', model: 'fixture', backupModel: '', instructions: 'Help', threadLimit: 2, projectId: project, homeDeviceId: home, expectedProjectRevision: 1, expectedHomeDeviceRevision: 1, providerBinding: null });
-  createTaskRecovery(db, auth, access, devices);
-  devices.close();
+  let authorityGeneration: string, deviceSession: string;
   let app = await startRustServer({ database, auth: authConfig });
   const jwt = () => {
     const now = Math.floor(Date.now() / 1000), input = `${Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url')}.${Buffer.from(JSON.stringify({ iss: owner.issuer, sub: owner.subject, sid: owner.sessionId, azp: authConfig.origin, exp: now + 600, nbf: now - 1, iat: now - 1 })).toString('base64url')}`;
@@ -44,8 +35,8 @@ test('Rust signed task admission, context fencing, one-use commits and durable r
     const requestId = String(body?.requestId ?? randomUUID()), raw = body ? JSON.stringify(body) : '', method = body ? 'POST' : 'GET';
     const headers: Record<string, string> = { Authorization: `Bearer ${jwt()}`, Origin: authConfig.origin, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': requestId };
     if (device) {
-      const iat = Math.floor(Date.now() / 1000), proof = { deviceId: home, deviceGeneration: 1, authorityGeneration: challenge.authorityGeneration, requestId, nonce: randomBytes(32).toString('base64url'), iat, exp: iat + 60, method, path, bodyDigest: sha256(raw) };
-      headers.Authorization = `Device ${linked.data.deviceSession}`; headers['X-Briefsip-Executor'] = token;
+      const iat = Math.floor(Date.now() / 1000), proof = { deviceId: home, deviceGeneration: 1, authorityGeneration, requestId, nonce: randomBytes(32).toString('base64url'), iat, exp: iat + 60, method, path, bodyDigest: sha256(raw) };
+      headers.Authorization = `Device ${deviceSession}`; headers['X-Briefsip-Executor'] = token;
       headers['X-Briefsip-Proof'] = JSON.stringify({ ...proof, signature: sign(null, Buffer.from(JSON.stringify(deviceProofBody(proof))), signing.privateKey).toString('base64url') });
     }
     Object.assign(headers, extra);
@@ -58,6 +49,19 @@ test('Rust signed task admission, context fencing, one-use commits and durable r
     assert.equal(response.status, status, JSON.stringify(result)); return result;
   };
   try {
+    const challenge: LinkChallengeResponse = (await send('/api/devices/link-challenges', candidate, false, 201)).data;
+    authorityGeneration = challenge.authorityGeneration;
+    const bytes = Buffer.from(JSON.stringify(deviceLinkBody(candidate, challenge)));
+    const descriptor = { v: 1 as const, accountId: owner.accountId, installationId: candidate.installationId, deviceId: home, authorityGeneration, deviceGeneration: 1, keyRevision: 1, zone: candidate.zone, zoneRevision: 1, signingPublicKey: candidate.deviceSigningKey, encryptionPublicKey: candidate.deviceEncryptionKey };
+    const linked = await send('/api/devices/link', {
+      requestId: randomUUID(), challengeId: challenge.challengeId, nonce: challenge.nonce,
+      installationSignature: sign(null, bytes, installation.privateKey).toString('base64url'),
+      deviceSignature: sign(null, bytes, signing.privateKey).toString('base64url'),
+      descriptor: { ...descriptor, signature: sign(null, Buffer.from(JSON.stringify(descriptorBody(descriptor))), signing.privateKey).toString('base64url') },
+    }, false, 201);
+    deviceSession = linked.data.deviceSession;
+    await send('/api/projects', { requestId: randomUUID(), id: project, name: 'Fixture' }, false, 201);
+    await send('/api/agents', { requestId: agent, id: agent, name: 'Agent', model: 'fixture', backupModel: '', instructions: 'Help', threadLimit: 2, projectId: project, homeDeviceId: home, expectedProjectRevision: 1, expectedHomeDeviceRevision: 1, providerBinding: null }, false, 201);
     const requestId = randomUUID(), payload = { v: 1, kind: 'direct', message: { text: 'Keep\nline breaks', files: [] } }, expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 };
     const command = { requestId, projectId: project, agentId: agent, homeDeviceId: home, payload, expectedRevisions, payloadDigest: digestCommand(['briefsip-task-payload-v1', requestId, project, agent, home, payload, expectedRevisions]) };
     const admitted = await send('/api/tasks', command, false, 202); assert.equal(admitted.data.state, 'waiting_device');
@@ -95,8 +99,8 @@ test('Rust signed task admission, context fencing, one-use commits and durable r
     const nextIntent = digestCommand([requestId, nextAction, 1, ownership, nextPayload, 'read', nextRef.snapshotId, nextRef.digest, null, null, 1, null, null, null]);
     await send(`/api/tasks/${requestId}/actions/${nextAction}/prepare`, { requestId: randomUUID(), sequence: 1, ownership, payloadDigest: nextPayload, actionKind: 'read', contextSnapshotId: nextRef.snapshotId, contextDigest: nextRef.digest, grantRevision: 1, expectedTaskRevision: nextRevision, journalSequence: 3, intentDigest: nextIntent }, true);
     const noMarker = { taskId: requestId, actionId: nextAction, sequence: 1, executorGeneration: 1, actionKind: 'read', payloadDigest: nextPayload, intentDigest: nextIntent, grantRevision: 1, state: 'not_sent', effectStatus: 'none', journalSequence: 4 };
-    const entryBytes = Buffer.from(JSON.stringify(journalEntryBody(challenge.authorityGeneration, home, 1, noMarker)));
-    const stop = { v: 1 as const, sourceAuthority: challenge.authorityGeneration, taskId: requestId, actionId: nextAction, sourceDeviceId: home, sourceDeviceGeneration: 1, executorGeneration: 1, bootId: lockProof.bootId, processId: lockProof.processId, processStart: lockProof.processStart, lockId: lockProof.lockId, observationBootId: lockProof.bootId, observation: 'process_exited' as const, children: [], observedAt: Date.now(), journalDigest: sha256(entryBytes) };
+    const entryBytes = Buffer.from(JSON.stringify(journalEntryBody(authorityGeneration, home, 1, noMarker)));
+    const stop = { v: 1 as const, sourceAuthority: authorityGeneration, taskId: requestId, actionId: nextAction, sourceDeviceId: home, sourceDeviceGeneration: 1, executorGeneration: 1, bootId: lockProof.bootId, processId: lockProof.processId, processStart: lockProof.processStart, lockId: lockProof.lockId, observationBootId: lockProof.bootId, observation: 'process_exited' as const, children: [], observedAt: Date.now(), journalDigest: sha256(entryBytes) };
     const stopped = { requestId: randomUUID(), actionId: nextAction, ownership, payloadDigest: nextPayload, state: 'not_sent', effectStatus: 'none', journalSequence: 4, noMarkerEvidence: { entry: noMarker, signature: sign(null, entryBytes, signing.privateKey).toString('base64url') }, stopEvidence: { ...stop, signature: sign(null, Buffer.from(JSON.stringify(stopEvidenceBody(stop))), signing.privateKey).toString('base64url') } };
     const wrong = { ...stopped, stopEvidence: { ...stopped.stopEvidence, lockId: randomUUID() } };
     assert.equal((await send(`/api/tasks/${requestId}/reconcile`, wrong, true, 403)).error.code, 'stop_evidence_invalid');
@@ -155,13 +159,13 @@ test('Rust signed task admission, context fencing, one-use commits and durable r
     const routine = randomUUID(), occurrence = randomUUID();
     db.prepare("INSERT INTO routines(id,agent,name,prompt,next_at,enabled) VALUES (?,?,'Fixture','Check work',0,0)").run(routine, agent);
     db.prepare(`INSERT INTO routine_occurrences(id,routine,project,due_at,schedule_revision,initiator_account,assignment_revision,authority_generation,home_device,zone,zone_revision,missed_count,state,task)
-      VALUES (?,?,?,0,1,?,1,?,?,'Asia/Jakarta',1,0,'admitted',?)`).run(occurrence, routine, project, owner.accountId, challenge.authorityGeneration, home, requestId);
+      VALUES (?,?,?,0,1,?,1,?,?,'Asia/Jakarta',1,0,'admitted',?)`).run(occurrence, routine, project, owner.accountId, authorityGeneration, home, requestId);
     db.prepare("INSERT INTO routine_steps VALUES (?,?,?,'queued','')").run(occurrence, agent, requestId);
     assert.equal((await send(`/api/tasks/${requestId}/execution`, { requestId: randomUUID(), ownership }, true, 403)).error.code, 'execution_denied');
     db.prepare('DELETE FROM routine_steps WHERE occurrence=?').run(occurrence);
     db.prepare('DELETE FROM routine_occurrences WHERE id=?').run(occurrence);
     db.prepare('DELETE FROM routines WHERE id=?').run(routine);
-    const sessionCommand = { requestId: randomUUID(), expectedAuthorityGeneration: challenge.authorityGeneration, sourceDeviceId: home, sourceDeviceGeneration: 1 };
+    const sessionCommand = { requestId: randomUUID(), expectedAuthorityGeneration: authorityGeneration, sourceDeviceId: home, sourceDeviceGeneration: 1 };
     assert.equal((await send(`/api/tasks/${requestId}/recovery-session`, sessionCommand, false, 409)).error.code, 'recovery_source_current');
     db.prepare("UPDATE devices SET status='revoked' WHERE id=?").run(home);
     const recovery = await send(`/api/tasks/${requestId}/recovery-session`, sessionCommand, false, 201);
@@ -170,7 +174,7 @@ test('Rust signed task admission, context fencing, one-use commits and durable r
     assert.equal(replay.data.session, undefined);
     assert.equal(replay.data.recoveryGeneration, recovery.data.recoveryGeneration);
     const entry = { taskId: requestId, actionId, sequence: 0, executorGeneration: 1, actionKind: 'read', payloadDigest, intentDigest, grantRevision: 1, state: 'reported', effectStatus: 'known', resultDigest: digest, resultRef: report.resultRef, journalSequence: 2 } as const;
-    const envelope = { v: 1 as const, sourceAuthority: challenge.authorityGeneration, sourceDeviceId: home, sourceDeviceGeneration: 1, watermark: 2, entries: [{ ...entry, signature: sign(null, Buffer.from(JSON.stringify(journalEntryBody(challenge.authorityGeneration, home, 1, entry))), signing.privateKey).toString('base64url') }], stopEvidence: [] };
+    const envelope = { v: 1 as const, sourceAuthority: authorityGeneration, sourceDeviceId: home, sourceDeviceGeneration: 1, watermark: 2, entries: [{ ...entry, signature: sign(null, Buffer.from(JSON.stringify(journalEntryBody(authorityGeneration, home, 1, entry))), signing.privateKey).toString('base64url') }], stopEvidence: [] };
     const recoveryRequest = (includeContent: boolean) => {
       const id = randomUUID(), generation = recovery.data.recoveryGeneration;
       return { requestId: id, recoveryGeneration: generation, envelope, signature: sign(null, Buffer.from(JSON.stringify(recoveryEnvelopeBody(generation, id, envelope))), signing.privateKey).toString('base64url'), ...(includeContent ? { resultContent: content } : {}) };
@@ -192,11 +196,12 @@ test('Rust signed task admission, context fencing, one-use commits and durable r
     db.prepare('UPDATE recovery_evidence_sessions SET expires_at=0').run();
     assert.equal((await send(`/api/tasks/${requestId}/recovery-results`, published, false, 403, proof)).error.code, 'recovery_session_invalid');
     db.exec('CREATE TABLE briefsip_backup_authority(generation TEXT,owner_account TEXT)');
-    db.prepare('INSERT INTO briefsip_backup_authority VALUES(?,?)').run(challenge.authorityGeneration, owner.accountId);
+    db.prepare('INSERT INTO briefsip_backup_authority VALUES(?,?)').run(authorityGeneration, owner.accountId);
     db.prepare("UPDATE authority_state SET generation=?,serving_state='read_only_recovery'").run(randomUUID());
-    const bootstrap = prepareRestoreBootstrap(db), restoreProof = issueRestoreSession(db, auth, owner, bootstrap.bootstrap);
+    const bootstrap = prepareRestoreBootstrap(db);
+    const restoreProof = (await send('/api/restore/reconcile', { requestId: randomUUID(), bootstrap: bootstrap.bootstrap })).data;
     const unknown = { ...entry, actionId: randomUUID(), sequence: 2, state: 'uncertain', effectStatus: 'unknown', journalSequence: 5, resultDigest: undefined, resultRef: undefined };
-    const signedUnknown = { ...unknown, signature: sign(null, Buffer.from(JSON.stringify(journalEntryBody(challenge.authorityGeneration, home, 1, unknown))), signing.privateKey).toString('base64url') };
+    const signedUnknown = { ...unknown, signature: sign(null, Buffer.from(JSON.stringify(journalEntryBody(authorityGeneration, home, 1, unknown))), signing.privateKey).toString('base64url') };
     const quarantineEnvelope = { ...envelope, watermark: 5, entries: [signedUnknown] }, quarantineId = randomUUID();
     const quarantine = { requestId: quarantineId, recoveryGeneration: restoreProof.recoveryGeneration, envelope: quarantineEnvelope, signature: sign(null, Buffer.from(JSON.stringify(recoveryEnvelopeBody(restoreProof.recoveryGeneration, quarantineId, quarantineEnvelope))), signing.privateKey).toString('base64url') };
     const quarantineProof = { 'X-Briefsip-Recovery': restoreProof.session };

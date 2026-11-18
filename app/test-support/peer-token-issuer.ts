@@ -1,5 +1,12 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import type { PeerTokenIssuer } from '../machines.ts';
+// M1 integration seam: inject M1's issuer into startApp({ peerTokenIssuer }).
+export type PeerTokenIssuer = {
+  createPeerToken(input: { name: string; scopes: readonly string[] }): { id: string; token: string } | Promise<{ id: string; token: string }>;
+  revokePeerToken(id: string): unknown | Promise<unknown>;
+  verifyBearer(token: string): { id: string; scopes: readonly string[] } | null | Promise<{ id: string; scopes: readonly string[] } | null>;
+};
+
+export const peerUpdateTimeoutMs = 300_000;
 
 // Test-only issuer. M1 supplies production persistence and bearer verification.
 export function fakePeerTokenIssuer(): PeerTokenIssuer & { tokens: Map<string, { id: string; scopes: readonly string[] }>; issued: string[]; revoked: string[] } {

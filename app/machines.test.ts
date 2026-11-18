@@ -7,7 +7,6 @@ import { tmpdir } from 'node:os';
 import { createServer, request as httpRequest, type Server } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './test-bridge.ts';
-import { machineOrigin } from './machines.ts';
 import { fakePeerTokenIssuer } from './test-support/peer-token-issuer.ts';
 
 const appVersion = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
@@ -98,8 +97,6 @@ test('pairing uses uniform invalid-code errors, strict bodies, one-time expiry, 
 });
 
 test('origins reject unsafe forms; remote pairing rejects redirects, oversized bodies, and credential reflection', async () => {
-  for (const origin of ['http://example.ts.net', 'https://user:pass@machine.ts.net', 'https://host/path', 'https://host?x=1', 'https://host#x', 'https://host\\evil', ' https://host', 'https://host?', 'https://host#']) assert.throws(() => machineOrigin(origin));
-  assert.equal(machineOrigin('https://machine.ts.net:4317'), 'https://machine.ts.net:4317'); assert.equal(machineOrigin('http://[::1]:1234'), 'http://[::1]:1234');
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-pair-fetch-')); const issuer = fakePeerTokenIssuer(), app = await startApp({ database: join(dir, 'db.sqlite'), peerTokenIssuer: issuer }); let mode = 'redirect', targetCalls = 0;
   const destination = createServer((_req, res) => { targetCalls++; res.end('{}'); }), destinationAddress = await listen(destination);
   const fake = createServer((_req, res) => { res.setHeader('Content-Type', 'application/json'); if (mode === 'redirect') { res.writeHead(307, { Location: destinationAddress.origin + '/steal' }); return res.end(); } if (mode === 'large') return res.end(JSON.stringify({ value: 'x'.repeat(129 * 1024) })); if (mode === 'declared') { res.writeHead(200, { 'Content-Length': '9999999' }); return res.end('{}'); } res.end('{}'); }); const address = await listen(fake);

@@ -2,126 +2,100 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { createServer, get } from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { startApp } from './test-bridge.ts';
 import { restoreWorkspace, workspaceSnapshot } from './backup.ts';
-import { createLocalProjects, initializeLocalProjects, ProjectError } from './local-projects.ts';
 const scratch = () => mkdtempSync(resolve('node_modules/.projects-test-'));
-function store() {
-  const home = scratch(), db = new DatabaseSync(join(home, 'state.sqlite')), agent = randomUUID();
-  db.exec('CREATE TABLE agents(id TEXT PRIMARY KEY) STRICT;CREATE TABLE channels(id TEXT PRIMARY KEY,name TEXT,instructions TEXT,lead TEXT,revision INTEGER DEFAULT 1,archived INTEGER DEFAULT 0,activity INTEGER DEFAULT 0,read_position INTEGER DEFAULT 0) STRICT;CREATE TABLE channel_members(channel TEXT,agent TEXT,PRIMARY KEY(channel,agent)) STRICT;CREATE TABLE threads(id TEXT PRIMARY KEY,agent TEXT,name TEXT,deleted INTEGER DEFAULT 0,archived INTEGER DEFAULT 0) STRICT;CREATE TABLE turns(id TEXT PRIMARY KEY,seq INTEGER,channel TEXT,thread TEXT,status TEXT,created TEXT,paused INTEGER DEFAULT 0) STRICT;');
-  db.prepare('INSERT INTO agents VALUES (?)').run(agent);
-  initializeLocalProjects(db);
-  const transaction = <T>(work: () => T) => {
-    db.exec('BEGIN IMMEDIATE');
-    try {
-      const result = work();
-      db.exec('COMMIT');
-      return result;
-    }
-    catch (error) {
-      db.exec('ROLLBACK');
-      throw error;
-    }
-  };
-  const projects = createLocalProjects(db, { home, dataDir: join(home, 'data'), root: join(home, 'Projects') }, transaction);
-  return { home, db, agent, projects, transaction, close() {
-      db.close();
-      rmSync(home, { recursive: true, force: true });
-    } };
-}
-test('project folders reject system, traversal, home, credential, data and symlink paths before creation', () => {
-  const f = store();
+test('Rust project folders reject system, traversal, home, credential, data and symlink paths before creation', async () => {
+  const f = await fixture();
   try {
-    mkdirSync(join(f.home, 'safe'));
-    symlinkSync('/etc', join(f.home, 'escape'));
-    symlinkSync(join(f.home, 'safe'), join(f.home, 'alias'));
-    mkdirSync(join(f.home, 'data'));
-    for (const path of ['/', '/etc', '/tmp', f.home, join(f.home, '.ssh'), join(f.home, '.codex'), join(f.home, '.codex-linc'), join(f.home, '.claude'), join(f.home, '.hermes'), join(f.home, '.config/briefsip'), join(f.home, 'data'), join(f.home, 'data/sub'), join(f.home, 'escape'), join(f.home, 'alias'), f.home + '/safe/../safe'])
-      assert.throws(() => f.projects.create({ id: randomUUID(), name: 'Bad', folders: [{ mode: 'existing', path }] }), ProjectError, path);
-    const unsafe = createLocalProjects(f.db, { home: f.home, dataDir: join(f.home, 'data'), root: join(f.home, 'escape') }, f.transaction);
-    assert.throws(() => unsafe.create({ id: randomUUID(), name: 'never-created', folders: [{ mode: 'new' }] }));
-    assert.equal(f.projects.list().length, 0);
-    const browser = f.projects.folders();
-    assert(browser.folders.some(item => item.name === 'safe'));
-    assert(!browser.folders.some(item => ['escape', 'alias', 'data'].includes(item.name)));
-  }
-  finally {
-    f.close();
-  }
+    const safe = join(f.directory, 'safe'), escape = join(f.directory, 'escape'), alias = join(f.directory, 'alias');
+    mkdirSync(safe);
+    symlinkSync('/etc', escape);
+    symlinkSync(safe, alias);
+    const home = homedir(), data = dirname(f.options.database);
+    for (const path of ['/', '/etc', '/tmp', home, ...['.ssh', '.codex', '.codex-linc', '.claude', '.hermes', '.config/briefsip'].map(name => join(home, name)), data, join(data, 'sub'), escape, alias, safe + '/../safe']) {
+      await f.request('/api/projects', { id: randomUUID(), name: 'Bad', folders: [{ mode: 'existing', path }] }, 400);
+    }
+    await f.restart({ projectRoot: escape });
+    await f.request('/api/projects', { id: randomUUID(), name: 'never-created', folders: [{ mode: 'new' }] }, 400);
+    assert.equal((await f.request('/api/projects')).projects.length, 1);
+    const browser = await f.request('/api/project-folders?' + new URLSearchParams({ path: f.directory }));
+    assert(browser.folders.some((item: { name: string }) => item.name === 'safe'));
+    assert(!browser.folders.some((item: { name: string }) => ['escape', 'alias', 'data'].includes(item.name)));
+  } finally { await f.close(); }
 });
-test('project CRUD, new and multiple folders, write confirmation, revisions, replay, restart and deletion preserve files', () => {
-  const f = store();
+
+test('Rust project CRUD preserves folder ownership, revision fences, exact replay and files on delete', async () => {
+  const f = await fixture();
   try {
-    mkdirSync(join(f.home, 'existing'));
-    const body = { id: randomUUID(), name: 'Build docs', description: 'Local project', folders: [{ mode: 'new' }, { mode: 'existing', path: join(f.home, 'existing') }], members: [{ agent: f.agent, write: true }], confirmWrite: true };
-    assert.throws(() => f.projects.create({ ...body, confirmWrite: false }), /Confirm/);
-    const p = f.projects.create(body) as any;
+    const body = { id: randomUUID(), name: 'Build docs', description: 'Local project', folders: [{ mode: 'new' }, { mode: 'existing', path: f.workspace }], members: [{ agent: f.agent, write: true }], confirmWrite: true };
+    await f.request('/api/projects', { ...body, confirmWrite: false }, 400);
+    const p = await f.request('/api/projects', body);
+    const path = `/api/projects/${p.id}`;
     assert.equal(p.folders.length, 2);
     assert(existsSync(p.folders[0]));
-    // New project folders start as their own Git repository with one empty commit and no sample hooks.
     assert.equal(execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: p.folders[0], encoding: 'utf8' }).trim(), p.folders[0]);
     assert.equal(execFileSync('git', ['log', '--format=%s'], { cwd: p.folders[0], encoding: 'utf8' }).trim(), 'Start project');
     assert(!existsSync(join(p.folders[0], '.git', 'hooks', 'pre-commit.sample')));
-    assert(!existsSync(join(p.folders[1], '.git')), 'existing folders are never initialized');
+    assert(!existsSync(join(f.workspace, '.git')));
     writeFileSync(join(p.folders[0], 'keep.txt'), 'keep');
-    assert.deepEqual(f.projects.create(body), p);
-    assert.throws(() => f.projects.create({ ...body, name: 'Other' }), /already used/);
-    assert.equal(f.db.prepare('SELECT count(*) n FROM channel_members WHERE channel=?').get(p.channel)?.n, 1);
-    assert.equal(f.projects.binding(p.id, f.agent, p.folders[1])?.write, true);
+    assert.deepEqual(await f.request('/api/projects', body), p);
+    await f.request('/api/projects', { ...body, name: 'Other' }, 409);
+    assert.deepEqual(p.members, body.members);
+
     const edit = { id: randomUUID(), revision: 1, name: 'Renamed', members: [{ agent: f.agent, write: false }] };
-    const changed = f.projects.edit(p.id, 'edit', edit) as any;
+    const changed = await f.request(path + '/edit', edit);
     assert.equal(changed.revision, 2);
     assert.equal(changed.name, 'Renamed');
     assert.equal(changed.sections[0].name, 'general');
-    assert.equal(f.projects.binding(p.id, f.agent)?.write, false);
-    assert.deepEqual(f.projects.edit(p.id, 'edit', edit), changed);
-    assert.throws(() => f.projects.edit(p.id, 'edit', { id: randomUUID(), revision: 1, name: 'Stale' }), /changed/);
-    rmSync(join(f.home, 'existing'), { recursive: true });
-    assert.deepEqual(f.projects.create(body), p);
-    assert.deepEqual(f.projects.edit(p.id, 'edit', { members: edit.members, name: edit.name, revision: edit.revision, id: edit.id }), changed);
-    const reopened = createLocalProjects(f.db, { home: f.home, dataDir: join(f.home, 'data'), root: join(f.home, 'Projects') }, f.transaction);
-    assert.deepEqual(reopened.create(body), p);
+    assert.deepEqual(changed.members, edit.members);
+    assert.deepEqual(await f.request(path + '/edit', edit), changed);
+    await f.request(path + '/edit', { id: randomUUID(), revision: 1, name: 'Stale' }, 409);
+    rmSync(f.workspace, { recursive: true });
+    assert.deepEqual(await f.request('/api/projects', body), p);
+    assert.deepEqual(await f.request(path + '/edit', { members: edit.members, name: edit.name, revision: edit.revision, id: edit.id }), changed);
+    await f.restart();
+    assert.deepEqual(await f.request('/api/projects', body), p);
     const remove = { id: randomUUID(), revision: 2, confirmed: true };
-    assert.deepEqual(reopened.edit(p.id, 'delete', remove), { id: p.id, deleted: true });
-    assert.deepEqual(reopened.edit(p.id, 'delete', remove), { id: p.id, deleted: true });
+    assert.deepEqual(await f.request(path + '/delete', remove), { id: p.id, deleted: true });
+    assert.deepEqual(await f.request(path + '/delete', remove), { id: p.id, deleted: true });
     assert.equal(readFileSync(join(p.folders[0], 'keep.txt'), 'utf8'), 'keep');
-    assert.equal(reopened.list().length, 0);
-    assert.throws(() => reopened.binding(p.id, f.agent), /not found/);
-    assert.equal(f.db.prepare('SELECT archived FROM channels WHERE id=?').get(p.channel)?.archived, 1);
-    assert.equal(f.db.prepare('SELECT count(*) n FROM channel_members WHERE channel=?').get(p.channel)?.n, 0);
-  }
-  finally {
-    f.close();
-  }
+    assert(!(await f.request('/api/projects')).projects.some((project: { id: string }) => project.id === p.id));
+    await f.request(path, undefined, 404);
+    const db = new DatabaseSync(f.options.database, { readOnly: true });
+    try {
+      assert.equal(db.prepare('SELECT archived FROM channels WHERE id=?').get(p.channel)?.archived, 1);
+      assert.equal(db.prepare('SELECT count(*) n FROM channel_members WHERE channel=?').get(p.channel)?.n, 0);
+    } finally { db.close(); }
+  } finally { await f.close(); }
 });
-test('project grants resolve only in chatroom or side thread, selected folder, and revoked membership fails closed', () => {
-  const f = store();
+
+test('Rust project grants resolve by room or selected side thread folder and fail closed after revocation', async () => {
+  const f = await fixture();
   try {
-    mkdirSync(join(f.home, 'other'));
-    const p = f.projects.create({ id: randomUUID(), name: 'Scope', folders: [{ mode: 'new' }, { mode: 'existing', path: join(f.home, 'other') }], members: [{ agent: f.agent, write: false }] }) as any;
-    assert.equal(f.projects.forTurn(f.agent, randomUUID()), undefined);
-    const direct = randomUUID();
-    f.db.prepare('INSERT INTO turns(id,seq,channel,thread,status,created) VALUES (?,1,NULL,NULL,?,?)').run(direct, 'done', new Date().toISOString());
-    assert.equal(f.projects.forTurn(f.agent, direct), undefined);
-    const room = randomUUID();
-    f.db.prepare('INSERT INTO turns(id,seq,channel,thread,status,created) VALUES (?,2,?,NULL,?,?)').run(room, p.channel, 'done', new Date().toISOString());
-    assert.equal(f.projects.forTurn(f.agent, room)?.directory, p.folders[0]);
-    const thread = f.projects.edit(p.id, 'thread', { id: randomUUID(), revision: 1, agent: f.agent, folder: p.folders[1], name: 'Second folder' }) as any;
-    const side = randomUUID();
-    f.db.prepare('INSERT INTO turns(id,seq,channel,thread,status,created) VALUES (?,3,NULL,?,?,?)').run(side, thread.threads[0].id, 'done', new Date().toISOString());
-    assert.equal(f.projects.forTurn(f.agent, side)?.directory, p.folders[1]);
-    assert.equal(f.projects.forTurn(f.agent, side)?.write, false);
-    f.projects.edit(p.id, 'edit', { id: randomUUID(), revision: 2, members: [] });
-    assert.throws(() => f.projects.forTurn(f.agent, side), /not a project member/);
-  }
-  finally {
-    f.close();
-  }
+    const other = join(f.directory, 'other');
+    mkdirSync(other);
+    writeFileSync(join(other, 'read.txt'), 'second folder content');
+    const p = await f.request('/api/projects', { id: randomUUID(), name: 'Scope', folders: [{ mode: 'existing', path: f.workspace }, { mode: 'existing', path: other }], members: [{ agent: f.agent, write: false }] });
+    assert.equal((await f.send(`/api/agents/${f.agent}/turns`, 'READ')).status, 'failed');
+    assert.match((await f.send(`/api/channels/${p.channel}/turns`, 'READ')).reply, /project bytes/);
+    const side = await f.request(`/api/projects/${p.id}/thread`, { id: randomUUID(), revision: 1, agent: f.agent, folder: other, name: 'Second folder' });
+    const path = `/api/threads/${side.threads[0].id}/turns`;
+    assert.match((await f.send(path, 'READ')).reply, /second folder content/);
+    assert.equal((await f.send(path, 'WRITE')).status, 'failed');
+    assert(!existsSync(join(other, 'made.txt')));
+    await f.request(`/api/projects/${p.id}/edit`, { id: randomUUID(), revision: 2, members: [] });
+    const revoked = await f.send(path, 'READ');
+    assert.equal(revoked.status, 'failed');
+    assert.match(revoked.error, /not a project member/i);
+  } finally { await f.close(); }
 });
+
 async function fixture() {
   const directory = scratch(), workspace = join(directory, 'workspace'), data = join(directory, 'data');
   mkdirSync(workspace);
@@ -248,26 +222,26 @@ test('project harness cwd and read-only native escalation denial; direct chat re
     await f.close();
   }
 });
-test('managed folder retry recovers durable intent after transaction failure without deleting files', () => {
-  const f = store();
+test('Rust managed folder retry recovers durable intent after transaction failure without deleting files', async () => {
+  const f = await fixture();
+  const db = new DatabaseSync(f.options.database);
   try {
     const body = { id: randomUUID(), name: 'Retry folder', folders: [{ mode: 'new' }] };
-    f.db.exec("CREATE TRIGGER reject_project BEFORE INSERT ON local_projects BEGIN SELECT RAISE(ABORT,'fixture failure'); END;");
-    assert.throws(() => f.projects.create(body), /fixture failure/);
-    const folder = join(f.home, 'Projects', 'retry-folder');
+    db.exec("CREATE TRIGGER reject_project BEFORE INSERT ON local_projects BEGIN SELECT RAISE(ABORT,'fixture failure'); END;");
+    await f.request('/api/projects', body, 500);
+    const folder = join(f.options.projectRoot, 'retry-folder');
     assert(existsSync(folder));
     writeFileSync(join(folder, 'retained.txt'), 'retained');
-    f.db.exec('DROP TRIGGER reject_project');
-    const p = f.projects.create(body) as any;
+    db.exec('DROP TRIGGER reject_project');
+    const p = await f.request('/api/projects', body);
     assert.equal(p.folders[0], folder);
     assert.equal(readFileSync(join(folder, 'retained.txt'), 'utf8'), 'retained');
-    assert.deepEqual(f.projects.create(body), p);
-  }
-  finally {
-    f.close();
+    assert.deepEqual(await f.request('/api/projects', body), p);
+  } finally {
+    db.close();
+    await f.close();
   }
 });
-
 
 test('standalone and P2 migration preserves channel IDs, history, read state, memory, files and legacy sidebar through restart and backup restore', async () => {
   const f = await fixture();
@@ -399,49 +373,68 @@ test('folderless project and side threads isolate host grants, accept folders la
   } finally {await f.close();}
 });
 
-test('migration failure rolls back new project ownership and can retry without touching standalone data', () => {
-  const f=store();
+test('Rust project migration rolls back ownership and retries without touching standalone data', async () => {
+  const f = await fixture();
+  await f.stop();
+  const db = new DatabaseSync(f.options.database);
   try {
-    const room=randomUUID();
-    f.db.prepare('INSERT INTO channels(id,name,instructions,lead) VALUES (?,?,?,?)').run(room,'Retain','History',f.agent);
-    f.db.prepare('INSERT INTO channel_members VALUES (?,?)').run(room,f.agent);
-    f.db.exec("CREATE TRIGGER fail_migration BEFORE INSERT ON local_project_sections BEGIN SELECT RAISE(ABORT,'interrupted migration'); END");
-    assert.throws(()=>initializeLocalProjects(f.db),/interrupted migration/);
-    assert.equal(f.projects.list().length,0);
-    assert.equal(f.db.prepare('SELECT project FROM channels WHERE id=?').get(room)?.project,null);
-    assert.equal(f.db.prepare('SELECT count(*) n FROM channel_members WHERE channel=?').get(room)?.n,1);
-    f.db.exec('DROP TRIGGER fail_migration');initializeLocalProjects(f.db);
-    const before=f.projects.list();initializeLocalProjects(f.db);assert.deepEqual(f.projects.list(),before);
-    assert.equal(before[0].sections[0].id,room);assert.equal(before[0].sections[0].name,'general');
-  } finally {f.close();}
+    const room = randomUUID();
+    db.prepare('INSERT INTO channels(id,name,instructions,lead) VALUES (?,?,?,?)').run(room, 'Retain', 'History', f.agent);
+    db.prepare('INSERT INTO channel_members VALUES (?,?)').run(room, f.agent);
+    db.exec("CREATE TRIGGER fail_migration BEFORE INSERT ON local_project_sections BEGIN SELECT RAISE(ABORT,'interrupted migration'); END");
+    await assert.rejects(f.restart(), /Project migration failed/);
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM local_projects').get()?.n, 1);
+    assert.equal(db.prepare('SELECT project FROM channels WHERE id=?').get(room)?.project, null);
+    assert.equal(db.prepare('SELECT count(*) n FROM channel_members WHERE channel=?').get(room)?.n, 1);
+    db.exec('DROP TRIGGER fail_migration');
+    await f.restart();
+    const before = await f.request('/api/projects');
+    await f.restart();
+    assert.deepEqual(await f.request('/api/projects'), before);
+    const project = before.projects.find((p: { id: string }) => p.id === room);
+    assert.equal(project.sections[0].id, room);
+    assert.equal(project.sections[0].name, 'general');
+  } finally {
+    db.close();
+    await f.close();
+  }
 });
 
-
-test('standalone migration cannot merge a channel whose ID collides with an existing project', () => {
-  const f=store();
+test('Rust migrates a standalone channel with a colliding ID into its own project', async () => {
+  const f = await fixture();
   try {
-    const original=f.projects.create({id:randomUUID(),name:'Original project',members:[{agent:f.agent,write:false}]}) as any;
-    f.db.prepare('INSERT INTO channels(id,name,instructions,lead) VALUES (?,?,?,?)').run(original.id,'Standalone collision','Separate work',f.agent);
-    f.db.prepare('INSERT INTO channel_members VALUES (?,?)').run(original.id,f.agent);
-    initializeLocalProjects(f.db);
-    const projects=f.projects.list(),migrated=projects.find(p=>p.name==='Standalone collision');
-    assert(migrated);assert.notEqual(migrated.id,original.id);assert.equal(migrated.sections[0].id,original.id);
-    assert.deepEqual(f.projects.read(original.id),original);
-    initializeLocalProjects(f.db);assert.deepEqual(f.projects.list(),projects);
-  } finally {f.close();}
+    await f.stop();
+    const db = new DatabaseSync(f.options.database);
+    try {
+      db.prepare('INSERT INTO channels(id,name,instructions,lead) VALUES (?,?,?,?)').run(f.project.id, 'Standalone collision', 'Separate work', f.agent);
+      db.prepare('INSERT INTO channel_members VALUES (?,?)').run(f.project.id, f.agent);
+    } finally { db.close(); }
+    await f.restart();
+    const projects = await f.request('/api/projects');
+    const migrated = projects.projects.find((project: { name: string }) => project.name === 'Standalone collision');
+    assert(migrated);
+    assert.notEqual(migrated.id, f.project.id);
+    assert.equal(migrated.sections[0].id, f.project.id);
+    assert.deepEqual(projects.projects.find((project: { id: string }) => project.id === f.project.id), f.project);
+    await f.restart();
+    assert.deepEqual(await f.request('/api/projects'), projects);
+  } finally { await f.close(); }
 });
 
-test('project members retain added order through reload and edit', () => {
-  const f = store();
+test('Rust project members retain added order through reload and edit', async () => {
+  const f = await fixture();
   try {
     const ids = ['ffffffff-ffff-4fff-8fff-ffffffffffff', '11111111-1111-4111-8111-111111111111', f.agent];
-    for (const id of ids.slice(0, 2)) f.db.prepare('INSERT INTO agents VALUES (?)').run(id);
+    for (const id of ids.slice(0, 2)) {
+      await f.request('/api/agents', { runtime: 'api', id, name: id, model: 'fixture', instructions: 'Help' }, 201);
+    }
     const members = ids.map(agent => ({ agent, write: false }));
-    f.projects.create({ id: randomUUID(), name: 'Ordered members', members, folders: [] });
-    const project = f.projects.list()[0];
-    assert.deepEqual(project.members, members);
+    const project = await f.request('/api/projects', { id: randomUUID(), name: 'Ordered members', members, folders: [] });
+    const path = `/api/projects/${project.id}`;
+    await f.restart();
+    assert.deepEqual((await f.request(path)).members, members);
     const reordered = members.toReversed();
-    f.projects.edit(project.id, 'edit', { id: randomUUID(), revision: project.revision, members: reordered });
-    assert.deepEqual(f.projects.list()[0].members, reordered);
-  } finally { f.close(); }
+    await f.request(path + '/edit', { id: randomUUID(), revision: project.revision, members: reordered });
+    assert.deepEqual((await f.request(path)).members, reordered);
+  } finally { await f.close(); }
 });

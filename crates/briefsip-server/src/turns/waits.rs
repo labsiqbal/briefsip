@@ -218,33 +218,113 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    const SECRET: &str = "synthetic-webhook-secret";
+    const NOW: i64 = 1794320000000;
+    const ID: &str = "event:123";
+
+    fn signed_headers(body: &[u8], timestamp: i64, id: &str) -> Result<axum::http::HeaderMap> {
+        let time = timestamp.to_string();
+        let mut signed = format!("{time}\n{id}\n").into_bytes();
+        signed.extend_from_slice(body);
+        let signature = hex(hmac::sign(
+            &hmac::Key::new(hmac::HMAC_SHA256, SECRET.as_bytes()),
+            &signed,
+        )
+        .as_ref());
+        let mut headers = axum::http::HeaderMap::new();
+        for (name, value) in [
+            ("x-briefsip-time", time.as_str()),
+            ("x-briefsip-id", id),
+            ("x-briefsip-signature", signature.as_str()),
+        ] {
+            headers.insert(name, value.parse().map_err(|_| Failure::storage())?);
+        }
+        Ok(headers)
+    }
+
     #[test]
     fn signed_events_validate_identity_and_payload() -> Result<()> {
-        let body = br#"{"event":"ready","payload":"fixture"}"#;
-        let mut headers = axum::http::HeaderMap::new();
-        headers.insert(
-            "x-briefsip-time",
-            axum::http::HeaderValue::from_static("10"),
+        let body = br#"{"event":"report.ready","payload":{"count":4}}"#;
+        let headers = signed_headers(body, NOW / 1000, ID)?;
+        let accepted = event(body, &headers, SECRET, NOW)?;
+        assert_eq!(accepted["id"], ID);
+        assert_eq!(accepted["eventTime"], NOW);
+        assert_eq!(accepted["payload"], json!({"count":4}));
+        for offset in [-300, 300] {
+            let headers = signed_headers(body, NOW / 1000 + offset, ID)?;
+            assert_eq!(
+                event(body, &headers, SECRET, NOW)?["digest"],
+                accepted["digest"]
+            );
+        }
+        for offset in [-301, 301] {
+            let headers = signed_headers(body, NOW / 1000 + offset, ID)?;
+            assert_eq!(
+                event(body, &headers, SECRET, NOW)
+                    .err()
+                    .map(|error| error.status),
+                Some(401)
+            );
+        }
+
+        assert_eq!(
+            event(body, &headers, "wrong-secret", NOW)
+                .err()
+                .map(|error| error.status),
+            Some(401)
         );
-        headers.insert(
+        let mut changed = body.to_vec();
+        changed.push(b' ');
+        assert_eq!(
+            event(&changed, &headers, SECRET, NOW)
+                .err()
+                .map(|error| error.status),
+            Some(401)
+        );
+        let mut changed = headers.clone();
+        changed.insert(
             "x-briefsip-id",
-            axum::http::HeaderValue::from_static("fixture"),
-        );
-        let mut signed = b"10\nfixture\n".to_vec();
-        signed.extend_from_slice(body);
-        let signature =
-            hex(hmac::sign(&hmac::Key::new(hmac::HMAC_SHA256, b"fixture-key"), &signed).as_ref());
-        headers.insert(
-            "x-briefsip-signature",
-            signature.parse().map_err(|_| Failure::storage())?,
+            axum::http::HeaderValue::from_static("different"),
         );
         assert_eq!(
-            event(body, &headers, "fixture-key", 10000)?["payload"],
-            "fixture"
+            event(body, &changed, SECRET, NOW)
+                .err()
+                .map(|error| error.status),
+            Some(401)
         );
-        assert!(event(body, &headers, "wrong-key", 10000).is_err());
-        assert!(event(body, &headers, "fixture-key", 400000).is_err());
-        assert!(event(b"{}", &headers, "fixture-key", 10000).is_err());
+        let mut duplicated = headers;
+        duplicated.append("x-briefsip-time", axum::http::HeaderValue::from_static("1"));
+        assert_eq!(
+            event(body, &duplicated, SECRET, NOW)
+                .err()
+                .map(|error| error.status),
+            Some(401)
+        );
+        let invalid_id = signed_headers(body, NOW / 1000, "bad/id")?;
+        assert_eq!(
+            event(body, &invalid_id, SECRET, NOW)
+                .err()
+                .map(|error| error.status),
+            Some(401)
+        );
+
+        for invalid in [
+            &[0xff][..],
+            b"{",
+            b"[]",
+            br#"{"event":""}"#,
+            br#"{"event":"x","eventTime":0}"#,
+            br#"{"event":"x","unexpected":1}"#,
+            br#"{"event":"x","payload":1e999}"#,
+        ] {
+            let headers = signed_headers(invalid, NOW / 1000, ID)?;
+            assert_eq!(
+                event(invalid, &headers, SECRET, NOW)
+                    .err()
+                    .map(|error| error.status),
+                Some(400)
+            );
+        }
         Ok(())
     }
 }
