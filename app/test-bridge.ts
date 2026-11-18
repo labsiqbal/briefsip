@@ -29,8 +29,9 @@ async function freePort(): Promise<number> {
 }
 
 /** Starts canonical-mode Rust with serializable Clerk, hub, executor, and sync options. */
-export async function startCanonicalApp(options: CanonicalOptions) {
+export async function startCanonicalApp(options: CanonicalOptions, portRetries = 0): ReturnType<typeof startRustServer> {
   const port = options.port && options.port !== 0 ? options.port : await freePort();
+  const configuredOrigin = options.auth?.origin;
   const auth = options.auth && { ...options.auth };
   if (auth && /^http:\/\/127\.0\.0\.1$/.test(auth.origin)) {
     auth.origin = `http://127.0.0.1:${port}`;
@@ -47,5 +48,12 @@ export async function startCanonicalApp(options: CanonicalOptions) {
   try {
     const app = await startRustServer({ ...serializable, auth, port, testKeyring, testCanonicalBridge: bridge.config });
     return { ...app, close: async () => { try { await app.close(); } finally { await bridge.close(); } } };
-  } catch (error) { await bridge.close(); throw error; }
+  } catch (error) {
+    await bridge.close();
+    if (!options.port && portRetries < 4 && error instanceof Error && 'code' in error && error.code === 'EADDRINUSE') {
+      if (options.auth && configuredOrigin) options.auth.origin = configuredOrigin;
+      return startCanonicalApp(options, portRetries + 1);
+    }
+    throw error;
+  }
 }
