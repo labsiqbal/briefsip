@@ -232,6 +232,90 @@ fn read_secret(host: &Host, row: &Value) -> Result<String> {
         .ok_or_else(keys::unavailable)
 }
 
+fn reveal(host: &Host, request: &Value) -> Result<Value> {
+    let time = now();
+    let expires = revision(&request["expiresAt"], 1)?;
+    if expires <= time || expires > time + 60_000 {
+        return Err(invalid());
+    }
+    let row = stored_wait(host, request)?;
+    if row["deadline"].as_i64().unwrap_or(0) <= time {
+        return Err(invalid());
+    }
+    let secret = read_secret(host, &row)?;
+    seal(
+        request,
+        &secret,
+        &host.key(&host.identity.encryption_ref, true, false)?,
+    )
+}
+
+fn acknowledge(host: &Host, result: &Value, response: &Value) -> Result<()> {
+    let ack = &response["data"];
+    let receipt = &response["receipt"];
+    let descriptor = host.identity.descriptor.as_ref().ok_or_else(invalid)?;
+    fields(ack, &["provisionId", "state", "receipt"])?;
+    if receipt["requestId"] != result["requestId"]
+        || receipt["recordId"] != result["provisionId"]
+        || receipt["actorId"] != descriptor["accountId"]
+        || receipt["payloadDigest"] != digest(&json!(["briefsip-wait-secret-result-v1", result]))
+        || ack["provisionId"] != result["provisionId"]
+        || !matches!(text(ack, "state"), "activated" | "closed")
+        || (ack["state"] == "activated" && result["state"] != "ready")
+    {
+        return Err(fail(
+            502,
+            "receipt_mismatch",
+            "Wait provision ACK does not match.",
+        ));
+    }
+    let id = text(ack, "provisionId");
+    let canonical = db::canonical(ack);
+    let closed = i64::from(ack["state"] == "closed");
+    let updated = host.db.execute("UPDATE device_wait_secrets SET state='acknowledged',closed=?,cleanup_pending=?,ack_json=? WHERE provision_id=? AND state<>'acknowledged'",
+        params![closed,closed,canonical,id])?;
+    if updated == 0
+        && one(
+            &host.db,
+            "SELECT 1 FROM device_wait_secrets WHERE provision_id=? AND ack_json=?",
+            params![id, canonical],
+        )?
+        .is_none()
+    {
+        return Err(fail(
+            409,
+            "wait_result_conflict",
+            "Wait provision ACK changed.",
+        ));
+    }
+    Ok(())
+}
+
+fn cleanup(host: &Host) -> Result<()> {
+    for row in rows(&host.db, "SELECT provision_id,key_reference FROM device_wait_secrets WHERE closed=1 AND cleanup_pending=1 LIMIT 40", [])? {
+        let service = host.secret_service();
+        let reference = text(&row, "key_reference");
+        if keys::remove_verified(&*host.keys, &service, reference) {
+            host.db.execute("UPDATE device_wait_secrets SET cleanup_pending=0 WHERE provision_id=? AND closed=1", [text(&row,"provision_id")])?;
+        }
+    }
+    Ok(())
+}
+
+fn resume_staging(host: &Host) -> Result<()> {
+    let rows = rows(&host.db, "SELECT provision_json FROM device_wait_secrets WHERE state='staging' ORDER BY (json_extract(provision_json,'$.sourceDeviceGeneration')=? AND json_extract(provision_json,'$.authorityGeneration')=?) DESC,rowid LIMIT 40",
+        params![host.identity.descriptor.as_ref().map_or(0, |d| d["deviceGeneration"].as_i64().unwrap_or(0)),
+            text(host.identity.descriptor.as_ref().unwrap_or(&Value::Null), "authorityGeneration")])?;
+    for row in rows {
+        provision(
+            host,
+            &crate::web::parse_json(text(&row, "provision_json").as_bytes())?,
+            true,
+        )?;
+    }
+    Ok(())
+}
+
 fn event(host: &Host, request: &Value, bytes: &[u8]) -> Result<Value> {
     let row = stored_wait(host, request)?;
     let secret = read_secret(host, &row)?;
@@ -345,22 +429,13 @@ impl Stream {
     }
 
     pub(super) async fn resume(&mut self, host: &mut Host, token: &str) -> Result<()> {
-        let rows = rows(&host.db, "SELECT provision_json FROM device_wait_secrets WHERE state='staging' ORDER BY (json_extract(provision_json,'$.sourceDeviceGeneration')=? AND json_extract(provision_json,'$.authorityGeneration')=?) DESC,rowid LIMIT 40",
-            params![host.identity.descriptor.as_ref().map_or(0, |d| d["deviceGeneration"].as_i64().unwrap_or(0)),
-                text(host.identity.descriptor.as_ref().unwrap_or(&Value::Null), "authorityGeneration")])?;
         let pending = one(&host.db, "SELECT 1 FROM device_wait_secrets WHERE state<>'acknowledged' OR cleanup_pending=1 LIMIT 1", [])?;
         if pending.is_none() {
             return Ok(());
         }
         host.acquire_executor()?;
-        for row in rows {
-            provision(
-                host,
-                &crate::web::parse_json(text(&row, "provision_json").as_bytes())?,
-                true,
-            )?;
-        }
-        for row in super::rows(
+        resume_staging(host)?;
+        for row in rows(
             &host.db,
             "SELECT w.result_json FROM device_wait_secrets w JOIN device_state s ON s.id=1
             WHERE w.state IN('ready','failed') AND s.device_id=?
@@ -371,37 +446,9 @@ impl Stream {
         )? {
             let result = crate::web::parse_json(text(&row, "result_json").as_bytes())?;
             let response = host.post("wait-secret-results", token, &result).await?;
-            let ack = &response["data"];
-            let receipt = &response["receipt"];
-            let descriptor = host.identity.descriptor.as_ref().ok_or_else(invalid)?;
-            fields(ack, &["provisionId", "state", "receipt"])?;
-            if receipt["requestId"] != result["requestId"]
-                || receipt["recordId"] != result["provisionId"]
-                || receipt["actorId"] != descriptor["accountId"]
-                || receipt["payloadDigest"]
-                    != digest(&json!(["briefsip-wait-secret-result-v1", result]))
-                || ack["provisionId"] != result["provisionId"]
-                || !matches!(text(ack, "state"), "activated" | "closed")
-                || (ack["state"] == "activated" && result["state"] != "ready")
-            {
-                return Err(fail(
-                    502,
-                    "receipt_mismatch",
-                    "Wait provision ACK does not match.",
-                ));
-            }
-            let closed = i64::from(ack["state"] == "closed");
-            host.db.execute("UPDATE device_wait_secrets SET state='acknowledged',closed=?,cleanup_pending=?,ack_json=? WHERE provision_id=?",
-                params![closed,closed,db::canonical(ack),text(ack,"provisionId")])?;
+            acknowledge(host, &result, &response)?;
         }
-        for row in super::rows(&host.db, "SELECT provision_id,key_reference FROM device_wait_secrets WHERE closed=1 AND cleanup_pending=1 LIMIT 40", [])? {
-            let service = host.secret_service();
-            let reference = text(&row,"key_reference");
-            if keys::remove_verified(&*host.keys, &service, reference) {
-                host.db.execute("UPDATE device_wait_secrets SET cleanup_pending=0 WHERE provision_id=? AND closed=1", [text(&row,"provision_id")])?;
-            }
-        }
-        Ok(())
+        cleanup(host)
     }
 
     fn assemble(&mut self, job: &Value, request: &Value) -> Result<Option<Vec<u8>>> {
@@ -507,23 +554,7 @@ impl Stream {
             host.acquire_executor()
                 .and_then(|()| self::event(host, request, &bytes))
         } else {
-            host.acquire_executor().and_then(|()| {
-                let time = now();
-                let expires = revision(&request["expiresAt"], 1)?;
-                if expires <= time || expires > time + 60_000 {
-                    return Err(invalid());
-                }
-                let row = stored_wait(host, request)?;
-                if row["deadline"].as_i64().unwrap_or(0) <= time {
-                    return Err(invalid());
-                }
-                let secret = read_secret(host, &row)?;
-                seal(
-                    request,
-                    &secret,
-                    &host.key(&host.identity.encryption_ref, true, false)?,
-                )
-            })
+            host.acquire_executor().and_then(|()| reveal(host, request))
         };
         let mut body = json!({"requestId":request_id,"payloadDigest":payload_digest});
         match result {
@@ -553,3 +584,7 @@ impl Stream {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "protected_wait_tests.rs"]
+mod tests;
