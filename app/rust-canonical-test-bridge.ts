@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import type { ClerkClient } from '@clerk/backend';
-import type { RoutineWebhookKeyring } from './routine-webhook-keyring.ts';
+import type { RoutineWebhookKeyring } from './test-support/routine-webhook-keyring.ts';
 
 type Mail = { from: string; origin: string; keyId: string; key: Uint8Array; lookupKey: Uint8Array; keyFor?: (id: string) => Uint8Array };
 export type CanonicalFixtures = { clerk?: ClerkClient; routineWebhookKeys?: RoutineWebhookKeyring; mail?: () => Mail };

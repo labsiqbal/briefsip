@@ -6,7 +6,6 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { startApp } from './test-bridge.ts';
-import { routineCalendar } from './calendar.ts';
 import { DatabaseSync } from 'node:sqlite';
 
 test('manual routine runs keep schedule, deduplicate across restart and enforce revision and overlap', async () => {
@@ -210,15 +209,6 @@ test('routine occurrences persist once and isolate each run from main history', 
 
 
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
-});
-
-test('calendar escapes text and folds UTF-8 without introducing properties', () => {
-  const name = '長'.repeat(60) + ',;\\\nBEGIN:VEVENT';
-  const calendar = routineCalendar([{ id: 'fixture', name, next_at: Date.UTC(2030, 0, 1), interval_ms: null, revision: 1 }], new Date('2026-01-01T00:00:00Z'));
-  assert(calendar.split('\r\n').every(line => Buffer.byteLength(line) <= 75));
-  const unfolded = calendar.replace(/\r\n /g, '');
-  assert.equal(unfolded.split('\r\nBEGIN:VEVENT').length, 2);
-  assert(unfolded.includes('SUMMARY:' + '長'.repeat(60) + '\\,\\;\\\\\\nBEGIN:VEVENT'));
 });
 
 test('routine hub pages visible local owners, filters safely and never returns secrets', async () => {

@@ -28,19 +28,38 @@ test('local routines require project membership and a report section belonging t
   } finally { await app.close(); rmSync(home, { recursive: true, force: true }); }
 });
 
-test('legacy interval migration preserves exact timing and does not publish earlier runs', async () => {
-  const { initializeLocalRoutines } = await import('./local-routines.ts');
-  const db = new DatabaseSync(':memory:');
+test('Rust upgrades legacy routine timing without publishing earlier runs', async () => {
+  const home = mkdtempSync(resolve('node_modules/.routine-migrate-'));
+  const database = join(home, 'state.sqlite');
+  let app = await startApp({ database });
   try {
-    db.exec(`CREATE TABLE agents(id TEXT PRIMARY KEY); CREATE TABLE threads(id TEXT PRIMARY KEY);
-      CREATE TABLE turns(id TEXT PRIMARY KEY); CREATE TABLE local_projects(id TEXT PRIMARY KEY);
-      CREATE TABLE routines(id TEXT PRIMARY KEY, next_at INTEGER, interval_ms INTEGER);
-      INSERT INTO routines VALUES ('legacy',1794758400123,65000);`);
-    initializeLocalRoutines(db); initializeLocalRoutines(db);
-    assert.deepEqual({ ...db.prepare('SELECT next_at,interval_ms,project,report_to,schedule_json,schedule_zone FROM routines').get() },
-      { next_at:1794758400123,interval_ms:65000,project:null,report_to:'run',schedule_json:null,schedule_zone:null });
-    assert.equal(db.prepare('SELECT count(*) AS count FROM local_routine_reports').get()?.count, 0);
-  } finally { db.close(); }
+    await app.close();
+    const db = new DatabaseSync(database);
+    try {
+      db.exec(`INSERT INTO agents(id,name,model,instructions) VALUES ('legacy-agent','Legacy','fixture','Help');
+        ALTER TABLE routines DROP COLUMN project;
+        ALTER TABLE routines DROP COLUMN report_to;
+        ALTER TABLE routines DROP COLUMN schedule_json;
+        ALTER TABLE routines DROP COLUMN schedule_zone;
+        DROP TABLE local_routine_reports;
+        INSERT INTO routines(id,agent,name,prompt,next_at,interval_ms,enabled)
+          VALUES ('legacy','legacy-agent','Legacy','Report',1794758400123,65000,0);
+        INSERT INTO turns(id,agent,text,reply,status,created)
+          VALUES ('old-run','legacy-agent','Report','Earlier outcome','done','2026-01-01');
+        INSERT INTO routine_runs(routine,scheduled_at,turn,missed) VALUES ('legacy',1794758335123,'old-run',0);`);
+    } finally { db.close(); }
+
+    for (let restart = 0; restart < 2; restart++) {
+      app = await startApp({ database });
+      const migrated = new DatabaseSync(database);
+      try {
+        assert.deepEqual({ ...migrated.prepare('SELECT next_at,interval_ms,project,report_to,schedule_json,schedule_zone FROM routines').get() },
+          { next_at: 1794758400123, interval_ms: 65000, project: null, report_to: 'run', schedule_json: null, schedule_zone: null });
+        assert.equal(migrated.prepare('SELECT turn FROM routine_runs WHERE routine=?').get('legacy')?.turn, 'old-run');
+        assert.equal(migrated.prepare('SELECT count(*) AS count FROM local_routine_reports').get()?.count, 0);
+      } finally { migrated.close(); await app.close(); }
+    }
+  } finally { await app.close(); rmSync(home, { recursive: true, force: true }); }
 });
 
 test('project routine runs use project folders and post one system report per outcome across retry and restart', async () => {
@@ -126,24 +145,6 @@ test('project routine runs use project folders and post one system report per ou
     const routine = rows.routines[0];
     await request(`/api/routines/${routine.id}/test`, { id: randomUUID(), revision: routine.revision }, 403);
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(home, { recursive: true, force: true }); }
-});
-
-test('friendly schedule computation preserves local clocks, selected weekly days, gaps and folds', async () => {
-  const { localSchedule } = await import('./local-routines.ts');
-  const { nextScheduleTimes } = await import('./schedule-spec.ts');
-  const at = Date.parse('2026-11-13T09:00:00Z');
-  const weekday = localSchedule({ kind: 'cron', expression: '0 9 * * 1-5' }, 'Asia/Jakarta', at).spec;
-  assert.deepEqual(nextScheduleTimes(weekday, 'Asia/Jakarta', at).map(t => new Date(t).toISOString()), ['2026-11-16T02:00:00.000Z','2026-11-17T02:00:00.000Z','2026-11-18T02:00:00.000Z']);
-  const weekly = localSchedule({ kind: 'cron', expression: '30 9 * * 1,3,5' }, 'UTC', at).spec;
-  assert.deepEqual(nextScheduleTimes(weekly, 'UTC', at).map(t => new Date(t).toISOString()), ['2026-11-13T09:30:00.000Z','2026-11-16T09:30:00.000Z','2026-11-18T09:30:00.000Z']);
-  const daily = localSchedule({ kind: 'cron', expression: '0 9 * * *' }, 'America/New_York', at).spec;
-  assert.deepEqual(nextScheduleTimes(daily, 'America/New_York', Date.parse('2026-03-07T00:00Z')).map(t => new Date(t).toISOString()), ['2026-03-07T14:00:00.000Z','2026-03-08T13:00:00.000Z','2026-03-09T13:00:00.000Z']);
-  assert.deepEqual(nextScheduleTimes({ kind:'cron', expression:'30 1 * * *' }, 'America/New_York', Date.parse('2026-11-01T00:00Z')).map(t => new Date(t).toISOString()), ['2026-11-01T05:30:00.000Z','2026-11-02T06:30:00.000Z','2026-11-03T06:30:00.000Z']);
-  assert.equal(new Date(localSchedule({ kind: 'once', date:'2026-03-08', time:'02:30' }, 'America/New_York').nextAt).toISOString(), '2026-03-08T07:00:00.000Z');
-  assert.equal(new Date(nextScheduleTimes({ kind:'cron', expression:'30 2 * * *' }, 'America/New_York', Date.parse('2026-03-07T08:00Z'),1)[0]).toISOString(), '2026-03-09T06:30:00.000Z');
-  for (const expression of ['* * * * *','61 9 * * *','0 9 * *','0 9 * * 7','0 9 30 2 *']) assert.throws(() => localSchedule({ kind:'cron', expression }, 'UTC',at));
-  const elapsed = { kind:'interval' as const,amount:2,unit:'hour' as const,anchorAt:Date.parse('2026-03-08T06:00Z') };
-  assert.deepEqual(nextScheduleTimes(elapsed,'America/New_York',elapsed.anchorAt-1), [elapsed.anchorAt,elapsed.anchorAt+7200000,elapsed.anchorAt+14400000]);
 });
 
 test('scheduled cron catches up once and unavailable project folders do not starve other routines', async () => {

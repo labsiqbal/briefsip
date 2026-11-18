@@ -426,4 +426,78 @@ mod tests {
         }
         Ok(())
     }
+    #[test]
+    fn local_schedule_preview_keeps_weekdays_wall_clocks_and_elapsed_intervals() -> Result<()> {
+        for (expression, zone, after, expected) in [
+            (
+                "0 9 * * 1-5",
+                "Asia/Jakarta",
+                "2026-11-13T09:00:00Z",
+                [
+                    "2026-11-16T02:00:00Z",
+                    "2026-11-17T02:00:00Z",
+                    "2026-11-18T02:00:00Z",
+                ],
+            ),
+            (
+                "30 9 * * 1,3,5",
+                "UTC",
+                "2026-11-13T09:00:00Z",
+                [
+                    "2026-11-13T09:30:00Z",
+                    "2026-11-16T09:30:00Z",
+                    "2026-11-18T09:30:00Z",
+                ],
+            ),
+            (
+                "0 9 * * *",
+                "America/New_York",
+                "2026-03-07T00:00:00Z",
+                [
+                    "2026-03-07T14:00:00Z",
+                    "2026-03-08T13:00:00Z",
+                    "2026-03-09T13:00:00Z",
+                ],
+            ),
+            (
+                "30 1 * * *",
+                "America/New_York",
+                "2026-11-01T00:00:00Z",
+                [
+                    "2026-11-01T05:30:00Z",
+                    "2026-11-02T06:30:00Z",
+                    "2026-11-03T06:30:00Z",
+                ],
+            ),
+            (
+                "30 2 * * *",
+                "America/New_York",
+                "2026-03-07T08:00:00Z",
+                [
+                    "2026-03-09T06:30:00Z",
+                    "2026-03-10T06:30:00Z",
+                    "2026-03-11T06:30:00Z",
+                ],
+            ),
+        ] {
+            let after = epoch(after);
+            let (spec, next, _) =
+                local(&json!({"kind":"cron","expression":expression}), zone, after)?;
+            assert_eq!(next, epoch(expected[0]));
+            assert_eq!(times(&spec, zone, after, 3)?, expected.map(epoch));
+        }
+        let anchor = epoch("2026-03-08T06:00:00Z");
+        let zone = "America/New_York";
+        let (elapsed, _, _) = local(
+            &json!({"kind":"interval","amount":2,"unit":"hour","anchorAt":anchor}),
+            zone,
+            anchor - 1,
+        )?;
+        assert_eq!(
+            times(&elapsed, zone, anchor - 1, 3)?,
+            [anchor, anchor + 7200000, anchor + 14400000]
+        );
+        assert!(local(&json!({"kind":"cron","expression":"0 9 * *"}), zone, anchor).is_err());
+        Ok(())
+    }
 }

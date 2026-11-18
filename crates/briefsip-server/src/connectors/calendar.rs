@@ -127,3 +127,29 @@ pub fn export(db: &Connection, owner: &str, now: i64) -> Result<Response> {
         .body(axum::body::Body::from(render(db, &entries, now)?))
         .map_err(|_| Failure::storage())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn once_exports_current_home_clock_or_retained_pending_time() -> Result<()> {
+        let db = Connection::open_in_memory()?;
+        let mut entry = json!({
+            "id": "schedule",
+            "name": "First check",
+            "revision": 2,
+            "next_at": 1_710_037_800_000_i64,
+            "schedule": {"kind": "once", "date": "2024-03-10", "time": "02:30"},
+            "zone": "America/New_York",
+        });
+        let render = |entry: &Value| super::render(&db, std::slice::from_ref(entry), 0);
+        assert!(render(&entry)?.contains("DTSTART:20240310T070000Z"));
+        entry["zone"] = json!("UTC");
+        assert!(render(&entry)?.contains("DTSTART:20240310T023000Z"));
+        entry["pendingDueAt"] = json!(1_710_037_800_000_i64);
+        entry["zone"] = json!("America/New_York");
+        assert!(render(&entry)?.contains("DTSTART:20240310T023000Z"));
+        Ok(())
+    }
+}
