@@ -361,12 +361,70 @@ fn usage(v: &Value) -> Value {
 }
 #[cfg(test)]
 mod tests {
+    use super::{audio, usage};
+    use serde_json::{json, Value};
+
     #[test]
     fn audio_headers() {
-        assert_eq!(super::audio(b"RIFF0000WAVEdata"), Some("wav"));
-        assert_eq!(super::audio(b"plain text"), None);
+        assert_eq!(audio(b"RIFF0000WAVEdata"), Some("wav"));
+        assert_eq!(audio(b"plain text"), None);
+    }
+
+    #[test]
+    fn webm_requires_bounded_ebml_header_and_exact_doctype() {
+        let valid = *b"\x1a\x45\xdf\xa3\x87\x42\x82\x84webm";
+        assert_eq!(audio(&valid), Some("webm"));
+        for len in 0..valid.len() {
+            assert_eq!(audio(&valid[..len]), None);
+        }
+        for (offset, byte) in [(8, b'm'), (4, 0xff), (5, 0x43)] {
+            let mut invalid = valid;
+            invalid[offset] = byte;
+            assert_eq!(audio(&invalid), None);
+        }
+    }
+
+    #[test]
+    fn mp4_checks_brand_and_ftyp_size() {
+        let mut bytes = *b"\x00\x00\x00\x18ftypM4A \x00\x00\x00\x00isommp42";
+        for brand in [
+            b"M4A ", b"M4B ", b"isom", b"mp41", b"mp42", b"iso2", b"iso5", b"iso6",
+        ] {
+            bytes[8..12].copy_from_slice(brand);
+            assert_eq!(audio(&bytes), Some("mp4"));
+        }
+        for brand in [b"avif", b"heic", b"mif1", b"xxxx"] {
+            bytes[8..12].copy_from_slice(brand);
+            assert_eq!(audio(&bytes), None);
+        }
+        bytes[8..12].copy_from_slice(b"M4A ");
+        assert_eq!(audio(&bytes[..15]), None);
+        for size in [0_u32, 1, 8, 15, 17, 25, u32::MAX] {
+            bytes[..4].copy_from_slice(&size.to_be_bytes());
+            assert_eq!(audio(&bytes), None);
+        }
+    }
+
+    #[test]
+    fn usage_preserves_zero_and_rejects_invalid_counts_and_durations() {
+        for invalid in [
+            Value::Null,
+            json!([]),
+            json!(1),
+            json!({"type":"unknown"}),
+            json!({"type":"duration","seconds":-1}),
+            json!({"type":"duration","seconds":f64::INFINITY}),
+            json!({"type":"duration","seconds":"3"}),
+            json!({"type":"tokens","input_tokens":"2","output_tokens":-1,"total_tokens":1.1}),
+        ] {
+            assert_eq!(usage(&invalid), Value::Null);
+        }
+        for duration in [json!(1.25), json!(0)] {
+            let value = json!({"type":"duration","seconds":duration});
+            assert_eq!(usage(&value), value);
+        }
         assert_eq!(
-            super::usage(&serde_json::json!({"type":"tokens","input_tokens":0}))["input_tokens"],
+            usage(&json!({"type":"tokens","input_tokens":0}))["input_tokens"],
             0
         );
     }

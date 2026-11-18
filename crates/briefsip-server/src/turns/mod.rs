@@ -85,11 +85,15 @@ impl Runtime {
 
 pub fn initialize_canonical(db: &Connection) -> Result<()> {
     db.execute_batch(include_str!("schema.sql"))?;
+    let columns = all(db, "PRAGMA table_info(transcriptions)", [])?;
+    if !columns.iter().any(|column| column["name"] == "usage") {
+        db.execute("ALTER TABLE transcriptions ADD COLUMN usage TEXT", [])?;
+    }
     Ok(())
 }
 
 pub fn initialize(db: &Connection) -> Result<()> {
-    db.execute_batch(include_str!("schema.sql"))?;
+    initialize_canonical(db)?;
     db.execute_batch(include_str!("indexes.sql"))?;
     waits::initialize(db)?;
     db.execute_batch("UPDATE compaction_attempts SET status='interrupted' WHERE status='pending';UPDATE harness_approvals SET state='expired',revision=revision+1 WHERE state='approval';UPDATE transcriptions SET status='uncertain' WHERE status='pending';")?;
