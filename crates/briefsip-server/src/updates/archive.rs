@@ -2,11 +2,12 @@ use super::{error, release, Result};
 use flate2::read::MultiGzDecoder;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     os::unix::fs::{DirBuilderExt, OpenOptionsExt},
     path::{Path, PathBuf},
+    sync::{Arc, LazyLock, Weak},
     time::Duration,
 };
 const LIMIT: u64 = 1024 * 1024 * 1024;
@@ -33,7 +34,7 @@ impl Drop for Temporary {
     }
 }
 pub struct Archive {
-    pub directory: Temporary,
+    pub _directory: Temporary,
     pub file: PathBuf,
     pub sha256: String,
 }
@@ -74,7 +75,33 @@ fn preflight(path: &Path, total: &mut u64, entries: &mut usize) -> Result<()> {
     }
     Ok(())
 }
-pub async fn create(root: &Path, id: &str) -> Result<Archive> {
+pub async fn create(root: &Path, id: &str) -> Result<Arc<Archive>> {
+    type Cached = Arc<tokio::sync::Mutex<Weak<Archive>>>;
+    static ARCHIVES: LazyLock<tokio::sync::Mutex<HashMap<PathBuf, Cached>>> =
+        LazyLock::new(Default::default);
+    if !release::id(id) {
+        return Err(error(400, "Invalid release ID."));
+    }
+    let key = root.join(id);
+    let entry = {
+        let mut archives = ARCHIVES.lock().await;
+        archives.retain(|_, entry| {
+            Arc::strong_count(entry) > 1
+                || entry
+                    .try_lock()
+                    .map_or(true, |archive| archive.strong_count() > 0)
+        });
+        archives.entry(key).or_default().clone()
+    };
+    let mut cached = entry.lock().await;
+    if let Some(archive) = cached.upgrade() {
+        return Ok(archive);
+    }
+    let archive = Arc::new(build(root, id).await?);
+    *cached = Arc::downgrade(&archive);
+    Ok(archive)
+}
+async fn build(root: &Path, id: &str) -> Result<Archive> {
     if !release::id(id) {
         return Err(error(400, "Invalid release ID."));
     }
@@ -109,7 +136,7 @@ pub async fn create(root: &Path, id: &str) -> Result<Archive> {
     }
     let sha256 = hash(&file)?;
     Ok(Archive {
-        directory,
+        _directory: directory,
         file,
         sha256,
     })
