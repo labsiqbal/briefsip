@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
+import { once } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -39,7 +40,12 @@ test('teammate messages correlate groups, isolate context, persist receipts and 
         if (!results.length) output = tool('search_memory', {});
         else { assert.deepEqual(results[0].items.map((row: any) => row.text), ['SHARED_MEMORY']); output = text('channel scoped'); }
       } else {
-        if (['hold', 'restart', 'cancel', 'pause'].includes(mode) && body.model === 'gamma') await new Promise<void>(resolve => held.push(resolve));
+        if (['hold', 'restart', 'cancel', 'pause'].includes(mode) && body.model === 'gamma') {
+          await new Promise<void>(resolve => {
+            held.push(resolve);
+            if (mode === 'restart') provider.emit('restart-request-held');
+          });
+        }
         if (mode === 'archive') await new Promise<void>(resolve => held.push(resolve));
         if (mode === 'notify') assert(!body.tools.some((tool: any) => tool.function.name === 'send_message'));
         output = text(mode === 'long' ? 'x'.repeat(20000) : `${body.model} result`);
@@ -104,14 +110,18 @@ test('teammate messages correlate groups, isolate context, persist receipts and 
     mode = 'notify'; const notification = randomUUID(); await post(path, { id: notification, text: 'FYI' }, 202);
     const notified = await until(path, notification, row => row.status === 'done' && row.agentMessages.every((item: any) => item.status === 'done'));
     assert.equal(JSON.parse(notified.reply).status, 'sent');
-    mode = 'restart'; const restart = randomUUID(); await post(path, { id: restart, text: 'restart group' }, 202);
-    await until(path, restart, row => row.agentMessages?.some((item: any) => item.agent === gamma.id && item.status === 'running'));
+    mode = 'restart'; const restart = randomUUID();
+    await Promise.all([
+      once(provider, 'restart-request-held', { signal: AbortSignal.timeout(30_000) }),
+      post(path, { id: restart, text: 'restart group' }, 202)
+        .then(() => until(path, restart, row => row.agentMessages?.some((item: any) => item.agent === gamma.id && item.status === 'running'))),
+    ]);
     const count = calls.filter(call => call.model === 'gamma').length;
     await app.close(); held.splice(0).forEach(release => release()); app = await startApp(options);
     const recovered = await until(path, restart, row => row.status === 'done');
-    assert(recovered.agentMessages.some((item: any) => item.status === 'interrupted'));
+    const interrupted = recovered.agentMessages.find((item: any) => item.agent === gamma.id);
+    assert.equal(interrupted?.status, 'interrupted');
     assert.equal(calls.filter(call => call.model === 'gamma').length, count);
-    const interrupted = recovered.agentMessages.find((item: any) => item.status === 'interrupted');
     const child = (await rows(`/api/threads/${interrupted.thread}/turns`))[0];
     await post(`/api/threads/${interrupted.thread}/turns/${child.id}/resume`, { id: randomUUID(), revision: child.revision, acknowledgeUncertain: true }, 409);
     mode = 'cancel'; const cancel = randomUUID(); await post(path, { id: cancel, text: 'cancel group' }, 202);
