@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
 import { startCanonicalApp } from './test-bridge.ts';
 import { openDeviceRuntime } from './device-runtime.ts';
+import { startRustDeviceEnrollment, startRustDeviceConnection, enrollRustDevice } from './test-support/rust-device-host.ts';
 import type { ActionContext } from './executor-journal.ts';
 import { rustBinary } from './rust-binary.ts';
 import { rustServerOutput } from './rust-test-server.ts';
@@ -470,20 +471,41 @@ async function until(check: () => boolean | Promise<boolean>, timeout = 30000) {
   assert.fail(`Device state did not settle within ${timeout}ms`);
 }
 
+async function prepareWorkflowConfiguration(f: Awaited<ReturnType<typeof fixture>>) {
+  const home = (await f.send('/api/devices')).body.data[0], project = randomUUID(), other = randomUUID(), agent = randomUUID(), workflow = randomUUID();
+  for (const id of [project, other]) assert.equal((await f.send('/api/projects', { requestId: randomUUID(), id, name: 'Workflows' })).status, 201);
+  assert.equal((await f.send('/api/agents', { requestId: agent, id: agent, name: 'Workflow agent', model: 'fixture', backupModel: '', instructions: 'Help', threadLimit: 2, projectId: project, homeDeviceId: home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: home.revision, providerBinding: null })).status, 201);
+  const graph = { entry: 'out', maxSteps: 1, nodes: [{ id: 'out', kind: 'output' }] }, list = `/api/projects/${project}/agents/${agent}/workflows`, detail = `/api/projects/${project}/workflows/${workflow}`;
+  return { home, project, other, agent, workflow, graph, list, detail };
+}
+
 async function workflowConfigurationFixture() {
   const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'workflow-home.sqlite'), server: f.origin(), development: true, entry: keys.entry });
   try {
     await runtime.enroll(f.jwt());
-    const home = (await f.send('/api/devices')).body.data[0], project = randomUUID(), other = randomUUID(), agent = randomUUID(), workflow = randomUUID();
-    for (const id of [project, other]) assert.equal((await f.send('/api/projects', { requestId: randomUUID(), id, name: 'Workflows' })).status, 201);
-    assert.equal((await f.send('/api/agents', { requestId: agent, id: agent, name: 'Workflow agent', model: 'fixture', backupModel: '', instructions: 'Help', threadLimit: 2, projectId: project, homeDeviceId: home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: home.revision, providerBinding: null })).status, 201);
-    const graph = { entry: 'out', maxSteps: 1, nodes: [{ id: 'out', kind: 'output' }] }, list = `/api/projects/${project}/agents/${agent}/workflows`, detail = `/api/projects/${project}/workflows/${workflow}`;
-    return { ...f, keys, runtime, home, project, other, agent, workflow, graph, list, detail, close: async () => { await runtime.close(); await f.close(); } };
+    return { ...f, ...await prepareWorkflowConfiguration(f), keys, runtime, close: async () => { await runtime.close(); await f.close(); } };
   } catch (error) { await runtime.close(); await f.close(); throw error; }
 }
 
-async function protectedWorkflowWaitFixture(subject = 'user_owner', timeoutSeconds = 60) {
-  const f = await workflowConfigurationFixture();
+async function rustWorkflowConfigurationFixture() {
+  const f = await fixture(), database = join(f.dir, 'workflow-home.sqlite'), keyring = join(f.dir, 'workflow-keys.json');
+  let connection: ReturnType<typeof startRustDeviceConnection> | undefined;
+  const close = async () => { await connection?.stop(); await f.close(); };
+  const config = () => ({ database, server: f.origin(), keyring });
+  try {
+    writeFileSync(keyring, '{}', { mode: 0o600 });
+    await enrollRustDevice(config(), f.jwt());
+    const keys = { get values() { return new Map(Object.entries(JSON.parse(readFileSync(keyring, 'utf8')) as Record<string, string>)); } };
+    const runtime = { connect() {
+      const active = connection = startRustDeviceConnection(config());
+      return { state: () => active.state() ?? { phase: 'connecting', generation: 0 }, stop: active.stop };
+    } };
+    return { ...f, ...await prepareWorkflowConfiguration(f), keys, runtime, close };
+  } catch (error) { await close(); throw error; }
+}
+
+async function protectedWorkflowWaitFixture(subject = 'user_owner', timeoutSeconds = 60, rustDevice = true) {
+  const f = rustDevice ? await rustWorkflowConfigurationFixture() : await workflowConfigurationFixture();
   try {
     const connection = f.runtime.connect(); await until(() => connection.state().phase === 'connected');
     const graph = { entry: 'event', maxSteps: 2, nodes: [{ id: 'event', kind: 'wait', event: 'ready', timeoutSeconds, next: 'out' }, { id: 'out', kind: 'output' }] };
@@ -590,7 +612,7 @@ test('protected workflow event commits one transition and keeps exact retries af
 
 test('protected workflow wait discards delayed reveal and event replies after authority changes', async t => {
   for (const kind of ['reveal','event'] as const) for (const change of ['revision','rules','assignment','mapping','cancel','expiry','revoke','disconnect'] as const) await t.test(`${kind}/${change}`, async () => {
-    const f = await protectedWorkflowWaitFixture('user_collaborator', change === 'expiry' ? 2 : 60), originalFetch = globalThis.fetch;
+    const f = await protectedWorkflowWaitFixture('user_collaborator', change === 'expiry' ? 2 : 60, false), originalFetch = globalThis.fetch;
     let held = false, release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     const browser = generateKeyPairSync('x25519'), reveal = { requestId: randomUUID(), ephemeralPublicKey: browser.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url'), expectedSecretGeneration: 1 };
@@ -2764,22 +2786,26 @@ test('cross-device reassign survives lost reply and restart, preserves old resul
 });
 
 test('local possession gate enrolls only configured server and retains identity across reconnect/revoke', async () => {
-  const f = await fixture(), store = memoryKeys(), database = join(f.dir, 'device.sqlite');
-  let runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: store.entry });
+  const f = await fixture(), database = join(f.dir, 'device.sqlite'), keyring = join(f.dir, 'device-keys.json');
+  writeFileSync(keyring, '{}', { mode: 0o600 });
+  const config = () => ({ database, server: f.origin(), keyring });
+  let link: Awaited<ReturnType<typeof startRustDeviceEnrollment>> | undefined;
+  let connection: ReturnType<typeof startRustDeviceConnection> | undefined;
   try {
-    const link = await runtime.bootstrap(), token = readFileSync(link.tokenFile, 'utf8');
-    assert.equal(statSync(link.tokenFile).mode & 0o777, 0o600);
+    const listener = link = await startRustDeviceEnrollment(config()), token = readFileSync(listener.tokenFile, 'utf8');
+    assert.equal(statSync(listener.tokenFile).mode & 0o777, 0o600);
     const local = async (headers = {}, path = '/local/link-proof', body: unknown = { requestId: randomUUID(), clerkToken: f.jwt() }) => {
-      const response = await fetch(link.origin + path, { method: 'POST', headers: { Origin: link.origin, 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...headers }, body: JSON.stringify(body) }); return { status: response.status, body: await response.json() };
+      const response = await fetch(listener.origin + path, { method: 'POST', headers: { Origin: listener.origin, 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...headers }, body: JSON.stringify(body) }); return { status: response.status, body: await response.json() };
     };
     assert.equal((await local({ Origin: 'https://evil.example' })).status, 403);
     assert.equal((await local({ Authorization: 'Bearer wrong' })).status, 403);
     assert.equal((await local({ 'X-Forwarded-Host': 'evil.example' })).status, 403);
     assert.equal((await local({}, '/local/sign-arbitrary')).status, 403);
     const linked = await local(); assert.equal(linked.status, 200, JSON.stringify(linked.body));
-    await link.close(); assert(!existsSync(link.tokenFile));
-    const deviceId = runtime.deviceId(), connection = runtime.connect();
-    await until(() => connection.state().phase === 'connected');
+    await listener.wait(); assert(!existsSync(listener.tokenFile));
+    const deviceId = linked.body.data.deviceId;
+    connection = startRustDeviceConnection(config());
+    await connection.ready();
     const devices = (await f.send('/api/devices')).body.data; assert.equal(devices.length, 1); assert.equal(devices[0].id, deviceId); assert.equal(devices[0].status, 'ready');
     assert.equal((await f.send('/api/devices', undefined, 'user_foreign')).body.data.length, 0);
     const project = randomUUID(), createProject = { requestId: randomUUID(), id: project, name: 'A' };
@@ -2795,41 +2821,43 @@ test('local possession gate enrolls only configured server and retains identity 
 
     assert.equal((await f.send(`/api/projects/${project}/agents/${id}/rules`, { requestId: randomUUID(), expectedParticipationRevision: 1, rules: 'A only' }, 'user_owner', 'PUT')).status, 200);
     assert.equal((await f.send(`/api/projects/${project}/agents/${id}/capabilities`, { requestId: randomUUID(), expectedRevision: 2, capabilities: { v: 1, tools: [], resources: [] } }, 'user_owner', 'PUT')).status, 200);
-    await connection.stop(); await runtime.close();
-    await f.restart(); runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: store.entry });
-    assert.equal(runtime.deviceId(), deviceId);
-    const resumed = runtime.connect(); await until(() => resumed.state().phase === 'connected');
+    await connection.stop();
+    await f.restart();
+    const resumed = connection = startRustDeviceConnection(config()); await resumed.ready();
+    assert.equal((await f.send('/api/devices')).body.data[0].id, deviceId);
     const current = (await f.send('/api/devices')).body.data[0];
     assert.equal((await f.send(`/api/devices/${deviceId}/revoke`, { requestId: randomUUID(), expectedRevision: current.revision })).status, 200);
-    await until(() => resumed.state().phase === 'blocked'); assert.equal(resumed.state().lastFailure?._tag, 'ConnectionBlockedError');
+    await until(() => resumed.state()?.phase === 'blocked'); await resumed.wait();
     const canonical = fixtureDatabase(join(f.dir, 'canonical.sqlite')), device = new DatabaseSync(database);
     try {
       assert.equal(device.prepare("SELECT name FROM sqlite_schema WHERE name='accounts'").get(), undefined);
       assert.equal(canonical.prepare("SELECT name FROM sqlite_schema WHERE name='device_state'").get(), undefined);
       assert.equal(canonical.prepare('SELECT count(*) AS n FROM device_sessions WHERE revoked=0').get()!.n, 0);
       const publicMetadata = readFileSync(`${database}.host/identity.json`, 'utf8');
-      for (const secret of store.values.values()) assert(!publicMetadata.includes(secret));
+      for (const secret of Object.values(JSON.parse(readFileSync(keyring, 'utf8')))) assert(!publicMetadata.includes(String(secret)));
     } finally { canonical.close(); device.close(); }
-  } finally { await runtime.close(); await f.close(); }
+  } finally { await connection?.stop(); await link?.close(); await f.close(); }
 });
 
 test('device key loss fails closed and concurrent stream replacement fences old heartbeat', async () => {
-  const f = await fixture(), store = memoryKeys(), database = join(f.dir, 'device.sqlite');
-  let runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: store.entry });
+  const f = await fixture(), database = join(f.dir, 'device.sqlite'), keyring = join(f.dir, 'device-keys.json');
+  const config = { database, server: f.origin(), keyring };
+  const connections: ReturnType<typeof startRustDeviceConnection>[] = [];
+  writeFileSync(keyring, '{}', { mode: 0o600 });
   try {
-    await runtime.enroll(f.jwt());
-    await runtime.close();
-    assert.throws(() => openDeviceRuntime({ database, server: f.origin(), development: true, entry: () => ({ getPassword() { return null; }, setPassword() { assert.fail('Must not replace missing identity key'); } }) }), error => error instanceof ProtocolError && error.code === 'device_key_unavailable');
-    runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: store.entry });
-    const first = runtime.connect(); await until(() => first.state().phase === 'connected');
-    const secondRuntime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: store.entry });
-    try {
-      const second = secondRuntime.connect(); await until(() => second.state().phase === 'connected');
-      await until(() => first.state().phase !== 'connected'); await first.stop();
-      const current = (await f.send('/api/devices')).body.data[0]; assert.equal(current.status, 'ready'); assert(current.connection_generation >= 2);
-      await second.stop();
-    } finally { await secondRuntime.close(); }
-  } finally { await runtime.close(); await f.close(); }
+    await enrollRustDevice(config, f.jwt());
+    const empty = join(f.dir, 'empty-keys.json');
+    writeFileSync(empty, '{}', { mode: 0o600 });
+    const missing = startRustDeviceConnection({ ...config, keyring: empty }); connections.push(missing);
+    await assert.rejects(missing.wait(), /Device key is unavailable/);
+    assert.equal(readFileSync(empty, 'utf8'), '{}', 'Must not replace missing identity key');
+    const first = startRustDeviceConnection(config); connections.push(first);
+    await first.ready();
+    const second = startRustDeviceConnection(config); connections.push(second);
+    await second.ready();
+    await until(() => first.state()?.phase !== 'connected'); await first.stop();
+    const current = (await f.send('/api/devices')).body.data[0]; assert.equal(current.status, 'ready'); assert(current.connection_generation >= 2);
+  } finally { await Promise.all(connections.map(connection => connection.stop())); await f.close(); }
 });
 
 test('lost enrollment ACK resumes same request and explicit reenroll/rotation preserve home identity', async () => {
@@ -3028,10 +3056,22 @@ test('SIGKILL recovery proves no send before marker and never repeats marked eff
       const expected=checkpoint==='after-marker'?'uncertain':beforeMarker?'not_sent':'acknowledged';
       const continuationId=beforeMarker?randomUUID():undefined;
       for(let restart=0;restart<2;restart++) {
+        await until(async () => (await f.send('/api/devices')).body.data[0].status !== 'ready');
         await f.restart();
-        const recovered=await start({mode:'recover',taskId,actionId,...(restart===0&&continuationId?{continuationId}:{})});
-        assert.equal(recovered.message.state,expected);
-        assert.equal((await recovered.exited)[0],0);
+        const recovery = startRustDeviceConnection({ database, server: f.origin(), keyring: keys });
+        try {
+          await recovery.ready();
+          const journal = fixtureDatabase(database);
+          try {
+            await until(() => journal.prepare("SELECT 1 FROM device_outbox WHERE action_id=? AND state='acknowledged'").get(actionId) !== undefined);
+            assert.equal(journal.prepare('SELECT state FROM device_journal WHERE action_id=?').get(actionId)!.state, expected);
+          } finally { journal.close(); }
+        } finally { await recovery.stop(); }
+        if (restart === 0 && continuationId) {
+          const continued = await start({ mode:'recover', taskId, actionId, continuationId });
+          assert.equal(continued.message.state, expected);
+          assert.equal((await continued.exited)[0], 0);
+        }
         assert.equal(calls.get(actionId)??0,beforeMarker?0:1);
         if(continuationId)assert.equal(calls.get(continuationId),1);
       }
