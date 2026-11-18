@@ -19,7 +19,8 @@ import { initializeSites, saveSite } from './sites.ts';
 import { parseLinkChallenge, deviceLinkBody, descriptorBody, type DeviceDescriptor } from './device-protocol.ts';
 import { canonicalJson, digestCommand, sha256, ProtocolError } from './protocol.ts';
 import { canonicalToolDigest, parseOwnership, journalEntryBody, stopEvidenceBody, recoveryEnvelopeBody, type StopEvidence, type JournalEntry } from './task-protocol.ts';
-import { prepareRestoreBootstrap, issueRestoreSession, workspaceSnapshot, restoreWorkspace } from './backup.ts';
+import { prepareRestoreBootstrap, issueRestoreSession, workspaceSnapshot } from './backup.ts';
+import { rustBinary } from './rust-binary.ts';
 import { rustTaskTestBridge } from './rust-task-test-bridge.ts';
 import { startRustServer } from './rust-test-server.ts';
 import { parseWaitProvision } from './wait-provisions.ts';
@@ -403,7 +404,10 @@ test('disaster restore closes pending provisions and activated wait references w
     }
     const receipts = f.db.prepare('SELECT * FROM receipts ORDER BY request_id').all();
     snapshot = await workspaceSnapshot(f.db, f.owner.accountId);
-    const path = restoreWorkspace(snapshot.file, join(directory, 'restored.sqlite'), { canonicalOnly: true }), restored = new DatabaseSync(path);
+    const path = join(directory, 'restored.sqlite');
+    const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
+    execFileSync(binary, ['--restore-read-only', snapshot.file, path]);
+    const restored = new DatabaseSync(path);
     try {
       assert.deepEqual(restored.prepare('SELECT * FROM receipts ORDER BY request_id').all(), receipts);
       assert.equal(restored.prepare('SELECT count(*) n FROM wait_provisions').get()!.n, 2);

@@ -27,19 +27,47 @@ test('Rust JWKS rotates keys, rejects unknown signatures and enforces audience',
 test('Rust opens every canonical schema version and rejects migration drift', { skip: process.env.BRIEFSIP_TEST_SERVER !== 'rust' }, async () => {
   const root=mkdtempSync(join(tmpdir(),'briefsip-rust-schema-'));
   const auth={secretKey:'sk_test_fixture',publishableKey:'pk_test_fixture',issuer:'https://fixture.clerk.accounts.dev',origin:'https://briefsip.example',development:true};
-  const inspect=(database:string) => { const db=new DatabaseSync(database); try { initializeCanonicalSchema(db); return db.prepare("SELECT type,name,tbl_name FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all().map(row => ({...row, ...(row.type==='table'?{columns:db.prepare(`PRAGMA table_info(${row.name})`).all()}:{} )})); } finally {db.close();} };
+  const indexes = [
+    'files_scope_seq', 'occurrence_pending', 'project_workflow_notifications_reader',
+    'provider_calls_turn_seq', 'queue_edit_active', 'routine_occurrences_active', 'routine_occurrences_schedule',
+  ];
+  const inspect = (database: string) => {
+    const db = new DatabaseSync(database, { readOnly: true });
+    try {
+      assert.equal(db.prepare('SELECT max(version) AS version FROM schema_migrations').get()?.version, 5);
+      const schema = db.prepare("SELECT type,name,tbl_name FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
+      assert.deepEqual(schema.filter(row => row.type === 'index' && indexes.includes(String(row.name))).map(row => row.name), indexes);
+      return schema.map(row => ({
+        ...row,
+        ...(row.type === 'table' ? { columns: db.prepare('SELECT * FROM pragma_table_info(?)').all(row.name) } : {}),
+        ...(row.type === 'index' ? { keys: db.prepare('SELECT * FROM pragma_index_xinfo(?)').all(row.name) } : {}),
+      }));
+    } finally { db.close(); }
+  };
   try {
-    const reference=join(root,'reference'),expected=inspect(reference);
-    for (const version of [1,2,3,4] as const) {
-      const database=join(root,`v${version}`),db=new DatabaseSync(database); initializeCanonicalSchema(db,123,version); db.close();
-      const app=await startRustServer({database,auth}); await app.close(); assert.deepEqual(inspect(database),expected,`Node v${version} upgraded by Rust`);
-    }
     const database=join(root,'rust-new'),app=await startRustServer({database,auth});
     try { const second=await startRustServer({database,auth}).then(async server => { await server.close(); return true; }, error => { assert.match(error.message,/Another canonical server is still running/); return false; }); assert.equal(second,false); }
     finally { await app.close(); }
-    assert.deepEqual(inspect(database),expected,'Rust schema reopened by Node');
-    const db=new DatabaseSync(database); db.prepare("INSERT INTO schema_migrations VALUES(5,'future','future',0)").run(); db.close();
-    await assert.rejects(startRustServer({database,auth}),/Database schema is newer than this server/);
+    const expected = inspect(database);
+    for (const version of [1, 2, 3, 4] as const) {
+      const upgrade = join(root, `v${version}`), db = new DatabaseSync(upgrade);
+      initializeCanonicalSchema(db, 123, version);
+      db.close();
+      const server = await startRustServer({ database: upgrade, auth });
+      await server.close();
+      assert.deepEqual(inspect(upgrade), expected, `Node v${version} upgraded by Rust`);
+    }
+    const reopened = await startRustServer({ database, auth });
+    await reopened.close();
+    assert.deepEqual(inspect(database), expected, 'Rust schema after restart');
+    const db = new DatabaseSync(database);
+    db.prepare("INSERT INTO schema_migrations VALUES(6,'future','future',0)").run();
+    db.close();
+    await assert.rejects(startRustServer({ database, auth }), /Database schema is newer than this server/);
+    const drift = new DatabaseSync(database);
+    drift.exec("DELETE FROM schema_migrations WHERE version=6; UPDATE schema_migrations SET checksum='bad' WHERE version=5");
+    drift.close();
+    await assert.rejects(startRustServer({ database, auth }), /Schema migration checksum mismatch/);
   } finally {rmSync(root,{recursive:true,force:true});}
 });
 

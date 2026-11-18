@@ -140,12 +140,18 @@ pub fn context(db: &Connection, kind: &str, id: &str) -> Result<Value> {
     one(db, sql, [id])?.ok_or_else(|| error(404, "Conversation not found."))
 }
 pub fn init(db: &Connection) -> crate::db::Result<()> {
-    init_mode(db, false)
+    init_schema(db, false)?;
+    db.execute_batch(include_str!("indexes.sql"))?;
+    recover(db)
 }
 pub fn init_canonical(db: &Connection) -> crate::db::Result<()> {
-    init_mode(db, true)
+    init_canonical_schema(db)?;
+    recover(db)
 }
-fn init_mode(db: &Connection, canonical: bool) -> crate::db::Result<()> {
+pub(crate) fn init_canonical_schema(db: &Connection) -> crate::db::Result<()> {
+    init_schema(db, true)
+}
+fn init_schema(db: &Connection, canonical: bool) -> crate::db::Result<()> {
     if canonical {
         db.execute_batch("CREATE TABLE IF NOT EXISTS shared_data(project TEXT NOT NULL REFERENCES projects(id),id INTEGER NOT NULL CHECK(id=1),revision INTEGER NOT NULL CHECK(revision>=0),image BLOB,PRIMARY KEY(project,id)) STRICT;")?;
     } else {
@@ -169,9 +175,11 @@ fn init_mode(db: &Connection, canonical: bool) -> crate::db::Result<()> {
             ))?;
         }
     }
-    writes::initialize(db)?;
-    git::writes::initialize(db)?;
     Ok(())
+}
+fn recover(db: &Connection) -> crate::db::Result<()> {
+    writes::initialize(db)?;
+    git::writes::initialize(db)
 }
 pub fn routes() -> Router<AppState> {
     Router::new()

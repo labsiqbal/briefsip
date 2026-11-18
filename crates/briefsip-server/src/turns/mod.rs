@@ -90,6 +90,7 @@ pub fn initialize_canonical(db: &Connection) -> Result<()> {
 
 pub fn initialize(db: &Connection) -> Result<()> {
     db.execute_batch(include_str!("schema.sql"))?;
+    db.execute_batch(include_str!("indexes.sql"))?;
     waits::initialize(db)?;
     db.execute_batch("UPDATE compaction_attempts SET status='interrupted' WHERE status='pending';UPDATE harness_approvals SET state='expired',revision=revision+1 WHERE state='approval';UPDATE transcriptions SET status='uncertain' WHERE status='pending';")?;
     db.execute("UPDATE turns SET status='interrupted',error='Server stopped during this turn. Check the result before resuming.',revision=revision+1 WHERE status='running'", [])?;
