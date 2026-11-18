@@ -14,7 +14,7 @@ import { ProtocolError } from './protocol.ts';
 import { fixPath } from './t3/path.ts';
 
 type Config = { testCanonicalBridge?: { origin: string; token: string; clerk: boolean; mail: boolean; webhook: boolean }; hubLink?: HubLinkOptions; composio?: { baseURL?: string; timeout?: number }; mailApiKey?: string; mailEndpoint?: string; scriptDirectory?: string; agentLimits?: unknown; imageProvider?: unknown; transcriptionProvider?: unknown; scriptToken?: string; installationId?: string; mailFrom?: string; mailOrigin?: string; testKeyring?: Record<string, string>; testKeyringLocked?: boolean; updates?: { releasesDir?: string; launcherSocket?: string }; desktop?: ConstructorParameters<typeof AgentDesktopManager>[0]; peerTokenIssuer?: PeerTokenIssuer; machines?: { now?: () => number; healthIntervalMs?: number }; baseURL?: string; apiKey?: string; defaultModel?: string; provider?: string; accounts?: unknown; timeout?: number; concurrency?: number; workspaces?: unknown; projectRoot?: string; harness?: { issuer?: AgentSessionIssuer; executables?: Partial<Record<import('./harness.ts').HarnessRuntime, string>>; mcpURL?: string }; stream?: boolean; streamTermination?: string; maxTokens?: number; database: string; port?: number; host?: string; tls?: { cert: string; key: string }; allowedOrigins?: string[]; dist?: string; auth?: { secretKey: string; publishableKey: string; issuer: string; origin: string; development?: boolean; audience?: string; jwtKey?: string; apiUrl?: string }; fixedClock?: number };
-export async function startRustServer(options: Config, attempt = 0): Promise<{ origin: string; close: () => Promise<void>; stderr: () => string; stdout: () => string; refreshMachines: () => Promise<void>; mcpServer: ReturnType<typeof rustMcpFacade>; hubLink?: ReturnType<typeof rustHubFacade> }> {
+export async function startRustServer(options: Config, attempt = 0): Promise<{ origin: string; close: () => Promise<void>; refreshMachines: () => Promise<void>; mcpServer: ReturnType<typeof rustMcpFacade>; hubLink?: ReturnType<typeof rustHubFacade> }> {
   await fixPath();
   if (options.concurrency !== undefined && (!Number.isSafeInteger(options.concurrency) || options.concurrency < 1 || options.concurrency > 32)) throw new Error('BRIEFSIP_CONCURRENCY must be 1..32');
   const supported = new Set(['testCanonicalBridge', 'hubLink', 'composio', 'mailApiKey', 'mailEndpoint', 'agentLimits', 'imageProvider', 'transcriptionProvider', 'scriptToken', 'scriptDirectory', 'installationId', 'mailFrom', 'mailOrigin', 'testKeyring', 'testKeyringLocked', 'updates', 'desktop', 'peerTokenIssuer', 'machines', 'database', 'port', 'host', 'tls', 'allowedOrigins', 'dist', 'auth', 'fixedClock', 'baseURL', 'apiKey', 'defaultModel', 'provider', 'accounts', 'timeout', 'concurrency', 'workspaces', 'projectRoot', 'harness', 'stream', 'streamTermination', 'maxTokens']);
@@ -49,7 +49,12 @@ export async function startRustServer(options: Config, attempt = 0): Promise<{ o
       void exited.then(() => { clearTimeout(timeout); reject(Object.assign(new Error(`Rust test server exited: ${stderr.trim()}`), /Address already in use/.test(stderr) ? { code: 'EADDRINUSE' } : {})); });
       child.stdout.on('data', value => { stdout = (stdout + value).slice(-8192); const match = /^Briefsip: (https?:\/\/[^\r\n]+)$/m.exec(stdout); if (match) { clearTimeout(timeout); ready(match[1]); } });
     });
-    return { origin, close, stderr: () => stderr, stdout: () => stdout, hubLink: options.hubLink ? rustHubFacade(resolve(options.database), origin, bridge.config.token) : undefined, mcpServer: rustMcpFacade(resolve(options.database)), refreshMachines: async () => { const response = await fetch(origin + '/api/machines', { headers: { 'X-Briefsip-Test-Refresh': bridge.config.token } }); if (!response.ok) throw new Error(await response.text()); } };
+    const readOutput = () => ({ stdout, stderr });
+    serverOutput.set(origin, readOutput);
+    void exited.then(() => {
+      if (serverOutput.get(origin) === readOutput) serverOutput.delete(origin);
+    });
+    return { origin, close, hubLink: options.hubLink ? rustHubFacade(resolve(options.database), origin, bridge.config.token) : undefined, mcpServer: rustMcpFacade(resolve(options.database)), refreshMachines: async () => { const response = await fetch(origin + '/api/machines', { headers: { 'X-Briefsip-Test-Refresh': bridge.config.token } }); if (!response.ok) throw new Error(await response.text()); } };
   } catch (error) {
     await close().catch(() => {});
     if (attempt < 20 && error instanceof Error && error.message.includes('Another canonical server is still running.')) {
@@ -59,4 +64,10 @@ export async function startRustServer(options: Config, attempt = 0): Promise<{ o
     if (error instanceof Error && error.message.includes('Another canonical server is still running.')) { throw new ProtocolError(409, 'canonical_server_busy', 'Another canonical server is still running.'); }
     throw error;
   }
+}
+
+const serverOutput = new Map<string, () => { stdout: string; stderr: string }>();
+
+export function rustServerOutput(origin: string) {
+  return serverOutput.get(origin)?.() ?? { stdout: '', stderr: '' };
 }

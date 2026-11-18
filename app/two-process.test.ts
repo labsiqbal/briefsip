@@ -13,6 +13,7 @@ import { startCanonicalApp } from './test-bridge.ts';
 import { openDeviceRuntime } from './device-runtime.ts';
 import type { ActionContext } from './executor-journal.ts';
 import { rustBinary } from './rust-binary.ts';
+import { rustServerOutput } from './rust-test-server.ts';
 import { canonicalJson, ProtocolError, digestCommand, sha256 } from './protocol.ts';
 import { onceCandidate } from './schedule-time.ts';
 import sharp from 'sharp';
@@ -453,7 +454,7 @@ async function fixture() {
     const response = await fetch(app.origin + path, { method, headers: { Authorization: `Bearer ${jwt(subject)}`, Origin: auth.origin, Connection: 'close', 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': body?.requestId ?? randomUUID() }, ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
   };
-  return { dir, jwt, send, webhookKeys, webhookFault, stderr: () => app.stderr(), stdout: () => app.stdout(), origin: () => app.origin, startAgain: (database=options.database,port=0) => startCanonicalApp({...options,database,port}), async restart() { const ready = ((await send('/api/devices')).body.data ?? []).filter((device:any)=>device.status==='ready').map((device:any)=>device.id); const port = new URL(app.origin).port; await app.close(); app = await startCanonicalApp({ ...options, port: Number(port) }); if(ready.length)await until(async()=>{const devices=(await send('/api/devices')).body.data;return ready.every((id:string)=>devices.some((device:any)=>device.id===id&&device.status==='ready'));}); }, async restoreFrom(backup:string){
+  return { dir, jwt, send, webhookKeys, webhookFault, stderr: () => rustServerOutput(app.origin).stderr, stdout: () => rustServerOutput(app.origin).stdout, origin: () => app.origin, startAgain: (database=options.database,port=0) => startCanonicalApp({...options,database,port}), async restart() { const ready = ((await send('/api/devices')).body.data ?? []).filter((device:any)=>device.status==='ready').map((device:any)=>device.id); const port = new URL(app.origin).port; await app.close(); app = await startCanonicalApp({ ...options, port: Number(port) }); if(ready.length)await until(async()=>{const devices=(await send('/api/devices')).body.data;return ready.every((id:string)=>devices.some((device:any)=>device.id===id&&device.status==='ready'));}); }, async restoreFrom(backup:string){
     const port=Number(new URL(app.origin).port);await app.close();renameSync(options.database,options.database+'.unavailable');
     const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
     const gate = JSON.parse(execFileSync(binary, ['--restore-read-only', backup, options.database], { encoding: 'utf8' }));
