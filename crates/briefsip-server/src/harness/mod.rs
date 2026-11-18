@@ -12,6 +12,7 @@ use crate::{
     AppState,
 };
 use axum::{extract::Request, http::Method, response::Response, routing::any, Router};
+use futures_util::future::join_all;
 use serde_json::{json, Value};
 use std::{
     os::unix::fs::PermissionsExt,
@@ -30,6 +31,8 @@ pub const RUNTIMES: [&str; 9] = [
     "gemini",
     "kiro",
 ];
+// Hermes can spend 20 seconds on each read and 15 on the protocol write.
+const CATALOG_TIMEOUT: Duration = Duration::from_secs(55);
 pub fn label(runtime: &str) -> &str {
     match runtime {
         "claude" => "Claude Code",
@@ -152,20 +155,25 @@ pub fn executable(state: &AppState, runtime: &str) -> Option<PathBuf> {
     }
     None
 }
-async fn availability(state: &AppState, runtime: &str) -> Value {
+async fn availability(state: &AppState, runtime: &str, deadline: tokio::time::Instant) -> Value {
     let missing = || json!({"runtime":runtime,"available":false,"version":null,"signedIn":null,"models":[],"reason":format!("{} is missing from PATH. Install it and sign in on this host.",label(runtime))});
     let Some(path) = executable(state, runtime) else {
         return missing();
     };
-    let version = process::probe(&path, &["--version"], runtime, &self::path(state))
-        .await
-        .map(|v| {
-            v.chars()
-                .map(|c| if c.is_ascii_control() { ' ' } else { c })
-                .collect::<String>()
-        })
-        .map(|v| v.trim().chars().take(160).collect::<String>())
-        .filter(|v| !v.is_empty());
+    let version = tokio::time::timeout_at(
+        deadline,
+        process::probe(&path, &["--version"], runtime, &self::path(state)),
+    )
+    .await
+    .ok()
+    .flatten()
+    .map(|v| {
+        v.chars()
+            .map(|c| if c.is_ascii_control() { ' ' } else { c })
+            .collect::<String>()
+    })
+    .map(|v| v.trim().chars().take(160).collect::<String>())
+    .filter(|v| !v.is_empty());
     let Some(version) = version else {
         let mut v = missing();
         v["reason"] = json!(
@@ -174,39 +182,48 @@ async fn availability(state: &AppState, runtime: &str) -> Value {
         return v;
     };
     if runtime == "antigravity"
-        && process::probe(&path, &["--help"], runtime, &self::path(state))
-            .await
-            .is_none_or(|v| !v.lines().any(|l| l.trim().starts_with("acp")))
+        && tokio::time::timeout_at(
+            deadline,
+            process::probe(&path, &["--help"], runtime, &self::path(state)),
+        )
+        .await
+        .ok()
+        .flatten()
+        .is_none_or(|v| !v.lines().any(|l| l.trim().starts_with("acp")))
     {
         return json!({"runtime":runtime,"available":false,"signedIn":null,"models":[],"version":version,"reason":"Installed Antigravity command has no ACP server. Install the standalone agy ACP CLI."});
     }
     let (available, signed, models) = if ["codex", "claude"].contains(&runtime) {
         (true, Value::Null, json!([]))
     } else {
-        protocol::probe(&path, runtime, &self::path(state))
-            .await
-            .unwrap_or((false, Value::Null, json!([])))
+        tokio::time::timeout_at(
+            deadline,
+            protocol::probe(&path, runtime, &self::path(state)),
+        )
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or((false, Value::Null, json!([])))
     };
     json!({"runtime":runtime,"available":available,"signedIn":signed,"models":models,"version":version,"reason":if available{Value::Null}else{json!("Installed command did not pass the harness protocol check. Check its ACP support and host login.")}})
 }
 pub async fn runtimes(state: &AppState) -> Value {
-    {
-        let cache = state.config.harness.cache.lock().await;
-        if let Some((at, value)) = &*cache {
-            if at.elapsed() < Duration::from_secs(30) {
-                return value.clone();
-            }
+    let mut cache = state.config.harness.cache.lock().await;
+    if let Some((at, value)) = &*cache {
+        if at.elapsed() < Duration::from_secs(30) {
+            return value.clone();
         }
     }
-    let mut choices = Vec::new();
-    for runtime in RUNTIMES {
-        let mut value = availability(state, runtime).await;
+    let deadline = tokio::time::Instant::now() + CATALOG_TIMEOUT;
+    let choices = join_all(RUNTIMES.into_iter().map(|runtime| async move {
+        let mut value = availability(state, runtime, deadline).await;
         value["label"] = json!(label(runtime));
         value["enabled"] = json!(true);
-        choices.push(value);
-    }
+        value
+    }))
+    .await;
     let value = json!({"defaultRuntime":if executable(state,"codex").is_some(){"codex"}else{"api"},"choices":choices});
-    *state.config.harness.cache.lock().await = Some((Instant::now(), value.clone()));
+    *cache = Some((Instant::now(), value.clone()));
     value
 }
 pub fn handles(path: &str, method: &Method) -> bool {

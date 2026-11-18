@@ -33,7 +33,10 @@ use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
-    sync::{atomic::Ordering, Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
 };
 use tokio::sync::{watch, Notify};
 
@@ -51,6 +54,8 @@ pub struct Runtime {
     active: Arc<Mutex<HashMap<String, Active>>>,
     pub(crate) media: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,
     wake: Arc<Notify>,
+    requested_pass: Arc<AtomicU64>,
+    scheduled: watch::Sender<u64>,
     client: reqwest::Client,
     stopping: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -60,6 +65,8 @@ impl Runtime {
             active: Default::default(),
             media: Default::default(),
             wake: Default::default(),
+            requested_pass: Default::default(),
+            scheduled: Default::default(),
             stopping: Default::default(),
             client: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
@@ -104,6 +111,13 @@ pub fn initialize(db: &Connection) -> Result<()> {
     initialize_canonical(db)?;
     transaction(db, || queue::expire(db))?;
     db.execute_batch(include_str!("indexes.sql"))?;
+    db.execute_batch(
+        "CREATE INDEX IF NOT EXISTS turns_released_routing ON turns(routing) WHERE status='queued' AND routing='released';
+         CREATE INDEX IF NOT EXISTS turns_waiting_parent ON turns(waiting_for) WHERE status='queued' AND waiting_for IS NOT NULL;
+         CREATE INDEX IF NOT EXISTS turns_queued_steer ON turns(dispatch_target) WHERE status='queued' AND dispatch_mode='steer';
+         CREATE INDEX IF NOT EXISTS room_unresolved_invitations ON room_invitations(root) WHERE resolved IS NULL;
+         CREATE INDEX IF NOT EXISTS room_messages_root ON room_messages(root);",
+    )?;
     waits::initialize(db)?;
     db.execute_batch("UPDATE compaction_attempts SET status='interrupted' WHERE status='pending';UPDATE harness_approvals SET state='expired',revision=revision+1 WHERE state='approval';UPDATE transcriptions SET status='uncertain' WHERE status='pending';")?;
     db.execute("UPDATE turns SET status='interrupted',error='Server stopped during this turn. Check the result before resuming.',revision=revision+1 WHERE status='running'", [])?;
@@ -141,11 +155,19 @@ pub fn stop(state: &AppState) -> Result<()> {
     Ok(())
 }
 
-pub fn start(state: AppState) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        if state.auth.is_some() {
+pub fn start(state: AppState) -> Result<tokio::task::JoinHandle<()>> {
+    let reader = if state.auth.is_none() {
+        Some(Connection::open_with_flags(
+            &state.config.database,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?)
+    } else {
+        None
+    };
+    Ok(tokio::spawn(async move {
+        let Some(reader) = reader else {
             return;
-        }
+        };
         let mut changes = state.events.subscribe();
         let mut timer = tokio::time::interval(std::time::Duration::from_secs(1));
         loop {
@@ -158,14 +180,19 @@ pub fn start(state: AppState) -> tokio::task::JoinHandle<()> {
                     }
                 }
             }
-            if let Err(error) = schedule(&state) {
-                eprintln!("Turn scheduling failed: {}", error.message);
+            let pass = state.turns.requested_pass.load(Ordering::Acquire);
+            while changes.try_recv().is_ok() {}
+            match schedule(&state, &reader) {
+                Ok(()) => {
+                    state.turns.scheduled.send_replace(pass);
+                }
+                Err(error) => eprintln!("Turn scheduling failed: {}", error.message),
             }
             tokio::select! { _ = changes.recv() => (), _ = state.turns.wake.notified() => (), _ = timer.tick() => () }
         }
-    })
+    }))
 }
-pub(crate) fn schedule(state: &AppState) -> Result<()> {
+fn maintain(state: &AppState) -> Result<()> {
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let db = &guard.connection;
     if pending(state) {
@@ -176,134 +203,239 @@ pub(crate) fn schedule(state: &AppState) -> Result<()> {
     waits::expire(db, state.config.now())?;
     messaging::settle(state, db)?;
     coordination::settle(db)?;
-    room::settle(db)?;
-    for steer in all(db,"SELECT DISTINCT dispatch_target FROM turns WHERE dispatch_mode='steer' AND status='queued' AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.id=turns.dispatch_target AND t.status='running')",[])? {
-        db.execute("UPDATE turns SET dispatch_mode='queue',dispatch_target=NULL,dispatch_label='Queued after active turn',revision=revision+1 WHERE dispatch_mode='steer' AND dispatch_target=? AND status='queued'",[string(&steer,"dispatch_target")])?;
-    }
-    for approval in all(db,"SELECT id FROM harness_approvals WHERE state='approval' AND turn IN (SELECT id FROM turns WHERE status<>'running')",[])? {
-        db.execute("UPDATE harness_approvals SET state='expired',revision=revision+1 WHERE id=?",[string(&approval,"id")])?;
-    }
-    let mut active = state.turns.active.lock().map_err(|_| Failure::storage())?;
-    for (id, cancel) in active.iter() {
-        if !exists(
-            db,
-            "SELECT 1 FROM turns WHERE id=? AND status IN('queued','running') AND (paused=0 OR EXISTS(SELECT 1 FROM composio_calls WHERE turn=turns.id AND state='approval'))",
-            [id],
-        )? {
-            cancel.cancel.send_replace(true);
-        }
-    }
-    if pending(state) {
-        return Ok(());
-    }
-    let capacity = state
+    Ok(())
+}
+
+fn capacity(state: &AppState) -> usize {
+    state
         .config
         .data
         .concurrency
         .as_ref()
         .and_then(Value::as_u64)
-        .unwrap_or(4) as usize;
-    let queued = all(db, "SELECT t.*,a.thread_limit FROM turns t JOIN agents a ON a.id=t.agent WHERE t.status='queued' AND t.paused=0 AND t.waiting_for IS NULL AND NOT EXISTS(SELECT 1 FROM turn_waits w WHERE w.turn=t.id AND w.status='waiting') AND NOT EXISTS(SELECT 1 FROM questions q WHERE q.turn=t.id AND q.answer IS NULL) AND NOT EXISTS(SELECT 1 FROM remote_agent_calls WHERE delivery=t.id) AND NOT EXISTS(SELECT 1 FROM agent_requests r WHERE r.turn=t.id AND r.expects_reply=1 AND r.settled=0 AND NOT EXISTS(SELECT 1 FROM delegation_tasks d WHERE d.request=r.id)) AND NOT EXISTS(SELECT 1 FROM delegation_waits w WHERE w.turn=t.id AND w.status='waiting') AND NOT EXISTS(SELECT 1 FROM delegation_tasks d WHERE d.creator_turn=t.id AND d.wait=1 AND d.wake_delivered=0) AND t.dispatch_mode<>'steer' AND coalesce(t.routing,'')<>'released' AND NOT EXISTS(SELECT 1 FROM agent_visibility v WHERE v.agent=t.agent AND v.hidden=1) AND NOT EXISTS(SELECT 1 FROM queue_edits e JOIN turns h ON h.id=e.turn WHERE e.state='held' AND e.expires_at>unixepoch('subsec')*1000 AND h.agent=t.agent AND h.thread IS t.thread AND coalesce((SELECT position FROM queue_positions WHERE turn=h.id),h.seq)<=coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)) ORDER BY coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)", [])?;
-    for row in queued {
-        if active.len() >= capacity {
-            break;
+        .unwrap_or(4) as usize
+}
+
+fn schedule(state: &AppState, reader: &Connection) -> Result<()> {
+    maintain(state)?;
+    if pending(state) {
+        return Ok(());
+    }
+    for root in room::settlements(reader)? {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        if pending(state) {
+            return Ok(());
         }
-        let id = string(&row, "id");
-        if active.contains_key(id) {
-            continue;
+        room::settle_root(&guard.connection, &root)?;
+    }
+    let capacity = capacity(state);
+    let reserved = {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        let db = &guard.connection;
+        if pending(state) {
+            return Ok(());
         }
-        if !room::can_run(db, id)? {
-            continue;
+        for steer in all(db,"SELECT DISTINCT dispatch_target FROM turns WHERE dispatch_mode='steer' AND status='queued' AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.id=turns.dispatch_target AND t.status='running')",[])? {
+            db.execute("UPDATE turns SET dispatch_mode='queue',dispatch_target=NULL,dispatch_label='Queued after active turn',revision=revision+1 WHERE dispatch_mode='steer' AND dispatch_target=? AND status='queued'",[string(&steer,"dispatch_target")])?;
         }
-        let agent = string(&row, "agent");
-        let reserved = json!(active.keys().collect::<Vec<_>>()).to_string();
-        if exists(
-            db,
-            "SELECT 1 FROM turns WHERE agent=? AND thread IS ? AND(status='running' OR id IN(SELECT value FROM json_each(?)))",
-            params![agent, row["thread"].as_str(), reserved],
-        )? {
-            continue;
+        for approval in all(db,"SELECT id FROM harness_approvals WHERE state='approval' AND EXISTS(SELECT 1 FROM turns WHERE id=harness_approvals.turn AND status<>'running')",[])? {
+            db.execute("UPDATE harness_approvals SET state='expired',revision=revision+1 WHERE id=?",[string(&approval,"id")])?;
         }
-        if !row["thread"].is_null() {
-            let count:i64 = db.query_row("SELECT count(*) FROM turns WHERE agent=? AND thread IS NOT NULL AND(status='running' OR id IN(SELECT value FROM json_each(?)))", params![agent,reserved], |r|r.get(0))?;
-            if count >= row["thread_limit"].as_i64().unwrap_or(2) {
-                continue;
-            }
-        }
-        if !transaction(db, || {
-            room::admit(db, id)?;
-            exists(
+        let active = state.turns.active.lock().map_err(|_| Failure::storage())?;
+        for (id, cancel) in active.iter() {
+            if !exists(
                 db,
-                "SELECT 1 FROM turns WHERE id=? AND status='queued' AND paused=0",
+                "SELECT 1 FROM turns WHERE id=? AND status IN('queued','running') AND (paused=0 OR EXISTS(SELECT 1 FROM composio_calls WHERE turn=turns.id AND state='approval'))",
                 [id],
-            )
-        })? {
-            continue;
+            )? {
+                cancel.cancel.send_replace(true);
+            }
         }
-        let (cancel, mut receiver) = watch::channel(false);
-        let (started, _) = watch::channel(false);
-        active.insert(
-            id.to_owned(),
-            Active {
-                cancel,
-                started: started.clone(),
-            },
-        );
-        let task_state = state.clone();
-        let id = id.to_owned();
-        tokio::spawn(async move {
-            let result = tokio::select! { result=execution::run(&task_state,&id) => result, _=receiver.changed()=>Err(error(409,"Turn stopped.")) };
-            if let Err(failure) = result {
-                if let Ok(db) = task_state.database.lock() {
-                    if failure.message == "Turn stopped."
-                        && exists(
-                            &db.connection,
-                            "SELECT 1 FROM computer_waits WHERE turn=?",
-                            [&id],
-                        )
-                        .unwrap_or(false)
-                    {
-                        if let Ok(mut active) = task_state.turns.active.lock() {
-                            active.remove(&id);
-                        }
-                        task_state.turns.wake.notify_one();
-                        return;
-                    }
-                    let status = if task_state.turns.stopping.load(Ordering::Acquire) {
-                        "interrupted"
-                    } else {
-                        "failed"
-                    };
-                    let _=db.connection.execute("UPDATE turns SET status=?,error=?,stopped_at=? WHERE id=? AND status IN('queued','running') AND paused=0 AND(status='running' OR ?='failed')",params![status,failure.message,iso(&db.connection,task_state.config.now()).ok(),id,status]);
-                    let _=db.connection.execute("UPDATE provider_calls SET status=?,finished=? WHERE turn=? AND status='pending'",params![status,iso(&db.connection,task_state.config.now()).ok(),id]);
-                }
-            }
-            if let Ok(mut active) = task_state.turns.active.lock() {
-                active.remove(&id);
-            }
-            task_state.turns.wake.notify_one();
-        });
+        if active.len() >= capacity {
+            return Ok(());
+        }
+        active.keys().cloned().collect::<Vec<_>>()
+    };
+
+    // WAL lets queue traversal run while requests write. Recheck before reserving from that view.
+    let version = data_version(reader)?;
+    let snapshot = reader.unchecked_transaction()?;
+    let selection = select(&snapshot, &reserved, capacity)?;
+    snapshot.commit()?;
+    if selection.is_empty() || pending(state) {
+        return Ok(());
+    }
+    let guard = state.database.lock().map_err(|_| Failure::storage())?;
+    let mut active = state.turns.active.lock().map_err(|_| Failure::storage())?;
+    let selection = transaction(&guard.connection, || {
+        if pending(state) {
+            return Ok(Vec::new());
+        }
+        let unchanged = data_version(reader)? == version
+            && active.len() == reserved.len()
+            && reserved.iter().all(|id| active.contains_key(id));
+        // Running turns write often, so a stale snapshot is selected again under the lock
+        // instead of retried; every pass admits from a consistent view.
+        let selection = if unchanged {
+            selection
+        } else {
+            let current = active.keys().cloned().collect::<Vec<_>>();
+            select(&guard.connection, &current, capacity)?
+        };
+        for id in &selection {
+            room::admit(&guard.connection, id)?;
+        }
+        Ok(selection)
+    })?;
+    for id in selection {
+        run_reserved(state, &mut active, id);
     }
     Ok(())
 }
 
-pub(crate) async fn start_queued(state: &AppState, id: &str) -> Result<()> {
-    schedule(state)?;
-    let started = state
-        .turns
-        .active
-        .lock()
-        .map_err(|_| Failure::storage())?
-        .get(id)
-        .map(|active| active.started.subscribe());
-    if let Some(mut started) = started {
-        if !*started.borrow_and_update() {
-            // ponytail: handoff waits one second; slower startup needs a separate admission receipt.
-            let _ =
-                tokio::time::timeout(std::time::Duration::from_secs(1), started.changed()).await;
+fn data_version(db: &Connection) -> Result<i64> {
+    Ok(db.query_row("PRAGMA data_version", [], |row| row.get(0))?)
+}
+
+fn select(db: &Connection, reserved: &[String], capacity: usize) -> Result<Vec<String>> {
+    let mut reserved = reserved.to_vec();
+    let mut selected = Vec::new();
+    let queued = all(db, "SELECT t.id,t.agent,t.thread,t.channel,a.thread_limit FROM turns t JOIN agents a ON a.id=t.agent WHERE t.status='queued' AND t.paused=0 AND t.waiting_for IS NULL AND NOT EXISTS(SELECT 1 FROM turn_waits w WHERE w.turn=t.id AND w.status='waiting') AND NOT EXISTS(SELECT 1 FROM questions q WHERE q.turn=t.id AND q.answer IS NULL) AND NOT EXISTS(SELECT 1 FROM remote_agent_calls WHERE delivery=t.id) AND NOT EXISTS(SELECT 1 FROM agent_requests r WHERE r.turn=t.id AND r.expects_reply=1 AND r.settled=0 AND NOT EXISTS(SELECT 1 FROM delegation_tasks d WHERE d.request=r.id)) AND NOT EXISTS(SELECT 1 FROM delegation_waits w WHERE w.turn=t.id AND w.status='waiting') AND NOT EXISTS(SELECT 1 FROM delegation_tasks d WHERE d.creator_turn=t.id AND d.wait=1 AND d.wake_delivered=0) AND t.dispatch_mode<>'steer' AND coalesce(t.routing,'')<>'released' AND NOT EXISTS(SELECT 1 FROM agent_visibility v WHERE v.agent=t.agent AND v.hidden=1) AND NOT EXISTS(SELECT 1 FROM queue_edits e JOIN turns h ON h.id=e.turn WHERE e.state='held' AND e.expires_at>unixepoch('subsec')*1000 AND h.agent=t.agent AND h.thread IS t.thread AND coalesce((SELECT position FROM queue_positions WHERE turn=h.id),h.seq)<=coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)) ORDER BY coalesce((SELECT position FROM queue_positions WHERE turn=t.id),t.seq)", [])?;
+    let mut room_heads = HashMap::new();
+    for row in queued {
+        if reserved.len() >= capacity {
+            break;
         }
+        let id = string(&row, "id");
+        if reserved.iter().any(|reserved| reserved == id) {
+            continue;
+        }
+        if !room::can_run(db, id, row["channel"].as_str(), &mut room_heads)? {
+            continue;
+        }
+        let agent = string(&row, "agent");
+        let unavailable = json!(reserved).to_string();
+        if exists(
+            db,
+            "SELECT 1 FROM turns WHERE agent=? AND thread IS ? AND(status='running' OR id IN(SELECT value FROM json_each(?)))",
+            params![agent, row["thread"].as_str(), unavailable],
+        )? {
+            continue;
+        }
+        if !row["thread"].is_null() {
+            let count:i64 = db.query_row("SELECT count(*) FROM turns WHERE agent=? AND thread IS NOT NULL AND(status='running' OR id IN(SELECT value FROM json_each(?)))", params![agent,unavailable], |r|r.get(0))?;
+            if count >= row["thread_limit"].as_i64().unwrap_or(2) {
+                continue;
+            }
+        }
+        reserved.push(id.to_owned());
+        selected.push(id.to_owned());
+    }
+    Ok(selected)
+}
+
+fn run_reserved(state: &AppState, active: &mut HashMap<String, Active>, id: String) {
+    let (cancel, mut receiver) = watch::channel(false);
+    let (started, _) = watch::channel(false);
+    active.insert(id.clone(), Active { cancel, started });
+    let task_state = state.clone();
+    tokio::spawn(async move {
+        let result = tokio::select! { result=execution::run(&task_state,&id) => result, _=receiver.changed()=>Err(error(409,"Turn stopped.")) };
+        if let Err(failure) = result {
+            if let Ok(db) = task_state.database.lock() {
+                if failure.message == "Turn stopped."
+                    && exists(
+                        &db.connection,
+                        "SELECT 1 FROM computer_waits WHERE turn=?",
+                        [&id],
+                    )
+                    .unwrap_or(false)
+                {
+                    if let Ok(mut active) = task_state.turns.active.lock() {
+                        active.remove(&id);
+                    }
+                    task_state.turns.wake.notify_one();
+                    return;
+                }
+                let status = if task_state.turns.stopping.load(Ordering::Acquire) {
+                    "interrupted"
+                } else {
+                    "failed"
+                };
+                let _=db.connection.execute("UPDATE turns SET status=?,error=?,stopped_at=? WHERE id=? AND status IN('queued','running') AND paused=0 AND(status='running' OR ?='failed')",params![status,failure.message,iso(&db.connection,task_state.config.now()).ok(),id,status]);
+                let _=db.connection.execute("UPDATE provider_calls SET status=?,finished=? WHERE turn=? AND status='pending'",params![status,iso(&db.connection,task_state.config.now()).ok(),id]);
+            }
+        }
+        if let Ok(mut active) = task_state.turns.active.lock() {
+            active.remove(&id);
+        }
+        task_state.turns.wake.notify_one();
+    });
+}
+
+pub(crate) async fn start_queued(state: &AppState, id: &str) -> Result<()> {
+    let mut scheduled = state.turns.scheduled.subscribe();
+    let pass = state.turns.requested_pass.fetch_add(1, Ordering::AcqRel) + 1;
+    state.turns.wake.notify_one();
+    let initial = {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        let active = state.turns.active.lock().map_err(|_| Failure::storage())?;
+        let started = active.get(id).map(|turn| turn.started.subscribe());
+        if started.is_none()
+            && (pending(state)
+                || active.len() >= capacity(state)
+                || !handoff_possible(&guard.connection, id, &active)?)
+        {
+            return Ok(());
+        }
+        started
+    };
+
+    // Wait for an eligible turn's existing one-second provider handoff.
+    if let Ok(result) = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        let started = if initial.is_some() {
+            initial
+        } else {
+            let _ = scheduled.wait_for(|completed| *completed >= pass).await;
+            state
+                .turns
+                .active
+                .lock()
+                .map_err(|_| Failure::storage())?
+                .get(id)
+                .map(|turn| turn.started.subscribe())
+        };
+        if let Some(mut started) = started {
+            if !*started.borrow_and_update() {
+                let _ = started.changed().await;
+            }
+        }
+        Ok::<_, Failure>(())
+    })
+    .await
+    {
+        result?;
     }
     Ok(())
+}
+
+fn handoff_possible(db: &Connection, id: &str, active: &HashMap<String, Active>) -> Result<bool> {
+    let reserved = json!(active.keys().collect::<Vec<_>>()).to_string();
+    exists(
+        db,
+        "SELECT 1 FROM turns t
+        WHERE t.id=? AND t.status='queued' AND t.paused=0
+        AND NOT EXISTS(
+            SELECT 1 FROM json_each(?) slot JOIN turns running ON running.id=slot.value
+            WHERE (running.agent=t.agent AND running.thread IS t.thread)
+               OR (t.routing='room' AND running.channel=t.channel AND running.status='running'
+                   AND running.dispatch_mode<>'steer'
+                   AND (EXISTS(SELECT 1 FROM room_turns WHERE turn=running.id)
+                        OR EXISTS(SELECT 1 FROM room_dispatches WHERE turn=running.id))
+                   AND NOT EXISTS(SELECT 1 FROM agent_deliveries WHERE turn=running.id))
+        )",
+        params![id, reserved],
+    )
 }
 
 pub(crate) fn refresh_routing(db: &Connection) -> Result<()> {
@@ -442,7 +574,6 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
             }
         }
     }
-    state.turns.wake.notify_one();
     if method == Method::POST {
         start_queued(state, string(&v, "id")).await?;
     }
