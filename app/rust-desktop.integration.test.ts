@@ -85,6 +85,8 @@ test('Linux sandbox: public fixture, input, file isolation, loopback denial, SIG
     const launch = desktopProcesses(profile).find(row => row.args[0] === '/usr/bin/bwrap' && row.args.includes('--unshare-net'));
     assert(launch, 'Rust manager must launch Bubblewrap with the private profile and network namespace');
     const command = launch.args.indexOf('--') + 1;
+    assert.deepEqual(launch.args.slice(command), ['/briefsip-server', '--desktop-supervisor', '/run/briefsip/proxy.sock']);
+    assert(desktopProcesses(profile).some(row => row.args[0] === '/briefsip-server' && row.args[1] === '--desktop-supervisor'));
     const hiddenPaths = [marker, process.env.HOME!, dir, resolve('..'), `/run/user/${process.getuid!()}`];
     const inspect = 'for path do if test -e "$path"; then printf "Host path visible: %s\\n" "$path" >&2; exit 1; fi; done; printf "Host paths absent\\n"';
     const sandbox = await promisify(execFile)('/usr/bin/bwrap', [...launch.args.slice(1, command), '/usr/bin/sh', '-c', inspect, 'check-mounts', ...hiddenPaths], { env: { PATH: '/usr/bin:/bin', HOME: '/home/desktop' }, timeout: 5000 });
@@ -132,9 +134,14 @@ test('Linux sandbox: public fixture, input, file isolation, loopback denial, SIG
     await new Promise(resolve => setTimeout(resolve, 400));
     assert.equal(blockedHits, 0);
     const original = desktopProcesses(profile);
-    const chrome = original.find(row => row.args.includes('--user-data-dir=/home/desktop/chrome') && !row.args.some(arg => arg.startsWith('--type=')));
+    // Chrome rewrites /proc cmdline to a single space-separated process title.
+    const chrome = original.map(row => row.args.join(' ')).find(args => args.includes('--user-data-dir=/home/desktop/chrome') && !args.includes('--type='));
     assert(chrome);
-    if (!chrome.args.includes('--no-sandbox')) assert(original.some(row => row.args.includes('--type=renderer') && /^Seccomp:\s+2$/m.test(readFileSync(`/proc/${row.pid}/status`, 'utf8'))));
+    if (!chrome.includes('--no-sandbox')) assert(original.some(row => {
+      try {
+        return row.args.join(' ').includes('--type=renderer') && /^Seccomp:\s+2$/m.test(readFileSync(`/proc/${row.pid}/status`, 'utf8'));
+      } catch { return false; }
+    }));
     const returned = await post(path + '/control', { id: randomUUID(), revision: take.control.revision, operation: 'hand-back' });
     assert.equal(returned.control.mode, 'agent');
     await post(path + '/input', { revision: take.control.revision, name: 'computer_click', args: { x: 1, y: 1 } }, 409);
@@ -143,7 +150,7 @@ test('Linux sandbox: public fixture, input, file isolation, loopback denial, SIG
     app = await startApp(options);
     await post(path + '/start', {});
     assert((await fetch(app.origin + path + '/screenshot')).ok);
-    await post(path + '/stop', {});
+    assert.equal((await post(path + '/stop', {})).state, 'off');
     await until(() => !desktopProcesses(profile).length);
     console.log(JSON.stringify({ network, clicked, typed: typed.has('Briefsip desktop works via VNC'), filesystemHidden: true, crashCleanup: true, staleLeaseRecovery: true }));
   } finally {

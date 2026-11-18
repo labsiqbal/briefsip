@@ -547,6 +547,20 @@ mod tests {
         assert_eq!(fs::read(&path)?, bytes);
         assert_eq!(fs::metadata(&path)?.mode() & 0o777, 0o600);
         assert!(restore(&root, &args).is_err());
+        for (key, value) in [
+            ("path", json!("../outside")),
+            ("recoveryPath", json!("nested/restored")),
+            ("digest", json!("0".repeat(64))),
+            ("extra", json!(true)),
+        ] {
+            let mut invalid = args.clone();
+            invalid[key] = value;
+            assert!(restore(&root, &invalid).is_err());
+        }
+        std::os::unix::fs::symlink(&path, root.join("nested/link"))?;
+        let mut linked = args.clone();
+        linked["path"] = json!("nested/link");
+        assert!(restore(&root, &linked).is_err());
         let mut raced = args.clone();
         raced["path"] = json!("raced");
         set_fault("race-publication");

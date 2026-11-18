@@ -132,7 +132,19 @@ async fn desktop_mounts_and_preferences_stay_private() -> TestResult<()> {
     assert!(!scratch.0.join("launches").exists());
     fs::remove_file(defaults.join("Preferences"))?;
     check(manager.start(FIRST, 0).await)?;
-    let args = sandbox(&profile, &manager.proxy_path);
+    let executable = std::env::current_exe()?;
+    let args = sandbox(&profile, &manager.proxy_path, &executable);
+    assert!(args.windows(3).any(|mount| mount[0] == "--ro-bind"
+        && Path::new(&mount[1]) == executable
+        && mount[2] == "/briefsip-server"));
+    assert_eq!(
+        &args[args.len() - 3..],
+        [
+            "/briefsip-server",
+            "--desktop-supervisor",
+            "/run/briefsip/proxy.sock"
+        ]
+    );
     let sources = args
         .windows(2)
         .filter(|a| matches!(a[0].as_str(), "--bind" | "--ro-bind"))
@@ -150,7 +162,7 @@ async fn desktop_mounts_and_preferences_stay_private() -> TestResult<()> {
             agent.join("x11"),
             agent.join("x11"),
             manager.proxy_path.clone(),
-            agent.join("supervisor.mjs")
+            executable
         ]
     );
     for flag in [

@@ -48,7 +48,8 @@ fn birth(pid: u32) -> Option<String> {
     let s = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     s.rsplit_once(") ")?.1.split(' ').nth(19).map(str::to_owned)
 }
-pub fn sandbox(profile: &Path, proxy: &Path) -> Vec<String> {
+pub fn sandbox(profile: &Path, proxy: &Path, executable: &Path) -> Vec<String> {
+    use super::desktop_supervisor::{BINARY, PROXY};
     let dir = profile.parent().unwrap_or(profile);
     let mut a = [
         "--die-with-parent",
@@ -100,8 +101,8 @@ pub fn sandbox(profile: &Path, proxy: &Path) -> Vec<String> {
     for (flag, from, to) in [
         ("--bind", dir.join("x11"), "/run/briefsip"),
         ("--bind", dir.join("x11"), "/tmp/.X11-unix"),
-        ("--ro-bind", proxy.to_owned(), "/run/briefsip/proxy.sock"),
-        ("--ro-bind", dir.join("supervisor.mjs"), "/desktop-host.mjs"),
+        ("--ro-bind", proxy.to_owned(), PROXY),
+        ("--ro-bind", executable.to_owned(), BINARY),
     ] {
         a.extend([flag.into(), from.to_string_lossy().into(), to.into()]);
     }
@@ -110,9 +111,9 @@ pub fn sandbox(profile: &Path, proxy: &Path) -> Vec<String> {
             "--chdir",
             "/home/desktop",
             "--",
-            "/usr/bin/node",
-            "/desktop-host.mjs",
-            "/run/briefsip/proxy.sock",
+            BINARY,
+            "--desktop-supervisor",
+            PROXY,
         ]
         .map(str::to_owned),
     );
@@ -393,17 +394,6 @@ impl Manager {
         ] {
             directory(p)?;
         }
-        let host = dir.join("supervisor.mjs");
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .custom_flags(0o400000)
-            .open(host)
-            .map_err(|_| error(503, "Desktop file is unavailable or unsafe."))?;
-        file.write_all(include_bytes!("../../../../app/agent-desktop-host.mjs"))
-            .map_err(|_| Failure::storage())?;
         let preferences = profile.join("Default/Preferences");
         let mut v: Value = if fs::symlink_metadata(&preferences).is_ok() {
             serde_json::from_slice(&safe_read(&preferences)?)
@@ -479,6 +469,8 @@ impl Manager {
             }
             return Ok(d);
         }
+        let executable = std::env::current_exe()
+            .map_err(|_| error(503, "Desktop supervisor is unavailable."))?;
         let display = self.reserve(agent)?;
         let profile = match self.prepare(agent, display) {
             Ok(v) => v,
@@ -492,7 +484,7 @@ impl Manager {
         let launcher = self.launcher.as_deref().unwrap_or(launcher);
         let mut command = Command::new(launcher);
         command
-            .args(sandbox(&profile, &self.proxy_path))
+            .args(sandbox(&profile, &self.proxy_path, &executable))
             .env_clear()
             .envs(environment)
             .envs([

@@ -1292,6 +1292,13 @@ mod tests {
             ..binding.clone()
         };
         assert!(capture(&state, &readonly, &turn).await.is_err());
+        for name in ["git_commit", "git_create_branch", "git_create_worktree"] {
+            let value = json!({"name":"denied","message":"Denied"});
+            let call = json!({"id":name,"function":{"name":name,"arguments":value.to_string()}});
+            assert!(execute(&state, &readonly, &turn, &call, &value, 0)
+                .await
+                .is_err_and(|error| error.message.contains("write permission")));
+        }
         io(fs::write(workspace.join("other"), "staged\n"))?;
         command(&workspace, &args(&["add", "--", "other"]), &[], &[]).await?;
         let initial_head = output(&workspace, &["rev-parse", "HEAD"], &[]).await?;
@@ -1412,12 +1419,18 @@ mod tests {
             execute(&state, &binding, &turn, &call, &value, 0).await?["created"],
             true
         );
-        let value = json!({"name":"-bad"});
-        let call = json!({"id":"bad-branch","function":{"name":"git_create_branch","arguments":value.to_string()}});
-        assert_eq!(
-            execute(&state, &binding, &turn, &call, &value, 0).await?["uncertain"],
-            true
-        );
+        for name in ["-force", "../escape", "x..y", "a@{b", "x.lock", "/absolute"] {
+            let value = json!({"name":name});
+            let call = json!({"id":format!("bad-branch-{name}"),"function":{"name":"git_create_branch","arguments":value.to_string()}});
+            assert_eq!(
+                execute(&state, &binding, &turn, &call, &value, 0).await?["uncertain"],
+                true
+            );
+        }
+        let repo = repository(&binding, true).await?;
+        assert!(worktree(&repo, &workspace, "denied")
+            .await
+            .is_err_and(|error| error.message.contains("Host approval")));
         io(std::os::unix::fs::symlink(
             "/etc/passwd",
             workspace.join("link"),
