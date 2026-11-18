@@ -281,3 +281,61 @@ fn content(v: &Value, token: &str) -> Result<(Value, Vec<File>)> {
         files,
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_preserves_bounded_files_and_never_resolves_resource_uris() -> Result<()> {
+        let bytes = [0, 255, 128];
+        let encoded = STANDARD.encode(bytes);
+        let (result, files) = content(
+            &json!({"content":[
+                {"type":"resource","resource":{"uri":"fixture://binary","blob":encoded}},
+                {"type":"audio","mimeType":"audio/wav","data":encoded},
+                {"type":"resource","resource":{"uri":"fixture://text","text":"untrusted"}},
+                {"type":"resource_link","uri":"https://example.test/file","name":"link"}
+            ]}),
+            "secret",
+        )?;
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].1, bytes);
+        assert_eq!(files[0].2, "mcp-1.bin");
+        assert_eq!(files[0].4.as_deref(), Some("fixture://binary"));
+        assert_eq!(files[1].2, "mcp-2.wav");
+        assert_eq!(result["omitted"], 1);
+        let resource: Value = serde_json::from_str(result["content"][0]["text"].as_str().unwrap())
+            .map_err(|_| Failure::storage())?;
+        assert_eq!(resource["text"], "untrusted");
+        for data in [
+            "not base64".into(),
+            "AB==".into(),
+            "AA".into(),
+            STANDARD.encode(vec![0; 128001]),
+        ] {
+            assert!(content(
+                &json!({"content":[{"type":"image","mimeType":"image/png","data":data}]}),
+                ""
+            )
+            .is_err());
+        }
+        for secret in [
+            b"secret".to_vec(),
+            "secret".encode_utf16().flat_map(u16::to_le_bytes).collect(),
+            STANDARD.encode("secret").into_bytes(),
+        ] {
+            assert!(content(&json!({"content":[{"type":"resource","resource":{"uri":"fixture://private","blob":STANDARD.encode(secret)}}]}), "secret").is_err());
+        }
+        let image = json!({"type":"image","mimeType":"image/png","data":encoded});
+        assert!(content(&json!({"content":vec![image; 9]}), "").is_err());
+        for mime in ["__proto__", "constructor", "toString"] {
+            let (_, files) = content(
+                &json!({"content":[{"type":"image","mimeType":mime,"data":encoded}]}),
+                "",
+            )?;
+            assert_eq!(files[0].2, "mcp-1.bin");
+        }
+        Ok(())
+    }
+}

@@ -470,3 +470,49 @@ pub fn remove(db: &Connection, agent: &str) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn room_speaker_migration_preserves_rows_schema_and_sequence() -> crate::db::Result<()> {
+        let db = Connection::open_in_memory()?;
+        db.execute_batch(
+            "PRAGMA foreign_keys=ON;
+             CREATE TABLE agents(id TEXT PRIMARY KEY);
+             INSERT INTO agents VALUES ('a');
+             CREATE TABLE turns(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE,
+                 agent TEXT NOT NULL REFERENCES agents(id),text TEXT,parent TEXT REFERENCES turns(id));
+             INSERT INTO turns VALUES (1,'kept','a','original',NULL),(2,'child','a','child','kept'),
+                 (99,'removed','a','high-water',NULL);
+             DELETE FROM turns WHERE seq=99;
+             CREATE INDEX turn_text ON turns(text);
+             CREATE TABLE children(turn TEXT REFERENCES turns(id));
+             INSERT INTO children VALUES ('kept');
+             CREATE TABLE audit(text TEXT);
+             CREATE TRIGGER turn_audit AFTER INSERT ON turns BEGIN INSERT INTO audit VALUES (NEW.text);END;",
+        )?;
+        initialize(&db)?;
+        initialize(&db)?;
+        let text = |sql| db.query_row(sql, [], |row| row.get::<_, String>(0));
+        assert_eq!(text("SELECT text FROM turns WHERE id='kept'")?, "original");
+        assert_eq!(text("SELECT parent FROM turns WHERE id='child'")?, "kept");
+        db.execute_batch(
+            "UPDATE turns SET agent=NULL WHERE id='kept';
+             INSERT INTO turns(id,agent,text) VALUES ('new','a','triggered');",
+        )?;
+        assert_eq!(
+            db.query_row("SELECT seq FROM turns WHERE id='new'", [], |row| row
+                .get::<_, i64>(0))?,
+            100
+        );
+        assert_eq!(text("SELECT text FROM audit")?, "triggered");
+        assert_eq!(
+            text("SELECT name FROM sqlite_schema WHERE name='turn_text'")?,
+            "turn_text"
+        );
+        assert!(!db.prepare("PRAGMA foreign_key_check")?.exists([])?);
+        Ok(())
+    }
+}

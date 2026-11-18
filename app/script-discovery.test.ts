@@ -2,11 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
-import { scriptDiscovery } from './script-discovery.ts';
 
 test('duplicate discovery startup cannot interrupt the owning server task', async () => {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-discovery-owner-'));
@@ -72,7 +71,7 @@ test('private script discovery follows live grants, rotates on restart and prese
     const second = read(); assert.notEqual(second.token, first.token); assert.equal(second.url, app.origin);
     const stale = await fetch(app.origin + `/api/scripts/agents/${a.id}/provider`, { headers: { Authorization: `Bearer ${first.token}` } });
     assert.equal(stale.status, 403); await stale.arrayBuffer();
-    assert.throws(() => scriptDiscovery(directory, 'http://127.0.0.1:1', 'other'));
+    await assert.rejects(startApp({ ...options, database: join(root, 'competing.sqlite') }));
     assert.deepEqual(read(), second);
     await app.close();
     closed = true;
@@ -84,21 +83,28 @@ test('private script discovery follows live grants, rotates on restart and prese
   } finally { if (!closed) await app.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
-test('discovery rejects unsafe directories and symlink destinations without changing targets', () => {
+test('discovery rejects unsafe directories and symlink destinations without changing targets', async () => {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-discovery-boundary-'));
+  const database = join(root, 'db.sqlite');
+  const start = (scriptDirectory: string) => startApp({ database, scriptDirectory });
   try {
-    const unsafe = join(root, 'unsafe'); mkdirSync(unsafe); chmodSync(unsafe, 0o755);
-    assert.throws(() => scriptDiscovery(unsafe, 'local', 'secret'));
+    const unsafe = join(root, 'unsafe'); mkdirSync(unsafe, { mode: 0o755 });
+    await assert.rejects(start(unsafe), /must be private/);
     const link = join(root, 'link'); symlinkSync(unsafe, link);
-    assert.throws(() => scriptDiscovery(link, 'local', 'secret'));
+    await assert.rejects(start(link), /must be private/);
     const directory = join(root, 'private'), target = join(root, 'target');
-    writeFileSync(target, 'preserve');
-    const discovery = scriptDiscovery(directory, 'local', 'secret');
+    const app = await start(directory);
     try {
+      writeFileSync(target, 'preserve');
       symlinkSync(target, join(directory, 'connection.json'));
-      assert.throws(() => discovery.sync(true));
-      discovery.sync(false); assert.equal(readFileSync(target, 'utf8'), 'preserve');
-    } finally { discovery.close(); }
+      const send = (path: string, body: unknown) => fetch(app.origin + path, {
+        method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const agent = randomUUID();
+      assert((await send('/api/agents', { id: agent, runtime: 'api', name: 'Fixture', model: 'test', instructions: 'Help' })).ok);
+      assert.equal((await send(`/api/agents/${agent}/scripts`, { id: randomUUID(), revision: 0, enabled: true })).status, 500);
+      assert.equal(readFileSync(target, 'utf8'), 'preserve');
+    } finally { await app.close(); }
     assert(lstatSync(join(directory, 'connection.json')).isSymbolicLink());
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

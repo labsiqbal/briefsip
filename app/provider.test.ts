@@ -6,7 +6,6 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { anthropicRequest, anthropicChoice, anthropicTokens, providerFamily, providerURL } from './provider.ts';
-import { discoverModels } from './models.ts';
 import { startApp } from './test-bridge.ts';
 
 test('Anthropic translation preserves message roles, tools and honest usage', () => {
@@ -87,7 +86,11 @@ test('native Anthropic messages, catalog, tools, resume, cancellation and fallba
   }
   try {
     assert.deepEqual((await request('/api/models')).models, ['first', 'second']); assert.equal(catalogCalls, 2);
-    for (catalogMode of ['bad', 'cycle', 'redirect']) await assert.rejects(discoverModels(options.baseURL, options.apiKey, 'anthropic'), /model catalog/);
+    for (catalogMode of ['bad', 'cycle', 'redirect']) {
+      const response = await fetch(app.origin + '/api/models');
+      assert.equal(response.status, 502, catalogMode);
+      assert.match(await response.text(), /model catalog/);
+    }
     const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Native', model: 'primary', backupModel: 'backup', instructions: 'Use native tools' });
     const path = `/api/agents/${a.id}/turns`;
     for (const scenario of ['text', 'artifact', 'partial', 'unknown', 'multiple', 'overloaded', 'redirect', 'malformed']) {

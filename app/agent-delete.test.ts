@@ -156,27 +156,8 @@ test('running provider work must settle before delete; transactional failure pre
   app=await startApp({database});await post(path,command);assert(!existsSync(desktop));
 });
 
-test('room speaker migration preserves data, foreign keys, indexes, triggers and AUTOINCREMENT high-water across repeated startup', async()=>{
-  const {initializeAgentDeletion}=await import('./agent-delete.ts');
-  const db=new DatabaseSync(':memory:');
-  try{
-    db.exec(`PRAGMA foreign_keys=ON;CREATE TABLE agents(id TEXT PRIMARY KEY);INSERT INTO agents VALUES ('a');
-      CREATE TABLE turns(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE,agent TEXT NOT NULL REFERENCES agents(id),text TEXT,parent TEXT REFERENCES turns(id));
-      INSERT INTO turns VALUES (1,'kept','a','original',NULL),(2,'child','a','child','kept'),(99,'removed','a','high-water',NULL);DELETE FROM turns WHERE seq=99;
-      CREATE INDEX turn_text ON turns(text);CREATE TABLE children(turn TEXT REFERENCES turns(id));INSERT INTO children VALUES ('kept');
-      CREATE TABLE audit(text TEXT);CREATE TRIGGER turn_audit AFTER INSERT ON turns BEGIN INSERT INTO audit VALUES (NEW.text);END;`);
-    initializeAgentDeletion(db);initializeAgentDeletion(db);
-    assert.equal(db.prepare("SELECT text FROM turns WHERE id='kept'").get()!.text,'original');
-    assert.equal(db.prepare("SELECT parent FROM turns WHERE id='child'").get()!.parent,'kept');
-    db.exec("UPDATE turns SET agent=NULL WHERE id='kept';INSERT INTO turns(id,agent,text) VALUES ('new','a','triggered')");
-    assert.equal(db.prepare("SELECT seq FROM turns WHERE id='new'").get()!.seq,100);
-    assert.equal(db.prepare('SELECT text FROM audit').get()!.text,'triggered');
-    assert(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='turn_text'").get());assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
-  }finally{db.close();}
-});
-
 test('paired peer cannot delete owner agents; deletion on owner refreshes peer roster', async t=>{
-  const {fakePeerTokenIssuer}=await import('./machines.fixture.ts');
+  const {fakePeerTokenIssuer}=await import('./test-support/peer-token-issuer.ts');
   const dir=mkdtempSync(join(tmpdir(),'briefsip-delete-peer-')),issuer=fakePeerTokenIssuer();
   const owner=await startApp({database:join(dir,'owner.sqlite'),peerTokenIssuer:issuer}),peer=await startApp({database:join(dir,'peer.sqlite'),peerTokenIssuer:fakePeerTokenIssuer()});
   t.after(async()=>{await owner.close();await peer.close();rmSync(dir,{recursive:true,force:true});});

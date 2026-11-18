@@ -8,12 +8,27 @@ import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './test-bridge.ts';
 import { restoreWorkspace } from './backup.ts';
-import { parseSections, readSidebarSummary } from './sidebar.ts';
 
-test('sidebar validates unique membership, names, IDs and bounded settings', () => {
-  const id = randomUUID(), agent = randomUUID(), section = { id, name: ' Work ', agents: [agent] };
-  assert.equal(parseSections([section])[0].name, 'Work');
-  for (const value of [null, {}, [null], [{ ...section, name: ' ' }], [{ ...section, name: 'a'.repeat(81) }], [{ ...section, name: 'a\nb' }], [{ ...section, id: '__proto__' }], [section, section], [{ ...section, agents: [agent, agent] }], [section, { ...section, id: randomUUID() }], [{ ...section, agents: ['missing'] }], [{ ...section, privilege: 'admin' }], Array(101).fill(section)]) assert.throws(() => parseSections(value));
+test('sidebar validates unique membership, names, IDs and bounded settings', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'briefsip-sidebar-valid-'));
+  const app = await startApp({ database: join(directory, 'state.sqlite') });
+  const post = (path: string, body: unknown) => fetch(app.origin + path, {
+    method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  try {
+    const agent = randomUUID(), section = { id: randomUUID(), name: ' Work ', agents: [agent] };
+    assert((await post('/api/agents', { id: agent, runtime: 'api', name: 'Fixture', model: 'fixture', instructions: 'Help' })).ok);
+    const save = (sections: unknown, revision = 0) => post('/api/sidebar', { id: randomUUID(), revision, sections });
+    const updated = await save([section]);
+    assert.equal(updated.status, 200);
+    assert.equal((await updated.json()).sections[0].name, 'Work');
+    for (const sections of [
+      null, {}, [null], [{ ...section, name: ' ' }], [{ ...section, name: 'a'.repeat(81) }],
+      [{ ...section, name: 'a\nb' }], [{ ...section, id: '__proto__' }], [section, section],
+      [{ ...section, agents: [agent, agent] }], [section, { ...section, id: randomUUID() }],
+      [{ ...section, agents: ['missing'] }], [{ ...section, privilege: 'admin' }], Array(101).fill(section),
+    ]) assert.equal((await save(sections, 1)).status, 400, JSON.stringify(sections));
+  } finally { await app.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
 test('sidebar HTTP edits retain agents/history through delete, conflicts, retry, restart and backup', async () => {
@@ -87,35 +102,43 @@ test('sidebar HTTP edits retain agents/history through delete, conflicts, retry,
   } finally { await restored?.close(); await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(directory, { recursive: true, force: true }); }
 });
 
-test('sidebar summary bounds entries and text, redacts credentials, and selects latest explicit remote messages', () => {
-  const db = new DatabaseSync(':memory:');
+test('sidebar summary bounds entries and text, redacts credentials, and selects latest explicit remote messages', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'briefsip-sidebar-summary-')), database = join(directory, 'state.sqlite');
+  const app = await startApp({ database, baseURL: 'http://127.0.0.1:1/v1', apiKey: 'saved-provider-credential' });
+  const db = new DatabaseSync(database);
   try {
-    db.exec(`CREATE TABLE agents(id TEXT PRIMARY KEY,instructions TEXT);
-      CREATE TABLE turns(seq INTEGER PRIMARY KEY,agent TEXT,text TEXT,reply TEXT,created TEXT,status TEXT,error TEXT,channel TEXT);
-      CREATE TABLE paired_machines(environment_id TEXT,state TEXT,token TEXT);
-      CREATE TABLE remote_agent_calls(id TEXT,machine TEXT,agent TEXT,text TEXT,reply TEXT,created INTEGER,status TEXT,delivery TEXT);`);
-    const add = db.prepare('INSERT INTO agents VALUES (?,?)');
-    for (let i = 0; i < 501; i++) add.run(`agent-${i}`, 'PRIVATE_INSTRUCTIONS');
-    db.prepare('INSERT INTO turns(seq,agent,text,reply,created,status,error) VALUES (?,?,?,?,?,?,?)').run(1,'agent-0','old',null,'2026-11-14T00:00:00.000Z','running','PRIVATE_ERROR');
-    db.prepare('INSERT INTO turns(seq,agent,text,reply,created,status,error) VALUES (?,?,?,?,?,?,?)').run(2,'agent-0','unused prompt','saved-provider-credential Bearer abcdefghijklmnop token="hide-me" sk-abcdefghijklmnopqrstuv '+ 'x'.repeat(500),'2026-11-14T01:00:00.000Z','done','PRIVATE_ERROR');
-    db.prepare('INSERT INTO paired_machines VALUES (?,?,?)').run('machine','paired','PRIVATE_PAIRING_TOKEN');
-    const remote = db.prepare('INSERT INTO remote_agent_calls VALUES (?,?,?,?,?,?,?,?)');
-    remote.run('a','machine','remote','old',null,1000,'done',null);
-    remote.run('b','machine','remote','latest user message','Latest reply',2000,'done',null);
-    remote.run('c','machine','remote','AGENT_DELIVERY_SECRET',null,3000,'done','internal-turn');
-    remote.run('d','removed-machine','remote','UNPAIRED_SECRET',null,3000,'done',null);
-    db.prepare('INSERT INTO turns(seq,agent,text,created,status,channel) VALUES (?,?,?,?,?,?)').run(3,'agent-1','Room-only secret','2026-11-14T02:00:00.000Z','running','general');
-    db.prepare('INSERT INTO turns(seq,agent,text,created,status,channel) VALUES (?,?,?,?,?,?)').run(4,'agent-0','Room newer than direct','2026-11-14T03:00:00.000Z','done','general');
-    const result = readSidebarSummary(db, ['saved-provider-credential']);
-    assert.equal(result.summaries.length,501);
-    assert.deepEqual(result.summaries[1], {agent:'agent-1',preview:'',time:null,status:'idle'});
-    assert.equal(result.summaries[0].status,'running');
-    assert.equal(result.summaries[0].preview.length,180);
-    assert.equal(result.summaries[0].time,'2026-11-14T01:00:00.000Z');
-    assert.deepEqual(result.summaries.at(-1),{agent:'remote@machine',preview:'Latest reply',time:'1970-01-01T00:00:02.000Z',status:'done'});
-    assert.deepEqual(Object.keys(result.summaries[0]).sort(),['agent','preview','status','time']);
-    assert.doesNotMatch(JSON.stringify(result),/PRIVATE_|hide-me|abcdefghijklmnop|saved-provider-credential|AGENT_DELIVERY_SECRET|UNPAIRED_SECRET|unused prompt/);
-    for(let i=0;i<501;i++) remote.run(`remote-${i}`,'machine',`r-${i}`,'hello',null,4000,'done',null);
-    assert.equal(readSidebarSummary(db).summaries.length,1000);
-  } finally { db.close(); }
+    const add = db.prepare("INSERT INTO agents(id,name,model,instructions) VALUES(?,?,'fixture','PRIVATE_INSTRUCTIONS')");
+    const [first, second, room, third] = Array.from({ length: 4 }, () => randomUUID());
+    for (const agent of [first, second, third, ...Array.from({ length: 498 }, () => randomUUID())]) add.run(agent, agent);
+    db.prepare("INSERT INTO channels(id,name,instructions) VALUES(?,'Room','Help')").run(room);
+    const turn = db.prepare('INSERT INTO turns(id,agent,text,reply,created,status,error,channel) VALUES(?,?,?,?,?,?,?,?)');
+    turn.run(randomUUID(), first, 'old', null, '2026-11-14T00:00:00.000Z', 'running', 'PRIVATE_ERROR', null);
+    turn.run(randomUUID(), first, 'unused prompt', 'saved-provider-credential Bearer abcdefghijklmnop token="hide-me" sk-abcdefghijklmnopqrstuv ' + 'x'.repeat(500), '2026-11-14T01:00:00.000Z', 'done', 'PRIVATE_ERROR', null);
+    turn.run(randomUUID(), second, 'Room-only secret', null, '2026-11-14T02:00:00.000Z', 'running', null, room);
+    turn.run(randomUUID(), first, 'Room newer than direct', null, '2026-11-14T03:00:00.000Z', 'done', null, room);
+    const delivery = randomUUID();
+    turn.run(delivery, third, 'Delivery', null, '2026-11-14T03:00:00.000Z', 'done', null, room);
+    db.exec("INSERT INTO paired_machines(environment_id,name,origin,token,local_token_id,state,status,version,agents) VALUES('machine','Peer','http://127.0.0.1:1','PRIVATE_PAIRING_TOKEN','fixture','paired','offline','fixture','[]')");
+    const remote = db.prepare("INSERT INTO remote_agent_calls(id,machine,agent,name,text,reply,created,status,delivery,depth,state) VALUES(?,?,?,'Fixture',?,?,?,'done',?,0,'result')");
+    remote.run('a','machine','remote','old',null,1000,null);
+    remote.run('b','machine','remote','latest user message','Latest reply',2000,null);
+    remote.run('c','machine','remote','AGENT_DELIVERY_SECRET',null,3000,delivery);
+    remote.run('d','removed-machine','remote','UNPAIRED_SECRET',null,3000,null);
+    const summary = async () => {
+      const response = await fetch(app.origin + '/api/sidebar/summary');
+      assert.equal(response.status, 200);
+      return response.json();
+    };
+    const result = await summary();
+    assert.equal(result.summaries.length, 501);
+    assert.deepEqual(result.summaries[1], { agent: second, preview: '', time: null, status: 'idle' });
+    assert.equal(result.summaries[0].status, 'running');
+    assert.equal(result.summaries[0].preview.length, 180);
+    assert.equal(result.summaries[0].time, '2026-11-14T01:00:00.000Z');
+    assert.deepEqual(result.summaries.at(-1), { agent: 'remote@machine', preview: 'Latest reply', time: '1970-01-01T00:00:02.000Z', status: 'done' });
+    assert.deepEqual(Object.keys(result.summaries[0]).sort(), ['agent','preview','status','time']);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_|hide-me|abcdefghijklmnop|saved-provider-credential|AGENT_DELIVERY_SECRET|UNPAIRED_SECRET|unused prompt/);
+    for (let i = 0; i < 501; i++) remote.run(`remote-${i}`, 'machine', `r-${i}`, 'hello', null, 4000, null);
+    assert.equal((await summary()).summaries.length, 1000);
+  } finally { db.close(); await app.close(); rmSync(directory, { recursive: true, force: true }); }
 });
