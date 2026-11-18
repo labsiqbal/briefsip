@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { startRustServer } from './rust-test-server.ts';
 import { runRustConnector, runRustConnectorJournal } from './rust-connectors-runner.ts';
-import { initializeCanonicalSchema } from './schema.ts';
+import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
 import { encryptMail, serializeMailEnvelope } from './mail.ts';
 import { routineCalendar } from './calendar.ts';
 import { composioToolName } from './composio.ts';
@@ -265,7 +265,7 @@ test('Rust calendar matches Node bytes for folding, escaping, intervals and IANA
 
 test('Rust mail retries exact envelope after lost response and fences expired, revoked, tampered and exhausted jobs', async () => {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-mail-')), database = join(root, 'db');
-  const db = new DatabaseSync(database); initializeCanonicalSchema(db);
+  const db = new DatabaseSync(database); installFrozenNodeSchema(db);
   const account = randomUUID(), project = randomUUID(), keyId = randomUUID(), key = randomBytes(32), now = Date.now();
   const generation = String(db.prepare('SELECT generation FROM authority_state').get()!.generation);
   db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,?,?,?)').run(account, 'fixture', 'owner', now);

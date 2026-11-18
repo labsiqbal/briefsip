@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createClerkClient } from '@clerk/backend';
-import { initializeCanonicalSchema } from './schema.ts';
+import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
 import { startCanonicalApp } from './test-bridge.ts';
 import { startRustServer } from './rust-test-server.ts';
 
@@ -23,7 +23,7 @@ test('Rust project automation matches Node scopes, receipts, versions, calendars
   for (const name of ['node', 'rust']) {
     const db = new DatabaseSync(join(directory, name));
     try {
-      initializeCanonicalSchema(db);
+      installFrozenNodeSchema(db);
       db.prepare('UPDATE authority_state SET generation=?').run(generation);
       db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,?,?,?)').run(account, auth.issuer, 'user_fixture', now * 1000);
       for (const id of [project, foreign]) {
