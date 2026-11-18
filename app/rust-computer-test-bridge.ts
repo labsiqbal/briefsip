@@ -3,7 +3,7 @@ import type { HubLinkOptions } from './rust-hub-test-bridge.ts';
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import type { AgentDesktopManager } from './agent-desktop.ts';
-import { peerUpdateTimeoutMs, type PeerTokenIssuer } from './machines.ts';
+import { peerUpdateTimeoutMs, type PeerTokenIssuer } from './test-support/peer-token-issuer.ts';
 
 type Options = { hubLink?: HubLinkOptions; desktop?: ConstructorParameters<typeof AgentDesktopManager>[0]; peerTokenIssuer?: PeerTokenIssuer; machines?: { now?: () => number; healthIntervalMs?: number } };
 export async function computerTestBridge(options: Options) {
