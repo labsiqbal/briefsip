@@ -146,8 +146,7 @@ console.log(`Lint: ${checks} assertions passed; ${browserSafeModules.length} sha
 {
   const pendingLegacyModules = [
     'device-runtime.ts', 'executor-journal.ts', 'schema.ts', 'wait-provisions.ts',
-    'wait-connection.ts', 'wait-events.ts', 'webhooks.ts',
-    'harness-session.ts', 'harness-store.ts', 'harness.ts', 'provider-store.ts',
+    'wait-connection.ts', 'wait-events.ts', 'webhooks.ts', 'provider-store.ts',
     'agent-desktop-proxy.ts', 'agent-desktop-vnc.ts', 'agent-desktop.ts', 'pdf-text.ts',
     'workspace-files.ts', 'workspace-git.ts', 'workspace-writes.ts',
   ];
