@@ -1,7 +1,7 @@
 import type { StreamPartial, StreamSegment } from '../../shared/turn-stream';
 
 export type TurnActivityData = {
-  artifacts?: { id: string; name: string; kind: string; url: string }[];
+  artifacts?: { id: string; name: string; kind: string; url: string | null }[];
   started_at?: string | null;
   stopped_at?: string | null;
   budget_stopped?: number;

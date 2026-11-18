@@ -394,7 +394,7 @@ fn activity(db: &Connection, id: &str) -> Result<Value> {
     v["artifacts"] = json!(rows(
         db,
         "verification_artifacts",
-        "SELECT f.id,f.name,v.kind,'/api/' || replace(f.scope,':','/') || '/files/' || f.id AS url FROM verification_artifacts v JOIN files f ON f.id=v.file WHERE v.turn=? AND v.kind='screenshot' AND f.deleted=0 ORDER BY v.rowid",
+        "SELECT coalesce(f.id,v.source) AS id,coalesce(f.name,'Verification result') AS name,v.kind,CASE WHEN f.id IS NULL THEN NULL ELSE '/api/' || replace(f.scope,':','/') || '/files/' || f.id END AS url FROM verification_artifacts v LEFT JOIN files f ON f.id=v.file AND v.kind='screenshot' WHERE v.turn=? AND (f.id IS NULL OR f.deleted=0) ORDER BY v.rowid",
         [id]
     )?);
     v["harness"] = json!(rows(
