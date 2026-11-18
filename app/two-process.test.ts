@@ -2323,7 +2323,7 @@ test('signed human sync preserves delta cursors through canonical restart and re
   } finally { await f.close(); }
 });
 
-async function loopTask(f: Awaited<ReturnType<typeof fixture>>, runtime: Pick<ReturnType<typeof openDeviceRuntime>, 'deviceId'>, setup = false, existingBinding?: string | null) {
+async function loopTask(f: Awaited<ReturnType<typeof fixture>>, runtime: { deviceId(): string }, setup = false, existingBinding?: string | null) {
   const home = (await f.send('/api/devices')).body.data.find((row: { id: string }) => row.id === runtime.deviceId()), project = randomUUID(), agent = randomUUID(), binding = existingBinding === undefined ? randomUUID() : existingBinding;
   assert.equal((await f.send('/api/projects', { requestId: randomUUID(), id: project, name: 'Execution loop' })).status, 201);
   if (existingBinding === undefined) {
@@ -2385,9 +2385,9 @@ test('signed task and device mutations publish atomic scoped observations across
   } finally { await runtime.close(); await f.close(); }
 });
 
-async function rustTaskFixture(f: Awaited<ReturnType<typeof fixture>>, filename: string) {
+async function rustTaskFixture(f: Awaited<ReturnType<typeof fixture>>, filename: string, server = f.origin()) {
   const database = join(f.dir, filename), keyring = database + '.keys.json';
-  const options = { database, keyring, server: f.origin() };
+  const options = { database, keyring, server };
   writeFileSync(keyring, '{}', { mode: 0o600 });
   const { deviceId } = await enrollRustDevice(options, f.jwt());
   async function withProvider<T>(provide: (context: ActionContext) => unknown, run: (origin: string) => Promise<T>) {
@@ -2607,32 +2607,30 @@ test('home execution loop consumes resolved late-known output without repeating 
 });
 
 test('home execution loop persists provider wait across reply loss and preserves concurrent pause', async () => {
-  const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'wait-loop.sqlite'), server: f.origin(), development: true, entry: keys.entry }), originalFetch = globalThis.fetch;
+  const f = await fixture(), proxy = await startDeviceFaultProxy(f.origin);
   try {
-    await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const runtime = await rustTaskFixture(f, 'wait-loop.sqlite', proxy.origin);
     const missing = await loopTask(f, runtime, false, null);
-    globalThis.fetch = async (url, init) => {
-      const response = await originalFetch(url, init);
-      if (String(url).endsWith('/wait-provider')) { await response.body?.cancel(); throw new Error('Lost provider wait reply'); }
-      return response;
-    };
-    await assert.rejects(runtime.runTask(missing.taskId, () => assert.fail('No provider binding')), /Lost provider wait reply/);
-    globalThis.fetch = originalFetch;
-    const waiting = (await f.send(`/api/tasks/${missing.taskId}`)).body.data;
+    let waitStatus: number | undefined;
+    proxy.fault({ path: '/wait-provider', drop: status => { waitStatus = status; return true; } });
+    await assert.rejects(runtime.runTask(missing.taskId, () => assert.fail('No provider binding')), { code: 'device_offline' });
+    assert.equal(waitStatus, 200, 'Lost reply must follow a durable provider wait');
+    proxy.fault();
+    const waiting = (await f.send('/api/tasks/' + missing.taskId)).body.data;
     assert.equal(waiting.state, 'waiting_resource');
     assert.equal((await runtime.runTask(missing.taskId, () => assert.fail('No provider binding'))).state, 'waiting_resource');
-    assert.equal((await f.send(`/api/tasks/${missing.taskId}`)).body.data.revision, waiting.revision);
+    assert.equal((await f.send('/api/tasks/' + missing.taskId)).body.data.revision, waiting.revision);
+
     const paused = await loopTask(f, runtime, false, null);
-    globalThis.fetch = async (url, init) => {
-      if (String(url).endsWith('/wait-provider')) {
-        const detail = (await f.send(`/api/tasks/${paused.taskId}`)).body.data;
-        assert.equal((await f.send(`/api/tasks/${paused.taskId}/control`, { requestId: randomUUID(), expectedRevision: detail.revision, operation: 'pause' })).status, 200);
-      }
-      return originalFetch(url, init);
-    };
-    await assert.rejects(runtime.runTask(paused.taskId, () => assert.fail('Paused task must not dispatch')), (error: unknown) => error instanceof ProtocolError && error.code === 'stale_revision');
-    assert.equal((await f.send(`/api/tasks/${paused.taskId}`)).body.data.state, 'paused');
-  } finally { globalThis.fetch = originalFetch; await runtime.close(); await f.close(); }
+    const path = '/api/tasks/' + paused.taskId;
+    proxy.fault({ path: path + '/wait-provider', before: async () => {
+      const detail = (await f.send(path)).body.data;
+      const response = await f.send(path + '/control', { requestId: randomUUID(), expectedRevision: detail.revision, operation: 'pause' });
+      assert.equal(response.status, 200);
+    } });
+    await assert.rejects(runtime.runTask(paused.taskId, () => assert.fail('Paused task must not dispatch')), { code: 'stale_revision' });
+    assert.equal((await f.send(path)).body.data.state, 'paused');
+  } finally { await proxy.close(); await f.close(); }
 });
 
 test('home execution loop holds missing bindings and enforces provider slots before dispatch', async () => {
