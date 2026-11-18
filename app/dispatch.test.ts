@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './test-bridge.ts';
@@ -49,19 +50,50 @@ async function fixture(stream = false) {
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(directory, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, stream };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory, servers: [provider] });
+  const close = async () => {
+    try { await app.close(); }
+    finally {
+      provider.closeAllConnections();
+      await new Promise<void>(resolve => provider.close(() => resolve()));
+      rmSync(directory, { recursive: true, force: true });
+    }
+  };
   async function request(path: string, body?: unknown, status?: number): Promise<any> {
     const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const result = await response.json(); if (status) assert.equal(response.status, status, JSON.stringify(result)); else assert(response.ok, JSON.stringify(result)); return result;
   }
-  const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Dispatch agent', model: 'fake', instructions: 'Help.' });
+  const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Dispatch agent', model: 'fake', instructions: 'Help.' }).catch(async error => {
+    await close();
+    throw error;
+  });
   const path = `/api/agents/${agent.id}/turns`;
   async function turn(id: string, predicate: (row: any) => boolean, at = path) { return until(async () => (await request(at)).find((row: any) => row.id === id), row => !!row && predicate(row)); }
   return { request, turn, agent, path, calls, held, options, directory,
     offline: async (change: (db: DatabaseSync) => void) => { await app.close(); const db = new DatabaseSync(options.database); try { change(db); } finally { db.close(); } app = await startApp(options); },
     restart: async () => { await app.close(); app = await startApp(options); },
-    close: async () => { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(directory, { recursive: true, force: true }); } };
+    close };
 }
+
+test('startup failure reports child output and releases the provider and directory', async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'briefsip-startup-failure-'));
+  const binary = join(directory, 'failing-server');
+  writeFileSync(binary, '#!/bin/sh\nprintf "fixture stdout\\n"\nprintf "fixture stderr\\n" >&2\nexit 17\n', { mode: 0o700 });
+  const provider = createServer();
+  await new Promise<void>((resolve, reject) => provider.once('error', reject).listen(0, '127.0.0.1', resolve));
+  const original = process.env.BRIEFSIP_RUST_BINARY;
+  t.after(async () => {
+    if (original === undefined) delete process.env.BRIEFSIP_RUST_BINARY;
+    else process.env.BRIEFSIP_RUST_BINARY = original;
+    if (provider.listening) await new Promise<void>(resolve => provider.close(() => resolve()));
+    rmSync(directory, { recursive: true, force: true });
+  });
+  process.env.BRIEFSIP_RUST_BINARY = binary;
+  await assert.rejects(startApp({ database: join(directory, 'state.sqlite') }, { directory, servers: [provider] }),
+    /exited \(17\)\.[\s\S]*stdout tail:\nfixture stdout\nstderr tail:\nfixture stderr/);
+  assert.equal(provider.listening, false);
+  assert.equal(existsSync(directory), false);
+});
 
 test('steer is injected once at next tool-loop safe point, durable and idempotent', async () => {
   const f = await fixture(); try {
