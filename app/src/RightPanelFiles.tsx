@@ -1,4 +1,5 @@
 import { useVisiblePolling } from './hooks/useVisiblePolling';
+import { readJson } from './http';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowLeft, Download, Ellipsis, FileText } from 'lucide-react';
 import { ActionMenu, Alert, Button, CodeBlock, EmptyState, IconButton, Section, Select, SkeletonRows, Tooltip, useConfirm } from './ui/kit';
@@ -65,7 +66,7 @@ export function PanelFiles({ selected, onSelect, onDeleted, navigation, base, fi
     setError('');
     try {
       const response = await fetch(`${base.replace('/panel', '')}/files/${file.id}`, { method: 'DELETE' });
-      if (!response.ok) throw new Error((await response.json()).error ?? 'File could not be deleted. Try again.');
+      if (!response.ok) await readJson(response, 'File could not be deleted. Try again.');
       setRemoved(current => [...current, file.id]); document.querySelector<HTMLElement>('.right-panel [role=tab][data-state=active]')?.focus(); onDeleted();
       if (attached.includes(file.id)) onAttach?.(file);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'File could not be deleted. Try again.'); }
