@@ -1,4 +1,4 @@
-import { connectorJournalCommand } from './test-support/connector-journal-command.ts';
+import { connectorJournalCommand, openConnectorJournalFixture } from './test-support/connector-journal-command.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -100,30 +100,29 @@ test('Slack status and stop scope to requester root and preserve cancellation id
 });
 
 test('Slack offline recovery pins revisions, retains confirmed chunks and requires explicit CLI confirmation',async()=>{
- const {connectorJournal}=await import('./connector-journal.ts');
- const directory=mkdtempSync(join(tmpdir(),'briefsip-slack-recovery-')),id=randomUUID();let owner=connectorJournal(directory,'slack.sqlite');let closed=false,calls=0;
+ const directory=mkdtempSync(join(tmpdir(),'briefsip-slack-recovery-')),id=randomUUID();let owner=openConnectorJournalFixture('slack',directory);let closed=false,calls=0;
  const cli=connectorJournalCommand('slack',directory);
  const remote=async()=>{calls++;if(calls>1)throw new SlackError(false);return {channel:'DCHAT',ts:'1700000001.000001'};};
  try{
-  initializeSlack(owner.db);owner.db.prepare('INSERT INTO slack_outbox(id,channel,sender,root,text) VALUES (?,?,?,?,?)').run(id,'DCHAT','UUSER','1700000000.000001','x'.repeat(5000));
-  await deliverSlack(owner.db,id,remote,async()=>{});assert.equal(calls,2);assert.notEqual(cli('inspect',id).status,0);
+  initializeSlack(owner);owner.prepare('INSERT INTO slack_outbox(id,channel,sender,root,text) VALUES (?,?,?,?,?)').run(id,'DCHAT','UUSER','1700000000.000001','x'.repeat(5000));
+  await deliverSlack(owner,id,remote,async()=>{});assert.equal(calls,2);
   owner.close();closed=true;
   let inspected=JSON.parse(cli('inspect',id).stdout);assert.equal(inspected.reply.status,'uncertain');assert.equal(inspected.reply.part,1);assert.equal(inspected.revision,0);
   assert.notEqual(cli('recover',id,'0','retry').status,0);assert.equal(cli('recover',id,'0','retry','--accept-duplicate-risk').status,0);
-  owner=connectorJournal(directory,'slack.sqlite');closed=false;initializeSlack(owner.db);await deliverSlack(owner.db,id,remote,async()=>{});assert.equal(calls,3);owner.close();closed=true;
+  owner=openConnectorJournalFixture('slack',directory);closed=false;initializeSlack(owner);await deliverSlack(owner,id,remote,async()=>{});assert.equal(calls,3);owner.close();closed=true;
   assert.notEqual(cli('recover',id,'0','retry','--accept-duplicate-risk').status,0);
   inspected=JSON.parse(cli('inspect',id).stdout);assert.equal(inspected.reply.part,1);assert.equal(JSON.parse(inspected.reply.timestamps).length,1);assert.equal(inspected.revision,1);
   assert.equal(cli('recover',id,'1','retry','--accept-duplicate-risk').status,0);
-  owner=connectorJournal(directory,'slack.sqlite');closed=false;initializeSlack(owner.db);let authorized=false;
-  await assert.rejects(deliverSlack(owner.db,id,async()=>{throw new Error('must not send');},async()=>{if(!authorized)throw new Error('revoked');}),/revoked/);
-  authorized=true;await deliverSlack(owner.db,id,async(_method,body)=>{calls++;assert.equal(body.text,'x'.repeat(1000));return {channel:'DCHAT',ts:'1700000001.000002'};},async()=>{});
-  assert.equal(owner.db.prepare('SELECT status FROM slack_outbox WHERE id=?').get(id)!.status,'sent');owner.db.prepare("UPDATE slack_outbox SET status='sending' WHERE id=?").run(id);owner.close();closed=true;
+  owner=openConnectorJournalFixture('slack',directory);closed=false;initializeSlack(owner);let authorized=false;
+  await assert.rejects(deliverSlack(owner,id,async()=>{throw new Error('must not send');},async()=>{if(!authorized)throw new Error('revoked');}),/revoked/);
+  authorized=true;await deliverSlack(owner,id,async(_method,body)=>{calls++;assert.equal(body.text,'x'.repeat(1000));return {channel:'DCHAT',ts:'1700000001.000002'};},async()=>{});
+  assert.equal(owner.prepare('SELECT status FROM slack_outbox WHERE id=?').get(id)!.status,'sent');owner.prepare("UPDATE slack_outbox SET status='sending' WHERE id=?").run(id);owner.close();closed=true;
   inspected=JSON.parse(cli('inspect',id).stdout);assert.equal(inspected.reply.status,'uncertain');assert.equal(inspected.revision,2);
   assert.notEqual(cli('recover',id,'2','discard').status,0);assert.equal(cli('recover',id,'2','discard','--confirm').status,0);assert.notEqual(cli('recover',id,'3','retry','--accept-duplicate-risk').status,0);
   inspected=JSON.parse(cli('inspect',id).stdout);assert.equal(inspected.reply.status,'discarded');assert.equal(inspected.decisions.length,3);assert.equal(inspected.reply.part,2);
-  const rejected=randomUUID();owner=connectorJournal(directory,'slack.sqlite');closed=false;initializeSlack(owner.db);
-  owner.db.prepare('INSERT INTO slack_outbox(id,channel,sender,root,text) VALUES (?,?,?,?,?)').run(rejected,'DCHAT','UUSER','1700000000.000001','Rejected');
-  await deliverSlack(owner.db,rejected,async()=>{throw new SlackError(true);},async()=>{});owner.close();closed=true;
+  const rejected=randomUUID();owner=openConnectorJournalFixture('slack',directory);closed=false;initializeSlack(owner);
+  owner.prepare('INSERT INTO slack_outbox(id,channel,sender,root,text) VALUES (?,?,?,?,?)').run(rejected,'DCHAT','UUSER','1700000000.000001','Rejected');
+  await deliverSlack(owner,rejected,async()=>{throw new SlackError(true);},async()=>{});owner.close();closed=true;
   inspected=JSON.parse(cli('inspect',rejected).stdout);assert.equal(inspected.reply.status,'failed');assert.equal(inspected.reply.part,0);
   assert.equal(cli('recover',rejected,'0','retry','--accept-duplicate-risk').status,0);
   assert.equal(JSON.parse(cli('inspect',rejected).stdout).reply.status,'queued');

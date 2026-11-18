@@ -6,7 +6,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
 import { resolve, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './test-bridge.ts';
-import { composioToolName } from './composio.ts';
+import { composioToolName } from './test-support/composio-tool-name.ts';
 import { validateProjectEnvironment, redactSecrets } from './project-environment.ts';
 const secret='PROJECT_CANARY_j4W8sK3p';
 const listen=async(server:ReturnType<typeof createServer>)=>{await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));return `http://127.0.0.1:${(server.address() as {port:number}).port}`;};
