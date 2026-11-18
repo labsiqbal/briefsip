@@ -181,7 +181,12 @@ fn evidence(db: &Connection, t: &Value) -> Result<Value> {
             }
         }
     }
-    for r in rows(db,"WITH RECURSIVE chain(id,depth) AS(SELECT id,0 FROM tasks WHERE logical_turn=? AND predecessor_task IS NULL UNION ALL SELECT t.id,c.depth+1 FROM tasks t JOIN chain c ON t.predecessor_task=c.id) SELECT r.task,r.action,r.digest,r.size,r.encoding,r.content_json,a.sequence FROM chain c JOIN task_results r ON r.task=c.id JOIN task_actions a ON a.id=r.action ORDER BY c.depth,a.sequence",[string(t,"logical_turn")])? {
+    let mut result_bytes = 0_u64;
+    for r in all(db,"WITH RECURSIVE chain(id,depth) AS(SELECT id,0 FROM tasks WHERE logical_turn=? AND predecessor_task IS NULL UNION ALL SELECT t.id,c.depth+1 FROM tasks t JOIN chain c ON t.predecessor_task=c.id) SELECT r.task,r.action,r.digest,r.size,r.encoding,r.content_json,a.sequence FROM chain c JOIN task_results r ON r.task=c.id JOIN task_actions a ON a.id=r.action ORDER BY c.depth,a.sequence",[string(t,"logical_turn")])? {
+        result_bytes = result_bytes.saturating_add(r["size"].as_u64().ok_or_else(Failure::storage)?);
+        if result_bytes > 8388608 {
+            return Err(fail(413, "context_too_large", "Context source exceeds the limit."));
+        }
         journal.push(json!({"kind":"task_result","taskId":r["task"],"actionId":r["action"],"sequence":r["sequence"],"resultRef":{"v":1,"taskId":r["task"],"actionId":r["action"],"digest":r["digest"],"size":r["size"],"encoding":r["encoding"]},"result":data::json(&r["content_json"])?}));
     }
     Ok(json!({"coordination":coordination,"toolJournal":journal,"artifacts":artifacts}))

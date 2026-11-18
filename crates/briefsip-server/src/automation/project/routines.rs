@@ -295,7 +295,7 @@ fn save(s: &Scope, path: &str, p: &[&str], v: &Value) -> Result<Value> {
         } else {
             timing(&spec, string(&device, "zone"), s.state.config.now())?
         };
-        if v["enabled"]==true&&v["trigger"].as_str().or_else(||current.as_ref().and_then(|r|r["trigger"].as_str())).unwrap_or("schedule")=="schedule"&&exists(s.db,"SELECT 1 FROM routine_occurrences WHERE routine=? AND due_at=? AND source='schedule' AND task IS NOT NULL",params![routine,next])?{return Err(Failure::new(409,"schedule_processed","Scheduled time was already processed. Choose a new time."))}
+        if v["enabled"]==true&&v["trigger"].as_str().or_else(||current.as_ref().and_then(|r|r["trigger"].as_str())).unwrap_or("schedule")=="schedule"&&exists(s.db,"SELECT 1 FROM routine_occurrences WHERE routine=? AND due_at=? AND source='schedule' AND task IS NOT NULL",params![routine,if v.get("schedule").is_none(){v["nextAt"].as_i64().unwrap_or(next)}else{next}])?{return Err(Failure::new(409,"schedule_processed","Scheduled time was already processed. Choose a new time."))}
         if creating {
             if exists(s.db, "SELECT 1 FROM routines WHERE id=?", [routine])? {
                 root(s, routine)?;

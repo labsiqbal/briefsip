@@ -1,4 +1,4 @@
-mod flows;
+pub(crate) mod flows;
 pub mod options;
 pub(crate) mod project;
 mod routines;

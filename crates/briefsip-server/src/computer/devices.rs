@@ -29,7 +29,7 @@ pub struct Principal {
     pub account: String,
     pub generation: i64,
     pub authority: String,
-    session: Option<String>,
+    pub(crate) session: Option<String>,
 }
 struct Stream {
     principal: Principal,
@@ -1126,6 +1126,12 @@ pub async fn host(state: &AppState, request: Request, request_id: &str) -> Resul
     {
         let result = waits::resolve(db, &principal, &v, operation == "wait-event-results", now)?;
         return Ok(crate::json_response(200, json!({"ok":true,"data":result})));
+    }
+    if method == Method::POST && operation == "wait-secret-results" {
+        let result = data::transaction(db, || {
+            crate::tasks::waits::secret_result(db, &principal, &v, now)
+        })?;
+        return crate::tasks::response(result);
     }
     if method == Method::POST && operation == "acquire" {
         let token = crate::text_header(&headers, "x-briefsip-executor").ok_or_else(|| {

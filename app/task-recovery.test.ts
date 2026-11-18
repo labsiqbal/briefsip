@@ -22,11 +22,13 @@ import { createDevices, parseLinkChallenge, deviceLinkBody, descriptorBody, type
 import { canonicalJson, digestCommand, sha256, ProtocolError } from './protocol.ts';
 import { canonicalToolDigest, createTaskRecovery, parseTaskCommand, parseOwnership, journalEntryBody, stopEvidenceBody, recoveryEnvelopeBody, type StopEvidence, type JournalEntry } from './task-recovery.ts';
 import { prepareRestoreBootstrap, issueRestoreSession, workspaceSnapshot, restoreWorkspace } from './backup.ts';
+import { rustTaskTestBridge } from './rust-task-test-bridge.ts';
 import { parseWaitProvision } from './wait-provisions.ts';
 import { initializeRoutineConfigurations } from './routine-store.ts';
 
 async function fixture(tools = ['transfer_task']) {
-  const db = new DatabaseSync(':memory:'); initializeCanonicalSchema(db);
+  const directory = mkdtempSync(join(tmpdir(), 'briefsip-recovery-rust-')), database = join(directory, 'canonical.sqlite');
+  const db = new DatabaseSync(database); initializeCanonicalSchema(db);
   const actor = (subject: string): HumanActor => ({ accountId: randomUUID(), issuer: 'https://fixture.example', subject, sessionId: `sess_${subject}`, expiresAt: Date.now() + 60000 });
   const owner = actor('owner'), member = actor('member'), foreign = actor('foreign');
   for (const a of [owner, member, foreign]) db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(a.accountId, a.issuer, a.subject, Date.now());
@@ -37,18 +39,18 @@ async function fixture(tools = ['transfer_task']) {
   const candidate = parseLinkChallenge({ requestId: randomUUID(), installationId: randomUUID(), deviceId: randomUUID(), mode: 'new', installationPublicKey: encoded(installation.publicKey), deviceSigningKey: encoded(signing.publicKey), deviceEncryptionKey: encoded(encryption.publicKey), deviceLabel: 'Home', requestedCapabilities: ['execution'], zone: 'Asia/Jakarta', zoneRevision: 1 });
   const challenge = devices.createChallenge(owner, candidate, owner.accountId), bytes = Buffer.from(JSON.stringify(deviceLinkBody(candidate, challenge)));
   const descriptor: Omit<DeviceDescriptor, 'signature'> = { v: 1, accountId: owner.accountId, installationId: candidate.installationId, deviceId: candidate.deviceId, authorityGeneration: challenge.authorityGeneration, deviceGeneration: 1, keyRevision: 1, zone: candidate.zone, zoneRevision: 1, signingPublicKey: candidate.deviceSigningKey, encryptionPublicKey: candidate.deviceEncryptionKey };
-  devices.link(owner, { requestId: randomUUID(), challengeId: challenge.challengeId, nonce: challenge.nonce, installationSignature: sign(null, bytes, installation.privateKey).toString('base64url'), deviceSignature: sign(null, bytes, signing.privateKey).toString('base64url'), descriptor: { ...descriptor, signature: sign(null, Buffer.from(JSON.stringify(descriptorBody(descriptor))), signing.privateKey).toString('base64url') } }, owner.accountId);
+  const linked = devices.link(owner, { requestId: randomUUID(), challengeId: challenge.challengeId, nonce: challenge.nonce, installationSignature: sign(null, bytes, installation.privateKey).toString('base64url'), deviceSignature: sign(null, bytes, signing.privateKey).toString('base64url'), descriptor: { ...descriptor, signature: sign(null, Buffer.from(JSON.stringify(descriptorBody(descriptor))), signing.privateKey).toString('base64url') } }, owner.accountId);
   const project = randomUUID(), agent = randomUUID(), home = candidate.deviceId;
   access.createProject(owner, { requestId: randomUUID(), id: project, name: 'A' });
   await access.createAgent(owner, { requestId: agent, id: agent, name: 'Agent', model: 'fixture', backupModel: '', instructions: 'Research', threadLimit: 2, projectId: project, homeDeviceId: home, expectedProjectRevision: 1, expectedHomeDeviceRevision: 1, providerBinding: null });
   db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(project, member.accountId);
-  const tasks = createTaskRecovery(db, auth, access, devices, tools.map(name => ({ type: 'function', function: { name, parameters: { type: 'object' } } })));
+  const native = await rustTaskTestBridge(database, signing, String(linked.data.deviceSession)), tasks = native.tasks;
   function command(change: Record<string, unknown> = {}) {
     const c = { requestId: randomUUID(), projectId: project, agentId: agent, homeDeviceId: home, payload: { v: 1, kind: 'direct', message: { text: 'Research this', files: [] } }, expectedRevisions: { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 }, ...change };
     return { ...c, payloadDigest: digestCommand(['briefsip-task-payload-v1', c.requestId, c.projectId, c.agentId, c.homeDeviceId, c.payload, c.expectedRevisions]) };
   }
   const principal = { deviceId: home, accountId: owner.accountId, generation: 1, authorityGeneration: challenge.authorityGeneration };
-  return { db, owner, member, foreign, project, agent, home, tasks, access, devices, command, signing, principal, close() { devices.close(); db.close(); } };
+  return { db, owner, member, foreign, project, agent, home, tasks, access, devices, command, signing, principal, async close() { await native.close(); devices.close(); db.close(); rmSync(directory, { recursive: true, force: true }); } };
 }
 const code = (expected: string) => (error: unknown) => error instanceof ProtocolError && error.code === expected;
 
@@ -80,7 +82,7 @@ test('reassign creates one immutable successor, keeps original receipt and fence
     assert.throws(() => f.tasks.control(f.foreign, successor, { requestId: randomUUID(), expectedRevision: 1, operation: 'pause' }), code('resource_not_found'));
     assert.throws(() => f.db.prepare('UPDATE tasks SET agent=? WHERE id=?').run(recipient, taskId), /immutable task admission/);
     assert.equal(f.tasks.admit(f.owner, command).data.taskId, taskId);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 async function preparedTask() {
@@ -149,7 +151,7 @@ test('canonical channel context names current visible members and lead across ed
     f.db.prepare('DELETE FROM channel_members WHERE channel=? AND agent=?').run(channel, peer);
     f.db.prepare('UPDATE channels SET lead=NULL,revision=revision+1 WHERE id=?').run(channel);
     assert.deepEqual(snapshot(), { ...expected, members: ['Agent'], lead: 'No lead' });
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 async function routineTaskTools() {
@@ -177,15 +179,15 @@ test('canonical routine outcomes validate reasons and atomically retain result r
         assert.equal(f.db.prepare('SELECT no_update FROM turns WHERE id=?').get(f.task.taskId)!.no_update,0);
         assert.equal(f.db.prepare('SELECT stopped FROM execution_owners WHERE task=?').get(f.task.taskId)!.stopped,0);
       }
-      f.db.exec(`CREATE TABLE files(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE,scope TEXT,name TEXT,digest TEXT,bytes BLOB,created TEXT);
-        CREATE TABLE generated_files(seq INTEGER PRIMARY KEY AUTOINCREMENT,turn TEXT,file TEXT,call_id TEXT,call TEXT,after_action INTEGER);`);
+      f.db.exec(`CREATE TABLE IF NOT EXISTS files(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE,scope TEXT,name TEXT,digest TEXT,bytes BLOB,created TEXT);
+        CREATE TABLE IF NOT EXISTS generated_files(seq INTEGER PRIMARY KEY AUTOINCREMENT,turn TEXT,file TEXT,call_id TEXT,call TEXT,after_action INTEGER);`);
       const file=randomUUID(),bytes=Buffer.from('Evidence collected before terminal outcome');
       f.db.prepare("INSERT INTO files(id,scope,name,digest,bytes,created) VALUES (?,'fixture','partial.txt',?,?,'fixture')").run(file,sha256(bytes),bytes);
       f.db.prepare("INSERT INTO generated_files(turn,file,call_id,call,after_action) VALUES (?,?,'partial',?,0)").run(f.task.taskId,file,JSON.stringify({function:{name:'create_text_file'}}));
       f.db.prepare("INSERT INTO record_scopes VALUES ('files',?,?,?,'owner','agent',?)").run(JSON.stringify([file]),f.member.accountId,f.project,f.agent);
       const reason='r'.repeat(2000),command=f.stage(f.task,{reason},name),before=f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(f.task.taskId)!.revision;
       f.db.exec("CREATE TRIGGER fail_outcome_receipt BEFORE INSERT ON receipts WHEN NEW.scope LIKE 'tasks:context-mutations:%' BEGIN SELECT RAISE(ABORT,'outcome receipt failed'); END");
-      assert.throws(()=>command(),/outcome receipt failed/);
+      assert.throws(()=>command(),code('storage_failed'));
       assert.equal(f.db.prepare('SELECT state FROM tasks WHERE id=?').get(f.task.taskId)!.state,'running');
       assert.equal(f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(f.task.taskId)!.revision,before);
       assert.equal(f.db.prepare('SELECT no_update FROM turns WHERE id=?').get(f.task.taskId)!.no_update,0);
@@ -203,7 +205,7 @@ test('canonical routine outcomes validate reasons and atomically retain result r
       assert.equal(f.tasks.execution(f.principal,f.task.taskId,{requestId:randomUUID(),ownership:f.task.ownership},f.task.token).state,name==='no_update'?'completed':'failed');
       f.db.prepare('UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE project=? AND account=? AND agent=?').run(f.project,f.member.accountId,f.agent);
       assert.throws(()=>command(),code('execution_denied'),'Saved evidence still requires current assignment');
-    }finally{f.close();}
+    }finally{await f.close();}
   }
 });
 
@@ -227,7 +229,7 @@ test('canonical routine outcomes deny forced ordinary chat and descendant calls'
         assert.throws(()=>command(),code('execution_denied'));
         assert.equal(f.db.prepare('SELECT state FROM tasks WHERE id=?').get(task.taskId)!.state,'running');
       }
-    }finally{f.close();}
+    }finally{await f.close();}
   }
 });
 
@@ -246,7 +248,7 @@ test('canonical routine outcomes reject late results after pause cancel revoke o
       assert.equal(f.db.prepare('SELECT no_update FROM turns WHERE id=?').get(f.task.taskId)!.no_update,0);
       assert.equal(f.db.prepare('SELECT 1 FROM task_results WHERE action=?').get(command.request.actionId),undefined);
       assert.notEqual(f.db.prepare('SELECT state FROM tasks WHERE id=?').get(f.task.taskId)!.state,'completed');
-    }finally{f.close();}
+    }finally{await f.close();}
   }
 });
 
@@ -274,7 +276,7 @@ test('canonical turn wait reserves one deadline and activates only after matchin
     assert.throws(() => f.tasks.waitSecretResult(f.principal, { ...result, state: 'failed', secretRef: undefined, errorCode: 'wait_expired' }), code('payload_conflict'));
     assert.throws(() => f.tasks.context(f.principal, task.taskId, { requestId: randomUUID(), ownership: task.ownership, expectedTaskRevision: original.receipt.recordRevision }, task.token), code('event_pending'));
     assert(!f.db.prepare('PRAGMA table_info(turn_waits)').all().some(row => row.name === 'secret'));
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('pending turn wait closes after cancellation, stale target or failed keyring result and rolls back failed activation', async () => {
@@ -289,7 +291,7 @@ test('pending turn wait closes after cancellation, stale target or failed keyrin
       const result = { requestId: randomUUID(), provisionId: provision.provisionId, payloadDigest: provision.payloadDigest, waitKey: provision.waitKey, secretGeneration: 1, sourceDeviceGeneration: 1, ...(outcome === 'keyring' ? { state: 'failed', errorCode: 'keystore_unavailable' } : { state: 'ready', secretRef: JSON.stringify([provision.waitKey, 1]) }) };
       if (outcome === 'rollback') {
         f.db.exec("CREATE TRIGGER fail_wait_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'fixture wait result failure'); END");
-        assert.throws(() => f.tasks.waitSecretResult(f.principal, result), /fixture wait result failure/);
+        assert.throws(() => f.tasks.waitSecretResult(f.principal, result), code('storage_failed'));
         assert.equal(f.db.prepare('SELECT count(*) n FROM turn_waits').get()!.n, 0);
         assert.equal(f.db.prepare('SELECT state FROM wait_provisions').get()!.state, 'pending');
         f.db.exec('DROP TRIGGER fail_wait_result');
@@ -299,7 +301,7 @@ test('pending turn wait closes after cancellation, stale target or failed keyrin
       assert.equal(f.db.prepare('SELECT count(*) n FROM turn_waits').get()!.n, outcome === 'rollback' ? 1 : 0);
       assert.deepEqual(f.tasks.waitSecretResult(f.principal, result), ack);
       if (outcome === 'cancel' || outcome === 'pause') assert.equal(f.db.prepare('SELECT state FROM tasks WHERE id=?').get(task.taskId)!.state, outcome === 'cancel' ? 'cancelled' : 'paused');
-    } finally { f.close(); }
+    } finally { await f.close(); }
   }
 });
 
@@ -326,7 +328,7 @@ test('canonical maintenance expires pending and activated waits once without rev
         assert.equal(f.tasks.waitSecretResult(f.principal, result).data.state, 'activated', 'Exact ACK remains immutable after expiry');
       }
       assert.equal(f.db.prepare('SELECT count(*) n FROM task_results').get()!.n, 1);
-    } finally { t.mock.restoreAll(); f.close(); }
+    } finally { t.mock.restoreAll(); await f.close(); }
   }
 });
 
@@ -364,7 +366,7 @@ test('canonical wait maintenance survives SQLite failure and retries after stora
     } finally { probe.close(); }
   } finally {
     if (child && child.exitCode === null && child.signalCode === null) { const exited = once(child, 'exit'); child.send('close'); await exited; }
-    snapshot?.cleanup(); f.close();
+    snapshot?.cleanup(); await f.close();
   }
 });
 
@@ -389,7 +391,7 @@ test('disaster restore closes pending provisions and activated wait references w
       assert.equal(restored.prepare('SELECT status FROM turn_waits').get()!.status, 'closed');
       assert.equal(restored.prepare('SELECT serving_state FROM authority_state').get()!.serving_state, 'read_only_recovery');
     } finally { restored.close(); }
-  } finally { snapshot?.cleanup(); f.close(); rmSync(directory, { recursive: true, force: true }); }
+  } finally { snapshot?.cleanup(); await f.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
 test('canonical shared data keeps schema ownership, collaborator scope, validation and atomic receipts',async()=>{
@@ -409,13 +411,13 @@ test('canonical shared data keeps schema ownership, collaborator scope, validati
     for(const args of [{sql:''},{sql:'SELECT 1; SELECT 2'},{sql:'ATTACH DATABASE \'/tmp/private\' AS hidden'},{sql:'SELECT ?',parameters:[true]}])assert.equal(typeof (await f.stage(first,args,'query_data').async()).data.resultContent.error,'string');
     const insert=f.stage(first,{sql:'INSERT INTO notes VALUES (?)',parameters:['Atomic row']},'query_data');
     f.db.exec("CREATE TRIGGER reject_data_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'result journal failed'); END");
-    await assert.rejects(insert.async(),/result journal failed/);assert.equal(f.db.prepare('SELECT revision FROM shared_data WHERE project=?').get(f.project)!.revision,2);
+    await assert.rejects(insert.async(),code('storage_failed'));assert.equal(f.db.prepare('SELECT revision FROM shared_data WHERE project=?').get(f.project)!.revision,2);
     f.db.exec('DROP TRIGGER reject_data_result');const saved=await insert.async();assert.equal(saved.data.resultContent.revision,3);
     assert.deepEqual(await insert.async(),saved);assert.deepEqual((await run(first,'SELECT text FROM notes ORDER BY rowid')).data.resultContent.rows,[['Shared project row'],['Atomic row']]);
     const denied=f.stage(collaborator,{sql:'INSERT INTO notes VALUES (\'Revoked\')'},'query_data'),deniedWork=denied.async();f.db.prepare('UPDATE collaborator_agents SET enabled=0,revision=2 WHERE project=? AND account=? AND agent=?').run(f.project,f.member.accountId,f.agent);
     await assert.rejects(deniedWork,code('execution_denied'));assert.equal(f.db.prepare('SELECT revision FROM shared_data WHERE project=?').get(f.project)!.revision,3);
     await assert.rejects(f.stage(first,{sql:'SELECT 1',project:f.project},'query_data').async(),code('unknown_field'));
-  }finally{f.close();}
+  }finally{await f.close();}
 });
 
 test('canonical shared data rechecks cancellation and authority across worker I/O and preserves concurrent conflicts',async()=>{
@@ -432,7 +434,7 @@ test('canonical shared data rechecks cancellation and authority across worker I/
     const cancelled=run(second,"INSERT INTO notes VALUES ('Cancelled')");
     const revision=Number(f.tasks.lookup(f.owner,second.taskId).data.revision);f.tasks.control(f.owner,second.taskId,{requestId:randomUUID(),expectedRevision:revision,operation:'cancel'});
     await assert.rejects(cancelled,code('ownership_conflict'));assert.equal(f.db.prepare('SELECT revision FROM shared_data WHERE project=?').get(f.project)!.revision,3);
-  }finally{f.close();}
+  }finally{await f.close();}
 });
 
 test('canonical cancellation kills SQL workers and releases query capacity',async()=>{
@@ -443,7 +445,7 @@ test('canonical cancellation kills SQL workers and releases query capacity',asyn
     for(const task of tasks)f.tasks.control(f.owner,task.taskId,{requestId:randomUUID(),expectedRevision:Number(f.tasks.lookup(f.owner,task.taskId).data.revision),operation:'cancel'});
     assert((await finished).every(result=>result.status==='rejected'));assert(performance.now()-started<1000,'Cancelled query workers must stop before their SQL deadline.');
     const next=f.start(),result=await f.stage(next,{sql:'SELECT 42'},'query_data').async();assert.deepEqual(result.data.resultContent.rows,[[42]]);
-  }finally{f.close();}
+  }finally{await f.close();}
 });
 
 test('canonical questions validate limits and atomically pause, answer and retain cancellation',async()=>{
@@ -455,14 +457,14 @@ test('canonical questions validate limits and atomically pause, answer and retai
     assert.deepEqual(f.tasks.lookup(f.owner,task.taskId).data.questions,[]);
     const ask=f.stage(task,{question:' Continue? ',choices:[' Yes ','No']});
     f.db.exec("CREATE TRIGGER fail_question_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'question result failed'); END");
-    assert.throws(ask,/question result failed/);assert.deepEqual(f.tasks.lookup(f.owner,task.taskId).data.questions,[]);assert.equal(f.tasks.lookup(f.owner,task.taskId).data.state,'running');
+    assert.throws(ask,code('storage_failed'));assert.deepEqual(f.tasks.lookup(f.owner,task.taskId).data.questions,[]);assert.equal(f.tasks.lookup(f.owner,task.taskId).data.state,'running');
     f.db.exec('DROP TRIGGER fail_question_result');
     const saved=ask(),question=(saved.data.resultContent as {id:string}).id;
     assert.deepEqual(ask(),saved);assert.equal(f.tasks.lookup(f.owner,task.taskId).data.state,'paused');
     assert.throws(()=>f.tasks.control(f.owner,task.taskId,{requestId:randomUUID(),expectedRevision:saved.receipt.recordRevision,operation:'reassign',recipientAgentId:f.agent}),code('question_pending'));
     const answer={requestId:randomUUID(),expectedRevision:saved.receipt.recordRevision,text:'Yes'};
     f.db.exec("CREATE TRIGGER fail_question_answer BEFORE INSERT ON question_answers BEGIN SELECT RAISE(ABORT,'answer failed'); END");
-    assert.throws(()=>f.tasks.answer(f.owner,task.taskId,question,answer),/answer failed/);
+    assert.throws(()=>f.tasks.answer(f.owner,task.taskId,question,answer),code('storage_failed'));
     const unchanged=f.tasks.lookup(f.owner,task.taskId);assert.equal(unchanged.data.state,'paused');assert.equal(unchanged.data.revision,answer.expectedRevision);assert.equal((unchanged.data.questions as {answer:null}[])[0].answer,null);
     f.db.exec('DROP TRIGGER fail_question_answer');
     const answered=f.tasks.answer(f.owner,task.taskId,question,answer);assert.equal(answered.data.state,'running');assert.deepEqual(f.tasks.answer(f.owner,task.taskId,question,answer),answered);
@@ -473,7 +475,7 @@ test('canonical questions validate limits and atomically pause, answer and retai
     const stopped=f.tasks.control(f.owner,cancelled.taskId,{requestId:randomUUID(),expectedRevision:pendingResult.receipt.recordRevision,operation:'cancel'});
     assert.deepEqual(pending(),pendingResult);assert.throws(()=>f.tasks.answer(f.owner,cancelled.taskId,pendingId,{requestId:randomUUID(),expectedRevision:stopped.receipt.recordRevision,text:'Late'}),code('question_closed'));
     assert.equal(f.tasks.lookup(f.owner,cancelled.taskId).data.state,'cancelled');
-  }finally{f.close();}
+  }finally{await f.close();}
 });
 
 test('canonical question answers enforce private human, conversation, project and current collaborator access',async()=>{
@@ -495,14 +497,14 @@ test('canonical question answers enforce private human, conversation, project an
     const side=f.start(f.member,{v:1,kind:'side',threadId:thread,message:{text:'Side question',files:[]}}),sideResult=f.stage(side,{question:'Side?',choices:[]})(),sideQuestion=(sideResult.data.resultContent as {id:string}).id;
     f.db.prepare('UPDATE threads SET archived=1,revision=revision+1 WHERE id=?').run(thread);
     assert.throws(()=>f.tasks.answer(f.member,side.taskId,sideQuestion,{requestId:randomUUID(),expectedRevision:sideResult.receipt.recordRevision,text:'Late'}),code('execution_denied'));
-    const channel=randomUUID();f.db.prepare("INSERT INTO channels VALUES (?,'Room','',NULL,1,0)").run(channel);f.db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel,f.agent);
+    const channel=randomUUID();f.db.prepare("INSERT INTO channels(id,name,instructions,lead,revision,archived) VALUES (?,'Room','',NULL,1,0)").run(channel);f.db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel,f.agent);
     f.db.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(JSON.stringify([channel]),f.owner.accountId,f.project,channel);
     const room=f.start(f.owner,{v:1,kind:'channel',channelId:channel,routing:'assigned',message:{text:'Shared question',files:[]}}),roomResult=f.stage(room,{question:'Room?',choices:[]})(),roomQuestion=(roomResult.data.resultContent as {id:string}).id;
     assert.throws(()=>f.tasks.answer(f.member,side.taskId,roomQuestion,{requestId:randomUUID(),expectedRevision:sideResult.receipt.recordRevision,text:'Wrong conversation'}),code('resource_not_found'));
     assert.equal(f.tasks.answer(f.member,room.taskId,roomQuestion,{requestId:randomUUID(),expectedRevision:roomResult.receipt.recordRevision,text:'Shared answer'}).data.answer,'Shared answer');
     f.db.prepare('UPDATE project_members SET deleted=1 WHERE account=?').run(f.member.accountId);
     assert.throws(()=>f.tasks.answer(f.member,task.taskId,question,answer),code('resource_not_found'));
-  }finally{f.close();}
+  }finally{await f.close();}
 });
 
 for(const kind of ['direct','side'] as const)test(`canonical avatar removal in ${kind} preserves CAS, rollback, scope and exact results`,async()=>{
@@ -519,7 +521,7 @@ for(const kind of ['direct','side'] as const)test(`canonical avatar removal in $
     assert.equal((run({image:null,revision:0}).data.resultContent as {status:number}).status,409);
     f.db.prepare('UPDATE agent_avatars SET image=?,revision=2 WHERE agent=?').run(Buffer.from('saved image'),f.agent);
     const deletion=f.stage(task,{image:null,revision:2},'set_avatar');
-    f.db.exec("CREATE TRIGGER fail_avatar_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'avatar result failed'); END");assert.throws(deletion,/avatar result failed/);assert.equal(f.db.prepare('SELECT revision FROM agent_avatars WHERE agent=?').get(f.agent)!.revision,2);assert.equal(Buffer.from(f.db.prepare('SELECT image FROM agent_avatars WHERE agent=?').get(f.agent)!.image as Uint8Array).toString(),'saved image');
+    f.db.exec("CREATE TRIGGER fail_avatar_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'avatar result failed'); END");assert.throws(deletion,code('storage_failed'));assert.equal(f.db.prepare('SELECT revision FROM agent_avatars WHERE agent=?').get(f.agent)!.revision,2);assert.equal(Buffer.from(f.db.prepare('SELECT image FROM agent_avatars WHERE agent=?').get(f.agent)!.image as Uint8Array).toString(),'saved image');
     f.db.exec('DROP TRIGGER fail_avatar_result');const saved=deletion();assert.deepEqual(saved.data.resultContent,{revision:3,present:false});assert.equal(f.db.prepare('SELECT image FROM agent_avatars WHERE agent=?').get(f.agent)!.image,null);
     f.db.prepare('UPDATE agent_avatars SET image=?,revision=4 WHERE agent=?').run(Buffer.from('later image'),f.agent);assert.deepEqual(deletion(),saved);assert.equal(f.db.prepare('SELECT revision FROM agent_avatars WHERE agent=?').get(f.agent)!.revision,4);
     const stale=f.stage(task,{image:null,revision:4},'set_avatar');f.db.prepare('UPDATE agent_avatars SET revision=5 WHERE agent=?').run(f.agent);assert.throws(stale,code('context_stale'));
@@ -527,9 +529,9 @@ for(const kind of ['direct','side'] as const)test(`canonical avatar removal in $
     f.db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,f.agent);f.db.prepare('INSERT INTO response_policies VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,f.agent);
     const member=f.start(f.member),memberDelete=f.stage(member,{image:null,revision:5},'set_avatar');assert.deepEqual(memberDelete().data.resultContent,{revision:6,present:false});
     f.db.prepare('UPDATE collaborator_agents SET enabled=0,revision=2 WHERE project=? AND account=? AND agent=?').run(f.project,f.member.accountId,f.agent);assert.throws(memberDelete,code('execution_denied'));
-    const channel=randomUUID();f.db.prepare("INSERT INTO channels VALUES (?,'Room','',NULL,1,0)").run(channel);f.db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel,f.agent);f.db.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(JSON.stringify([channel]),f.owner.accountId,f.project,channel);
+    const channel=randomUUID();f.db.prepare("INSERT INTO channels(id,name,instructions,lead,revision,archived) VALUES (?,'Room','',NULL,1,0)").run(channel);f.db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel,f.agent);f.db.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(JSON.stringify([channel]),f.owner.accountId,f.project,channel);
     const room=f.start(f.owner,{v:1,kind:'channel',channelId:channel,routing:'assigned',message:{text:'Room avatar',files:[]}}),roomContext=f.tasks.context(f.principal,room.taskId,{requestId:randomUUID(),ownership:room.ownership,expectedTaskRevision:2},room.token).data.snapshot as {tools:unknown[]};assert.deepEqual(roomContext.tools,[]);assert.throws(()=>f.stage(room,{image:null,revision:6},'set_avatar')(),code('execution_denied'));
-  }finally{f.close();}
+  }finally{await f.close();}
 });
 
 for(const kind of ['direct','side'] as const)test(`canonical sites in ${kind} page scoped metadata and retain atomic deletion`,async()=>{
@@ -554,15 +556,15 @@ for(const kind of ['direct','side'] as const)test(`canonical sites in ${kind} pa
     for(const revision of [0,1.5,Number.MAX_SAFE_INTEGER])assert.equal((run('delete_site',{site:sites[0],revision}).data.resultContent as {status:number}).status,400);
     assert.equal((run('delete_site',{site:sites[0],revision:2}).data.resultContent as {status:number}).status,409);
     const deletion=f.stage(task,{site:sites[0],revision:1},'delete_site');
-    f.db.exec("CREATE TRIGGER fail_site_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'site result failed'); END");assert.throws(deletion,/site result failed/);assert.equal(f.db.prepare('SELECT revision FROM local_sites WHERE id=?').get(sites[0])!.revision,1);assert.equal(f.db.prepare('SELECT deleted FROM local_sites WHERE id=?').get(sites[0])!.deleted,0);
+    f.db.exec("CREATE TRIGGER fail_site_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'site result failed'); END");assert.throws(deletion,code('storage_failed'));assert.equal(f.db.prepare('SELECT revision FROM local_sites WHERE id=?').get(sites[0])!.revision,1);assert.equal(f.db.prepare('SELECT deleted FROM local_sites WHERE id=?').get(sites[0])!.deleted,0);
     f.db.exec('DROP TRIGGER fail_site_result');const saved=deletion();assert.deepEqual(saved.data.resultContent,{id:sites[0],name:'Scoped site',revision:2,deleted:1,path:null});assert.deepEqual(deletion(),saved);assert.equal(f.db.prepare('SELECT source FROM local_sites WHERE id=?').get(sites[0])!.source,'');
     assert.equal((run('delete_site',{site:sites[0],revision:2}).data.resultContent as {status:number}).status,410);
     f.tasks.control(f.owner,task.taskId,{requestId:randomUUID(),expectedRevision:f.tasks.lookup(f.owner,task.taskId).data.revision,operation:'cancel'});assert.deepEqual(deletion(),saved);
     f.db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,f.agent);f.db.prepare('INSERT INTO response_policies VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,f.agent);
     const member=f.start(f.member),shared=seed(undefined,f.project,f.owner.accountId,f.agent,'project');assert.equal((f.stage(member,{site:privateSite,revision:1},'delete_site')().data.resultContent as {deleted:number}).deleted,1);assert.equal((f.stage(member,{site:sites[1],revision:1},'delete_site')().data.resultContent as {status:number}).status,404);assert.equal((f.stage(member,{site:shared,revision:1},'delete_site')().data.resultContent as {deleted:number}).deleted,1);
-    const channel=randomUUID();f.db.prepare("INSERT INTO channels VALUES (?,'Room','',NULL,1,0)").run(channel);f.db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel,f.agent);f.db.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(JSON.stringify([channel]),f.owner.accountId,f.project,channel);
+    const channel=randomUUID();f.db.prepare("INSERT INTO channels(id,name,instructions,lead,revision,archived) VALUES (?,'Room','',NULL,1,0)").run(channel);f.db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel,f.agent);f.db.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(JSON.stringify([channel]),f.owner.accountId,f.project,channel);
     for(const name of ['list_sites','delete_site']){const room=f.start(f.owner,{v:1,kind:'channel',channelId:channel,routing:'assigned',message:{text:'Room sites',files:[]}});assert.throws(()=>f.stage(room,name==='list_sites'?{}:{site:sites[1],revision:1},name)(),code('execution_denied'));}
-  }finally{f.close();}
+  }finally{await f.close();}
 });
 
 test('reassign denies unresolved effects, revoked initiators and invalid successor provenance atomically', async () => {
@@ -593,7 +595,7 @@ test('reassign denies unresolved effects, revoked initiators and invalid success
     insert.run(...columns.map(key=>base[key]));
     f.db.prepare('UPDATE project_members SET deleted=1 WHERE project=? AND account=?').run(f.project,f.owner.accountId);
     assert.throws(()=>f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId:next,previousExecutorGeneration:0,executorTokenHash:sha256(f.token),lockProof:{...f.lockProof,lockId:randomUUID()}},f.token),code('execution_denied'));
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('local journal locks sole runner and retains immutable intent/result until exact ACK', async () => {
@@ -617,7 +619,7 @@ test('local journal locks sole runner and retains immutable intent/result until 
     const receipt={requestId:JSON.parse(String(result.intent_json)).reportRequestId,recordId:f.actionId,projectId:f.project,payloadDigest:journal.reportDigest(f.actionId),status:200,recordRevision:1,committedAt:Date.now()};
     assert.equal(journal.acknowledge(f.actionId,receipt).state,'acknowledged');
     assert.equal(journal.acknowledge(f.actionId,receipt).state,'acknowledged');
-  } finally {journal.close();db.close();f.close();rmSync(dir,{recursive:true,force:true});}
+  } finally {journal.close();db.close();await f.close();rmSync(dir,{recursive:true,force:true});}
 });
 
 test('committed result survives lost ACK, revocation and offline history without granting dispatch', async () => {
@@ -639,7 +641,7 @@ test('committed result survives lost ACK, revocation and offline history without
     assert.deepEqual((detail.data.results as { content: unknown }[])[0].content, resultContent);
     const context = f.tasks.context(f.principal, f.taskId, { requestId: randomUUID(), ownership: f.ownership, expectedTaskRevision: saved.receipt.recordRevision }, f.token);
     assert.equal((context.data.snapshot as { toolJournal: unknown[] }).toolJournal.length, 1);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('not-sent and uncertain reports require verifiable evidence and cannot resurrect cancelled work', async () => {
@@ -654,7 +656,7 @@ test('not-sent and uncertain reports require verifiable evidence and cannot resu
     const saved = f.tasks.reconcile(f.principal, f.taskId, { ...report, state: 'uncertain', effectStatus: 'unknown', uncertainReason: 'Provider response lost' }, f.token);
     assert.equal(saved.data.taskState, 'cancelled');
     assert.equal(saved.data.actionState, 'uncertain');
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('signed no-marker evidence reconciles original owner before acquire and altered proofs fail closed', async () => {
@@ -678,7 +680,7 @@ test('signed no-marker evidence reconciles original owner before acquire and alt
     const next = f.tasks.acquire(f.principal, { ...acquire, lockProof: { ...acquire.lockProof, reconciledThrough: 2 } }, f.token);
     assert.equal(parseOwnership(next.data.ownership).executorGeneration, 2);
     assert.throws(() => f.tasks.context(f.principal, f.taskId, { requestId: randomUUID(), ownership: f.ownership, expectedTaskRevision: next.receipt.recordRevision }, f.token), code('ownership_conflict'));
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('progress reports advance monotonically, immutable result publishes once and prepare sees changed context', async () => {
@@ -686,7 +688,7 @@ test('progress reports advance monotonically, immutable result publishes once an
   try {
     f.access.editAgentRules(f.owner, f.project, f.agent, { requestId: randomUUID(), expectedParticipationRevision: 1, rules: 'New rules' });
     assert.throws(() => f.tasks.commit(f.principal, f.taskId, f.actionId, f.commit, f.token), code('context_stale'));
-  } finally { f.close(); }
+  } finally { await f.close(); }
   const g = await preparedTask();
   try {
     g.tasks.commit(g.principal, g.taskId, g.actionId, g.commit, g.token);
@@ -701,7 +703,7 @@ test('progress reports advance monotonically, immutable result publishes once an
     assert.equal(g.tasks.reconcile(g.principal, g.taskId, { ...report, requestId: randomUUID(), state: 'acknowledged', journalSequence: 4 }, g.token).data.actionState, 'acknowledged');
     assert.throws(() => g.tasks.reconcile(g.principal, g.taskId, { ...report, requestId: randomUUID(), journalSequence: 5 }, g.token), code('action_conflict'));
     assert.throws(() => g.tasks.reconcile(g.principal, g.taskId, { ...progress, requestId: randomUUID(), journalSequence: 5 }, g.token), code('payload_conflict'));
-  } finally { g.close(); }
+  } finally { await g.close(); }
 });
 
 test('task controls use current scope and revisions, keep cancellation terminal and resolve no effects implicitly', async () => {
@@ -716,7 +718,7 @@ test('task controls use current scope and revisions, keep cancellation terminal 
     const cancelled = f.tasks.control(f.owner, f.taskId, { requestId: randomUUID(), expectedRevision: paused.receipt.recordRevision, operation: 'cancel' });
     assert.equal(cancelled.data.state, 'cancelled');
     assert.throws(() => f.tasks.control(f.owner, f.taskId, { requestId: randomUUID(), expectedRevision: cancelled.receipt.recordRevision, operation: 'resume' }), code('task_terminal'));
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('owner risk resolution reserves one replacement and cannot erase unknown original effect', async () => {
@@ -737,7 +739,7 @@ test('owner risk resolution reserves one replacement and cannot erase unknown or
     const prepare = { requestId: randomUUID(), sequence: 1, ownership: nextOwnership, payloadDigest, actionKind: 'read', contextSnapshotId: ref.snapshotId, contextDigest: ref.digest, grantRevision: 1, expectedTaskRevision: task.data.revision, journalSequence: 3, resolutionRequestId: decision.requestId };
     const intentDigest = digestCommand([f.taskId,actionId,1,nextOwnership,payloadDigest,'read',ref.snapshotId,ref.digest,null,null,1,null,null,decision.requestId]);
     assert.equal(f.tasks.prepare(f.principal, f.taskId, actionId, { ...prepare, intentDigest }, f.token).data.state, 'prepared');
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('late known result rejects risk retry and historical accepted receipt stays valid after a later ACK', async () => {
@@ -752,7 +754,7 @@ test('late known result rejects risk retry and historical accepted receipt stays
     assert.throws(()=>f.tasks.control(f.owner,f.taskId,{requestId:randomUUID(),expectedRevision:acknowledged.receipt.recordRevision,operation:'resolve_uncertain',decision:{kind:'retry_with_risk',actionId:f.actionId,acknowledgement:'effect_may_have_happened',reason:'Should not replay known output'}}),code('resolution_conflict'));
     const resolved=f.tasks.control(f.owner,f.taskId,{requestId:randomUUID(),expectedRevision:acknowledged.receipt.recordRevision,operation:'resolve_uncertain',decision:{kind:'known_result',actionId:f.actionId,evidenceRequestId:accepted.receipt.requestId,resultRef}});
     assert.equal(resolved.data.state,'running');assert.equal(resolved.data.replacementActionId,undefined);
-  }finally{f.close();}
+  }finally{await f.close();}
 });
 
 test('offline task admission is durable, scoped, immutable and exact without provider binding', async () => {
@@ -773,7 +775,7 @@ test('offline task admission is durable, scoped, immutable and exact without pro
     assert.throws(() => f.db.prepare('UPDATE tasks SET home_device=? WHERE id=?').run(randomUUID(), command.requestId), /immutable task admission/);
     assert.equal(f.db.prepare('SELECT count(*) AS n FROM turns').get()!.n, 1);
     assert.equal(f.db.prepare('SELECT count(*) AS n FROM task_actions').get()!.n, 0);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('assigned collaborator executes owner home/binding and revoked scope blocks receipt replay', async () => {
@@ -786,7 +788,7 @@ test('assigned collaborator executes owner home/binding and revoked scope blocks
     f.db.prepare('UPDATE project_members SET deleted=1,grant_revision=2 WHERE project=? AND account=?').run(f.project, f.member.accountId);
     assert.throws(() => f.tasks.admit(f.member, command), code('resource_not_found'));
     assert.throws(() => f.tasks.lookup(f.member, command.requestId), code('resource_not_found'));
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('task messages require files, preserve line breaks, and closed union rejects mixed routing', async () => {
@@ -798,7 +800,7 @@ test('task messages require files, preserve line breaks, and closed union reject
     assert.throws(() => parseTaskCommand(f.command({ payload: { v: 1, kind: 'channel', channelId: randomUUID(), threadId: randomUUID(), routing: 'assigned', message: { text: 'Mixed', files: [] } }, expectedRevisions: { ...command.expectedRevisions, channel: 1 } })), code('invalid_task_payload'));
     assert.throws(() => f.tasks.admit(f.owner, f.command({ payload: { v: 1, kind: 'direct', message: { text: 'Foreign attachment', files: [randomUUID()] } } })), code('resource_not_found'));
     assert.equal(f.db.prepare('SELECT count(*) AS n FROM tasks').get()!.n, 1);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('task admission requires scoped conversation, matching revisions and exact attachment conversation', async () => {
@@ -821,7 +823,7 @@ test('task admission requires scoped conversation, matching revisions and exact 
     f.db.prepare('UPDATE channels SET archived=1,revision=2 WHERE id=?').run(channel);
     assert.equal(f.tasks.admit(f.owner, room).status, 200);
     assert.throws(() => f.tasks.admit(f.owner, f.command({ ...room, requestId: randomUUID() })), code('conversation_archived'));
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('provider provenance is captured from owner same-home binding and never caller fields', async () => {
@@ -836,7 +838,7 @@ test('provider provenance is captured from owner same-home binding and never cal
     f.db.prepare('UPDATE provider_bindings SET owner_account=? WHERE id=?').run(f.foreign.accountId, binding);
     assert.throws(() => f.tasks.admit(f.owner, f.command()), code('resource_not_found'));
     assert.equal(f.tasks.admit(f.owner, command).status, 200);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('acquire requires stopped/reconciled owner, exact token and fenced generation', async () => {
@@ -855,7 +857,7 @@ test('acquire requires stopped/reconciled owner, exact token and fenced generati
     const next = f.tasks.acquire(f.principal, { ...acquire, requestId: randomUUID(), previousExecutorGeneration: 1, executorTokenHash: sha256(successorToken), lockProof: { ...lockProof, lockId: randomUUID() } }, successorToken);
     assert.equal((next.data.ownership as any).executorGeneration, 2);
     assert(!JSON.stringify(owned).includes(token));
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('context snapshot is immutable, exact, project scoped and requires current executor token', async () => {
@@ -872,7 +874,7 @@ test('context snapshot is immutable, exact, project scoped and requires current 
     assert.equal(data.snapshotRef.digest,sha256(canonicalJson(data.snapshot)));
     assert.throws(() => f.tasks.context(f.principal,c.requestId,{ ...command,requestId: randomUUID() }, randomBytes(32).toString('base64url')),code('executor_invalid'));
     assert.throws(() => f.db.prepare('UPDATE task_context_snapshots SET snapshot_json=\'{}\'').run(),/immutable task context/);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('action prepare grants no dispatch; commit has one live grant and stale context blocks new work', async () => {
@@ -894,7 +896,7 @@ test('action prepare grants no dispatch; commit has one live grant and stale con
     assert.equal(JSON.parse(String(f.db.prepare('SELECT result_json FROM receipts WHERE request_id=?').get(commit.requestId)!.result_json)).data.dispatchable,false);
     assert.throws(()=>f.tasks.commit(f.principal,c.requestId,action,{...commit,requestId:randomUUID()},token),code('action_conflict'));
     assert.throws(()=>f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId:c.requestId,previousExecutorGeneration:1,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token),code('ownership_conflict'));
-  }finally{f.close();}
+  }finally{await f.close();}
 });
 
 async function canonicalTransfer() {
@@ -940,7 +942,7 @@ test('canonical transfer commits one successor and immutable result, fences old 
     assert.throws(() => f.tasks.contextMutations(f.principal, f.taskId, { ...f.mutation, requestId: randomUUID() }, f.token), code('ownership_conflict'));
     f.db.prepare('UPDATE project_members SET deleted=1 WHERE project=? AND account=?').run(f.project, f.owner.accountId);
     assert.throws(() => f.tasks.contextMutations(f.principal, f.taskId, f.mutation, f.token), code('execution_denied'));
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('canonical RPC rejects changed input, stale grants and fabricated results without partial transfer', async () => {
@@ -958,7 +960,7 @@ test('canonical RPC rejects changed input, stale grants and fabricated results w
     assert.equal(f.db.prepare('SELECT count(*) n FROM task_results').get()!.n, 0);
     assert.equal(f.db.prepare('SELECT count(*) n FROM tasks').get()!.n, 1);
     assert.equal(f.db.prepare('SELECT stopped FROM execution_owners WHERE task=?').get(f.taskId)!.stopped, 0);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('canonical transfer keeps channel-only tool boundary for private tasks', async () => {
@@ -967,7 +969,7 @@ test('canonical transfer keeps channel-only tool boundary for private tasks', as
     const payload={toolCall:{id:'transfer',function:{name:'transfer_task',arguments:JSON.stringify({recipient:randomUUID(),task:'Handoff'})}},expectedRevision:2};
     assert.throws(()=>f.tasks.contextMutations(f.principal,f.taskId,{...payload,requestId:randomUUID(),actionId:randomUUID(),ownership:f.ownership,payloadDigest:canonicalToolDigest(payload)},f.token),code('execution_denied'));
     assert.equal(f.db.prepare('SELECT count(*) n FROM tasks').get()!.n,1);
-  } finally {f.close();}
+  } finally {await f.close();}
 });
 
 
@@ -1004,17 +1006,17 @@ test('context projects authorized memory, pinned skills and byte-free asset refs
     const next=f.tasks.context(f.principal,f.taskId,{requestId:randomUUID(),ownership:f.ownership,expectedTaskRevision:2},f.token).data as ActionContext;
     f.db.prepare('UPDATE agent_skills SET enabled=0,revision=revision+1 WHERE agent=? AND skill=?').run(f.agent,skill);
     assert.throws(()=>f.tasks.prepare(f.principal,f.taskId,actionId,{...prepare,contextSnapshotId:next.snapshotRef.snapshotId,contextDigest:next.snapshotRef.digest,intentDigest:digestCommand([f.taskId,actionId,1,f.ownership,payloadDigest,'read',next.snapshotRef.snapshotId,next.snapshotRef.digest,null,null,1,null,null,null])},f.token),code('context_stale'));
-  } finally {f.close();}
+  } finally {await f.close();}
 });
 
 test('context preserves scoped history, questions, compaction and child evidence without foreign records or file bytes', async () => {
   const f = await fixture();
   try {
     initializeQuestions(f.db); initializeCompaction(f.db);
-    f.db.exec(`CREATE TABLE routines(id TEXT PRIMARY KEY,agent TEXT);
-      CREATE TABLE coordination(seq INTEGER PRIMARY KEY AUTOINCREMENT,turn TEXT,owner TEXT,target TEXT,kind TEXT,prompt TEXT,call TEXT,child TEXT);
-      CREATE TABLE files(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE,scope TEXT,name TEXT,digest TEXT,bytes BLOB,created TEXT);
-      CREATE TABLE generated_files(seq INTEGER PRIMARY KEY AUTOINCREMENT,turn TEXT,file TEXT,call_id TEXT,call TEXT,after_action INTEGER);`);
+    f.db.exec(`CREATE TABLE IF NOT EXISTS routines(id TEXT PRIMARY KEY,agent TEXT);
+      CREATE TABLE IF NOT EXISTS coordination(seq INTEGER PRIMARY KEY AUTOINCREMENT,turn TEXT,owner TEXT,target TEXT,kind TEXT,prompt TEXT,call TEXT,child TEXT);
+      CREATE TABLE IF NOT EXISTS files(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE,scope TEXT,name TEXT,digest TEXT,bytes BLOB,created TEXT);
+      CREATE TABLE IF NOT EXISTS generated_files(seq INTEGER PRIMARY KEY AUTOINCREMENT,turn TEXT,file TEXT,call_id TEXT,call TEXT,after_action INTEGER);`);
     initializeFlows(f.db);
     const otherProject = randomUUID(); f.access.createProject(f.owner,{requestId:randomUUID(),id:otherProject,name:'Other'});
     const turn = (text: string, project=f.project, account=f.owner.accountId, root=f.agent) => {
@@ -1068,7 +1070,7 @@ test('context preserves scoped history, questions, compaction and child evidence
     assert.equal(canonicalJson(f.tasks.context(f.principal,taskId,request,token).data),canonicalJson(context));
     assert.equal(f.db.prepare('SELECT count(*) n FROM task_context_snapshots').get()!.n,count);
     assert.equal(f.db.prepare('SELECT count(*) n FROM task_actions').get()!.n,0);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 
@@ -1076,9 +1078,9 @@ test('canonical history retains sequence cursors and excludes unmapped, foreign,
   const f = await fixture(['read_history','read_message']);
   try {
     initializeQuestions(f.db);
-    f.db.exec(`CREATE TABLE queue_positions(turn TEXT PRIMARY KEY,position INTEGER NOT NULL);
-      CREATE TABLE files(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE,scope TEXT,name TEXT,digest TEXT,bytes BLOB,created TEXT);
-      CREATE TABLE generated_files(seq INTEGER PRIMARY KEY AUTOINCREMENT,turn TEXT,file TEXT,call_id TEXT,call TEXT,after_action INTEGER);`);
+    f.db.exec(`CREATE TABLE IF NOT EXISTS queue_positions(turn TEXT PRIMARY KEY,position INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS files(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE,scope TEXT,name TEXT,digest TEXT,bytes BLOB,created TEXT);
+      CREATE TABLE IF NOT EXISTS generated_files(seq INTEGER PRIMARY KEY AUTOINCREMENT,turn TEXT,file TEXT,call_id TEXT,call TEXT,after_action INTEGER);`);
     const other = randomUUID(); f.access.createProject(f.owner,{requestId:randomUUID(),id:other,name:'Other'});
     const seed = (text: string, project=f.project, account=f.owner.accountId, root=f.agent, mapped=true) => {
       const id=randomUUID(), row=f.db.prepare("INSERT INTO turns(id,agent,text,reply,status,created) VALUES (?,?,?,?,'done','fixture')").run(id,f.agent,text,'Saved original reply');
@@ -1120,7 +1122,7 @@ test('canonical history retains sequence cursors and excludes unmapped, foreign,
     assert.equal((run('read_message',{id:originals[0].id,offset:-1}).result.data.resultContent as {status:number}).status,400);
     f.db.prepare('UPDATE turns SET text=?,revision=revision+1 WHERE id=?').run('Changed original',originals[0].id);
     assert.equal(canonicalJson(f.tasks.contextMutations(f.principal,task.requestId,read.request,token)),canonicalJson({...read.result,status:200}));
-  }finally{f.close();}
+  }finally{await f.close();}
 });
 
 test('canonical skills retain installed pins, owner mappings, private boundaries and immutable read results', async () => {
@@ -1176,7 +1178,7 @@ test('canonical skills retain installed pins, owner mappings, private boundaries
     const member=start('direct',f.member);assert.equal(run('read_skill',{id:installed[2]},member).content,'PINNED_INSTRUCTIONS');
     const room=start('channel'),context=f.tasks.context(f.principal,room.taskId,{requestId:randomUUID(),ownership:room.ownership,expectedTaskRevision:2},room.token);
     assert.deepEqual((context.data.snapshot as {tools:unknown[]}).tools,[]);assert.throws(()=>run('list_skills',{},room),code('execution_denied'));
-  }finally{f.close();}
+  }finally{await f.close();}
 });
 
 test('canonical routine tools keep private project mappings, pagination and flow scope', async () => {
@@ -1192,14 +1194,16 @@ test('canonical routine tools keep private project mappings, pagination and flow
       return f.tasks.contextMutations(f.principal,task.requestId,{requestId:randomUUID(),actionId,ownership,toolCall,payloadDigest,expectedRevision},token).data.resultContent as Record<string,unknown>;
     };
     assert.deepEqual(run('list_routines',{}),{routines:[],next_after:null});
-    f.db.exec('CREATE TABLE routines(id TEXT PRIMARY KEY,agent TEXT,name TEXT,prompt TEXT,next_at INTEGER,interval_ms INTEGER,enabled INTEGER,revision INTEGER,trigger TEXT,secret TEXT); CREATE TABLE routine_flows(routine TEXT PRIMARY KEY,graph TEXT,revision INTEGER);');
+    f.db.exec('CREATE TABLE IF NOT EXISTS routines(id TEXT PRIMARY KEY,agent TEXT,name TEXT,prompt TEXT,next_at INTEGER,interval_ms INTEGER,enabled INTEGER,revision INTEGER,trigger TEXT,secret TEXT); CREATE TABLE IF NOT EXISTS routine_flows(routine TEXT PRIMARY KEY,graph TEXT,revision INTEGER);');
+    f.db.exec('ALTER TABLE routines ADD COLUMN secret TEXT');
     const other=randomUUID();f.access.createProject(f.owner,{requestId:randomUUID(),id:other,name:'Other'});
     const seed=(project=f.project,account=f.owner.accountId,mapped=true,agent=f.agent)=>{
-      const id=randomUUID();f.db.prepare("INSERT INTO routines VALUES (?,?,'Routine','Routine prompt',123456,NULL,1,1,'schedule','SECRET_MUST_NOT_LEAK')").run(id,agent);
+      const id=randomUUID();f.db.prepare("INSERT INTO routines(id,agent,name,prompt,next_at,interval_ms,enabled,revision,trigger,secret) VALUES (?,?,'Routine','Routine prompt',123456,NULL,1,1,'schedule','SECRET_MUST_NOT_LEAK')").run(id,agent);
       if(mapped)f.db.prepare("INSERT INTO record_scopes VALUES ('routines',?,?,?,'owner','agent',?)").run(JSON.stringify([id]),account,project,agent);return id;
     };
     const visible=Array.from({length:11},()=>seed()).sort(),foreign=seed(other),privateRoutine=seed(f.project,f.member.accountId),unmapped=seed(f.project,f.owner.accountId,false);
-    const foreignAgent=seed(f.project,f.owner.accountId,true,randomUUID());
+    const unassigned=randomUUID();f.db.prepare("INSERT INTO agents(id,name,model,instructions) VALUES (?,'Unassigned','fixture','Help')").run(unassigned);
+    const foreignAgent=seed(f.project,f.owner.accountId,true,unassigned);
     const page=run('list_routines',{});assert.deepEqual((page.routines as {id:string}[]).map(row=>row.id),visible.slice(0,10));assert.equal(page.next_after,visible[9]);assert(!JSON.stringify(page).includes('Routine prompt'));assert(!JSON.stringify(page).includes('SECRET_MUST_NOT_LEAK'));
     const next=run('list_routines',{after:page.next_after});assert.deepEqual((next.routines as {id:string}[]).map(row=>row.id),visible.slice(10));assert.equal(next.next_after,null);
     const plain=run('read_routine',{id:visible[0]});assert.equal(plain.prompt,'Routine prompt');assert.deepEqual(plain.flow,{graph:{root:f.agent,nodes:[f.agent],links:[]},revision:0});assert(!JSON.stringify(plain).includes('SECRET_MUST_NOT_LEAK'));
@@ -1216,7 +1220,7 @@ test('canonical routine tools keep private project mappings, pagination and flow
     for(const name of ['list_routines','set_routine_flow']){
       const toolCall={id:randomUUID(),function:{name,arguments:'{}'}},expectedRevision=2;assert.throws(()=>f.tasks.contextMutations(f.principal,room.requestId,{requestId:randomUUID(),actionId:randomUUID(),ownership:roomOwnership,toolCall,expectedRevision,payloadDigest:canonicalToolDigest({toolCall,expectedRevision})},token),code('execution_denied'));
     }
-  }finally{f.close();}
+  }finally{await f.close();}
 });
 
 test('canonical routine edits require project agents and assignment, preserve CAS and roll back with result failure', async () => {
@@ -1225,9 +1229,9 @@ test('canonical routine edits require project agents and assignment, preserve CA
     f.access.createProject(f.owner,{requestId:randomUUID(),id:other,name:'Other'});
     for(const [id,projectId] of [[recipient,f.project],[outsider,other]])await f.access.createAgent(f.owner,{requestId:id,id,name:'Recipient',model:'fixture',backupModel:'',instructions:'Continue',threadLimit:2,projectId,homeDeviceId:f.home,expectedProjectRevision:1,expectedHomeDeviceRevision:1,providerBinding:null});
     f.db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,f.agent);
-    f.db.exec('CREATE TABLE routines(id TEXT PRIMARY KEY,agent TEXT,name TEXT,prompt TEXT,next_at INTEGER,interval_ms INTEGER,enabled INTEGER,revision INTEGER,trigger TEXT); CREATE TABLE routine_flows(routine TEXT PRIMARY KEY,graph TEXT,revision INTEGER); CREATE TABLE flow_runs(root_turn TEXT PRIMARY KEY,graph TEXT);');
+    f.db.exec('CREATE TABLE IF NOT EXISTS routines(id TEXT PRIMARY KEY,agent TEXT,name TEXT,prompt TEXT,next_at INTEGER,interval_ms INTEGER,enabled INTEGER,revision INTEGER,trigger TEXT); CREATE TABLE IF NOT EXISTS routine_flows(routine TEXT PRIMARY KEY,graph TEXT,revision INTEGER); CREATE TABLE IF NOT EXISTS flow_runs(root_turn TEXT PRIMARY KEY,graph TEXT);');
     for(const [id,project,visibility] of [[routine,f.project,'project'],[privateRoutine,f.project,'owner'],[foreignRoutine,other,'project']]){
-      f.db.prepare("INSERT INTO routines VALUES (?,?,'Routine','Prompt',123456,NULL,1,1,'schedule')").run(id,f.agent);
+      f.db.prepare("INSERT INTO routines(id,agent,name,prompt,next_at,interval_ms,enabled,revision,trigger) VALUES (?,?,'Routine','Prompt',123456,NULL,1,1,'schedule')").run(id,f.agent);
       f.db.prepare("INSERT INTO record_scopes VALUES ('routines',?,?,?,?, 'agent',?)").run(JSON.stringify([id]),f.owner.accountId,project,visibility,f.agent);
     }
     const task=f.command();f.tasks.admit(f.member,task);const token=randomBytes(32).toString('base64url');
@@ -1246,18 +1250,18 @@ test('canonical routine edits require project agents and assignment, preserve CA
     assert.equal(f.db.prepare('SELECT count(*) n FROM routine_flows').get()!.n,0);
     f.db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,recipient);
     f.db.exec("CREATE TRIGGER fail_flow_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'fixture_result_fail'); END;");
-    assert.throws(()=>run({id:routine,revision:0,links:[{from:f.agent,to:recipient}]}),/fixture_result_fail/);
+    assert.throws(()=>run({id:routine,revision:0,links:[{from:f.agent,to:recipient}]}),code('storage_failed'));
     assert.equal(f.db.prepare('SELECT count(*) n FROM routine_flows').get()!.n,0);assert.equal(f.db.prepare("SELECT count(*) n FROM record_scopes WHERE table_name='routine_flows'").get()!.n,0);
     f.db.exec('DROP TRIGGER fail_flow_result');
     const saved=f.tasks.contextMutations(f.principal,task.requestId,pending,token),graph=(saved.data.resultContent as {graph:unknown}).graph;
     assert.deepEqual(saved.data.resultContent,{graph:{root:f.agent,nodes:[f.agent,recipient],links:[{from:f.agent,to:recipient}]},revision:1});
     const mapping=f.db.prepare("SELECT account,project,visibility FROM record_scopes WHERE table_name='routine_flows'").get()!;assert.deepEqual({...mapping},{account:f.owner.accountId,project:f.project,visibility:'project'});
-    f.db.prepare('INSERT INTO flow_runs VALUES (?,?)').run(task.requestId,JSON.stringify(graph));
+    f.db.prepare('INSERT INTO flow_runs(root_turn,graph) VALUES (?,?)').run(task.requestId,JSON.stringify(graph));
     assert.equal(run({id:routine,revision:0,links:[]}).status,409);assert.deepEqual(run({id:routine,revision:1,links:[]}),{graph:{root:f.agent,nodes:[f.agent],links:[]},revision:2});assert.deepEqual(JSON.parse(String(f.db.prepare('SELECT graph FROM flow_runs').get()!.graph)),graph);
     assert.deepEqual(f.tasks.contextMutations(f.principal,task.requestId,pending,token).data.resultContent,{graph:{root:f.agent,nodes:[f.agent],links:[]},revision:2});
     f.db.prepare('UPDATE tasks SET state=\'cancelled\',revision=revision+1 WHERE id=?').run(task.requestId);assert.deepEqual(f.tasks.contextMutations(f.principal,task.requestId,pending,token).data.resultContent,{graph:{root:f.agent,nodes:[f.agent],links:[]},revision:2});
     assert.equal(f.db.prepare('SELECT revision FROM routine_flows WHERE routine=?').get(routine)!.revision,2);
-  }finally{f.close();}
+  }finally{await f.close();}
 });
 
 for(const kind of ['direct','side'] as const) test(`canonical provider settings read binding metadata only in ${kind} and stays private`, async () => {
@@ -1294,7 +1298,7 @@ for(const kind of ['direct','side'] as const) test(`canonical provider settings 
     const room=f.command({payload:{v:1,kind:'channel',channelId:channel,routing:'assigned',message:{text:'Forced read',files:[]}},expectedRevisions:{project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1,channel:1}});f.tasks.admit(f.owner,room);
     const roomOwned=f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId:room.requestId,previousExecutorGeneration:0,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token),roomOwnership=parseOwnership(roomOwned.data.ownership),roomContext=f.tasks.context(f.principal,room.requestId,{requestId:randomUUID(),ownership:roomOwnership,expectedTaskRevision:2},token),roomCall={id:randomUUID(),function:{name:'read_provider_settings',arguments:'{}'}},roomExpected=2;
     assert.deepEqual((roomContext.data.snapshot as {tools:unknown[]}).tools,[]);assert.throws(()=>f.tasks.contextMutations(f.principal,room.requestId,{requestId:randomUUID(),actionId:randomUUID(),ownership:roomOwnership,toolCall:roomCall,expectedRevision:roomExpected,payloadDigest:canonicalToolDigest({toolCall:roomCall,expectedRevision:roomExpected})},token),code('execution_denied'));
-  }finally{f.close();}
+  }finally{await f.close();}
 });
 
 test('canonical setup restricts host actions and forced tools, and requires a complete profile edit',async()=>{
@@ -1319,7 +1323,7 @@ test('canonical setup restricts host actions and forced tools, and requires a co
     };
     assert.equal(edit({revision:1,name:'Incomplete'}).status,400);assert.equal(edit({revision:1,instructions:'Incomplete'}).status,400);
     assert.deepEqual(edit({revision:1,name:'Research partner',instructions:'Cite evidence'}),{name:'Research partner',role:'',instructions:'Cite evidence',revision:2});
-  }finally{f.close();}
+  }finally{await f.close();}
 });
 
 for(const kind of ['direct','side'] as const) test(`canonical profile edit in ${kind} keeps atomic CAS errors and channel privacy`, async () => {
@@ -1342,7 +1346,7 @@ for(const kind of ['direct','side'] as const) test(`canonical profile edit in ${
     assert.deepEqual(run({revision:1,instructions:'Stale'}),{error:'Profile changed. Ask the user for guidance before changing it again.',status:409});
     for(const args of [{revision:2},{revision:2,name:''},{revision:2,name:null},...[null,42,'x'.repeat(61),'bad\nrole','bad\u0085role','bad\u2028role'].map(role=>({revision:2,role})),{revision:2,name:'x'.repeat(81)},{revision:2,instructions:'\u0000'},{revision:2,instructions:' '},{revision:2,instructions:'x'.repeat(8001)},...[0,-1,1.5,Number.MAX_SAFE_INTEGER].map(revision=>({revision,name:'No'}))])assert.equal(run(args).status,400);
     assert.deepEqual(run({revision:2,role:'',instructions:'  Updated instructions  '}),{name:'Renamed',role:'',instructions:'Updated instructions',revision:3});
-    f.db.exec("CREATE TRIGGER fail_profile_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'fixture_result_fail'); END;");assert.throws(()=>run({revision:3,name:'Rolled back'}),/fixture_result_fail/);assert.equal(f.db.prepare('SELECT revision FROM agents WHERE id=?').get(f.agent)!.revision,3);f.db.exec('DROP TRIGGER fail_profile_result');
+    f.db.exec("CREATE TRIGGER fail_profile_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'fixture_result_fail'); END;");assert.throws(()=>run({revision:3,name:'Rolled back'}),code('storage_failed'));assert.equal(f.db.prepare('SELECT revision FROM agents WHERE id=?').get(f.agent)!.revision,3);f.db.exec('DROP TRIGGER fail_profile_result');
     const recovered=f.tasks.contextMutations(f.principal,task.requestId,pending,token);assert.deepEqual(recovered.data.resultContent,{name:'Rolled back',role:'',instructions:'Updated instructions',revision:4});assert.deepEqual(f.tasks.contextMutations(f.principal,task.requestId,pending,token),recovered);
     for(const field of ['agentId','model','providerAccount','permissions','homeDeviceId']){
       const toolCall={id:randomUUID(),function:{name:'edit_profile',arguments:JSON.stringify({revision:4,name:'No',[field]:randomUUID()})}},expectedRevision=Number(f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(task.requestId)!.revision);assert.throws(()=>f.tasks.contextMutations(f.principal,task.requestId,{requestId:randomUUID(),actionId:randomUUID(),ownership,toolCall,expectedRevision,payloadDigest:canonicalToolDigest({toolCall,expectedRevision})},token),code('unknown_field'));
@@ -1352,7 +1356,7 @@ for(const kind of ['direct','side'] as const) test(`canonical profile edit in ${
     const roomOwned=f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId:room.requestId,previousExecutorGeneration:0,executorTokenHash:sha256(token),lockProof:{bootId:randomUUID(),processId:1234,processStart:'999',lockId:randomUUID(),previousOwnerStopped:true,reconciledThrough:0,journalDigest:sha256('journal')}},token),roomOwnership=parseOwnership(roomOwned.data.ownership),roomContext=f.tasks.context(f.principal,room.requestId,{requestId:randomUUID(),ownership:roomOwnership,expectedTaskRevision:2},token),roomCall={id:randomUUID(),function:{name:'edit_profile',arguments:JSON.stringify({revision:2,name:'No'})}},roomExpected=2;
     assert.deepEqual((roomContext.data.snapshot as {tools:unknown[]}).tools,[]);assert.throws(()=>f.tasks.contextMutations(f.principal,room.requestId,{requestId:randomUUID(),actionId:randomUUID(),ownership:roomOwnership,toolCall:roomCall,expectedRevision:roomExpected,payloadDigest:canonicalToolDigest({toolCall:roomCall,expectedRevision:roomExpected})},token),code('execution_denied'));
     assert.equal(f.db.prepare('SELECT instructions FROM agents WHERE id=?').get(f.agent)!.instructions,'Updated instructions');
-  }finally{f.close();}
+  }finally{await f.close();}
 });
 
 test('canonical agent directory pages authorized teammates and scopes activity to project, human and channel', async () => {
@@ -1417,7 +1421,7 @@ test('canonical agent directory pages authorized teammates and scopes activity t
     f.tasks.control(f.owner,main.taskId,{requestId:randomUUID(),expectedRevision,operation:'pause'});
     const paused=Number(f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(main.taskId)!.revision),moved=f.tasks.control(f.owner,main.taskId,{requestId:randomUUID(),expectedRevision:paused,operation:'reassign',recipientAgentId:peer});
     const successor=start(String(moved.data.taskId));assert(!run(successor).agents.some(row=>row.id===f.agent||row.id===peer));
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('canonical interruption isolates sender, human and project while preserving terminal outcomes and atomic notice rollback',async()=>{
@@ -1455,14 +1459,14 @@ test('canonical interruption isolates sender, human and project while preserving
     for(const args of [{recipient:beta,reason:''},{recipient:beta,reason:'x'.repeat(2001)},{recipient:beta,reason:'\u0000'},{recipient:'bad',reason:'Invalid ID'},{recipient:randomUUID(),reason:'Unavailable'},{recipient:f.agent,reason:'Self'}])assert.equal(typeof run(stopper,'interrupt_agent',args).status,'number');
     const scope=f.db.prepare("SELECT * FROM record_scopes WHERE table_name='agent_deliveries' AND key_json=?").get(JSON.stringify([ownId]))!;f.db.prepare("DELETE FROM record_scopes WHERE table_name='agent_deliveries' AND key_json=?").run(scope.key_json);assert.equal(run(stopper,'interrupt_agent',{recipient:beta,reason:'Scope required'}).status,403);f.db.prepare('INSERT INTO record_scopes VALUES (?,?,?,?,?,?,?)').run(...Object.values(scope));
     const interrupt=stage(stopper,'interrupt_agent',{recipient:beta.toUpperCase(),reason:'Changed direction'}),before=Number(f.db.prepare('SELECT count(*) n FROM tasks').get()!.n);
-    f.db.exec("CREATE TRIGGER fail_interrupt_notice BEFORE INSERT ON threads BEGIN SELECT RAISE(ABORT,'notice failed'); END");assert.throws(interrupt,/notice failed/);f.db.exec('DROP TRIGGER fail_interrupt_notice');assert.equal(f.tasks.lookup(f.member,ownId).data.state,'paused');assert.equal(f.db.prepare('SELECT count(*) n FROM tasks').get()!.n,before);
-    f.db.exec("CREATE TRIGGER fail_interrupt_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'result journal failed'); END");assert.throws(interrupt,/result journal failed/);f.db.exec('DROP TRIGGER fail_interrupt_result');assert.equal(f.db.prepare('SELECT count(*) n FROM tasks').get()!.n,before);assert.equal(f.tasks.lookup(f.member,ownId).data.state,'paused');assert.notEqual(f.tasks.lookup(f.member,unfinished).data.state,'cancelled');
+    f.db.exec("CREATE TRIGGER fail_interrupt_notice BEFORE INSERT ON threads BEGIN SELECT RAISE(ABORT,'notice failed'); END");assert.throws(interrupt,code('storage_failed'));f.db.exec('DROP TRIGGER fail_interrupt_notice');assert.equal(f.tasks.lookup(f.member,ownId).data.state,'paused');assert.equal(f.db.prepare('SELECT count(*) n FROM tasks').get()!.n,before);
+    f.db.exec("CREATE TRIGGER fail_interrupt_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'result journal failed'); END");assert.throws(interrupt,code('storage_failed'));f.db.exec('DROP TRIGGER fail_interrupt_result');assert.equal(f.db.prepare('SELECT count(*) n FROM tasks').get()!.n,before);assert.equal(f.tasks.lookup(f.member,ownId).data.state,'paused');assert.notEqual(f.tasks.lookup(f.member,unfinished).data.state,'cancelled');
     const result=interrupt(),content=result.data.resultContent as any;assert.equal(content.status,'interrupted');assert.equal(content.recipient,beta);assert.deepEqual(content.cancelled,[ownId,unfinished].sort());assert.deepEqual(interrupt(),result);
     for(const taskId of [ownId,unfinished])assert.equal(f.tasks.lookup(f.member,taskId).data.state,'cancelled');
     for(const taskId of [senderOther,humanOther,projectOther,userWork,channelChild])assert.notEqual(f.db.prepare('SELECT state FROM tasks WHERE id=?').get(taskId)!.state,'cancelled');
     assert.equal(f.tasks.lookup(f.member,failed).data.state,'failed');assert.equal(f.db.prepare('SELECT error FROM turns WHERE id=?').get(failed)!.error,'Preserved failure');
     assert.equal(f.tasks.lookup(f.member,finished).data.state,'completed');assert.equal(f.db.prepare('SELECT reply FROM turns WHERE id=?').get(finished)!.reply,'Preserved outcome');assert.equal(children(content.request).length,1);assert.equal(f.db.prepare('SELECT expects_reply FROM agent_requests WHERE id=?').get(content.request)!.expects_reply,0);assert.match(String(f.db.prepare('SELECT text FROM turns WHERE id=?').get(children(content.request)[0])!.text),/Changed direction/);snapshot(main);
-  }finally{f.close();}
+  }finally{await f.close();}
 });
 
 test('canonical messages retain full assignment, isolated children, group waits and atomic cancellation',async()=>{
@@ -1490,7 +1494,7 @@ test('canonical messages retain full assignment, isolated children, group waits 
     const invalid=run(main,{recipients:[peers[0],foreign],text:'No partial delivery',expects_reply:false});assert.equal(invalid.status,404);assert.equal(f.db.prepare('SELECT count(*) n FROM agent_requests WHERE turn=?').get(main.taskId)!.n,1);
     for(const args of [{recipients:[peers[0],peers[0].toUpperCase()],text:'Duplicate',expects_reply:false},{recipients:[peers[0]],text:'\u0000',expects_reply:false},{recipients:[],text:'Empty',expects_reply:false},{recipients:[peers[0]],text:'Missing flag'}])assert.equal(typeof run(main,args).status,'number');
     const atomic=stage(main,{recipients:[peers[0],peers[1]],text:'Atomic group',expects_reply:true}),before=Number(f.db.prepare('SELECT count(*) n FROM tasks').get()!.n);
-    f.db.exec("CREATE TRIGGER fail_message_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'result journal failed'); END");assert.throws(atomic,/result journal failed/);f.db.exec('DROP TRIGGER fail_message_result');assert.equal(f.db.prepare('SELECT count(*) n FROM tasks').get()!.n,before);
+    f.db.exec("CREATE TRIGGER fail_message_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'result journal failed'); END");assert.throws(atomic,code('storage_failed'));f.db.exec('DROP TRIGGER fail_message_result');assert.equal(f.db.prepare('SELECT count(*) n FROM tasks').get()!.n,before);
     const group=atomic().data.resultContent as {request:string};assert.equal(children(group.request).length,2);assert.deepEqual(atomic().data.resultContent,group);
     assert.throws(()=>snapshot(main),code('waiting_agents'));
     const ids=children(group.request),child=start(ids[0]);assert(f.db.prepare('SELECT 1 FROM tasks WHERE id=? AND initiator_account=?').get(child.taskId,f.member.accountId));
@@ -1520,7 +1524,7 @@ test('canonical messages retain full assignment, isolated children, group waits 
     f.db.prepare('UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE account=? AND agent=?').run(f.member.accountId,peers[3]);assert.equal(run(main,{recipients:[peers[3]],text:'No grant',expects_reply:false}).status,404);
     const revoked=run(main,{recipients:[peers[4]],text:'Accepted before revoke',expects_reply:true}),revokedChild=children(revoked.request)[0];f.db.prepare('UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE account=? AND agent=?').run(f.member.accountId,peers[4]);assert.throws(()=>start(revokedChild),code('execution_denied'));
     const requestScope=f.db.prepare("SELECT * FROM record_scopes WHERE table_name='agent_requests' AND key_json=?").get(JSON.stringify([revoked.request]))!;f.db.prepare("DELETE FROM record_scopes WHERE table_name='agent_requests' AND key_json=?").run(requestScope.key_json);assert.throws(()=>snapshot(main),code('record_scope_missing'));
-  }finally{f.close();}
+  }finally{await f.close();}
 });
 
 test('context counts projected result bytes once, including escaped JSON content', async () => {
@@ -1532,7 +1536,7 @@ test('context counts projected result bytes once, including escaped JSON content
     const context = f.tasks.context(f.principal,f.taskId,{requestId:randomUUID(),ownership:f.ownership,expectedTaskRevision:report.receipt.recordRevision},f.token);
     assert.deepEqual((context.data.snapshot as any).toolJournal[0].result,resultContent);
     assert(Buffer.byteLength(canonicalJson(context.data)) < 8*1024*1024);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 function recoveryEnvelope(f: Awaited<ReturnType<typeof preparedTask>>, requestId: string, recoveryGeneration: string, resultContent?: unknown) {
@@ -1575,7 +1579,7 @@ test('disaster mixed batches reconcile known evidence and privately quarantine o
     request.requestId=randomUUID();resign();
     assert.throws(()=>f.tasks.recoveryImport(f.owner,f.taskId,request,proof.session),code('recovery_conflict'));
     assert.equal(f.db.prepare('SELECT receipt_id FROM task_reports').get()!.receipt_id,previousReceipt);
-  }finally{f.close();}
+  }finally{await f.close();}
 });
 
 test('owner recovery session is scoped, nonsecret on retry, rotates and requires revoked original source', async()=>{
@@ -1595,7 +1599,7 @@ test('owner recovery session is scoped, nonsecret on retry, rotates and requires
     assert.notEqual(next.data.recoveryGeneration,first.data.recoveryGeneration);
     assert.equal(f.db.prepare('SELECT revoked FROM recovery_evidence_sessions WHERE id_hash=?').get(sha256(session))!.revoked,1);
     assert.equal(f.db.prepare('SELECT serving_state FROM authority_state').get()!.serving_state,'active');
-  } finally {f.close();}
+  } finally {await f.close();}
 });
 
 test('revoked-source recovery retains signed evidence then publishes exact content without granting execution',async()=>{
@@ -1620,7 +1624,7 @@ test('revoked-source recovery retains signed evidence then publishes exact conte
     assert.equal(f.db.prepare('SELECT executor_generation FROM execution_owners WHERE task=?').get(f.taskId)!.executor_generation,1);
     assert.throws(()=>f.tasks.acquire(f.principal,{requestId:randomUUID()},f.token));
     assert.throws(()=>f.tasks.recoveryImport(f.owner,f.taskId,{...metadata,requestId:randomUUID()},proof),code('recovery_signature_invalid'));
-  }finally{f.close();}
+  }finally{await f.close();}
 });
 
 
@@ -1659,7 +1663,7 @@ test('recovery rejects replacement keys, expired proof, changed content and non-
     assert.throws(()=>f.tasks.recoveryResults(f.owner,f.taskId,request,proof),code('recovery_session_invalid'));
     assert.equal(f.db.prepare('SELECT count(*) n FROM recovery_imports').get()!.n,1);
     assert.equal(f.db.prepare('SELECT receipt_id FROM task_reports').get()!.receipt_id,result.receipt.requestId);
-  }finally{f.close();}
+  }finally{await f.close();}
 });
 
 test('recovery stop proof preserves original journal signature and rejects altered runner evidence',async()=>{
@@ -1679,7 +1683,7 @@ test('recovery stop proof preserves original journal signature and rejects alter
     assert.equal(f.db.prepare('SELECT state FROM task_actions WHERE id=?').get(f.actionId)!.state,'not_sent');
     assert.equal(JSON.parse(String(f.db.prepare('SELECT envelope_json FROM recovery_imports').get()!.envelope_json)).entries[0].signature,signed.signature);
     assert.deepEqual(f.tasks.recoveryImport(f.owner,f.taskId,request,proof),result);
-  }finally{f.close();}
+  }finally{await f.close();}
 });
 
 test('late content completes a saved recovery batch without lowering newer evidence watermark',async()=>{
@@ -1701,5 +1705,5 @@ test('late content completes a saved recovery batch without lowering newer evide
     assert.equal(f.db.prepare('SELECT max(watermark) n FROM recovery_imports').get()!.n,3);
     assert.equal(f.db.prepare('SELECT count(*) n FROM recovery_imports').get()!.n,2);
     assert.deepEqual((f.tasks.lookup(f.owner,f.taskId).data.results as any[])[0].content,content);
-  }finally{f.close();}
+  }finally{await f.close();}
 });

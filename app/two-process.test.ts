@@ -420,7 +420,7 @@ async function fixture() {
     const response = await fetch(app.origin + path, { method, headers: { Authorization: `Bearer ${jwt(subject)}`, Origin: auth.origin, Connection: 'close', 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': body?.requestId ?? randomUUID() }, ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
   };
-  return { dir, jwt, send, webhookKeys, webhookFault, origin: () => app.origin, startAgain: (database=options.database,port=0) => startCanonicalApp({...options,database,port}), async restart() { const port = new URL(app.origin).port; await app.close(); app = await startCanonicalApp({ ...options, port: Number(port) }); }, async restoreFrom(backup:string){
+  return { dir, jwt, send, webhookKeys, webhookFault, origin: () => app.origin, startAgain: (database=options.database,port=0) => startCanonicalApp({...options,database,port}), async restart() { const ready = (await send('/api/devices')).body.data.filter((device:any)=>device.status==='ready').map((device:any)=>device.id); const port = new URL(app.origin).port; await app.close(); app = await startCanonicalApp({ ...options, port: Number(port) }); if(ready.length)await until(async()=>{const devices=(await send('/api/devices')).body.data;return ready.every((id:string)=>devices.some((device:any)=>device.id===id&&device.status==='ready'));}); }, async restoreFrom(backup:string){
     const port=Number(new URL(app.origin).port);await app.close();renameSync(options.database,options.database+'.unavailable');
     restoreWorkspace(backup,options.database,{canonicalOnly:true});
     const restored=new DatabaseSync(options.database);

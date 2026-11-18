@@ -28,7 +28,14 @@ function fixture(source:string, version:string, mode='healthy') {
   writeFileSync(join(source,'package.json'),JSON.stringify({name:'fixture',version,type:'module'}));
   nativeReleaseFixture(source,version,mode);
 }
-function publishFixture(dir:string, version:string, mode='healthy') { const source=join(dir,'source');fixture(source,version,mode);return buildRelease({source,releases:join(dir,'releases'),build:false,install:false,allowDirty:true,notes:`Fixture ${version}`}); }
+function publishFixture(dir:string, version:string, mode='healthy') {
+  if (!existsSync(join(dir,'.git'))) {
+    execFileSync('git',['init'],{cwd:dir,stdio:'ignore'});
+    execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','Fixture'],{cwd:dir,stdio:'ignore'});
+  }
+  const source=join(dir,'source');fixture(source,version,mode);
+  return buildRelease({source,releases:join(dir,'releases'),repository:dir,build:false,install:false,allowDirty:true,notes:`Fixture ${version}`});
+}
 async function launcher(dir:string, current:string) {
   const releases=join(dir,'releases'),data=join(dir,'data');mkdirSync(data,{recursive:true});selectRelease(releases,'current',current);
   const port=await freePort(),config=join(dir,'launcher.json');writeFileSync(config,JSON.stringify({dataDir:data,releasesDir:releases,port,trialTimeoutMs:5000}),{mode:0o600});
