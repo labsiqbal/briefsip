@@ -8,7 +8,7 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 const excludedDirectories = new Set(['references', 'work', 'archive', 'node_modules']);
 // These records preserve paths from retired implementations.
 const history = new Set(['backlog.md', 'docs/host-package.md']);
-const files = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], {
+const files = execFileSync('git', ['ls-files', '--cached', '-z'], {
   cwd: root,
   encoding: 'utf8',
 }).split('\0');
