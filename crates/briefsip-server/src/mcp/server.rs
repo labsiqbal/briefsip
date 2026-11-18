@@ -10,11 +10,11 @@ static REQUESTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(16);
 
 fn tools() -> Value {
     json!([
-    {"name":"list_agents","description":"List available local agents.","inputSchema":{"type":"object","properties":{"after":{"type":"string","maxLength":400}},"additionalProperties":false}},
-    {"name":"send_message","description":"Queue an isolated message.","inputSchema":{"type":"object","properties":{"requestId":{"type":"string"},"recipient":{"type":"string","minLength":1,"maxLength":400},"text":{"type":"string","minLength":1,"maxLength":16000,"pattern":"\\S"},"metadata":{"type":"object","properties":{"depth":{"type":"integer","minimum":0,"maximum":100}},"required":["depth"],"additionalProperties":false}},"required":["requestId","recipient","text"],"additionalProperties":false}},
-    {"name":"get_message_status","description":"Read delivery status.","inputSchema":{"type":"object","properties":{"requestId":{"type":"string"}},"required":["requestId"],"additionalProperties":false}},
-    {"name":"cancel_message","description":"Cancel delivery.","inputSchema":{"type":"object","properties":{"requestId":{"type":"string"}},"required":["requestId"],"additionalProperties":false}},
-    {"name":"read_history","description":"Read bounded history.","inputSchema":{"type":"object","properties":{"before":{"type":"integer","minimum":1},"limit":{"type":"integer","minimum":1,"maximum":50}},"additionalProperties":false}}
+    {"name":"list_agents","description":"List available local agents, ten per page. Continue with next_after.","inputSchema":{"type":"object","properties":{"after":{"type":"string","maxLength":400}},"additionalProperties":false}},
+    {"name":"send_message","description":"Queue an isolated message. Retry only with the same requestId.","inputSchema":{"type":"object","properties":{"requestId":{"type":"string","pattern":"^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$"},"recipient":{"type":"string","minLength":1,"maxLength":400},"text":{"type":"string","minLength":1,"maxLength":16000,"pattern":"\\S"},"metadata":{"type":"object","properties":{"depth":{"type":"integer","minimum":0,"maximum":100}},"required":["depth"],"additionalProperties":false}},"required":["requestId","recipient","text"],"additionalProperties":false}},
+    {"name":"get_message_status","description":"Read status and up to 8000 characters of reply from a delivery created by this caller. Use read_history for paginated message summaries.","inputSchema":{"type":"object","properties":{"requestId":{"type":"string","pattern":"^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$"}},"required":["requestId"],"additionalProperties":false}},
+    {"name":"cancel_message","description":"Best-effort cancellation of a delivery created by this peer.","inputSchema":{"type":"object","properties":{"requestId":{"type":"string","pattern":"^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$"}},"required":["requestId"],"additionalProperties":false}},
+    {"name":"read_history","description":"Read bounded history, newest first. Peers see only deliveries they created; sessions see only their current conversation before the bound turn.","inputSchema":{"type":"object","properties":{"before":{"type":"integer","minimum":1,"maximum":9007199254740991i64},"limit":{"type":"integer","minimum":1,"maximum":50}},"additionalProperties":false}}
     ])
 }
 fn allowed(row: &Value, scope: &str) -> bool {
@@ -306,12 +306,9 @@ pub async fn rpc(state: &AppState, request: Request) -> Result<Response> {
 }
 fn reply(id: &Value, result: Result<Value>) -> Response {
     let value = match result {
+        Ok(value) if value["content"].is_array() => value,
         Ok(value) => {
-            let content = value["content"]
-                .as_array()
-                .cloned()
-                .unwrap_or_else(|| vec![json!({"type":"text","text":value.to_string()})]);
-            json!({"content":content,"structuredContent":value})
+            json!({"content":[{"type":"text","text":value.to_string()}],"structuredContent":value})
         }
 
         Err(e) => {
@@ -447,4 +444,23 @@ fn send(state: &AppState, db: &Connection, caller: &Value, args: &Value) -> Resu
         )?;
         Ok(result)
     })
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn formatted_results_keep_their_original_envelope(
+    ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+        for value in [
+            json!({"content":[{"type":"image","data":"aW1hZ2U=","mimeType":"image/png"}]}),
+            json!({"isError":true,"content":[{"type":"text","text":"Denied"}]}),
+        ] {
+            let response = reply(&json!(1), Ok(value.clone()));
+            let body = axum::body::to_bytes(response.into_body(), 1024).await?;
+            let actual: Value = serde_json::from_slice(&body)?;
+            assert_eq!(actual["result"], value);
+        }
+        Ok(())
+    }
 }

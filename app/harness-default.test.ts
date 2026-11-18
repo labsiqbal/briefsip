@@ -79,6 +79,10 @@ test('provider isolation, account home rotation and MCP shell approval boundarie
     const turn = randomUUID(); await api(path + '/turns', { id: turn, text: 'HOLD' });
     for (let n = 0; n < 300; n++) { if ((await api(path + '/turns')).find((item: { id: string }) => item.id === turn)?.partial?.text) break; await new Promise(resolve => setTimeout(resolve, 10)); }
     const session = app.mcpServer.mintAgentSession({ agent: agent.id, turn, ttlMs: 60000, scopes: ['orchestration'] });
+    const catalogResponse = await fetch(app.origin + '/mcp', { method: 'POST', headers: { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) });
+    const catalog = (await catalogResponse.json()).result.tools.map((tool: { name: string }) => tool.name);
+    for (const name of ['run_shell', 'verify_result', 'create_text_file', 'open_file_in_panel']) assert(catalog.includes(name), name);
+    for (const name of ['read_workspace_file', 'create_workspace_file', 'git_status', 'search_memory', 'set_routine_flow']) assert(!catalog.includes(name), name);
     const call = async (name: string, args: Record<string, unknown>) => {
       const response = await fetch(app.origin + '/mcp', { method: 'POST', headers: { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: randomUUID(), method: 'tools/call', params: { name, arguments: args } }) });
       return (await response.json()).result;
