@@ -5,7 +5,7 @@ import type { Duplex } from 'node:stream';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { closedObject, id, parseJson, ProtocolError, sha256 } from '../protocol.ts';
+import { closedObject, id, parseJson, ProtocolError, sha256 } from '../shared/protocol.ts';
 import { createHostGateway, notFound, singleHeader } from './host-gateway.ts';
 import { createHubSessions, createClerkVerifier, createStubVerifier, cookie, requireOrigin, type SessionIdentity, type SessionVerifier } from './sessions.ts';
 import { createHubAuthority, type HubAuthority } from './project-authority.ts';

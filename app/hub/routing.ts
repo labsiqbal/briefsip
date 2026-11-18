@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { canonicalJson, closedObject, digest, existingRevision, id, ProtocolError, sha256, time } from '../protocol.ts';
+import { canonicalJson, closedObject, digest, existingRevision, id, ProtocolError, sha256, time } from '../shared/protocol.ts';
 import { denied, stale, type ControlFrame, type Fence, type HubAuthority, type NodePrincipal, type ProjectContext } from './project-authority.ts';
 import { transaction } from './schema.ts';
 

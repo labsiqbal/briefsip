@@ -8,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { ProtocolError } from '../protocol.ts';
+import { ProtocolError } from '../shared/protocol.ts';
 import { initializeHubSchema, fenceRestoredHub, activateRestoredHub } from './schema.ts';
 import { createHubAuthority } from './project-authority.ts';
 import { createClerkVerifier, createStubVerifier, type SessionIdentity, type SessionVerifier } from './sessions.ts';

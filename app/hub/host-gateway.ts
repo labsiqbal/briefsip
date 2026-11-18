@@ -1,5 +1,5 @@
 import type { IncomingMessage } from 'node:http';
-import { ProtocolError } from '../protocol.ts';
+import { ProtocolError } from '../shared/protocol.ts';
 import { slug, type HubAuthority } from './project-authority.ts';
 
 export const notFound = () => new ProtocolError(404, 'resource_not_found', 'Resource not found.');
