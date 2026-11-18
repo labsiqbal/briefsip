@@ -123,29 +123,7 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
             ));
         }
         if let Some(workspace) = tools::workspace(state, db, &turn)? {
-            match crate::files::workspace::download(&workspace.directory, "AGENTS.md") {
-                Ok((_, bytes)) => {
-                    if bytes.len() > 65536 {
-                        return Err(error(502, "Workspace AGENTS.md exceeds 64 KiB."));
-                    }
-                    let text = std::str::from_utf8(&bytes)
-                        .map_err(|_| error(502, "Cannot read workspace AGENTS.md safely."))?;
-                    system.push_str(&format!(
-                        "\n\n<project_conventions>\n{text}\n</project_conventions>"
-                    ));
-                }
-                Err(e) if e.status == 404 => (),
-                Err(_) => {
-                    if workspace
-                        .directory
-                        .join("AGENTS.md")
-                        .symlink_metadata()
-                        .is_ok()
-                    {
-                        return Err(error(502, "Cannot read workspace AGENTS.md safely."));
-                    }
-                }
-            }
+            system.push_str(&workspace_conventions(&workspace.directory)?);
         }
         system.push_str(&format!(
             "\n\n{}\nCurrent avatar revision: 0. Current profile revision: {}.",
@@ -656,6 +634,25 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         }
     }
 }
+fn workspace_conventions(root: &std::path::Path) -> Result<String> {
+    match crate::files::workspace::download(root, "AGENTS.md") {
+        Ok((_, bytes)) => {
+            if bytes.len() > 65536 {
+                return Err(error(502, "Workspace AGENTS.md exceeds 64 KiB."));
+            }
+            let text = std::str::from_utf8(&bytes)
+                .map_err(|_| error(502, "Cannot read workspace AGENTS.md safely."))?;
+            Ok(format!(
+                "\n\n<project_conventions>\n{text}\n</project_conventions>"
+            ))
+        }
+        Err(e) if e.status == 404 => Ok(String::new()),
+        Err(_) if root.join("AGENTS.md").symlink_metadata().is_ok() => {
+            Err(error(502, "Cannot read workspace AGENTS.md safely."))
+        }
+        Err(_) => Ok(String::new()),
+    }
+}
 pub(super) fn base_instructions(
     runtime: &str,
     model: &str,
@@ -834,4 +831,96 @@ fn replay(db: &Connection, turn: &str) -> Result<Vec<Value>> {
         append_screenshot(db, turn, string(&call, "id"), true, &mut messages)?;
     }
     Ok(messages)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base_guidance_names_only_enabled_tools() -> Result<()> {
+        let text = base_instructions("api", "fixture", "test-agent", &[])?;
+        for phrase in [
+            "Briefsip through the api runtime, model fixture",
+            "Only the user's own messages",
+            "ordinary inline Markdown links",
+            "One relevant check per deliverable",
+            "Reuse check output already in context",
+            "verify_result is optional",
+            "Visual verification is unavailable this turn",
+            "request broader permissions solely to verify",
+        ] {
+            assert!(text.contains(phrase), "{phrase}");
+        }
+        let visual = base_instructions(
+            "claude",
+            "fixture",
+            "test-agent",
+            &[json!({"function":{"name":"computer_screenshot"}})],
+        )?;
+        assert!(visual.contains("Computer screenshots are available"));
+        assert!(!visual.contains("Visual verification is unavailable"));
+        let active_tools = ["open_file_in_panel", "run_shell", "search_memory"];
+        let active = base_instructions(
+            "codex",
+            "fixture",
+            "test-agent",
+            &active_tools.map(|name| json!({"function":{"name":name}})),
+        )?;
+        for name in active_tools {
+            assert!(!text.contains(name), "{name}");
+            assert!(active.contains(name), "{name}");
+        }
+        for name in [
+            "create_text_file",
+            "computer_",
+            "delegate_task",
+            "remember_memory",
+            "routine",
+            "workflow",
+        ] {
+            assert!(!text.contains(name), "{name}");
+            assert!(!active.contains(name), "{name}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_conventions_reject_links_oversized_and_non_utf8_files() -> Result<()> {
+        struct TemporaryWorkspace(std::path::PathBuf);
+        impl Drop for TemporaryWorkspace {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = TemporaryWorkspace(
+            std::env::temp_dir().join(format!("briefsip-conventions-{}", uuid::Uuid::new_v4())),
+        );
+        let io = |_| Failure::storage();
+        std::fs::create_dir(&root.0).map_err(io)?;
+        let path = root.0.join("AGENTS.md");
+        let target = root.0.join("target");
+        assert_eq!(workspace_conventions(&root.0)?, "");
+        std::fs::write(&target, "Do not read this file via a link.").map_err(io)?;
+        std::os::unix::fs::symlink(&target, &path).map_err(io)?;
+        assert_eq!(
+            workspace_conventions(&root.0).err().map(|e| e.status),
+            Some(502)
+        );
+        std::fs::remove_file(&path).map_err(io)?;
+
+        std::fs::write(&path, vec![b'x'; 65537]).map_err(io)?;
+        assert_eq!(
+            workspace_conventions(&root.0).err().map(|e| e.message),
+            Some("Workspace AGENTS.md exceeds 64 KiB.".into())
+        );
+        std::fs::write(&path, [0xff]).map_err(io)?;
+        assert!(workspace_conventions(&root.0).is_err());
+        std::fs::write(&path, "Project fixtures only.").map_err(io)?;
+        assert_eq!(
+            workspace_conventions(&root.0)?,
+            "\n\n<project_conventions>\nProject fixtures only.\n</project_conventions>"
+        );
+        Ok(())
+    }
 }

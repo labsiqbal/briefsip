@@ -535,6 +535,7 @@ fn usage(family: &str, v: &Value) -> [Option<i64>; 3] {
         }
         _ => {
             let u = &v["usage"];
+            let count = |value: &Value| count(value).filter(|n| *n <= 1_000_000_000);
             (
                 count(&u["prompt_tokens"]),
                 count(&u["completion_tokens"]),
@@ -543,4 +544,28 @@ fn usage(family: &str, v: &Value) -> [Option<i64>; 3] {
         }
     };
     [input, output, total]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compatible_usage_preserves_zero_and_ignores_invalid_counts() {
+        for value in [
+            Value::Null,
+            json!({"usage": []}),
+            json!({"usage": {"prompt_tokens": "1", "completion_tokens": -1, "total_tokens": 1.2}}),
+            json!({"usage": {"prompt_tokens": 1e30, "completion_tokens": 1_000_000_001}}),
+        ] {
+            assert_eq!(usage("openai-compatible", &value), [None, None, None]);
+        }
+        assert_eq!(
+            usage(
+                "openai-compatible",
+                &json!({"usage": {"prompt_tokens": 0, "completion_tokens": 3, "total_tokens": 3}})
+            ),
+            [Some(0), Some(3), Some(3)]
+        );
+    }
 }
