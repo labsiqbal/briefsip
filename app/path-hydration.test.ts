@@ -4,19 +4,24 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
+import { createInterface } from 'node:readline';
 import { buildEnvironmentCaptureCommand, hydratePosixHome, hydratePosixPath, listLoginShellCandidates, mergePathEntries, readEnvironmentFromLoginShell } from './t3/path.ts';
 import { harnessEnv } from './harness.ts';
 import { rustBinary } from './rust-binary.ts';
 
 const { freePort, stop } = await import(new URL('../scripts/production-env-gate.mjs', import.meta.url).href);
 
-for (const broken of [false, true]) test(broken ? 'broken login shell keeps service startup working' : 'service launch discovers Codex exported only by the login shell', { timeout: 20_000 }, async () => {
+for (const broken of [false, true]) test(broken ? 'broken login shell keeps service startup working' : 'service launch discovers Codex exported only by the login shell', { timeout: 20_000 }, async t => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-login-path-'));
   const bin = join(directory, 'bin'), shell = join(directory, 'login-shell');
+  const inherited = join(directory, 'service-bin');
   const probes = join(directory, 'probes'), environment = join(directory, 'harness-env.json');
   const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
   mkdirSync(bin);
+  mkdirSync(inherited);
+  writeFileSync(join(inherited, 'printenv'), '#!/bin/sh\n[ "$1" = PATH ] && printf "%s\\n" "$PATH"\n', { mode: 0o700 });
+  // The fallback Bash login shell also has a fixture-only PATH.
+  writeFileSync(join(directory, '.bash_profile'), `export PATH='${inherited}'\n`);
   writeFileSync(join(bin, 'codex'), `#!${process.execPath}
 import { writeFileSync } from 'node:fs';
 writeFileSync(${JSON.stringify(environment)}, JSON.stringify(process.env));
@@ -27,44 +32,48 @@ console.log('codex fixture 1.0');
     : `#!/bin/sh
 printf x >> '${probes}'
 printf 'profile noise\\n'
-export PATH='${bin}:/usr/bin:/bin'
+export PATH='${bin}:${inherited}'
 export SHELL_SECRET=synthetic-secret
 exec /bin/sh -c "$2"
 `, { mode: 0o700 });
   const port = await freePort();
   const origin = `http://127.0.0.1:${port}`;
   const child = spawn(binary, [], {
-    env: { HOME: directory, PATH: '/usr/bin:/bin', SHELL: shell, TMPDIR: directory, PORT: String(port), BRIEFSIP_DATA_DIR: directory, AMBIENT_SECRET: 'synthetic-secret' },
-    stdio: ['ignore', 'ignore', 'pipe'],
+    env: { HOME: directory, PATH: inherited, SHELL: shell, TMPDIR: directory, PORT: String(port), BRIEFSIP_DATA_DIR: directory, AMBIENT_SECRET: 'synthetic-secret' },
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
   const closed = new Promise(ready => child.once('close', ready));
   let stderr = '';
   child.stderr.on('data', chunk => { stderr += chunk; });
   try {
-    const deadline = Date.now() + 10000;
-    let response: Response | undefined;
-    while (Date.now() < deadline) {
-      assert.equal(child.exitCode, null, stderr);
-      response = await fetch(origin + '/api/environment', { signal: AbortSignal.timeout(1000) }).catch(() => undefined);
-      if (response) break;
-      await delay(50);
+    const startup = AbortSignal.any([t.signal, AbortSignal.timeout(10_000)]);
+    const lines = createInterface({ input: child.stdout, signal: startup });
+    let ready = false;
+    for await (const line of lines) {
+      if (line === `Briefsip: ${origin}`) { ready = true; break; }
     }
-    assert.equal(response?.status, 200, stderr);
-    await response!.arrayBuffer();
-    const catalog = await fetch(origin + '/api/runtimes', { signal: AbortSignal.timeout(10000) });
+    assert(ready, `Server did not report readiness. ${stderr}`);
+    const response = await fetch(origin + '/api/environment', { signal: startup });
+    assert.equal(response.status, 200, stderr);
+    await response.arrayBuffer();
+    const catalog = await fetch(origin + '/api/runtimes', { signal: AbortSignal.any([t.signal, AbortSignal.timeout(10_000)]) });
     assert.equal(catalog.status, 200, stderr);
     const runtimes = await catalog.json();
     assert(!stderr.includes('synthetic-secret'));
+    const choices: { runtime: string; version: string | null; reason: string | null }[] = runtimes.choices;
+    const discovered = choices.filter(choice => !choice.reason?.includes('is missing from PATH.'));
+    assert.deepEqual(discovered.map(choice => choice.runtime), broken ? [] : ['codex']);
     if (broken) {
-      assert.notEqual(runtimes.choices.find((choice: { runtime: string }) => choice.runtime === 'codex').version, 'codex fixture 1.0');
+      assert.equal(choices.find(choice => choice.runtime === 'codex')?.version, null);
+      assert.equal(runtimes.defaultRuntime, 'api');
       return;
     }
-    assert.equal(runtimes.choices.find((choice: { runtime: string }) => choice.runtime === 'codex').version, 'codex fixture 1.0');
+    assert.equal(choices.find(choice => choice.runtime === 'codex')?.version, 'codex fixture 1.0');
     assert.equal(runtimes.defaultRuntime, 'codex');
-    await (await fetch(origin + '/api/runtimes')).arrayBuffer();
+    await (await fetch(origin + '/api/runtimes', { signal: t.signal })).arrayBuffer();
     assert.equal(readFileSync(probes, 'utf8'), 'x');
     const childEnv = JSON.parse(readFileSync(environment, 'utf8'));
-    assert.equal(childEnv.PATH, `${bin}:/usr/bin:/bin`);
+    assert.equal(childEnv.PATH, `${bin}:${inherited}`);
     assert.equal(childEnv.AMBIENT_SECRET, undefined);
     assert.equal(childEnv.SHELL_SECRET, undefined);
   } finally {
