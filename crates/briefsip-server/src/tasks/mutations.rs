@@ -277,7 +277,7 @@ pub fn execute(
                 db.execute_batch("RELEASE canonical_tool")?;
                 result
             }
-            Err(error) if error.status < 500 => {
+            Err(error) if error.status < 500 && error.code != "record_scope_missing" => {
                 db.execute_batch("ROLLBACK TO canonical_tool; RELEASE canonical_tool")?;
                 json!({"error":error.message,"status":error.status})
             }
@@ -505,6 +505,7 @@ fn tool(
         }
         name @ ("no_update" | "report_failure") => {
             let reason = text(&args["reason"], 2000, "reason")?;
+            let reason = reason.trim();
             let step = one(
                 db,
                 "SELECT occurrence FROM routine_steps WHERE turn=?",
