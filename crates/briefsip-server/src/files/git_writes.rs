@@ -668,7 +668,11 @@ async fn commit(repo: &Repo, value: &Value) -> Result<Value> {
         &next,
         repo.head.as_deref().unwrap_or(&"0".repeat(next.len())),
     ]));
+    #[cfg(test)]
+    tests::crash_ref_publication(&repo.directory, "before");
     command(&repo.directory, &a, &[], &[]).await?;
+    #[cfg(test)]
+    tests::crash_ref_publication(&repo.directory, "after");
     io(io(OpenOptions::new()
         .read(true)
         .custom_flags(0x20000)
@@ -973,48 +977,16 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
-    #[tokio::test]
-    async fn git_writes_preserve_staging_checkpoints_receipts_and_sandbox() -> Result<()> {
-        let root = Temporary(
-            std::env::temp_dir().join(format!("briefsip-rust-git-{}", uuid::Uuid::new_v4())),
-        );
-        io(fs::create_dir(&root.0))?;
-        let workspace = root.0.join("repo");
-        let data = root.0.join("data");
-        io(fs::create_dir(&workspace))?;
-        io(fs::create_dir(&data))?;
-        command(
-            &workspace,
-            &args(&["init", "-q", "--template=", "--initial-branch=main"]),
-            &[],
-            &[],
-        )
-        .await?;
-        command(
-            &workspace,
-            &args(&["config", "user.name", "Fixture"]),
-            &[],
-            &[],
-        )
-        .await?;
-        command(
-            &workspace,
-            &args(&["config", "user.email", "fixture@example.invalid"]),
-            &[],
-            &[],
-        )
-        .await?;
-        for file in ["note", "other"] {
-            io(fs::write(workspace.join(file), "original\n"))?;
+    pub(super) fn crash_ref_publication(root: &Path, phase: &str) {
+        if std::env::var_os("BRIEFSIP_TEST_GIT_REPO").as_deref() == Some(root.as_os_str())
+            && std::env::var("BRIEFSIP_TEST_GIT_PHASE").as_deref() == Ok(phase)
+        {
+            rustix::process::kill_process(rustix::process::getpid(), rustix::process::Signal::KILL)
+                .unwrap_or_else(|e| panic!("{e}"));
         }
-        command(&workspace, &args(&["add", "--", "note", "other"]), &[], &[]).await?;
-        command(
-            &workspace,
-            &args(&["commit", "-q", "-m", "Initial"]),
-            &[],
-            &[],
-        )
-        .await?;
+    }
+
+    fn state_at(data: &Path) -> Result<AppState> {
         let config: crate::config::Config =
             serde_json::from_value(json!({"database":data.join("app.sqlite")}))
                 .map_err(|_| Failure::storage())?;
@@ -1023,7 +995,7 @@ mod tests {
         crate::files::init(&database.connection).map_err(|_| Failure::storage())?;
         let computer =
             Arc::new(crate::computer::Manager::new(&config).map_err(|_| Failure::storage())?);
-        let state = AppState {
+        Ok(AppState {
             database: Arc::new(Mutex::new(database)),
             config: Arc::new(config),
             origin: "http://127.0.0.1".to_owned(),
@@ -1032,7 +1004,271 @@ mod tests {
             computer,
             turns: crate::turns::Runtime::default(),
             trial_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        })
+    }
+
+    async fn init_repository(root: &Path) -> Result<()> {
+        io(fs::create_dir(root))?;
+        for setup in [
+            args(&["init", "-q", "--template=", "--initial-branch=main"]),
+            args(&["config", "user.name", "Fixture"]),
+            args(&["config", "user.email", "fixture@example.invalid"]),
+        ] {
+            command(root, &setup, &[], &[]).await?;
+        }
+        for file in ["note", "other"] {
+            io(fs::write(root.join(file), "original\n"))?;
+        }
+        command(root, &args(&["add", "--", "note", "other"]), &[], &[]).await?;
+        command(root, &args(&["commit", "-q", "-m", "Initial"]), &[], &[]).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn killed_commit_before_or_after_ref_publication_is_never_replayed() -> Result<()> {
+        use std::os::unix::process::ExitStatusExt;
+        let agent = "10000000-0000-4000-8000-000000000001";
+        let turn = "10000000-0000-4000-8000-000000000002";
+        let value = json!({"message":"Uncertain commit"});
+        let call = json!({"id":"commit","type":"function","function":{"name":"git_commit","arguments":value.to_string()}});
+        let binding = |directory| WorkspaceConfig {
+            agent: agent.into(),
+            directory,
+            write: true,
         };
+        if let Some(workspace) = std::env::var_os("BRIEFSIP_TEST_GIT_REPO") {
+            let workspace = PathBuf::from(workspace);
+            let state = state_at(workspace.parent().ok_or_else(Failure::storage)?)?;
+            let result = execute(&state, &binding(workspace), turn, &call, &value, 0).await;
+            panic!("ref publication fault not reached: {result:?}");
+        }
+        for phase in ["before", "after"] {
+            let dir = Temporary(
+                std::env::temp_dir().join(format!("bs-git-crash-{}", uuid::Uuid::new_v4())),
+            );
+            io(fs::create_dir(&dir.0))?;
+            let workspace = dir.0.join("repo");
+            init_repository(&workspace).await?;
+            let original = output(&workspace, &["rev-parse", "HEAD"], &[]).await?;
+            let state = state_at(&dir.0)?;
+            db(&state, |db| {
+                db.execute(
+                    "INSERT INTO agents(id,name,model,instructions) VALUES(?,'Fixture','','')",
+                    [agent],
+                )?;
+                db.execute(
+                    "INSERT INTO turns(id,agent,text,status,created) VALUES(?,?,'','done','')",
+                    [turn, agent],
+                )?;
+                Ok(())
+            })?;
+            drop(state);
+            io(fs::write(workspace.join("note"), b"uncertain\n"))?;
+            let child = io(tokio::process::Command::new(io(std::env::current_exe())?)
+                .args(["--exact", "files::git::writes::tests::killed_commit_before_or_after_ref_publication_is_never_replayed"])
+                .env("BRIEFSIP_TEST_GIT_REPO", &workspace)
+                .env("BRIEFSIP_TEST_GIT_PHASE", phase)
+                .env("GIT_AUTHOR_NAME", "Injected identity")
+                .output().await)?;
+            assert_eq!(child.status.signal(), Some(9), "{child:?}");
+            let head = output(&workspace, &["rev-parse", "HEAD"], &[]).await?;
+            assert_eq!(head == original, phase == "before");
+            assert_eq!(
+                output(&workspace, &["log", "-1", "--format=%an"], &[]).await?,
+                "Fixture"
+            );
+            assert_eq!(
+                output(&workspace, &["log", "-1", "--format=%s"], &[]).await?,
+                if phase == "before" {
+                    "Initial"
+                } else {
+                    "Uncertain commit"
+                }
+            );
+            let state = state_at(&dir.0)?;
+            let binding = binding(workspace.clone());
+            for _ in 0..2 {
+                let result = execute(&state, &binding, turn, &call, &value, 0).await?;
+                assert_eq!(result["uncertain"], true);
+            }
+            assert_eq!(
+                db(&state, |db| db
+                    .query_row(
+                        "SELECT count(*) FROM flow_tool_calls WHERE turn=? AND call_id='commit'",
+                        [turn],
+                        |r| r.get::<_, i64>(0)
+                    )
+                    .map_err(Into::into))?,
+                1
+            );
+            assert_eq!(output(&workspace, &["rev-parse", "HEAD"], &[]).await?, head);
+            assert_eq!(io(fs::read(workspace.join("note")))?, b"uncertain\n");
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn scoped_git_reads_bound_diff_and_fence_untrusted_paths() -> Result<()> {
+        use super::super::{diff, log, status};
+        let dir =
+            Temporary(std::env::temp_dir().join(format!("bs-git-read-{}", uuid::Uuid::new_v4())));
+        io(fs::create_dir(&dir.0))?;
+        let workspace = dir.0.join("repo");
+        init_repository(&workspace).await?;
+        let agent = uuid::Uuid::new_v4().to_string();
+        let binding = WorkspaceConfig {
+            agent: agent.clone(),
+            directory: workspace.clone(),
+            write: true,
+        };
+        assert_eq!(status(None).await?, json!({"isRepo":false}));
+        io(fs::write(workspace.join("note"), b"staged\n"))?;
+        command(&workspace, &args(&["add", "--", "note"]), &[], &[]).await?;
+        io(fs::write(workspace.join("note"), b"after\n"))?;
+        io(fs::write(workspace.join("new"), b"new text\n"))?;
+        let snapshot = status(Some(&binding)).await?;
+        for (key, expected) in [
+            ("dirtyCount", 2),
+            ("stagedCount", 1),
+            ("unstagedCount", 1),
+            ("untrackedCount", 1),
+        ] {
+            assert_eq!(snapshot[key], expected);
+        }
+        assert_eq!(snapshot["branch"], "main");
+        assert_eq!(snapshot["root"], workspace.to_string_lossy().as_ref());
+        assert!(snapshot["aheadCount"].is_null() && snapshot["behindCount"].is_null());
+        let patch = diff(&binding, None).await?;
+        let contents = text(&patch, "text");
+        for line in ["-original", "+after", "+new text"] {
+            assert!(contents.contains(line));
+        }
+        assert_eq!(patch["truncated"], false);
+        io(fs::write(workspace.join("new"), b"\0BINARY"))?;
+        let binary = diff(&binding, Some("new")).await?;
+        assert_eq!(binary["text"], "");
+        assert_eq!(binary["binaryFiles"], json!(["new"]));
+        io(fs::write(
+            workspace.join("large"),
+            "long line ".repeat(40_000),
+        ))?;
+        let large = diff(&binding, Some("large")).await?;
+        assert_eq!(large["truncated"], true);
+        assert!(text(&large, "text").len() <= 256 * 1024 + 3);
+        let commits = log(&binding, 1).await?;
+        assert_eq!(commits["commits"][0]["subject"], "Initial");
+        assert_eq!(text(&commits["commits"][0], "hash").len(), 40);
+        assert!(log(&binding, 0).await.is_err() && log(&binding, 51).await.is_err());
+
+        let secret = dir.0.join("private");
+        io(fs::write(&secret, b"PRIVATE"))?;
+        io(std::os::unix::fs::symlink(&secret, workspace.join("link")))?;
+        io(std::os::unix::fs::symlink(
+            &dir.0,
+            workspace.join("linked-dir"),
+        ))?;
+        io(fs::hard_link(&secret, workspace.join("hard")))?;
+        let repo = repository(&binding, true).await?;
+        for path in [
+            "../private",
+            "/etc/passwd",
+            ".git/config",
+            "link",
+            "hard",
+            "linked-dir/private",
+            "a/../private",
+            "a//b",
+            "bad\\path",
+        ] {
+            assert!(diff(&binding, Some(path)).await.is_err(), "{path}");
+            assert!(
+                commit(&repo, &json!({"message":"Unsafe","paths":[path]}))
+                    .await
+                    .is_err(),
+                "{path}"
+            );
+        }
+        assert_eq!(io(fs::read(&secret))?, b"PRIVATE");
+        io(fs::write(workspace.join(":(top)private"), b"literal file"))?;
+        assert_eq!(
+            commit(
+                &repo,
+                &json!({"message":"Literal","paths":[":(top)private"]})
+            )
+            .await?["committed"],
+            true
+        );
+        assert_eq!(
+            output(&workspace, &["show", "HEAD::(top)private"], &[]).await?,
+            "literal file"
+        );
+        command(
+            &workspace,
+            &args(&["config", "core.sparseCheckout", "true"]),
+            &[],
+            &[],
+        )
+        .await?;
+        assert!(commit(
+            &repository(&binding, true).await?,
+            &json!({"message":"Sparse","paths":["note"]})
+        )
+        .await
+        .is_err_and(|e| e.message.contains("Sparse checkouts")));
+        command(
+            &workspace,
+            &args(&["config", "core.sparseCheckout", "false"]),
+            &[],
+            &[],
+        )
+        .await?;
+        command(&workspace, &args(&["checkout", "-q", "--detach"]), &[], &[]).await?;
+        assert!(status(Some(&binding)).await?["branch"].is_null());
+        let empty = dir.0.join("empty");
+        io(fs::create_dir(&empty))?;
+        command(
+            &empty,
+            &args(&["init", "-q", "--template=", "--initial-branch=main"]),
+            &[],
+            &[],
+        )
+        .await?;
+        let unborn = WorkspaceConfig {
+            directory: empty.clone(),
+            ..binding
+        };
+        assert!(status(Some(&unborn)).await?["head"].is_null());
+        assert_eq!(log(&unborn, 1).await?, json!({"commits":[]}));
+        let state = state_at(&dir.0)?;
+        let turn = uuid::Uuid::new_v4().to_string();
+        io(fs::write(empty.join("untracked"), b"unborn checkpoint"))?;
+        capture(&state, &unborn, &turn).await?;
+        assert_eq!(
+            output(
+                &empty,
+                &[
+                    "show",
+                    &format!("refs/briefsip/checkpoints/{turn}:untracked")
+                ],
+                &[]
+            )
+            .await?,
+            "unborn checkpoint"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn git_writes_preserve_staging_checkpoints_receipts_and_sandbox() -> Result<()> {
+        let root = Temporary(
+            std::env::temp_dir().join(format!("briefsip-rust-git-{}", uuid::Uuid::new_v4())),
+        );
+        io(fs::create_dir(&root.0))?;
+        let workspace = root.0.join("repo");
+        let data = root.0.join("data");
+        io(fs::create_dir(&data))?;
+        init_repository(&workspace).await?;
+        let state = state_at(&data)?;
         let agent = uuid::Uuid::new_v4().to_string();
         let turn = uuid::Uuid::new_v4().to_string();
         db(&state, |db| {
@@ -1056,9 +1292,17 @@ mod tests {
             ..binding.clone()
         };
         assert!(capture(&state, &readonly, &turn).await.is_err());
-        capture(&state, &binding, &turn).await?;
         io(fs::write(workspace.join("other"), "staged\n"))?;
         command(&workspace, &args(&["add", "--", "other"]), &[], &[]).await?;
+        let initial_head = output(&workspace, &["rev-parse", "HEAD"], &[]).await?;
+        let initial_index = io(fs::read(workspace.join(".git/index")))?;
+        let marker = dir_marker(&root.0, &workspace).await?;
+        capture(&state, &binding, &turn).await?;
+        assert_eq!(
+            output(&workspace, &["rev-parse", "HEAD"], &[]).await?,
+            initial_head
+        );
+        assert_eq!(io(fs::read(workspace.join(".git/index")))?, initial_index);
         io(fs::write(workspace.join("note"), "changed\n"))?;
         io(fs::write(workspace.join("new"), "untracked\n"))?;
         let value = json!({"message":"Selected","paths":["note"]});
@@ -1091,18 +1335,21 @@ mod tests {
         )
         .await
         .is_err());
-        initialize(
-            &state
-                .database
-                .lock()
-                .map_err(|_| Failure::storage())?
-                .connection,
-        )
-        .map_err(|_| Failure::storage())?;
+        drop(state);
+        let state = state_at(&data)?;
         assert_eq!(
             execute(&state, &binding, &turn, &call, &value, 0).await?,
             committed
         );
+        assert_eq!(
+            output(&workspace, &["log", "-1", "--format=%an <%ae>"], &[]).await?,
+            "Fixture <fixture@example.invalid>"
+        );
+        assert!(text(
+            &crate::files::git::diff(&binding, Some("note")).await?,
+            "text"
+        )
+        .is_empty());
         let plan_value = preview(&state, &binding, &turn).await?;
         let restore_id = uuid::Uuid::new_v4().to_string();
         let request = json!({"checkpointId":turn,"digest":plan_value["digest"]});
@@ -1131,12 +1378,36 @@ mod tests {
         let call = json!({"id":"worktree","function":{"name":"git_create_worktree","arguments":value.to_string()}});
         let created = execute(&state, &binding, &turn, &call, &value, 0).await?;
         assert_eq!(created["created"], true, "{created}");
+        assert!(Path::new(text(&created, "path")).starts_with(data.join("worktrees")));
         assert_eq!(
             io(fs::read(Path::new(text(&created, "path")).join("note")))?,
             b"changed\n"
         );
+        drop(state);
+        let state = state_at(&data)?;
+        assert_eq!(
+            execute(&state, &binding, &turn, &call, &value, 0).await?,
+            created
+        );
+        assert!(
+            !marker.exists(),
+            "a hook, filter, text converter or signing helper ran"
+        );
         let value = json!({"name":"fixture/branch"});
         let call = json!({"id":"branch","function":{"name":"git_create_branch","arguments":value.to_string()}});
+        assert_eq!(
+            execute(&state, &binding, &turn, &call, &value, 0).await?["created"],
+            true
+        );
+        assert_eq!(
+            output(&workspace, &["branch", "--show-current"], &[]).await?,
+            "main"
+        );
+        let status = crate::files::git::status(Some(&binding)).await?;
+        assert_eq!(status["worktrees"].as_array().map(Vec::len), Some(2));
+        assert!(status["localBranches"]
+            .as_array()
+            .is_some_and(|branches| branches.contains(&json!("fixture/branch"))));
         assert_eq!(
             execute(&state, &binding, &turn, &call, &value, 0).await?["created"],
             true
@@ -1185,6 +1456,227 @@ mod tests {
             .ok_or_else(Failure::storage)?["uncertain"],
             true
         );
+        Ok(())
+    }
+
+    async fn dir_marker(root: &Path, repo: &Path) -> Result<PathBuf> {
+        use std::os::unix::fs::PermissionsExt;
+        let marker = root.join("git-external-command");
+        let canary = root.join("marker.sh");
+        io(fs::write(
+            &canary,
+            format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
+        ))?;
+        io(fs::set_permissions(
+            &canary,
+            fs::Permissions::from_mode(0o700),
+        ))?;
+        let hooks = repo.join(".git/hooks");
+        io(fs::create_dir_all(&hooks))?;
+        for name in [
+            "pre-commit",
+            "prepare-commit-msg",
+            "commit-msg",
+            "post-commit",
+            "post-checkout",
+            "reference-transaction",
+        ] {
+            io(fs::hard_link(&canary, hooks.join(name)))?;
+        }
+        let config = canary.to_str().ok_or_else(Failure::storage)?;
+        for (key, value) in [
+            ("filter.unsafe.clean", config),
+            ("filter.unsafe.smudge", config),
+            ("diff.unsafe.textconv", config),
+            ("commit.gpgSign", "true"),
+            ("gpg.program", config),
+            ("extensions.worktreeConfig", "true"),
+        ] {
+            command(repo, &args(&["config", key, value]), &[], &[]).await?;
+        }
+        for key in ["filter.worktree.clean", "filter.worktree.smudge"] {
+            command(
+                repo,
+                &args(&["config", "--worktree", key, config]),
+                &[],
+                &[],
+            )
+            .await?;
+        }
+        io(fs::write(
+            repo.join(".gitattributes"),
+            "note filter=unsafe diff=unsafe\n",
+        ))?;
+        io(fs::create_dir_all(repo.join(".git/info")))?;
+        io(fs::write(
+            repo.join(".git/info/attributes"),
+            "note filter=worktree\n",
+        ))?;
+        Ok(marker)
+    }
+
+    #[tokio::test]
+    async fn git_scoped_commit_restore_and_pruning_preserve_siblings() -> Result<()> {
+        use super::super::{diff, status};
+        let dir =
+            Temporary(std::env::temp_dir().join(format!("bs-git-scope-{}", uuid::Uuid::new_v4())));
+        io(fs::create_dir(&dir.0))?;
+        let workspace = dir.0.join("repo");
+        init_repository(&workspace).await?;
+        let scoped = workspace.join("scoped");
+        io(fs::create_dir(&scoped))?;
+        io(fs::write(scoped.join("in"), b"inside before\n"))?;
+        io(fs::write(scoped.join(".gitignore"), b"ignored\n"))?;
+        command(&workspace, &args(&["add", "--", "scoped"]), &[], &[]).await?;
+        command(&workspace, &args(&["commit", "-qm", "Scope"]), &[], &[]).await?;
+        let agent = uuid::Uuid::new_v4().to_string();
+        let binding = WorkspaceConfig {
+            agent: agent.clone(),
+            directory: scoped.clone(),
+            write: true,
+        };
+        let state = state_at(&dir.0)?;
+        io(fs::write(scoped.join("ignored"), b"keep ignored"))?;
+        io(fs::write(workspace.join("other"), b"OUTSIDE SECRET"))?;
+        io(fs::write(scoped.join("in"), b"inside after\n"))?;
+        assert_eq!(
+            status(Some(&binding)).await?["changedFiles"],
+            json!([{"code":" M","path":"in"}])
+        );
+        assert!(!diff(&binding, None)
+            .await?
+            .to_string()
+            .contains("OUTSIDE SECRET"));
+        let original = output(&workspace, &["rev-parse", "HEAD"], &[]).await?;
+        let index = io(fs::read(workspace.join(".git/index")))?;
+        let old = (0..50)
+            .map(|_| uuid::Uuid::new_v4().to_string())
+            .collect::<Vec<_>>();
+        let mut refs = String::new();
+        for (index, id) in old.iter().enumerate() {
+            let reference = format!("refs/briefsip/checkpoints/{id}");
+            refs.push_str(&format!("create {reference} {original}\n"));
+            db(&state, |db| {
+                db.execute(
+                    "INSERT INTO workspace_checkpoints VALUES(?,?,?,?,?,'done',?)",
+                    rusqlite::params![
+                        id,
+                        agent,
+                        scoped.to_str(),
+                        reference,
+                        original,
+                        index as i64 - 50
+                    ],
+                )?;
+                Ok(())
+            })?;
+        }
+        command(
+            &workspace,
+            &args(&["update-ref", "--stdin"]),
+            &[],
+            refs.as_bytes(),
+        )
+        .await?;
+        drop(state);
+        let state = state_at(&dir.0)?;
+        let turn = uuid::Uuid::new_v4().to_string();
+        io(fs::write(
+            scoped.join("untracked"),
+            b"untracked in checkpoint",
+        ))?;
+        capture(&state, &binding, &turn).await?;
+        assert_eq!(
+            output(&workspace, &["rev-parse", "HEAD"], &[]).await?,
+            original
+        );
+        assert_eq!(io(fs::read(workspace.join(".git/index")))?, index);
+        assert_eq!(
+            output(
+                &workspace,
+                &[
+                    "for-each-ref",
+                    "--format=%(refname)",
+                    "refs/briefsip/checkpoints"
+                ],
+                &[]
+            )
+            .await?
+            .lines()
+            .count(),
+            50
+        );
+        assert!(preview(&state, &binding, &old[0]).await.is_err());
+        assert_eq!(
+            output(
+                &workspace,
+                &[
+                    "show",
+                    &format!("refs/briefsip/checkpoints/{turn}:untracked")
+                ],
+                &[]
+            )
+            .await?,
+            "untracked in checkpoint"
+        );
+        io(fs::write(scoped.join("in"), b"current"))?;
+        let stale = preview(&state, &binding, &turn).await?;
+        io(fs::write(scoped.join("in"), b"raced"))?;
+        let rejected = restore(
+            &state,
+            &binding,
+            &uuid::Uuid::new_v4().to_string(),
+            &json!({"checkpointId":turn,"digest":stale["digest"]}),
+        )
+        .await;
+        assert!(
+            rejected
+                .as_ref()
+                .err()
+                .is_some_and(|e| e.message.contains("changed"))
+                || rejected
+                    .as_ref()
+                    .ok()
+                    .is_some_and(|v| text(v, "error").contains("changed"))
+        );
+        assert_eq!(io(fs::read(scoped.join("in")))?, b"raced");
+        let latest = preview(&state, &binding, &turn).await?;
+        let restore_id = uuid::Uuid::new_v4().to_string();
+        let request = json!({"checkpointId":turn,"digest":latest["digest"]});
+        let restored = restore(&state, &binding, &restore_id, &request).await?;
+        assert_eq!(restored["restored"], true);
+        assert_eq!(io(fs::read(scoped.join("in")))?, b"inside after\n");
+        assert_eq!(io(fs::read(scoped.join("ignored")))?, b"keep ignored");
+        assert_eq!(io(fs::read(workspace.join("other")))?, b"OUTSIDE SECRET");
+        assert_eq!(io(fs::read(workspace.join(".git/index")))?, index);
+        let repo = repository(&binding, true).await?;
+        assert_eq!(
+            commit(&repo, &json!({"message":"Scope commit"})).await?["committed"],
+            true
+        );
+        assert_eq!(
+            output(&workspace, &["show", "HEAD:other"], &[]).await?,
+            "original"
+        );
+        assert_eq!(
+            output(&workspace, &["show", "HEAD:scoped/in"], &[]).await?,
+            "inside after"
+        );
+        assert!(
+            output(&workspace, &["ls-tree", "-r", "--name-only", "HEAD"], &[])
+                .await?
+                .lines()
+                .all(|name| name != "scoped/untracked")
+        );
+        assert!(commit(
+            &repository(&binding, true).await?,
+            &json!({"message":"No changes"})
+        )
+        .await
+        .is_err_and(|e| e.message.contains("Nothing to commit")));
+        assert!(worktree(&repo, &dir.0, "forbidden")
+            .await
+            .is_err_and(|e| e.message.contains("binding to the repository root")));
         Ok(())
     }
 }

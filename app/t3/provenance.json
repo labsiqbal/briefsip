@@ -212,7 +212,6 @@
     "app/t3/mcp-session-registry.ts": "6a16d9d250b10dd01556180e31dc2efb38f3580aad47cbfaa8eefb7ad3357967",
     "app/t3/mcp-tool-access.ts": "b9b209f536312658cd9c962a99a874945ac7915a95f959fa092a671cf55c3c50",
     "app/mcp-server.ts": "3c1155a6f508891353a9cc95f68a0a12243e83ef5249ec49686e360685b51585",
-    "app/workspace-git.ts": "1a1f70315f5fb397981e0c3ceb61b3adc89281329dcae252179754eaab2aa4ff",
     "app/src/SourceControl.tsx": "e57ee243489ac4811838ee2a9ca8e85fa0aed73b34346d20fd49d7323b00f4b8",
     "app/src/ui/source-control.css": "8b85c9f079aec8cb46ec8136a154baeb43dfe89efe08735bb476bc1553936053",
     "app/machines.ts": "85f9b1584f8fa641c3e9d8c079e3c9b23097722e49e61179a3bcc9c8cc1d5cc9",
@@ -583,11 +582,11 @@
       "adaptation": "Temporary-index, stash-free working-tree capture and private checkpoint refs, translated from Effect into plain TypeScript. Raw blob capture includes untracked regular files; Briefsip adds binding boundaries, SQLite intent receipts, restore confirmation digests and conservative uncertain recovery.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "f44227ab093c129d26d1a3898c583d74b3522bddc117af788cff9b8094323e88",
-      "localPath": "app/workspace-git.ts",
+      "localPath": "crates/briefsip-server/src/files/git_writes.rs",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "compatibilityCheck": "app/workspace-git.test.ts"
+      "compatibilityCheck": "app/rust-workspace-git-http.test.ts"
     },
     {
       "sourcePath": "apps/server/src/vcs/GitVcsDriverCore.ts",
@@ -599,11 +598,11 @@
       "adaptation": "Local Git status, temporary-index commit and branch/worktree command patterns. Uses execFile argument arrays and local identity; Briefsip excludes remotes, disables hooks/filters/signing, bounds storage/output and records durable tool-call receipts.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "2f14761316e748cf3e1059fe3969d57d899708b9edbba4f6aba7d648fd3d1b40",
-      "localPath": "app/workspace-git.ts",
+      "localPath": "crates/briefsip-server/src/files/git_writes.rs",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "compatibilityCheck": "app/workspace-git.test.ts"
+      "compatibilityCheck": "app/rust-workspace-git-http.test.ts"
     },
     {
       "sourcePath": "apps/server/src/checkpointing/CheckpointStore.ts",
@@ -615,11 +614,11 @@
       "adaptation": "Checkpoint lifecycle and before-turn restoration semantics adapted to node:sqlite and private refs, with 50-ref retention. No Effect services or T3 runtime dependency.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "a1b1a7f354011b329472d01b3b0d03c877a010e5eb7a27acb4e0f0eff406cf4a",
-      "localPath": "app/workspace-git.ts",
+      "localPath": "crates/briefsip-server/src/files/git_writes.rs",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "compatibilityCheck": "app/workspace-git.test.ts"
+      "compatibilityCheck": "app/rust-workspace-git-http.test.ts"
     },
     {
       "sourcePath": "packages/source-control-core/src/server/diffFileRevisions.ts",
