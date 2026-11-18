@@ -123,6 +123,44 @@ impl Hub {
     pub fn close(&self) {
         self.shutdown.send_replace(true);
     }
+    pub fn sidebar(&self, db: &Arc<Mutex<Database>>) -> Response {
+        let mut changes = self.changes.subscribe();
+        let mut shutdown = self.shutdown.subscribe();
+        let db = db.clone();
+        let stream = async_stream::stream! {
+            let mut previous = String::new();
+            let mut refresh = true;
+            let mut heartbeat = tokio::time::interval_at(tokio::time::Instant::now() + Duration::from_secs(15), Duration::from_secs(15));
+            loop {
+                if refresh {
+                    let snapshot = db.lock().map_err(|_| Failure::storage()).and_then(|guard| crate::data::sidebar::attention(&guard.connection));
+                    let Ok(snapshot) = snapshot else { break };
+                    let current = snapshot.to_string();
+                    if current != previous {
+                        yield Ok::<_, Infallible>(format!("data: {current}\n\n"));
+                        previous = current;
+                    }
+                }
+                refresh = tokio::select! {
+                    _ = shutdown.changed() => break,
+                    _ = heartbeat.tick() => {
+                        yield Ok(": keepalive\n\n".to_owned());
+                        false
+                    }
+                    change = changes.recv() => match change {
+                        Ok(scope) => scope == "database",
+                        Err(broadcast::error::RecvError::Lagged(_)) => true,
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    },
+                };
+                if refresh {
+                    tokio::time::sleep(Duration::from_millis(150)).await;
+                    while changes.try_recv().is_ok() {}
+                }
+            }
+        };
+        stream_response(Body::from_stream(stream))
+    }
     pub fn response(&self, scope: Scope, db: &Arc<Mutex<Database>>) -> Result<Response, Failure> {
         {
             let guard = db.lock().map_err(|_| Failure::storage())?;
@@ -170,20 +208,24 @@ impl Hub {
                 }
             }
         };
-        let mut response = Response::new(Body::from_stream(stream));
-        response.headers_mut().insert(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("text/event-stream"),
-        );
-        response.headers_mut().insert(
-            header::CACHE_CONTROL,
-            HeaderValue::from_static("no-cache, no-transform"),
-        );
-        response
-            .headers_mut()
-            .insert("x-accel-buffering", HeaderValue::from_static("no"));
-        Ok(response)
+        Ok(stream_response(Body::from_stream(stream)))
     }
+}
+
+fn stream_response(body: Body) -> Response {
+    let mut response = Response::new(body);
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/event-stream"),
+    );
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("no-cache, no-transform"),
+    );
+    response
+        .headers_mut()
+        .insert("x-accel-buffering", HeaderValue::from_static("no"));
+    response
 }
 
 #[cfg(test)]

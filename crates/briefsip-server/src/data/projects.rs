@@ -31,7 +31,7 @@ pub fn read(db: &Connection, id: &str) -> Result<Value> {
         [id],
     )?
     .ok_or_else(|| error(404, "Project not found."))?;
-    let mut sections=all(db,"SELECT s.channel AS id,s.name,s.position,s.archived,s.revision,c.activity,c.read_position FROM local_project_sections s JOIN channels c ON c.id=s.channel WHERE s.project=? ORDER BY s.position,s.channel",[id])?;
+    let mut sections=all(db,"SELECT s.channel AS id,s.name,s.position,s.archived,s.revision,c.activity,c.read_position,EXISTS(SELECT 1 FROM conversation_attention a WHERE a.channel=s.channel) AS needs_you FROM local_project_sections s JOIN channels c ON c.id=s.channel WHERE s.project=? ORDER BY s.position,s.channel",[id])?;
     for section in &mut sections {
         section["archived"] = json!(section["archived"] == 1);
     }
@@ -45,7 +45,7 @@ pub fn read(db: &Connection, id: &str) -> Result<Value> {
     }
     let latest=one(db,"SELECT CAST((julianday(max(created))-2440587.5)*86400000 AS INTEGER) AS created FROM turns WHERE channel IN(SELECT channel FROM local_project_sections WHERE project=?) OR thread IN(SELECT thread FROM local_project_threads WHERE project=?)",[id,id])?.and_then(|v|v["created"].as_i64()).unwrap_or(0);
     Ok(
-        json!({"id":id,"name":p["name"],"description":p["description"],"archived":p["archived"]==1,"allowInstallationApps":p["allow_installation_apps"]==1,"revision":p["revision"],"updated":p["updated"].as_i64().unwrap_or(0).max(latest),"folders":all(db,"SELECT directory FROM local_project_folders WHERE project=? ORDER BY rowid",[id])?.into_iter().map(|v|v["directory"].clone()).collect::<Vec<_>>(),"members":members,"channel":p["channel"],"sections":sections,"threads":all(db,"SELECT t.id,t.agent,t.name,p.folder FROM local_project_threads p JOIN threads t ON t.id=p.thread WHERE p.project=? AND t.deleted=0 ORDER BY t.rowid DESC LIMIT 100",[id])?}),
+        json!({"id":id,"name":p["name"],"description":p["description"],"archived":p["archived"]==1,"allowInstallationApps":p["allow_installation_apps"]==1,"revision":p["revision"],"updated":p["updated"].as_i64().unwrap_or(0).max(latest),"folders":all(db,"SELECT directory FROM local_project_folders WHERE project=? ORDER BY rowid",[id])?.into_iter().map(|v|v["directory"].clone()).collect::<Vec<_>>(),"members":members,"channel":p["channel"],"sections":sections,"threads":all(db,"SELECT t.id,t.agent,t.name,p.folder,EXISTS(SELECT 1 FROM conversation_attention a WHERE a.thread=t.id) AS needs_you FROM local_project_threads p JOIN threads t ON t.id=p.thread WHERE p.project=? AND t.deleted=0 ORDER BY t.rowid DESC LIMIT 100",[id])?}),
     )
 }
 fn fields(v: &Value, keys: &[&str]) -> Result<()> {
