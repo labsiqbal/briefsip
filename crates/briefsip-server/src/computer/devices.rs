@@ -1129,7 +1129,7 @@ pub async fn host(state: &AppState, request: Request, request_id: &str) -> Resul
     }
     if method == Method::POST && operation == "wait-secret-results" {
         let result = data::transaction(db, || {
-            crate::tasks::waits::secret_result(db, &principal, &v, now)
+            crate::tasks::waits::secret_result(state, db, &principal, &v, now)
         })?;
         return crate::tasks::response(result);
     }

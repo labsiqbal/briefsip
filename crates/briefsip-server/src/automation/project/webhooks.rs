@@ -45,6 +45,17 @@ fn key(state: &AppState, name: Option<&str>) -> Result<Option<String>> {
         .ok_or_else(unavailable)?;
     Ok(Some(value))
 }
+fn event_denied(error: Failure) -> Failure {
+    if error.status == 404 {
+        Failure::new(
+            403,
+            "execution_denied",
+            "Routine event is outside the current scope.",
+        )
+    } else {
+        error
+    }
+}
 fn filters(v: &Value) -> Result<Value> {
     super::super::webhooks::filters(v)
         .map_err(|e| Failure::new(e.status, "invalid_webhook", e.message))
@@ -244,14 +255,18 @@ pub(super) fn event(
         db.execute_batch(include_str!("../project.sql"))?;
         let owner = one(db, "SELECT account FROM projects WHERE id=?", [project])?;
         let hook=one(db,"SELECT h.* FROM routine_webhooks h JOIN routines r ON r.id=h.routine JOIN record_scopes s ON s.table_name='routines' AND s.key_json=json_array(r.id) AND s.project=? AND s.root_kind='agent' AND s.root_id=r.agent WHERE h.routine=?",[project,routine])?;
-        let secret = key(
+        let secret = match key(
             state,
             hook.as_ref()
                 .filter(|_| owner.is_some())
                 .and_then(|h| h["secret_ref"].as_str()),
-        )
-        .ok()
-        .flatten();
+        ) {
+            Ok(value) => value,
+            Err(_) => {
+                eprintln!("Webhook keystore is unavailable for routine {routine}.");
+                None
+            }
+        };
         let time = crate::text_header(headers, "x-briefsip-time").unwrap_or("");
         let delivery = crate::text_header(headers, "x-briefsip-id").unwrap_or("");
         let signature = crate::text_header(headers, "x-briefsip-signature").unwrap_or("");
@@ -331,7 +346,7 @@ pub(super) fn event(
             project,
             kind: "Routine",
         };
-        s.member()?;
+        s.member().map_err(event_denied)?;
         let r = routines::root(&s, routine)?;
         if r["trigger"] != "webhook" || r["enabled"] != 1 {
             return Err(Failure::new(
@@ -359,7 +374,8 @@ pub(super) fn event(
             }
             let result = data::json(&prior["result"])?;
             if let Some(o) = result["occurrenceId"].as_str() {
-                s.scope("routine_occurrences", json!([o]), string(&r, "agent"))?;
+                s.scope("routine_occurrences", json!([o]), string(&r, "agent"))
+                    .map_err(event_denied)?;
             }
             return Ok(read_response(result));
         }

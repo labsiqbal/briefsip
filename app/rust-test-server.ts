@@ -49,6 +49,11 @@ export async function startRustServer(options: Config, attempt = 0): Promise<{ o
       void exited.then(() => { clearTimeout(timeout); reject(Object.assign(new Error(`Rust test server exited: ${stderr.trim()}`), /Address already in use/.test(stderr) ? { code: 'EADDRINUSE' } : {})); });
       child.stdout.on('data', value => { stdout = (stdout + value).slice(-8192); const match = /^Briefsip: (https?:\/\/[^\r\n]+)$/m.exec(stdout); if (match) { clearTimeout(timeout); ready(match[1]); } });
     });
+    const readOutput = () => ({ stdout, stderr });
+    serverOutput.set(origin, readOutput);
+    void exited.then(() => {
+      if (serverOutput.get(origin) === readOutput) serverOutput.delete(origin);
+    });
     return { origin, close, hubLink: options.hubLink ? rustHubFacade(resolve(options.database), origin, bridge.config.token) : undefined, mcpServer: rustMcpFacade(resolve(options.database)), refreshMachines: async () => { const response = await fetch(origin + '/api/machines', { headers: { 'X-Briefsip-Test-Refresh': bridge.config.token } }); if (!response.ok) throw new Error(await response.text()); } };
   } catch (error) {
     await close().catch(() => {});
@@ -59,4 +64,10 @@ export async function startRustServer(options: Config, attempt = 0): Promise<{ o
     if (error instanceof Error && error.message.includes('Another canonical server is still running.')) { throw new ProtocolError(409, 'canonical_server_busy', 'Another canonical server is still running.'); }
     throw error;
   }
+}
+
+const serverOutput = new Map<string, () => { stdout: string; stderr: string }>();
+
+export function rustServerOutput(origin: string) {
+  return serverOutput.get(origin)?.() ?? { stdout: '', stderr: '' };
 }

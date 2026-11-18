@@ -2,30 +2,49 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createClerkClient } from '@clerk/backend';
 import { createHash, createHmac, createDecipheriv, createPublicKey, diffieHellman, hkdfSync, generateKeyPairSync, sign, randomUUID, randomBytes } from 'node:crypto';
-import { mkdtempSync, rmSync, readFileSync, existsSync, statSync, writeFileSync, renameSync, symlinkSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { chmodSync, mkdtempSync, rmSync, readFileSync, existsSync, statSync, writeFileSync, renameSync, symlinkSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer, request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { backup, DatabaseSync } from 'node:sqlite';
 import { startCanonicalApp } from './test-bridge.ts';
 import { openDeviceRuntime } from './device-runtime.ts';
 import type { ActionContext } from './executor-journal.ts';
-import { createAuth, type AuthConfig } from './auth.ts';
-import { prepareRestoreBootstrap, issueRestoreSession, restoreWorkspace, workspaceSnapshot } from './backup.ts';
+import { rustBinary } from './rust-binary.ts';
+import { rustServerOutput } from './rust-test-server.ts';
 import { canonicalJson, ProtocolError, digestCommand, sha256 } from './protocol.ts';
-import { parseOwnership } from './task-recovery.ts';
 import { onceCandidate } from './schedule-time.ts';
-import { createRoutineRuntime } from './routine-runtime.ts';
-import { routineWebhookKeyring } from './routine-webhook-keyring.ts';
 import sharp from 'sharp';
-import { saveSkill } from './skills.ts';
-import { initializeSites, saveSite } from './sites.ts';
 
 function memoryKeys() {
   const values = new Map<string, string>();
   return { values, entry(service: string, name: string) { const key = `${service}/${name}`; return { getPassword: () => values.get(key) ?? null, setPassword: (value: string) => { values.set(key, value); } }; } };
+}
+
+function fixtureDatabase(path: string) {
+  const db = new DatabaseSync(path);
+  db.exec('PRAGMA busy_timeout=5000');
+  return db;
+}
+
+async function workspaceSnapshot(db: DatabaseSync, owner?: string) {
+  const directory = mkdtempSync(join(tmpdir(), 'briefsip-canonical-snapshot-'));
+  const file = join(directory, 'snapshot.sqlite');
+  const cleanup = () => rmSync(directory, { recursive: true, force: true });
+  try {
+    await backup(db, file);
+    chmodSync(file, 0o600);
+    const snapshot = new DatabaseSync(file);
+    try {
+      snapshot.exec(`CREATE TABLE briefsip_backup(format TEXT NOT NULL,version INTEGER NOT NULL,created TEXT NOT NULL) STRICT;
+        CREATE TABLE briefsip_backup_authority(generation TEXT NOT NULL,owner_account TEXT REFERENCES accounts(id)) STRICT;`);
+      snapshot.prepare("INSERT INTO briefsip_backup VALUES ('briefsip-canonical-v6',6,?)").run(new Date().toISOString());
+      snapshot.prepare('INSERT INTO briefsip_backup_authority SELECT generation,coalesce(?,(SELECT min(account) FROM projects HAVING count(DISTINCT account)=1)) FROM authority_state WHERE id=1').run(owner ?? null);
+    } finally { snapshot.close(); }
+    return { file, cleanup };
+  } catch (error) { cleanup(); throw error; }
 }
 
 async function protectedWaitFixture() {
@@ -67,11 +86,11 @@ test('protected turn event verifies on home, saves one receipt and resumes with 
     assert.equal((await sendEvent('{"event":"ready","extra":true}')).status, 400);
     await connection.stop(); assert.equal((await sendEvent()).body.error.code, 'device_offline');
     const reconnected = runtime.connect(); await until(() => reconnected.state().phase === 'connected');
-    const db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+    const db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
     try { db.exec("CREATE TRIGGER fail_event_receipt BEFORE INSERT ON receipts WHEN NEW.scope LIKE 'turn-wait-event:%' BEGIN SELECT RAISE(ABORT,'fixture event failure'); END"); } finally { db.close(); }
     assert.equal((await sendEvent()).status, 500);
     assert.equal((await f.send(`/api/turn-waits/${waitId}`)).body.data.status, 'waiting', 'Receipt storage failure rolls back delivery and tool result');
-    const repair = new DatabaseSync(join(f.dir, 'canonical.sqlite')); repair.exec('DROP TRIGGER fail_event_receipt'); repair.close();
+    const repair = fixtureDatabase(join(f.dir, 'canonical.sqlite')); repair.exec('DROP TRIGGER fail_event_receipt'); repair.close();
     const accepted = await sendEvent(); assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
     assert.equal(accepted.body.data.accepted, true); assert.equal(accepted.body.data.delivery, delivery);
     assert.deepEqual((await sendEvent()).body, accepted.body);
@@ -90,7 +109,7 @@ test('protected turn event verifies on home, saves one receipt and resumes with 
     assert.equal((await f.send(`/api/tasks/${taskId}/control`, { requestId: randomUUID(), expectedRevision: after.revision, operation: 'cancel' })).status, 200);
     assert.deepEqual((await sendEvent()).body, accepted.body, 'Accepted delivery remains evidence after task ends');
     assert.equal([...keys.values].filter(([key]) => key.includes('/event-wait/')).length, 1);
-    const source = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+    const source = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
     const owner = (await f.send('/api/session')).body.data.accountId;
     const snapshot = await workspaceSnapshot(source, owner); source.close();
     try {
@@ -180,7 +199,7 @@ test('protected turn wait uses outbound stream and recovers lost host ACK withou
       const host = new DatabaseSync(database);
       try { return host.prepare('SELECT state FROM device_wait_secrets').get()?.state === 'acknowledged'; } finally { host.close(); }
     });
-    const canonical = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+    const canonical = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
     try {
       assert.equal(canonical.prepare('SELECT count(*) n FROM wait_provisions').get()!.n, 1);
       assert.equal(canonical.prepare('SELECT count(*) n FROM turn_waits').get()!.n, 1);
@@ -250,7 +269,7 @@ test('protected turn wait uses outbound stream and recovers lost host ACK withou
     assert.equal((await beforeRulesChange).status, 409, 'Delayed reveal cannot cross project rules/capability revisions');
     const retained = [...keys.values].filter(([key]) => key.includes('/event-wait/'));
     assert.equal(retained.length, 1); assert.equal(retained[0][1], secret);
-    const inspect = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+    const inspect = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
     try { for (const table of ['wait_provisions','turn_waits','receipts','task_results','sync_events']) assert(!JSON.stringify(inspect.prepare('SELECT * FROM ' + table).all()).includes(secret)); }
     finally { inspect.close(); }
     await connection.stop();
@@ -292,7 +311,7 @@ test('canonical shared data isolates project images and recovers one write after
     assert.match((await run(second,'query_data',{sql:'SELECT * FROM notes'})).error,/no such table/);
     assert.equal((await run(second,'query_data',{sql:'CREATE TABLE notes(text TEXT)'})).revision,1);
     assert.deepEqual((await run(second,'query_data',{sql:'SELECT * FROM notes'})).rows,[]);
-    const inspect=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{assert.equal(inspect.prepare('SELECT revision FROM shared_data WHERE project=?').get(project)!.revision,2);assert.equal(inspect.prepare('SELECT revision FROM shared_data WHERE project=?').get(other)!.revision,1);}finally{inspect.close();}
+    const inspect=fixtureDatabase(join(f.dir,'canonical.sqlite'));try{assert.equal(inspect.prepare('SELECT revision FROM shared_data WHERE project=?').get(project)!.revision,2);assert.equal(inspect.prepare('SELECT revision FROM shared_data WHERE project=?').get(other)!.revision,1);}finally{inspect.close();}
   }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}
 });
 
@@ -303,18 +322,18 @@ test('canonical avatar removal recovers its original result after a lost reply, 
     const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),agent=randomUUID(),image=await sharp({create:{width:256,height:256,channels:4,background:'#206060'}}).png().toBuffer();
     assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Avatar project'})).status,201);
     assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Avatar owner',model:'fixture',backupModel:'',instructions:'Remove avatar',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
-    const seed=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{seed.prepare('INSERT INTO agent_avatars VALUES (?,1,?)').run(agent,image);}finally{seed.close();}
+    const seed=fixtureDatabase(join(f.dir,'canonical.sqlite'));try{seed.prepare('INSERT INTO agent_avatars VALUES (?,1,?)').run(agent,image);}finally{seed.close();}
     const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'Remove my avatar',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
     assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
     const owned=await runtime.startTask(taskId),context=await runtime.taskContext(taskId,owned.ownership,owned.revision),actionId=randomUUID();assert.equal((context.snapshot.profile as {avatarRevision:number}).avatarRevision,1);
     const action={taskId,actionId,sequence:0,actionKind:'canonical' as const,ownership:owned.ownership,payload:{toolCall:{id:actionId,function:{name:'set_avatar',arguments:JSON.stringify({image:null,revision:1})}},expectedRevision:context.snapshot.taskRevision+1},context,grantRevision:1};
     globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith('/context-mutations')){assert.equal(response.status,200,await response.clone().text());await response.body?.cancel();throw new Error('Lost avatar removal');}return response;};
     await assert.rejects(runtime.executeAction(action,()=>assert.fail('Host effect')),/Lost avatar removal/);globalThis.fetch=originalFetch;
-    const newer=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{assert.equal(newer.prepare('SELECT image FROM agent_avatars WHERE agent=?').get(agent)!.image,null);newer.prepare('UPDATE agent_avatars SET revision=3,image=? WHERE agent=?').run(image,agent);}finally{newer.close();}
+    const newer=fixtureDatabase(join(f.dir,'canonical.sqlite'));try{assert.equal(newer.prepare('SELECT image FROM agent_avatars WHERE agent=?').get(agent)!.image,null);newer.prepare('UPDATE agent_avatars SET revision=3,image=? WHERE agent=?').run(image,agent);}finally{newer.close();}
     const generation=connection.state().generation;await f.restart();await until(()=>connection.state().phase==='connected'&&connection.state().generation>generation);
     await until(()=>runtime.recoveryStatus().results.some(row=>row.actionId===actionId&&row.state==='acknowledged'),15000);
     const detail=(await f.send(`/api/tasks/${taskId}`)).body.data;assert.equal(detail.results.length,1);assert.deepEqual(detail.results[0].content,{revision:2,present:false});
-    const inspect=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{const row=inspect.prepare('SELECT revision,image FROM agent_avatars WHERE agent=?').get(agent)!;assert.equal(row.revision,3);assert.deepEqual(Buffer.from(row.image as Uint8Array),image);}finally{inspect.close();}
+    const inspect=fixtureDatabase(join(f.dir,'canonical.sqlite'));try{const row=inspect.prepare('SELECT revision,image FROM agent_avatars WHERE agent=?').get(agent)!;assert.equal(row.revision,3);assert.deepEqual(Buffer.from(row.image as Uint8Array),image);}finally{inspect.close();}
     const latest=await runtime.taskContext(taskId,owned.ownership,detail.revision);assert.equal((latest.snapshot.profile as {avatarRevision:number}).avatarRevision,3);
   }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}
 });
@@ -326,11 +345,13 @@ test('canonical site management keeps project scope and recovers one deletion af
     const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),otherProject=randomUUID(),agent=randomUUID(),site=randomUUID(),foreign=randomUUID();
     for(const id of [project,otherProject])assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id,name:id})).status,201);
     assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Site owner',model:'fixture',backupModel:'',instructions:'Manage sites',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
-    const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    const db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
     try{
-      initializeSites(db);const owner=db.prepare("SELECT id FROM accounts WHERE clerk_sub='user_owner'").get()!.id;
+      const owner=db.prepare("SELECT id FROM accounts WHERE clerk_sub='user_owner'").get()!.id;
       for(const [id,scope] of [[site,project],[foreign,otherProject]]){
-        saveSite(db,agent,{id,name:'Scoped site',source:'<p>PRIVATE_SITE_SOURCE</p>'});
+        const source = '<p>PRIVATE_SITE_SOURCE</p>';
+        db.prepare("INSERT INTO local_sites(id,agent,name,source,html,revision,updated) VALUES (?,?,'Scoped site',?,?,1,?)").run(id,agent,source,source,new Date().toISOString());
+        db.prepare('INSERT INTO site_commands VALUES (?,?,?,?)').run(id,agent,digestCommand({id,name:'Scoped site',source}),id);
         db.prepare("INSERT INTO record_scopes VALUES ('local_sites',?,?,?,'owner','agent',?)").run(JSON.stringify([id]),owner,scope,agent);
       }
     }finally{db.close();}
@@ -350,7 +371,7 @@ test('canonical site management keeps project scope and recovers one deletion af
     await f.restart();await until(()=>connection.state().phase==='connected'&&connection.state().generation>generation);
     await until(()=>runtime.recoveryStatus().results.some(row=>row.actionId===deletion.actionId&&row.state==='acknowledged'),15000);
     const detail=(await f.send(`/api/tasks/${taskId}`)).body.data;assert.equal(detail.results.length,2);assert.deepEqual(detail.results[1].content,{id:site,name:'Scoped site',revision:2,deleted:1,path:null});
-    const inspect=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{assert.deepEqual({...inspect.prepare('SELECT revision,deleted,source,html FROM local_sites WHERE id=?').get(site)!},{revision:2,deleted:1,source:'',html:''});assert.equal(inspect.prepare('SELECT deleted FROM local_sites WHERE id=?').get(foreign)!.deleted,0);assert.equal(inspect.prepare('SELECT count(*) n FROM site_commands WHERE site=?').get(site)!.n,2);}finally{inspect.close();}
+    const inspect=fixtureDatabase(join(f.dir,'canonical.sqlite'));try{assert.deepEqual({...inspect.prepare('SELECT revision,deleted,source,html FROM local_sites WHERE id=?').get(site)!},{revision:2,deleted:1,source:'',html:''});assert.equal(inspect.prepare('SELECT deleted FROM local_sites WHERE id=?').get(foreign)!.deleted,0);assert.equal(inspect.prepare('SELECT count(*) n FROM site_commands WHERE site=?').get(site)!.n,2);}finally{inspect.close();}
   }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}
 });
 
@@ -403,13 +424,26 @@ test('canonical questions survive lost RPC and answer replies, restart and home 
 });
 async function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-device-http-')), keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
-  const auth: AuthConfig = { jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), secretKey: 'sk_test_fixture', publishableKey: `pk_test_${Buffer.from('fixture.clerk.accounts.dev$').toString('base64')}`, issuer: 'https://fixture.clerk.accounts.dev', origin: 'http://127.0.0.1', development: true };
+  const auth = { jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), secretKey: 'sk_test_fixture', publishableKey: `pk_test_${Buffer.from('fixture.clerk.accounts.dev$').toString('base64')}`, issuer: 'https://fixture.clerk.accounts.dev', origin: 'http://127.0.0.1', development: true };
   const clerk = createClerkClient({ secretKey: auth.secretKey, publishableKey: auth.publishableKey, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), telemetry: { disabled: true } });
   const syncSecret = randomBytes(32), webhookKeys = memoryKeys(), webhookFault = { read: false, write: false, reads: [] as { service: string; name: string }[] };
-  const routineWebhookKeys = routineWebhookKeyring(randomUUID(), (service, name) => {
-    const entry = webhookKeys.entry(service, name);
-    return { getPassword: () => { webhookFault.reads.push({ service, name }); if (webhookFault.read) throw new Error('PRIVATE_KEYRING_FAILURE'); return entry.getPassword(); }, setPassword: value => { if (webhookFault.write) throw new Error('Key write failed'); entry.setPassword(value); } };
-  });
+  const service = `briefsip/server/${randomUUID()}/routine-webhooks`;
+  const routineWebhookKeys = {
+    read(secretRef?: string) {
+      const name = secretRef ?? 'routine-webhook/missing-target';
+      webhookFault.reads.push({ service, name });
+      if (webhookFault.read) throw new Error('PRIVATE_KEYRING_FAILURE');
+      return secretRef ? webhookKeys.entry(service, name).getPassword() ?? undefined : undefined;
+    },
+    create(routine: string, generation: number) {
+      if (webhookFault.write) throw new Error('Key write failed');
+      const secretRef = `routine-webhook/${routine}/${generation}/${randomUUID()}`;
+      const secret = randomBytes(32).toString('base64url');
+      webhookKeys.entry(service, secretRef).setPassword(secret);
+      if (this.read(secretRef) !== secret) throw new Error('Key read-back failed');
+      return { secretRef, secret };
+    },
+  };
   const options = { database: join(dir, 'canonical.sqlite'), auth, clerk, syncKey: () => syncSecret, routineWebhookKeys };
   let app = await startCanonicalApp(options); auth.origin = app.origin;
   const jwt = (subject = 'user_owner') => {
@@ -420,14 +454,14 @@ async function fixture() {
     const response = await fetch(app.origin + path, { method, headers: { Authorization: `Bearer ${jwt(subject)}`, Origin: auth.origin, Connection: 'close', 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': body?.requestId ?? randomUUID() }, ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
   };
-  return { dir, jwt, send, webhookKeys, webhookFault, origin: () => app.origin, startAgain: (database=options.database,port=0) => startCanonicalApp({...options,database,port}), async restart() { const ready = (await send('/api/devices')).body.data.filter((device:any)=>device.status==='ready').map((device:any)=>device.id); const port = new URL(app.origin).port; await app.close(); app = await startCanonicalApp({ ...options, port: Number(port) }); if(ready.length)await until(async()=>{const devices=(await send('/api/devices')).body.data;return ready.every((id:string)=>devices.some((device:any)=>device.id===id&&device.status==='ready'));}); }, async restoreFrom(backup:string){
+  return { dir, jwt, send, webhookKeys, webhookFault, stderr: () => rustServerOutput(app.origin).stderr, stdout: () => rustServerOutput(app.origin).stdout, origin: () => app.origin, startAgain: (database=options.database,port=0) => startCanonicalApp({...options,database,port}), async restart() { const ready = ((await send('/api/devices')).body.data ?? []).filter((device:any)=>device.status==='ready').map((device:any)=>device.id); const port = new URL(app.origin).port; await app.close(); app = await startCanonicalApp({ ...options, port: Number(port) }); if(ready.length)await until(async()=>{const devices=(await send('/api/devices')).body.data;return ready.every((id:string)=>devices.some((device:any)=>device.id===id&&device.status==='ready'));}); }, async restoreFrom(backup:string){
     const port=Number(new URL(app.origin).port);await app.close();renameSync(options.database,options.database+'.unavailable');
-    restoreWorkspace(backup,options.database,{canonicalOnly:true});
-    const restored=new DatabaseSync(options.database);
-    try{
-      const verifier=createAuth(restored,auth,clerk),actor=await verifier.authenticate(new Request(auth.origin+'/api/session',{headers:{Authorization:`Bearer ${jwt()}`}}));
-      const gate=prepareRestoreBootstrap(restored);return issueRestoreSession(restored,verifier,actor,gate.bootstrap);
-    }finally{restored.close();app=await startCanonicalApp({...options,port});}
+    const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
+    const gate = JSON.parse(execFileSync(binary, ['--restore-read-only', backup, options.database], { encoding: 'utf8' }));
+    app = await startCanonicalApp({ ...options, port });
+    const reconciled = await send('/api/restore/reconcile', { requestId: randomUUID(), bootstrap: gate.bootstrap });
+    assert.equal(reconciled.status, 200, JSON.stringify(reconciled.body));
+    return reconciled.body.data as { session: string; recoveryGeneration: string; expiresAt: number };
   }, close: async () => { await app.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 async function until(check: () => boolean | Promise<boolean>, timeout = 30000) {
@@ -456,7 +490,7 @@ async function protectedWorkflowWaitFixture(subject = 'user_owner', timeoutSecon
     assert.equal((await f.send(f.list, { requestId: f.workflow, id: f.workflow, revision: 0, name: 'Protected wait', graph })).status, 201);
     const initiator = (await f.send('/api/session', undefined, subject)).body.data.accountId;
     if (subject !== 'user_owner') {
-      const db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+      const db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
       try { db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project, initiator); db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project, initiator, f.agent); }
       finally { db.close(); }
     }
@@ -489,7 +523,7 @@ test('protected workflow connection reveals only ciphertext to its current owner
     assert.equal((await f.send(path, { ...reveal, requestId: randomUUID(), expectedSecretGeneration: 2 })).status, 409);
     assert.equal((await f.send(path, { ...reveal, requestId: randomUUID(), ephemeralPublicKey: 'invalid' })).status, 400);
     const collaborator = (await f.send('/api/session', undefined, 'user_collaborator')).body.data.accountId;
-    const db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+    const db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
     try { db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project, collaborator); db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project, collaborator, f.agent); }
     finally { db.close(); }
     assert.equal((await f.send(f.waitPath, undefined, 'user_collaborator')).status, 200);
@@ -503,7 +537,7 @@ test('protected workflow connection reveals only ciphertext to its current owner
 
 test('protected workflow event commits one transition and keeps exact retries after advancement restart and restore', async () => {
   const f = await protectedWorkflowWaitFixture();
-  let db: DatabaseSync | undefined = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  let db: DatabaseSync | undefined = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     const secret = [...f.keys.values].find(([key]) => key.includes('/event-wait/'))![1], delivery = randomUUID(), timestamp = String(Math.floor(Date.now() / 1000));
     const small = '{ "event": "ready", "eventTime": 1234, "payload": {"message":"hello 🌏"} }', body = small + ' '.repeat(65536 - Buffer.byteLength(small));
@@ -555,8 +589,7 @@ test('protected workflow event commits one transition and keeps exact retries af
 });
 
 test('protected workflow wait discards delayed reveal and event replies after authority changes', async t => {
-  for (const kind of ['reveal','event'] as const) for (const change of ['revision','rules','assignment','mapping','cancel','expiry','revoke','disconnect'] as const) await t.test(`${kind}/${change}`, async t => {
-    if (change === 'expiry') t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  for (const kind of ['reveal','event'] as const) for (const change of ['revision','rules','assignment','mapping','cancel','expiry','revoke','disconnect'] as const) await t.test(`${kind}/${change}`, async () => {
     const f = await protectedWorkflowWaitFixture('user_collaborator', change === 'expiry' ? 2 : 60), originalFetch = globalThis.fetch;
     let held = false, release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
@@ -567,7 +600,7 @@ test('protected workflow wait discards delayed reveal and event replies after au
       const response = await originalFetch(f.origin() + f.waitPath + '/events', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': delivery, 'X-Briefsip-Signature': createHmac('sha256', secret).update(`${time}\n${delivery}\n${body}`).digest('hex') }, body });
       return { status: response.status, body: await response.json() };
     };
-    const db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+    const db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
     try {
       globalThis.fetch = async (url, init) => { if (String(url).endsWith(`/wait-${kind}-results`)) { held = true; await gate; } return originalFetch(url, init); };
       const pending = send(); await until(() => held);
@@ -577,7 +610,7 @@ test('protected workflow wait discards delayed reveal and event replies after au
       if (change === 'assignment') assert.equal((await f.send(`/api/projects/${f.project}/members/${f.initiator}`, { requestId: randomUUID(), expectedRevision: 1, agentAssignments: [{ agentId: f.agent, expectedAgentRevision: 1, expectedParticipationRevision: 1, expectedAssignmentRevision: 1, enabled: false }] }, 'user_owner', 'PATCH')).status, 200);
       if (change === 'mapping') db.prepare("DELETE FROM record_scopes WHERE table_name='workflow_waits' AND key_json=?").run(canonicalJson([f.run,1]));
       if (change === 'cancel') { const run = (await f.send(f.path)).body.data, id = randomUUID(); assert.equal((await f.send(f.path + '/cancel', { requestId: id, id, revision: run.revision })).status, 200); }
-      if (change === 'expiry') t.mock.timers.setTime(Number(db.prepare('SELECT deadline FROM workflow_waits WHERE run=?').get(f.run)!.deadline));
+      if (change === 'expiry') db.prepare('UPDATE workflow_waits SET deadline=? WHERE run=?').run(Date.now(),f.run);
       if (change === 'revoke') { const device = (await f.send('/api/devices')).body.data[0]; assert.equal((await f.send(`/api/devices/${device.id}/revoke`, { requestId: randomUUID(), expectedRevision: device.revision })).status, 200); }
       const stopping = change === 'disconnect' ? f.connection.stop() : undefined;
       if (stopping) await until(async () => (await f.send('/api/devices')).body.data[0].status !== 'ready');
@@ -663,7 +696,7 @@ test('canonical workflow cron validates HTTP input and admits one retained overd
     // Compare with the request start: a save just before a 5-minute boundary returns that boundary, which can pass before the response arrives.
     const before=Date.now(),saved=await f.send(path,command);assert.equal(saved.status,201,JSON.stringify(saved.body));assert(saved.body.data.nextAt>before);
     // Model a persisted cron that became overdue while canonical and home were offline.
-    const dueAt=Math.floor(Date.now()/300000)*300000-900000,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    const dueAt=Math.floor(Date.now()/300000)*300000-900000,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
     try{db.prepare('UPDATE schedules SET next_at=? WHERE id=?').run(dueAt,f.workflow);}finally{db.close();}
     await f.restart();let current:any;
     await until(async()=>{current=(await f.send(path)).body.data;return current.occurrences.length===1;});
@@ -725,7 +758,7 @@ test('workflow schedule sync retains scoped metadata and exact deltas across res
 });
 
 test('workflow schedule sync rechecks current assignment private versions and root visibility for every human',async()=>{
-  const f=await workflowConfigurationFixture(),db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  const f=await workflowConfigurationFixture(),db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
   try{
     assert.equal((await f.send(f.list,{requestId:f.workflow,id:f.workflow,revision:0,name:'Private schedules',graph:f.graph})).status,201);
     const requestId=randomUUID(),command={requestId,id:requestId,revision:0,spec:{kind:'instant',at:Date.now()-1000},input:'PRIVATE_SCOPE_CANARY',enabled:true};
@@ -759,7 +792,7 @@ test('canonical workflow schedule rejects foreign scope and rechecks current ass
   const f=await workflowConfigurationFixture();
   try{
     assert.equal((await f.send(f.list,{requestId:f.workflow,id:f.workflow,revision:0,name:'Schedule authority',graph:f.graph})).status,201);
-    const member=(await f.send('/api/session',undefined,'user_member')).body.data.accountId,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    const member=(await f.send('/api/session',undefined,'user_member')).body.data.accountId,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
     try{
       db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project,member);
       db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,member,f.agent);
@@ -814,7 +847,7 @@ test('canonical workflow admits isolated home tasks and keeps model nodes tool-f
       { id: 'model', kind: 'model', model: 'workflow-model', prompt: 'Model work', next: 'out' }, { id: 'out', kind: 'output' },
     ] };
     assert.equal((await f.send(list, { requestId: workflow, id: workflow, revision: 0, name: 'Home tasks', graph })).status, 201);
-    const db = new DatabaseSync(join(f.dir, 'canonical.sqlite')), binding = randomUUID();
+    const db = fixtureDatabase(join(f.dir, 'canonical.sqlite')), binding = randomUUID();
     try {
       db.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','workflow-fixture','Fixture','ready',1)").run(binding, f.home.id, (await f.send('/api/session')).body.data.accountId);
       db.prepare('UPDATE agent_authority SET provider_binding=?,revision=revision+1 WHERE agent=?').run(binding, f.agent);
@@ -857,7 +890,7 @@ test('canonical workflow retry preserves topology and failed evidence while usin
   const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f;
   try {
     const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
-    const db = new DatabaseSync(join(f.dir, 'canonical.sqlite')), binding = randomUUID();
+    const db = fixtureDatabase(join(f.dir, 'canonical.sqlite')), binding = randomUUID();
     db.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','workflow-fixture','Fixture','ready',1)").run(binding, f.home.id, (await f.send('/api/session')).body.data.accountId);
     db.prepare('UPDATE agent_authority SET provider_binding=?,revision=revision+1 WHERE agent=?').run(binding, f.agent);
     db.close();
@@ -905,7 +938,7 @@ test('canonical workflow retry preserves topology and failed evidence while usin
 
 test('canonical workflow retry changes agent per attempt and falls back to the original node after removal', async () => {
   const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f;
-  const db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  const db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
     const second = randomUUID(), home = (await f.send('/api/devices')).body.data[0], binding = randomUUID();
@@ -951,7 +984,7 @@ test('canonical workflow retry changes agent per attempt and falls back to the o
 
 test('canonical workflow retry checks capacity scopes and original authority with atomic receipts', async () => {
   const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f;
-  const db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  const db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
     const owner = (await f.send('/api/session')).body.data.accountId, collaborator = (await f.send('/api/session', undefined, 'user_collaborator')).body.data.accountId;
@@ -997,7 +1030,7 @@ test('canonical workflow retry checks capacity scopes and original authority wit
 });
 
 test('canonical workflow dispatch retains original collaborator and owner cancellation fences revoked work', async () => {
-  const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f, db = new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f, db = fixtureDatabase(join(f.dir,'canonical.sqlite'));
   try {
     const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
     const owner = (await f.send('/api/session')).body.data.accountId, collaborator = (await f.send('/api/session',undefined,'user_collaborator')).body.data.accountId;
@@ -1028,7 +1061,7 @@ test('canonical workflow dispatch retains original collaborator and owner cancel
 });
 
 test('canonical workflow completion recovers a lost ACK after advancing to approval', async () => {
-  const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f, db = new DatabaseSync(join(f.dir, 'canonical.sqlite')), originalFetch = globalThis.fetch;
+  const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f, db = fixtureDatabase(join(f.dir, 'canonical.sqlite')), originalFetch = globalThis.fetch;
   try {
     const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
     const binding = randomUUID(), owner = (await f.send('/api/session')).body.data.accountId;
@@ -1062,7 +1095,7 @@ test('canonical workflow completion recovers a lost ACK after advancing to appro
 });
 
 test('canonical workflow cancellation fences no-reply descendants of completed steps', async () => {
-  const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f, db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f, db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
     const binding = randomUUID(), peer = randomUUID(), owner = (await f.send('/api/session')).body.data.accountId, home = (await f.send('/api/devices')).body.data[0];
@@ -1091,7 +1124,7 @@ test('canonical workflow cancellation fences no-reply descendants of completed s
 });
 
 test('canonical workflow oversized handoff fails once without starving later runs', async () => {
-  const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f, db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f, db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
     const binding = randomUUID(), owner = (await f.send('/api/session')).body.data.accountId;
@@ -1116,7 +1149,7 @@ test('canonical workflow oversized handoff fails once without starving later run
 });
 
 test('canonical workflow capacity retries leave no empty threads before admission', async () => {
-  const f = await workflowConfigurationFixture(), { workflow, project, list, detail } = f, db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  const f = await workflowConfigurationFixture(), { workflow, project, list, detail } = f, db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     const expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 }, payload = { v: 1, kind: 'direct', message: { text: 'Fill queue', files: [] } };
     for (let index = 0; index < 100; index++) {
@@ -1141,7 +1174,7 @@ test('canonical workflow capacity retries leave no empty threads before admissio
 });
 
 test('canonical workflow revoked assignment before host ACK closes the original run', async () => {
-  const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f, db = new DatabaseSync(join(f.dir, 'canonical.sqlite')), originalFetch = globalThis.fetch;
+  const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f, db = fixtureDatabase(join(f.dir, 'canonical.sqlite')), originalFetch = globalThis.fetch;
   try {
     const collaborator = (await f.send('/api/session', undefined, 'user_collaborator')).body.data.accountId;
     db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(project, collaborator);
@@ -1168,7 +1201,7 @@ test('canonical workflow revoked assignment before host ACK closes the original 
 });
 
 test('canonical workflow wait reserves once offline and activates only after home keyring acknowledgement', async () => {
-  const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f, db = new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f, db = fixtureDatabase(join(f.dir,'canonical.sqlite'));
   try {
     const graph={entry:'event',maxSteps:2,nodes:[{id:'event',kind:'wait',event:'ready',timeoutSeconds:60,next:'out'},{id:'out',kind:'output'}]};
     assert.equal((await f.send(list,{requestId:workflow,id:workflow,revision:0,name:'Protected wait',graph})).status,201);
@@ -1194,7 +1227,7 @@ test('canonical workflow wait reserves once offline and activates only after hom
 });
 
 test('canonical workflow timeout fails offline reservation without generating a second wait', async () => {
-  const f=await workflowConfigurationFixture(),{workflow,project,list,detail}=f,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  const f=await workflowConfigurationFixture(),{workflow,project,list,detail}=f,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
   try{
     const graph={entry:'event',maxSteps:2,nodes:[{id:'event',kind:'wait',event:'ready',timeoutSeconds:1,next:'out'},{id:'out',kind:'output'}]};
     assert.equal((await f.send(list,{requestId:workflow,id:workflow,revision:0,name:'Timeout',graph})).status,201);
@@ -1214,10 +1247,10 @@ test('canonical workflow timeout fails offline reservation without generating a 
 });
 
 test('canonical workflow channel output is atomic and does not duplicate after restart', async () => {
-  const f=await workflowConfigurationFixture(),{workflow,project,list,detail}=f,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  const f=await workflowConfigurationFixture(),{workflow,project,list,detail}=f,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
   try{
     const owner=(await f.send('/api/session')).body.data.accountId,channel=randomUUID();
-    db.prepare("INSERT INTO channels VALUES (?,?,'',?,1,0)").run(channel,'Workflow output',f.agent);db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel,f.agent);
+    db.prepare("INSERT INTO channels(id,name,instructions,lead,revision,archived) VALUES (?,?,'',?,1,0)").run(channel,'Workflow output',f.agent);db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel,f.agent);
     db.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(canonicalJson([channel]),owner,project,channel);
     const graph={entry:'out',maxSteps:1,nodes:[{id:'out',kind:'output',channel}]};
     assert.equal((await f.send(list,{requestId:workflow,id:workflow,revision:0,name:'Output',graph})).status,201);
@@ -1260,7 +1293,7 @@ test('canonical workflow run admission keeps its graph and receipt across restar
 });
 
 test('canonical workflow runs deny revoked private and unmapped state and roll back controls with receipts', async () => {
-  const f = await workflowConfigurationFixture(), { project, workflow, detail, list, agent } = f, db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  const f = await workflowConfigurationFixture(), { project, workflow, detail, list, agent } = f, db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     const graph = { entry: 'approve', maxSteps: 2, nodes: [{ id: 'approve', kind: 'approval', prompt: 'Accept?', yes: 'out' }, { id: 'out', kind: 'output' }] };
     assert.equal((await f.send(list, { requestId: workflow, id: workflow, revision: 0, name: 'Approval', graph })).status, 201);
@@ -1306,7 +1339,7 @@ test('canonical workflow runs deny revoked private and unmapped state and roll b
 });
 
 test('canonical workflow run and step pages preserve old approvals and admission rolls back failed receipts', async () => {
-  const f = await workflowConfigurationFixture(), { project, workflow, graph, detail, list } = f, db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  const f = await workflowConfigurationFixture(), { project, workflow, graph, detail, list } = f, db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     assert.equal((await f.send(list, { requestId: workflow, id: workflow, revision: 0, name: 'Pages', graph })).status, 201);
     const runs: string[] = [];
@@ -1346,7 +1379,7 @@ test('canonical workflow run and step pages preserve old approvals and admission
 });
 
 test('canonical routine manual run waits for its home and recovers lost replies and restart without moving schedule',async()=>{
-  const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=new DatabaseSync(join(f.dir,'canonical.sqlite')),originalFetch=globalThis.fetch;
+  const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=fixtureDatabase(join(f.dir,'canonical.sqlite')),originalFetch=globalThis.fetch;
   const otherRuntime=openDeviceRuntime({database:join(f.dir,'manual-other-home.sqlite'),server:f.origin(),development:true,entry:f.keys.entry});
   const command={requestId:routine,id:routine,revision:0,name:'Manual',prompt:'PRIVATE_MANUAL_PROMPT',nextAt:Date.now()+600000,intervalSeconds:300,enabled:false};
   const request={requestId:randomUUID()};let calls=0;
@@ -1385,7 +1418,7 @@ test('canonical routine manual run waits for its home and recovers lost replies 
 });
 
 test('canonical routine manual admission enforces current authority private scopes closed requests and receipt conflicts',async()=>{
-  const f=await workflowConfigurationFixture(),routine=randomUUID(),otherRoutine=randomUUID(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,detail=`/api/projects/${f.project}/routines/${routine}`,otherDetail=`/api/projects/${f.project}/routines/${otherRoutine}`,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  const f=await workflowConfigurationFixture(),routine=randomUUID(),otherRoutine=randomUUID(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,detail=`/api/projects/${f.project}/routines/${routine}`,otherDetail=`/api/projects/${f.project}/routines/${otherRoutine}`,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
   try{
     for(const requestId of [routine,otherRoutine])assert.equal((await f.send(list,{requestId,id:requestId,revision:0,name:'Manual',prompt:'Private work',nextAt:Date.now()+600000,intervalSeconds:null,enabled:true})).status,201);
     const owner=(await f.send('/api/session')).body.data.accountId,member=(await f.send('/api/session',undefined,'user_collaborator')).body.data.accountId;
@@ -1445,7 +1478,7 @@ test('canonical routine configuration and flow stay scoped across projects resta
     assert.equal((await f.send(detail+'/edit',{...edited,requestId:randomUUID(),id:randomUUID()})).status,400);
     for(const path of [`/api/routines/${routine}`,`/api/agents/${f.agent}/routines?after=${routine}`,list+'?projectId='+f.project,list+'?after=x',list+'?after=&after=',detail+'?after='+routine])assert.equal((await f.send(path)).status,404,path);
     assert.equal((await f.send(detail+'/edit',{...edited,projectId:f.project})).status,404);
-    const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    const db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
     try{assert.equal(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='routine_runs'").get(),undefined,'Configuration never starts legacy dispatch');assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);}finally{db.close();}
   }finally{await f.close();}
 });
@@ -1479,13 +1512,13 @@ test('canonical routine runtime coalesces offline intervals once and retains tas
     assert.equal((await f.send(`/api/projects/${f.other}/routines/${routine}/runs`)).status,404);
     for(const suffix of ['?before=0','?before=1&before=2','?projectId='+f.project])assert.equal((await f.send(detail+'/runs'+suffix)).status,404);
     assert.equal((await f.send(detail+'/runs',{requestId:randomUUID()})).status,404);
-    const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    const db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
     try{assert.equal(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='routine_runs'").get(),undefined);assert.equal(db.prepare('SELECT count(*) n FROM tasks WHERE id=?').get(taskId)!.n,1);assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);}finally{db.close();}
   }finally{await f.close();}
 });
 
 test('canonical routine runtime snapshots flows and hands off once using current home authority',async()=>{
-  const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
   const secondRuntime=openDeviceRuntime({database:join(f.dir,'routine-second-home.sqlite'),server:f.origin(),development:true,entry:f.keys.entry});
   try{
     await secondRuntime.enroll(f.jwt());
@@ -1519,7 +1552,7 @@ test('canonical routine runtime snapshots flows and hands off once using current
 });
 
 for(const name of ['no_update','report_failure'] as const) test(`canonical routine ${name} recovers terminal result after home SIGKILL and server restart without fan-out`,async()=>{
-  const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
   const keys=join(f.dir,'routine-keys.json'),database=join(f.dir,'workflow-home.sqlite'),reason=name==='no_update'?'Checked all sources; nothing changed.':'Required service access is missing.';
   let calls=0,child:ReturnType<typeof spawn>|undefined;
   const provider=createServer(async(req,res)=>{
@@ -1571,7 +1604,7 @@ for(const name of ['no_update','report_failure'] as const) test(`canonical routi
 });
 
 test('canonical routine mixed fan-in waits for success and keeps quiet and failed outcomes distinct',async()=>{
-  const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
   try{
     const connection=f.runtime.connect();await until(()=>connection.state().phase==='connected');
     const home=(await f.send('/api/devices')).body.data.find((row:any)=>row.id===f.home.id),binding=randomUUID(),owner=(await f.send('/api/session')).body.data.accountId;
@@ -1613,7 +1646,7 @@ test('canonical routine mixed fan-in waits for success and keeps quiet and faile
 });
 
 test('canonical routine keeps no-reply descendants executable after completion and fences revoked root authority',async()=>{
-  const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
   try{
     const connection=f.runtime.connect();await until(()=>connection.state().phase==='connected');
     const binding=randomUUID(),peer=randomUUID(),owner=(await f.send('/api/session')).body.data.accountId,home=(await f.send('/api/devices')).body.data[0];
@@ -1633,7 +1666,7 @@ test('canonical routine keeps no-reply descendants executable after completion a
 });
 
 test('canonical routine runtime rechecks grants and rolls back failed task admissions without consuming occurrence',async()=>{
-  const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
   try{
     const collaborator=(await f.send('/api/session',undefined,'user_collaborator')).body.data.accountId;
     db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project,collaborator);
@@ -1644,18 +1677,16 @@ test('canonical routine runtime rechecks grants and rolls back failed task admis
     const occurrenceId=run.id;
     db.prepare('UPDATE collaborator_agents SET enabled=0,revision=2 WHERE project=? AND account=?').run(f.project,collaborator);
     const connection=f.runtime.connect();await until(()=>connection.state().phase==='connected');
-    db.function('briefsip_capability_digest',{ deterministic: true }, value => digestCommand(['briefsip-capabilities-v1', JSON.parse(String(value))]));
-    const scheduler=createRoutineRuntime(db);scheduler.maintain();
     assert.equal(db.prepare('SELECT task FROM routine_occurrences WHERE id=?').get(occurrenceId)!.task,null);
     assert.equal((await f.send(detail+'/runs',undefined,'user_collaborator')).status,404);
-    db.prepare('UPDATE collaborator_agents SET enabled=1,revision=3 WHERE project=? AND account=?').run(f.project,collaborator);scheduler.maintain();
-    assert.equal(db.prepare('SELECT task FROM routine_occurrences WHERE id=?').get(occurrenceId)!.task,null,'Regrant never revives old schedule authority');
-    const rebind=randomUUID();assert.equal((await f.send(detail+'/edit',{...command,requestId:rebind,id:rebind,revision:1},'user_collaborator')).status,200);
+    db.prepare('UPDATE collaborator_agents SET enabled=1,revision=3 WHERE project=? AND account=?').run(f.project,collaborator);
     db.exec("CREATE TRIGGER fail_routine_admission BEFORE INSERT ON receipts WHEN NEW.scope LIKE 'tasks:routine-step:%' BEGIN SELECT RAISE(ABORT,'synthetic routine receipt failure'); END");
-    assert.throws(()=>scheduler.maintain(),/synthetic routine receipt failure/);
+    const rebind=randomUUID();assert.equal((await f.send(detail+'/edit',{...command,requestId:rebind,id:rebind,revision:1},'user_collaborator')).status,200);
+    await until(() => f.stderr().includes('Project automation failed:'));
+    assert.equal(db.prepare('SELECT task FROM routine_occurrences WHERE id=?').get(occurrenceId)!.task,null,'Regrant never revives old schedule authority');
     assert.equal(db.prepare('SELECT count(*) n FROM routine_steps').get()!.n,0);assert.equal(db.prepare('SELECT count(*) n FROM tasks').get()!.n,0);assert.equal((await f.send(detail)).body.data.enabled,1);
-    db.exec('DROP TRIGGER fail_routine_admission');scheduler.maintain();
-    const accepted=(await f.send(detail+'/runs',undefined,'user_collaborator')).body.data.items.find((row:any)=>row.state==='admitted');assert(accepted);
+    db.exec('DROP TRIGGER fail_routine_admission');
+    let accepted:any; await until(async()=>{accepted=(await f.send(detail+'/runs',undefined,'user_collaborator')).body.data.items.find((row:any)=>row.state==='admitted');return !!accepted;});
     assert.equal((await f.send(`/api/tasks/${accepted.taskId}`,undefined,'user_collaborator')).body.receipt.actorId,collaborator);
     db.prepare('UPDATE collaborator_agents SET enabled=0,revision=4 WHERE project=? AND account=?').run(f.project,collaborator);
     await assert.rejects(f.runtime.startTask(accepted.taskId),error=>error instanceof ProtocolError&&error.code==='execution_denied');
@@ -1689,16 +1720,16 @@ test('canonical routine runtime preserves started snapshots through edits and re
     const owned=await f.runtime.startTask(run.taskId),current=(await f.send(detail)).body.data,edit=randomUUID();
     assert.equal((await f.send(detail+'/edit',{...command,requestId:edit,id:edit,revision:current.revision,nextAt:current.next_at,enabled:false})).status,200);
     assert.equal((await f.send(`/api/tasks/${run.taskId}`)).body.data.state,'running','Configuration edits keep started snapshot under task controls');
-    const db=new DatabaseSync(join(f.dir,'canonical.sqlite')),backup=await workspaceSnapshot(db);
+    const db=fixtureDatabase(join(f.dir,'canonical.sqlite')),backup=await workspaceSnapshot(db);
     db.close();await connection.stop();
     try{await f.restoreFrom(backup.file);}finally{backup.cleanup();}
-    const restored=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    const restored=fixtureDatabase(join(f.dir,'canonical.sqlite'));
     try{
       const row=restored.prepare('SELECT * FROM routine_occurrences WHERE id=?').get(run.id)!;
       assert.equal(row.state,'blocked');assert.equal(row.task,run.taskId);assert.equal(row.due_at,run.dueAt);assert.equal(row.schedule_revision,run.scheduleRevision);
       assert.equal(restored.prepare('SELECT enabled FROM routines WHERE id=?').get(routine)!.enabled,0);
       assert.equal(restored.prepare('SELECT state FROM tasks WHERE id=?').get(run.taskId)!.state,'uncertain');
-      createRoutineRuntime(restored).maintain();assert.equal(restored.prepare('SELECT count(*) n FROM routine_occurrences').get()!.n,1);
+      await f.restart();assert.equal(restored.prepare('SELECT count(*) n FROM routine_occurrences').get()!.n,1);
       assert.equal(restored.prepare('SELECT state FROM routine_occurrences WHERE id=?').get(run.id)!.state,'blocked');assert.deepEqual(restored.prepare('PRAGMA foreign_key_check').all(),[]);
     }finally{restored.close();}
     await assert.rejects(f.runtime.taskContext(run.taskId,owned.ownership,owned.revision));
@@ -1715,13 +1746,13 @@ test('canonical routine cancellation settles terminal occurrence after task canc
     assert.equal((await f.send(`/api/tasks/${run.taskId}/control`,{requestId:control,expectedRevision:task.revision,operation:'cancel'})).status,200);
     await until(async()=>{run=(await f.send(detail+'/runs')).body.data.items[0];return run?.state==='failed';});
     assert.equal((await f.send(`/api/tasks/${run.taskId}`)).body.data.state,'cancelled');
-    const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{assert.equal(db.prepare('SELECT state FROM routine_steps WHERE occurrence=?').get(run.id)!.state,'failed');}finally{db.close();}
+    const db=fixtureDatabase(join(f.dir,'canonical.sqlite'));try{assert.equal(db.prepare('SELECT state FROM routine_steps WHERE occurrence=?').get(run.id)!.state,'failed');}finally{db.close();}
     await f.restart();assert.equal((await f.send(detail+'/runs')).body.data.items[0].state,'failed');
   }finally{await f.close();}
 });
 
 test('canonical routines recheck assignments private mappings flow agents and receipt rollback',async()=>{
-  const f=await workflowConfigurationFixture(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  const f=await workflowConfigurationFixture(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
   const command={requestId:routine,id:routine,revision:0,name:'Routine',prompt:'Check',nextAt:Date.now()+600000,intervalSeconds:null,enabled:false};
   try{
     for(const fields of [{trigger:['webhook']},{trigger:{}},{nextAt:-1},{intervalSeconds:1.5},{prompt:''}]){
@@ -1764,7 +1795,7 @@ test('canonical routines recheck assignments private mappings flow agents and re
 });
 
 test('canonical routine wall-clock HTTP keeps exact retries and pending identities across restart and catch-up admission', async () => {
-  const f = await workflowConfigurationFixture(), db = new DatabaseSync(join(f.dir, 'canonical.sqlite')), originalFetch = globalThis.fetch;
+  const f = await workflowConfigurationFixture(), db = fixtureDatabase(join(f.dir, 'canonical.sqlite')), originalFetch = globalThis.fetch;
   const list = `/api/projects/${f.project}/agents/${f.agent}/routines`, once = randomUUID(), cron = randomUUID();
   const oncePath = `/api/projects/${f.project}/routines/${once}`, cronPath = `/api/projects/${f.project}/routines/${cron}`;
   const schedule = { kind: 'once', date: '2024-03-10', time: '02:30' };
@@ -1825,7 +1856,7 @@ test('canonical routine wall-clock HTTP keeps exact retries and pending identiti
 });
 
 test('canonical routine calendar exports only current project and reader schedules without prompts',async()=>{
-  const f=await workflowConfigurationFixture(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,path=list+'/calendar.ics',db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  const f=await workflowConfigurationFixture(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,path=list+'/calendar.ics',db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
   const at=Date.parse('2027-01-01T09:00:00Z'),entries:Record<string,string>={};
   const calendar=async(subject='user_owner',suffix='',extra:Record<string,string>={})=>{
     const res=await fetch(f.origin()+path+suffix,{headers:{Authorization:`Bearer ${f.jwt(subject)}`,Origin:f.origin(),Connection:'close','Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':randomUUID(),...extra}});
@@ -1897,7 +1928,7 @@ test('canonical workflow configuration stays project scoped with immutable versi
 test('canonical workflows enforce current assignments private mappings selectors and atomic receipt storage', async () => {
   const f = await workflowConfigurationFixture(), { project, other, agent, workflow, graph, list, detail } = f;
   const command = { requestId: workflow, id: workflow, revision: 0, name: 'Shared', graph };
-  const db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  const db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     const accepted = await f.send(list, command); assert.equal(accepted.status, 201);
     const collaborator = (await f.send('/api/session', undefined, 'user_collaborator')).body.data.accountId;
@@ -1938,7 +1969,7 @@ test('canonical workflows enforce current assignments private mappings selectors
     assert.equal((await f.send('/api/agents', { requestId: teammate, id: teammate, name: 'Other agent', model: 'fixture', backupModel: '', instructions: 'Help', threadLimit: 2, projectId: project, homeDeviceId: f.home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: f.home.revision, providerBinding: null })).status, 201);
     assert.equal((await f.send(list, { ...command, id: bad, requestId: bad, graph: { ...foreignGraph, nodes: [{ ...foreignGraph.nodes[0], agent: teammate }, ...graph.nodes] } }, 'user_collaborator')).status, 404, 'Every graph agent needs current assignment');
     const channel = randomUUID();
-    db.prepare("INSERT INTO channels VALUES (?,?,'',?,1,0)").run(channel, 'Other project', agent); db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel, agent);
+    db.prepare("INSERT INTO channels(id,name,instructions,lead,revision,archived) VALUES (?,?,'',?,1,0)").run(channel, 'Other project', agent); db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel, agent);
     db.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(JSON.stringify([channel]), owner, other, channel);
     assert.equal((await f.send(list, { ...command, id: bad, requestId: bad, graph: { ...graph, nodes: [{ id: 'out', kind: 'output', channel }] } })).status, 404);
     const change = { requestId: randomUUID(), revision: 2, name: 'Atomic', graph };
@@ -1986,7 +2017,7 @@ test('canonical workflow pages bound graph bytes and preserve list and version c
 });
 
 test('canonical workflow inbox keeps read state per authorized human across retry restart and deletion', async () => {
-  const f = await workflowConfigurationFixture(), db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  const f = await workflowConfigurationFixture(), db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     const inbox = `/api/projects/${f.project}/workflow-notifications`, collaborator = (await f.send('/api/session', undefined, 'user_collaborator')).body.data.accountId;
     db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project, collaborator);
@@ -2028,7 +2059,7 @@ test('canonical workflow inbox keeps read state per authorized human across retr
 });
 
 test('canonical workflow inbox hides foreign selectors and rechecks current reader scopes before receipt replay', async () => {
-  const f = await workflowConfigurationFixture(), db = new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  const f = await workflowConfigurationFixture(), db = fixtureDatabase(join(f.dir,'canonical.sqlite'));
   try {
     const inbox = `/api/projects/${f.project}/workflow-notifications`, collaborator = (await f.send('/api/session',undefined,'user_collaborator')).body.data.accountId;
     db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project,collaborator);
@@ -2078,7 +2109,7 @@ test('canonical workflow inbox hides foreign selectors and rechecks current read
 });
 
 test('canonical workflow inbox pages twenty outputs without duplicate completion or recipient backfill', async () => {
-  const f = await workflowConfigurationFixture(), db = new DatabaseSync(join(f.dir,'canonical.sqlite'));
+  const f = await workflowConfigurationFixture(), db = fixtureDatabase(join(f.dir,'canonical.sqlite'));
   try {
     const inbox = `/api/projects/${f.project}/workflow-notifications`, collaborator = (await f.send('/api/session',undefined,'user_collaborator')).body.data.accountId;
     db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project,collaborator);
@@ -2138,9 +2169,8 @@ test('workflow sync publishes metadata and revisioned run transitions once acros
   } finally { await f.close(); }
 });
 
-test('workflow sync includes protected wait activation delivery and expiry without secret references', async t => {
-  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
-  const f = await protectedWorkflowWaitFixture(), db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+test('workflow sync includes protected wait activation delivery and expiry without secret references', async () => {
+  const f = await protectedWorkflowWaitFixture(), db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     const syncPath = '/api/sync?projectId=' + f.project, snapshot = (await f.send(syncPath)).body.data;
     const initial = snapshot.page.events.find((event: any) => event.recordKind === 'workflow_run');
@@ -2169,7 +2199,6 @@ test('workflow sync includes protected wait activation delivery and expiry witho
     const before = (await f.send(syncPath)).body.data;
     assert.equal((await f.send(f.detail + '/run', { requestId: next, id: next, revision: 2, input: '' })).status, 201);
     await until(async () => (await f.send(path)).body.data.status === 'waiting');
-    t.mock.timers.tick(2000);
     await until(async () => (await f.send(path)).body.data.status === 'failed');
     const expired = (await f.send(syncPath + '&cursor=' + encodeURIComponent(before.nextCursor))).body.data;
     assert.deepEqual(expired.page.events.map((event: any) => [event.revision,event.body.status]), [[1,'ready'],[2,'waiting'],[3,'failed']]);
@@ -2177,7 +2206,7 @@ test('workflow sync includes protected wait activation delivery and expiry witho
 });
 
 test('workflow sync rolls back commands with event failures and retains deletion tombstones', async () => {
-  const f = await workflowConfigurationFixture(), db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  const f = await workflowConfigurationFixture(), db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     const syncPath = '/api/sync?projectId=' + f.project, before = (await f.send(syncPath)).body.data;
     const graph = { entry: 'approval', maxSteps: 2, nodes: [{ id: 'approval', kind: 'approval', prompt: 'Approve', yes: 'out' }, { id: 'out', kind: 'output' }] };
@@ -2216,7 +2245,7 @@ test('workflow sync rolls back commands with event failures and retains deletion
 });
 
 test('workflow sync rechecks assignment project and private root version and run scopes', async () => {
-  const f = await workflowConfigurationFixture(), db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  const f = await workflowConfigurationFixture(), db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     const collaborator = (await f.send('/api/session', undefined, 'user_collaborator')).body.data.accountId;
     db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project, collaborator);
@@ -2279,7 +2308,7 @@ async function loopTask(f: Awaited<ReturnType<typeof fixture>>, runtime: ReturnT
   const home = (await f.send('/api/devices')).body.data.find((row: { id: string }) => row.id === runtime.deviceId()), project = randomUUID(), agent = randomUUID(), binding = existingBinding === undefined ? randomUUID() : existingBinding;
   assert.equal((await f.send('/api/projects', { requestId: randomUUID(), id: project, name: 'Execution loop' })).status, 201);
   if (existingBinding === undefined) {
-    const seed = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+    const seed = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
     try { seed.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible',?,'Synthetic','ready',1)").run(binding, home.id, seed.prepare('SELECT account FROM devices WHERE id=?').get(home.id)!.account, binding); } finally { seed.close(); }
   }
   assert.equal((await f.send('/api/agents', { requestId: agent, id: agent, name: 'Loop agent', model: 'fixture', backupModel: '', instructions: 'Answer carefully', threadLimit: 2, projectId: project, homeDeviceId: home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: home.revision, providerBinding: binding ? { bindingId: binding, expectedRevision: 1 } : null, setup })).status, 201);
@@ -2307,7 +2336,7 @@ test('signed task and device mutations publish atomic scoped observations across
     const command = { requestId: taskId, projectId: project, agentId: agent, homeDeviceId: home.id, payload, expectedRevisions, payloadDigest: digestCommand(['briefsip-task-payload-v1', taskId, project, agent, home.id, payload, expectedRevisions]) };
     const accepted = await f.send('/api/tasks', command); assert.equal(accepted.status, 202); assert.deepEqual((await f.send('/api/tasks', command)).body.receipt, accepted.body.receipt);
     assert.equal((await f.send(`/api/tasks/${taskId}/control`, { requestId: randomUUID(), expectedRevision: 1, operation: 'pause' })).status, 200);
-    const cancellation = { requestId: randomUUID(), expectedRevision: 2, operation: 'cancel' }, inspect = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+    const cancellation = { requestId: randomUUID(), expectedRevision: 2, operation: 'cancel' }, inspect = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
     try {
       inspect.exec("CREATE TRIGGER fail_task_sync BEFORE INSERT ON sync_events WHEN NEW.record_kind='task' BEGIN SELECT RAISE(ABORT,'synthetic event failure'); END");
       assert.equal((await f.send(`/api/tasks/${taskId}/control`, cancellation)).status, 500);
@@ -2323,7 +2352,7 @@ test('signed task and device mutations publish atomic scoped observations across
     await runtime.runTask(completed.taskId, () => ({ text: 'Private result canary' }));
     const completionDelta = (await f.send(completedPath + '&cursor=' + encodeURIComponent(queued.nextCursor))).body.data;
     assert.equal(completionDelta.page.events.at(-1).body.state, 'completed'); assert(completionDelta.page.events.some((event: any) => event.body.state === 'running')); assert(!JSON.stringify(completionDelta).includes('Private result canary'));
-    const failure = new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    const failure = fixtureDatabase(join(f.dir,'canonical.sqlite'));
     try {
       failure.exec("CREATE TRIGGER fail_device_sync BEFORE INSERT ON sync_events WHEN NEW.record_kind='device' BEGIN SELECT RAISE(ABORT,'synthetic offline event failure'); END");
       await connection.stop(); assert.equal((await f.send('/api/session')).status,200);
@@ -2553,7 +2582,7 @@ for (const lostAt of ['request', 'reply', 'receipt', 'revoked', 'storage'] as co
     const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
     const home = (await f.send('/api/devices')).body.data[0], project = randomUUID(), agent = randomUUID(), binding = randomUUID();
     assert.equal((await f.send('/api/projects', { requestId: randomUUID(), id: project, name: 'Completion' })).status, 201);
-    const seed = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+    const seed = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
     try { seed.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','synthetic-completion','Synthetic','ready',1)").run(binding, home.id, seed.prepare('SELECT account FROM devices WHERE id=?').get(home.id)!.account); } finally { seed.close(); }
     assert.equal((await f.send('/api/agents', { requestId: agent, id: agent, name: 'Writer', model: 'fixture', backupModel: '', instructions: 'Answer carefully', threadLimit: 2, projectId: project, homeDeviceId: home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: home.revision, providerBinding: { bindingId: binding, expectedRevision: 1 } })).status, 201);
     const taskId = randomUUID(), payload = { v: 1, kind: 'direct', message: { text: 'Answer once', files: [] } }, expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 };
@@ -2573,7 +2602,7 @@ for (const lostAt of ['request', 'reply', 'receipt', 'revoked', 'storage'] as co
     await assert.rejects(runtime.completeTask(taskId, actionId), lostAt === 'receipt' ? (error: unknown) => error instanceof ProtocolError && error.code === 'receipt_mismatch' : /Lost completion/);
     globalThis.fetch = originalFetch;
     if (lostAt === 'revoked' || lostAt === 'storage') {
-      const db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+      const db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
       try { db.prepare('UPDATE agent_projects SET deleted=1 WHERE project=? AND agent=?').run(project, agent); } finally { db.close(); }
     }
     await runtime.close(); await f.restart();
@@ -2595,7 +2624,7 @@ for (const lostAt of ['request', 'reply', 'receipt', 'revoked', 'storage'] as co
       runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: keys.entry });
       const restarted = runtime.connect(); await until(() => restarted.state().phase === 'connected');
       assert.deepEqual(await runtime.recoverPending(), []);
-      const db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+      const db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
       try {
         assert.equal(db.prepare('SELECT reply FROM turns WHERE id=?').get(taskId)!.reply, null);
         db.prepare('UPDATE agent_projects SET deleted=0 WHERE project=? AND agent=?').run(project, agent);
@@ -2611,7 +2640,7 @@ for (const lostAt of ['request', 'reply', 'receipt', 'revoked', 'storage'] as co
     runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: keys.entry });
     const restarted = runtime.connect(); await until(() => restarted.state().phase === 'connected');
     assert.deepEqual(await runtime.recoverPending(), []);
-    const inspect = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+    const inspect = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
     try {
       const row = inspect.prepare('SELECT status,reply,paused FROM turns WHERE id=?').get(taskId)!;
       assert.deepEqual({ ...row }, { status: 'done', reply: 'Saved final answer', paused: 0 });
@@ -2628,7 +2657,7 @@ for (const scenario of ['pause', 'cancel', 'latest', 'invalid', 'setup', 'revoke
     await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
     const home = (await f.send('/api/devices')).body.data[0], project = randomUUID(), binding = randomUUID(), agent = randomUUID(), taskId = scenario === 'setup' ? agent : randomUUID();
     assert.equal((await f.send('/api/projects', { requestId: randomUUID(), id: project, name: 'Completion controls' })).status, 201);
-    const db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+    const db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
     try {
       db.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','completion-controls','Synthetic','ready',1)").run(binding, home.id, db.prepare('SELECT account FROM devices WHERE id=?').get(home.id)!.account);
       assert.equal((await f.send('/api/agents', { requestId: agent, id: agent, name: 'Writer', model: 'fixture', backupModel: '', instructions: 'Answer carefully', threadLimit: 2, projectId: project, homeDeviceId: home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: home.revision, providerBinding: { bindingId: binding, expectedRevision: 1 }, setup: scenario === 'setup' })).status, 201);
@@ -2773,7 +2802,7 @@ test('local possession gate enrolls only configured server and retains identity 
     const current = (await f.send('/api/devices')).body.data[0];
     assert.equal((await f.send(`/api/devices/${deviceId}/revoke`, { requestId: randomUUID(), expectedRevision: current.revision })).status, 200);
     await until(() => resumed.state().phase === 'blocked'); assert.equal(resumed.state().lastFailure?._tag, 'ConnectionBlockedError');
-    const canonical = new DatabaseSync(join(f.dir, 'canonical.sqlite')), device = new DatabaseSync(database);
+    const canonical = fixtureDatabase(join(f.dir, 'canonical.sqlite')), device = new DatabaseSync(database);
     try {
       assert.equal(device.prepare("SELECT name FROM sqlite_schema WHERE name='accounts'").get(), undefined);
       assert.equal(canonical.prepare("SELECT name FROM sqlite_schema WHERE name='device_state'").get(), undefined);
@@ -2816,7 +2845,7 @@ test('lost enrollment ACK resumes same request and explicit reenroll/rotation pr
     await assert.rejects(runtime.enroll(f.jwt()), /lost enrollment ACK/);
     const pending = JSON.parse(readFileSync(`${database}.host/identity.json`, 'utf8')).pending;
     const linked = await runtime.enroll(f.jwt()); assert.equal(linked.generation, 1);
-    const canonical = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+    const canonical = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
     try {
       assert.equal(canonical.prepare('SELECT count(*) AS n FROM devices').get()!.n, 1);
       assert.equal(canonical.prepare("SELECT count(*) AS n FROM receipts WHERE scope='device_enrollment'").get()!.n, 1);
@@ -2847,7 +2876,7 @@ test('canonical task HTTP survives lost acceptance response/restart without disp
     const detail = await f.send(`/api/tasks/${command.requestId}`); assert.equal(detail.status, 200); assert.equal(detail.body.data.state, 'waiting_device');
     assert.equal((await f.send('/api/tasks', command)).status, 200);
     assert.equal((await f.send(`/api/tasks/${command.requestId}`, undefined, 'user_foreign')).status, 404);
-    const db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+    const db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
     try { assert.equal(db.prepare('SELECT count(*) n FROM tasks').get()!.n, 1); assert.equal(db.prepare('SELECT count(*) n FROM task_actions').get()!.n, 0); }
     finally { db.close(); }
   } finally { await runtime.close(); await f.close(); }
@@ -2869,10 +2898,10 @@ test('signed host HTTP admission commits once and result ACK survives canonical 
     let dropAcquire = true;
     globalThis.fetch = async (url, init) => { const response = await originalFetch(url, init); if (dropAcquire && String(url).endsWith('/acquire')) { dropAcquire = false; await response.body?.cancel(); throw new Error('Synthetic lost acquire ACK'); } return response; };
     await assert.rejects(runtime.acquireTask(taskId, lockProof, 0, acquireId), /lost acquire ACK/);
-    const acquired = await runtime.acquireTask(taskId, lockProof, 0, acquireId) as { ownership: unknown; revision: number };
+    const acquired = await runtime.acquireTask(taskId, lockProof, 0, acquireId) as Awaited<ReturnType<typeof runtime.startTask>>;
     await assert.rejects(runtime.acquireTask(taskId, lockProof, 0, randomUUID()), error => error instanceof ProtocolError && error.code === 'ownership_conflict');
     globalThis.fetch = originalFetch;
-    const ownership = parseOwnership(acquired.ownership), context = await runtime.taskContext(taskId, ownership, acquired.revision) as { snapshotRef: { snapshotId: string; digest: string }; snapshot: unknown };
+    const { ownership } = acquired, context = await runtime.taskContext(taskId, ownership, acquired.revision);
     assert.equal(context.snapshotRef.digest, sha256(canonicalJson(context.snapshot)));
     const actionId = randomUUID(), payloadDigest = sha256('synthetic read');
     const intentDigest = digestCommand([taskId,actionId,0,ownership,payloadDigest,'read',context.snapshotRef.snapshotId,context.snapshotRef.digest,null,null,1,null,null,null]);
@@ -2887,7 +2916,7 @@ test('signed host HTTP admission commits once and result ACK survives canonical 
     await f.restart(); await until(() => connection.state().phase === 'connected' && connection.state().generation > previousConnectionGeneration);
     assert.deepEqual(await runtime.reconcileTask(taskId, report), published);
     assert.deepEqual((await f.send(`/api/tasks/${taskId}`)).body.data.results[0].content, resultContent);
-    const db = new DatabaseSync(database), canonical = new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    const db = new DatabaseSync(database), canonical = fixtureDatabase(join(f.dir,'canonical.sqlite'));
     try {
       const refs = String(db.prepare('SELECT executor_refs_json FROM device_state WHERE id=1').get()!.executor_refs_json), receipts = JSON.stringify(canonical.prepare('SELECT result_json FROM receipts').all());
       for (const [name, token] of store.values) if (name.includes('/executor/')) { assert(!refs.includes(token)); assert(!receipts.includes(token)); }
@@ -3048,7 +3077,7 @@ test('canonical transfer survives lost RPC reply and canonical restart without d
     const devices=(await f.send('/api/devices')).body.data,project=randomUUID(),source=randomUUID(),recipient=randomUUID();
     assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Canonical transfer'})).status,201);
     for(const [agentId,deviceId] of [[source,home.deviceId()],[recipient,target.deviceId()]])assert.equal((await f.send('/api/agents',{requestId:agentId,id:agentId,name:agentId,model:'fixture',backupModel:'',instructions:'Continue',threadLimit:2,projectId:project,homeDeviceId:deviceId,expectedProjectRevision:1,expectedHomeDeviceRevision:devices.find((d:{id:string})=>d.id===deviceId).revision,providerBinding:null})).status,201);
-    const channel=randomUUID(),seed=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    const channel=randomUUID(),seed=fixtureDatabase(join(f.dir,'canonical.sqlite'));
     try {
       const ownerId=String(seed.prepare('SELECT account FROM projects WHERE id=?').get(project)!.account);
       seed.prepare('INSERT INTO channels(id,name,instructions,lead) VALUES (?,?,?,?)').run(channel,'Handoff','Continue project work',source);
@@ -3069,7 +3098,7 @@ test('canonical transfer survives lost RPC reply and canonical restart without d
     await until(()=>home.recoveryStatus().results.some(row=>row.actionId===actionId&&row.state==='acknowledged'),15000);
     assert.equal(effects,0);assert.equal((await f.send(`/api/tasks/${taskId}`)).body.data.currentTaskId,successor);
     const next=(await f.send(`/api/tasks/${successor}`)).body.data;assert.equal(next.homeDeviceId,target.deviceId());assert.equal(next.state,'waiting_device');
-    const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{assert.equal(db.prepare('SELECT count(*) n FROM tasks WHERE logical_turn=?').get(taskId)!.n,2);assert.equal(db.prepare('SELECT count(*) n FROM task_results WHERE action=?').get(actionId)!.n,1);}finally{db.close();}
+    const db=fixtureDatabase(join(f.dir,'canonical.sqlite'));try{assert.equal(db.prepare('SELECT count(*) n FROM tasks WHERE logical_turn=?').get(taskId)!.n,2);assert.equal(db.prepare('SELECT count(*) n FROM task_results WHERE action=?').get(actionId)!.n,1);}finally{db.close();}
   } finally {globalThis.fetch=originalFetch;await home.close();await target.close();await f.close();}
 });
 
@@ -3119,7 +3148,7 @@ test('owner recovers revoked-device journal through HTTP without device session 
     assert.throws(()=>runtime.exportRecovery(taskId,[actionId],randomUUID(),generation,true),error=>error instanceof ProtocolError&&error.code==='device_key_unavailable');
     keys.values.set(keyName,privateKey);
 
-    const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{assert.equal(db.prepare('SELECT count(*) n FROM task_results').get()!.n,1);assert.equal(db.prepare('SELECT count(*) n FROM recovery_imports').get()!.n,1);assert(!JSON.stringify(db.prepare('SELECT * FROM receipts').all()).includes(proof));}finally{db.close();}
+    const db=fixtureDatabase(join(f.dir,'canonical.sqlite'));try{assert.equal(db.prepare('SELECT count(*) n FROM task_results').get()!.n,1);assert.equal(db.prepare('SELECT count(*) n FROM recovery_imports').get()!.n,1);assert(!JSON.stringify(db.prepare('SELECT * FROM receipts').all()).includes(proof));}finally{db.close();}
   }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}
 });
 
@@ -3137,7 +3166,7 @@ test('disaster recovery imports original host result without original server and
     globalThis.fetch=async(url,init)=>{if(String(url).endsWith('/reconcile'))throw new Error('Original server lost');return originalFetch(url,init);};
     await assert.rejects(runtime.executeAction({taskId,actionId,sequence:0,actionKind:'read',ownership:owned.ownership,payload:{operation:'one call'},context,grantRevision:1},()=>{calls++;return{text:'Saved on original host'};}),/Original server lost/);
     await connection.stop();globalThis.fetch=originalFetch;
-    const source=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{backup=await workspaceSnapshot(source);}finally{source.close();}
+    const source=fixtureDatabase(join(f.dir,'canonical.sqlite'));try{backup=await workspaceSnapshot(source);}finally{source.close();}
     const proof=await f.restoreFrom(backup.file);
     assert.notEqual(proof.recoveryGeneration,owned.ownership.authorityGeneration);
     const send=async(kind:string,body:ReturnType<typeof runtime.exportRecovery>,session=proof.session,subject='user_owner')=>{
@@ -3152,7 +3181,7 @@ test('disaster recovery imports original host result without original server and
     const published=await send('results',content);assert.equal(published.status,200,JSON.stringify(published.body));assert.equal((await send('results',content)).status,200);
     await assert.rejects(runtime.startTask(taskId),error=>error instanceof ProtocolError&&error.code==='device_offline');
     assert.equal((await f.send(`/api/tasks/${taskId}`)).status,503);
-    const restored=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    const restored=fixtureDatabase(join(f.dir,'canonical.sqlite'));
     try{
       assert.equal(restored.prepare('SELECT serving_state FROM authority_state').get()!.serving_state,'read_only_recovery');
       assert.deepEqual(JSON.parse(String(restored.prepare('SELECT content_json FROM task_results WHERE action=?').get(actionId)!.content_json)),{text:'Saved on original host'});
@@ -3179,7 +3208,7 @@ test('disaster recovery quarantines signed post-backup actions and tasks without
       assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
       return taskId;
     };
-    const knownTask=await admit(),source=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{backup=await workspaceSnapshot(source);}finally{source.close();}
+    const knownTask=await admit(),source=fixtureDatabase(join(f.dir,'canonical.sqlite'));try{backup=await workspaceSnapshot(source);}finally{source.close();}
     const unknownTask=await admit(),actions=[];
     globalThis.fetch=async(url,init)=>{if(String(url).endsWith('/reconcile'))throw new Error('Original server lost');return originalFetch(url,init);};
     for(const taskId of [knownTask,unknownTask]){
@@ -3201,7 +3230,7 @@ test('disaster recovery quarantines signed post-backup actions and tasks without
       assert.equal((await send(taskId,metadata)).body.receipt.requestId,result.body.receipt.requestId);
     }
     await f.restart();
-    const restored=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{
+    const restored=fixtureDatabase(join(f.dir,'canonical.sqlite'));try{
       assert.equal(restored.prepare('SELECT count(*) n FROM tasks').get()!.n,1);
       assert.equal(restored.prepare('SELECT count(*) n FROM task_actions').get()!.n,0);
       assert.equal(restored.prepare('SELECT count(*) n FROM task_results').get()!.n,0);
@@ -3245,7 +3274,7 @@ test('canonical memory RPC isolates projects and retains committed memory after 
     assert.equal((await run(first,'remember_memory',{text:'x'.repeat(2001)})).status,400);
     assert.equal((await run(first,'search_memory',{})).items.length,1);
     const second=await start(other);assert.deepEqual((await run(second,'search_memory',{})).items,[]);
-    const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{
+    const db=fixtureDatabase(join(f.dir,'canonical.sqlite'));try{
       assert.equal(db.prepare('SELECT count(*) n FROM memories').get()!.n,1);assert.equal(db.prepare("SELECT project FROM record_scopes WHERE table_name='memories'").get()!.project,project);
       const scope=db.prepare('SELECT scope FROM memories').get()!.scope;
       db.prepare('INSERT INTO memories(scope,id,text,essential,revision,removed,selection_locked) VALUES (?,?,?,0,1,0,1)').run(scope,randomUUID(),'Unmapped legacy private content');
@@ -3263,7 +3292,7 @@ test('canonical history RPC pages scoped originals and retains exact reads after
     for(const id of [project,other])assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id,name:id})).status,201);
     assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Reader',model:'fixture',backupModel:'',instructions:'Read originals',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
     await f.send('/api/session',undefined,'user_foreign');
-    const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    const db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
     const ownerId=String(db.prepare("SELECT id FROM accounts WHERE clerk_sub='user_owner'").get()!.id),foreignId=String(db.prepare("SELECT id FROM accounts WHERE clerk_sub='user_foreign'").get()!.id);
     const seed=(text:string,rootKind='agent',root=agent,visibility='owner',account=ownerId,projectId=project,mapped=true)=>{
       const id=randomUUID(),row=db.prepare("INSERT INTO turns(id,agent,text,reply,status,created) VALUES (?,?,?,?,'done','fixture')").run(id,agent,text,'Saved reply');
@@ -3286,7 +3315,7 @@ test('canonical history RPC pages scoped originals and retains exact reads after
       return {...await runtime.startTask(taskId),sequence:0};
     };
     const first=await start('direct');
-    const futureDb=new DatabaseSync(join(f.dir,'canonical.sqlite'));const future=randomUUID();
+    const futureDb=fixtureDatabase(join(f.dir,'canonical.sqlite'));const future=randomUUID();
     futureDb.prepare("INSERT INTO turns(id,agent,text,reply,status,created) VALUES (?,?,'FUTURE','Future reply','done','fixture')").run(future,agent);
     futureDb.prepare("INSERT INTO record_scopes VALUES ('turns',?,?,?,'owner','agent',?)").run(JSON.stringify([future]),ownerId,project,agent);futureDb.close();
     const run=async(task:typeof first,name:string,args:unknown,lose=false)=>{
@@ -3295,7 +3324,7 @@ test('canonical history RPC pages scoped originals and retains exact reads after
       if(lose){
         globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith('/context-mutations')){assert.equal(response.status,200,await response.clone().text());await response.body?.cancel();throw new Error('Lost history result');}return response;};
         await assert.rejects(runtime.executeAction(input,()=>assert.fail('Host effect')),/Lost history result/);globalThis.fetch=originalFetch;
-        const changed=new DatabaseSync(join(f.dir,'canonical.sqlite'));changed.prepare('UPDATE turns SET text=?,revision=revision+1 WHERE id=?').run('Changed after read',oldest.id);changed.close();
+        const changed=fixtureDatabase(join(f.dir,'canonical.sqlite'));changed.prepare('UPDATE turns SET text=?,revision=revision+1 WHERE id=?').run('Changed after read',oldest.id);changed.close();
         await f.restart();await until(()=>connection.state().phase==='connected');await until(()=>runtime.recoveryStatus().results.some(row=>row.actionId===actionId&&row.state==='acknowledged'),15000);
       }else await runtime.executeAction(input,()=>assert.fail('Host effect'));
       return (await f.send(`/api/tasks/${task.taskId}`)).body.data.results.find((row:{actionId:string})=>row.actionId===actionId).content;
@@ -3303,7 +3332,7 @@ test('canonical history RPC pages scoped originals and retains exact reads after
     const page=await run(first,'read_history',{});assert.deepEqual(page.messages.map((row:{id:string})=>row.id),direct.slice(1).reverse().map(row=>row.id));assert.equal(page.next_before,direct[1].seq);
     const next=await run(first,'read_history',{before:page.next_before});assert.deepEqual(next.messages.map((row:{id:string})=>row.id),[direct[0].id,oldest.id]);assert.equal(next.next_before,null);assert.equal(next.messages[1].truncated,true);
     const original=await run(first,'read_message',{id:oldest.id},true);assert.equal(original.text,'x'.repeat(8000));assert.equal(original.next_offset,8000);assert.deepEqual(original.attachments,[]);assert.deepEqual(original.generatedFiles,[]);assert.deepEqual(original.questions,[]);
-    const restored=new DatabaseSync(join(f.dir,'canonical.sqlite'));restored.prepare('UPDATE turns SET text=?,revision=revision+1 WHERE id=?').run('x'.repeat(9000)+'ORIGINAL_END',oldest.id);restored.close();
+    const restored=fixtureDatabase(join(f.dir,'canonical.sqlite'));restored.prepare('UPDATE turns SET text=?,revision=revision+1 WHERE id=?').run('x'.repeat(9000)+'ORIGINAL_END',oldest.id);restored.close();
     const tail=await run(first,'read_message',{id:oldest.id,offset:8000});assert.equal(tail.text,'x'.repeat(1000)+'ORIGINAL_END');assert.equal(tail.next_offset,null);
     assert.match((await run(first,'read_message',{id:hidden[0].id})).error,/not found/);
     assert.equal((await run(first,'read_history',{before:0})).status,400);assert.equal((await run(first,'read_message',{id:oldest.id,offset:-1})).status,400);
@@ -3319,10 +3348,23 @@ test('canonical skill reads recover exact pinned text after lost response, disab
     const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),agent=randomUUID(),skill=randomUUID();
     assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Skill reads'})).status,201);
     assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Reader',model:'fixture',backupModel:'',instructions:'Read installed skills',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
-    const db=new DatabaseSync(join(f.dir,'canonical.sqlite')),owner=String(db.prepare("SELECT id FROM accounts WHERE clerk_sub='user_owner'").get()!.id);
+    const db=fixtureDatabase(join(f.dir,'canonical.sqlite')),owner=String(db.prepare("SELECT id FROM accounts WHERE clerk_sub='user_owner'").get()!.id);
     try{
-      saveSkill(db,skill,{revision:0,files:[{path:'SKILL.md',content:'---\nname: pinned-reader\ndescription: Read immutable support files\n---\nPINNED_CONTENT'},{path:'notes.txt',content:'x'.repeat(8000)+'ORIGINAL_TAIL'},{path:'asset.bin',content:Buffer.from('BINARY_PRIVATE').toString('base64'),encoding:'base64'}]});
-      saveSkill(db,skill,{revision:1,files:[{path:'SKILL.md',content:'---\nname: latest-reader\ndescription: Uninstalled version\n---\nLATEST_PRIVATE'}]});
+      const versions = [
+        { name: 'pinned-reader', description: 'Read immutable support files', content: 'PINNED_CONTENT' },
+        { name: 'latest-reader', description: 'Uninstalled version', content: 'LATEST_PRIVATE' },
+      ];
+      db.prepare('INSERT INTO skills VALUES (?,?,2)').run(skill,versions[1].name);
+      for (const [index, version] of versions.entries()) {
+        const { name, description, content } = version;
+        db.prepare('INSERT INTO skill_versions VALUES (?,?,?,?,?)').run(skill,index+1,name,description,content);
+        const files: { path: string; content: string; encoding?: 'base64' }[] = [{ path: 'SKILL.md', content: `---\nname: ${name}\ndescription: ${description}\n---\n${content}` }];
+        if (index === 0) files.push(
+          { path: 'notes.txt', content: 'x'.repeat(8000)+'ORIGINAL_TAIL' },
+          { path: 'asset.bin', content: Buffer.from('BINARY_PRIVATE').toString('base64'), encoding: 'base64' },
+        );
+        db.prepare('INSERT INTO skill_files VALUES (?,?,?)').run(skill,index+1,JSON.stringify(files));
+      }
       db.prepare('INSERT INTO agent_skills(agent,skill,version,enabled,revision,removed) VALUES (?,?,1,1,1,0)').run(agent,skill);
       for(const [table,key] of [['skills',[skill]],['skill_versions',[skill,1]],['agent_skills',[agent,skill]],['skill_files',[skill,1]]] as const)db.prepare("INSERT INTO record_scopes VALUES (?,?,?,?,'owner','agent',?)").run(table,JSON.stringify(key),owner,project,agent);
     }finally{db.close();}
@@ -3335,7 +3377,7 @@ test('canonical skill reads recover exact pinned text after lost response, disab
       if(lose){
         globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith('/context-mutations')){assert.equal(response.status,200,await response.clone().text());await response.body?.cancel();throw new Error('Lost skill result');}return response;};
         await assert.rejects(runtime.executeAction(input,()=>assert.fail('Host effect')),/Lost skill result/);globalThis.fetch=originalFetch;
-        const changed=new DatabaseSync(join(f.dir,'canonical.sqlite'));changed.prepare('UPDATE agent_skills SET enabled=0,revision=revision+1 WHERE agent=? AND skill=?').run(agent,skill);changed.close();
+        const changed=fixtureDatabase(join(f.dir,'canonical.sqlite'));changed.prepare('UPDATE agent_skills SET enabled=0,revision=revision+1 WHERE agent=? AND skill=?').run(agent,skill);changed.close();
         await f.restart();await until(()=>connection.state().phase==='connected');await until(()=>runtime.recoveryStatus().results.some(row=>row.actionId===actionId&&row.state==='acknowledged'),15000);
       }else await runtime.executeAction(input,()=>assert.fail('Host effect'));
       return (await f.send(`/api/tasks/${taskId}`)).body.data.results.find((row:{actionId:string})=>row.actionId===actionId).content;
@@ -3365,11 +3407,11 @@ test('canonical agent directory isolates projects and recovers exact roster afte
     const input={taskId,actionId,sequence:1,actionKind:'canonical' as const,ownership:owned.ownership,payload:{toolCall:{id:actionId,function:{name:'list_agents',arguments:'{}'}},expectedRevision:context.snapshot.taskRevision+1},context,grantRevision:1};
     globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith('/context-mutations')){assert.equal(response.status,200,await response.clone().text());await response.body?.cancel();throw new Error('Lost directory result');}return response;};
     await assert.rejects(runtime.executeAction(input,()=>assert.fail('Host effect')),/Lost directory result/);globalThis.fetch=originalFetch;
-    const changed=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{changed.prepare("UPDATE agents SET name='Later teammate',revision=revision+1 WHERE id=?").run(peer);changed.prepare('UPDATE agent_projects SET deleted=1,revision=revision+1 WHERE project=? AND agent=?').run(project,peer);}finally{changed.close();}
+    const changed=fixtureDatabase(join(f.dir,'canonical.sqlite'));try{changed.prepare("UPDATE agents SET name='Later teammate',revision=revision+1 WHERE id=?").run(peer);changed.prepare('UPDATE agent_projects SET deleted=1,revision=revision+1 WHERE project=? AND agent=?').run(project,peer);}finally{changed.close();}
     await f.restart();await until(()=>connection.state().phase==='connected');await until(()=>runtime.recoveryStatus().results.some(row=>row.actionId===actionId&&row.state==='acknowledged'),15000);
     const detail=(await f.send(`/api/tasks/${taskId}`)).body.data;
     assert.equal(detail.results.length,2);assert.deepEqual(detail.results[1].content,{agents:[{id:peer,name:'Original teammate',role:'',description:'Project teammate',status:'idle',queuedMessages:0}],next_after:null});
-    const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{assert.equal(db.prepare('SELECT count(*) n FROM task_results WHERE action=?').get(actionId)!.n,1);assert.equal(db.prepare('SELECT count(*) n FROM task_reports WHERE action=?').get(actionId)!.n,1);}finally{db.close();}
+    const db=fixtureDatabase(join(f.dir,'canonical.sqlite'));try{assert.equal(db.prepare('SELECT count(*) n FROM task_results WHERE action=?').get(actionId)!.n,1);assert.equal(db.prepare('SELECT count(*) n FROM task_reports WHERE action=?').get(actionId)!.n,1);}finally{db.close();}
   }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}
 });
 
@@ -3389,7 +3431,7 @@ test('canonical teammate sends retain one scoped delivery on its fixed home afte
     await f.restart();await until(()=>connection.state().phase==='connected');await until(()=>runtime.recoveryStatus().results.some(row=>row.actionId===actionId&&row.state==='acknowledged'),15000);
     const detail=(await f.send(`/api/tasks/${taskId}`)).body.data,result=detail.results[0].content;
     assert.equal(result.status,'sent');assert.equal(result.expects_reply,false);
-    const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));let childId:string;
+    const db=fixtureDatabase(join(f.dir,'canonical.sqlite'));let childId:string;
     try{
       const children=db.prepare('SELECT turn FROM agent_deliveries WHERE request=?').all(result.request);assert.equal(children.length,1);childId=String(children[0].turn);
       assert.equal(db.prepare('SELECT count(*) n FROM tasks').get()!.n,2);assert.equal(db.prepare('SELECT count(*) n FROM task_results WHERE action=?').get(actionId)!.n,1);
@@ -3415,7 +3457,7 @@ test('canonical setup creation retains one restricted task and creation receipt 
   try{
     await runtime.enroll(f.jwt());const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),agent=randomUUID(),binding=randomUUID();
     assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Setup'})).status,201);
-    const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    const db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
     try{db.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','synthetic-setup','Synthetic','ready',1)").run(binding,home.id,db.prepare('SELECT account FROM devices WHERE id=?').get(home.id)!.account);}finally{db.close();}
     const command={requestId:agent,id:agent,name:'New agent',model:'fixture',backupModel:'',instructions:'Build a careful research profile.',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:{bindingId:binding,expectedRevision:1},setup:true};
     globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith('/api/agents')){assert.equal(response.status,201,await response.clone().text());await response.body?.cancel();throw new Error('Lost setup creation');}return response;};
@@ -3429,7 +3471,7 @@ test('canonical setup creation retains one restricted task and creation receipt 
     const current=(await f.send(`/api/tasks/${agent}`)).body.data,next=await runtime.taskContext(agent,owned.ownership,current.revision),editId=randomUUID();
     await runtime.executeAction({taskId:agent,actionId:editId,sequence:1,actionKind:'canonical',ownership:owned.ownership,payload:{toolCall:{id:editId,function:{name:'edit_profile',arguments:JSON.stringify({revision:1,name:'Research partner',instructions:'Compare sources and cite evidence.'})}},expectedRevision:next.snapshot.taskRevision+1},context:next,grantRevision:1},()=>assert.fail('Host effect'));
     assert.equal((await f.send('/api/agents',command)).status,200);assert.equal(providerCalls,1);
-    const saved=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    const saved=fixtureDatabase(join(f.dir,'canonical.sqlite'));
     try{assert.equal(saved.prepare('SELECT count(*) n FROM tasks WHERE id=?').get(agent)!.n,1);assert.equal(saved.prepare('SELECT count(*) n FROM turns WHERE id=?').get(agent)!.n,1);assert.equal(saved.prepare('SELECT count(*) n FROM receipts WHERE request_id=?').get(agent)!.n,1);assert.equal(saved.prepare('SELECT name FROM agents WHERE id=?').get(agent)!.name,'Research partner');}finally{saved.close();}
   }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}
 });
@@ -3452,7 +3494,7 @@ test('canonical caller interruption retains one notice and fences remote deliver
       return {taskId:task.taskId,actionId,sequence:0,actionKind:'canonical' as const,ownership:task.ownership,payload:{toolCall:{id:actionId,function:{name,arguments:JSON.stringify(args)}},expectedRevision:context.snapshot.taskRevision+1},context,grantRevision:1};
     };
     const parent=await admit();await runtime.executeAction(await input(parent,'send_message',{recipients:[peer],text:'Work that should stop',expects_reply:true}),()=>assert.fail('Host effect'));
-    const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));let childId:string;
+    const db=fixtureDatabase(join(f.dir,'canonical.sqlite'));let childId:string;
     try{childId=String(db.prepare('SELECT d.turn FROM agent_deliveries d JOIN agent_requests r ON r.id=d.request WHERE r.turn=?').get(parent.taskId)!.turn);}finally{db.close();}
     const child=await remote.startTask(childId),childContext=await remote.taskContext(childId,child.ownership,child.revision),effectId=randomUUID();let effectStarted=false;
     const hold=new Promise<void>(resolve=>{releaseEffect=resolve;});
@@ -3466,7 +3508,7 @@ test('canonical caller interruption retains one notice and fences remote deliver
     await f.restart();await until(()=>connection.state().phase==='connected'&&remoteConnection.state().phase==='connected');await until(()=>runtime.recoveryStatus().results.some(row=>row.actionId===stop.actionId&&row.state==='acknowledged'),15000);
     const detail=(await f.send(`/api/tasks/${stopper.taskId}`)).body.data,result=detail.results[0].content;assert.equal(result.status,'interrupted');assert.deepEqual(result.cancelled,[childId]);
     await assert.rejects(remote.taskContext(childId,child.ownership,child.revision),(error:unknown)=>error instanceof ProtocolError&&error.code==='ownership_conflict');
-    const saved=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    const saved=fixtureDatabase(join(f.dir,'canonical.sqlite'));
     try{const notices=saved.prepare('SELECT t.text,r.expects_reply FROM agent_requests r JOIN agent_deliveries d ON d.request=r.id JOIN turns t ON t.id=d.turn WHERE r.turn=?').all(stopper.taskId);assert.equal(notices.length,1);assert.equal(notices[0].expects_reply,0);assert.match(String(notices[0].text),/Changed direction/);assert.equal(saved.prepare('SELECT count(*) n FROM task_results WHERE action=?').get(stop.actionId)!.n,1);}finally{saved.close();}
     const parentDetail=(await f.send(`/api/tasks/${parent.taskId}`)).body.data;await runtime.taskContext(parent.taskId,parent.ownership,parentDetail.revision);
   }finally{releaseEffect?.();globalThis.fetch=originalFetch;await runtime.close();await remote.close();await f.close();}
@@ -3487,7 +3529,7 @@ test('canonical profile edits recover exact result without replacing later edits
     const input={taskId,actionId,sequence:0,actionKind:'canonical' as const,ownership:owned.ownership,payload:{toolCall:{id:actionId,function:{name:'edit_profile',arguments:JSON.stringify({revision:1,name:'Edited',instructions:'Saved instructions'})}},expectedRevision:context.snapshot.taskRevision+1},context,grantRevision:1};
     globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith('/context-mutations')){assert.equal(response.status,200,await response.clone().text());await response.body?.cancel();throw new Error('Lost profile edit result');}return response;};
     await assert.rejects(runtime.executeAction(input,()=>assert.fail('Host effect')),/Lost profile edit result/);globalThis.fetch=originalFetch;
-    const changed=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{changed.prepare("UPDATE agents SET name='Later edit',instructions='Later instructions',revision=revision+1 WHERE id=?").run(agent);}finally{changed.close();}
+    const changed=fixtureDatabase(join(f.dir,'canonical.sqlite'));try{changed.prepare("UPDATE agents SET name='Later edit',instructions='Later instructions',revision=revision+1 WHERE id=?").run(agent);}finally{changed.close();}
     await f.restart();await until(()=>connection.state().phase==='connected');await until(()=>runtime.recoveryStatus().results.some(row=>row.actionId===actionId&&row.state==='acknowledged'),15000);
     const detail=(await f.send(`/api/tasks/${taskId}`)).body.data;assert.equal(detail.results.length,1);assert.deepEqual(detail.results[0].content,{name:'Edited',role:'',instructions:'Saved instructions',revision:2});
     const continued=await runtime.taskContext(taskId,owned.ownership,detail.revision),continuedSources=continued.snapshot.sourceRevisions as {kind:string;revision:number}[];assert.deepEqual(continued.snapshot.profile,context.snapshot.profile);assert.equal(continuedSources.find(row=>row.kind==='agent')!.revision,3);
@@ -3502,7 +3544,7 @@ test('canonical provider settings use home binding metadata and recover saved re
     const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),agent=randomUUID(),binding=randomUUID();
     assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Provider reads'})).status,201);
     assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Reader',model:'fixture',backupModel:'backup',instructions:'Read settings',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
-    const db=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    const db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
     try{
       const owner=String(db.prepare("SELECT id FROM accounts WHERE clerk_sub='user_owner'").get()!.id);
       db.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','bound-account','Owner','ready',1)").run(binding,home.id,owner);
@@ -3515,7 +3557,7 @@ test('canonical provider settings use home binding metadata and recover saved re
     const input={taskId,actionId,sequence:0,actionKind:'canonical' as const,ownership:owned.ownership,payload:{toolCall:{id:actionId,function:{name:'read_provider_settings',arguments:'{}'}},expectedRevision:context.snapshot.taskRevision+1},context,grantRevision:1};
     globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith('/context-mutations')){assert.equal(response.status,200,await response.clone().text());await response.body?.cancel();throw new Error('Lost provider settings result');}return response;};
     await assert.rejects(runtime.executeAction(input,()=>assert.fail('Host effect')),/Lost provider settings result/);globalThis.fetch=originalFetch;
-    const changed=new DatabaseSync(join(f.dir,'canonical.sqlite'));
+    const changed=fixtureDatabase(join(f.dir,'canonical.sqlite'));
     try{changed.prepare("UPDATE provider_bindings SET provider_account_id='Changed',readiness='revoked',revision=2 WHERE id=?").run(binding);}finally{changed.close();}
     await f.restart();await until(()=>connection.state().phase==='connected');await until(()=>runtime.recoveryStatus().results.some(row=>row.actionId===actionId&&row.state==='acknowledged'),15000);
     const results=(await f.send(`/api/tasks/${taskId}`)).body.data.results;
@@ -3530,7 +3572,7 @@ test('canonical routine reads and edits isolate project configuration and recove
     const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),other=randomUUID(),agent=randomUUID(),routine=randomUUID(),hidden=randomUUID();
     for(const id of [project,other])assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id,name:id})).status,201);
     assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Routine reader',model:'fixture',backupModel:'',instructions:'Read project routines',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
-    const graph={root:agent,nodes:[agent],links:[]},db=new DatabaseSync(join(f.dir,'canonical.sqlite')),owner=String(db.prepare("SELECT id FROM accounts WHERE clerk_sub='user_owner'").get()!.id);
+    const graph={root:agent,nodes:[agent],links:[]},db=fixtureDatabase(join(f.dir,'canonical.sqlite')),owner=String(db.prepare("SELECT id FROM accounts WHERE clerk_sub='user_owner'").get()!.id);
     try{
       db.exec('ALTER TABLE routines ADD COLUMN secret TEXT');
       for(const [id,projectId] of [[routine,project],[hidden,other]]){
@@ -3548,7 +3590,7 @@ test('canonical routine reads and edits isolate project configuration and recove
       if(lose){
         globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith('/context-mutations')){assert.equal(response.status,200,await response.clone().text());await response.body?.cancel();throw new Error('Lost routine result');}return response;};
         await assert.rejects(runtime.executeAction(input,()=>assert.fail('Host effect')),/Lost routine result/);globalThis.fetch=originalFetch;
-        const changed=new DatabaseSync(join(f.dir,'canonical.sqlite'));changed.prepare("UPDATE routines SET prompt='Changed prompt',revision=revision+1 WHERE id=?").run(routine);changed.prepare("UPDATE routine_flows SET graph='{}',revision=revision+1 WHERE routine=?").run(routine);changed.close();
+        const changed=fixtureDatabase(join(f.dir,'canonical.sqlite'));changed.prepare("UPDATE routines SET prompt='Changed prompt',revision=revision+1 WHERE id=?").run(routine);changed.prepare("UPDATE routine_flows SET graph='{}',revision=revision+1 WHERE routine=?").run(routine);changed.close();
         await f.restart();await until(()=>connection.state().phase==='connected');await until(()=>runtime.recoveryStatus().results.some(row=>row.actionId===actionId&&row.state==='acknowledged'),15000);
       }else await runtime.executeAction(input,()=>assert.fail('Host effect'));
       return (await f.send(`/api/tasks/${taskId}`)).body.data.results.find((row:{actionId:string})=>row.actionId===actionId).content;
@@ -3557,7 +3599,7 @@ test('canonical routine reads and edits isolate project configuration and recove
     const read=await run('read_routine',{id:routine},true);assert.equal(read.prompt,'Original prompt');assert.deepEqual(read.flow,{graph,revision:1});assert(!JSON.stringify(read).includes('WEBHOOK_SECRET'));
     assert.match((await run('read_routine',{id:hidden})).error,/not found/);
     const edit=await run('set_routine_flow',{id:routine,revision:2,links:[]},true);assert.deepEqual(edit,{graph,revision:3});
-    const final=new DatabaseSync(join(f.dir,'canonical.sqlite'));try{assert.equal(final.prepare('SELECT revision FROM routine_flows WHERE routine=?').get(routine)!.revision,4);assert.equal(final.prepare('SELECT count(*) n FROM task_results WHERE task=?').get(taskId)!.n,4);}finally{final.close();}
+    const final=fixtureDatabase(join(f.dir,'canonical.sqlite'));try{assert.equal(final.prepare('SELECT revision FROM routine_flows WHERE routine=?').get(routine)!.revision,4);assert.equal(final.prepare('SELECT count(*) n FROM task_results WHERE task=?').get(taskId)!.n,4);}finally{final.close();}
   }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}
 });
 
@@ -3579,7 +3621,7 @@ async function routineWebhookFixture() {
 }
 
 test('canonical routine webhook admits once offline and recovers lost response restart edits and rotation', async () => {
-  const f = await routineWebhookFixture(), db = new DatabaseSync(join(f.dir, 'canonical.sqlite')), originalFetch = globalThis.fetch;
+  const f = await routineWebhookFixture(), db = fixtureDatabase(join(f.dir, 'canonical.sqlite')), originalFetch = globalThis.fetch;
   const other = openDeviceRuntime({ database: join(f.dir, 'webhook-other.sqlite'), server: f.origin(), development: true, entry: f.keys.entry });
   let calls = 0;
   try {
@@ -3637,8 +3679,7 @@ test('canonical routine webhook admits once offline and recovers lost response r
 });
 
 test('canonical routine webhook conceals missing and inactive targets until signature verification', async () => {
-  const f = await routineWebhookFixture(), originalError = console.error, logs: unknown[][] = [];
-  console.error = (...args: unknown[]) => { logs.push(args); };
+  const f = await routineWebhookFixture();
   try {
     const denied = { status: 401, body: { ok: false, error: { code: 'invalid_webhook', message: 'Webhook signature does not match.', retryable: false } } };
     const expectDenied = (response: { status: number; body: any }) => {
@@ -3662,14 +3703,15 @@ test('canonical routine webhook conceals missing and inactive targets until sign
     f.webhookFault.read = true;
     expectDenied(await f.event(undefined, undefined, undefined, undefined, {}, noHook));
     for (const extra of [{}, { 'X-Briefsip-Signature': '' }, { 'X-Briefsip-Signature': '0'.repeat(64) }]) {
-      const before = logs.length;
+      const before = f.stderr().length;
       expectDenied(await f.event(undefined, undefined, undefined, undefined, extra));
-      assert.deepEqual(logs.slice(before), [[`Webhook keystore is unavailable for routine ${f.routine}.`]]);
+      await until(() => f.stderr().length > before);
+      assert.equal(f.stderr().slice(before).trim(), `Webhook keystore is unavailable for routine ${f.routine}.`);
     }
     assert.equal((await f.send(f.path + '/webhook')).body.data.keystore, 'unavailable');
     assert.equal((await f.send(f.path + '/webhook', f.create)).status, 503);
-    assert(!JSON.stringify(logs).includes(f.hook.data.secret));
-    assert(!JSON.stringify(logs).includes('PRIVATE_'));
+    assert(!f.stderr().includes(f.hook.data.secret));
+    assert(!f.stderr().includes('PRIVATE_'));
     f.webhookFault.read = false;
     assert.equal((await f.send(f.path + '/webhook')).body.data.keystore, 'ok');
     for (const [revision, enabled, trigger] of [[1, false, 'webhook'], [2, true, 'schedule']] as const) {
@@ -3680,7 +3722,7 @@ test('canonical routine webhook conceals missing and inactive targets until sign
       assert.equal(signed.status, 409); assert.equal(signed.body.error.code, 'webhook_inactive');
       assert.equal(signed.body.error.message, 'Webhook routine is inactive.');
     }
-  } finally { console.error = originalError; await f.close(); }
+  } finally { await f.close(); }
 });
 
 test('canonical routine webhook performs one keyring read for configured and missing targets', async () => {
@@ -3706,9 +3748,8 @@ test('canonical routine webhook performs one keyring read for configured and mis
   } finally { await f.close(); }
 });
 
-test('canonical routine webhook rejects invalid deliveries and records ignored receipts across filter changes', async t => {
-  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
-  const f = await routineWebhookFixture(), db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+test('canonical routine webhook rejects invalid deliveries and records ignored receipts across filter changes', async () => {
+  const f = await routineWebhookFixture(), db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     const secret = f.hook.data.secret, body = '{"event":"ready","payload":{"count":4}}', time = String(Math.floor(Date.now() / 1000));
     for (const header of ['X-Briefsip-Time','X-Briefsip-Id','X-Briefsip-Signature']) assert.equal((await f.event(secret, 'bad', body, time, { [header]: '' })).status, 401);
@@ -3734,7 +3775,7 @@ test('canonical routine webhook rejects invalid deliveries and records ignored r
 });
 
 test('canonical routine webhook settings require current owner while assigned collaborator can edit', async () => {
-  const f = await routineWebhookFixture(), db = new DatabaseSync(join(f.dir, 'canonical.sqlite'));
+  const f = await routineWebhookFixture(), db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     const member = (await f.send('/api/session', undefined, 'user_collaborator')).body.data.accountId, owner = (await f.send('/api/session')).body.data.accountId;
     db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project, member); db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project, member, f.agent);
@@ -3755,8 +3796,7 @@ test('canonical routine webhook settings require current owner while assigned co
 });
 
 test('canonical routine webhook keyring and DB failures leave no active reference or partial admission and exclude secrets', async () => {
-  const f = await routineWebhookFixture(), db = new DatabaseSync(join(f.dir, 'canonical.sqlite')), originalLog = console.log, logs: unknown[][] = [];
-  console.log = (...args: unknown[]) => { logs.push(args); };
+  const f = await routineWebhookFixture(), db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     const row = db.prepare('SELECT * FROM routine_webhooks').get()!, rotate = { requestId: randomUUID(), revision: 1, rotate: true };
     f.webhookFault.write = true; assert.equal((await f.send(f.path + '/webhook', rotate)).status, 503); f.webhookFault.write = false;
@@ -3780,10 +3820,10 @@ test('canonical routine webhook keyring and DB failures leave no active referenc
     const reads = [(await f.send(f.path)).body, (await f.send(f.path + '/webhook')).body, (await f.send(f.path + '/runs')).body, (await f.send('/api/sync?projectId=' + f.project)).body], snapshot = await workspaceSnapshot(db);
     try { for (const value of f.webhookKeys.values.values()) assert(!readFileSync(snapshot.file).includes(Buffer.from(value))); } finally { snapshot.cleanup(); }
     for (const value of f.webhookKeys.values.values()) {
-      assert(!JSON.stringify([reads, logs]).includes(value)); assert(!readFileSync(join(f.dir, 'canonical.sqlite')).includes(Buffer.from(value)));
+      assert(!JSON.stringify([reads, f.stdout(), f.stderr()]).includes(value)); assert(!readFileSync(join(f.dir, 'canonical.sqlite')).includes(Buffer.from(value)));
       for (const table of db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'").all()) assert(!JSON.stringify(db.prepare(`SELECT * FROM "${table.name}"`).all()).includes(value), String(table.name));
     }
     assert.equal((await f.send(f.path + '/webhook', f.create)).body.data.secret, f.hook.data.secret); assert.equal((await f.send(detail + '/webhook', create)).status, 201);
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
-  } finally { console.log = originalLog; db.close(); await f.close(); }
+  } finally { db.close(); await f.close(); }
 });

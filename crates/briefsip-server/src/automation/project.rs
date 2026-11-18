@@ -4,6 +4,7 @@ use crate::data::{exists, param};
 mod routines;
 mod runtime;
 mod scheduler;
+pub(crate) mod waits;
 mod webhooks;
 mod workflows;
 
@@ -380,7 +381,7 @@ pub async fn event(
         return Ok(None);
     }
     *request_id = uuid::Uuid::new_v4().to_string();
-    let _capacity = crate::data::limits::reserve(&path, request.method())?;
+    let _capacity = crate::data::limits::reserve(&path, request.method(), request.headers())?;
     if request.method() != Method::POST {
         return Err(Failure::new(
             405,

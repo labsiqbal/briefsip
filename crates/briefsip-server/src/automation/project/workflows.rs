@@ -622,7 +622,14 @@ fn notifications(
         [s.project, s.account, p[4]],
     )?;
     if old["read"] == 0 {
-        s.observe("workflow_notification", p[4])?;
+        crate::data::sync::append_record(
+            s.db,
+            s.project,
+            "workflow_notification",
+            p[4],
+            Some(s.account),
+            s.state.config.now(),
+        )?;
     }
     s.save(
         path,
@@ -717,6 +724,12 @@ fn schedule(
             .as_ref()
             .map(|r| r["next_at"].clone())
             .unwrap_or(Value::Null)
+    } else if spec["kind"] == "cron" {
+        json!(
+            super::super::schedule::local(&spec, string(&device, "zone"), s.state.config.now())
+                .map_err(super::routines::schedule_error)?
+                .1
+        )
     } else {
         json!(super::routines::timing(
             &spec,

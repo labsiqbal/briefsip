@@ -11,6 +11,7 @@ mod files;
 mod harness;
 mod mcp;
 mod media;
+mod restore;
 mod tasks;
 mod turns;
 mod updates;
@@ -326,6 +327,12 @@ async fn canonical_request(
     request: Request,
     request_id: &mut String,
 ) -> Result<Response, Failure> {
+    if (request.uri().path().starts_with("/api/turn-waits/")
+        || request.uri().path().starts_with("/api/workflow-waits/"))
+        && request.uri().path().ends_with("/events")
+    {
+        return tasks::wait_routes::event(state, request, request_id).await;
+    }
     if request.uri().path().starts_with("/api/projects/")
         && request.uri().path().ends_with("/webhook-events")
     {
@@ -377,7 +384,8 @@ async fn canonical_request(
     {
         return Err(Failure::new(400, "invalid_route", "Invalid route."));
     }
-    let _capacity = data::limits::reserve(request.uri().path(), request.method())?;
+    let _capacity =
+        data::limits::reserve(request.uri().path(), request.method(), request.headers())?;
     if tasks::device_path(request.uri().path()) {
         return tasks::device(state, request, request_id).await;
     }
@@ -398,11 +406,7 @@ async fn canonical_request(
     let path = request.uri().path().to_owned();
     let method = request.method().clone();
     let body = if method != Method::GET && method != Method::HEAD {
-        let limit = if tasks::result_path(&path) {
-            8388608
-        } else {
-            65536
-        };
+        let limit = data::limits::body_limit(&path, &method, &headers);
         let bytes = axum::body::to_bytes(request.into_body(), limit)
             .await
             .map_err(|_| {
@@ -434,6 +438,10 @@ async fn canonical_request(
     } else {
         json!({})
     };
+    if path == "/api/restore/reconcile" && method == Method::POST {
+        let value = restore::reconcile(state, &actor, &body)?;
+        return Ok(json_response(200, json!({"ok":true,"data":value})));
+    }
     if let Some(response) = automation::project::route(
         state,
         &path,
@@ -467,6 +475,11 @@ async fn canonical_request(
     }
     if let Some(response) =
         computer::devices::human(state, &path, &method, &body, &actor, &headers).await?
+    {
+        return Ok(response);
+    }
+    if let Some(response) =
+        tasks::wait_routes::human_route(state, &actor, &path, &method, &body).await?
     {
         return Ok(response);
     }
@@ -511,6 +524,15 @@ async fn main() -> db::Result<()> {
     }
     if std::env::args().nth(1).as_deref() == Some("--mcp-stdio") {
         return mcp::stdio().await;
+    }
+    if std::env::args().nth(1).as_deref() == Some("--restore-read-only") {
+        let [source, target]: [std::ffi::OsString; 2] = std::env::args_os()
+            .skip(2)
+            .collect::<Vec<_>>()
+            .try_into()
+            .map_err(|_| "Use --restore-read-only BACKUP NEW_DATABASE.")?;
+        println!("{}", restore::read_only(source.as_ref(), target.as_ref())?);
+        return Ok(());
     }
     let mut config = Config::read()?;
     harness::hydrate(&mut config.harness).await;
@@ -605,6 +627,7 @@ async fn main() -> db::Result<()> {
         .merge(automation::routes())
         .route("/api/session", any(dispatch))
         .route("/api/session/logout", any(dispatch))
+        .route("/api/restore/reconcile", any(dispatch))
         .route("/api/agents", any(dispatch))
         .route("/api/agents/{id}/turns/stream", any(dispatch))
         .route("/api/threads/{id}/turns/stream", any(dispatch))

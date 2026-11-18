@@ -478,7 +478,16 @@ pub fn route(
                 [task_id],
                 |r| r.get(0),
             )?;
-            let resolution=one(db,"SELECT r.action actionId,r.resolution kind,r.request_id requestId,r.replacement_action_id replacementActionId FROM task_action_resolutions r JOIN task_actions a ON a.id=r.action AND a.task=r.task WHERE r.task=? AND a.sequence=?",params![task_id,next-1])?;
+            let mut resolution=one(db,"SELECT r.action actionId,r.resolution kind,r.request_id requestId,r.replacement_action_id replacementActionId FROM task_action_resolutions r JOIN task_actions a ON a.id=r.action AND a.task=r.task WHERE r.task=? AND a.sequence=?",params![task_id,next-1])?;
+            if let Some(saved) = resolution
+                .as_mut()
+                .filter(|saved| saved["kind"] == "known_result")
+            {
+                if let Some(result)=one(db,"SELECT r.content_json,p.journal_sequence FROM task_results r JOIN task_reports p ON p.action=r.action WHERE r.task=? AND r.action=?",[task_id,string(saved,"actionId")])? {
+                    saved["result"]=data::json(&result["content_json"])?;
+                    saved["journalSequence"]=result["journal_sequence"].clone();
+                }
+            }
             Ok(
                 json!({"taskId":task_id,"state":task["state"],"revision":task["revision"],"nextSequence":next,"resolution":resolution}),
             )

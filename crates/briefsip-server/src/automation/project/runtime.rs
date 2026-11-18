@@ -228,6 +228,7 @@ pub(super) fn maintain(state: &AppState) -> Result<()> {
         return Ok(());
     }
     scheduler::maintain(state, db)?;
+    waits::maintain(state, db)?;
     for row in all(db,"SELECT r.id,s.project,c.actor FROM workflow_runs r JOIN record_scopes s ON s.table_name='workflow_runs' AND s.key_json=json_array(r.id) JOIN receipts c ON c.request_id=r.id WHERE r.status IN('ready','waiting') ORDER BY r.created,r.id LIMIT 100",[])?{
         let result=maintenance_transaction(db,||{
             let s=Scope{state,db,account:string(&row,"actor"),project:string(&row,"project"),kind:"Workflow"};
@@ -260,8 +261,13 @@ pub(super) fn maintain(state: &AppState) -> Result<()> {
                     let data=task(&s,agent,"Workflow",&prompt,string(&parent,"visibility"),&format!("tasks:workflow-step:{id}:{seq}"))?;
                     db.execute("INSERT INTO workflow_steps(run,seq,node,turn,model,status,settings) VALUES(?,?,?,?,?,'waiting',?)",params![id,seq,node["id"].as_str(),data["taskId"].as_str(),if node["kind"]=="agent"{None}else{node["model"].as_str()},crate::db::canonical(&node)])?;
                     s.map("workflow_steps",json!([id,seq]),string(&w,"id"),&parent)?;
+                    if let Some(occurrence)=one(db,"UPDATE occurrences SET task=? WHERE run=? AND task IS NULL RETURNING schedule,occurrence_id",params![data["taskId"].as_str(),id])? {
+                        s.observe("workflow_schedule_occurrence",&json!([occurrence["schedule"],occurrence["occurrence_id"]]).to_string())?;
+                    }
                     db.execute("UPDATE workflow_runs SET steps=?,status='waiting',revision=revision+1 WHERE id=?",params![seq,id])?;
-                }else if node["kind"]!="wait"{
+                }else if node["kind"]=="wait"{
+                    return waits::reserve(&s,&run,&node,seq);
+                }else{
                     let mut output=None;
                     if node["kind"]=="output" {if let Some(channel)=node["channel"].as_str(){
                         if !exists(db,"SELECT 1 FROM channels c JOIN channel_members m ON m.channel=c.id AND m.agent=? JOIN record_scopes s ON s.table_name='channels' AND s.key_json=json_array(c.id) AND s.root_kind='channel' AND s.root_id=c.id WHERE c.id=? AND c.archived=0 AND s.project=? AND (s.visibility='project' OR s.account=?)",[string(&run,"agent"),channel,s.project,s.account])?{

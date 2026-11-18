@@ -119,7 +119,13 @@ fn valid(db: &Connection, p: &Principal, saved: &Value, now: i64) -> Result<bool
         Err(e) => Err(e),
     }
 }
-pub fn secret_result(db: &Connection, p: &Principal, v: &Value, now: i64) -> Result<Value> {
+pub fn secret_result(
+    state: &AppState,
+    db: &Connection,
+    p: &Principal,
+    v: &Value,
+    now: i64,
+) -> Result<Value> {
     fields(
         v,
         &[
@@ -193,11 +199,40 @@ pub fn secret_result(db: &Connection, p: &Principal, v: &Value, now: i64) -> Res
         return Err(conflict());
     }
     if provision["target"]["kind"] == "workflow" {
-        return Err(fail(
-            422,
-            "capability_missing",
-            "Workflow wait activation is unavailable.",
-        ));
+        let result = crate::automation::project::waits::activate(
+            state,
+            db,
+            provision,
+            v,
+            row["state"] == "pending",
+        )?;
+        let activated = result["state"] == "activated";
+        let task = json!({"project":row["project"]});
+        let ack = Save {
+            account: &p.account,
+            task: &task,
+            request: &request,
+            scope: "wait-secret-results",
+            payload: &pd,
+            now,
+        }
+        .save(
+            db,
+            &provision_id,
+            n(&result["receipt"], "recordRevision"),
+            200,
+            json!({"provisionId":provision_id,"state":result["state"],"receipt":result["receipt"]}),
+            None,
+        )?;
+        db.execute(
+            "UPDATE wait_provisions SET state=?,result_request_id=? WHERE id=?",
+            params![
+                if activated { "activated" } else { "closed" },
+                request,
+                provision_id
+            ],
+        )?;
+        return Ok(ack);
     }
     let activated = row["state"] == "pending"
         && v["state"] == "ready"
