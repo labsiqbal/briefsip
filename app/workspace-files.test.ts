@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
-test('workspace browser API pages text and directories while enforcing host binding and read boundaries', async () => {
+test('workspace browser API pages text and directories while enforcing agent folder and read boundaries', async () => {
   const dir=mkdtempSync(join(tmpdir(),'briefsip-workspace-browser-')),root=join(dir,'root');mkdirSync(root);
   const agent=randomUUID(),other=randomUUID();let app=await startApp({database:join(dir,'db.sqlite'),workspaces:[{agent,directory:root}]});
   async function get(route:string,status=200,headers:Record<string,string>={}){const response=await fetch(app.origin+route,{headers});assert.equal(response.status,status);assert.equal(response.headers.get('cache-control'),'no-store');return response.json();}
@@ -16,7 +16,7 @@ test('workspace browser API pages text and directories while enforcing host bind
     for(const id of [agent,other]){const response=await fetch(app.origin+'/api/agents',{ method:'POST',headers:{Origin:app.origin,'Content-Type':'application/json'},body:JSON.stringify({runtime:'api',id,name:'Browser',model:'fixture',instructions:'Help'})});assert(response.ok);}
     const directory = await get('/api/agents');
     assert.equal(directory.agents.find((row: any) => row.id === agent).workspace_connected, true);
-    assert.equal(directory.agents.find((row: any) => row.id === other).workspace_connected, false);
+    assert.equal(directory.agents.find((row: any) => row.id === other).workspace_connected, true);
     mkdirSync(join(root,'pages'));for(let i=0;i<101;i++)writeFileSync(join(root,'pages',String(i).padStart(3,'0')),'');
     writeFileSync(join(root,'text.html'),'<script>alert(1)</script>'+'x'.repeat(8000));
     writeFileSync(join(dir,'outside'),'PRIVATE');symlinkSync('../outside',join(root,'link'));linkSync(join(dir,'outside'),join(root,'hard'));symlinkSync(dir,join(root,'directory-link'));
@@ -31,7 +31,7 @@ test('workspace browser API pages text and directories while enforcing host bind
     for(const name of ['too-large','pages','link','hard','directory-link/outside','../outside','/etc/passwd'])await get(path+'/download?path='+encodeURIComponent(name),400);
     await get(path+'/download?path=raw.bin&offset=0',400);await get(path+'/download?path=raw.bin&path=large',400);
     await get(path+'/download?path=raw.bin',403,{Origin:'https://external.invalid'});
-    await get(`/api/agents/${other}/workspace/download?path=raw.bin`,403);
+    await get(`/api/agents/${other}/workspace/download?path=raw.bin`,400);
     const first=await get(path+'/entries?path=pages');assert.equal(first.entries.length,100);
     const last=await get(path+'/entries?path=pages&after='+encodeURIComponent(first.next_after));assert.deepEqual(last.entries,[{name:'100',kind:'file'}]);assert.equal(last.next_after,null);
     const file=await get(path+'/file?path=text.html');assert(file.text.startsWith('<script>'));assert.equal(file.next_offset,8000);
@@ -41,9 +41,9 @@ test('workspace browser API pages text and directories while enforcing host bind
     for(const name of ['../outside','/etc/passwd','link','hard','directory-link/outside','binary','large']){const response=await get(path+'/file?path='+encodeURIComponent(name),400);assert(!JSON.stringify(response).includes('PRIVATE'));assert(!JSON.stringify(response).includes(dir));}
     for(const suffix of ['/entries?extra=x','/entries?__proto__=x','/entries?path=pages&path=','/entries?offset=0','/file?path=text.html&offset=-1','/file?path=text.html&offset=1e2','/file?path=text.html&digest=bad'])await get(path+suffix,400);
     await get(path+'/entries',403,{Origin:'https://external.invalid'});await get(path+'/entries',403,{'sec-fetch-site':'cross-site'});
-    await get(`/api/agents/${other}/workspace/entries`,403);await get(`/api/agents/${randomUUID()}/workspace/entries`,404);
-    await app.close();app=await startApp({database:join(dir,'db.sqlite'),workspaces:[]});await get(path+'/file?path=text.html',403);
-    assert.equal((await get('/api/agents')).agents.find((row: any) => row.id === agent).workspace_connected, false);
+    assert.deepEqual((await get(`/api/agents/${other}/workspace/entries`)).entries, []);await get(`/api/agents/${randomUUID()}/workspace/entries`,404);
+    await app.close();app=await startApp({database:join(dir,'db.sqlite'),workspaces:[]});await get(path+'/file?path=text.html',400);
+    assert.equal((await get('/api/agents')).agents.find((row: any) => row.id === agent).workspace_connected, true);
   } finally {await app.close();rmSync(dir,{recursive:true,force:true});}
 });
 

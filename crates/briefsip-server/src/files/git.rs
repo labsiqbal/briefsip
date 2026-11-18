@@ -628,12 +628,12 @@ pub async fn handle(state: &AppState, req: Request, parts: &[&str]) -> Result<Re
     let selected = if op == "checkpoints" {
         super::panel::binding_for_turn(state, agent, parts[5])?
     } else {
-        state
-            .config
-            .workspaces
-            .iter()
-            .find(|w| w.agent == agent)
-            .cloned()
+        let db = state.database.lock().map_err(|_| Failure::storage())?;
+        Some(crate::data::agent_folders::effective(
+            state,
+            &db.connection,
+            agent,
+        )?)
     };
     let binding = selected.as_ref();
     let result = if op == "status" {

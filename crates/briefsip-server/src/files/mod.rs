@@ -160,6 +160,7 @@ fn init_schema(db: &Connection, canonical: bool) -> crate::db::Result<()> {
     db.execute_batch(include_str!("schema.sql"))?;
     for (table, name, definition) in [
         ("files", "deleted", "INTEGER NOT NULL DEFAULT 0"),
+        ("generated_files", "workspace", "TEXT"),
         (
             "agent_skills",
             "removed",

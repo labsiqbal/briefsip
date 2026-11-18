@@ -95,6 +95,58 @@ fn publish(root: &Path, relative: &str, bytes: &[u8]) -> Result<Value> {
         }
     }
 }
+pub fn publish_generated(
+    db: &Connection,
+    binding: &crate::config::WorkspaceConfig,
+    name: &str,
+    text: &str,
+    previous: Option<&str>,
+) -> Result<()> {
+    if !binding.write {
+        return Err(error(403, "Workspace does not have write permission."));
+    }
+    let root = &binding.directory;
+    let (fd, filename) = parent(root, name, 2048)?;
+    match fs::symlink_metadata(location(&fd, &filename)) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            publish(root, name, text.as_bytes())?;
+        }
+        Ok(meta) if meta.is_file() => {
+            let bytes = workspace::read_bytes(&fd, &filename, 32768)?;
+            if bytes == text.as_bytes() {
+                return Ok(());
+            }
+            let digest = format!("{:x}", Sha256::digest(&bytes));
+            if previous != Some(digest.as_str()) {
+                return Err(error(409, "File already exists. Read it before editing."));
+            }
+            let replaced = perform(
+                db,
+                root,
+                &binding.agent,
+                "replace_workspace_file",
+                &json!({"path":name,"text":text,"digest":digest}),
+            )?;
+            if replaced["replaced"] != true {
+                return Err(error(409, text_result_error(&replaced)));
+            }
+        }
+        _ => {
+            return Err(error(
+                409,
+                "Workspace destination is unavailable or is not a regular file.",
+            ))
+        }
+    }
+    Ok(())
+}
+
+fn text_result_error(result: &Value) -> String {
+    let message = text(result, "error");
+    let recovery = text(result, "recoveryPath");
+    format!("{message} Recovery file: {recovery}")
+}
+
 fn remove(root: &Path, args: &Value) -> Result<Value> {
     if !keys(args, &["path", "digest"]) {
         return Err(error(400, "Invalid workspace deletion"));

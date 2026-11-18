@@ -1,4 +1,5 @@
 pub(crate) mod access;
+pub(crate) mod agent_folders;
 pub(crate) mod agents;
 pub(crate) mod avatar;
 pub(crate) mod conversations;
@@ -286,6 +287,7 @@ pub fn handles(path: &str) -> bool {
                 _,
                 "edit"
                     | "delete"
+                    | "folder"
                     | "visibility"
                     | "template"
                     | "avatar"
@@ -304,6 +306,7 @@ pub fn handles(path: &str) -> bool {
                 "files"
             ]
             | ["api", "agents", _, "avatar", "image"]
+            | ["api", "agents", _, "folder", "reset"]
             | ["api", "threads", _, "edit" | "delete" | "fork-context"]
             | ["api", "channels", _, "memory" | "edit" | "read"]
             | ["api", "channels", _, "turns"]
@@ -457,6 +460,12 @@ fn route(
         ["api", "agents"] if post => {
             let (status, v) = agents::create(state, db, v, avatar)?;
             return Ok(json_response(status, v));
+        }
+        ["api", "agents", id, "folder"] if get || post => {
+            agent_folders::route(state, db, id, false, get, v, q, headers)?
+        }
+        ["api", "agents", id, "folder", "reset"] if post => {
+            agent_folders::route(state, db, id, true, false, v, q, headers)?
         }
         ["api", "agents", id, "template"] if get => agents::template(db, id)?,
         ["api", "agents", id, "edit"] if post => agents::edit(state, db, id, v)?,
@@ -622,6 +631,8 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/api/project-folders", any(crate::dispatch))
         .route("/api/agents/{id}/edit", any(crate::dispatch))
+        .route("/api/agents/{id}/folder", any(crate::dispatch))
+        .route("/api/agents/{id}/folder/reset", any(crate::dispatch))
         .route("/api/agents/{id}/delete", any(crate::dispatch))
         .route("/api/agents/{id}/visibility", any(crate::dispatch))
         .route("/api/agents/{id}/scripts", any(crate::dispatch))

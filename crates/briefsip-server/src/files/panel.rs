@@ -114,13 +114,10 @@ fn scope_db(
                 }
             }
         }
-    } else if let Some(agent) = &agent {
-        workspace = state
-            .config
-            .workspaces
-            .iter()
-            .find(|w| w.agent == *agent)
-            .cloned();
+    } else if kind != "channels" {
+        if let Some(agent) = &agent {
+            workspace = crate::data::agent_folders::effective(state, db, agent).ok();
+        }
     }
     Ok(Scope {
         kind: kind.to_owned(),
@@ -149,18 +146,12 @@ pub(super) fn binding_for_turn(
             return Ok(scope_db(state, &db.connection, "threads", thread, Some(agent))?.workspace);
         }
         if let Some(channel) = row["channel"].as_str() {
-            let scope = scope_db(state, &db.connection, "channels", channel, Some(agent))?;
-            if scope.project.is_some() {
-                return Ok(scope.workspace);
-            }
+            return Ok(
+                scope_db(state, &db.connection, "channels", channel, Some(agent))?.workspace,
+            );
         }
     }
-    Ok(state
-        .config
-        .workspaces
-        .iter()
-        .find(|w| w.agent == agent)
-        .cloned())
+    crate::data::agent_folders::effective(state, &db.connection, agent).map(Some)
 }
 fn outputs(db: &Connection, scope: &Scope) -> Result<HashSet<String>> {
     let mut result = HashSet::new();

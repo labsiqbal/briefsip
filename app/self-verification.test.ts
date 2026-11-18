@@ -17,12 +17,12 @@ test('synthetic done without verification gets one nudge, checks precede final, 
       let message;
       const tool = (name: string, args: unknown) => ({ tool_calls: [{ id: randomUUID(), type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
       if (messages[0].content.includes('One verification reminder') && !checked) {
-        calls.push('nudge'); message = tool('open_file_in_panel', { id: file }); checked = true;
+        calls.push('nudge'); message = tool('read_workspace_file', { path: 'result.txt' }); checked = true;
       } else if (last.role === 'tool') {
         const result = JSON.parse(last.content), name = messages.at(-2).tool_calls[0].function.name;
         calls.push(name); assert(!result.error, last.content);
         if (name === 'create_text_file') { file = result.id; message = { content: 'Done.' }; }
-        else if (name === 'open_file_in_panel') { checked = true; message = tool('verify_result', { kind: 'file', review: 'Reread request: result.txt contains the requested result.' }); }
+        else if (name === 'read_workspace_file') { assert.equal(result.text, 'Requested result'); checked = true; message = tool('verify_result', { kind: 'file', review: 'Reread request: result.txt contains the requested result.' }); }
         else { assert(result.verified); reviewed = true; message = { content: `Saved [result.txt](/api/agents/${agent}/files/${file}).` }; }
       } else message = tool('create_text_file', { name: 'result.txt', text: 'Requested result' });
       res.end(JSON.stringify({ choices: [{ finish_reason: message.tool_calls ? 'tool_calls' : 'stop', message }] }));
@@ -39,7 +39,7 @@ test('synthetic done without verification gets one nudge, checks precede final, 
     let row;
     for (let n = 0; n < 300; n++) { row = (await request(`/api/agents/${agent}/turns`))[0]; if (row.status === 'done') break; assert.notEqual(row.status, 'failed', row.error); await new Promise(resolve => setTimeout(resolve, 10)); }
     assert.equal(row.status, 'done'); assert(checked && reviewed); assert.deepEqual(errors, []);
-    assert.deepEqual(calls, ['create_text_file', 'nudge', 'open_file_in_panel', 'verify_result']);
+    assert.deepEqual(calls, ['create_text_file', 'nudge', 'read_workspace_file', 'verify_result']);
     assert.match(row.reply, /^Saved \[result\.txt\]/); assert(!row.reply.includes('test-summary'));
     await app.close();
     app = await startApp({ database, baseURL: `http://127.0.0.1:${address.port}/v1` });

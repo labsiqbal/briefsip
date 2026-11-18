@@ -448,7 +448,7 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                     && super::verification::nudge(db, id, &turn, &profile)?
                 {
                     let system = messages[0]["content"].as_str().unwrap_or("").to_owned();
-                    messages[0]["content"]=json!(format!("{system}\n\nOne verification reminder: no current check is recorded. Run one relevant check, compare it with the request, then finish. Reuse existing output; verify_result is optional. State checks blocked by budget or tools."));
+                    messages[0]["content"]=json!(format!("{system}\n\nOne verification reminder: no current check is recorded. Run one relevant check, compare it with the request, then finish. Reuse existing output; verify_result is optional. Keep tool mechanics out of the reply."));
                     db.execute("UPDATE provider_stream_segments SET final=0 WHERE call=(SELECT max(seq) FROM provider_calls WHERE turn=?)",[id])?;
                     continue;
                 }
@@ -675,7 +675,10 @@ pub(super) fn base_instructions(
         .iter()
         .any(|t| t["function"]["name"] == "computer_screenshot")
     {
-        text = text.replace("Visual verification is unavailable this turn. Use available nonvisual checks and report this limit; no visual tool discovery is needed.", "Computer screenshots are available for visual checks.");
+        text = text.replace(
+            "Visual verification is unavailable this turn. Use relevant nonvisual checks.",
+            "Computer screenshots are available for visual checks.",
+        );
     }
     for row in v["guidance"].as_array().ok_or_else(Failure::storage)? {
         let active = row[0]
@@ -793,8 +796,12 @@ fn append_screenshot(
 }
 fn replay(db: &Connection, turn: &str) -> Result<Vec<Value>> {
     let mut entries:Vec<(i64,i64,u8,Value)>=all(db,"SELECT call,result,after_output,coalesce(after_action,0) AS after_action FROM flow_tool_calls WHERE turn=? ORDER BY seq",[turn])?.into_iter().map(|r|(r["after_action"].as_i64().unwrap_or(0),r["after_output"].as_i64().unwrap_or(0),0,r)).collect();
-    for (position,g) in all(db,"SELECT g.call,g.after_action,f.id,f.name,length(f.bytes) AS size,f.scope FROM generated_files g JOIN files f ON f.id=g.file WHERE g.turn=? ORDER BY g.seq",[turn])?.into_iter().enumerate() {
-        entries.push((g["after_action"].as_i64().unwrap_or(0),position as i64,1,json!({"call":g["call"],"result":json!({"id":g["id"],"name":g["name"],"size":g["size"],"url":format!("/api/{}/files/{}",string(&g,"scope").replace(':',"/"),string(&g,"id"))}).to_string()})));
+    for (position,g) in all(db,"SELECT g.call,g.after_action,g.workspace,f.id,f.name,length(f.bytes) AS size,f.scope FROM generated_files g JOIN files f ON f.id=g.file WHERE g.turn=? ORDER BY g.seq",[turn])?.into_iter().enumerate() {
+        let mut result = json!({"id":g["id"],"name":g["name"],"size":g["size"],"url":format!("/api/{}/files/{}",string(&g,"scope").replace(':',"/"),string(&g,"id"))});
+        if g["workspace"].is_string() {
+            result["path"] = g["name"].clone();
+        }
+        entries.push((g["after_action"].as_i64().unwrap_or(0), position as i64, 1, json!({"call":g["call"],"result":result.to_string()})));
     }
     for (position, row) in all(
         db,

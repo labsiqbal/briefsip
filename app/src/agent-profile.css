@@ -24,3 +24,5 @@
 .bs-root .agent-profile__resources .panel-row__title { flex: 1; text-align: left; }
 
 .agent-profile__runtime-label { display: inline-flex; align-items: center; gap: 8px; }
+
+.bs-root .agent-folder-path { width: 100%; overflow-wrap: anywhere; }

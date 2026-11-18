@@ -653,6 +653,8 @@ async fn main() -> db::Result<()> {
             files::init_canonical(&guard.connection)?;
             automation::project::initialize(&guard.connection).map_err(|e| e.message)?;
         }
+        data::agent_folders::warn_unknown_bindings(&config, &guard.connection)
+            .map_err(|e| e.message)?;
         events.watch(&guard.connection);
     }
     let listener = TcpListener::bind((config.host.as_str(), config.port)).await?;

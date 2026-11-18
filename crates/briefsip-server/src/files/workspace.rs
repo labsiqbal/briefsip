@@ -225,23 +225,11 @@ pub async fn handle(state: &AppState, req: Request, parts: &[&str]) -> Result<Re
     if !valid_id(agent) {
         return Err(error(400, "Invalid agent ID."));
     }
-    {
+    let binding = {
         let db = state.database.lock().map_err(|_| Failure::storage())?;
-        if one(&db.connection, "SELECT id FROM agents WHERE id=?", [agent])?.is_none() {
-            return Err(error(404, "Agent not found."));
-        }
-    }
-    let binding = state
-        .config
-        .workspaces
-        .iter()
-        .find(|w| w.agent == agent)
-        .ok_or_else(|| {
-            error(
-                403,
-                "Agent workspace is not connected by the host owner yet.",
-            )
-        })?;
+        crate::data::agents::read(&db.connection, agent)?;
+        crate::data::agent_folders::effective(state, &db.connection, agent)?
+    };
     let args = query(&req);
     let allowed = if kind == "entries" {
         vec!["path", "after"]
