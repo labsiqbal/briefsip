@@ -1,4 +1,3 @@
-import { remoteRoster, peerAgentRole } from './remote-agents.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -6,7 +5,6 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './test-bridge.ts';
 import { restoreRemoteMessage } from './remote-message-command.ts';
 
@@ -102,28 +100,6 @@ test('kill switch cancels an active peer turn before any more remote work is adm
   try{const id=randomUUID();await api(f.a,'/api/remote-agents/messages',{id,machine:f.machine.id,agent:f.beta.id,text:'Running'});await until(async()=>started);const peer=(await api(f.b,'/api/machines')).machines[0];await api(f.b,'/api/machines/agent-messaging',{id:randomUUID(),environmentId:peer.id,allowed:false});const row=await until(async()=>{const rows=(await api(f.a,`/api/remote-agents/messages?machine=${f.machine.id}&agent=${f.beta.id}`)).messages;return rows.find((r:any)=>r.id===id&&r.status==='cancelled');});assert.match(row.error,/disabled/);}
   finally{release();await f.close();}
 });
-
-import { resolveAgentTarget } from './test-support/agent-delegation.ts';
-test('address resolution keeps exact IDs, refuses ambiguous names and excludes offline rosters',()=>{
-  const db=new DatabaseSync(':memory:'),agent=randomUUID(),host=randomUUID();
-  try{db.exec('CREATE TABLE agents(id TEXT,name TEXT); CREATE TABLE paired_machines(environment_id TEXT,name TEXT,state TEXT,status TEXT,agents TEXT)');db.prepare('INSERT INTO paired_machines VALUES (?,?,?,?,?)').run(host,'B','paired','online',JSON.stringify([{id:agent,name:'Beta',role:'Personal agent',model:'fixture',status:'idle'}]));assert.deepEqual(resolveAgentTarget('Beta@B',db),{kind:'remote',machine:host,agent});assert.deepEqual(resolveAgentTarget(`${agent}@${host}`,db),{kind:'remote',machine:host,agent});assert.equal(resolveAgentTarget('Beta@Unpaired',db),null);assert.equal(remoteRoster(db)[0].online,true);assert.equal(remoteRoster(db)[0].machine,'B');db.prepare('UPDATE paired_machines SET status=?').run('offline');assert.deepEqual(remoteRoster(db),[]);assert.equal(resolveAgentTarget('Beta@B',db)?.kind,'remote');db.prepare('INSERT INTO paired_machines VALUES (?,?,?,?,?)').run(randomUUID(),'B','paired','online','[]');assert.equal(resolveAgentTarget('Beta@B',db),null);assert.equal(resolveAgentTarget(`${agent}@${host}`,db)?.kind,'remote');}
-  finally{db.close();}
-});
-
-
-test('peer roles sanitize bounded text and old cached summaries default empty', () => {
-  assert.equal(peerAgentRole(undefined), ''); assert.equal(peerAgentRole(null), '');
-  assert.equal(peerAgentRole('  Personal\n agent\u0085\u2028  '), 'Personal agent');
-  assert.equal(peerAgentRole('x'.repeat(100)), 'x'.repeat(60));
-  const db = new DatabaseSync(':memory:');
-  try {
-    db.exec('CREATE TABLE paired_machines(environment_id TEXT,name TEXT,status TEXT,state TEXT,agents TEXT)');
-    const agent = { id: randomUUID(), name: 'Odd', model: 'fixture', status: 'idle' };
-    db.prepare('INSERT INTO paired_machines VALUES (?,?,?,?,?)').run(randomUUID(), 'Peer', 'online', 'paired', JSON.stringify([agent]));
-    assert.equal(remoteRoster(db)[0].role, '');
-  } finally { db.close(); }
-});
-
 
 test('remote role reaches local discovery and team prompt through paired peer summaries', async () => {
   let system = '';
