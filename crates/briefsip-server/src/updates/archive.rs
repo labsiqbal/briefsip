@@ -1,9 +1,11 @@
-use super::{error, release, Result};
+use super::{error, release, PeerError, Result};
 use flate2::read::MultiGzDecoder;
+use reqwest::StatusCode;
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, File, OpenOptions},
+    future::Future,
     io::{Read, Write},
     os::unix::fs::{DirBuilderExt, OpenOptionsExt},
     path::{Path, PathBuf},
@@ -37,6 +39,7 @@ pub struct Archive {
     pub _directory: Temporary,
     pub file: PathBuf,
     pub sha256: String,
+    pub size: u64,
 }
 fn hash(file: &Path) -> Result<String> {
     let mut file = File::open(file).map_err(|_| error(500, "Could not read release."))?;
@@ -60,14 +63,14 @@ fn preflight(path: &Path, total: &mut u64, entries: &mut usize) -> Result<()> {
             .map_err(|_| error(500, "Could not read release."))?;
         *entries += 1;
         if *entries > 100000 {
-            return Err(error(500, "Release exceeds file count limit."));
+            return Err(PeerError::SizeLimit.detail("Release exceeds file count limit."));
         }
         if s.is_dir() {
             preflight(&entry.path(), total, entries)?;
         } else if s.is_file() {
             *total += s.len();
             if *total > EXPANDED {
-                return Err(error(500, "Expanded release exceeds size limit."));
+                return Err(PeerError::SizeLimit.detail("Expanded release exceeds size limit."));
             }
         } else {
             return Err(error(500, "Unsupported release entry."));
@@ -127,18 +130,18 @@ async fn build(root: &Path, id: &str) -> Result<Archive> {
     if !status.success() {
         return Err(error(500, "Could not package release."));
     }
-    if fs::metadata(&file)
+    let size = fs::metadata(&file)
         .map_err(|_| error(500, "Could not read release."))?
-        .len()
-        > LIMIT
-    {
-        return Err(error(500, "Release exceeds download limit."));
+        .len();
+    if size > LIMIT {
+        return Err(PeerError::SizeLimit.detail("Release exceeds download limit."));
     }
     let sha256 = hash(&file)?;
     Ok(Archive {
         _directory: directory,
         file,
         sha256,
+        size,
     })
 }
 fn number(bytes: &[u8]) -> Result<u64> {
@@ -170,20 +173,26 @@ fn extract(archive: &Path, destination: &Path) -> Result<()> {
             }
             break;
         }
+        if total >= EXPANDED {
+            return Err(PeerError::SizeLimit.detail("Expanded release exceeds size limit."));
+        }
         stream
             .read_exact(&mut header[1..])
             .map_err(|_| error(502, "Truncated tar archive."))?;
         total += 512;
         if total > EXPANDED {
-            return Err(error(502, "Expanded release exceeds size limit."));
+            return Err(PeerError::SizeLimit.detail("Expanded release exceeds size limit."));
         }
         if header.iter().all(|b| *b == 0) {
             ended = true;
             continue;
         }
         entries += 1;
-        if ended || entries > 100000 {
-            return Err(error(502, "Invalid tar trailer or file count."));
+        if entries > 100000 {
+            return Err(PeerError::SizeLimit.detail("Release exceeds file count limit."));
+        }
+        if ended {
+            return Err(error(502, "Invalid tar trailer."));
         }
         let checksum: u64 = header
             .iter()
@@ -222,9 +231,11 @@ fn extract(archive: &Path, destination: &Path) -> Result<()> {
             || !seen.insert(name.to_owned())
             || ![0, b'0', b'5'].contains(&kind)
             || kind == b'5' && size != 0
-            || size > EXPANDED - total
         {
             return Err(error(502, "Unsafe tar entry."));
+        }
+        if size > EXPANDED - total {
+            return Err(PeerError::SizeLimit.detail("Expanded release exceeds size limit."));
         }
         let path = destination.join(name);
         fs::DirBuilder::new()
@@ -251,12 +262,10 @@ fn extract(archive: &Path, destination: &Path) -> Result<()> {
                 stream
                     .read_exact(&mut bytes[..n])
                     .map_err(|_| error(502, "Truncated tar archive."))?;
-                out.write_all(&bytes[..n])
-                    .map_err(|_| error(502, "Could not save peer release."))?;
+                out.write_all(&bytes[..n]).map_err(|_| storage())?;
                 left -= n as u64;
             }
-            out.sync_all()
-                .map_err(|_| error(502, "Could not save peer release."))?;
+            out.sync_all().map_err(|_| storage())?;
         }
         let padding = (512 - size % 512) % 512;
         let mut bytes = [0; 512];
@@ -265,79 +274,225 @@ fn extract(archive: &Path, destination: &Path) -> Result<()> {
             .map_err(|_| error(502, "Truncated tar archive."))?;
         total += size + padding;
         if total > EXPANDED {
-            return Err(error(502, "Expanded release exceeds size limit."));
+            return Err(PeerError::SizeLimit.detail("Expanded release exceeds size limit."));
         }
     }
     Ok(())
 }
-pub async fn receive(
-    mut response: reqwest::Response,
+fn partial_path(root: &Path, id: &str, expected: &str) -> Result<PathBuf> {
+    const PREFIX: &str = ".peer-release-partial-";
+    let key = Sha256::digest(format!("{id}:{expected}"));
+    let partial = root.join(format!("{PREFIX}{key:x}"));
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(root)
+        .map_err(|_| storage())?;
+    // ponytail: keep one resumable archive per release directory. Budget multiple
+    // partials if the receiver starts allowing parallel incoming updates.
+    for entry in fs::read_dir(root).map_err(|_| storage())? {
+        let entry = entry.map_err(|_| storage())?;
+        if entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.strip_prefix(PREFIX).is_some_and(valid_hash))
+            && entry.path() != partial
+        {
+            fs::remove_file(entry.path()).map_err(|_| storage())?;
+        }
+    }
+    Ok(partial)
+}
+
+pub(super) fn valid_hash(expected: &str) -> bool {
+    expected.len() == 64
+        && expected
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn storage() -> crate::web::Failure {
+    crate::web::Failure::new(500, "storage_failed", "Could not save peer release.")
+}
+
+fn metadata_error() -> crate::web::Failure {
+    PeerError::IntegrityMismatch.detail("Invalid peer release metadata or byte range.")
+}
+
+fn resume_range(value: &str, offset: u64) -> Option<u64> {
+    let (span, total) = value.strip_prefix("bytes ")?.split_once('/')?;
+    let (start, end) = span.split_once('-')?;
+    let total = total.parse::<u64>().ok()?;
+    (offset > 0
+        && start.parse::<u64>().ok()? == offset
+        && end.parse::<u64>().ok()?.checked_add(1) == Some(total)
+        && offset < total)
+        .then_some(total)
+}
+
+async fn append(file: &mut File, mut response: reqwest::Response, expected: &str) -> Result<()> {
+    let mut offset = file.metadata().map_err(|_| storage())?.len();
+    let status = response.status();
+    if [StatusCode::UNAUTHORIZED, StatusCode::FORBIDDEN].contains(&status) {
+        return Err(PeerError::PermissionRevoked.failure());
+    }
+    if status == StatusCode::PAYLOAD_TOO_LARGE {
+        return Err(PeerError::SizeLimit.failure());
+    }
+    if status == StatusCode::GATEWAY_TIMEOUT || status == StatusCode::REQUEST_TIMEOUT {
+        return Err(PeerError::Timeout.failure());
+    }
+    let get = |key| response.headers().get(key).and_then(|v| v.to_str().ok());
+    if !matches!(
+        status,
+        StatusCode::OK | StatusCode::PARTIAL_CONTENT | StatusCode::RANGE_NOT_SATISFIABLE
+    ) {
+        return Err(PeerError::ConnectionLost.detail(format!(
+            "Origin rejected the release download (HTTP {status})."
+        )));
+    }
+    if get("x-briefsip-sha256") != Some(expected) || get("content-type") != Some("application/gzip")
+    {
+        return Err(metadata_error());
+    }
+    let length = response.content_length();
+    if length.is_some_and(|n| n > LIMIT) {
+        return Err(PeerError::SizeLimit.failure());
+    }
+    let target = match status {
+        StatusCode::OK => {
+            file.set_len(0).map_err(|_| storage())?;
+            offset = 0;
+            length
+        }
+        StatusCode::PARTIAL_CONTENT => {
+            let total = resume_range(get("content-range").unwrap_or(""), offset)
+                .ok_or_else(metadata_error)?;
+            if total > LIMIT {
+                return Err(PeerError::SizeLimit.failure());
+            }
+            if length.is_some_and(|n| n != total - offset) {
+                return Err(metadata_error());
+            }
+            Some(total)
+        }
+        // A process may stop just after writing the last byte. Verify the saved archive normally.
+        _ if offset > 0 && get("content-range") == Some(format!("bytes */{offset}").as_str()) => {
+            return Ok(())
+        }
+        _ => return Err(metadata_error()),
+    };
+    while let Some(bytes) = response.chunk().await.map_err(PeerError::network)? {
+        offset += bytes.len() as u64;
+        if offset > LIMIT {
+            return Err(PeerError::SizeLimit.failure());
+        }
+        if target.is_some_and(|total| offset > total) {
+            return Err(metadata_error());
+        }
+        file.write_all(&bytes).map_err(|_| storage())?;
+    }
+    if target.is_some_and(|total| offset != total) {
+        return Err(PeerError::ConnectionLost.failure());
+    }
+    Ok(())
+}
+
+pub async fn receive<D, A>(
     root: &Path,
     id: &str,
     expected: &str,
-    authorize: impl FnOnce() -> Result<()>,
-) -> Result<serde_json::Value> {
-    if !release::id(id)
-        || expected.len() != 64
-        || !expected
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        || response
-            .headers()
-            .get("x-briefsip-sha256")
-            .and_then(|v| v.to_str().ok())
-            != Some(expected)
-        || response
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            != Some("application/gzip")
-        || response.content_length().is_some_and(|n| n > LIMIT)
-    {
-        return Err(error(502, "Invalid peer release metadata."));
+    mut download: impl FnMut(u64) -> D,
+    authorize: impl FnOnce() -> A,
+) -> Result<()>
+where
+    D: Future<Output = Result<reqwest::Response>>,
+    A: Future<Output = Result<()>>,
+{
+    if !release::id(id) || !valid_hash(expected) {
+        return Err(metadata_error());
     }
-    let directory = Temporary::new(root, "download")?;
-    let archive = directory.0.join("release.tar.gz");
-    let stage = directory.0.join(id);
+    let partial = partial_path(root, id, expected)?;
     let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
+        .read(true)
+        .append(true)
+        .create(true)
         .mode(0o600)
-        .open(&archive)
-        .map_err(|_| error(502, "Could not save peer release."))?;
-    let mut total = 0;
-    let mut hash = Sha256::new();
-    while let Some(bytes) = response.chunk().await.map_err(|_| {
-        error(
-            502,
-            "Peer release download failed integrity, permission, time or size checks.",
-        )
-    })? {
-        total += bytes.len() as u64;
-        if total > LIMIT {
-            return Err(error(502, "Release exceeds download limit."));
+        .custom_flags((rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32)
+        .open(&partial)
+        .map_err(|_| storage())?;
+    briefsip_launcher::files::private_file(&partial).map_err(|_| storage())?;
+    for attempt in 0..3 {
+        let offset = file.metadata().map_err(|_| storage())?.len();
+        let result = if offset > LIMIT {
+            Err(PeerError::SizeLimit.failure())
+        } else {
+            match download(offset).await {
+                Ok(response) => append(&mut file, response, expected).await,
+                Err(failure) => Err(failure),
+            }
+        };
+        match result {
+            Ok(()) => break,
+            Err(failure) => {
+                let resumable = matches!(
+                    failure.code,
+                    "peer_transfer_timeout" | "peer_connection_lost"
+                );
+                if !resumable {
+                    fs::remove_file(&partial).map_err(|_| storage())?;
+                    return Err(failure);
+                }
+                file.sync_all().map_err(|_| storage())?;
+                if attempt == 2 {
+                    return Err(failure);
+                }
+                let retained = file.metadata().map_err(|_| storage())?.len();
+                eprintln!("peer release download retry release={id} bytes={retained} code={} message={:?}",
+                    failure.code, failure.message);
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
         }
-        hash.update(&bytes);
-        file.write_all(&bytes)
-            .map_err(|_| error(502, "Could not save peer release."))?;
     }
-    file.sync_all()
-        .map_err(|_| error(502, "Could not save peer release."))?;
+    file.sync_all().map_err(|_| storage())?;
     drop(file);
-    if format!("{:x}", hash.finalize()) != expected {
-        return Err(error(502, "Release SHA-256 mismatch."));
+    let directory = Temporary::new(root, "download")?;
+    let archive = partial.clone();
+    let target = id.to_owned();
+    let expected = expected.to_owned();
+    let verified = async {
+        let directory = tokio::task::spawn_blocking(move || {
+            if hash(&archive)? != expected {
+                return Err(PeerError::IntegrityMismatch.detail("Peer release SHA-256 mismatch."));
+            }
+            let stage = directory.0.join(&target);
+            fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&stage)
+                .map_err(|_| storage())?;
+            extract(&archive, &stage).map_err(|failure| {
+                if failure.code == "invalid_request" {
+                    PeerError::IntegrityMismatch.detail(failure.message)
+                } else {
+                    failure
+                }
+            })?;
+            release::verify(&directory.0, &target).map_err(|_| {
+                PeerError::IntegrityMismatch.detail("Peer release manifest mismatch.")
+            })?;
+            Ok(directory)
+        })
+        .await
+        .map_err(|_| storage())??;
+        authorize().await?;
+        Ok::<_, crate::web::Failure>(directory)
     }
-    fs::DirBuilder::new()
-        .mode(0o700)
-        .create(&stage)
-        .map_err(|_| error(502, "Could not save peer release."))?;
-    extract(&archive, &stage)?;
-    let info = release::verify(&directory.0, id)?;
-    authorize()?;
-    fs::rename(stage, root.join(id)).map_err(|_| error(502, "Could not publish peer release."))?;
-    briefsip_launcher::files::sync_dir(root)
-        .map_err(|_| error(502, "Could not publish peer release."))?;
-    Ok(info)
+    .await;
+    fs::remove_file(&partial).map_err(|_| storage())?;
+    let directory = verified?;
+    fs::rename(directory.0.join(id), root.join(id)).map_err(|_| storage())?;
+    briefsip_launcher::files::sync_dir(root).map_err(|_| storage())?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -376,6 +531,54 @@ mod tests {
         let _ = fs::remove_dir_all(root);
         Ok(result)
     }
+    #[tokio::test]
+    async fn stalled_http_body_reports_transfer_timeout() -> Result<()> {
+        use axum::{body::Body, Router};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .map_err(|_| storage())?;
+        let address = listener.local_addr().map_err(|_| storage())?;
+        let server = tokio::spawn(async move {
+            let route = Router::new().fallback(|| async {
+                let body = async_stream::stream! {
+                    yield Ok::<_, std::convert::Infallible>("part");
+                    std::future::pending::<()>().await;
+                };
+                (
+                    [
+                        ("content-type", "application/gzip"),
+                        ("x-briefsip-sha256", "hash"),
+                    ],
+                    Body::from_stream(body),
+                )
+            });
+            axum::serve(listener, route).await
+        });
+        let result = async {
+            let temporary = Temporary::new(&std::env::temp_dir(), "peer-idle-test")?;
+            let mut file = File::create(temporary.0.join("partial")).map_err(|_| storage())?;
+            let response = reqwest::Client::builder()
+                .no_proxy()
+                .read_timeout(Duration::from_millis(250))
+                .build()
+                .map_err(PeerError::network)?
+                .get(format!("http://{address}"))
+                .send()
+                .await
+                .map_err(PeerError::network)?;
+            let failure = append(&mut file, response, "hash")
+                .await
+                .err()
+                .ok_or_else(storage)?;
+            assert_eq!(failure.code, "peer_transfer_timeout");
+            assert_eq!(file.metadata().map_err(|_| storage())?.len(), 4);
+            Ok(())
+        }
+        .await;
+        server.abort();
+        result
+    }
+
     #[test]
     fn strict_ustar_rejects_links_traversal_duplicates_and_truncation() -> Result<()> {
         assert!(check(&tar("./bin/server", b'0', b"native"))?);
