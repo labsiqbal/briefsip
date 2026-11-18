@@ -132,7 +132,10 @@ pub async fn tool(
         .ok_or_else(|| error(403, "MCP authorization failed."))?
     };
     let call = json!({"id":call_id,"type":"function","function":{"name":name,"arguments":args.to_string()}});
-    let result = tools::run(state, &row, &call).await?;
+    let clock = super::diagnostics::Clock::start(state, turn, call_id);
+    let result = tools::run(state, &row, &call).await;
+    drop(clock);
+    let result = result?;
     if name.starts_with("computer_") {
         use base64::Engine;
         let guard = state.database.lock().map_err(|_| Failure::storage())?;

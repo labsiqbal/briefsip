@@ -275,3 +275,20 @@
 @media (max-width: 767px) {
   .sidebar[role="dialog"] { position: fixed; inset: 0 auto 0 0; z-index: 81; height: 100dvh; max-width: calc(100vw - 48px); }
 }
+
+.activity-step-button {
+  padding: 1px 4px;
+  margin-inline-start: -4px;
+  min-height: 24px;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  color: var(--color-text-primary);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.activity-step-button:hover { background: var(--color-bg-hover); }
+.activity-step-state { margin-inline-start: 8px; color: var(--color-text-secondary); font-size: 12px; }
+.activity-step-state[data-state='Failed'] { color: var(--color-danger-text); }
+.turn-activity__inspect { margin-inline: 8px; }

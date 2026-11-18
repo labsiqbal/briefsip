@@ -2,29 +2,8 @@ use super::*;
 use crate::data::transaction;
 use std::collections::BTreeSet;
 
-pub fn redact(text: &str, secrets: &[String], streaming: bool) -> String {
-    let mut value = text.to_owned();
-    let mut sorted = secrets.iter().filter(|s| !s.is_empty()).collect::<Vec<_>>();
-    sorted.sort_by_key(|v| std::cmp::Reverse(v.len()));
-    for secret in &sorted {
-        value = value.replace(secret.as_str(), "[REDACTED]");
-        let encoded = json!(secret).to_string();
-        if let Some(escaped) = encoded.get(1..encoded.len().saturating_sub(1)) {
-            value = value.replace(escaped, "[REDACTED]");
-        }
-    }
-    if streaming {
-        for secret in sorted {
-            for size in (1..secret.len().min(value.len() + 1)).rev() {
-                if secret.is_char_boundary(size) && value.ends_with(&secret[..size]) {
-                    value.truncate(value.len() - size);
-                    break;
-                }
-            }
-        }
-    }
-    value
-}
+use crate::mcp::secrets::redact;
+
 pub struct Snapshot {
     state: AppState,
     call: i64,
@@ -104,22 +83,66 @@ impl Snapshot {
         }
         Ok(())
     }
-    pub fn tool(&mut self, id: &str, name: &str, state: &str) -> Result<()> {
+    pub fn tool(
+        &mut self,
+        id: &str,
+        name: &str,
+        state: &str,
+        arguments: &Value,
+        result: &Value,
+    ) -> Result<()> {
         if id.is_empty() || id.len() > 300 || name.len() > 2000 || state.len() > 100 {
             return Err(error(502, "Invalid harness tool identity."));
         }
+        let arguments = crate::turns::diagnostics::display(arguments, &self.secrets);
+        let failed = crate::turns::diagnostics::tool_failed(result);
+        let result = crate::turns::diagnostics::display(result, &self.secrets);
+        let name = crate::turns::diagnostics::text(name, &self.secrets);
+        let terminal = matches!(
+            state,
+            "completed"
+                | "done"
+                | "failed"
+                | "declined"
+                | "denied"
+                | "cancelled"
+                | "interrupted"
+                | "error"
+                | "aborted"
+        );
         self.flush()?;
-        let id = format!("tool-{id}");
-        let index = if let Some(index) = self.segments.iter().position(|s| s["id"] == id) {
+        let key = format!("tool-{id}");
+        let index = if let Some(index) = self.segments.iter().position(|s| s["id"] == key) {
             index
         } else {
             if self.segments.len() >= 512 {
                 return Err(error(502, "Coding harness stream has too many segments."));
             }
             self.segments
-                .push(json!({"id":id,"kind":"tool","text":name,"state":state,"final":0}));
+                .push(json!({"id":key,"kind":"tool","text":name,"state":state,"final":0}));
             self.segments.len() - 1
         };
+        {
+            let guard = self.state.database.lock().map_err(|_| Failure::storage())?;
+            let db = &guard.connection;
+            let now = crate::data::iso(db, self.state.config.now())?;
+            transaction(db, || {
+                db.execute(
+                    "INSERT INTO harness_steps(turn,id,name,state) VALUES(?,?,?,?)
+                     ON CONFLICT(turn,id) DO UPDATE SET name=excluded.name,state=excluded.state",
+                    rusqlite::params![self.turn, id, name, state],
+                )?;
+                db.execute(
+                    "INSERT INTO turn_step_diagnostics(turn,id,started,finished,arguments,result,failed) VALUES(?,?,?,?,?,?,?)
+                     ON CONFLICT(turn,id) DO UPDATE SET started=coalesce(started,excluded.started),
+                     finished=coalesce(excluded.finished,finished),arguments=coalesce(excluded.arguments,arguments),
+                     result=coalesce(excluded.result,result),failed=max(failed,excluded.failed)",
+                    rusqlite::params![self.turn, id, (!terminal).then_some(&now), terminal.then_some(&now), arguments, result, failed],
+                )?;
+                Ok(())
+            })?;
+        }
+        self.segments[index]["text"] = json!(name);
         self.segments[index]["state"] = json!(state);
         self.dirty.insert(index);
         self.flush()

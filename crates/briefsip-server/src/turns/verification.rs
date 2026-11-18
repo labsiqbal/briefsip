@@ -1,6 +1,29 @@
 use super::*;
 use sha2::{Digest, Sha256};
 
+pub fn migrate(db: &Connection) -> Result<()> {
+    if !all(db, "PRAGMA table_info(verification_artifacts)", [])?
+        .iter()
+        .any(|column| column["name"] == "file" && column["notnull"] == 1)
+    {
+        return Ok(());
+    }
+    db.execute_batch("SAVEPOINT verification_files")?;
+    let result = db.execute_batch(
+        "ALTER TABLE verification_artifacts RENAME TO verification_artifacts_old;
+         CREATE TABLE verification_artifacts(turn TEXT NOT NULL REFERENCES turns(id),
+             source TEXT NOT NULL,file TEXT REFERENCES files(id),kind TEXT NOT NULL,
+             stamp TEXT NOT NULL,PRIMARY KEY(turn,source)) STRICT;
+         INSERT INTO verification_artifacts SELECT * FROM verification_artifacts_old;
+         DROP TABLE verification_artifacts_old;",
+    );
+    if result.is_err() {
+        db.execute_batch("ROLLBACK TO verification_files")?;
+    }
+    db.execute_batch("RELEASE verification_files")?;
+    Ok(result?)
+}
+
 fn stamp(db: &Connection, turn: &str) -> Result<String> {
     let changes:i64=db.query_row("SELECT count(*) FROM flow_tool_calls WHERE turn=? AND json_extract(call,'$.function.name') IN ('replace_workspace_file','create_workspace_file','delete_workspace_file','create_routine','update_routine','computer_open_url','computer_click','computer_type','computer_key','computer_scroll')",[turn],|r|r.get(0))?;
     let writes:i64=db.query_row("SELECT count(*) FROM harness_steps WHERE turn=? AND (name IN ('Write','Edit','MultiEdit','fileChange') OR name LIKE '%apply_patch%')",[turn],|r|r.get(0))?;
@@ -66,8 +89,6 @@ pub fn command(
     turn: &str,
     id: &str,
     command: &str,
-    output: &str,
-    exit_code: Option<i64>,
     explicit_check: bool,
 ) -> Result<()> {
     let check = explicit_check || check_command(command)?;
@@ -75,23 +96,15 @@ pub fn command(
         .map_err(|_| Failure::storage())?
         .is_match(&shell_command(command)?);
     if check || read {
-        let report = format!(
-            "# Check report\n\nCommand: {}\n\nExit code: {}\n\n```text\n{}\n```\n",
-            super::history::slice(command, 0, 2000),
-            exit_code.map(|n| n.to_string()).unwrap_or("unknown".into()),
-            super::history::slice(output, 0, 16000).replace("```", "'''")
-        );
-        artifact(
-            db,
-            turn,
-            &format!("check:{id}"),
-            if check { "check" } else { "file-check" },
-            if check {
-                "test-summary.md"
-            } else {
-                "file-check.md"
-            },
-            report.as_bytes(),
+        // Shell output belongs to its step. Save the check receipt without a synthetic file.
+        db.execute(
+            "INSERT OR IGNORE INTO verification_artifacts(turn,source,kind,stamp) VALUES(?,?,?,?)",
+            params![
+                turn,
+                format!("check:{id}"),
+                if check { "check" } else { "file-check" },
+                stamp(db, turn)?
+            ],
         )?;
     }
     Ok(())
@@ -119,8 +132,6 @@ pub fn capture(db: &Connection, turn: &str) -> Result<()> {
                 turn,
                 &id,
                 string(&args, "command"),
-                string(&result, "output"),
-                result["exitCode"].as_i64(),
                 args["check"] == true,
             )?;
         }
@@ -233,7 +244,7 @@ mod tests {
              CREATE TABLE generated_files(turn TEXT);
              CREATE TABLE computer_actions(turn TEXT, call_id TEXT, image BLOB);
              CREATE TABLE turn_verification(turn TEXT PRIMARY KEY, review TEXT, kind TEXT, stamp TEXT, nudged INTEGER);
-             CREATE TABLE verification_artifacts(turn TEXT, source TEXT, file TEXT, kind TEXT, stamp TEXT);",
+             CREATE TABLE verification_artifacts(turn TEXT, source TEXT, file TEXT, kind TEXT, stamp TEXT, PRIMARY KEY(turn,source));",
         )?;
         let turn = json!({"id":"turn","text":"Create a result"});
         let profile = json!({});
@@ -252,15 +263,7 @@ mod tests {
             )?;
             Ok(())
         };
-        command(
-            &db,
-            "turn",
-            "native-check",
-            "node result.test.mjs",
-            "1 test passed",
-            Some(0),
-            false,
-        )?;
+        command(&db, "turn", "native-check", "node result.test.mjs", false)?;
         let recorded = Some(json!({"recorded":true,"evidenceInWorkLog":true}));
         assert_eq!(receipt(&db, "turn", "native-check")?, recorded);
         assert!(!nudge(&db, "turn", &turn, &profile)?);
@@ -277,12 +280,7 @@ mod tests {
         assert_eq!(receipt(&db, "turn", "native-check")?, None);
         assert!(nudge(&db, "turn", &turn, &profile)?);
         assert!(!nudge(&db, "turn", &turn, &profile)?);
-        let report: Vec<u8> = db.query_row(
-            "SELECT bytes FROM files WHERE name='test-summary.md'",
-            [],
-            |row| row.get(0),
-        )?;
-        assert!(String::from_utf8_lossy(&report).contains("1 test passed"));
+        assert!(!exists(&db, "SELECT 1 FROM files", [])?);
         tool("capture", "computer_screenshot", json!({}), json!({}))?;
         db.execute(
             "INSERT INTO computer_actions VALUES('turn','capture',?)",

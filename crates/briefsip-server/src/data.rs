@@ -295,6 +295,7 @@ pub fn handles(path: &str) -> bool {
                     | "scripts"
             ]
             | ["api", "threads", _, "panel"]
+            | ["api", "turns", _, "inspect"]
             | ["api", "channels", _, "panel"]
             | [
                 "api",
@@ -329,6 +330,9 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
     let method = request.method().clone();
     let q = query(&request);
     let headers = request.headers().clone();
+    if let ["api", "turns", id, "inspect"] = parts.as_slice() {
+        return crate::turns::inspect(state, id, &method, &headers, &q);
+    }
     if parts.get(3) == Some(&"panel") {
         if headers.contains_key("authorization")
             || headers.contains_key("origin") && !origin(state, &headers)
@@ -583,6 +587,7 @@ pub async fn canonical(
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/sync", any(crate::dispatch))
+        .route("/api/turns/{id}/inspect", any(crate::dispatch))
         .route("/api/projects/{id}/invitations", any(crate::dispatch))
         .route("/api/invitations/{id}/accept", any(crate::dispatch))
         .route("/api/invitations/{id}/revoke", any(crate::dispatch))
