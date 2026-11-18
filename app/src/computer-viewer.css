@@ -22,7 +22,6 @@
 .computer-viewer__screen.is-controlled { outline: 2px solid var(--color-brand); outline-offset: -2px; }
 .computer-viewer__empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--color-viewer-text); font-size: 13px; text-align: center; padding: 24px; }
 .computer-viewer__empty p { margin: 0; }
-.computer-viewer__empty-hint { font-size: 12px; }
 .computer-viewer__spinner { width: 24px; height: 24px; }
 .computer-viewer__text { display: flex; flex-direction: column; gap: 12px; width: 340px; max-width: 100%; }
 .computer-viewer__text .k-row-actions { justify-content: flex-end; }
