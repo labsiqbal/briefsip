@@ -193,7 +193,7 @@ export async function rustConnectorFixture(platform: Platform, root: string, age
               const row = db.prepare('SELECT offset FROM telegram_binding WHERE id=1').get();
               if (Number(row?.offset) > message.update_id) return true;
             } catch (error) {
-              if (!(error instanceof Error) || !/unable to open|no such table/.test(error.message)) throw error;
+              if (!(error instanceof Error) || !/unable to open|no such table|database is locked/.test(error.message)) throw error;
             }
             check();
           }, 'Telegram update was not committed');
