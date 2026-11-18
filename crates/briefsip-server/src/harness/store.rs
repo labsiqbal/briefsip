@@ -380,12 +380,10 @@ async fn execute(
         .map(|v| string(&v, "model").to_owned())
         .unwrap_or_default()
     };
-    let instructions = messages
-        .iter()
-        .filter(|v| v["role"] == "system")
-        .map(|v| string(v, "content"))
-        .collect::<Vec<_>>()
-        .join("\n\n");
+    let instructions = {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        turns::harness::instructions(state, &guard.connection, turn, runtime, &native_model)?
+    };
     let mut prompt = messages
         .iter()
         .map(|v| {
@@ -400,6 +398,14 @@ async fn execute(
         })
         .collect::<Vec<_>>()
         .join("\n\n");
+    prompt = format!(
+        "{}\n\n{prompt}",
+        if saved.is_some() {
+            "Continuing the saved harness conversation. The Briefsip transcript below is reference context; follow its latest user request."
+        } else {
+            "Briefsip owns tasks and approvals. Use the briefsip MCP server for agent communication and delegation."
+        }
+    );
     if messages
         .iter()
         .any(|v| v["role"] == "system" && string(v, "content").contains("Interrupted task context"))
@@ -412,20 +418,21 @@ async fn execute(
             "Coding harness context exceeds 2 MiB. Start a new conversation.",
         ));
     }
+    let mut session = saved
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let mut args = if runtime == "codex" {
         vec!["app-server".into()]
     } else if runtime == "claude" {
         let shim = std::env::current_exe().map_err(|_| Failure::storage())?;
-        let mut args=vec!["--print".into(),"--output-format".into(),"stream-json".into(),"--input-format".into(),"stream-json".into(),"--verbose".into(),"--include-partial-messages".into(),"--permission-mode".into(),"default".into(),"--setting-sources".into(),"".into(),"--strict-mcp-config".into(),"--mcp-config".into(),json!({"mcpServers":{"briefsip":{"type":"stdio","command":shim,"args":["--mcp-stdio"]}}}).to_string()];
+        let mut args=vec!["--print".into(),"--output-format".into(),"stream-json".into(),"--input-format".into(),"stream-json".into(),"--verbose".into(),"--include-partial-messages".into(),"--permission-prompt-tool".into(),"stdio".into(),"--permission-mode".into(),"default".into(),"--setting-sources".into(),"".into(),"--strict-mcp-config".into(),"--append-system-prompt".into(),format!("{instructions}\nUse briefsip run_shell for workspace commands. Native Bash requires approval. run_shell provides a separate workspace sandbox without host credentials or network. Discover tools needed for the task together; reuse loaded tools and their receipts."),"--mcp-config".into(),json!({"mcpServers":{"briefsip":{"type":"stdio","command":shim,"args":["--mcp-stdio"]}}}).to_string()];
         args.extend([
             if saved.is_some() {
                 "--resume".into()
             } else {
                 "--session-id".into()
             },
-            saved
-                .clone()
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            session.clone(),
         ]);
         if !native_model.is_empty() {
             args.extend(["--model".into(), native_model.clone()]);
@@ -472,7 +479,6 @@ async fn execute(
     }
     let mut process = Process::launch(&executable, &args, workspace, &env)?;
     let mut seq = 0;
-    let mut session = String::new();
     if runtime == "codex" {
         rpc(&mut process,&mut seq,"initialize",json!({"clientInfo":{"name":"briefsip","title":"Briefsip","version":"0.1.0"},"capabilities":{"experimentalApi":true}})).await?;
         process.send(json!({"method":"initialized"})).await?;
@@ -508,7 +514,7 @@ async fn execute(
         .await?;
         session = string(&response["thread"], "id").into();
     } else if runtime == "claude" {
-        process.send(json!({"type":"control_request","request_id":"init","request":{"subtype":"initialize","hooks":{"PreToolUse":[{"hookCallbackIds":["approval"],"onFailure":"block"}],"Stop":[{"hookCallbackIds":["stop"]}]},"appendSystemPrompt":instructions}})).await?;
+        process.send(json!({"type":"control_request","request_id":"init","request":{"subtype":"initialize","hooks":{"PreToolUse":[{"hookCallbackIds":["approval"],"onFailure":"block"}],"Stop":[{"hookCallbackIds":["stop"]}]}}})).await?;
         loop {
             let value = process.next().await?;
             if value["type"] == "control_response"
@@ -517,8 +523,7 @@ async fn execute(
             {
                 return Err(error(502,"Claude Code lacks fail-closed permission hooks. Update the host executable before using this runtime."));
             }
-            if value["type"] == "system" && value["subtype"] == "init" {
-                session = string(&value, "session_id").into();
+            if value["type"] == "control_response" && value["response"]["request_id"] == "init" {
                 break;
             }
         }
@@ -634,14 +639,16 @@ async fn execute(
             &session,
         )?;
     }
+    let native_secrets = secrets.clone();
     let mut snapshot = Snapshot::new(state, call, string(turn, "id"), secrets);
     let mut usage = [None, None];
     let mut acp_segment = 0;
     let mut claude_message = String::new();
+    let mut claude_tools = HashMap::<String, (String, Option<String>)>::new();
     for pass in 0..2 {
         let prompt_id;
         if runtime == "codex" {
-            let context = json!({"briefsip":{"kind":"application","value":instructions}});
+            let context = json!({"briefsip_001":{"kind":"application","value":instructions}});
             let result=rpc(&mut process,&mut seq,"turn/start",json!({"threadId":session,"additionalContext":context,"input":[{"type":"text","text":prompt}],"cwd":workspace,"approvalPolicy":"on-request","sandboxPolicy":if binding.write{json!({"type":"workspaceWrite","writableRoots":[workspace],"networkAccess":false,"excludeTmpdirEnvVar":true,"excludeSlashTmp":true})}else{json!({"type":"readOnly"})}})).await?;
             if !result["turn"]["id"].is_string() {
                 return Err(process::stopped());
@@ -755,6 +762,21 @@ async fn execute(
                         },
                     )?;
                 }
+                if method == "item/completed" && p["item"]["type"] == "commandExecution" {
+                    let item = &p["item"];
+                    if item.get("exitCode").is_some() {
+                        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+                        turns::harness::command(
+                            &guard.connection,
+                            string(turn, "id"),
+                            string(item, "id"),
+                            &redact(string(item, "command"), &native_secrets, false),
+                            &redact(string(item, "aggregatedOutput"), &native_secrets, false),
+                            item["exitCode"].as_i64(),
+                            false,
+                        )?;
+                    }
+                }
                 if method == "thread/tokenUsage/updated" {
                     pass_usage = [
                         p["tokenUsage"]["last"]["inputTokens"].as_i64(),
@@ -795,10 +817,17 @@ async fn execute(
                             let read = ["Read", "Glob", "Grep", "LS"].contains(&name);
                             let write =
                                 ["Write", "Edit", "MultiEdit", "NotebookEdit"].contains(&name);
+                            let glob_outside = name == "Glob"
+                                && args["pattern"].as_str().is_some_and(|p| {
+                                    Path::new(p).is_absolute() || p.split('/').any(|c| c == "..")
+                                });
                             let allowed = name.starts_with("mcp__briefsip__")
                                 || ["ToolSearch", "TodoWrite"].contains(&name)
                                 || (read || write && binding.write)
-                                    && path.map(|p| inside(workspace, p)).unwrap_or(read);
+                                    && !glob_outside
+                                    && path
+                                        .or(if read { Some(".") } else { None })
+                                        .is_some_and(|p| inside(workspace, p));
                             let allow = if allowed {
                                 true
                             } else {
@@ -856,6 +885,15 @@ async fn execute(
                                     snapshot.text(string(block, "text"), Some(&id), true)?;
                                 }
                                 if block["type"] == "tool_use" {
+                                    claude_tools.insert(
+                                        string(block, "id").into(),
+                                        (
+                                            string(block, "name").into(),
+                                            (block["name"] == "Bash").then(|| {
+                                                string(&block["input"], "command").to_owned()
+                                            }),
+                                        ),
+                                    );
                                     tool(
                                         state,
                                         string(turn, "id"),
@@ -873,18 +911,44 @@ async fn execute(
                         if let Some(content) = value["message"]["content"].as_array() {
                             for block in content {
                                 if block["type"] == "tool_result" {
+                                    let Some((name, command)) =
+                                        claude_tools.remove(string(block, "tool_use_id"))
+                                    else {
+                                        continue;
+                                    };
                                     tool(
                                         state,
                                         string(turn, "id"),
                                         &mut snapshot,
                                         string(block, "tool_use_id"),
-                                        "Bash",
+                                        &name,
                                         if block["is_error"] == true {
                                             "failed"
                                         } else {
                                             "completed"
                                         },
                                     )?;
+                                    if let Some(command) = command
+                                        .or_else(|| (name == "Read").then(|| "cat file".into()))
+                                    {
+                                        let guard = state
+                                            .database
+                                            .lock()
+                                            .map_err(|_| Failure::storage())?;
+                                        let output = block["content"]
+                                            .as_str()
+                                            .map(str::to_owned)
+                                            .unwrap_or_else(|| block["content"].to_string());
+                                        turns::harness::command(
+                                            &guard.connection,
+                                            string(turn, "id"),
+                                            string(block, "tool_use_id"),
+                                            &redact(&command, &native_secrets, false),
+                                            &redact(&output, &native_secrets, false),
+                                            Some(if block["is_error"] == true { 1 } else { 0 }),
+                                            false,
+                                        )?;
+                                    }
                                 }
                             }
                         }

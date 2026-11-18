@@ -26,6 +26,21 @@ async function fixture(runtime: HarnessRuntime, write = true, room = false) {
   return {directory,workspace,agent,path,profile,request,until,send,minted,revoked,options,get app(){return app;}, async editDatabase(edit: (db: DatabaseSync) => void){await app.close();const db=new DatabaseSync(options.database);try{edit(db);}finally{db.close();app=await startApp(options);}},async restart(){await app.close();app=await startApp(options);},async close(){await app.close();rmSync(directory,{recursive:true,force:true});}};
 }
 for(const runtime of ['codex','claude'] as const) {
+  test(`${runtime}: native check receipt prevents a second verification turn`, async () => {
+    const f = await fixture(runtime);
+    try {
+      const id = await f.send('Write a result NATIVE_CHECK'), done = await f.until(id, row => ['done','failed'].includes(row.status));
+      assert.equal(done.status, 'done', done.error);
+      assert.equal(done.activity.artifacts.filter((a: any) => a.kind === 'check').length, 1);
+      assert(done.activity.harness.some((step: any) => step.name === (runtime === 'codex' ? 'fileChange' : 'Write') && step.state === 'completed'));
+      const log = readFileSync(join(f.workspace, 'fake-log.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      assert.equal(log.filter(row => row.type === 'turn').length, 1);
+      assert(!done.activity.harness.some((step: any) => step.name === 'Verify result'));
+      const contexts = log.filter(row => row.context).map(row => JSON.stringify(row.context));
+      assert(contexts.every(text => text.includes(`through the ${runtime} runtime`)));
+      assert(contexts.every(text => text.includes('read_routine to verify saved fields')));
+    } finally { await f.close(); }
+  });
   test(`${runtime}: gated segments replace only final answer, coalesce writes and restore without replay`, async () => {
     const f = await fixture(runtime);
     try {

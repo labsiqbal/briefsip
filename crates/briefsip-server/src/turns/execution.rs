@@ -94,7 +94,16 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         let early_replies = super::messaging::capture(db, id)?;
         room::admit(db, id)?;
         let mut system =
-            base_instructions(string(&profile, "model"), string(&turn, "agent"), &tools)?;
+            if profile["runtime"] == "api" || crate::automation::model(db, id)?.is_some() {
+                base_instructions(
+                    "api",
+                    string(&profile, "model"),
+                    string(&turn, "agent"),
+                    &tools,
+                )?
+            } else {
+                String::new()
+            };
         if let Some(channel) = turn["channel"].as_str() {
             let room = one(
                 db,
@@ -647,7 +656,12 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         }
     }
 }
-fn base_instructions(model: &str, agent: &str, tools: &[Value]) -> Result<String> {
+pub(super) fn base_instructions(
+    runtime: &str,
+    model: &str,
+    agent: &str,
+    tools: &[Value],
+) -> Result<String> {
     let v: Value =
         serde_json::from_str(include_str!("instructions.json")).map_err(|_| Failure::storage())?;
     let mut text = string(&v, "base")
@@ -655,7 +669,17 @@ fn base_instructions(model: &str, agent: &str, tools: &[Value]) -> Result<String
             "BRIEFSIP_MODEL",
             &model.split_whitespace().collect::<Vec<_>>().join(" "),
         )
-        .replace("BRIEFSIP_AGENT", agent);
+        .replace("BRIEFSIP_AGENT", agent)
+        .replace(
+            "through the api runtime",
+            &format!("through the {runtime} runtime"),
+        );
+    if tools
+        .iter()
+        .any(|t| t["function"]["name"] == "computer_screenshot")
+    {
+        text = text.replace("Visual verification is unavailable this turn. Use available nonvisual checks and report this limit; no visual tool discovery is needed.", "Computer screenshots are available for visual checks.");
+    }
     for row in v["guidance"].as_array().ok_or_else(Failure::storage)? {
         let active = row[0]
             .as_array()

@@ -1,3 +1,4 @@
+pub use super::verification::command;
 use super::*;
 use rusqlite::OptionalExtension;
 pub async fn drain(state: &AppState) -> Result<()> {
@@ -37,8 +38,82 @@ pub fn reminder(db: &Connection, turn: &Value, profile: &Value) -> Result<Option
 pub fn peer(db: &Connection, turn: &str) -> Result<bool> {
     exists(db,"WITH RECURSIVE a(id,parent,origin) AS(SELECT id,parent,origin FROM turns WHERE id=? UNION SELECT t.id,t.parent,t.origin FROM turns t JOIN a ON a.parent=t.id) SELECT 1 FROM a WHERE origin LIKE 'peer:%'",[turn])
 }
+pub fn instructions(
+    state: &AppState,
+    db: &Connection,
+    turn: &Value,
+    runtime: &str,
+    model: &str,
+) -> Result<String> {
+    let mut specs = specs(state, db, turn)?;
+    if !state.computer.enabled
+        || !exists(
+            db,
+            "SELECT 1 FROM agent_computers WHERE agent=? AND enabled=1",
+            [string(turn, "agent")],
+        )?
+    {
+        specs.retain(|t| !string(&t["function"], "name").starts_with("computer_"));
+    }
+    if !super::profile::setup(db, turn)? {
+        let features: Vec<Value> = serde_json::from_str(include_str!("../mcp/feature-tools.json"))
+            .map_err(|_| Failure::storage())?;
+        specs.extend(
+            features
+                .iter()
+                .map(|f| json!({"function":{"name":f["name"]}})),
+        );
+    }
+    let shell = match runtime {
+        "codex" => "exec_command",
+        "claude" => "Bash",
+        "pi" => "bash",
+        _ => "",
+    };
+    specs.push(json!({"function":{"name":shell}}));
+    execution::base_instructions(runtime, model, string(turn, "agent"), &specs)
+}
 pub fn specs(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Value>> {
-    tools::offered(state, db, turn)
+    let mut specs: Vec<Value> =
+        serde_json::from_str(include_str!("tool-specs.json")).map_err(|_| Failure::storage())?;
+    specs.retain(|t| {
+        [
+            "verify_result",
+            "create_text_file",
+            "open_file_in_panel",
+            "ask_user",
+            "edit_profile",
+            "run_shell",
+        ]
+        .contains(&string(&t["function"], "name"))
+    });
+    for spec in &mut specs {
+        if spec["function"]["name"] == "run_shell" {
+            spec["function"]["description"] = json!(string(&spec["function"], "description")
+                .replace(
+                    "after command approval",
+                    "with approval for sensitive commands"
+                ));
+        }
+    }
+    specs.extend(crate::mcp::execution::specs()?);
+    specs.extend(
+        crate::computer::actions::tools(state.computer.width, state.computer.height)
+            .as_array()
+            .ok_or_else(Failure::storage)?
+            .iter()
+            .cloned(),
+    );
+    if super::profile::setup(db, turn)? {
+        specs.retain(|t| ["edit_profile", "ask_user"].contains(&string(&t["function"], "name")));
+        for spec in &mut specs {
+            if spec["function"]["name"] == "edit_profile" {
+                spec["function"]["parameters"]["required"] =
+                    json!(["revision", "name", "instructions"]);
+            }
+        }
+    }
+    Ok(specs)
 }
 pub async fn tool(
     state: &AppState,

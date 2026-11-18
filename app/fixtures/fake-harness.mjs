@@ -17,15 +17,21 @@ let session = (hasResume ? (arg('--resume') ?? process.argv.find(value => value.
 const notify = (method, params) => send({ method, params: { threadId: session, ...params } });
 function delta(text) { if (codex) notify('item/agentMessage/delta', { delta: text }); else send({ type: 'stream_event', session_id: session, uuid: randomUUID(), parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } } }); }
 function finish(allowed = true) {
+  const check = prompt.includes('NATIVE_CHECK');
   if (codex) {
-    notify('item/completed', { item: { id: 'shell', type: 'commandExecution', command: 'echo hello', status: allowed ? 'completed' : 'declined' } });
+    if (check) notify('item/completed', { item: { id: 'edit', type: 'fileChange', status: 'completed' } });
+    notify('item/completed', { item: { id: 'shell', type: 'commandExecution', command: check ? 'node --test fixture.test.mjs' : 'echo hello', status: allowed ? 'completed' : 'declined', ...(check ? { aggregatedOutput: 'Native check passed.', exitCode: 0 } : {}) } });
     delta(allowed ? 'finished' : 'denied');
     if (prompt.includes('FINAL_SECRET')) { delta(' test-mcp-session-'); delta('token'); }
     if (prompt.includes('FINAL_PROVIDER_SECRET') && process.env.BRIEFSIP_PROVIDER_KEY) { const key = process.env.BRIEFSIP_PROVIDER_KEY; delta(key.slice(0, 8)); delta(key.slice(8)); }
     notify('thread/tokenUsage/updated', { tokenUsage: { last: { inputTokens: 11, outputTokens: 7 } } });
     notify('turn/completed', { turn: { id: 'fake-turn', status: 'completed' } });
   } else {
-    send({ type: 'assistant', uuid: randomUUID(), session_id: session, parent_tool_use_id: null, message: { id: 'm1', role: 'assistant', type: 'message', content: [{ type: 'tool_use', id: 'shell', name: 'Bash', input: { command: 'echo hello' } }], model: 'fake', stop_reason: 'tool_use', stop_sequence: null, usage: { input_tokens: 11, output_tokens: 7 } } });
+    if (check) {
+      send({ type: 'assistant', message: { id: 'edit', content: [{ type: 'tool_use', id: 'edit', name: 'Write', input: { file_path: 'result.txt', content: 'checked' } }] } });
+      send({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'edit', content: 'File saved.' }] } });
+    }
+    send({ type: 'assistant', uuid: randomUUID(), session_id: session, parent_tool_use_id: null, message: { id: 'm1', role: 'assistant', type: 'message', content: [{ type: 'tool_use', id: 'shell', name: 'Bash', input: { command: check ? 'node --test fixture.test.mjs' : 'echo hello' } }], model: 'fake', stop_reason: 'tool_use', stop_sequence: null, usage: { input_tokens: 11, output_tokens: 7 } } });
     send({ type: 'user', uuid: randomUUID(), session_id: session, parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'shell', content: 'fake result', is_error: !allowed }] } });
     delta(allowed ? 'finished' : 'denied');
     if (prompt.includes('FINAL_SECRET')) { delta(' test-mcp-session-'); delta('token'); }
@@ -105,14 +111,16 @@ for await (const line of createInterface({ input: process.stdin })) {
       if (request.subtype === 'initialize') {
         callback = request.hooks?.PreToolUse?.[0]?.hookCallbackIds?.[0] ?? '';
         stopCallback = request.hooks?.Stop?.[0]?.hookCallbackIds?.[0] ?? '';
-        log({ type: 'init', resume: hasResume, callback: !!callback, context: request.appendSystemPrompt });
+        log({ type: 'init', resume: hasResume, callback: !!callback, context: arg('--append-system-prompt') ?? request.appendSystemPrompt });
         const config = JSON.parse(arg('--mcp-config')); assert.equal(config.mcpServers.briefsip.type, 'stdio'); assert(process.env.BRIEFSIP_MCP_TOKEN); assert(!JSON.stringify(config).includes(process.env.BRIEFSIP_MCP_TOKEN));
         send({ type: 'control_response', response: { subtype: 'success', request_id: value.request_id, response: { commands: [], models: [], account: {}, hook_on_failure_supported: true, hooks_applied: true } } });
-        send({ type: 'system', subtype: 'init', session_id: session, uuid: randomUUID(), cwd: process.cwd(), tools: [], mcp_servers: [], model: 'fake', permissionMode: 'default', apiKeySource: 'none', slash_commands: [] });
       } else if (request.subtype === 'interrupt') { log({ interrupted: true }); send({ type: 'control_response', response: { subtype: 'success', request_id: value.request_id, response: {} } }); }
       else send({ type: 'control_response', response: { subtype: 'success', request_id: value.request_id, response: {} } });
     }
-    if (value.type === 'user') run(typeof value.message.content === 'string' ? value.message.content : value.message.content.map(block => block.text ?? '').join('\n'));
+    if (value.type === 'user') {
+      send({ type: 'system', subtype: 'init', session_id: session, uuid: randomUUID(), cwd: process.cwd(), tools: [], mcp_servers: [], model: 'fake', permissionMode: 'default', apiKeySource: 'none', slash_commands: [] });
+      run(typeof value.message.content === 'string' ? value.message.content : value.message.content.map(block => block.text ?? '').join('\n'));
+    }
     if (value.type === 'control_response' && value.response.request_id === 'sv-stop') { log({ type: 'stop-hook', decision: value.response.response?.decision }); run(value.response.response?.reason ?? 'No reminder.'); }
     if (value.type === 'control_response' && value.response.request_id === approvalId) { const decision = value.response.response?.hookSpecificOutput?.permissionDecision; log({ decision }); finish(decision === 'allow'); }
   }

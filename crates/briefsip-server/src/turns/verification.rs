@@ -61,6 +61,41 @@ fn shell_command(command: &str) -> Result<String> {
 pub fn check_command(command: &str) -> Result<bool> {
     Ok(regex::Regex::new(r"(?:^|[;&|])\s*(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test(?::[\w-]+)?|build|lint|check)|pytest|vitest|jest|node\s+(?:(?:--[^\s]+\s+)*--test\b|[\w./-]+\.(?:test|spec)\.[cm]?js\b)|cargo\s+(?:test|check|build)|go\s+(?:test|build)|python3?\s+-m\s+(?:unittest|pytest)|make\s+(?:test|check|build))\b").map_err(|_|Failure::storage())?.is_match(&shell_command(command)?))
 }
+pub fn command(
+    db: &Connection,
+    turn: &str,
+    id: &str,
+    command: &str,
+    output: &str,
+    exit_code: Option<i64>,
+    explicit_check: bool,
+) -> Result<()> {
+    let check = explicit_check || check_command(command)?;
+    let read = regex::Regex::new(r"(?:^|[;&|]\s*)(?:cat|head|tail|sed|wc|stat)\s")
+        .map_err(|_| Failure::storage())?
+        .is_match(&shell_command(command)?);
+    if check || read {
+        let report = format!(
+            "# Check report\n\nCommand: {}\n\nExit code: {}\n\n```text\n{}\n```\n",
+            super::history::slice(command, 0, 2000),
+            exit_code.map(|n| n.to_string()).unwrap_or("unknown".into()),
+            super::history::slice(output, 0, 16000).replace("```", "'''")
+        );
+        artifact(
+            db,
+            turn,
+            &format!("check:{id}"),
+            if check { "check" } else { "file-check" },
+            if check {
+                "test-summary.md"
+            } else {
+                "file-check.md"
+            },
+            report.as_bytes(),
+        )?;
+    }
+    Ok(())
+}
 pub fn capture(db: &Connection, turn: &str) -> Result<()> {
     let mut statement=db.prepare("SELECT f.call_id,f.call,f.result,c.image FROM flow_tool_calls f LEFT JOIN computer_actions c ON c.turn=f.turn AND c.call_id=f.call_id WHERE f.turn=?")?;
     let rows = statement
@@ -73,41 +108,21 @@ pub fn capture(db: &Connection, turn: &str) -> Result<()> {
             ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    let reads = regex::Regex::new(r"(?:^|[;&|]\s*)(?:cat|head|tail|sed|wc|stat)\s")
-        .map_err(|_| Failure::storage())?;
     for (id, call, result, image) in rows {
         let call: Value = serde_json::from_str(&call).map_err(|_| Failure::storage())?;
         let result: Value = serde_json::from_str(&result).map_err(|_| Failure::storage())?;
         if call["function"]["name"] == "run_shell" && result.get("error").is_none() {
             let args: Value = serde_json::from_str(string(&call["function"], "arguments"))
                 .map_err(|_| Failure::storage())?;
-            let command = string(&args, "command");
-            let check = args["check"] == true || check_command(command)?;
-            let read = reads.is_match(&shell_command(command)?);
-            if check || read {
-                let report = format!(
-                    "# Check report\n\nCommand: {}\n\nExit code: {}\n\n```text\n{}\n```\n",
-                    super::history::slice(command, 0, 2000),
-                    result["exitCode"]
-                        .as_i64()
-                        .map(|n| n.to_string())
-                        .unwrap_or("unknown".into()),
-                    super::history::slice(string(&result, "output"), 0, 16000)
-                        .replace("```", "'''")
-                );
-                artifact(
-                    db,
-                    turn,
-                    &format!("check:{id}"),
-                    if check { "check" } else { "file-check" },
-                    if check {
-                        "test-summary.md"
-                    } else {
-                        "file-check.md"
-                    },
-                    report.as_bytes(),
-                )?;
-            }
+            command(
+                db,
+                turn,
+                &id,
+                string(&args, "command"),
+                string(&result, "output"),
+                result["exitCode"].as_i64(),
+                args["check"] == true,
+            )?;
         }
         if let Some(image) = image {
             artifact(
