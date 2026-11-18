@@ -44,7 +44,9 @@ console.log(JSON.stringify({jsonrpc:'2.0',id:call.id,result}));
     const channel = await post('/api/channels', { id: randomUUID(), name: 'Fixture room', members: [agent.id], lead: agent.id, instructions: 'Help.' });
     assert.equal((await (await fetch(app.origin + `/api/channels/${channel.id}/panel`, { headers: { Origin: app.origin } })).json()).computer, null);
     const metrics = await (await fetch(app.origin + '/api/host-metrics', { headers: { Origin: app.origin } })).json();
-    assert.equal(metrics.process.memoryLimit, process.constrainedMemory() || null);
+    // Node reports an unlimited cgroup as UINT64_MAX; the server reports it as null.
+    const limit = process.constrainedMemory();
+    assert.equal(metrics.process.memoryLimit, limit > 0 && limit < 2 ** 63 ? limit : null);
     assert(metrics.process.availableMemory <= metrics.memory.available);
   } finally {
     await app?.close();
