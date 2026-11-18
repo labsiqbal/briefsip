@@ -430,7 +430,7 @@ pub async fn event(
     let path = request.uri().path().to_owned();
     let parts = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
     *request_id = uuid::Uuid::new_v4().to_string();
-    let _capacity = data::limits::reserve(&path, request.method())?;
+    let _capacity = data::limits::reserve(&path, request.method(), request.headers())?;
     if request.method() != Method::POST {
         return Err(fail(405, "method_not_allowed", "Use POST for events."));
     }

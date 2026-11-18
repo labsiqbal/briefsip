@@ -384,7 +384,8 @@ async fn canonical_request(
     {
         return Err(Failure::new(400, "invalid_route", "Invalid route."));
     }
-    let _capacity = data::limits::reserve(request.uri().path(), request.method())?;
+    let _capacity =
+        data::limits::reserve(request.uri().path(), request.method(), request.headers())?;
     if tasks::device_path(request.uri().path()) {
         return tasks::device(state, request, request_id).await;
     }
@@ -405,11 +406,7 @@ async fn canonical_request(
     let path = request.uri().path().to_owned();
     let method = request.method().clone();
     let body = if method != Method::GET && method != Method::HEAD {
-        let limit = if tasks::result_path(&path) {
-            8388608
-        } else {
-            65536
-        };
+        let limit = data::limits::body_limit(&path, &method, &headers);
         let bytes = axum::body::to_bytes(request.into_body(), limit)
             .await
             .map_err(|_| {

@@ -230,7 +230,13 @@ pub fn device_path(path: &str) -> bool {
     )
 }
 pub fn result_path(path: &str) -> bool {
-    path.ends_with("/reconcile") || path.ends_with("/recovery-results")
+    matches!(
+        path.trim_start_matches('/')
+            .split('/')
+            .collect::<Vec<_>>()
+            .as_slice(),
+        ["api", "tasks", _, "reconcile" | "recovery-results"]
+    )
 }
 pub fn query_allowed(path: &str, method: &Method, query: &[(String, String)]) -> bool {
     let p = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
@@ -261,7 +267,7 @@ pub async fn device(state: &AppState, request: Request, request_id: &str) -> Res
     let path = request.uri().path().to_owned();
     let target = request.uri().to_string();
     let headers = request.headers().clone();
-    let limit = if result_path(&path) { 8388608 } else { 65536 };
+    let limit = data::limits::body_limit(&path, request.method(), &headers);
     let raw = axum::body::to_bytes(request.into_body(), limit)
         .await
         .map_err(|_| {

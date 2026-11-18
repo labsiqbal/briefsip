@@ -5,6 +5,8 @@ static REQUEST: Semaphore = Semaphore::const_new(64);
 static CONTROL: Semaphore = Semaphore::const_new(32);
 static CONTEXT: Semaphore = Semaphore::const_new(1);
 static RESULT: Semaphore = Semaphore::const_new(1);
+const REQUEST_BYTES: usize = 65536;
+const RESULT_BYTES: usize = 8388608;
 fn busy(code: &'static str, message: &'static str) -> Failure {
     let mut failure = Failure::new(429, code, message);
     failure.retryable = true;
@@ -15,7 +17,27 @@ fn permit(lane: &'static Semaphore) -> Result<SemaphorePermit<'static>> {
     lane.try_acquire()
         .map_err(|_| busy("server_capacity", "Server is busy. Try again."))
 }
-pub fn reserve(path: &str, method: &Method) -> Result<Vec<SemaphorePermit<'static>>> {
+pub(crate) fn body_limit(path: &str, method: &Method, headers: &HeaderMap) -> usize {
+    if *method == Method::POST && path == "/api/agents" {
+        return 750000;
+    }
+    if *method == Method::POST && crate::tasks::result_path(path) {
+        let short = !headers.contains_key("transfer-encoding")
+            && crate::text_header(headers, "content-length")
+                .and_then(|length| length.parse::<usize>().ok())
+                .is_some_and(|length| length <= REQUEST_BYTES);
+        if !short {
+            return RESULT_BYTES;
+        }
+    }
+    REQUEST_BYTES
+}
+
+pub fn reserve(
+    path: &str,
+    method: &Method,
+    headers: &HeaderMap,
+) -> Result<Vec<SemaphorePermit<'static>>> {
     let parts = path.split('/').skip(1).collect::<Vec<_>>();
     let recovery = matches!(
         parts.as_slice(),
@@ -55,12 +77,7 @@ pub fn reserve(path: &str, method: &Method) -> Result<Vec<SemaphorePermit<'stati
     if matches!(parts.as_slice(), ["api", "tasks", _, "context"]) {
         permits.push(permit(&CONTEXT)?);
     }
-    if matches!(
-        parts.as_slice(),
-        ["api", "tasks", _, "reconcile" | "recovery-results"]
-    ) && *method != Method::GET
-        && *method != Method::HEAD
-    {
+    if body_limit(path, method, headers) == RESULT_BYTES {
         permits.push(permit(&RESULT)?);
     }
     Ok(permits)
