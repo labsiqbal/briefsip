@@ -309,3 +309,20 @@ pub async fn read(state: &AppState, file: File, q: &[(String, String)]) -> Resul
         _ => Ok(download(name, file.bytes)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn image_headers_identify_only_supported_formats() {
+        let mut png = [0; 24];
+        png[..8].copy_from_slice(&[137, 80, 78, 71, 13, 10, 26, 10]);
+        png[12..16].copy_from_slice(b"IHDR");
+        assert_eq!(image_type(&png), Some("image/png"));
+        assert_eq!(image_type(&[255, 216, 255, 224]), Some("image/jpeg"));
+        assert_eq!(image_type(b"RIFF0000WEBPVP8 "), Some("image/webp"));
+        assert_eq!(image_type(b"<svg></svg>"), None);
+        assert_eq!(image_type(&png[..12]), None);
+    }
+}

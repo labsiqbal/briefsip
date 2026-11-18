@@ -12,7 +12,7 @@ import { decryptMail } from './mail.ts';
 import { digestCommand } from './shared/protocol.ts';
 import sharp from 'sharp';
 import { execFileSync } from 'node:child_process';
-import { createWorkspaceGit } from './workspace-git.ts';
+import { legacyCheckpointFixture as createWorkspaceGit } from './test-support/node-checkpoint-fixture.ts';
 
 async function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-data-gaps-')), database = join(directory, 'db.sqlite');

@@ -311,6 +311,92 @@ pub fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn removal_and_restore_result_loss_preserve_recovery_and_never_replay() -> crate::db::Result<()>
+    {
+        use rusqlite::OptionalExtension;
+        for operation in ["delete_workspace_file", "restore_workspace_file"] {
+            let root =
+                std::env::temp_dir().join(format!("briefsip-rust-writes-{}", uuid::Uuid::new_v4()));
+            fs::create_dir(&root)?;
+            let result = (|| -> crate::db::Result<()> {
+                let db = Connection::open_in_memory()?;
+                db.execute_batch(
+                    "CREATE TABLE turns(id TEXT PRIMARY KEY,agent TEXT,status TEXT);
+                    INSERT INTO turns VALUES ('turn','agent','running');
+                    CREATE TABLE generated_files(turn TEXT);",
+                )?;
+                initialize(&db)?;
+                let binding = crate::config::WorkspaceConfig {
+                    agent: "agent".into(),
+                    directory: root.clone(),
+                    write: true,
+                };
+                let path = root.join("file");
+                fs::write(&path, b"KEEP")?;
+                let mut args =
+                    json!({"path":"file","digest":format!("{:x}", Sha256::digest(b"KEEP"))});
+                if operation == "restore_workspace_file" {
+                    let removed = remove(&root, &args).map_err(|e| e.message)?;
+                    assert_eq!(removed["removed"], true);
+                    args["recoveryPath"] = removed["recoveryPath"].clone();
+                }
+                let call = json!({"id":"fixture","type":"function","function":{"name":operation,"arguments":args.to_string()}});
+                db.execute_batch(
+                    "CREATE TRIGGER lose_result BEFORE INSERT ON flow_tool_calls
+                    BEGIN SELECT RAISE(ABORT,'lost result'); END;",
+                )?;
+                assert!(execute(&db, &binding, "turn", &call, 0).is_err());
+                assert_eq!(path.exists(), operation == "restore_workspace_file");
+                if path.exists() {
+                    assert_eq!(fs::read(&path)?, b"KEEP");
+                }
+                let recovery = fs::read_dir(&root)?
+                    .filter_map(|entry| entry.ok())
+                    .find(|entry| {
+                        entry
+                            .file_name()
+                            .to_string_lossy()
+                            .starts_with(".briefsip-removed-")
+                    })
+                    .ok_or("Recovery directory missing")?
+                    .path()
+                    .join("file");
+                assert_eq!(fs::read(&recovery)?, b"KEEP");
+                assert_eq!(
+                    db.query_row("SELECT result FROM flow_tool_calls", [], |row| row
+                        .get::<_, String>(0))
+                        .optional()?,
+                    None
+                );
+                fs::write(&path, b"NEW")?;
+                db.execute_batch("DROP TRIGGER lose_result")?;
+                initialize(&db)?;
+                initialize(&db)?;
+                let receipt: String = db.query_row(
+                    "SELECT result FROM flow_tool_calls WHERE call_id='fixture'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(serde_json::from_str::<Value>(&receipt)?["uncertain"], true);
+                assert_eq!(
+                    db.query_row("SELECT count(*) FROM flow_tool_calls", [], |row| row
+                        .get::<_, i64>(0))?,
+                    1
+                );
+                let retry = execute(&db, &binding, "turn", &call, 0);
+                assert!(retry.is_err_and(|e| e.message.contains("already attempted")));
+                assert_eq!(fs::read(&path)?, b"NEW");
+                assert_eq!(fs::read(recovery)?, b"KEEP");
+                Ok(())
+            })();
+            fs::remove_dir_all(root)?;
+            result?;
+        }
+        Ok(())
+    }
+
     #[test]
     fn writes_preserve_recovery_bytes_and_never_overwrite_or_follow_links() -> crate::db::Result<()>
     {

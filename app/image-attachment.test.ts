@@ -5,18 +5,11 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { imageType, imagePart, imageLimit } from './image-attachment.ts';
 import type { ProviderFamily } from './test-support/provider-endpoint.ts';
 import { startApp } from './test-bridge.ts';
 
+const imageLimit = 4 * 1024 * 1024;
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZ84AAAAASUVORK5CYII=', 'base64');
-test('image headers and eventual inline bytes are bounded', () => {
-  assert.equal(imageType(png), 'image/png'); assert.equal(imageType(Buffer.from([255,216,255,224])), 'image/jpeg');
-  assert.equal(imageType(Buffer.from('RIFF0000WEBPVP8 ')), 'image/webp'); assert.equal(imageType(Buffer.from('<svg></svg>')), null);
-  assert.equal(imageType(png.subarray(0, 12)), null); assert.throws(() => imagePart(Buffer.concat([png, Buffer.alloc(imageLimit)])));
-  const part = imagePart(png); assert.equal(part.image_url.url, 'data:image/png;base64,' + png.toString('base64'));
-});
-
 for (const family of ['openai-compatible', 'anthropic', 'gemini'] as ProviderFamily[]) test(`${family} image attachments retain scope, bytes, retry identity and bounded rereading`, async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-images-'));
   let mode = 'text', target = '', stage = 0;

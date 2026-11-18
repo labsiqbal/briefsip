@@ -168,8 +168,20 @@ mod tests {
         let mut unknown = form.clone();
         unknown["serverName"] = json!("foreign");
         assert_eq!(elicitation(&unknown), json!({"action":"decline"}));
-        unknown = form;
+        unknown = form.clone();
         unknown["requestedSchema"]["required"] = json!(["missing"]);
         assert_eq!(elicitation(&unknown), json!({"action":"decline"}));
+        let mut empty = form.clone();
+        empty["requestedSchema"] = json!({"type":"object","properties":{}});
+        assert_eq!(elicitation(&empty), json!({"action":"accept","content":{}}));
+        let mut boolean = empty.clone();
+        boolean["requestedSchema"]["properties"]["persist"] = json!({"type":"boolean"});
+        assert_eq!(
+            elicitation(&boolean),
+            json!({"action":"accept","content":{"persist":false}})
+        );
+        empty["mode"] = json!("url");
+        empty["url"] = json!("https://example.com");
+        assert_eq!(elicitation(&empty), json!({"action":"decline"}));
     }
 }

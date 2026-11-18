@@ -1,9 +1,14 @@
 use super::*;
+use std::sync::LazyLock;
 use std::{os::fd::AsRawFd, process::Stdio};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     process::Command,
 };
+
+static COMMAND_REQUIRING_APPROVAL: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"(?i)(?:\b(?:rm|rmdir|shred|dd|mkfs|sudo|su|mount|umount|chmod|chown|kill|pkill|killall|curl|wget|ssh|scp|sftp|sendmail|mail)\b|\bgit\s+(?:push|reset|clean|restore|checkout)\b|\bnpm\s+(?:publish|unpublish|login|token)\b|\b(?:printenv|env)\b|\.(?:ssh|aws|codex)|credentials|secrets?\b)").unwrap_or_else(|_| unreachable!())
+});
 
 pub fn decide(db: &Connection, turn: &str, approval: &str, v: &Value) -> Result<Value> {
     if !closed(v, &["id", "revision", "decision"])
@@ -83,8 +88,7 @@ async fn approval(
             && !harness::peer(&guard.connection, string(turn, "id"))?
     };
     if native {
-        let safe=regex::Regex::new(r"(?i)(?:\b(?:rm|rmdir|shred|dd|mkfs|sudo|su|mount|umount|chmod|chown|kill|pkill|killall|curl|wget|ssh|scp|sftp|sendmail|mail)\b|\bgit\s+(?:push|reset|clean|restore|checkout)\b|\bnpm\s+(?:publish|unpublish|login|token)\b|\b(?:printenv|env)\b|\.(?:ssh|aws|codex)|credentials|secrets?\b)").map_err(|_|Failure::storage())?;
-        if binding.write && !safe.is_match(command) {
+        if binding.write && !COMMAND_REQUIRING_APPROVAL.is_match(command) {
             return Ok(true);
         }
         return crate::harness::approve(
@@ -318,4 +322,35 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value, args: Value) -> R
         result["verification"] = receipt;
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checks_and_edits_stay_automatic_while_sensitive_commands_require_approval() {
+        for command in [
+            "node --test",
+            "npm test",
+            "npm run build",
+            "cat > hello.txt << EOF\nhello\nEOF",
+            "git diff",
+            "python3 clean_csv.py",
+        ] {
+            assert!(!COMMAND_REQUIRING_APPROVAL.is_match(command), "{command}");
+        }
+        for command in [
+            "rm -rf .",
+            "git push",
+            "git reset --hard",
+            "npm publish",
+            "curl https://example.test",
+            "cat ~/.ssh/id_rsa",
+            "printenv",
+            "sendmail someone@example.test",
+        ] {
+            assert!(COMMAND_REQUIRING_APPROVAL.is_match(command), "{command}");
+        }
+    }
 }
