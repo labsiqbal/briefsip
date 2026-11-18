@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { startApp, startCanonicalApp } from './test-bridge.ts';
 import { rustBinary } from './rust-binary.ts';
 import { checkedRestore, restoreWorkspace, workspaceSnapshot } from './test-support/backup.ts';
-import { initializeCanonicalSchema } from './schema.ts';
+import { initializeCanonicalSchema } from './test-support/legacy-schema.ts';
 import { canonicalHttp } from './test-support/canonical-http.ts';
 
 test('canonical server guard fences aliases and processes, releases on SIGKILL and rejects unsafe files', async () => {

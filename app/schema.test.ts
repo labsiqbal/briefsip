@@ -1,7 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { initializeCanonicalSchema, schemaVersion, SCHEMA_VERSION } from './schema.ts';
+import { readFileSync } from 'node:fs';
+import { initializeCanonicalSchema, schemaVersion, SCHEMA_VERSION, migration, migrationV2, migrationV3, migrationV4 } from './test-support/legacy-schema.ts';
+
+test('legacy schema fixture stays byte-identical to Rust migrations', () => {
+  for (const [version, fixture] of [[1, migration], [2, migrationV2], [3, migrationV3], [4, migrationV4]] as const) {
+    const rust = readFileSync(new URL(`../crates/briefsip-server/src/data/legacy-v${version}.sql`, import.meta.url));
+    assert(Buffer.from(fixture).equals(rust), `legacy-v${version}.sql drifted from Node fixture`);
+  }
+});
 
 test('canonical v1 schema initializes empty and current SQLite stores idempotently', () => {
   const db = new DatabaseSync(':memory:');
