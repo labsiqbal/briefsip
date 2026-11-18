@@ -20,15 +20,20 @@ pub fn initialize(db: &Connection) -> Result<()> {
     Ok(())
 }
 fn role(value: &Value) -> String {
-    value
+    let cleaned: String = value
         .as_str()
         .unwrap_or("")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
         .chars()
-        .filter(|c| !c.is_control())
-        .take(60)
+        .filter(|c| !c.is_control() && !matches!(c, '\u{2028}' | '\u{2029}'))
+        .collect();
+    let mut units = 0;
+    cleaned
+        .trim()
+        .chars()
+        .take_while(|c| {
+            units += c.len_utf16();
+            units <= 60
+        })
         .collect()
 }
 pub fn roster(db: &Connection, online_only: bool) -> Result<Vec<Value>> {
@@ -391,6 +396,59 @@ mod tests {
         );
         db.execute("INSERT INTO peer_revocations VALUES('token')", [])?;
         assert!(!messaging_allowed(&db, "token")?);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod roster_tests {
+    use super::*;
+
+    fn fixture(agent: Value) -> Result<Connection> {
+        let db = Connection::open_in_memory()?;
+        db.execute_batch("CREATE TABLE paired_machines(environment_id TEXT,name TEXT,state TEXT,status TEXT,agents TEXT)")?;
+        db.execute(
+            "INSERT INTO paired_machines VALUES ('host','B','paired','online',?)",
+            [json!([agent]).to_string()],
+        )?;
+        Ok(db)
+    }
+
+    #[test]
+    fn address_resolution_keeps_exact_ids_and_excludes_offline_rosters() -> Result<()> {
+        let db = fixture(
+            json!({"id":"agent","name":"Beta","role":"Personal agent","model":"fixture","status":"idle"}),
+        )?;
+        let expected = Some(json!({"kind":"remote","machine":"host","agent":"agent"}));
+        assert_eq!(resolve(&db, "Beta@B")?, expected);
+        assert_eq!(resolve(&db, "agent@host")?, expected);
+        assert_eq!(resolve(&db, "Beta@Unpaired")?, None);
+        let online = roster(&db, true)?;
+        assert_eq!(online[0]["online"], true);
+        assert_eq!(online[0]["machine"], "B");
+        db.execute("UPDATE paired_machines SET status='offline'", [])?;
+        assert!(roster(&db, true)?.is_empty());
+        assert_eq!(resolve(&db, "Beta@B")?, expected);
+        db.execute(
+            "INSERT INTO paired_machines VALUES ('other','B','paired','online','[]')",
+            [],
+        )?;
+        assert_eq!(resolve(&db, "Beta@B")?, None);
+        assert_eq!(resolve(&db, "agent@host")?, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn peer_roles_sanitize_bounded_text_and_default_for_old_summaries() -> Result<()> {
+        assert_eq!(role(&Value::Null), "");
+        assert_eq!(
+            role(&json!("  Personal\n agent\u{0085}\u{2028}  ")),
+            "Personal agent"
+        );
+        assert_eq!(role(&json!("x".repeat(100))), "x".repeat(60));
+        assert_eq!(role(&json!("  Keep  spacing ")), "Keep  spacing");
+        let db = fixture(json!({"id":"agent","name":"Odd","model":"fixture","status":"idle"}))?;
+        assert_eq!(roster(&db, true)?[0]["role"], "");
         Ok(())
     }
 }

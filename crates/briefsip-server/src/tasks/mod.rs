@@ -13,6 +13,19 @@ mod sources;
 pub(crate) mod wait_routes;
 pub(crate) mod waits;
 
+pub(crate) fn device_journal_body(
+    authority: &Value,
+    device: &Value,
+    generation: &Value,
+    entry: &Value,
+) -> Value {
+    recovery::journal_body(authority, device, generation, entry)
+}
+
+pub(crate) fn device_stop_body(stop: &Value) -> Value {
+    recovery::stop_body(stop)
+}
+
 pub fn maintain(state: &AppState) -> Result<()> {
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let db = &guard.connection;

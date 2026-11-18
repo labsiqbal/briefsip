@@ -1,3 +1,4 @@
+pub mod host;
 pub mod waits;
 use crate::{
     auth::Actor,

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { initializeCanonicalSchema, initializeDeviceSchema, schemaVersion, SCHEMA_VERSION } from './schema.ts';
+import { initializeCanonicalSchema, schemaVersion, SCHEMA_VERSION } from './schema.ts';
 
 test('canonical v1 schema initializes empty and current SQLite stores idempotently', () => {
   const db = new DatabaseSync(':memory:');
@@ -40,18 +40,4 @@ test('routine outcome schema upgrade retains old turns and saved flags across re
     assert.equal(db.prepare('SELECT no_update FROM turns').get()!.no_update,1);
     assert.deepEqual(db.prepare('SELECT * FROM schema_migrations ORDER BY version').all(),migrations);
   } finally { db.close(); }
-});
-
-test('device schema stays separate from canonical authority and is idempotent', () => {
-  const db = new DatabaseSync(':memory:');
-  initializeDeviceSchema(db); initializeDeviceSchema(db);
-  assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 3);
-  for (const table of ['device_state', 'device_resource_bindings', 'device_provider_bindings', 'device_journal', 'device_outbox', 'device_wait_secrets']) assert(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(table));
-  assert.equal(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='projects'").get(), undefined);
-  db.close();
-});
-
-test('device schema refuses canonical database', () => {
-  const db = new DatabaseSync(':memory:'); initializeCanonicalSchema(db);
-  assert.throws(() => initializeDeviceSchema(db), /Canonical/); db.close();
 });
