@@ -1,3 +1,6 @@
+import { connectorJournal } from './connector-journal.ts';
+import { runRustConnector } from './rust-connectors-runner.ts';
+import { connectorJournalCommand } from './test-support/connector-journal-command.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
@@ -47,33 +50,32 @@ test('Telegram callback migration preserves prior approval selection and default
 
 test('Telegram offline recovery preserves sent parts and rejects repeated operator decisions', async () => {
   const {mkdtempSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
-  const {spawnSync}=await import('node:child_process');const {telegramJournal}=await import('./telegram-runner.ts');
   const directory=mkdtempSync(join(tmpdir(),'briefsip-telegram-recovery-')),id=randomUUID(),calls:any[]=[];
-  const command=(...args:string[])=>spawnSync(process.execPath,['--experimental-strip-types',new URL('./telegram-runner.ts',import.meta.url).pathname,...args],{encoding:'utf8',env:{...process.env,BRIEFSIP_TELEGRAM_DIRECTORY:directory}});
+  const command=connectorJournalCommand('telegram',directory);
   let lost=true;
   const server=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const body=JSON.parse(raw);calls.push(body);if(calls.length>1&&lost){req.socket.destroy();return;}res.end(JSON.stringify({ok:true,result:{message_id:calls.length,chat:{id:4}}}));});
   await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));const address=server.address();assert(address&&typeof address!=='string');
   const remote=telegramApi('123:'+'x'.repeat(24),`http://127.0.0.1:${address.port}`);
   try{
-    let state=telegramJournal(directory);
+    let state=connectorJournal(directory,'telegram.sqlite');
     try{initializeTelegram(state.db);queueTelegramReply(state.db,id,4,2,'a'.repeat(4096)+'tail');await deliverTelegramReply(state.db,id,remote);assert.equal(command('inspect',id).status,1);}finally{state.close();}
     let inspected=JSON.parse(command('inspect',id).stdout);assert.equal(inspected.reply.status,'uncertain');assert.equal(inspected.reply.part,1);assert.equal(inspected.revision,0);
     assert.equal(command('recover',id,'0','retry').status,1);assert.equal(command('recover',id,'1','retry','--accept-duplicate-risk').status,1);
     assert.equal(command('recover',id,'0','retry','--accept-duplicate-risk').status,0);
-    state=telegramJournal(directory);try{initializeTelegram(state.db);await deliverTelegramReply(state.db,id,remote);}finally{state.close();}
+    state=connectorJournal(directory,'telegram.sqlite');try{initializeTelegram(state.db);await deliverTelegramReply(state.db,id,remote);}finally{state.close();}
     assert.equal(calls.length,3);assert.equal(calls[2].text,'tail');
     assert.equal(command('recover',id,'0','retry','--accept-duplicate-risk').status,1,'Old command cannot retry a newly uncertain attempt');
     inspected=JSON.parse(command('inspect',id).stdout);assert.equal(inspected.revision,1);assert.equal(inspected.decisions[0].status,'uncertain');assert.equal(inspected.decisions[0].part,1);
     lost=false;assert.equal(command('recover',id,'1','retry','--accept-duplicate-risk').status,0);
-    state=telegramJournal(directory);try{initializeTelegram(state.db);await deliverTelegramReply(state.db,id,remote);}finally{state.close();}
+    state=connectorJournal(directory,'telegram.sqlite');try{initializeTelegram(state.db);await deliverTelegramReply(state.db,id,remote);}finally{state.close();}
     inspected=JSON.parse(command('inspect',id).stdout);assert.equal(inspected.reply.status,'sent');assert.equal(inspected.reply.message_ids,'[1,4]');assert.equal(calls[3].text,'tail');
     assert.equal(command('recover',id,'2','retry','--accept-duplicate-risk').status,1);
-    const rejected=randomUUID();state=telegramJournal(directory);try{queueTelegramReply(state.db,rejected,4,2,'Rejected');state.db.prepare("UPDATE telegram_outbox SET status='failed',error='Rejected' WHERE id=?").run(rejected);}finally{state.close();}
+    const rejected=randomUUID();state=connectorJournal(directory,'telegram.sqlite');try{queueTelegramReply(state.db,rejected,4,2,'Rejected');state.db.prepare("UPDATE telegram_outbox SET status='failed',error='Rejected' WHERE id=?").run(rejected);}finally{state.close();}
     assert.equal(command('recover',rejected,'0','discard').status,1);assert.equal(command('recover',rejected,'0','discard','--confirm').status,0);
     inspected=JSON.parse(command('inspect',rejected).stdout);assert.equal(inspected.reply.status,'discarded');assert.equal(inspected.decisions[0].error,'Rejected');
-    state=telegramJournal(directory);try{initializeTelegram(state.db);await deliverTelegramReply(state.db,rejected,remote);}finally{state.close();}assert.equal(calls.length,4);
+    state=connectorJournal(directory,'telegram.sqlite');try{initializeTelegram(state.db);await deliverTelegramReply(state.db,rejected,remote);}finally{state.close();}assert.equal(calls.length,4);
     assert.equal(command('recover',rejected,'1','retry','--accept-duplicate-risk').status,1);
-    const interrupted=randomUUID();state=telegramJournal(directory);try{queueTelegramReply(state.db,interrupted,4,2,'Interrupted');state.db.prepare("UPDATE telegram_outbox SET status='sending' WHERE id=?").run(interrupted);}finally{state.close();}
+    const interrupted=randomUUID();state=connectorJournal(directory,'telegram.sqlite');try{queueTelegramReply(state.db,interrupted,4,2,'Interrupted');state.db.prepare("UPDATE telegram_outbox SET status='sending' WHERE id=?").run(interrupted);}finally{state.close();}
     inspected=JSON.parse(command('inspect',interrupted).stdout);assert.equal(inspected.reply.status,'uncertain');assert.equal(inspected.revision,0);
     assert.equal(command('recover',interrupted,'0','discard','--confirm').status,0);
   }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));rmSync(directory,{recursive:true,force:true});}
@@ -186,16 +188,15 @@ test('Telegram bridge submits once through granted side-thread API and isolates 
 test('Telegram journal refuses concurrent ownership, unsafe files and mismatched bot startup', async () => {
   const {mkdtempSync,mkdirSync,rmSync,writeFileSync,symlinkSync,existsSync} = await import('node:fs');
   const {tmpdir}=await import('node:os');const {join}=await import('node:path');
-  const {telegramJournal,runTelegram}=await import('./telegram-runner.ts');
   const root=mkdtempSync(join(tmpdir(),'briefsip-telegram-lock-'));
   const server=createServer((_req,res)=>res.end(JSON.stringify({ok:true,result:{id:124,is_bot:true}})));
   await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));const address=server.address();assert(address&&typeof address!=='string');
   try{
-    const path=join(root,'safe'),first=telegramJournal(path);initializeTelegram(first.db);
-    assert.throws(()=>telegramJournal(path));first.close();const second=telegramJournal(path);second.close();
+    const path=join(root,'safe'),first=connectorJournal(path,'telegram.sqlite');initializeTelegram(first.db);
+    assert.throws(()=>connectorJournal(path,'telegram.sqlite'));first.close();const second=connectorJournal(path,'telegram.sqlite');second.close();
     const unsafe=join(root,'unsafe');mkdirSync(unsafe,{mode:0o700});writeFileSync(join(root,'outside'),'KEEP');symlinkSync(join(root,'outside'),join(unsafe,'telegram.sqlite'));
-    assert.throws(()=>telegramJournal(unsafe),/private and regular/);assert(!existsSync(join(unsafe,'owner.lock')));
-    await assert.rejects(runTelegram({directory:join(root,'mismatch'),scriptDirectory:join(root,'absent'),agent:randomUUID(),token:'123:'+'x'.repeat(24),users:[4],origin:`http://127.0.0.1:${address.port}`},new AbortController().signal),/identity mismatch/);
+    assert.throws(()=>connectorJournal(unsafe,'telegram.sqlite'),/private and regular/);assert(!existsSync(join(unsafe,'owner.lock')));
+    await assert.rejects(runRustConnector('telegram', {directory:join(root,'mismatch'),scriptDirectory:join(root,'absent'),agent:randomUUID(),token:'123:'+'x'.repeat(24),users:[4],origin:`http://127.0.0.1:${address.port}`},new AbortController().signal),/identity mismatch/);
     assert(!existsSync(join(root,'mismatch','owner.lock')));
   }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));rmSync(root,{recursive:true,force:true});}
 });
@@ -245,7 +246,7 @@ test('Telegram stop cannot cancel another chat and never starts an unsent task',
 
 for(const ask of [false,true])test(`Telegram runner ${ask?'answers a question':'replies directly'} and releases owned journal on shutdown`,async()=>{
   const {mkdtempSync,rmSync,existsSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
-  const {startApp}=await import('./test-bridge.ts');const {runTelegram}=await import('./telegram-runner.ts');
+  const {startApp}=await import('./test-bridge.ts');
   const root=mkdtempSync(join(tmpdir(),'briefsip-telegram-run-')),agent=randomUUID(),controller=new AbortController();
   let modelCalls=0,delivered=0;let answerUpdate:any;const offsets:number[]=[];
   const provider=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const data=JSON.parse(raw);modelCalls++;const question=ask&&!data.messages.some((message:any)=>message.role==='tool');res.end(JSON.stringify({choices:[{finish_reason:question?'tool_calls':'stop',message:question?{tool_calls:[{id:'question',type:'function',function:{name:'ask_user',arguments:JSON.stringify({question:'Proceed?',choices:['Yes','No']})}}]}:{content:'Runner reply'}}]}));});
@@ -260,7 +261,7 @@ for(const ask of [false,true])test(`Telegram runner ${ask?'answers a question':'
   const timeout=setTimeout(()=>controller.abort(),10000);
   try{
     for(const [path,body]of [['/api/agents',{runtime:'api', id:agent,name:'Runner',model:'fixture',instructions:'Help'}],[`/api/agents/${agent}/scripts`,{id:randomUUID(),revision:0,enabled:true}]]as const){const response=await fetch(app.origin+path,{method:'POST',headers:{Origin:app.origin,'Content-Type':'application/json'},body:JSON.stringify(body)});assert(response.ok);await response.json();}
-    await runTelegram({directory:join(root,'state'),scriptDirectory:join(root,'scripts'),agent,token:'123:'+'x'.repeat(24),users:[4],origin:`http://127.0.0.1:${ta.port}`},controller.signal);
+    await runRustConnector('telegram', {directory:join(root,'state'),scriptDirectory:join(root,'scripts'),agent,token:'123:'+'x'.repeat(24),users:[4],origin:`http://127.0.0.1:${ta.port}`},controller.signal);
     assert.equal(modelCalls,ask?2:1);assert.equal(delivered,ask?3:1);assert(offsets.includes(8));assert(!existsSync(join(root,'state','owner.lock')));
     const journal=new DatabaseSync(join(root,'state','telegram.sqlite'));try{assert.equal(journal.prepare('SELECT status FROM telegram_outbox').get()!.status,'sent');}finally{journal.close();}
   }finally{clearTimeout(timeout);controller.abort();await app.close();provider.closeAllConnections();telegram.closeAllConnections();await Promise.all([new Promise<void>(resolve=>provider.close(()=>resolve())),new Promise<void>(resolve=>telegram.close(()=>resolve()))]);rmSync(root,{recursive:true,force:true});}

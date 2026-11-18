@@ -1,3 +1,4 @@
+import { connectorJournalCommand } from './test-support/connector-journal-command.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -99,9 +100,9 @@ test('Slack status and stop scope to requester root and preserve cancellation id
 });
 
 test('Slack offline recovery pins revisions, retains confirmed chunks and requires explicit CLI confirmation',async()=>{
- const {spawnSync}=await import('node:child_process');const {connectorJournal}=await import('./connector-journal.ts');
+ const {connectorJournal}=await import('./connector-journal.ts');
  const directory=mkdtempSync(join(tmpdir(),'briefsip-slack-recovery-')),id=randomUUID();let owner=connectorJournal(directory,'slack.sqlite');let closed=false,calls=0;
- const cli=(...args:string[])=>spawnSync(process.execPath,['--experimental-strip-types','slack-runner.ts',...args],{cwd:import.meta.dirname,env:{...process.env,BRIEFSIP_SLACK_DIRECTORY:directory},encoding:'utf8'});
+ const cli=connectorJournalCommand('slack',directory);
  const remote=async()=>{calls++;if(calls>1)throw new SlackError(false);return {channel:'DCHAT',ts:'1700000001.000001'};};
  try{
   initializeSlack(owner.db);owner.db.prepare('INSERT INTO slack_outbox(id,channel,sender,root,text) VALUES (?,?,?,?,?)').run(id,'DCHAT','UUSER','1700000000.000001','x'.repeat(5000));
@@ -165,14 +166,14 @@ test('Slack session cooldown survives abort and reopen without blocking other me
 });
 
 test('Slack startup cancellation releases lock and status retains authentication cooldown',async()=>{
- const {spawnSync}=await import('node:child_process');const root=mkdtempSync(join(tmpdir(),'briefsip-slack-start-stop-')),directory=join(root,'state'),controller=new AbortController();let requests=0;
+ const root=mkdtempSync(join(tmpdir(),'briefsip-slack-start-stop-')),directory=join(root,'state'),controller=new AbortController();let requests=0;
  const server=createServer(async(req,res)=>{for await(const _ of req){}requests++;res.writeHead(429,{'Retry-After':'60'});res.end('Wait');});await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const address=server.address();assert(address&&typeof address!=='string');
  const timeout=setTimeout(()=>controller.abort(),5000);
  try{
   const running=runSlack({directory,scriptDirectory:join(root,'unused'),agent:randomUUID(),team:'TTEAM',app:'AAPP',botToken:'xoxb-'+'b'.repeat(24),appToken:'xapp-'+'a'.repeat(24),users:['UUSER'],origin:`http://127.0.0.1:${address.port}`},controller.signal);
   let recorded=false;for(let i=0;i<100&&!recorded;i++){await new Promise(r=>setTimeout(r,10));if(!existsSync(join(directory,'slack.sqlite')))continue;const db=new DatabaseSync(join(directory,'slack.sqlite'));try{recorded=!!db.prepare("SELECT 1 FROM sqlite_master WHERE name='slack_session_cooldowns'").get()&&!!db.prepare("SELECT until FROM slack_session_cooldowns WHERE method='auth.test'").get();}finally{db.close();}}
   assert(recorded);controller.abort();await running;assert.equal(requests,1);assert(!existsSync(join(directory,'owner.lock')));
-  const status=spawnSync(process.execPath,['--experimental-strip-types','slack-runner.ts','status'],{cwd:import.meta.dirname,env:{...process.env,BRIEFSIP_SLACK_DIRECTORY:directory},encoding:'utf8'});assert.equal(status.status,0,status.stderr);const rows=JSON.parse(status.stdout).sessionCooldowns;assert.equal(rows.length,1);assert.equal(rows[0].method,'auth.test');assert(rows[0].until>Date.now());
+  const status=connectorJournalCommand('slack',directory)('status');assert.equal(status.status,0,status.stderr);const rows=JSON.parse(status.stdout).sessionCooldowns;assert.equal(rows.length,1);assert.equal(rows[0].method,'auth.test');assert(rows[0].until>Date.now());
  }finally{clearTimeout(timeout);controller.abort();server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));rmSync(root,{recursive:true,force:true});}
 });
 

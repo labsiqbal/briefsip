@@ -16,8 +16,6 @@
     "test:phase-2": "node --experimental-strip-types ../work/rebuild/collaboration-check/two-process.mjs --phase --receipt ../work/rebuild/collaboration-check/phase-2.json",
     "test:phase-3": "node ../work/rebuild/collaboration-check/phase.mjs 3",
     "cli": "node --experimental-strip-types cli.ts",
-    "telegram": "node --experimental-strip-types telegram-runner.ts",
-    "slack": "node --experimental-strip-types slack-runner.ts",
     "skills": "node --experimental-strip-types skill-directory.ts",
     "lint": "eslint . --max-warnings 0 && node lint/check.mjs"
   },
