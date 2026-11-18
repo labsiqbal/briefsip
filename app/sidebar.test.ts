@@ -55,7 +55,7 @@ test('sidebar HTTP edits retain agents/history through delete, conflicts, retry,
     for (let attempt = 0; attempt < 100; attempt++) { history = await request(historyPath); if (history[0]?.status === 'done') break; await new Promise(resolve => setTimeout(resolve, 10)); }
     assert.equal(history[0].status, 'done');
     const summary = await request('/api/sidebar/summary');
-    assert.deepEqual(summary.summaries.find((row: any) => row.agent === a.id), { agent: a.id, preview: 'History retained.', time: history[0].created, status: 'idle' });
+    assert.deepEqual(summary.summaries.find((row: any) => row.agent === a.id), { agent: a.id, preview: 'History retained.', time: history[0].created, status: 'idle', needs_you: 0 });
     assert.equal((await fetch(app.origin + '/api/sidebar/summary')).headers.get('cache-control'), 'no-store');
     const first = { id: randomUUID(), name: 'Projects', agents: [a.id, b.id] }, second = { id: randomUUID(), name: 'Personal', agents: [] as string[] };
     const create = { id: randomUUID(), revision: 0, sections: [first, second] };
@@ -131,12 +131,12 @@ test('sidebar summary bounds entries and text, redacts credentials, and selects 
     };
     const result = await summary();
     assert.equal(result.summaries.length, 501);
-    assert.deepEqual(result.summaries[1], { agent: second, preview: '', time: null, status: 'idle' });
+    assert.deepEqual(result.summaries[1], { agent: second, preview: '', time: null, status: 'idle', needs_you: 0 });
     assert.equal(result.summaries[0].status, 'running');
     assert.equal(result.summaries[0].preview.length, 180);
     assert.equal(result.summaries[0].time, '2026-11-14T01:00:00.000Z');
-    assert.deepEqual(result.summaries.at(-1), { agent: 'remote@machine', preview: 'Latest reply', time: '1970-01-01T00:00:02.000Z', status: 'done' });
-    assert.deepEqual(Object.keys(result.summaries[0]).sort(), ['agent','preview','status','time']);
+    assert.deepEqual(result.summaries.at(-1), { agent: 'remote@machine', preview: 'Latest reply', time: '1970-01-01T00:00:02.000Z', status: 'done', needs_you: 0 });
+    assert.deepEqual(Object.keys(result.summaries[0]).sort(), ['agent','needs_you','preview','status','time']);
     assert.doesNotMatch(JSON.stringify(result), /PRIVATE_|hide-me|abcdefghijklmnop|saved-provider-credential|AGENT_DELIVERY_SECRET|UNPAIRED_SECRET|unused prompt/);
     for (let i = 0; i < 501; i++) remote.run(`remote-${i}`, 'machine', `r-${i}`, 'hello', null, 4000, null);
     assert.equal((await summary()).summaries.length, 1000);

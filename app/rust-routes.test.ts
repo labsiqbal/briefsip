@@ -15,6 +15,7 @@ const matcher = (entry: Matcher) => {
 test('Rust route inventory stays within frozen Node matchers and reports ported coverage', t => {
   const rustOnly = new Map([
     ['/api/restore/reconcile', 'Exchanges a backup bootstrap token for a read-only recovery session.'],
+    ['/api/sidebar/stream', 'Streams pending input and turn completion to the local owner.'],
   ]);
   const matchers = new Map(inventory.matchers.map(entry => [entry.kind.startsWith('regex') ? `/${entry.pattern}/${entry.flags ?? ''}` : entry.pattern, matcher(entry)]));
   const endpoints = new Map(inventory.matchers.filter(entry => entry.endpoint === true).map(entry => [entry.kind.startsWith('regex') ? `/${entry.pattern}/${entry.flags ?? ''}` : entry.pattern, matcher(entry)]));
