@@ -7,8 +7,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {startApp} from './test-bridge.ts';
 import {pdfFixture} from './test-support/pdf-fixture.ts';
-import childProcess from 'node:child_process';
-import {syncBuiltinESMExports} from 'node:module';
+import {setTimeout as delay} from 'node:timers/promises';
 
 for(const pdf of [false,true]) test(`requester reads returned teammate ${pdf?'PDF':'text'} artifacts but not private inputs or no-reply outputs`,async()=>{
  const dir=mkdtempSync(join(tmpdir(),'briefsip-result-read-'));let worker='',created='',otherOutput='',target='',expectsReply=true,restart=false,hold=false,ready=false,release:(()=>void)|undefined;
@@ -28,7 +27,15 @@ for(const pdf of [false,true]) test(`requester reads returned teammate ${pdf?'PD
   res.end(JSON.stringify({choices:[{finish_reason:fn?'tool_calls':'stop',message:fn?{tool_calls:[{id:fn.name,type:'function',function:fn}]}:{content:answer}}]}));
  });
  await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));const address=provider.address();assert(address&&typeof address!=='string');
- const options={database:join(dir,'app.sqlite'),baseURL:`http://127.0.0.1:${address.port}/v1`};let app=await startApp(options);
+ let startPdf!:()=>void,releasePdf!:()=>void;
+ const pdfStarted=new Promise<void>(resolve=>{startPdf=resolve;});
+ const pdfReleased=new Promise<void>(resolve=>{releasePdf=resolve;});
+ let holdPdf=false;
+ const pdfFault=pdf?async()=>{
+  if(holdPdf){holdPdf=false;startPdf();await pdfReleased;}
+  return undefined;
+ }:undefined;
+ const options={database:join(dir,'app.sqlite'),baseURL:`http://127.0.0.1:${address.port}/v1`,pdfFault};let app=await startApp(options);
  async function ui(path:string,body?:unknown):Promise<any>{const res=await fetch(app.origin+path,{method:body?'POST':'GET',headers:{Origin:app.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const value=await res.json();assert(res.ok,JSON.stringify(value));return value;}
  async function wait(path:string,id:string,status:string){for(let i=0;i<300;i++){const row=(await ui(path)).find((t:any)=>t.id===id);if(row?.status===status)return row;await new Promise(r=>setTimeout(r,10));}assert.fail('Task did not settle');}
  try{
@@ -55,15 +62,11 @@ for(const pdf of [false,true]) test(`requester reads returned teammate ${pdf?'PD
   assert(!(await ui(path.replace('/turns','/panel/files'))).some((file:any)=>file.id===removed));
   hold=true;ready=false;created='';id=randomUUID();await ui(path,{id,text:'Delete source'});for(let i=0;i<200&&!ready;i++)await new Promise(r=>setTimeout(r,10));assert(ready);
   const parent=(await ui(path)).find((t:any)=>t.id===id),child=parent.agentMessages[0],thread=(await ui(`/api/agents/${worker}/threads`)).find((t:any)=>t.id===child.thread);
-  const originalSpawn=childProcess.spawn;let frozen:ReturnType<typeof childProcess.spawn>|undefined;
-  let started!:()=>void;const spawned=new Promise<void>(resolve=>{started=resolve;});
-  try{
-   if(pdf){
-    childProcess.spawn=((...args:Parameters<typeof childProcess.spawn>)=>{const child=originalSpawn(...args);if(args[0]==='/usr/bin/bwrap'){frozen=child;child.kill('SIGSTOP');started();}return child;}) as typeof childProcess.spawn;syncBuiltinESMExports();
-    hold=false;release?.();await spawned;
-   }
-   const archived=await ui(`/api/threads/${thread.id}/edit`,{id:randomUUID(),revision:thread.revision,name:thread.name,archived:true});await ui(`/api/threads/${thread.id}/delete`,{id:randomUUID(),revision:archived.revision});
-   hold=false;release?.();frozen?.kill('SIGCONT');await wait(path,id,'done');assert(results.at(-1).error);assert(!JSON.stringify(results.at(-1)).includes('REQUESTED_OUTPUT'));
-  }finally{childProcess.spawn=originalSpawn;syncBuiltinESMExports();frozen?.kill('SIGKILL');}
- }finally{hold=false;release?.();await app.close();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));rmSync(dir,{recursive:true,force:true});}
+  if(pdf){
+   holdPdf=true;hold=false;release?.();
+   await Promise.race([pdfStarted,delay(5000,undefined,{ref:false}).then(()=>assert.fail('PDF extraction did not start'))]);
+  }
+  const archived=await ui(`/api/threads/${thread.id}/edit`,{id:randomUUID(),revision:thread.revision,name:thread.name,archived:true});await ui(`/api/threads/${thread.id}/delete`,{id:randomUUID(),revision:archived.revision});
+  hold=false;release?.();releasePdf();await wait(path,id,'done');assert(results.at(-1).error);assert(!JSON.stringify(results.at(-1)).includes('REQUESTED_OUTPUT'));
+ }finally{hold=false;release?.();releasePdf();await app.close();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));rmSync(dir,{recursive:true,force:true});}
 });

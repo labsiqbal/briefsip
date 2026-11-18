@@ -264,10 +264,38 @@ pub fn values(
     turn: &str,
     agent: &str,
 ) -> Result<std::collections::HashMap<String, String>> {
+    turn_values(state, db, turn, agent, false)
+}
+
+pub fn computer_values(
+    state: &AppState,
+    db: &Connection,
+    turn: &str,
+    agent: &str,
+) -> Result<std::collections::HashMap<String, String>> {
+    turn_values(state, db, turn, agent, true)
+}
+
+fn turn_values(
+    state: &AppState,
+    db: &Connection,
+    turn: &str,
+    agent: &str,
+    computer: bool,
+) -> Result<std::collections::HashMap<String, String>> {
     let scope=one(db,"SELECT coalesce(p.project,c.project) AS project FROM turns t LEFT JOIN local_project_threads p ON p.thread=t.thread LEFT JOIN channels c ON c.id=t.channel WHERE t.id=?",[turn])?;
     let Some(project) = scope.as_ref().and_then(|r| r["project"].as_str()) else {
         return Ok(Default::default());
     };
+    if computer
+        && !exists(
+            db,
+            "SELECT 1 FROM project_environment_settings WHERE project=? AND expose_computer=1",
+            [project],
+        )?
+    {
+        return Ok(Default::default());
+    }
     check_project(db, project)?;
     if !exists(
         db,
