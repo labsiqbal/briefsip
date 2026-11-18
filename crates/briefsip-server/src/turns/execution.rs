@@ -22,25 +22,10 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let turn = one(&guard.connection, "SELECT * FROM turns WHERE id=?", [id])?
             .ok_or_else(Failure::storage)?;
-        let native =
-            data::agents::read(&guard.connection, string(&turn, "agent"))?["runtime"] != "api";
-        tools::workspace(state, &guard.connection, &turn)?.filter(|b| b.write && native)
+        tools::workspace(state, &guard.connection, &turn)?.filter(|b| b.write)
     };
     if let Some(binding) = binding {
-        let effect = crate::computer::hub::before_effect(
-            state,
-            id,
-            "tool",
-            json!({"kind":"workspace.checkpoint"}),
-        )
-        .await?;
-        let result = crate::computer::hub::run_effect(
-            &effect,
-            crate::files::git::writes::capture(state, &binding, id),
-        )
-        .await;
-        crate::computer::hub::finish_effect(state, effect, "unknown").await?;
-        result?;
+        crate::files::git::writes::capture(state, &binding, id).await?;
     }
     {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
