@@ -529,7 +529,7 @@ fn plan(db: &Connection, c: &Value, name: &str, a: &Value, id: &str) -> Result<V
             b = json!({});
             format!("/api/agents/{}/computer/start", string(a, "agent"))
         }
-        _ => return Err(error(501, "Feature tool is not ported.")),
+        _ => return Err(error(403, "MCP authorization failed.")),
     };
     Ok(json!({"path":path,"body":b}))
 }
@@ -879,7 +879,7 @@ async fn read(state: &AppState, c: &Value, name: &str, a: &Value) -> Result<Valu
         "delegate_task" | "task_status" | "wait_task" | "cancel_task" => {
             delegation(state, c, name, a).await
         }
-        _ => Err(error(501, "Feature tool is not ported.")),
+        _ => Err(error(403, "MCP authorization failed.")),
     }
 }
 fn conversations(state: &AppState, c: &Value, name: &str, a: &Value) -> Result<Value> {
@@ -1236,7 +1236,7 @@ async fn automation(state: &AppState, c: &Value, name: &str, a: &Value) -> Resul
             items.truncate(limit);
             Ok(json!({"items":items,"next_after":next}))
         }
-        _ => Err(error(501, "Feature tool is not ported.")),
+        _ => Err(error(403, "MCP authorization failed.")),
     }
 }
 fn usage_skills(state: &AppState, c: &Value, name: &str, a: &Value) -> Result<Value> {

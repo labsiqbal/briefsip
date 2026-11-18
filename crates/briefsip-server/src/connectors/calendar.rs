@@ -117,9 +117,6 @@ pub fn render(db: &Connection, entries: &[Value], now: i64) -> Result<String> {
 }
 pub fn export(db: &Connection, owner: &str, now: i64) -> Result<Response> {
     crate::data::agents::read(db, owner)?;
-    if !crate::data::table(db, "routines")? {
-        return Err(error(503, "not ported: routine storage (lane #92)"));
-    }
     let entries=all(db,"SELECT * FROM routines WHERE agent=? AND enabled=1 AND trigger='schedule' ORDER BY next_at",[owner])?;
     Response::builder()
         .header("Content-Type", "text/calendar; charset=utf-8")

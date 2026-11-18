@@ -646,7 +646,7 @@ pub fn run(
             )?;
             Ok(json!({"taskId":id,"status":"waiting"}))
         }
-        _ => Err(error(501, "Tool is not ported in this lane.")),
+        _ => Err(error(502, "Invalid coordination request.")),
     }
 }
 pub fn cancel(db: &Connection, roots: &[String], reason: &str) -> Result<Vec<String>> {

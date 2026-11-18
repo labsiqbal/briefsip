@@ -148,11 +148,6 @@ impl Config {
         if args.iter().any(|arg| arg != "--mode=canonical") {
             return Err("Unsupported Briefsip mode".into());
         }
-        for key in ["BRIEFSIP_AGENT_DESKTOP", "BRIEFSIP_COMPOSIO"] {
-            if env::var_os(key).is_some() {
-                return Err(format!("not ported: {key} (see crates/PORTING.md)").into());
-            }
-        }
         let port = env::var("PORT")
             .unwrap_or_else(|_| "4317".to_owned())
             .parse::<u16>()
