@@ -7,24 +7,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { HumanActor } from './test-support/auth.ts';
-import { initializeDeviceSchema, transaction } from './schema.ts';
+import { transaction } from './schema.ts';
 import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
-import { openExecutorJournal, type ActionContext } from './executor-journal.ts';
 import { initializeMemory, rememberMemory } from './test-support/memory.ts';
 import { requireSkillSchema as initializeSkills, seedSkillVersion as saveSkill } from './test-support/skill-fixture.ts';
 import { initializeQuestions } from './test-support/questions.ts';
-import { initializeSharedData } from './shared-data.ts';
 import { initializeCompaction } from './test-support/compaction.ts';
-import { initializeSites, saveSite } from './sites.ts';
 import { parseLinkChallenge, deviceLinkBody, descriptorBody, type DeviceDescriptor } from './test-support/device-protocol.ts';
 import { canonicalJson, digestCommand, sha256, ProtocolError } from './shared/protocol.ts';
-import { canonicalToolDigest, parseOwnership, journalEntryBody, stopEvidenceBody, recoveryEnvelopeBody, type StopEvidence, type JournalEntry } from './test-support/task-protocol.ts';
+import { canonicalToolDigest, parseOwnership, journalEntryBody, stopEvidenceBody, recoveryEnvelopeBody, type StopEvidence, type JournalEntry, type ActionContext } from './test-support/task-protocol.ts';
 import { prepareRestoreBootstrap, issueRestoreSession, workspaceSnapshot } from './test-support/backup.ts';
 import { rustBinary } from './rust-binary.ts';
 import { rustTaskTestBridge } from './rust-task-test-bridge.ts';
 import { startRustServer } from './rust-test-server.ts';
-import { parseWaitProvision } from './wait-provisions.ts';
-import { initializeRoutineConfigurations } from './routine-store.ts';
 
 async function fixture(tools = ['transfer_task'], testPathPrefix?: string) {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-recovery-rust-')), database = join(directory, 'canonical.sqlite');
@@ -58,6 +53,15 @@ async function fixture(tools = ['transfer_task'], testPathPrefix?: string) {
     throw error;
   }
 }
+function storedTurnProvision(raw: unknown) {
+  const { provision } = JSON.parse(String(raw)) as {
+    provision: { provisionId: string; payloadDigest: string; waitKey: string; deadline: number; target: { kind: string } };
+  };
+  const { payloadDigest, ...payload } = provision;
+  assert.equal(payloadDigest, digestCommand(['briefsip-wait-provision-v1', payload]));
+  return provision;
+}
+
 const code = (expected: string) => (error: unknown) => error instanceof ProtocolError && error.code === expected;
 
 test('reassign creates one immutable successor, keeps original receipt and fences source controls', async () => {
@@ -162,7 +166,6 @@ test('canonical channel context names current visible members and lead across ed
 
 async function routineTaskTools() {
   const f=await canonicalTaskTools(['no_update','report_failure']);
-  initializeRoutineConfigurations(f.db);
   f.db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,f.agent);
   const task=f.start(f.member),routine=randomUUID(),occurrence=randomUUID();
   transaction(f.db, () => {
@@ -267,7 +270,7 @@ test('canonical turn wait reserves one deadline and activates only after matchin
     await assert.rejects(rpc.async(), code('device_offline'));
     const row = f.db.prepare('SELECT * FROM wait_provisions').get()!;
     assert.equal(row.state, 'pending');
-    const provision = parseWaitProvision(JSON.parse(String(row.request_json)).provision);
+    const provision = storedTurnProvision(row.request_json);
     assert.equal(provision.provisionId, rpc.request.requestId);
     assert.equal(provision.target.kind, 'turn');
     assert.equal(f.db.prepare('SELECT count(*) n FROM turn_waits').get()!.n, 0);
@@ -295,7 +298,7 @@ test('pending turn wait closes after cancellation, stale target or failed keyrin
     try {
       const task = f.start(), rpc = f.stage(task, { event: 'ready', timeoutSeconds: 60 }, 'wait_for_event');
       await assert.rejects(rpc.async(), code('device_offline'));
-      const row = f.db.prepare('SELECT * FROM wait_provisions').get()!, provision = parseWaitProvision(JSON.parse(String(row.request_json)).provision);
+      const row = f.db.prepare('SELECT * FROM wait_provisions').get()!, provision = storedTurnProvision(row.request_json);
       if (outcome === 'cancel' || outcome === 'pause') f.tasks.control(f.owner, task.taskId, { requestId: randomUUID(), expectedRevision: rpc.request.expectedRevision, operation: outcome });
       if (outcome === 'capability') f.db.prepare('UPDATE agent_projects SET revision=revision+1').run();
       const result = { requestId: randomUUID(), provisionId: provision.provisionId, payloadDigest: provision.payloadDigest, waitKey: provision.waitKey, secretGeneration: 1, sourceDeviceGeneration: 1, ...(outcome === 'keyring' ? { state: 'failed', errorCode: 'keystore_unavailable' } : { state: 'ready', secretRef: JSON.stringify([provision.waitKey, 1]) }) };
@@ -321,7 +324,7 @@ test('canonical maintenance expires pending and activated waits once without rev
     try {
       const task = f.start(), rpc = f.stage(task, { event: 'ready', timeoutSeconds: 2 }, 'wait_for_event');
       await assert.rejects(rpc.async(), code('device_offline'));
-      const row = f.db.prepare('SELECT * FROM wait_provisions').get()!, provision = parseWaitProvision(JSON.parse(String(row.request_json)).provision);
+      const row = f.db.prepare('SELECT * FROM wait_provisions').get()!, provision = storedTurnProvision(row.request_json);
       const result = { requestId: randomUUID(), provisionId: provision.provisionId, payloadDigest: provision.payloadDigest, waitKey: provision.waitKey, secretGeneration: 1, sourceDeviceGeneration: 1, state: 'ready', secretRef: JSON.stringify([provision.waitKey, 1]) };
       if (activated) f.tasks.waitSecretResult(f.principal, result);
       const until = provision.deadline + 5000;
@@ -353,7 +356,7 @@ test('canonical wait maintenance survives SQLite failure and retries after stora
   try {
     const task = f.start(), rpc = f.stage(task, { event: 'ready', timeoutSeconds: 60 }, 'wait_for_event');
     await assert.rejects(rpc.async(), code('device_offline'));
-    const provision = parseWaitProvision(JSON.parse(String(f.db.prepare('SELECT request_json FROM wait_provisions').get()!.request_json)).provision);
+    const provision = storedTurnProvision(f.db.prepare('SELECT request_json FROM wait_provisions').get()!.request_json);
     f.tasks.waitSecretResult(f.principal, { requestId: randomUUID(), provisionId: provision.provisionId, payloadDigest: provision.payloadDigest, waitKey: provision.waitKey, secretGeneration: 1, sourceDeviceGeneration: 1, state: 'ready', secretRef: JSON.stringify([provision.waitKey, 1]) });
     snapshot = await workspaceSnapshot(f.db, f.owner.accountId);
     const saved = new DatabaseSync(snapshot.file);
@@ -399,7 +402,7 @@ test('disaster restore closes pending provisions and activated wait references w
       const task = f.start(), rpc = f.stage(task, { event: 'ready', timeoutSeconds: 60 }, 'wait_for_event');
       await assert.rejects(rpc.async(), code('device_offline'));
       const row = f.db.prepare('SELECT request_json FROM wait_provisions WHERE id=?').get(rpc.request.requestId)!;
-      const provision = parseWaitProvision(JSON.parse(String(row.request_json)).provision);
+      const provision = storedTurnProvision(row.request_json);
       if (activated) f.tasks.waitSecretResult(f.principal, { requestId: randomUUID(), provisionId: provision.provisionId, payloadDigest: provision.payloadDigest, waitKey: provision.waitKey, secretGeneration: 1, sourceDeviceGeneration: 1, state: 'ready', secretRef: JSON.stringify([provision.waitKey, 1]) });
     }
     const receipts = f.db.prepare('SELECT * FROM receipts ORDER BY request_id').all();
@@ -419,7 +422,7 @@ test('disaster restore closes pending provisions and activated wait references w
 });
 
 test('canonical shared data keeps schema ownership, collaborator scope, validation and atomic receipts',async()=>{
-  const f=await canonicalTaskTools(['query_data','list_data_tables']);initializeSharedData(f.db,true);
+  const f=await canonicalTaskTools(['query_data','list_data_tables']);
   try{
     const first=f.start(),run=async(task:typeof first,sql:string,parameters?:unknown[])=>f.stage(task,{sql,...(parameters?{parameters}:{})},'query_data').async();
     assert.equal((await run(first,'CREATE TABLE notes(text TEXT)')).data.resultContent.revision,1);
@@ -483,7 +486,6 @@ test('canonical shared data rechecks cancellation and authority across worker I/
   const f = await canonicalTaskTools(['query_data', 'list_data_tables'], gate.directory).catch(error => {
     gate.close(); throw error;
   });
-  initializeSharedData(f.db, true);
   try {
     const first = f.start(), second = f.start();
     const stage = (task: typeof first, sql: string) => f.stage(task, { sql }, 'query_data');
@@ -533,7 +535,7 @@ test('canonical shared data rechecks cancellation and authority across worker I/
 });
 
 test('canonical cancellation kills SQL workers and releases query capacity',async()=>{
-  const f=await canonicalTaskTools(['query_data']);initializeSharedData(f.db,true);
+  const f=await canonicalTaskTools(['query_data']);
   try{
     const tasks=[f.start(),f.start()],sql='WITH RECURSIVE forever(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM forever) SELECT sum(n) FROM forever';
     const work=tasks.map(task=>f.stage(task,{sql},'query_data').async()),finished=Promise.allSettled(work),started=performance.now();
@@ -633,11 +635,12 @@ for(const kind of ['direct','side'] as const)test(`canonical avatar removal in $
 for(const kind of ['direct','side'] as const)test(`canonical sites in ${kind} page scoped metadata and retain atomic deletion`,async()=>{
   const f=await canonicalTaskTools(['list_sites','delete_site']);
   try{
-    initializeSites(f.db);
     const other=randomUUID(),peer=randomUUID();f.access.createProject(f.owner,{requestId:randomUUID(),id:other,name:'Other'});
     await f.access.createAgent(f.owner,{requestId:peer,id:peer,name:'Peer',model:'fixture',backupModel:'',instructions:'Peer',threadLimit:2,projectId:f.project,homeDeviceId:f.home,expectedProjectRevision:1,expectedHomeDeviceRevision:1,providerBinding:null});
     const seed=(id=randomUUID(),project=f.project,account=f.owner.accountId,agent=f.agent,visibility='owner',mapped=true,root=agent)=>{
-      saveSite(f.db,agent,{id,name:'Scoped site',source:'<p>PRIVATE_SITE_SOURCE</p>'});
+      const source = '<p>PRIVATE_SITE_SOURCE</p>';
+      f.db.prepare("INSERT INTO local_sites(id,agent,name,source,html,revision,updated) VALUES (?,?,'Scoped site',?,?,1,?)")
+        .run(id, agent, source, source, new Date().toISOString());
       if(mapped)f.db.prepare("INSERT INTO record_scopes VALUES ('local_sites',?,?,?,?, 'agent',?)").run(JSON.stringify([id]),account,project,visibility,root);
       return id;
     };
@@ -692,30 +695,6 @@ test('reassign denies unresolved effects, revoked initiators and invalid success
     f.db.prepare('UPDATE project_members SET deleted=1 WHERE project=? AND account=?').run(f.project,f.owner.accountId);
     assert.throws(()=>f.tasks.acquire(f.principal,{requestId:randomUUID(),taskId:next,previousExecutorGeneration:0,executorTokenHash:sha256(f.token),lockProof:{...f.lockProof,lockId:randomUUID()}},f.token),code('execution_denied'));
   } finally { await f.close(); }
-});
-
-test('local journal locks sole runner and retains immutable intent/result until exact ACK', async () => {
-  const f=await preparedTask(), db=new DatabaseSync(':memory:'), dir=mkdtempSync(join(tmpdir(),'briefsip-executor-journal-'));
-  initializeDeviceSchema(db);db.prepare("INSERT INTO device_state VALUES (1,?,?,?,0,0,'[]')").run(f.home,f.ownership.authorityGeneration,1);
-  const journal=openExecutorJournal(db,dir);
-  try {
-    assert.throws(()=>openExecutorJournal(db,dir),error=>error instanceof ProtocolError&&error.code==='executor_busy');
-    const context=f.context.data as ActionContext;
-    const input={taskId:f.taskId,actionId:f.actionId,sequence:0,actionKind:'read' as const,ownership:f.ownership,payload:{operation:'read'},context,grantRevision:1};
-    const staged=journal.stage(input);assert.equal(staged.state,'prepared');assert.equal(staged.send_marker,0);
-    assert.deepEqual(journal.stage(input),staged);
-    assert.throws(()=>journal.stage({...input,payload:{operation:'other'}}),error=>error instanceof ProtocolError&&error.code==='action_conflict');
-    assert.throws(()=>journal.markSend(f.actionId),error=>error instanceof ProtocolError&&error.code==='dispatch_forbidden');
-    journal.committed(f.actionId);assert.equal(journal.markSend(f.actionId).send_marker,1);
-    assert.throws(()=>journal.markSend(f.actionId),error=>error instanceof ProtocolError&&error.code==='dispatch_forbidden');
-    const content={text:'Once only'},result=journal.outcome(f.actionId,content);assert.equal(result.state,'reported');
-    assert.equal(journal.resultRef(result).digest,sha256(canonicalJson(content)));
-    assert.throws(()=>journal.outcome(f.actionId,{text:'Changed'}),error=>error instanceof ProtocolError&&error.code==='result_conflict');
-    assert.throws(()=>journal.acknowledge(f.actionId,{requestId:randomUUID(),recordId:f.actionId,committedAt:Date.now()}),error=>error instanceof ProtocolError&&error.code==='receipt_mismatch');
-    const receipt={requestId:JSON.parse(String(result.intent_json)).reportRequestId,recordId:f.actionId,projectId:f.project,payloadDigest:journal.reportDigest(f.actionId),status:200,recordRevision:1,committedAt:Date.now()};
-    assert.equal(journal.acknowledge(f.actionId,receipt).state,'acknowledged');
-    assert.equal(journal.acknowledge(f.actionId,receipt).state,'acknowledged');
-  } finally {journal.close();db.close();await f.close();rmSync(dir,{recursive:true,force:true});}
 });
 
 test('committed result survives lost ACK, revocation and offline history without granting dispatch', async () => {

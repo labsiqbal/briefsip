@@ -184,17 +184,18 @@ fn retry_delay(error: &Failure, default_ms: u64) -> Duration {
 
 async fn connected(
     host: &mut Host,
-    session: Session,
+    session: &Session,
     mut frames: Frames,
-    generation: u64,
+    recover: bool,
 ) -> Result<()> {
     let mut waits = protected_wait::Stream::new();
     let period = Duration::from_secs(10);
     let mut heartbeat = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    println!("{}", json!({"phase":"connected","generation":generation}));
     let _ = waits.resume(host, &session.token).await;
-    let _ = host.recover_journal(&session.token).await;
+    if recover {
+        let _ = host.recover_journal(&session.token).await;
+    }
     loop {
         tokio::select! {
             frame = frames.next() => {
@@ -205,12 +206,21 @@ async fn connected(
                 waits.handle(host, &session.token, session.connection, &frame).await?;
             }
             _ = heartbeat.tick() => {
-                host.beat(&session).await?;
+                host.beat(session).await?;
                 let _ = waits.resume(host, &session.token).await;
-                let _ = host.recover_journal(&session.token).await;
+                if recover {
+                    let _ = host.recover_journal(&session.token).await;
+                }
             }
         }
     }
+}
+
+pub(super) async fn observe_task(host: &mut Host, session: &Session, frames: Frames) -> Failure {
+    connected(host, session, frames, false)
+        .await
+        .err()
+        .unwrap_or_else(transport)
 }
 
 pub(super) async fn run(mut host: Host) -> db::Result<()> {
@@ -232,9 +242,10 @@ pub(super) async fn run(mut host: Host) -> db::Result<()> {
             Err(error) => (error, false),
             Ok((session, frames)) => {
                 failures = 0;
+                println!("{}", json!({"phase":"connected","generation":generation}));
                 let error = tokio::select! {
                     _ = &mut stopped => break,
-                    error = connected(&mut host, session, frames, generation) => error.err().unwrap_or_else(transport),
+                    error = connected(&mut host, &session, frames, true) => error.err().unwrap_or_else(transport),
                 };
                 (error, true)
             }

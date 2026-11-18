@@ -275,7 +275,7 @@ async fn bounded(mut r: Response, limit: usize) -> Result<Vec<u8>> {
 fn provider_error(status: u16, unsupported: bool) -> String {
     match status{401=>"The provider rejected the API key. Check the server's provider configuration.".into(),403=>"The provider denied this request. Check the API key permissions and model access.".into(),404=>"The provider does not know this model. Check the model ID or choose one from model discovery.".into(),408=>"The provider request timed out. Check the provider before retrying because completion may be uncertain.".into(),429=>"The provider rate limit was reached (HTTP 429). Wait for quota to reset or choose another model.".into(),_ if unsupported=>"The provider rejected the requested tools. Choose a model and provider that support tools.".into(),500..=599=>format!("The provider failed while processing the request (HTTP {status}). Check provider status and retry later."),_=>format!("The provider rejected the request (HTTP {status}). Check model and provider compatibility.")}
 }
-fn translate(
+pub(crate) fn translate(
     family: &str,
     model: &str,
     messages: &[Value],
@@ -434,7 +434,7 @@ fn translate(
         Ok(v)
     }
 }
-fn gemini_model(model: &str) -> Result<&str> {
+pub(crate) fn gemini_model(model: &str) -> Result<&str> {
     let id = model.strip_prefix("models/").unwrap_or(model);
     if !id.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
         || id.len() > 151

@@ -141,6 +141,13 @@ impl Options {
         }
         Ok(())
     }
+    pub(crate) fn account(&self, id: &str) -> Option<Account> {
+        self.validated_accounts
+            .iter()
+            .find(|account| account.id == id)
+            .cloned()
+    }
+
     fn parse_accounts(&self) -> crate::db::Result<Vec<Account>> {
         let mut out = vec![Account {
             id: String::new(),

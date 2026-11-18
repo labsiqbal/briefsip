@@ -11,9 +11,10 @@ struct Runner {
 
 pub(super) struct Lock {
     pub(super) boot_id: String,
+    pub(super) runner: Value,
     path: PathBuf,
     file: (u64, u64),
-    _guard: Connection,
+    _guard: Mutex<Connection>,
 }
 
 fn unavailable() -> Failure {
@@ -118,7 +119,10 @@ impl Lock {
             stopped(&previous, &runner.boot_id)?;
         }
         let mut statement = db.prepare(
-            "SELECT intent_json FROM device_journal WHERE state NOT IN ('acknowledged','not_sent')",
+            "SELECT j.intent_json FROM device_journal j
+             LEFT JOIN device_outbox o ON o.action_id=j.action_id
+             WHERE j.state NOT IN ('acknowledged','not_sent')
+             AND NOT (j.state='reported' AND j.result_json IS NOT NULL AND o.report_json IS NOT NULL)",
         )?;
         for row in statement.query_map([], |r| r.get::<_, String>(0))? {
             let intent: Value = serde_json::from_str(&row?).map_err(|_| unavailable())?;
@@ -161,9 +165,10 @@ impl Lock {
         let info = private_metadata(&path, false).map_err(|_| invalid_lock())?;
         Ok(Self {
             boot_id: runner.boot_id,
+            runner: data,
             path,
             file: (info.dev(), info.ino()),
-            _guard: guard,
+            _guard: Mutex::new(guard),
         })
     }
 }

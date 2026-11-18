@@ -16,7 +16,7 @@ mod memory;
 pub(crate) mod messaging;
 pub mod options;
 mod profile;
-mod provider;
+pub(crate) mod provider;
 mod questions;
 mod queue;
 pub(crate) mod room;

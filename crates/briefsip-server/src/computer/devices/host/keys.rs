@@ -122,3 +122,39 @@ impl Private {
         Ok(result)
     }
 }
+
+pub(super) fn stage(store: &dyn Store, service: &str, name: &str, secret: &str) -> Result<()> {
+    match store.read(service, name).map_err(|_| unavailable())? {
+        Some(previous) if previous != secret => {
+            return Err(Failure::new(
+                409,
+                "secret_conflict",
+                "Keyring reference is already in use.",
+            ));
+        }
+        Some(_) => {}
+        None => store
+            .write(service, name, secret)
+            .map_err(|_| unavailable())?,
+    }
+    if store
+        .read(service, name)
+        .map_err(|_| unavailable())?
+        .as_deref()
+        != Some(secret)
+    {
+        return Err(unavailable());
+    }
+    Ok(())
+}
+
+pub(super) fn remove_verified(store: &dyn Store, service: &str, name: &str) -> bool {
+    match store.read(service, name) {
+        Ok(None) => true,
+        Ok(Some(_)) => {
+            store.remove(service, name).is_ok()
+                && store.read(service, name).is_ok_and(|value| value.is_none())
+        }
+        Err(_) => false,
+    }
+}

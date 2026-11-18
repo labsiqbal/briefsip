@@ -1,6 +1,6 @@
 import { useVisiblePolling } from './hooks/useVisiblePolling';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { siteCommand } from '../site-command';
+import { siteCommand } from './site-command';
 import { Alert, Button, Card, Dialog, EmptyState, Field, IconButton, Input, Row, SkeletonRows, Textarea, Tooltip, useConfirm, RecoveryAlert } from './ui/kit';
 import { ChevronLeft, ChevronRight, ExternalLink, Plus } from 'lucide-react';
 
