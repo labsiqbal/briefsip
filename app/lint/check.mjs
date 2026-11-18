@@ -150,5 +150,5 @@ console.log(`Lint: ${checks} assertions passed; ${browserSafeModules.length} sha
     .filter(name => !name.endsWith('.test.ts') && !/^rust-.*\.ts$|^vite.*\.config\.ts$/.test(name)
       && name !== 'test-bridge.ts' && name !== 'test.ts');
   assert.deepEqual(rootModules.sort(), [],
-    'Root TypeScript modules changed. Move new modules under src/, shared/, hub/, test-support/ or t3/ and remove stale allowances.');
+    'Server code belongs in Rust. Put browser code under src/ or shared/, hub code under hub/, and test helpers under test-support/.');
 }
