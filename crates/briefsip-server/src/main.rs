@@ -11,7 +11,12 @@ mod files;
 mod harness;
 mod mcp;
 mod media;
+mod operator_file;
 mod restore;
+mod restore_cli;
+mod restore_fence;
+mod script_cli;
+mod skill_directory;
 mod tasks;
 mod turns;
 mod updates;
@@ -524,6 +529,26 @@ async fn main() -> db::Result<()> {
     }
     if std::env::args().nth(1).as_deref() == Some("--mcp-stdio") {
         return mcp::stdio().await;
+    }
+    if let Some(command @ ("script" | "restore")) = std::env::args().nth(1).as_deref() {
+        let args = std::env::args().skip(2).collect::<Vec<_>>();
+        let result = if command == "restore" {
+            restore_cli::run(&args).await
+        } else {
+            script_cli::run(&args).await
+        };
+        println!("{result}");
+        std::process::exit(result["exitCode"].as_i64().unwrap_or(1) as i32);
+    }
+    if std::env::args().nth(1).as_deref() == Some("skills") {
+        match skill_directory::run(&std::env::args().skip(2).collect::<Vec<_>>()) {
+            Ok(result) => println!("{}", serde_json::to_string_pretty(&result)?),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
     }
     if std::env::args().nth(1).as_deref() == Some("--restore-read-only") {
         let [source, target]: [std::ffi::OsString; 2] = std::env::args_os()

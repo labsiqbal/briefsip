@@ -94,6 +94,11 @@ export function stageRuntime(source, stage) {
     mkdirSync(join(stage, 't3'), { recursive: true });
     cpSync(file, join(stage, 't3', name));
   }
+  const command = join(source, 'scripts', 'briefsip-command.sh');
+  if (existsSync(command)) {
+    mkdirSync(join(stage, 'scripts'), { recursive: true });
+    cpSync(command, join(stage, 'scripts', 'briefsip-command.sh'));
+  }
   const worker = join(source, 'shared-data-worker.py');
   if (existsSync(worker)) {
     mkdirSync(join(stage, 'app'), { recursive: true });

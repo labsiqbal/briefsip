@@ -23,13 +23,18 @@ impl Drop for Staging {
     }
 }
 
-fn random_proof() -> db::Result<String> {
+pub(super) fn random_proof() -> db::Result<String> {
     let mut bytes = [0; 32];
     getrandom::getrandom(&mut bytes).map_err(|_| "Unable to generate recovery proof.")?;
     Ok(URL_SAFE_NO_PAD.encode(bytes))
 }
 
 pub fn read_only(source: &Path, target: &Path) -> db::Result<Value> {
+    workspace(source, target, true)?
+        .ok_or_else(|| "Read-only restore requires a canonical backup.".into())
+}
+
+pub fn workspace(source: &Path, target: &Path, canonical_only: bool) -> db::Result<Option<Value>> {
     for suffix in ["", "-wal", "-shm", "-journal"] {
         let mut path = target.as_os_str().to_owned();
         path.push(suffix);
@@ -66,26 +71,64 @@ pub fn read_only(source: &Path, target: &Path) -> db::Result<Value> {
             ))
         },
     )?;
+    let canonical = manifest == ("briefsip-canonical-v6".to_owned(), 6, 1);
+    if !canonical && canonical_only {
+        return Err("Read-only restore requires a canonical backup.".into());
+    }
+    let has_authority = table(&connection, "authority_state").map_err(|e| e.message)?;
+    if canonical != has_authority
+        || !canonical && manifest != ("briefsip-workspace".to_owned(), 1, 1)
+    {
+        return Err("Unsupported Briefsip backup format.".into());
+    }
+    let integrity: String = connection.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+    if integrity != "ok" || connection.prepare("PRAGMA foreign_key_check")?.exists([])? {
+        return Err("Invalid backup integrity.".into());
+    }
+    let proof = if canonical {
+        Some(restore_canonical(&connection, canonical_only)?)
+    } else {
+        let tx = connection.unchecked_transaction()?;
+        tx.execute_batch(include_str!("restore-local.sql"))?;
+        for (name, sql) in [
+            (
+                "mcp_connections",
+                "UPDATE mcp_connections SET enabled=0,revision=revision+1; DELETE FROM mcp_tests;",
+            ),
+            ("turn_waits", include_str!("restore-local-waits.sql")),
+        ] {
+            if table(&tx, name).map_err(|e| e.message)? {
+                tx.execute_batch(sql)?;
+            }
+        }
+        tx.commit()?;
+        None
+    };
+    drop(connection);
+    fs::File::open(&staged)?.sync_all()?;
+    fs::hard_link(staged, target)?;
+    drop(staging);
+    fs::File::open(parent)?.sync_all()?;
+    Ok(proof)
+}
+
+fn restore_canonical(connection: &Connection, upgrade: bool) -> db::Result<Value> {
     let schema: i64 = connection.query_row(
         "SELECT coalesce(max(version),0) FROM schema_migrations",
         [],
         |row| row.get(0),
     )?;
-    if manifest != ("briefsip-canonical-v6".to_owned(), 6, 1)
-        || !(1..=db::SCHEMA_VERSION).contains(&schema)
-    {
+    if !(1..=db::SCHEMA_VERSION).contains(&schema) {
         return Err("Unsupported canonical backup format.".into());
-    }
-    let integrity: String = connection.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
-    if integrity != "ok" || connection.prepare("PRAGMA foreign_key_check")?.exists([])? {
-        return Err("Invalid backup integrity.".into());
     }
     let marker: bool = connection.query_row("SELECT count(*)=1 AND min(generation)=(SELECT generation FROM authority_state WHERE id=1) FROM briefsip_backup_authority", [], |row| row.get(0))?;
     if !marker {
         return Err("Canonical backup authority mismatch.".into());
     }
     let now = crate::config::now();
-    db::migrate(&connection, now, db::SCHEMA_VERSION)?;
+    // Canonical-only restore upgrades the archive. Workspace restore preserves its schema version.
+    let schema = if upgrade { db::SCHEMA_VERSION } else { schema };
+    db::migrate(connection, now, schema)?;
     let generation = Uuid::new_v4().to_string();
     let bootstrap = random_proof()?;
     let expires = now + 900_000;
@@ -101,6 +144,12 @@ pub fn read_only(source: &Path, target: &Path) -> db::Result<Value> {
     tx.execute_batch("UPDATE briefsip_backup_authority SET owner_account=(SELECT min(account) FROM projects HAVING count(DISTINCT account)=1) WHERE owner_account IS NULL;")?;
     tx.execute("UPDATE authority_state SET generation=?,serving_state='read_only_recovery',recovery_session_hash=?,recovery_expires_at=?,revision=revision+1 WHERE id=1", params![generation,digest(&bootstrap),expires])?;
     tx.execute_batch(include_str!("restore.sql"))?;
+    if schema >= 2 {
+        tx.execute_batch(include_str!("restore-v2.sql"))?;
+    }
+    if schema >= 3 {
+        tx.execute_batch(include_str!("restore-v3.sql"))?;
+    }
     for (name, sql) in [
         ("provider_calls", "UPDATE provider_calls SET status='interrupted' WHERE status='pending'"),
         ("routines", "UPDATE routines SET enabled=0,revision=revision+1"),
@@ -123,22 +172,10 @@ pub fn read_only(source: &Path, target: &Path) -> db::Result<Value> {
         }
     }
     tx.commit()?;
-    drop(connection);
-    fs::File::open(&staged)?.sync_all()?;
-    fs::hard_link(staged, target)?;
-    drop(staging);
-    fs::File::open(parent)?.sync_all()?;
     Ok(json!({"bootstrap":bootstrap,"recoveryGeneration":generation,"expiresAt":expires}))
 }
 
 pub fn reconcile(state: &AppState, actor: &Actor, body: &Value) -> Result<Value, Failure> {
-    let denied = || {
-        Failure::new(
-            403,
-            "recovery_session_invalid",
-            "Recovery evidence is invalid or expired.",
-        )
-    };
     if !crate::data::closed(body, &["requestId", "bootstrap"]) {
         return Err(Failure::new(
             400,
@@ -156,28 +193,52 @@ pub fn reconcile(state: &AppState, actor: &Actor, body: &Value) -> Result<Value,
         .require_current(&state.database, actor, now)?;
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let db = &guard.connection;
-    transaction(db, || {
-        if !table(db, "briefsip_backup_authority")? {
-            return Err(denied());
-        }
-        let proof = one(db, "SELECT a.generation,a.recovery_session_hash,owner.issuer FROM authority_state a JOIN accounts owner ON owner.id=? WHERE a.id=1 AND a.serving_state='read_only_recovery' AND a.recovery_expires_at>? AND owner.clerk_sub=? AND owner.blocked=0 AND (SELECT count(*) FROM briefsip_backup_authority)=1 AND owner.id=(SELECT owner_account FROM briefsip_backup_authority) AND EXISTS(SELECT 1 FROM projects p JOIN project_members m ON m.project=p.id AND m.account=owner.id WHERE p.account=owner.id AND p.deleted=0 AND m.deleted=0 AND m.role='owner')", params![actor.account,now,actor.subject])?.ok_or_else(denied)?;
-        if !bool::from(
-            digest(bootstrap)
-                .as_bytes()
-                .ct_eq(string(&proof, "recovery_session_hash").as_bytes()),
-        ) {
-            return Err(denied());
-        }
-        let session = random_proof().map_err(|_| Failure::storage())?;
-        let hash = digest(&canonical(&json!([
-            "briefsip-restore-session-v1",
-            actor.account,
-            proof["issuer"],
-            actor.subject,
-            session
-        ])));
-        let expires = now + 900_000;
-        db.execute("UPDATE authority_state SET recovery_session_hash=?,recovery_expires_at=?,revision=revision+1 WHERE id=1", params![hash,expires])?;
-        Ok(json!({"session":session,"recoveryGeneration":proof["generation"],"expiresAt":expires}))
-    })
+    transaction(db, || exchange(db, actor, bootstrap, now))
+}
+
+fn denied() -> Failure {
+    Failure::new(
+        403,
+        "recovery_session_invalid",
+        "Recovery evidence is invalid or expired.",
+    )
+}
+
+pub(super) fn owner(db: &Connection, actor: &Actor, now: i64) -> Result<Value, Failure> {
+    if actor.expires <= now || !table(db, "briefsip_backup_authority")? {
+        return Err(denied());
+    }
+    one(db, "SELECT a.generation,a.recovery_session_hash,a.recovery_expires_at,owner.issuer FROM authority_state a JOIN accounts owner ON owner.id=? WHERE a.id=1 AND a.serving_state='read_only_recovery' AND a.recovery_expires_at>? AND owner.clerk_sub=? AND owner.blocked=0 AND NOT EXISTS(SELECT 1 FROM session_denials WHERE issuer=owner.issuer AND sid=?) AND (SELECT count(*) FROM briefsip_backup_authority)=1 AND owner.id=(SELECT owner_account FROM briefsip_backup_authority) AND EXISTS(SELECT 1 FROM projects p JOIN project_members m ON m.project=p.id AND m.account=owner.id WHERE p.account=owner.id AND p.deleted=0 AND m.deleted=0 AND m.role='owner')", params![actor.account,now,actor.subject,actor.session])?.ok_or_else(denied)
+}
+
+pub(super) fn session_digest(actor: &Actor, issuer: &Value, session: &str) -> String {
+    digest(&canonical(&json!([
+        "briefsip-restore-session-v1",
+        actor.account,
+        issuer,
+        actor.subject,
+        session
+    ])))
+}
+
+pub(super) fn exchange(
+    db: &Connection,
+    actor: &Actor,
+    bootstrap: &str,
+    now: i64,
+) -> Result<Value, Failure> {
+    crate::computer::devices::decode(&json!(bootstrap), 32).map_err(|_| denied())?;
+    let proof = owner(db, actor, now)?;
+    if !bool::from(
+        digest(bootstrap)
+            .as_bytes()
+            .ct_eq(string(&proof, "recovery_session_hash").as_bytes()),
+    ) {
+        return Err(denied());
+    }
+    let session = random_proof().map_err(|_| Failure::storage())?;
+    let hash = session_digest(actor, &proof["issuer"], &session);
+    let expires = now + 900_000;
+    db.execute("UPDATE authority_state SET recovery_session_hash=?,recovery_expires_at=?,revision=revision+1 WHERE id=1", params![hash,expires])?;
+    Ok(json!({"session":session,"recoveryGeneration":proof["generation"],"expiresAt":expires}))
 }

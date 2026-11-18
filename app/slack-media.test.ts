@@ -12,7 +12,7 @@ import childProcess from 'node:child_process';
 import {syncBuiltinESMExports} from 'node:module';
 import {initializeSlack,bindSlack,recordSlackEnvelope,slackApi} from './slack.ts';
 import {slackAgentStep} from './slack-runner.ts';
-import {localScript} from './script-client.ts';
+import {localScript} from './test-support/script-client.ts';
 
 test('Slack files snapshot bytes and retry uploads and turns without duplicate work',async()=>{
  const root=mkdtempSync(join(tmpdir(),'briefsip-slack-media-')),agent=randomUUID(),users=new Set(['UUSER']),captures:any[]=[],uploads:any[]=[],downloads:string[]=[],sent:any[]=[];

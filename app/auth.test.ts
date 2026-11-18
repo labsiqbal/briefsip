@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { createClerkClient } from '@clerk/backend';
-import type { AuthConfig } from './auth.ts';
+import type { AuthConfig } from './test-support/auth.ts';
 import { startRustServer } from './rust-test-server.ts';
 import { startCanonicalApp } from './test-bridge.ts';
 import { mkdtempSync, rmSync } from 'node:fs';

@@ -8,7 +8,7 @@ import {join} from 'node:path';
 import {startApp} from './test-bridge.ts';
 import {initializeSlack,bindSlack,recordSlackEnvelope,finishSlack,deliverSlack} from './slack.ts';
 import {slackAgentStep} from './slack-runner.ts';
-import {localScript} from './script-client.ts';
+import {localScript} from './test-support/script-client.ts';
 
 for(const shared of [false,true])test(`Slack workflow commands bind requester root and retry run, approval and cancellation across restart (shared=${shared})`,async()=>{
  const selectedChannel=shared?'CROOM':'DCHAT',channels=new Set(shared?[selectedChannel]:[]);

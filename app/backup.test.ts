@@ -4,50 +4,56 @@ import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { chmodSync, linkSync, mkdtempSync, readFileSync, writeFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
-import { spawn } from 'node:child_process';
-import { once } from 'node:events';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startApp } from './test-bridge.ts';
-import { canonicalServerLock, restoreWorkspace, workspaceSnapshot } from './backup.ts';
-import { ProtocolError } from './shared/protocol.ts';
+import { startApp, startCanonicalApp } from './test-bridge.ts';
+import { rustBinary } from './rust-binary.ts';
+import { checkedRestore, restoreWorkspace, workspaceSnapshot } from './test-support/backup.ts';
 import { initializeCanonicalSchema } from './schema.ts';
+import { ProtocolError } from './shared/protocol.ts';
 import { createApplicationSync } from './application-sync.ts';
 import { createProjectAccess } from './project-access.ts';
-import type { HumanActor } from './auth.ts';
+import type { HumanActor } from './test-support/auth.ts';
 
 test('canonical server guard fences aliases and processes, releases on SIGKILL and rejects unsafe files', async () => {
   const dir=mkdtempSync(join(tmpdir(),'briefsip-server-lock-')),database=join(dir,'canonical.sqlite'),guardPath=database+'.server-lock.sqlite';
-  new DatabaseSync(database).close();
-  const source=`import { canonicalServerLock } from ${JSON.stringify(new URL('./backup.ts',import.meta.url).href)}; const guard=canonicalServerLock(process.argv[1]); process.on('message',()=>{guard.close();process.disconnect();}); process.send('locked');`;
-  const child=spawn(process.execPath,['--experimental-strip-types','--input-type=module','-e',source,database],{stdio:['ignore','ignore','pipe','ipc']});
-  let guard:DatabaseSync|undefined;
+  const source = new DatabaseSync(database);
+  initializeCanonicalSchema(source);
+  source.exec("UPDATE authority_state SET serving_state='read_only_recovery'");
+  source.close();
+  chmodSync(database, 0o600);
+  const auth = { origin: 'http://127.0.0.1', development: true, issuer: 'https://fixture.example', secretKey: 'fixture-secret', publishableKey: 'fixture-key' };
+  const fence = () => checkedRestore(['fence-request', '--db', database, '--session', join(dir, 'missing.json')]);
+  const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
+  const probe = (path: string) => spawnSync(binary, ['--test-config'], {
+    env: { ...process.env, BRIEFSIP_TEST_SERVER: 'rust' },
+    input: JSON.stringify({ database: path, port: 0, auth }), encoding: 'utf8', timeout: 3000,
+  });
+  const app = await startCanonicalApp({ database, auth });
   try {
-    assert.deepEqual(await once(child,'message',{signal:AbortSignal.timeout(10000)}),['locked',undefined]);
-    const busy=(error:unknown)=>error instanceof ProtocolError&&error.code==='canonical_server_busy';
-    assert.throws(()=>canonicalServerLock(database),busy);
-    const alias=join(dir,'alias.sqlite');symlinkSync(database,alias);assert.throws(()=>canonicalServerLock(alias),busy);
-    // A failed same-process acquisition must not release the other process's lock.
-    assert.throws(()=>canonicalServerLock(database),busy);
-    const exited=once(child,'exit');child.kill('SIGKILL');await exited;
-    guard=canonicalServerLock(alias);assert.equal(statSync(guardPath).mode&0o777,0o600);
-    assert.throws(()=>canonicalServerLock(database),busy);assert.throws(()=>canonicalServerLock(alias),busy);
-    const probeSource=`import { canonicalServerLock } from ${JSON.stringify(new URL('./backup.ts',import.meta.url).href)}; try { const guard=canonicalServerLock(process.argv[1]);guard.close();process.send('unexpected'); } catch(error) {process.send(error.code);} process.disconnect();`;
-    const probe=spawn(process.execPath,['--experimental-strip-types','--input-type=module','-e',probeSource,database],{stdio:['ignore','ignore','ignore','ipc']}),probeExited=once(probe,'exit');
-    try { assert.deepEqual(await once(probe,'message',{signal:AbortSignal.timeout(10000)}),['canonical_server_busy',undefined]); }
-    finally { if(probe.exitCode===null&&probe.signalCode===null)probe.kill('SIGKILL');await probeExited; }
-    guard.close();guard=undefined;
-    const retained=statSync(guardPath);guard=canonicalServerLock(database);assert.equal(statSync(guardPath).ino,retained.ino);guard.close();guard=undefined;
-    const hard=join(dir,'hard.sqlite');linkSync(database,hard);assert.throws(()=>canonicalServerLock(hard),/hard link/);rmSync(hard);
-    const initial=readFileSync(guardPath);rmSync(guardPath);symlinkSync(join(dir,'missing'),guardPath);assert.throws(()=>canonicalServerLock(database),/private/);rmSync(guardPath);
-    writeFileSync(guardPath,initial,{mode:0o644});assert.throws(()=>canonicalServerLock(database),/private/);chmodSync(guardPath,0o600);
-    const linked=join(dir,'guard-link');linkSync(guardPath,linked);assert.throws(()=>canonicalServerLock(database),/private/);rmSync(linked);
-    writeFileSync(guardPath,'not sqlite');assert.throws(()=>canonicalServerLock(database));assert.equal(readFileSync(guardPath,'utf8'),'not sqlite');writeFileSync(guardPath,initial);
-    guard=canonicalServerLock(database);
+    assert.throws(fence, /Another canonical server/);
+    const alias = join(dir, 'alias.sqlite'); symlinkSync(database, alias);
+    const aliasResult = probe(alias);
+    assert.equal(aliasResult.status, 1, aliasResult.stderr); assert.match(aliasResult.stderr, /Another canonical server/);
+    assert.throws(fence, /Another canonical server/);
+    const retained = statSync(guardPath);
+    await app.crash();
+    assert.throws(fence, /No such file/);
+    assert.equal(statSync(guardPath).mode & 0o777, 0o600);
+    assert.equal(statSync(guardPath).ino, retained.ino);
+    const hard = join(dir, 'hard.sqlite'); linkSync(database, hard);
+    assert.match(probe(hard).stderr, /hard link/); rmSync(hard);
+    const initial = readFileSync(guardPath); rmSync(guardPath);
+    symlinkSync(join(dir,'missing'), guardPath); assert.throws(fence, /private/); rmSync(guardPath);
+    writeFileSync(guardPath, initial, { mode: 0o644 }); assert.throws(fence, /private/); chmodSync(guardPath, 0o600);
+    const linked=join(dir,'guard-link'); linkSync(guardPath, linked); assert.throws(fence, /private/); rmSync(linked);
+    writeFileSync(guardPath, 'not sqlite'); assert.throws(fence, /Another canonical server/);
+    assert.equal(readFileSync(guardPath, 'utf8'), 'not sqlite');
+    writeFileSync(guardPath, initial); assert.throws(fence, /No such file/);
   } finally {
-    guard?.close();
-    if(child.exitCode===null&&child.signalCode===null){const exited=once(child,'exit');child.kill('SIGKILL');await exited;}
-    rmSync(dir,{recursive:true,force:true});
+    await app.close();
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

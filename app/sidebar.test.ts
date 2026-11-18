@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './test-bridge.ts';
-import { restoreWorkspace } from './backup.ts';
+import { restoreWorkspace } from './test-support/backup.ts';
 
 test('sidebar validates unique membership, names, IDs and bounded settings', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-sidebar-valid-'));

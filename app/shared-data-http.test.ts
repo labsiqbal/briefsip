@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
-import { restoreWorkspace } from './backup.ts';
+import { restoreWorkspace } from './test-support/backup.ts';
 
 test('shared data agent tools journal once across resume, user reads/drop and restored workspace retain data', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-data-http-'));

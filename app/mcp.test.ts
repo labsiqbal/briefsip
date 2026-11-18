@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
-import { restoreWorkspace } from './backup.ts';
+import { restoreWorkspace } from './test-support/backup.ts';
 import { once } from 'node:events';
 
 test('MCP tests before save, protects credentials/grants and journals success or uncertainty without replay', async () => {

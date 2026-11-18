@@ -9,7 +9,7 @@ import {join} from 'node:path';
 import {startApp} from './test-bridge.ts';
 import {slackApi,initializeSlack,bindSlack,recordSlackEnvelope,recoverSlackReply} from './slack.ts';
 import {slackAgentStep} from './slack-runner.ts';
-import {localScript} from './script-client.ts';
+import {localScript} from './test-support/script-client.ts';
 
 test('Slack artifacts retain exact bytes and upload stages across uncertain completion and grant recovery',async()=>{
  const root=mkdtempSync(join(tmpdir(),'briefsip-slack-output-')),agent=randomUUID(),users=new Set(['UUSER']),text='<h1>Exact Slack output</h1>\n';let calls=0,lost=true,sequence=0,question=false,origin='';const completed:any[]=[],uploaded:Buffer[]=[],allocated:any[]=[],messages:any[]=[];
@@ -32,7 +32,7 @@ test('Slack artifacts retain exact bytes and upload stages across uncertain comp
   db.close();db=new DatabaseSync(join(root,'slack.sqlite'));initializeSlack(db);await slackAgentStep(db,users,local,remote);assert.equal(completed.length,1);recoverSlackReply(db,String(document.id),0,'retry');await ui(`/api/agents/${agent}/scripts`,{id:randomUUID(),revision:1,enabled:false});await assert.rejects(slackAgentStep(db,users,local,remote));assert.equal(completed.length,1);await ui(`/api/agents/${agent}/scripts`,{id:randomUUID(),revision:2,enabled:true});await slackAgentStep(db,users,local,remote);assert.deepEqual(completed[0],completed[1]);assert.equal(uploaded.length,1);assert.equal(allocated.length,1);assert.equal(db.prepare('SELECT status FROM slack_outbox WHERE id=?').get(document.id)!.status,'sent');
   question=true;const partial=incoming();await until(()=>!!db.prepare('SELECT 1 FROM slack_questions WHERE turn=?').get(partial.turn));await ui(`/api/threads/${partial.thread}/turns/${partial.turn}/cancel`,{id:randomUUID()});await until(()=>db.prepare('SELECT status FROM slack_inbox WHERE turn=?').get(partial.turn)!.status==='done');assert(completed.at(-1).initial_comment.includes('Partial result'));assert.deepEqual(uploaded.at(-1),Buffer.from(text));assert.deepEqual(await ui(`/api/agents/${agent}/turns`),[]);
   const part=db.prepare('SELECT * FROM slack_documents WHERE turn=?').get(partial.turn)!;db.prepare("UPDATE slack_outbox SET status='queued' WHERE id=?").run(part.id);const count=completed.length;
-  await slackAgentStep(db,users,async(path,body,signal)=>{if(path.includes(`files/${part.file}?metadata`)){const {LocalAgentError}=await import('./script-client.ts');throw new LocalAgentError(404);}return local(path,body,signal);},remote);assert.equal(completed.length,count);assert.equal(db.prepare('SELECT status FROM slack_outbox WHERE id=?').get(part.id)!.status,'revoked');
+  await slackAgentStep(db,users,async(path,body,signal)=>{if(path.includes(`files/${part.file}?metadata`)){const {LocalAgentError}=await import('./test-support/script-client.ts');throw new LocalAgentError(404);}return local(path,body,signal);},remote);assert.equal(completed.length,count);assert.equal(db.prepare('SELECT status FROM slack_outbox WHERE id=?').get(part.id)!.status,'revoked');
  }finally{db.close();await app.close();provider.closeAllConnections();slack.closeAllConnections();await Promise.all([new Promise<void>(r=>provider.close(()=>r())),new Promise<void>(r=>slack.close(()=>r()))]);rmSync(root,{recursive:true,force:true});}
 });
 

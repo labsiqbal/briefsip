@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
-import type { HumanActor } from './auth.ts';
+import type { HumanActor } from './test-support/auth.ts';
 import { createApplicationSync } from './application-sync.ts';
 import { createProjectAccess } from './project-access.ts';
 import { initializeCanonicalSchema } from './schema.ts';

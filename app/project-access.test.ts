@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createProjectAccess, parseInvitationCreate, parseMemberEdit, parseResponsePolicy } from './project-access.ts';
 import { initializeCanonicalSchema } from './schema.ts';
 import { decryptMail } from './mail.ts';
-import type { HumanActor } from './auth.ts';
+import type { HumanActor } from './test-support/auth.ts';
 import { ProtocolError } from './shared/protocol.ts';
 
 function fixture() {
