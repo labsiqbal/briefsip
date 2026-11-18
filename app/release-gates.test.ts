@@ -101,6 +101,7 @@ const value = existsSync(mode) ? readFileSync(mode, 'utf8') : 'system';
 console.log(value === 'missing' ? 'libvips.so => not found' : value === 'external' ? 'libvips.so => /tmp/node_modules/libvips.so (0x1)' : 'libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x1)\\n/lib64/ld-linux-x86-64.so.2 (0x2)');
 `, { mode: 0o700 });
     writeFileSync(join(f.dir, 'scripts/resource-gate.mjs'), "import { existsSync } from 'node:fs';\nif (existsSync('gate-fails')) throw new Error('Rust resource budget exceeded');\n");
+    writeFileSync(join(f.dir, 'scripts/production-env-gate.mjs'), "import { existsSync } from 'node:fs';\nif (existsSync('production-fails')) throw new Error('Production env startup failed');\n");
     writeFileSync(join(f.dir, 'scripts/budgets.json'), '{}');
     writeFileSync(join(f.dir, 'gate-fails'), 'fail');
     process.env.PATH = `${bin}:${previousPath}`;
@@ -108,6 +109,10 @@ console.log(value === 'missing' ? 'libvips.so => not found' : value === 'externa
     assert.throws(() => buildRelease(options), /resource-gate/);
     assert.equal(existsSync(f.options.releases), false);
     rmSync(join(f.dir, 'gate-fails'));
+    writeFileSync(join(f.dir, 'production-fails'), 'fail');
+    assert.throws(() => buildRelease(options), /production-env-gate/);
+    assert.equal(existsSync(f.options.releases), false);
+    rmSync(join(f.dir, 'production-fails'));
     for (const [mode, message] of [['missing', /Native dependency missing/], ['external', /outside system loader paths/]] as const) {
       writeFileSync(join(f.dir, 'dependency-mode'), mode);
       assert.throws(() => buildRelease(options), message);
@@ -128,7 +133,7 @@ console.log(value === 'missing' ? 'libvips.so => not found' : value === 'externa
     assert.equal(readFileSync(join(stage, 'bin/launcher.NOTICE'), 'utf8'), 'T3 MIT notice');
     assert.equal(readFileSync(join(stage, 'machine/briefsip-launcher.mjs'), 'utf8'), readFileSync(new URL('../scripts/briefsip-launcher.mjs', import.meta.url), 'utf8'));
     const checks = readFileSync(join(f.dir, 'cargo-checks'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
-    assert.equal(checks.length, 16);
+    assert.equal(checks.length, 20);
     assert(checks.some(args => args.join(' ') === 'build --release --locked'));
   } finally { process.env.PATH = previousPath; rmSync(f.dir, { recursive: true, force: true }); rmSync(bin, { recursive: true, force: true }); }
 });

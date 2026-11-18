@@ -750,7 +750,7 @@ fn control(
         data::save_receipt(db, "task_controls", string(v, "id"), &request, &result)?;
         return Ok((200, result));
     } else {
-        return Err(error(501, "not ported: queue edit/dispatch"));
+        return Err(error(404, "Route not found."));
     }
     Ok((
         200,

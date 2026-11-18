@@ -651,7 +651,7 @@ pub(super) fn dispatch(
             }
         }
         "list_skills" | "read_skill" | "read_skill_file" => skill(db, agent, name, args),
-        _ => Err(error(501, "Tool is not ported in this lane.")),
+        _ => Err(error(502, "Invalid coordination request.")),
     }
 }
 fn skill(db: &Connection, agent: &str, name: &str, args: &Value) -> Result<Value> {
