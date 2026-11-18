@@ -8,7 +8,7 @@ use std::{
 type KeyEntries = HashMap<(String, String), String>;
 
 #[derive(Clone, Default)]
-struct Keyring(Arc<Mutex<KeyEntries>>);
+pub(super) struct Keyring(pub(super) Arc<Mutex<KeyEntries>>);
 impl keys::Store for Keyring {
     fn read(&self, service: &str, name: &str) -> Result<Option<String>> {
         Ok(self
@@ -34,9 +34,9 @@ impl keys::Store for Keyring {
     }
 }
 
-struct Scratch(PathBuf);
+pub(super) struct Scratch(pub(super) PathBuf);
 impl Scratch {
-    fn create() -> db::Result<Self> {
+    pub(super) fn create() -> db::Result<Self> {
         let path = std::env::temp_dir().join(format!("briefsip-device-test-{}", request_id()));
         fs::DirBuilder::new().mode(0o700).create(&path)?;
         Ok(Self(path))
@@ -49,8 +49,8 @@ impl Drop for Scratch {
 }
 
 #[derive(Clone)]
-struct Fixture {
-    state: AppState,
+pub(super) struct Fixture {
+    pub(super) state: AppState,
     actor: Arc<Actor>,
     lose_link: Arc<AtomicBool>,
 }
@@ -117,7 +117,9 @@ impl Fixture {
         })
     }
 
-    async fn start(scratch: &Scratch) -> db::Result<(Self, tokio::task::JoinHandle<()>)> {
+    pub(super) async fn start(
+        scratch: &Scratch,
+    ) -> db::Result<(Self, tokio::task::JoinHandle<()>)> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let origin = format!("http://{}", listener.local_addr()?);
         let config: crate::Config =

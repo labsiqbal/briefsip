@@ -1,6 +1,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { createServer, request } from 'node:http';
 import { createInterface } from 'node:readline';
 import { ProtocolError } from '../shared/protocol.ts';
 import { rustBinary } from '../rust-binary.ts';
@@ -8,6 +9,46 @@ import { rustBinary } from '../rust-binary.ts';
 type Options = { database: string; server: string; keyring: string };
 type Enrollment = { origin: string; tokenFile: string; expiresAt: number };
 type Connection = { phase: 'connecting' | 'connected' | 'backoff' | 'blocked' | 'offline'; generation: number };
+
+export async function startDeviceFaultProxy(canonical: () => string) {
+  type Fault = { path: string; before?: () => Promise<void>; drop?: (status: number) => boolean };
+  let fault: Fault | undefined;
+  let origin: string;
+  const server = createServer(async (incoming, outgoing) => {
+    const hook = fault && incoming.url?.endsWith(fault.path) ? fault : undefined;
+    try {
+      await hook?.before?.();
+      if (outgoing.destroyed) return;
+      const target = new URL(canonical());
+      const headers = { ...incoming.headers, host: target.host };
+      if (headers.origin === origin) headers.origin = target.origin;
+      const upstream = request(target, { method: incoming.method, path: incoming.url, headers }, reply => {
+        if (hook?.drop?.(reply.statusCode!)) {
+          reply.resume();
+          outgoing.destroy();
+          return;
+        }
+        outgoing.writeHead(reply.statusCode!, reply.headers);
+        reply.pipe(outgoing);
+        reply.on('error', () => outgoing.destroy());
+      });
+      outgoing.once('close', () => upstream.destroy());
+      upstream.on('error', () => outgoing.destroy());
+      incoming.pipe(upstream);
+    } catch {
+      outgoing.destroy();
+    }
+  });
+  await new Promise<void>((resolve, reject) => server.listen(0, '127.0.0.1', resolve).once('error', reject));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Device proxy address missing.');
+  origin = 'http://127.0.0.1:' + address.port;
+  const close = () => {
+    server.closeAllConnections();
+    return new Promise<void>(resolve => server.close(() => resolve()));
+  };
+  return { origin, fault: (next?: Fault) => { fault = next; }, close };
+}
 
 function hostArgs(options: Options, command: string[] = []) {
   return ['--device-host', ...command, '--server', options.server, '--test-keyring', options.keyring];

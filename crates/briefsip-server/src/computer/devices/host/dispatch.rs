@@ -289,6 +289,9 @@ impl Host {
                     TIMEOUT,
                 )
                 .await?;
+                if saved["actionKind"] == "provider" {
+                    self.checkpoint("provider-prepare-reply").await;
+                }
                 self.update_dispatch(&action, "committed", "unknown", false)?;
                 let command = json!({"requestId":saved["commitRequestId"],"ownership":saved["ownership"],
                     "intentDigest":saved["intentDigest"],"expectedTaskRevision":saved["context"]["snapshot"]["taskRevision"],
@@ -305,6 +308,9 @@ impl Host {
                         grant,
                     )
                     .await?;
+                if saved["actionKind"] == "provider" {
+                    self.checkpoint("provider-commit-reply").await;
+                }
                 if committed["data"]["dispatchable"] != true || start.elapsed() > grant {
                     return Err(fail(
                         409,

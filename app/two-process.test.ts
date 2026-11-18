@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createClerkClient } from '@clerk/backend';
 import { createHash, createHmac, createDecipheriv, createPublicKey, diffieHellman, hkdfSync, generateKeyPairSync, sign, randomUUID, randomBytes } from 'node:crypto';
-import { chmodSync, mkdtempSync, rmSync, readFileSync, existsSync, statSync, writeFileSync, renameSync, symlinkSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, readFileSync, existsSync, statSync, writeFileSync, renameSync, symlinkSync } from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer, request as httpRequest } from 'node:http';
@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
 import { startCanonicalApp } from './test-bridge.ts';
 import { openDeviceRuntime } from './device-runtime.ts';
-import { startRustDeviceEnrollment, startRustDeviceConnection, enrollRustDevice, startRustDeviceTask, runRustDeviceTask, crashRustDeviceTask, exportRustDeviceRecovery, type RecoveryExport } from './test-support/rust-device-host.ts';
+import { startDeviceFaultProxy, startRustDeviceEnrollment, startRustDeviceConnection, enrollRustDevice, startRustDeviceTask, runRustDeviceTask, crashRustDeviceTask, exportRustDeviceRecovery, type RecoveryExport } from './test-support/rust-device-host.ts';
 import type { ActionContext } from './test-support/task-protocol.ts';
 import { rustBinary } from './rust-binary.ts';
 import { rustServerOutput } from './rust-test-server.ts';
@@ -488,11 +488,12 @@ async function workflowConfigurationFixture() {
   } catch (error) { await runtime.close(); await f.close(); throw error; }
 }
 
-async function rustWorkflowConfigurationFixture() {
+async function rustWorkflowConfigurationFixture(withFaults = false) {
   const f = await fixture(), database = join(f.dir, 'workflow-home.sqlite'), keyring = join(f.dir, 'workflow-keys.json');
+  const proxy = withFaults ? await startDeviceFaultProxy(f.origin) : undefined;
   let connection: ReturnType<typeof startRustDeviceConnection> | undefined;
-  const close = async () => { await connection?.stop(); await f.close(); };
-  const config = () => ({ database, server: f.origin(), keyring });
+  const close = async () => { await connection?.stop(); await proxy?.close(); await f.close(); };
+  const config = () => ({ database, server: proxy?.origin ?? f.origin(), keyring });
   try {
     writeFileSync(keyring, '{}', { mode: 0o600 });
     await enrollRustDevice(config(), f.jwt());
@@ -501,12 +502,12 @@ async function rustWorkflowConfigurationFixture() {
       const active = connection = startRustDeviceConnection(config());
       return { state: () => active.state() ?? { phase: 'connecting', generation: 0 }, stop: active.stop };
     } };
-    return { ...f, ...await prepareWorkflowConfiguration(f), keys, runtime, hostOptions: config(), close };
+    return { ...f, ...await prepareWorkflowConfiguration(f), keys, runtime, hostOptions: config(), proxy, close };
   } catch (error) { await close(); throw error; }
 }
 
-async function protectedWorkflowWaitFixture(subject = 'user_owner', timeoutSeconds = 60, rustDevice = true) {
-  const f = rustDevice ? await rustWorkflowConfigurationFixture() : await workflowConfigurationFixture();
+async function protectedWorkflowWaitFixture(subject = 'user_owner', timeoutSeconds = 60, withFaults = false) {
+  const f = await rustWorkflowConfigurationFixture(withFaults);
   try {
     const connection = f.runtime.connect(); await until(() => connection.state().phase === 'connected');
     const graph = { entry: 'event', maxSteps: 2, nodes: [{ id: 'event', kind: 'wait', event: 'ready', timeoutSeconds, next: 'out' }, { id: 'out', kind: 'output' }] };
@@ -613,19 +614,20 @@ test('protected workflow event commits one transition and keeps exact retries af
 
 test('protected workflow wait discards delayed reveal and event replies after authority changes', async t => {
   for (const kind of ['reveal','event'] as const) for (const change of ['revision','rules','assignment','mapping','cancel','expiry','revoke','disconnect'] as const) await t.test(`${kind}/${change}`, async () => {
-    const f = await protectedWorkflowWaitFixture('user_collaborator', change === 'expiry' ? 2 : 60, false), originalFetch = globalThis.fetch;
+    const f = await protectedWorkflowWaitFixture('user_collaborator', change === 'expiry' ? 2 : 60, true);
+    const proxy = f.proxy!;
     let held = false, release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     const browser = generateKeyPairSync('x25519'), reveal = { requestId: randomUUID(), ephemeralPublicKey: browser.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url'), expectedSecretGeneration: 1 };
     const secret = [...f.keys.values].find(([key]) => key.includes('/event-wait/'))![1], delivery = randomUUID(), body = '{"event":"ready","payload":"once"}', time = String(Math.floor(Date.now() / 1000));
     const send = async () => {
       if (kind === 'reveal') return f.send(f.waitPath + '/connection', { ...reveal, requestId: randomUUID() });
-      const response = await originalFetch(f.origin() + f.waitPath + '/events', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': delivery, 'X-Briefsip-Signature': createHmac('sha256', secret).update(`${time}\n${delivery}\n${body}`).digest('hex') }, body });
+      const response = await fetch(f.origin() + f.waitPath + '/events', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': delivery, 'X-Briefsip-Signature': createHmac('sha256', secret).update(`${time}\n${delivery}\n${body}`).digest('hex') }, body });
       return { status: response.status, body: await response.json() };
     };
     const db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
     try {
-      globalThis.fetch = async (url, init) => { if (String(url).endsWith(`/wait-${kind}-results`)) { held = true; await gate; } return originalFetch(url, init); };
+      proxy.fault({ path: '/wait-' + kind + '-results', before: () => { held = true; return gate; } });
       const pending = send(); await until(() => held);
       assert.equal((await send()).status, 429, 'One pending request per home');
       if (change === 'revision') db.prepare('UPDATE workflow_runs SET revision=revision+1 WHERE id=?').run(f.run);
@@ -637,7 +639,7 @@ test('protected workflow wait discards delayed reveal and event replies after au
       if (change === 'revoke') { const device = (await f.send('/api/devices')).body.data[0]; assert.equal((await f.send(`/api/devices/${device.id}/revoke`, { requestId: randomUUID(), expectedRevision: device.revision })).status, 200); }
       const stopping = change === 'disconnect' ? f.connection.stop() : undefined;
       if (stopping) await until(async () => (await f.send('/api/devices')).body.data[0].status !== 'ready');
-      release(); globalThis.fetch = originalFetch;
+      proxy.fault(); release();
       await stopping;
       const denied = await pending;
       assert([403,404,409,503].includes(denied.status), JSON.stringify(denied));
@@ -645,7 +647,7 @@ test('protected workflow wait discards delayed reveal and event replies after au
       assert.equal(db.prepare("SELECT count(*) n FROM receipts WHERE scope LIKE 'workflow-wait-event:%'").get()!.n, 0);
       if (change === 'rules' || change === 'revision') assert.equal((await send()).status, 200, 'Fresh request uses changed authority');
       if (change === 'expiry') { await until(async () => (await f.send(f.path)).body.data.status === 'failed'); assert.equal((await f.send(f.waitPath)).body.data.status, 'expired'); }
-    } finally { release(); globalThis.fetch = originalFetch; db.close(); await f.close(); }
+    } finally { release(); db.close(); await f.close(); }
   });
 });
 
@@ -2321,7 +2323,7 @@ test('signed human sync preserves delta cursors through canonical restart and re
   } finally { await f.close(); }
 });
 
-async function loopTask(f: Awaited<ReturnType<typeof fixture>>, runtime: Pick<ReturnType<typeof openDeviceRuntime>, 'deviceId'>, setup = false, existingBinding?: string | null) {
+async function loopTask(f: Awaited<ReturnType<typeof fixture>>, runtime: { deviceId(): string }, setup = false, existingBinding?: string | null) {
   const home = (await f.send('/api/devices')).body.data.find((row: { id: string }) => row.id === runtime.deviceId()), project = randomUUID(), agent = randomUUID(), binding = existingBinding === undefined ? randomUUID() : existingBinding;
   assert.equal((await f.send('/api/projects', { requestId: randomUUID(), id: project, name: 'Execution loop' })).status, 201);
   if (existingBinding === undefined) {
@@ -2383,9 +2385,9 @@ test('signed task and device mutations publish atomic scoped observations across
   } finally { await runtime.close(); await f.close(); }
 });
 
-async function rustTaskFixture(f: Awaited<ReturnType<typeof fixture>>, filename: string) {
+async function rustTaskFixture(f: Awaited<ReturnType<typeof fixture>>, filename: string, server = f.origin()) {
   const database = join(f.dir, filename), keyring = database + '.keys.json';
-  const options = { database, keyring, server: f.origin() };
+  const options = { database, keyring, server };
   writeFileSync(keyring, '{}', { mode: 0o600 });
   const { deviceId } = await enrollRustDevice(options, f.jwt());
   async function withProvider<T>(provide: (context: ActionContext) => unknown, run: (origin: string) => Promise<T>) {
@@ -2605,32 +2607,30 @@ test('home execution loop consumes resolved late-known output without repeating 
 });
 
 test('home execution loop persists provider wait across reply loss and preserves concurrent pause', async () => {
-  const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'wait-loop.sqlite'), server: f.origin(), development: true, entry: keys.entry }), originalFetch = globalThis.fetch;
+  const f = await fixture(), proxy = await startDeviceFaultProxy(f.origin);
   try {
-    await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const runtime = await rustTaskFixture(f, 'wait-loop.sqlite', proxy.origin);
     const missing = await loopTask(f, runtime, false, null);
-    globalThis.fetch = async (url, init) => {
-      const response = await originalFetch(url, init);
-      if (String(url).endsWith('/wait-provider')) { await response.body?.cancel(); throw new Error('Lost provider wait reply'); }
-      return response;
-    };
-    await assert.rejects(runtime.runTask(missing.taskId, () => assert.fail('No provider binding')), /Lost provider wait reply/);
-    globalThis.fetch = originalFetch;
-    const waiting = (await f.send(`/api/tasks/${missing.taskId}`)).body.data;
+    let waitStatus: number | undefined;
+    proxy.fault({ path: '/wait-provider', drop: status => { waitStatus = status; return true; } });
+    await assert.rejects(runtime.runTask(missing.taskId, () => assert.fail('No provider binding')), { code: 'device_offline' });
+    assert.equal(waitStatus, 200, 'Lost reply must follow a durable provider wait');
+    proxy.fault();
+    const waiting = (await f.send('/api/tasks/' + missing.taskId)).body.data;
     assert.equal(waiting.state, 'waiting_resource');
     assert.equal((await runtime.runTask(missing.taskId, () => assert.fail('No provider binding'))).state, 'waiting_resource');
-    assert.equal((await f.send(`/api/tasks/${missing.taskId}`)).body.data.revision, waiting.revision);
+    assert.equal((await f.send('/api/tasks/' + missing.taskId)).body.data.revision, waiting.revision);
+
     const paused = await loopTask(f, runtime, false, null);
-    globalThis.fetch = async (url, init) => {
-      if (String(url).endsWith('/wait-provider')) {
-        const detail = (await f.send(`/api/tasks/${paused.taskId}`)).body.data;
-        assert.equal((await f.send(`/api/tasks/${paused.taskId}/control`, { requestId: randomUUID(), expectedRevision: detail.revision, operation: 'pause' })).status, 200);
-      }
-      return originalFetch(url, init);
-    };
-    await assert.rejects(runtime.runTask(paused.taskId, () => assert.fail('Paused task must not dispatch')), (error: unknown) => error instanceof ProtocolError && error.code === 'stale_revision');
-    assert.equal((await f.send(`/api/tasks/${paused.taskId}`)).body.data.state, 'paused');
-  } finally { globalThis.fetch = originalFetch; await runtime.close(); await f.close(); }
+    const path = '/api/tasks/' + paused.taskId;
+    proxy.fault({ path: path + '/wait-provider', before: async () => {
+      const detail = (await f.send(path)).body.data;
+      const response = await f.send(path + '/control', { requestId: randomUUID(), expectedRevision: detail.revision, operation: 'pause' });
+      assert.equal(response.status, 200);
+    } });
+    await assert.rejects(runtime.runTask(paused.taskId, () => assert.fail('Paused task must not dispatch')), { code: 'stale_revision' });
+    assert.equal((await f.send(path)).body.data.state, 'paused');
+  } finally { await proxy.close(); await f.close(); }
 });
 
 test('home execution loop holds missing bindings and enforces provider slots before dispatch', async () => {
@@ -3086,70 +3086,99 @@ test('journal-backed host dispatches once, retries publication only and refuses 
 });
 
 test('SIGKILL recovery proves no send before marker and never repeats marked effects or lost result ACKs', async () => {
-  const f = await fixture(), store = memoryKeys(), database = join(f.dir,'device.sqlite'), keys = join(f.dir,'synthetic-keys.json');
-  const runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: store.entry });
-  const calls = new Map<string,number>();
-  const effect = createServer(async (req,res) => {
-    let body=''; for await(const chunk of req)body+=chunk;
-    const {actionId}=JSON.parse(body); calls.set(actionId,(calls.get(actionId)??0)+1);
-    res.end(JSON.stringify({text:'Saved effect'}));
+  const f = await fixture(), database = join(f.dir, 'device.sqlite'), keyring = join(f.dir, 'synthetic-keys.json');
+  const options = { database, keyring, server: f.origin() };
+  const calls = new Map<string, number>();
+  const provider = createServer(async (req, res) => {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    const { taskId } = JSON.parse(body).snapshot;
+    calls.set(taskId, (calls.get(taskId) ?? 0) + 1);
+    res.end(JSON.stringify({ text: 'Saved effect' }));
   });
-  await new Promise<void>(resolve=>effect.listen(0,'127.0.0.1',resolve));
-  const address=effect.address();assert(address&&typeof address!=='string');
-  const effectOrigin=`http://127.0.0.1:${address.port}`;
-  let child: ReturnType<typeof spawn> | undefined;
+  await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+  const address = provider.address();
+  assert(address && typeof address !== 'string');
+  const origin = `http://127.0.0.1:${address.port}`;
   try {
-    await runtime.enroll(f.jwt());await runtime.close();
-    writeFileSync(keys,JSON.stringify(Object.fromEntries(store.values)),{mode:0o600});
-    const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),agent=randomUUID();
-    assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Crash recovery'})).status,201);
-    assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Agent',model:'fixture',backupModel:'',instructions:'Research',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
-    async function start(config:Record<string,unknown>) {
-      child=spawn(process.execPath,['--experimental-strip-types','test-support/recovery-fixture.mjs'],{cwd:new URL('.',import.meta.url),env:{...process.env,BRIEFSIP_RECOVERY_FIXTURE:JSON.stringify({database,keys,server:f.origin(),effect:effectOrigin, ...config})},timeout:30000,stdio:['ignore','ignore','pipe','ipc']});
-      let errors='';child.stderr!.on('data',chunk=>{errors+=chunk;});
-      const exited=once(child,'exit');
-      const message=await Promise.race([once(child,'message').then(([message])=>message),exited.then(()=>{throw new Error(`Recovery fixture exited: ${errors}`);})]);
-      return {child,exited,message};
-    }
-    for(const checkpoint of ['after-intent','after-prepare','after-commit','after-marker','after-result','after-report']) {
-      const taskId=randomUUID(),actionId=randomUUID(),payload={v:1,kind:'direct',message:{text:checkpoint,files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
-      assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
-      const running=await start({checkpoint,taskId,actionId});
-      assert.equal(running.message.checkpoint,checkpoint);
-      running.child.kill('SIGKILL');assert.equal((await running.exited)[1],'SIGKILL');
-      const beforeMarker=['after-intent','after-prepare','after-commit'].includes(checkpoint);
-      const expected=checkpoint==='after-marker'?'uncertain':beforeMarker?'not_sent':'acknowledged';
-      const continuationId=beforeMarker?randomUUID():undefined;
-      for(let restart=0;restart<2;restart++) {
-        await until(async () => (await f.send('/api/devices')).body.data[0].status !== 'ready');
-        await f.restart();
-        const recovery = startRustDeviceConnection({ database, server: f.origin(), keyring: keys });
-        try {
-          await recovery.ready();
-          const journal = fixtureDatabase(database);
+    writeFileSync(keyring, '{}', { mode: 0o600 });
+    const { deviceId } = await enrollRustDevice(options, f.jwt());
+    for (const [checkpoint, expected, marked] of [
+      ['provider-not-sent', 'not_sent', false],
+      ['provider-prepare-reply', 'not_sent', false],
+      ['provider-commit-reply', 'not_sent', false],
+      ['provider-in-flight', 'uncertain', true],
+      ['provider-saved', 'acknowledged', true],
+      ['provider-report-reply', 'acknowledged', true],
+    ] as const) {
+      const { taskId } = await loopTask(f, { deviceId: () => deviceId });
+      await crashRustDeviceTask(options, taskId, origin, checkpoint);
+      const db = fixtureDatabase(database);
+      try {
+        const action = db.prepare('SELECT action_id, send_marker FROM device_journal WHERE task_id=? AND sequence=0').get(taskId)!;
+        assert.equal(action.send_marker, Number(marked), checkpoint);
+        for (let restart = 0; restart < 2; restart++) {
+          await until(async () => (await f.send('/api/devices')).body.data[0].status !== 'ready');
+          await f.restart();
+          const recovery = startRustDeviceConnection(options);
           try {
-            await until(() => journal.prepare("SELECT 1 FROM device_outbox WHERE action_id=? AND state='acknowledged'").get(actionId) !== undefined);
-            assert.equal(journal.prepare('SELECT state FROM device_journal WHERE action_id=?').get(actionId)!.state, expected);
-          } finally { journal.close(); }
-        } finally { await recovery.stop(); }
-        if (restart === 0 && continuationId) {
-          const continued = await start({ mode:'recover', taskId, actionId, continuationId });
-          assert.equal(continued.message.state, expected);
-          assert.equal((await continued.exited)[0], 0);
+            await recovery.ready();
+            await until(() => db.prepare("SELECT 1 FROM device_outbox WHERE action_id=? AND state='acknowledged'").get(action.action_id!) !== undefined);
+            assert.equal(db.prepare('SELECT state FROM device_journal WHERE action_id=?').get(action.action_id!)!.state, expected, checkpoint);
+          } finally { await recovery.stop(); }
+          assert.equal(calls.get(taskId) ?? 0, marked || restart > 0 ? 1 : 0, checkpoint);
+          const detail = (await f.send(`/api/tasks/${taskId}`)).body.data;
+          if (expected === 'acknowledged') assert.deepEqual(detail.results[0].content, { text: 'Saved effect' });
+          if (expected === 'uncertain') assert.equal(detail.state, 'uncertain');
+          if (!marked && restart === 0) {
+            assert.equal(detail.state, 'running');
+            assert.equal((await runRustDeviceTask(options, taskId, origin)).state, 'completed');
+            const continued = db.prepare('SELECT action_id,state,result_json FROM device_journal WHERE task_id=? AND sequence=1').get(taskId)!;
+            assert.notEqual(continued.action_id, action.action_id);
+            assert.equal(continued.state, 'acknowledged');
+            assert.deepEqual(JSON.parse(String(continued.result_json)), { text: 'Saved effect' });
+            assert.equal(calls.get(taskId), 1);
+          }
         }
-        assert.equal(calls.get(actionId)??0,beforeMarker?0:1);
-        if(continuationId)assert.equal(calls.get(continuationId),1);
-      }
-      const detail=(await f.send(`/api/tasks/${taskId}`)).body.data;
-      if(expected==='acknowledged')assert.deepEqual(detail.results[0].content,{text:'Saved effect'});
-      else assert.equal(detail.state,beforeMarker?'running':'uncertain');
+      } finally { db.close(); }
     }
   } finally {
-    if(child&&child.exitCode===null&&child.signalCode===null){const exited=once(child,'exit');child.kill('SIGKILL');await exited;}
-    await runtime.close();effect.closeAllConnections();await new Promise<void>(resolve=>effect.close(()=>resolve()));await f.close();
+    provider.closeAllConnections();
+    await new Promise<void>(resolve => provider.close(() => resolve()));
+    await f.close();
   }
 });
 
+test('Rust exports prepared, in-flight and reported Node v3 journal evidence offline', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-frozen-journal-'));
+  const source = new URL('./test-support/fixtures/node-device-journal-v3/', import.meta.url);
+  try {
+    const { identity, keyring: syntheticKeys, samples } = JSON.parse(readFileSync(new URL('synthetic.json', source), 'utf8'));
+    const database = join(dir, 'home.sqlite'), keyring = join(dir, 'keys.json'), metadata = database + '.host';
+    writeFileSync(database, '', { mode: 0o600 });
+    const db = new DatabaseSync(database);
+    try { db.exec(readFileSync(new URL('device.sql', source), 'utf8')); } finally { db.close(); }
+    mkdirSync(metadata, { mode: 0o700 });
+    writeFileSync(join(metadata, 'identity.json'), JSON.stringify(identity), { mode: 0o600 });
+    writeFileSync(keyring, JSON.stringify(syntheticKeys), { mode: 0o600 });
+
+    const options = { database, keyring, server: identity.server };
+    const recoveryGeneration = randomUUID();
+    const effects = { not_sent: 'none', uncertain: 'unknown', reported: 'known' } as const;
+    for (const { taskId, actionId, recoveryState } of samples as { taskId: string; actionId: string; recoveryState: keyof typeof effects }[]) {
+      const requestId = randomUUID(), withContent = recoveryState === 'reported';
+      const evidence = exportRustDeviceRecovery(options, taskId, [actionId], requestId, recoveryGeneration, withContent);
+      assert.equal(evidence.envelope.entries.length, 1);
+      const [entry] = evidence.envelope.entries;
+      assert.equal(entry.actionId, actionId);
+      assert.equal(entry.taskId, taskId);
+      assert.equal(entry.state, recoveryState);
+      assert.equal(entry.effectStatus, effects[recoveryState]);
+      assert.deepEqual(evidence.resultContent, withContent ? { text: 'Saved effect' } : undefined);
+      assert.deepEqual(exportRustDeviceRecovery(options, taskId, [actionId], requestId, recoveryGeneration, withContent), evidence);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
 
 test('stalled normal requests cannot starve control reads and disconnected requests release capacity', async () => {
   const f=await fixture(), held: ReturnType<typeof httpRequest>[]=[];

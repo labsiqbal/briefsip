@@ -337,6 +337,9 @@ impl Host {
         if row["action_kind"] == "canonical" {
             self.checkpoint("tool-report").await;
         }
+        if row["action_kind"] == "provider" {
+            self.checkpoint("provider-report-reply").await;
+        }
         self.acknowledge(&action, saved, &report, receipt)
     }
 

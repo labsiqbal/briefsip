@@ -1,0 +1,48 @@
+{
+  "identity": {
+    "v": 1,
+    "server": "http://127.0.0.1:45501",
+    "installationId": "adc14b35-efd9-4b1e-b098-0e8e48b2528d",
+    "deviceId": "5892f499-1701-4647-813e-8c4d0ec2fe22",
+    "signingRef": "signing/27f7b95f-166f-4349-b9e0-c5249449d032",
+    "encryptionRef": "encryption/c75c6e91-2e65-4d17-802d-730fefeae091",
+    "zone": "Asia/Jakarta",
+    "zoneRevision": 1,
+    "descriptor": {
+      "v": 1,
+      "accountId": "8455ffe0-f735-42ab-ad6e-969dabb036a3",
+      "installationId": "adc14b35-efd9-4b1e-b098-0e8e48b2528d",
+      "deviceId": "5892f499-1701-4647-813e-8c4d0ec2fe22",
+      "authorityGeneration": "0be446d0-0971-4e8e-91f8-9379973eb8c0",
+      "deviceGeneration": 1,
+      "keyRevision": 1,
+      "zone": "Asia/Jakarta",
+      "zoneRevision": 1,
+      "signingPublicKey": "MCowBQYDK2VwAyEAe0H8ez7kyBtIYGopt-0HKle7R2RTDiIgNToq-xk9LXc",
+      "encryptionPublicKey": "MCowBQYDK2VuAyEAaP8wMLrvTvQUFNuNTmS45EgOxxP6fY3ovl39c2BrTgg",
+      "signature": "e3X5OFN_m00A2WnCU3IerBMEXekBhz6ZLkpeNmf-4k8V3QCNo75iM0dUmhtNnUmloXhZm8q1R3a2wUc9LFB3CA"
+    }
+  },
+  "keyring": {
+    "briefsip/installation/adc14b35-efd9-4b1e-b098-0e8e48b2528d/installation": "MC4CAQAwBQYDK2VwBCIEIC3ZfMAxatqtG6y0VGBcOBAP7-805SvIYfXldX1Wo6wh",
+    "briefsip/installation/adc14b35-efd9-4b1e-b098-0e8e48b2528d/signing/27f7b95f-166f-4349-b9e0-c5249449d032": "MC4CAQAwBQYDK2VwBCIEIFr94nufPuhCf3T7DJ3YxfPs43zosD-KdmQr4k7Jxinl",
+    "briefsip/installation/adc14b35-efd9-4b1e-b098-0e8e48b2528d/encryption/c75c6e91-2e65-4d17-802d-730fefeae091": "MC4CAQAwBQYDK2VuBCIEIMhxrXqd2NBxN5UA969nMt8WXSce5hGrWUDTT5cgnB5T"
+  },
+  "samples": [
+    {
+      "taskId": "746b978d-8649-4c75-b719-06821d8bcd9b",
+      "actionId": "d96d2b43-6dcf-4e21-bc3e-cf133eae498e",
+      "recoveryState": "not_sent"
+    },
+    {
+      "taskId": "1391ba5e-a583-46f6-b98a-f9c4889ff57c",
+      "actionId": "08b5087d-9d6a-4604-8da6-a05e7428d1fd",
+      "recoveryState": "uncertain"
+    },
+    {
+      "taskId": "b512fa4d-2356-4d02-93d3-fc345b534f23",
+      "actionId": "d4c7651d-b3c6-4098-ae4e-1dacfb523cdd",
+      "recoveryState": "reported"
+    }
+  ]
+}
