@@ -41,12 +41,12 @@ describe('collectServerUpdateTargets', () => {
 });
 
 describe('describeUpdateEverything', () => {
-  it('counts the running threads on restarting machines only and keeps skipped rows', () => {
+  it('counts the running turns on restarting machines only and keeps skipped rows', () => {
     const rows = [machine('local', 2), machine('peer', 1), { ...machine('offline', 9), skipped: 'Offline' }];
     assert.deepEqual(describeUpdateEverything(rows), {
-      count: 2, version: '0.13.0', warning: '3 running threads will be interrupted and can resume after the restart.',
+      count: 2, version: '0.13.0', warning: '3 running turns will be interrupted and can resume after the restart.',
     });
-    assert.match(describeUpdateEverything([machine('peer', 1)]).warning, /^1 running thread will /);
+    assert.match(describeUpdateEverything([machine('peer', 1)]).warning, /^1 running turn will /);
   });
 });
 

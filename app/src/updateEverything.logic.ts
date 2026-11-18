@@ -77,7 +77,7 @@ export function describeUpdateEverything(rows: readonly UpdateMachine[]) {
   return {
     count: targets.length,
     version: targets[0]?.target,
-    warning: `${running} running ${running === 1 ? 'thread' : 'threads'} will be interrupted and can resume after the restart.`,
+    warning: `${running} running ${running === 1 ? 'turn' : 'turns'} will be interrupted and can resume after the restart.`,
   };
 }
 

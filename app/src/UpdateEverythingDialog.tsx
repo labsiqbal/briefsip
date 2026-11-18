@@ -34,7 +34,7 @@ export function UpdateEverythingDialog({ updates }: { updates: UpdateEverythingS
       {run && <p className="sr-only" role="status">{result.label}</p>}
       {!run && updates.planning ? <SkeletonRows /> : rows.length > 0 ? <div className="k-table-wrap">
         <table className="k-table updates-table">
-          <thead><tr><th scope="col">Machine</th><th scope="col">Briefsip</th><th scope="col">Providers</th></tr></thead>
+          <thead><tr><th scope="col">Machine</th><th scope="col">Briefsip</th><th scope="col">Running turns</th></tr></thead>
           <tbody>{rows.map(row => {
             const status = (row as Partial<RunMachine>).status;
             const reason = (row as Partial<RunMachine>).reason;
@@ -48,7 +48,7 @@ export function UpdateEverythingDialog({ updates }: { updates: UpdateEverythingS
                   {reason && <small>{reason}</small>}
                 </div>}
               </td>
-              <td>{row.running} running</td>
+              <td>{row.running}</td>
             </tr>;
           })}</tbody>
         </table>
