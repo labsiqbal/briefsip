@@ -119,7 +119,7 @@ test('workspace descriptor reads reject escapes and changed pages, retain bounde
   }
 });
 
-for (const metadata of [false,true]) test(`workspace tools metadata=${metadata} share agent direct/side binding, deny unbound and channel access across restart`, async () => {
+for (const metadata of [false,true]) test(`workspace tools metadata=${metadata} share agent direct/side folder, isolate managed folders and channels across restart`, async () => {
   const dir=mkdtempSync(join(tmpdir(),'briefsip-workspace-http-')), root=join(dir,'root');mkdirSync(root);writeFileSync(join(root,'note.txt'),'OWN_WORKSPACE');
   const agent=randomUUID(), other=randomUUID(), toolName=metadata?'inspect_workspace_file':'read_workspace_file'; let advertised=false;
   const binary=Buffer.from([0,255,128,42]);if(metadata)writeFileSync(join(root,'note.txt'),binary);
@@ -128,7 +128,7 @@ for (const metadata of [false,true]) test(`workspace tools metadata=${metadata} 
     let raw='';for await(const chunk of req)raw+=chunk;const data=JSON.parse(raw);
     advertised=data.tools.some((tool:any)=>tool.function.name===toolName);
     const result=data.messages.findLast((message:any)=>message.role==='tool');
-    res.end(JSON.stringify({choices:[{finish_reason:result?'stop':'tool_calls',message:result?{content:metadata?result.content:JSON.parse(result.content).text}:{tool_calls:[{id:'read',type:'function',function:{name:toolName,arguments:JSON.stringify({path:'note.txt'})}}]}}]}));
+    res.end(JSON.stringify({choices:[{finish_reason:result?'stop':'tool_calls',message:result?{content:JSON.parse(result.content).error?"Workspace file unavailable.":metadata?result.content:JSON.parse(result.content).text}:{tool_calls:[{id:'read',type:'function',function:{name:toolName,arguments:JSON.stringify({path:'note.txt'})}}]}}]}));
   });
   await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));const address=provider.address();assert(address&&typeof address!=='string');
   const options={database:join(dir,'db.sqlite'),baseURL:`http://127.0.0.1:${address.port}/v1`,workspaces:[{agent,directory:root}]};let app=await startApp(options);
@@ -138,10 +138,10 @@ for (const metadata of [false,true]) test(`workspace tools metadata=${metadata} 
     for(const id of [agent,other])await request('/api/agents',{runtime:'api', id,name:id===agent?'Bound':'Unbound',model:'test',instructions:'Help'});
     assert.equal((await send(`/api/agents/${agent}/turns`)).reply,expected);assert(advertised);
     const side=await request(`/api/agents/${agent}/threads`,{id:randomUUID(),name:'Side'});assert.equal((await send(`/api/threads/${side.id}/turns`)).reply,expected);
-    assert.equal((await send(`/api/agents/${other}/turns`)).status,'failed');assert(!advertised);
+    assert.equal((await send(`/api/agents/${other}/turns`)).reply,'Workspace file unavailable.');assert(advertised);
     const channel=await request('/api/channels',{id:randomUUID(),name:'Team',instructions:'Help',members:[agent],lead:agent});
     assert.equal((await send(`/api/channels/${channel.id}/turns`)).status,'failed');assert(!advertised);
     await app.close();app=await startApp(options);assert.equal((await send(`/api/agents/${agent}/turns`)).reply,expected);
-    await app.close();app=await startApp({...options,workspaces:[]});assert.equal((await send(`/api/agents/${agent}/turns`)).status,'failed');assert(!advertised);
+    await app.close();app=await startApp({...options,workspaces:[]});assert.equal((await send(`/api/agents/${agent}/turns`)).reply,'Workspace file unavailable.');assert(advertised);
   } finally {await app.close();provider.closeAllConnections();await new Promise<void>(resolve=>provider.close(()=>resolve()));rmSync(dir,{recursive:true,force:true});}
 });

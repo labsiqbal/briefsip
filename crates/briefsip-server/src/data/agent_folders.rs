@@ -69,6 +69,7 @@ fn selected(state: &AppState, row: &Value, agent: &str) -> Result<(&'static str,
             agent: agent.into(),
             directory,
             write,
+            managed: source == "managed",
         },
     ))
 }
@@ -300,6 +301,7 @@ mod tests {
                 agent: agent.clone(),
                 directory: server.clone(),
                 write: true,
+                managed: false,
             });
         {
             let guard = state.database.lock().unwrap();

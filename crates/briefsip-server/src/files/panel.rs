@@ -110,6 +110,7 @@ fn scope_db(
                         agent: agent.clone(),
                         directory,
                         write: member["write"] == 1,
+                        managed: false,
                     });
                 }
             }

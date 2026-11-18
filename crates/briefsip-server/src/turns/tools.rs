@@ -59,6 +59,7 @@ pub fn workspace(
             agent: string(turn, "agent").to_owned(),
             directory: std::path::PathBuf::from(directory),
             write: member["write"] == 1,
+            managed: false,
         };
         crate::files::workspace::validate_bindings(std::slice::from_ref(&binding)).map_err(
             |_| {

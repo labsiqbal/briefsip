@@ -297,7 +297,7 @@ async fn repository(binding: &WorkspaceConfig, write: bool) -> Result<Repo> {
     if write && !binding.write {
         return Err(error(403, "Workspace does not have write permission."));
     }
-    detect(&binding.directory)
+    detect(binding)
         .await?
         .ok_or_else(|| error(404, "Workspace is not a Git repository."))
 }
@@ -371,7 +371,7 @@ pub async fn capture(
         return Err(error(403, "Workspace does not have write permission."));
     }
     let _lock = WRITES.lock().await;
-    let Some(repo) = detect(&binding.directory).await? else {
+    let Some(repo) = detect(binding).await? else {
         return Ok(None);
     };
     Ok(Some(
@@ -1050,6 +1050,7 @@ mod tests {
             agent: agent.clone(),
             directory: workspace.clone(),
             write: true,
+            managed: false,
         };
         let readonly = WorkspaceConfig {
             write: false,

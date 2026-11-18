@@ -69,6 +69,7 @@ fn binding(db: &Connection, agent: &str, project: &Value, destination: &str) -> 
                 agent: agent.to_owned(),
                 directory: path.to_path_buf(),
                 write: false,
+                managed: false,
             }])
             .map_err(|_| {
                 error(

@@ -384,6 +384,7 @@ mod tests {
                     agent: "agent".into(),
                     directory: root.clone(),
                     write: true,
+                    managed: false,
                 };
                 let path = root.join("file");
                 fs::write(&path, b"KEEP")?;
