@@ -509,7 +509,7 @@ mod gemini_tests {
 #[cfg(test)]
 mod sse_tests {
     use super::*;
-    use axum::{body::Body, routing::get};
+    use axum::body::Body;
     use tokio::net::TcpListener;
 
     async fn fixture(
@@ -531,25 +531,22 @@ mod sse_tests {
         );
         let text = text.into();
         let server = tokio::spawn(async move {
-            let app = Router::new().route(
-                "/",
-                get(move || async move {
-                    let chunks = text
-                        .as_bytes()
-                        .chunks(width)
-                        .map(axum::body::Bytes::copy_from_slice)
-                        .collect::<Vec<_>>();
-                    Body::from_stream(async_stream::stream! {
-                        for chunk in chunks {
-                            yield Ok(chunk);
-                        }
-                        if interrupted {
-                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                            yield Err(std::io::Error::other("simulated broken connection"));
-                        }
-                    })
-                }),
-            );
+            let app = Router::new().fallback(move || async move {
+                let chunks = text
+                    .as_bytes()
+                    .chunks(width)
+                    .map(axum::body::Bytes::copy_from_slice)
+                    .collect::<Vec<_>>();
+                Body::from_stream(async_stream::stream! {
+                    for chunk in chunks {
+                        yield Ok(chunk);
+                    }
+                    if interrupted {
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        yield Err(std::io::Error::other("simulated broken connection"));
+                    }
+                })
+            });
             axum::serve(listener, app).await
         });
         let parsed = match reqwest::get(origin).await {
