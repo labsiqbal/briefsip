@@ -3086,70 +3086,68 @@ test('journal-backed host dispatches once, retries publication only and refuses 
 });
 
 test('SIGKILL recovery proves no send before marker and never repeats marked effects or lost result ACKs', async () => {
-  const f = await fixture(), store = memoryKeys(), database = join(f.dir,'device.sqlite'), keys = join(f.dir,'synthetic-keys.json');
-  const runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: store.entry });
-  const calls = new Map<string,number>();
-  const effect = createServer(async (req,res) => {
-    let body=''; for await(const chunk of req)body+=chunk;
-    const {actionId}=JSON.parse(body); calls.set(actionId,(calls.get(actionId)??0)+1);
-    res.end(JSON.stringify({text:'Saved effect'}));
+  const f = await fixture(), database = join(f.dir, 'device.sqlite'), keyring = join(f.dir, 'synthetic-keys.json');
+  const options = { database, keyring, server: f.origin() };
+  const calls = new Map<string, number>();
+  const provider = createServer(async (req, res) => {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    const { taskId } = JSON.parse(body).snapshot;
+    calls.set(taskId, (calls.get(taskId) ?? 0) + 1);
+    res.end(JSON.stringify({ text: 'Saved effect' }));
   });
-  await new Promise<void>(resolve=>effect.listen(0,'127.0.0.1',resolve));
-  const address=effect.address();assert(address&&typeof address!=='string');
-  const effectOrigin=`http://127.0.0.1:${address.port}`;
-  let child: ReturnType<typeof spawn> | undefined;
+  await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+  const address = provider.address();
+  assert(address && typeof address !== 'string');
+  const origin = `http://127.0.0.1:${address.port}`;
   try {
-    await runtime.enroll(f.jwt());await runtime.close();
-    writeFileSync(keys,JSON.stringify(Object.fromEntries(store.values)),{mode:0o600});
-    const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),agent=randomUUID();
-    assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Crash recovery'})).status,201);
-    assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Agent',model:'fixture',backupModel:'',instructions:'Research',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
-    async function start(config:Record<string,unknown>) {
-      child=spawn(process.execPath,['--experimental-strip-types','test-support/recovery-fixture.mjs'],{cwd:new URL('.',import.meta.url),env:{...process.env,BRIEFSIP_RECOVERY_FIXTURE:JSON.stringify({database,keys,server:f.origin(),effect:effectOrigin, ...config})},timeout:30000,stdio:['ignore','ignore','pipe','ipc']});
-      let errors='';child.stderr!.on('data',chunk=>{errors+=chunk;});
-      const exited=once(child,'exit');
-      const message=await Promise.race([once(child,'message').then(([message])=>message),exited.then(()=>{throw new Error(`Recovery fixture exited: ${errors}`);})]);
-      return {child,exited,message};
-    }
-    for(const checkpoint of ['after-intent','after-prepare','after-commit','after-marker','after-result','after-report']) {
-      const taskId=randomUUID(),actionId=randomUUID(),payload={v:1,kind:'direct',message:{text:checkpoint,files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
-      assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
-      const running=await start({checkpoint,taskId,actionId});
-      assert.equal(running.message.checkpoint,checkpoint);
-      running.child.kill('SIGKILL');assert.equal((await running.exited)[1],'SIGKILL');
-      const beforeMarker=['after-intent','after-prepare','after-commit'].includes(checkpoint);
-      const expected=checkpoint==='after-marker'?'uncertain':beforeMarker?'not_sent':'acknowledged';
-      const continuationId=beforeMarker?randomUUID():undefined;
-      for(let restart=0;restart<2;restart++) {
-        await until(async () => (await f.send('/api/devices')).body.data[0].status !== 'ready');
-        await f.restart();
-        const recovery = startRustDeviceConnection({ database, server: f.origin(), keyring: keys });
-        try {
-          await recovery.ready();
-          const journal = fixtureDatabase(database);
+    writeFileSync(keyring, '{}', { mode: 0o600 });
+    const { deviceId } = await enrollRustDevice(options, f.jwt());
+    for (const [checkpoint, expected, marked] of [
+      ['provider-not-sent', 'not_sent', false],
+      ['provider-prepare-reply', 'not_sent', false],
+      ['provider-commit-reply', 'not_sent', false],
+      ['provider-in-flight', 'uncertain', true],
+      ['provider-saved', 'acknowledged', true],
+      ['provider-report-reply', 'acknowledged', true],
+    ] as const) {
+      const { taskId } = await loopTask(f, { deviceId: () => deviceId });
+      await crashRustDeviceTask(options, taskId, origin, checkpoint);
+      const db = fixtureDatabase(database);
+      try {
+        const action = db.prepare('SELECT action_id, send_marker FROM device_journal WHERE task_id=? AND sequence=0').get(taskId)!;
+        assert.equal(action.send_marker, Number(marked), checkpoint);
+        for (let restart = 0; restart < 2; restart++) {
+          await until(async () => (await f.send('/api/devices')).body.data[0].status !== 'ready');
+          await f.restart();
+          const recovery = startRustDeviceConnection(options);
           try {
-            await until(() => journal.prepare("SELECT 1 FROM device_outbox WHERE action_id=? AND state='acknowledged'").get(actionId) !== undefined);
-            assert.equal(journal.prepare('SELECT state FROM device_journal WHERE action_id=?').get(actionId)!.state, expected);
-          } finally { journal.close(); }
-        } finally { await recovery.stop(); }
-        if (restart === 0 && continuationId) {
-          const continued = await start({ mode:'recover', taskId, actionId, continuationId });
-          assert.equal(continued.message.state, expected);
-          assert.equal((await continued.exited)[0], 0);
+            await recovery.ready();
+            await until(() => db.prepare("SELECT 1 FROM device_outbox WHERE action_id=? AND state='acknowledged'").get(action.action_id!) !== undefined);
+            assert.equal(db.prepare('SELECT state FROM device_journal WHERE action_id=?').get(action.action_id!)!.state, expected, checkpoint);
+          } finally { await recovery.stop(); }
+          assert.equal(calls.get(taskId) ?? 0, marked || restart > 0 ? 1 : 0, checkpoint);
+          const detail = (await f.send(`/api/tasks/${taskId}`)).body.data;
+          if (expected === 'acknowledged') assert.deepEqual(detail.results[0].content, { text: 'Saved effect' });
+          if (expected === 'uncertain') assert.equal(detail.state, 'uncertain');
+          if (!marked && restart === 0) {
+            assert.equal(detail.state, 'running');
+            assert.equal((await runRustDeviceTask(options, taskId, origin)).state, 'completed');
+            const continued = db.prepare('SELECT action_id,state,result_json FROM device_journal WHERE task_id=? AND sequence=1').get(taskId)!;
+            assert.notEqual(continued.action_id, action.action_id);
+            assert.equal(continued.state, 'acknowledged');
+            assert.deepEqual(JSON.parse(String(continued.result_json)), { text: 'Saved effect' });
+            assert.equal(calls.get(taskId), 1);
+          }
         }
-        assert.equal(calls.get(actionId)??0,beforeMarker?0:1);
-        if(continuationId)assert.equal(calls.get(continuationId),1);
-      }
-      const detail=(await f.send(`/api/tasks/${taskId}`)).body.data;
-      if(expected==='acknowledged')assert.deepEqual(detail.results[0].content,{text:'Saved effect'});
-      else assert.equal(detail.state,beforeMarker?'running':'uncertain');
+      } finally { db.close(); }
     }
   } finally {
-    if(child&&child.exitCode===null&&child.signalCode===null){const exited=once(child,'exit');child.kill('SIGKILL');await exited;}
-    await runtime.close();effect.closeAllConnections();await new Promise<void>(resolve=>effect.close(()=>resolve()));await f.close();
+    provider.closeAllConnections();
+    await new Promise<void>(resolve => provider.close(() => resolve()));
+    await f.close();
   }
 });
-
 
 test('stalled normal requests cannot starve control reads and disconnected requests release capacity', async () => {
   const f=await fixture(), held: ReturnType<typeof httpRequest>[]=[];
