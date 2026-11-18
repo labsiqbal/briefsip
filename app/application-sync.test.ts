@@ -12,7 +12,7 @@ import { initializeCanonicalSchema } from './schema.ts';
 import { digestCommand, ProtocolError } from './shared/protocol.ts';
 import { startCanonicalApp } from './test-bridge.ts';
 import { createServer } from 'node:http';
-import { createMailWorker } from './mail.ts';
+import { createMailWorker } from './test-support/legacy-mail-worker.ts';
 import { createProjectWorkflows, initializeWorkflowConfigurations, initializeWorkflowRuns, initializeWorkflowNotifications } from './workflow-store.ts';
 
 function fixture(workflows = false) {

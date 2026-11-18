@@ -4,7 +4,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { createProjectAccess, parseInvitationCreate, parseMemberEdit, parseResponsePolicy } from './project-access.ts';
 import { initializeCanonicalSchema } from './schema.ts';
-import { decryptMail } from './mail.ts';
+import { decryptMail } from './test-support/mail-fixture.ts';
 import type { HumanActor } from './test-support/auth.ts';
 import { ProtocolError } from './shared/protocol.ts';
 

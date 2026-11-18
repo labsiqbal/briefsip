@@ -265,24 +265,65 @@ pub fn journal() -> crate::db::Result<()> {
         if !matches!((action,c.confirmation.as_deref()),("retry",Some("--accept-duplicate-risk"))|("discard",Some("--confirm"))) {
             return Err(error(400,"Explicit recovery confirmation required"));
         }
-        transaction(db, || {
-            let row = one(db,&format!("SELECT * FROM {p}_outbox WHERE id=?"),[id])?.ok_or_else(|| error(409,"Delivery changed or is not recoverable; inspect it again"))?;
-            let current: i64 = db.query_row(&format!("SELECT count(*) FROM {p}_recoveries WHERE reply=?"),[id],|r|r.get(0))?;
-            if !["failed","uncertain"].contains(&string(&row,"status")) || current != revision {
-                return Err(error(409,"Delivery changed or is not recoverable; inspect it again"));
-            }
-            if p == "slack" {
-                db.execute("INSERT INTO slack_recoveries(reply,revision,action,status,part) VALUES(?,?,?,?,?)",params![id,revision+1,action,row["status"].as_str(),row["part"].as_i64()])?;
-            } else {
-                db.execute("INSERT INTO telegram_recoveries(reply,revision,action,status,part,error) VALUES(?,?,?,?,?,?)",params![id,revision+1,action,row["status"].as_str(),row["part"].as_i64(),row["error"].as_str()])?;
-            }
-            let status = if action == "retry" {"queued"} else {"discarded"};
-            db.execute(&format!("UPDATE {p}_outbox SET status=?{} WHERE id=?",if p=="telegram" {",error=NULL"} else {""}),[status,id])?;
-            Ok(json!({"id":id,"status":status,"revision":revision+1}))
-        })
+        recover_reply(db, p, id, revision, action)
     })().map_err(|e| e.message)?;
     println!("{output}");
     Ok(())
+}
+pub(super) fn recover_reply(
+    db: &Connection,
+    p: &str,
+    id: &str,
+    revision: i64,
+    action: &str,
+) -> Result<Value> {
+    transaction(db, || {
+        let row =
+            one(db, &format!("SELECT * FROM {p}_outbox WHERE id=?"), [id])?.ok_or_else(|| {
+                error(
+                    409,
+                    "Delivery changed or is not recoverable; inspect it again",
+                )
+            })?;
+        let current: i64 = db.query_row(
+            &format!("SELECT count(*) FROM {p}_recoveries WHERE reply=?"),
+            [id],
+            |r| r.get(0),
+        )?;
+        if !["failed", "uncertain"].contains(&string(&row, "status")) || current != revision {
+            return Err(error(
+                409,
+                "Delivery changed or is not recoverable; inspect it again",
+            ));
+        }
+        if p == "slack" {
+            db.execute(
+                "INSERT INTO slack_recoveries(reply,revision,action,status,part) VALUES(?,?,?,?,?)",
+                params![
+                    id,
+                    revision + 1,
+                    action,
+                    row["status"].as_str(),
+                    row["part"].as_i64()
+                ],
+            )?;
+        } else {
+            db.execute("INSERT INTO telegram_recoveries(reply,revision,action,status,part,error) VALUES(?,?,?,?,?,?)",params![id,revision+1,action,row["status"].as_str(),row["part"].as_i64(),row["error"].as_str()])?;
+        }
+        let status = if action == "retry" {
+            "queued"
+        } else {
+            "discarded"
+        };
+        db.execute(
+            &format!(
+                "UPDATE {p}_outbox SET status=?{} WHERE id=?",
+                if p == "telegram" { ",error=NULL" } else { "" }
+            ),
+            [status, id],
+        )?;
+        Ok(json!({"id":id,"status":status,"revision":revision+1}))
+    })
 }
 pub async fn run_options(options: &Options) -> crate::db::Result<()> {
     if !uuid(&options.agent)

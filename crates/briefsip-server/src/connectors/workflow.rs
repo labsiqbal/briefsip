@@ -75,9 +75,26 @@ pub async fn handle(
             [string(row, "turn")],
         )?;
         if decision.is_none() {
-            let run = local
+            let run = match local
                 .request(&format!("{base}/workflow-runs/{}", parts[1]), None)
-                .await?;
+                .await
+            {
+                Ok(run) => run,
+                Err(e) if platform == "slack" && e.status == 404 => {
+                    db.execute(
+                        "UPDATE slack_inbox SET status='unavailable' WHERE turn=?",
+                        [parts[1]],
+                    )?;
+                    finish(
+                        db,
+                        platform,
+                        row,
+                        "Workflow delivery stopped. Run not found; check status in Briefsip.",
+                    )?;
+                    return Ok(true);
+                }
+                Err(e) => return Err(e),
+            };
             if done(string(&run, "status")) {
                 finish(
                     db,
@@ -115,6 +132,9 @@ pub async fn handle(
             },
         )?;
         return Ok(true);
+    }
+    if platform == "slack" && !["workflow", "workflow-command"].contains(&string(row, "kind")) {
+        return Ok(false);
     }
     if cmd == format!("{prefix}workflows") {
         if parts.len() > 2 || parts.get(1).is_some_and(|id| !uuid(id)) {

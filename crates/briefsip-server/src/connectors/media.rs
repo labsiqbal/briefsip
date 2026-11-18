@@ -172,18 +172,23 @@ pub async fn telegram_document(
         .send()
         .await
         .map_err(|_| error(502, "Telegram request outcome is uncertain."))?;
+    let status = response.status();
     let value: Value =
         serde_json::from_slice(&super::runner::bytes(response, 2 * 1024 * 1024).await?)
             .map_err(|_| error(502, "Telegram request outcome is uncertain."))?;
-    if value["ok"] == true {
-        Ok(value["result"].clone())
-    } else {
-        Err(error(
-            value["error_code"]
-                .as_u64()
-                .filter(|n| (400..500).contains(n))
-                .unwrap_or(502) as u16,
-            "Telegram request outcome is uncertain.",
-        ))
+    if status.is_success() && value["ok"] == true {
+        return Ok(value["result"].clone());
     }
+    if value["ok"] == false {
+        if let Some(code) = value["error_code"]
+            .as_u64()
+            .filter(|n| (400..500).contains(n))
+        {
+            return Err(error(
+                code as u16,
+                format!("Telegram rejected request ({code})."),
+            ));
+        }
+    }
+    Err(error(502, "Telegram request outcome is uncertain."))
 }

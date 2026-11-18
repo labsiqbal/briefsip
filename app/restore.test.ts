@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { initializeCanonicalSchema } from './schema.ts';
 import { checkedRestore, restoreCommand, restoreWorkspace, workspaceSnapshot } from './test-support/backup.ts';
 import { createProjectAccess } from './project-access.ts';
-import { createMailWorker } from './mail.ts';
+import { createMailWorker } from './test-support/legacy-mail-worker.ts';
 import { startApp } from './test-bridge.ts';
 import { restoreIdentity } from './test-support/restore-identity.ts';
 import { sha256, ProtocolError } from './shared/protocol.ts';
