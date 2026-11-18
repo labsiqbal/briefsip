@@ -45,7 +45,7 @@ pub fn canonical(value: &Value) -> String {
 
 pub struct Database {
     pub connection: Connection,
-    _guard: Connection,
+    _guard: Option<Connection>,
 }
 pub fn open(path: &Path, canonical_mode: bool, now: i64) -> Result<Database> {
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -57,31 +57,7 @@ pub fn open(path: &Path, canonical_mode: bool, now: i64) -> Result<Database> {
     let connection = Connection::open(path)?;
     connection.set_prepared_statement_cache_capacity(128);
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    let source = fs::canonicalize(path)?;
-    if fs::metadata(&source)?.nlink() != 1 {
-        return Err("Canonical database must be a file without hard links.".into());
-    }
-    let guard_path = format!("{}.server-lock.sqlite", source.display());
-    let file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .mode(0o600)
-        .custom_flags(0x20000)
-        .open(&guard_path)?;
-    let metadata = file.metadata()?;
-    if !metadata.is_file()
-        || metadata.nlink() != 1
-        || metadata.mode() & 0o077 != 0
-        || metadata.uid() != fs::metadata("/proc/self")?.uid()
-    {
-        return Err("Server guard must be a private file owned by the user.".into());
-    }
-    drop(file);
-    let guard = Connection::open(&guard_path)?;
-    guard
-        .execute_batch("PRAGMA busy_timeout=0; PRAGMA locking_mode=EXCLUSIVE; BEGIN EXCLUSIVE")
-        .map_err(|_| "Another canonical server is still running.")?;
+    let guard = server_guard(path)?;
     connection.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000")?;
     if canonical_mode {
         migrate(&connection, now, SCHEMA_VERSION)?;
@@ -95,9 +71,80 @@ pub fn open(path: &Path, canonical_mode: bool, now: i64) -> Result<Database> {
     }
     Ok(Database {
         connection,
+        _guard: Some(guard),
+    })
+}
+fn server_guard(path: &Path) -> Result<Connection> {
+    let source = fs::canonicalize(path)?;
+    if fs::metadata(&source)?.nlink() != 1 {
+        return Err("Canonical database must be a file without hard links.".into());
+    }
+    let guard_path = format!("{}.server-lock.sqlite", source.display());
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(0o600)
+        .custom_flags((rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32)
+        .open(&guard_path)
+        .map_err(|error| {
+            if error.raw_os_error() == Some(rustix::io::Errno::LOOP.raw_os_error()) {
+                std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "Server guard must be a private file owned by the user.",
+                )
+            } else {
+                error
+            }
+        })?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file()
+        || metadata.nlink() != 1
+        || metadata.mode() & 0o077 != 0
+        || metadata.uid() != fs::metadata("/proc/self")?.uid()
+    {
+        return Err("Server guard must be a private file owned by the user.".into());
+    }
+    drop(file);
+    let guard = Connection::open(&guard_path)?;
+    guard
+        .execute_batch("PRAGMA busy_timeout=0; PRAGMA locking_mode=EXCLUSIVE; BEGIN EXCLUSIVE")
+        .map_err(|_| "Another canonical server is still running.")?;
+    Ok(guard)
+}
+
+pub(crate) fn open_recovery(path: &Path, exclusive: bool) -> Result<Database> {
+    for suffix in ["", "-wal", "-shm", "-journal"] {
+        let mut companion = path.as_os_str().to_owned();
+        companion.push(suffix);
+        match fs::symlink_metadata(companion) {
+            Ok(meta)
+                if meta.is_file()
+                    && meta.nlink() == 1
+                    && meta.uid() == rustix::process::getuid().as_raw()
+                    && meta.mode() & 0o077 == 0 => {}
+            Err(error) if !suffix.is_empty() && error.kind() == std::io::ErrorKind::NotFound => {}
+            _ => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "Recovery database must be a private file owned by the user.",
+                )
+                .into())
+            }
+        }
+    }
+    let guard = exclusive.then(|| server_guard(path)).transpose()?;
+    let connection = Connection::open_with_flags(
+        path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
+    )?;
+    connection.execute_batch("PRAGMA trusted_schema=OFF; PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000")?;
+    Ok(Database {
+        connection,
         _guard: guard,
     })
 }
+
 fn table(db: &Connection, name: &str) -> Result<bool> {
     Ok(db
         .query_row(
