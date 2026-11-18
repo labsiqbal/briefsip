@@ -26,7 +26,7 @@ test('routine tools recover from invalid arguments, preserve owner scope and kee
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
-  const app = await startApp({ database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` });
+  const app = await startApp({ database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` }, { directory: dir, servers: [provider] });
   async function request(path: string, body?: unknown) {
     const res = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const data = await res.json(); assert(res.ok, JSON.stringify(data)); return data;

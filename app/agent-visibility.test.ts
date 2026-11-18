@@ -28,7 +28,7 @@ test('hidden agents finish active work, hold queue across restart, reject new wo
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, concurrency: 1 };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [provider] });
   async function request(path: string, body?: unknown, status?: number): Promise<any> {
     const res = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const value = await res.json(); if (status) assert.equal(res.status, status, JSON.stringify(value)); else assert(res.ok, JSON.stringify(value)); return value;

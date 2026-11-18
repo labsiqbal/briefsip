@@ -26,7 +26,7 @@ test('CLI routine lists and histories stay within the selected granted agent', a
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(dir, 'db.sqlite'), scriptDirectory: directory, baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: randomUUID() };
-  let app = await startApp(options), drop = true;
+  let app = await startApp(options, { directory: dir, servers: [provider] }), drop = true;
   const requests: string[] = [];
   const proxy = createServer(async (req, res) => {
     let body = ''; for await (const chunk of req) body += chunk;
@@ -259,7 +259,7 @@ test('script CLI discovers only grants, sends once, waits, preserves retry ID an
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const directory = join(dir, 'scripts'), options = { database: join(dir, 'db.sqlite'), scriptDirectory: directory, baseURL: `http://127.0.0.1:${address.port}/v1` };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [provider] });
   async function request(path: string, body?: unknown) {
     const res = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const value = await res.json(); assert(res.ok, JSON.stringify(value)); return value;
@@ -410,7 +410,7 @@ test('CLI answers retain receipt identity across lost replies and restart', asyn
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const directory = join(dir, 'scripts'), options = { database: join(dir, 'db.sqlite'), scriptDirectory: directory, baseURL: `http://127.0.0.1:${address.port}/v1` };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [provider] });
   const proxy = createServer(async (req, res) => {
     let body = ''; for await (const chunk of req) body += chunk;
     const response = await fetch(app.origin + req.url, { method: req.method, headers: { Authorization: req.headers.authorization!, 'Content-Type': 'application/json' }, body: body || undefined });

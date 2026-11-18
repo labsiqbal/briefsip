@@ -48,7 +48,7 @@ test('MCP tests before save, protects credentials/grants and journals success or
   await new Promise<void>(resolve => external.listen(0, '127.0.0.1', resolve)); await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = external.address(), pa = provider.address(); assert(address && typeof address !== 'string' && pa && typeof pa !== 'string');
   const url = `http://127.0.0.1:${address.port}/mcp`, options = { database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${pa.port}/v1` };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [external, provider] });
   const get = async (path: string) => { const response = await fetch(app.origin + path); assert(response.ok); return response.json(); };
   const post = async (path: string, body: unknown, status = 200) => {
     const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const value = await response.json(); assert.equal(response.status, status, JSON.stringify(value)); assert(!JSON.stringify(value).includes(token)); return value;

@@ -22,7 +22,7 @@ test('shared data agent tools journal once across resume, user reads/drop and re
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [provider] });
   const get = async (path: string) => { const r = await fetch(app.origin + path); assert(r.ok); return r.json(); };
   const post = async (path: string, data: unknown, status = 200) => {
     const r = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); const value = await r.json(); assert.equal(r.status, status, JSON.stringify(value)); return value;

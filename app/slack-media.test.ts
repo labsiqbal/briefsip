@@ -20,7 +20,7 @@ test('Slack files snapshot bytes and retry uploads and turns without duplicate w
  const scriptToken='fixture-media-script-token-01234567890';
  let pdfUnavailable=false;
  const pdfFault=async()=>pdfUnavailable?{status:503,error:'PDF sandbox is unavailable.'}:undefined;
- const app=await startApp({database:join(root,'app.sqlite'),baseURL:`http://127.0.0.1:${pa.port}/v1`,scriptToken,scriptDirectory:join(root,'scripts'),pdfFault});
+ const app=await startApp({database:join(root,'app.sqlite'),baseURL:`http://127.0.0.1:${pa.port}/v1`,scriptToken,scriptDirectory:join(root,'scripts'),pdfFault}, { directory: root, servers: [provider] });
  const actual=localScript(join(root,'scripts'));
  let db:DatabaseSync|undefined;
  const connector=await rustConnectorFixture('slack',root,agent,app.origin,scriptToken,(method,raw,req,res)=>{

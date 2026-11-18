@@ -22,7 +22,7 @@ async function fixture() {
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve)); const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database, baseURL: `http://127.0.0.1:${address.port}/v1`, allowedOrigins: ['https://briefsip.example:4317'] };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [provider] });
   const clients: Client[] = [];
   async function post(path: string, body: unknown, expected = 200) { const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const value = await response.json(); assert.equal(response.status, expected, JSON.stringify(value)); return value; }
   async function peer(name = 'Laptop', scopes = allScopes) { return post('/api/mcp-server/peer-tokens', { id: randomUUID(), name, scopes }); }

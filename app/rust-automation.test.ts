@@ -56,7 +56,7 @@ test('Rust workflow schedules skip busy approvals once and leave offline work du
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address();
   assert(address && typeof address !== 'string');
-  let app = await startApp({ database, fixedClock: now });
+  let app = await startApp({ database, fixedClock: now }, { directory, servers: [provider] });
   async function api(path: string, body?: unknown, status = 200) {
     const response = await fetch(app.origin + path, {
       method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' },

@@ -32,7 +32,7 @@ for (const family of ['openai-compatible', 'anthropic', 'gemini'] as ProviderFam
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(directory, 'db.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, provider: family };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory, servers: [provider] });
   async function request(path: string, body?: unknown, status?: number) {
     const response = await fetch(app.origin + path, { method: body === undefined ? 'GET' : 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
     const data = await response.json(); if (status) assert.equal(response.status, status, JSON.stringify(data)); else assert(response.ok, JSON.stringify(data)); return data;
