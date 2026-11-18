@@ -277,7 +277,11 @@ pub fn execute(
                 db.execute_batch("RELEASE canonical_tool")?;
                 result
             }
-            Err(error) if error.status < 500 && error.code != "record_scope_missing" => {
+            Err(error)
+                if error.status < 500
+                    && (error.code != "record_scope_missing"
+                        || matches!(name, "send_message" | "interrupt_agent")) =>
+            {
                 db.execute_batch("ROLLBACK TO canonical_tool; RELEASE canonical_tool")?;
                 json!({"error":error.message,"status":error.status})
             }

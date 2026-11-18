@@ -11,7 +11,13 @@ mod sql {
     include!(concat!(env!("OUT_DIR"), "/schema.rs"));
 }
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
+const CANONICAL_INDEXES: &str = concat!(
+    include_str!("files/indexes.sql"),
+    include_str!("turns/indexes.sql"),
+    include_str!("provider-indexes.sql"),
+    include_str!("automation/project-indexes.sql"),
+);
 
 pub fn digest(value: &str) -> String {
     format!("{:x}", Sha256::digest(value.as_bytes()))
@@ -167,6 +173,7 @@ pub fn migrate(db: &Connection, now: i64, through: i64) -> Result<()> {
             (sql::MIGRATIONV2, "v2_device_authority"),
             (sql::MIGRATIONV3, "v3_task_fencing"),
             (sql::MIGRATIONV4, "v4_sync_retention"),
+            (CANONICAL_INDEXES, "v5_canonical_indexes"),
         ];
         for (index, (sql, name)) in migrations.iter().enumerate() {
             let next = index as i64 + 1;
@@ -189,6 +196,12 @@ pub fn migrate(db: &Connection, now: i64, through: i64) -> Result<()> {
                     ] {
                         column(db, "turns", name, definition)?;
                     }
+                }
+                if next == 5 {
+                    provider_tables(db)?;
+                    crate::turns::initialize_canonical(db).map_err(|error| error.message)?;
+                    crate::files::init_canonical_schema(db)?;
+                    crate::automation::project::initialize(db).map_err(|error| error.message)?;
                 }
                 db.execute_batch(sql)?;
                 if next == 1 {
@@ -284,7 +297,9 @@ fn local(db: &Connection) -> Result<()> {
     ] {
         column(db, "turns", name, definition)?;
     }
-    provider_tables(db)
+    provider_tables(db)?;
+    db.execute_batch(include_str!("provider-indexes.sql"))?;
+    Ok(())
 }
 
 pub fn provider_tables(db: &Connection) -> Result<()> {
@@ -296,7 +311,7 @@ pub fn provider_tables(db: &Connection) -> Result<()> {
     ] {
         column(db, "provider_calls", name, definition)?;
     }
-    db.execute_batch("CREATE INDEX IF NOT EXISTS provider_calls_turn_seq ON provider_calls(turn,seq); CREATE TABLE IF NOT EXISTS provider_streams(call INTEGER PRIMARY KEY REFERENCES provider_calls(seq),text TEXT NOT NULL) STRICT; CREATE TABLE IF NOT EXISTS provider_stream_segments(call INTEGER NOT NULL REFERENCES provider_calls(seq),ordinal INTEGER NOT NULL,id TEXT NOT NULL,kind TEXT NOT NULL,text TEXT NOT NULL,state TEXT NOT NULL,final INTEGER NOT NULL DEFAULT 0,revision INTEGER NOT NULL,PRIMARY KEY(call,ordinal),UNIQUE(call,id)) STRICT;")?;
+    db.execute_batch("CREATE TABLE IF NOT EXISTS provider_streams(call INTEGER PRIMARY KEY REFERENCES provider_calls(seq),text TEXT NOT NULL) STRICT; CREATE TABLE IF NOT EXISTS provider_stream_segments(call INTEGER NOT NULL REFERENCES provider_calls(seq),ordinal INTEGER NOT NULL,id TEXT NOT NULL,kind TEXT NOT NULL,text TEXT NOT NULL,state TEXT NOT NULL,final INTEGER NOT NULL DEFAULT 0,revision INTEGER NOT NULL,PRIMARY KEY(call,ordinal),UNIQUE(call,id)) STRICT;")?;
     Ok(())
 }
 
@@ -305,32 +320,32 @@ mod tests {
     use super::*;
     #[test]
     fn migrations_upgrade_and_refuse_drift_atomically() -> Result<()> {
-        for version in 1..=4 {
+        for version in 1..SCHEMA_VERSION {
             let db = Connection::open_in_memory()?;
             migrate(&db, 123, version)?;
-            migrate(&db, 124, 4)?;
-            migrate(&db, 125, 4)?;
+            migrate(&db, 124, SCHEMA_VERSION)?;
+            migrate(&db, 125, SCHEMA_VERSION)?;
             assert_eq!(
                 db.query_row("SELECT max(version) FROM schema_migrations", [], |row| row
                     .get::<_, i64>(
                     0
                 ))?,
-                4
+                SCHEMA_VERSION
             );
             db.execute(
                 "UPDATE schema_migrations SET checksum='bad' WHERE version=1",
                 [],
             )?;
-            assert!(migrate(&db, 126, 4).is_err());
+            assert!(migrate(&db, 126, SCHEMA_VERSION).is_err());
             assert!(db.is_autocommit());
         }
         let db = Connection::open_in_memory()?;
-        migrate(&db, 1, 4)?;
+        migrate(&db, 1, SCHEMA_VERSION)?;
         db.execute(
-            "INSERT INTO schema_migrations VALUES(5,'future','future',1)",
-            [],
+            "INSERT INTO schema_migrations VALUES(?,'future','future',1)",
+            [SCHEMA_VERSION + 1],
         )?;
-        assert!(migrate(&db, 2, 4).is_err());
+        assert!(migrate(&db, 2, SCHEMA_VERSION).is_err());
         assert!(db.is_autocommit());
         Ok(())
     }

@@ -13,6 +13,9 @@ const matcher = (entry: Matcher) => {
 };
 
 test('Rust route inventory stays within frozen Node matchers and reports ported coverage', t => {
+  const rustOnly = new Map([
+    ['/api/restore/reconcile', 'Exchanges a backup bootstrap token for a read-only recovery session.'],
+  ]);
   const matchers = new Map(inventory.matchers.map(entry => [entry.kind.startsWith('regex') ? `/${entry.pattern}/${entry.flags ?? ''}` : entry.pattern, matcher(entry)]));
   const endpoints = new Map(inventory.matchers.filter(entry => entry.endpoint === true).map(entry => [entry.kind.startsWith('regex') ? `/${entry.pattern}/${entry.flags ?? ''}` : entry.pattern, matcher(entry)]));
   const publicMatchers = inventory.publicMatchers.map(entry => new RegExp(entry.pattern, entry.flags));
@@ -32,9 +35,10 @@ test('Rust route inventory stays within frozen Node matchers and reports ported 
     }
     const environment = witness.replace(/^\/api\/projects\/[^/]+(\/environment(?:\/(?:remove|settings))?)$/, '/api$1');
     const matches = [...endpoints].filter(([, testMatcher]) => testMatcher(witness) || testMatcher(environment));
-    assert(matches.length > 0, `Rust route absent from Node: ${route}`);
+    assert(matches.length > 0 || rustOnly.delete(route), `Rust route absent from Node: ${route}`);
     for (const [name] of matches) ported.add(name);
   }
+  assert.deepEqual([...rustOnly.keys()], [], 'Unused Rust-only route entries');
   const witnesses = routes.map(route => route.replace(/\{seq\}/g, '1').replace(/\{[^}]+\}/g, id));
   for (const [name, testMatcher] of matchers) if (!endpoints.has(name) && witnesses.some(witness => testMatcher(witness))) ported.add(name);
   assert(![...endpoints.values()].some(testMatcher => testMatcher('/api/__inventory_unknown')));

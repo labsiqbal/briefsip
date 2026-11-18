@@ -67,7 +67,7 @@ test('Rust signed task admission, context fencing, one-use commits and durable r
     const ownership = acquired.data.ownership, revision = acquired.receipt.recordRevision;
     const contextCommand = { requestId: randomUUID(), ownership, expectedTaskRevision: revision };
     const context = await send(`/api/tasks/${requestId}/context`, contextCommand, true);
-    assert.equal((await send(`/api/tasks/${requestId}/context`, contextCommand, true)).data.snapshot, undefined);
+    assert.deepEqual((await send(`/api/tasks/${requestId}/context`, contextCommand, true)).data, context.data);
     assert.equal(context.data.snapshot.conversation.message.text, payload.message.text);
     assert.equal(context.data.snapshotRef.digest, sha256(canonicalJson(context.data.snapshot)));
     const ref = context.data.snapshotRef, actionId = randomUUID(), payloadDigest = sha256('read');
@@ -152,10 +152,15 @@ test('Rust signed task admission, context fencing, one-use commits and durable r
     assert.equal((await send(`/api/tasks/${requestId}/execution`, { requestId: randomUUID(), ownership }, true, 403)).error.code, 'execution_denied');
     db.prepare('UPDATE turns SET parent=NULL WHERE id=?').run(requestId);
     db.prepare('DELETE FROM turns WHERE id=?').run(parent);
-    db.exec('CREATE TABLE routine_steps(turn TEXT NOT NULL) STRICT');
-    db.prepare('INSERT INTO routine_steps VALUES(?)').run(requestId);
-    assert.equal((await send(`/api/tasks/${requestId}/execution`, { requestId: randomUUID(), ownership }, true, 422)).error.code, 'capability_missing');
-    db.exec('DROP TABLE routine_steps');
+    const routine = randomUUID(), occurrence = randomUUID();
+    db.prepare("INSERT INTO routines(id,agent,name,prompt,next_at,enabled) VALUES (?,?,'Fixture','Check work',0,0)").run(routine, agent);
+    db.prepare(`INSERT INTO routine_occurrences(id,routine,project,due_at,schedule_revision,initiator_account,assignment_revision,authority_generation,home_device,zone,zone_revision,missed_count,state,task)
+      VALUES (?,?,?,0,1,?,1,?,?,'Asia/Jakarta',1,0,'admitted',?)`).run(occurrence, routine, project, owner.accountId, challenge.authorityGeneration, home, requestId);
+    db.prepare("INSERT INTO routine_steps VALUES (?,?,?,'queued','')").run(occurrence, agent, requestId);
+    assert.equal((await send(`/api/tasks/${requestId}/execution`, { requestId: randomUUID(), ownership }, true, 403)).error.code, 'execution_denied');
+    db.prepare('DELETE FROM routine_steps WHERE occurrence=?').run(occurrence);
+    db.prepare('DELETE FROM routine_occurrences WHERE id=?').run(occurrence);
+    db.prepare('DELETE FROM routines WHERE id=?').run(routine);
     const sessionCommand = { requestId: randomUUID(), expectedAuthorityGeneration: challenge.authorityGeneration, sourceDeviceId: home, sourceDeviceGeneration: 1 };
     assert.equal((await send(`/api/tasks/${requestId}/recovery-session`, sessionCommand, false, 409)).error.code, 'recovery_source_current');
     db.prepare("UPDATE devices SET status='revoked' WHERE id=?").run(home);
