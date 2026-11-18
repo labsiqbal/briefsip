@@ -224,8 +224,8 @@ pub fn dispatch(db: &Connection, task: &Value) -> Result<Option<Value>> {
             .cloned()
             .ok_or_else(denied)?
     };
-    if !matches!(string(&node, "kind"), "agent" | "model")
-        && !(node["kind"] == "condition" && node["operator"] == "model")
+    if !(matches!(string(&node, "kind"), "agent" | "model")
+        || (node["kind"] == "condition" && node["operator"] == "model"))
     {
         return Err(denied());
     }
