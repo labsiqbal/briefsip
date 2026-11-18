@@ -9,12 +9,11 @@ import { execFileSync } from 'node:child_process';
 import type { HumanActor } from './auth.ts';
 import { initializeCanonicalSchema, initializeDeviceSchema, transaction } from './schema.ts';
 import { openExecutorJournal, type ActionContext } from './executor-journal.ts';
-import { initializeMemory, rememberMemory } from './memory.ts';
+import { initializeMemory, rememberMemory } from './test-support/memory.ts';
 import { initializeSkills, saveSkill } from './skills.ts';
-import { initializeQuestions } from './questions.ts';
+import { initializeQuestions } from './test-support/questions.ts';
 import { initializeSharedData } from './shared-data.ts';
-import { initializeCompaction } from './compaction.ts';
-import { initializeFlows } from './flow-store.ts';
+import { initializeCompaction } from './test-support/compaction.ts';
 import { initializeSites, saveSite } from './sites.ts';
 import { parseLinkChallenge, deviceLinkBody, descriptorBody, type DeviceDescriptor } from './device-protocol.ts';
 import { canonicalJson, digestCommand, sha256, ProtocolError } from './protocol.ts';
@@ -1113,7 +1112,6 @@ test('context preserves scoped history, questions, compaction and child evidence
       CREATE TABLE IF NOT EXISTS coordination(seq INTEGER PRIMARY KEY AUTOINCREMENT,turn TEXT,owner TEXT,target TEXT,kind TEXT,prompt TEXT,call TEXT,child TEXT);
       CREATE TABLE IF NOT EXISTS files(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE,scope TEXT,name TEXT,digest TEXT,bytes BLOB,created TEXT);
       CREATE TABLE IF NOT EXISTS generated_files(seq INTEGER PRIMARY KEY AUTOINCREMENT,turn TEXT,file TEXT,call_id TEXT,call TEXT,after_action INTEGER);`);
-    initializeFlows(f.db);
     const otherProject = randomUUID(); f.access.createProject(f.owner,{requestId:randomUUID(),id:otherProject,name:'Other'});
     const turn = (text: string, project=f.project, account=f.owner.accountId, root=f.agent) => {
       const id=randomUUID();

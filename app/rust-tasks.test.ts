@@ -10,7 +10,7 @@ import { createProjectAccess } from './project-access.ts';
 import { createDevices, descriptorBody, deviceLinkBody, deviceProofBody, parseLinkChallenge } from './devices.ts';
 import { canonicalToolDigest, createTaskRecovery, journalEntryBody, recoveryEnvelopeBody, stopEvidenceBody } from './task-recovery.ts';
 import { canonicalJson, digestCommand, sha256 } from './protocol.ts';
-import { initializeMemory } from './memory.ts';
+import { initializeMemory } from './test-support/memory.ts';
 import { prepareRestoreBootstrap, issueRestoreSession } from './backup.ts';
 import { startRustServer } from './rust-test-server.ts';
 

@@ -85,11 +85,20 @@ impl Runtime {
 
 pub fn initialize_canonical(db: &Connection) -> Result<()> {
     db.execute_batch(include_str!("schema.sql"))?;
+    if !all(db, "PRAGMA table_info(queue_edits)", [])?
+        .iter()
+        .any(|column| column["name"] == "expires_at")
+    {
+        db.execute_batch(
+            "ALTER TABLE queue_edits ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0",
+        )?;
+    }
     Ok(())
 }
 
 pub fn initialize(db: &Connection) -> Result<()> {
-    db.execute_batch(include_str!("schema.sql"))?;
+    initialize_canonical(db)?;
+    transaction(db, || queue::expire(db))?;
     db.execute_batch(include_str!("indexes.sql"))?;
     waits::initialize(db)?;
     db.execute_batch("UPDATE compaction_attempts SET status='interrupted' WHERE status='pending';UPDATE harness_approvals SET state='expired',revision=revision+1 WHERE state='approval';UPDATE transcriptions SET status='uncertain' WHERE status='pending';")?;

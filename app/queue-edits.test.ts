@@ -1,3 +1,4 @@
+import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -159,24 +160,42 @@ test('abandoned edit lease expires and drains its message and following queue in
   } finally { release(); await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('legacy permanent holds migrate to expired leases, and expiry fences the old revision once', async () => {
-  const { DatabaseSync } = await import('node:sqlite');
-  const { initializeQueueEdits, expireQueueEdits, queueEditing } = await import('./queue-edits.ts');
-  const db = new DatabaseSync(':memory:');
+test('Rust expires migrated permanent queue holds and fences the prior revision once', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'briefsip-queue-migration-'));
+  const database = join(directory, 'state.sqlite');
+  let app = await startApp({ database });
+  const legacy = randomUUID(), current = randomUUID();
   try {
-    db.exec(`CREATE TABLE turns(id TEXT PRIMARY KEY,revision INTEGER NOT NULL);
-      CREATE TABLE queue_edits(editor TEXT PRIMARY KEY,turn TEXT NOT NULL,state TEXT NOT NULL,original TEXT NOT NULL);
-      INSERT INTO turns VALUES('legacy',1);
-      INSERT INTO queue_edits VALUES('old-editor','legacy','held','{}');`);
-    initializeQueueEdits(db);
-    assert.equal(queueEditing(db, 'legacy'), false);
-    assert.equal(db.prepare("SELECT revision FROM turns WHERE id='legacy'").get()!.revision, 2);
-    expireQueueEdits(db); assert.equal(db.prepare("SELECT revision FROM turns WHERE id='legacy'").get()!.revision, 2);
-    db.exec(`INSERT INTO turns VALUES('new',1);
-      INSERT INTO queue_edits VALUES('new-editor','new','held','{}',${Date.now() + 30000});`);
-    assert.equal(queueEditing(db, 'new'), true);
-    expireQueueEdits(db, Date.now() + 30001);
-    assert.equal(queueEditing(db, 'new'), false);
-    assert.equal(db.prepare("SELECT revision FROM turns WHERE id='new'").get()!.revision, 2);
-  } finally { db.close(); }
+    await app.close();
+    const seed = new DatabaseSync(database);
+    try {
+      seed.exec(`INSERT INTO agents(id,name,model,instructions) VALUES ('fixture','Fixture','fixture','Help');
+        ALTER TABLE queue_edits DROP COLUMN expires_at;`);
+      seed.prepare("INSERT INTO turns(id,agent,text,status,created,paused) VALUES (?,'fixture','Legacy','queued','2026-01-01',1)").run(legacy);
+      seed.prepare("INSERT INTO queue_edits(editor,turn,state,original) VALUES ('legacy-editor',?,'held','{}')").run(legacy);
+    } finally { seed.close(); }
+
+    app = await startApp({ database });
+    const db = new DatabaseSync(database);
+    try {
+      const edit = db.prepare('SELECT state,expires_at FROM queue_edits WHERE turn=?');
+      const revision = db.prepare('SELECT revision FROM turns WHERE id=?');
+      assert.deepEqual({ ...edit.get(legacy) }, { state: 'cancelled', expires_at: 0 });
+      assert.equal(revision.get(legacy)?.revision, 2);
+
+      db.prepare("INSERT INTO turns(id,agent,text,status,created,paused) VALUES (?,'fixture','Current','queued','2026-01-01',1)").run(current);
+      const deadline = Date.now() + 30000;
+      db.prepare("INSERT INTO queue_edits(editor,turn,state,original,expires_at) VALUES ('current-editor',?,'held','{}',?)").run(current, deadline);
+      await app.close(); app = await startApp({ database });
+      assert.equal(revision.get(legacy)?.revision, 2);
+      assert.deepEqual({ ...edit.get(current) }, { state: 'held', expires_at: deadline });
+      assert.equal(revision.get(current)?.revision, 1);
+
+      await app.close();
+      db.prepare('UPDATE queue_edits SET expires_at=0 WHERE turn=?').run(current);
+      app = await startApp({ database });
+      assert.equal(edit.get(current)?.state, 'cancelled');
+      assert.equal(revision.get(current)?.revision, 2);
+    } finally { db.close(); }
+  } finally { await app.close(); rmSync(directory, { recursive: true, force: true }); }
 });
