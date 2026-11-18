@@ -22,7 +22,8 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let turn = one(&guard.connection, "SELECT * FROM turns WHERE id=?", [id])?
             .ok_or_else(Failure::storage)?;
-        tools::workspace(state, &guard.connection, &turn)?.filter(|b| b.write)
+        let native = data::agents::read(&guard.connection, string(&turn, "agent"))?["runtime"] != "api";
+        tools::workspace(state, &guard.connection, &turn)?.filter(|b| b.write && native)
     };
     if let Some(binding) = binding {
         let effect = crate::computer::hub::before_effect(
