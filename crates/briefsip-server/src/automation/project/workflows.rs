@@ -725,11 +725,13 @@ fn schedule(
             .map(|r| r["next_at"].clone())
             .unwrap_or(Value::Null)
     } else if spec["kind"] == "cron" {
-        json!(
-            super::super::schedule::local(&spec, string(&device, "zone"), s.state.config.now())
-                .map_err(super::routines::schedule_error)?
-                .1
+        json!(super::super::schedule::next_cron(
+            string(&spec, "expression"),
+            string(&device, "zone"),
+            s.state.config.now(),
+            false,
         )
+        .map_err(super::routines::schedule_error)?)
     } else {
         json!(super::routines::timing(
             &spec,

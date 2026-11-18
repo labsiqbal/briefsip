@@ -61,6 +61,13 @@ pub fn once(value: &Value, zone: &str) -> Result<i64> {
     }
     Err(error(422, "Scheduled time cannot be mapped."))
 }
+pub fn valid_epoch(at: i64) -> Result<i64> {
+    if (0..=MAX_TIME).contains(&at) {
+        Ok(at)
+    } else {
+        Err(invalid())
+    }
+}
 pub fn interval(value: &Value) -> i64 {
     match string(value, "kind") {
         "legacy_interval" => value["intervalMs"].as_i64().unwrap_or(0),
@@ -312,6 +319,33 @@ pub fn times(value: &Value, zone: &str, after: i64, count: usize) -> Result<Vec<
         _ => Err(invalid()),
     }
 }
+pub fn next_cron(expression: &str, zone: &str, now: i64, first_fold_only: bool) -> Result<i64> {
+    let mut previous = None;
+    let mut first = None;
+    scan(
+        expression,
+        zone,
+        now - 300000,
+        now + 1825 * 86400000,
+        |at, index| {
+            if previous.is_some_and(|p| at - p < 300000) {
+                return Err(error(400, "Cron interval must be at least five minutes."));
+            }
+            if at > now && (!first_fold_only || index == 0) {
+                first.get_or_insert(at);
+            }
+            previous = Some(at);
+            Ok(true)
+        },
+    )?;
+    first.ok_or_else(|| {
+        Failure::new(
+            422,
+            "schedule_unsatisfiable",
+            "Cron has no occurrence within 1,825 days.",
+        )
+    })
+}
 pub fn local(value: &Value, zone: &str, now: i64) -> Result<(Value, i64, Option<i64>)> {
     let spec = parse(value)?;
     let duration = interval(&spec);
@@ -320,27 +354,13 @@ pub fn local(value: &Value, zone: &str, now: i64) -> Result<(Value, i64, Option<
         "once" => once(&spec, zone)?,
         "instant" => spec["at"].as_i64().ok_or_else(invalid)?,
         "interval" => spec["anchorAt"].as_i64().ok_or_else(invalid)?,
-        "cron" => {
-            let mut previous = None;
-            let mut first = None;
-            scan(
-                string(&spec, "expression"),
-                zone,
-                now - 300000,
-                now + 1825 * 86400000,
-                |at, index| {
-                    if previous.is_some_and(|p| at - p < 300000) {
-                        return Err(error(400, "Cron interval must be at least five minutes."));
-                    }
-                    if at > now && index == 0 {
-                        first.get_or_insert(at);
-                    }
-                    previous = Some(at);
-                    Ok(true)
-                },
-            )?;
-            first.ok_or_else(|| error(422, "Cron has no occurrence within 1,825 days."))?
-        }
+        "cron" => next_cron(string(&spec, "expression"), zone, now, true).map_err(|failure| {
+            if failure.code == "schedule_unsatisfiable" {
+                error(failure.status, failure.message)
+            } else {
+                failure
+            }
+        })?,
         _ => return Err(invalid()),
     };
     if !(1..=MAX_TIME).contains(&next) || duration > 31536000000 {

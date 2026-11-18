@@ -4,6 +4,8 @@ use crate::data::{exists, param};
 mod routines;
 mod runtime;
 mod scheduler;
+#[cfg(test)]
+mod tests;
 pub(crate) mod waits;
 mod webhooks;
 mod workflows;

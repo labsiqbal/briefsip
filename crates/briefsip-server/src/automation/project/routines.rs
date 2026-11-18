@@ -112,7 +112,9 @@ fn read(s: &Scope, p: &[&str], q: &[(String, String)]) -> Result<Value> {
 pub(super) fn timing(spec: &Value, zone: &str, now: i64) -> Result<i64> {
     match string(spec, "kind") {
         "instant" => spec["at"].as_i64().ok_or_else(invalid),
-        "once" => schedule::once(spec, zone).map_err(schedule_error),
+        "once" => schedule::once(spec, zone)
+            .and_then(schedule::valid_epoch)
+            .map_err(schedule_error),
         "cron" => {
             let mut next = None;
             schedule::scan(
@@ -292,6 +294,20 @@ fn save(s: &Scope, path: &str, p: &[&str], v: &Value) -> Result<Value> {
                 .as_ref()
                 .and_then(|r| r["next_at"].as_i64())
                 .ok_or_else(invalid)?
+        } else if spec["kind"] == "cron" {
+            schedule::next_cron(
+                string(&spec, "expression"),
+                string(&device, "zone"),
+                s.state.config.now(),
+                true,
+            )
+            .map_err(|error| {
+                if error.code == "schedule_unsatisfiable" {
+                    error
+                } else {
+                    schedule_error(error)
+                }
+            })?
         } else {
             timing(&spec, string(&device, "zone"), s.state.config.now())?
         };

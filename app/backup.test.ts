@@ -11,10 +11,7 @@ import { startApp, startCanonicalApp } from './test-bridge.ts';
 import { rustBinary } from './rust-binary.ts';
 import { checkedRestore, restoreWorkspace, workspaceSnapshot } from './test-support/backup.ts';
 import { initializeCanonicalSchema } from './schema.ts';
-import { ProtocolError } from './shared/protocol.ts';
-import { createApplicationSync } from './application-sync.ts';
-import { createProjectAccess } from './project-access.ts';
-import type { HumanActor } from './test-support/auth.ts';
+import { canonicalHttp } from './test-support/canonical-http.ts';
 
 test('canonical server guard fences aliases and processes, releases on SIGKILL and rejects unsafe files', async () => {
   const dir=mkdtempSync(join(tmpdir(),'briefsip-server-lock-')),database=join(dir,'canonical.sqlite'),guardPath=database+'.server-lock.sqlite';
@@ -58,32 +55,40 @@ test('canonical server guard fences aliases and processes, releases on SIGKILL a
 });
 
 test('v4 backup retains sync floors, monotonic heads, tombstones and receipts while restored authority stays fenced', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-sync-backup-')), db = new DatabaseSync(join(dir, 'source.sqlite'));
-  initializeCanonicalSchema(db);
-  const owner: HumanActor = { accountId: randomUUID(), issuer: 'https://fixture.example', subject: 'owner', sessionId: 'session_owner', expiresAt: Date.now() + 60000 };
-  db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(owner.accountId, owner.issuer, owner.subject, Date.now());
-  let now = Date.now();
-  const auth = { requireCurrent: (actor: HumanActor) => actor, verifiedMailboxes: async () => [] };
-  const sync = createApplicationSync(db, auth, { key: () => Buffer.alloc(32, 7), now: () => now });
-  const access = createProjectAccess(db, auth, () => { throw new Error('No mail'); }, [], sync), project = randomUUID();
+  const f = canonicalHttp('briefsip-sync-backup-');
+  const { db, dir, owner } = f;
+  const now = Date.now(), project = randomUUID();
   let backup: Awaited<ReturnType<typeof workspaceSnapshot>> | undefined;
   try {
-    access.createProject(owner, { requestId: randomUUID(), id: project, name: 'Retained tombstone' });
+    await f.start({ fixedClock: now - 90 * 86400_000 - 1 });
+    await f.request('/api/projects', 'POST', { requestId: randomUUID(), id: project, name: 'Retained tombstone' });
     db.prepare("INSERT INTO record_scopes VALUES ('projects',?,?,?,'owner','project',?)").run(JSON.stringify([project]), owner.accountId, project, project);
     db.prepare("UPDATE record_scopes SET visibility='project' WHERE project=?").run(project);
-    access.editProject(owner, project, { requestId: randomUUID(), expectedRevision: 1, deleted: true });
-    now += 90 * 86400_000 + 1; assert.equal(sync.prune().removed, 2);
+    await f.request(`/api/projects/${project}`, 'PATCH', { requestId: randomUUID(), expectedRevision: 1, deleted: true });
+    assert.equal(db.prepare('SELECT count(*) n FROM sync_events').get()!.n, 2);
+    await f.start({ fixedClock: now });
+    const deadline = Date.now() + 10000;
+    while (Number(db.prepare('SELECT count(*) n FROM sync_events').get()!.n) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.equal(db.prepare('SELECT count(*) n FROM sync_events').get()!.n, 0);
     const retained = Object.fromEntries(['sync_heads','retention_floors','sync_scope_revisions','receipts','projects'].map(table => [table, db.prepare('SELECT * FROM ' + table).all()]));
     backup = await workspaceSnapshot(db, owner.accountId);
     const destination = join(dir, 'restored.sqlite'); restoreWorkspace(backup.file, destination, { canonicalOnly: true });
     const restored = new DatabaseSync(destination);
     try {
       for (const [table, rows] of Object.entries(retained)) assert.deepEqual(restored.prepare('SELECT * FROM ' + table).all(), rows);
-      const recoverySync = createApplicationSync(restored, auth, { key: () => Buffer.alloc(32, 7) });
-      try { assert.throws(() => recoverySync.read(owner, { projectId: project }), error => error instanceof ProtocolError && error.code === 'authority_unavailable'); } finally { recoverySync.close(); }
       assert.equal(restored.prepare('SELECT serving_state FROM authority_state').get()!.serving_state, 'read_only_recovery');
     } finally { restored.close(); }
-  } finally { backup?.cleanup(); sync.close(); db.close(); rmSync(dir, { recursive: true, force: true }); }
+    const live = randomUUID(), recovery = new DatabaseSync(destination);
+    try {
+      recovery.prepare("INSERT INTO projects VALUES(?,?,'Visible before restore',0,0,1)").run(live, owner.accountId);
+      recovery.prepare("INSERT INTO project_members VALUES(?,?,'owner',1,0)").run(live, owner.accountId);
+    } finally { recovery.close(); }
+    await f.start({ database: destination });
+    await assert.rejects(f.request(`/api/sync?projectId=${project}`), { code: 'sync_scope_denied' });
+    await assert.rejects(f.request(`/api/sync?projectId=${live}`), { code: 'authority_unavailable' });
+  } finally { backup?.cleanup(); await f.close(); }
 });
 
 test('live backup restores history while holding pending work and disabling automation', async () => {
