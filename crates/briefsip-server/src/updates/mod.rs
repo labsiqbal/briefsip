@@ -1,8 +1,11 @@
 mod archive;
+mod attempts;
 pub mod config;
 pub mod install;
+mod peer_error;
 mod peers;
 mod release;
+pub(crate) use peer_error::PeerError;
 use peers::*;
 
 use crate::{json_response, local_error, web::Failure, AppState};
@@ -57,12 +60,14 @@ pub fn handles(path: &str) -> bool {
         || path.starts_with("/api/peer/updates/")
 }
 pub async fn launcher(options: &config::Options, request: Value) -> Result<Value> {
+    let unavailable =
+        |status, message| Failure::new(status, PeerError::LauncherUnavailable.code(), message);
     let path = options
         .launcher_socket
         .as_ref()
-        .ok_or_else(|| error(409, UNMANAGED))?;
+        .ok_or_else(|| unavailable(409, UNMANAGED))?;
     let metadata = std::fs::symlink_metadata(path).map_err(|_| {
-        error(
+        unavailable(
             409,
             "Launcher control socket must be private and owned by this user.",
         )
@@ -74,14 +79,14 @@ pub async fn launcher(options: &config::Options, request: Value) -> Result<Value
                 .map_err(|_| Failure::storage())?
                 .uid()
     {
-        return Err(error(
+        return Err(unavailable(
             409,
             "Launcher control socket must be private and owned by this user.",
         ));
     }
     tokio::time::timeout(Duration::from_secs(5), async {
         let mut socket = UnixStream::connect(path).await.map_err(|_| {
-            error(
+            unavailable(
                 409,
                 "Launcher is unavailable. Start Briefsip through its launcher.",
             )
@@ -90,7 +95,7 @@ pub async fn launcher(options: &config::Options, request: Value) -> Result<Value
             .write_all(format!("{request}\n").as_bytes())
             .await
             .map_err(|_| {
-                error(
+                unavailable(
                     409,
                     "Launcher is unavailable. Start Briefsip through its launcher.",
                 )
@@ -99,24 +104,24 @@ pub async fn launcher(options: &config::Options, request: Value) -> Result<Value
         loop {
             let mut bytes = [0; 4096];
             let n = socket.read(&mut bytes).await.map_err(|_| {
-                error(
+                unavailable(
                     409,
                     "Launcher is unavailable. Start Briefsip through its launcher.",
                 )
             })?;
             if n == 0 {
-                return Err(error(
+                return Err(unavailable(
                     503,
                     "Launcher response was interrupted. Retry with the same request ID.",
                 ));
             }
             buffer.extend_from_slice(&bytes[..n]);
             if buffer.len() > 65536 {
-                return Err(error(502, "Invalid launcher response."));
+                return Err(unavailable(502, "Invalid launcher response."));
             }
             if let Some(end) = buffer.iter().position(|b| *b == b'\n') {
                 let value: Value = serde_json::from_slice(&buffer[..end])
-                    .map_err(|_| error(502, "Invalid launcher response."))?;
+                    .map_err(|_| unavailable(502, "Invalid launcher response."))?;
                 if let Some(message) = value.get("error").filter(|v| !v.is_null() && **v != false) {
                     return Err(error(
                         409,
@@ -132,7 +137,7 @@ pub async fn launcher(options: &config::Options, request: Value) -> Result<Value
     })
     .await
     .map_err(|_| {
-        error(
+        unavailable(
             503,
             "Launcher response timed out. Retry with the same request ID.",
         )
@@ -167,6 +172,7 @@ pub fn watch_trial(state: AppState) -> tokio::task::JoinHandle<()> {
 pub fn initialize(db: &rusqlite::Connection) -> crate::db::Result<()> {
     install::initialize(db)?;
     db.execute_batch("CREATE TABLE IF NOT EXISTS update_commands(id TEXT PRIMARY KEY,request TEXT NOT NULL,result TEXT NOT NULL) STRICT;")?;
+    attempts::initialize(db)?;
     Ok(())
 }
 pub fn version() -> String {

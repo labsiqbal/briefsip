@@ -28,6 +28,12 @@ for (const [file, prefix] of [['src/lint-probe.ts', '../'], ['src/hub/lint-probe
     await check(code, file);
 }
 await check("import { Button } from '../ui/kit';", 'src/hub/probe.ts');
+const safeJson = 'no-restricted-syntax';
+await check('response.json();', 'src/lint-probe.ts', safeJson);
+await check("response['json']();", 'src/hub/lint-probe.ts', safeJson);
+await check('readJson(response);', 'src/lint-probe.ts');
+await check('response.json();', 'server.ts');
+
 await check("import 'node:fs';", 'server.ts');
 await check("import '../server.ts';", 'hub/probe.ts');
 for (const module of browserSafeModules) {
@@ -135,3 +141,20 @@ async function countRules(directory) {
 }
 await countRules(root);
 console.log(`Lint: ${checks} assertions passed; ${browserSafeModules.length} shared modules guarded; yaml browser graph ${packageFiles.size} files; ${rules.size} enforced rules: ${[...rules].sort().join(', ')}.`);
+
+// #107: Remove each allowance when its round 4 lane lands.
+{
+  const pendingLegacyModules = [
+    'device-runtime.ts', 'executor-journal.ts', 'schema.ts', 'wait-provisions.ts',
+    'wait-connection.ts', 'wait-events.ts', 'webhooks.ts', 'provider-store.ts',
+    'agent-desktop-proxy.ts', 'agent-desktop-vnc.ts', 'agent-desktop.ts', 'pdf-text.ts',
+    'workspace-files.ts', 'workspace-git.ts', 'workspace-writes.ts',
+  ];
+  const rootModules = readdirSync(root, { withFileTypes: true })
+    .filter(entry => !entry.isDirectory() && entry.name.endsWith('.ts'))
+    .map(entry => entry.name)
+    .filter(name => !name.endsWith('.test.ts') && !/^rust-.*\.ts$|^vite.*\.config\.ts$/.test(name)
+      && name !== 'test-bridge.ts' && name !== 'test.ts');
+  assert.deepEqual(rootModules.sort(), pendingLegacyModules.sort(),
+    'Root TypeScript modules changed. Move new modules under src/, shared/, hub/, test-support/ or t3/ and remove stale allowances.');
+}

@@ -284,6 +284,18 @@ pub async fn run(
 ) -> Result<String> {
     store::run(state, turn, model, messages, phase).await
 }
+pub(crate) async fn settle_process(state: &AppState, turn: &str) {
+    let cleanup = state
+        .config
+        .harness
+        .stopping_processes
+        .lock()
+        .ok()
+        .and_then(|mut processes| processes.remove(turn));
+    if let Some(cleanup) = cleanup {
+        let _ = cleanup.await;
+    }
+}
 pub async fn stop(state: &AppState) {
     if let Err(error) = crate::turns::harness::drain(state).await {
         eprintln!("Harness shutdown failed: {}", error.message);

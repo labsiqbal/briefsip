@@ -1,3 +1,4 @@
+import { HttpError, readJson } from './http';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { RefreshCw, X } from 'lucide-react';
 import { AudioRecorder } from './AudioRecorder';
@@ -6,7 +7,6 @@ import { removeAttachment, uploadLimitError } from './attachments';
 import { Alert, Button, IconButton, RecoveryAlert } from './ui/kit';
 
 type Request = <T>(path: string, data?: unknown) => Promise<T>;
-class HttpError extends Error { status: number; constructor(status: number, text: string) { super(text); this.status = status; } }
 const message = (error: unknown) => error instanceof Error ? error.message : 'Connection failed. Try again.';
 
 // Keep upload receipts in conversation scope, independent of the right panel.
@@ -82,8 +82,7 @@ export function useConversationAttachments({ path, archived, attached, onAttach,
       sessionStorage.setItem(storageKey, JSON.stringify({ id: request.id, name: request.name, size: request.size, digest: request.digest, attach: request.attach }));
       pending.current = { ...request, file };
       const response = await fetch(`${path}/${request.id}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) }, body: file }).catch(() => { throw new Error('Connection lost. Try the same upload again.'); });
-      const result = await response.json();
-      if (!response.ok) throw new HttpError(response.status, result.error ?? 'Upload failed.');
+      const result = await readJson<StoredFile>(response, 'Upload failed.');
       setFiles(current => [result, ...current.filter(file => file.id !== result.id)]);
       if (request.attach) attachUploaded(result.id);
       clearUpload(request.id); setSelected(null); if (input.current) input.current.value = '';
