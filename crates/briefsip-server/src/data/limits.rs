@@ -174,9 +174,10 @@ mod tests {
             "WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<900)
              INSERT INTO tasks SELECT 'A','agent-'||i,'waiting_device' FROM n;",
         )?;
-        let error = task_capacity(&db, "A", "free").unwrap_err();
-        assert_eq!(error.code, "queue_full");
-        assert!(error.retryable);
+        let error = task_capacity(&db, "A", "free")
+            .err()
+            .map(|error| (error.code, error.retryable));
+        assert_eq!(error, Some(("queue_full", true)));
         assert_eq!(
             db.query_row("SELECT count(*) FROM tasks", [], |row| row.get::<_, i64>(0))?,
             1000
@@ -191,13 +192,15 @@ mod tests {
         const GIB: u128 = 1 << 30;
         require_storage_capacity(Ok((GIB, 20 * GIB)))?;
         for (free, total) in [(GIB - 1, 20 * GIB - 20), (2 * GIB, 41 * GIB)] {
-            let error = require_storage_capacity(Ok((free, total))).unwrap_err();
-            assert_eq!((error.status, error.code), (507, "storage_pressure"));
-            assert!(error.retryable);
+            let error = require_storage_capacity(Ok((free, total)))
+                .err()
+                .map(|error| (error.status, error.code, error.retryable));
+            assert_eq!(error, Some((507, "storage_pressure", true)));
         }
-        let error = require_storage_capacity(Err(rustix::io::Errno::NOENT)).unwrap_err();
-        assert_eq!((error.status, error.code), (503, "storage_unavailable"));
-        assert!(error.retryable);
+        let error = require_storage_capacity(Err(rustix::io::Errno::NOENT))
+            .err()
+            .map(|error| (error.status, error.code, error.retryable));
+        assert_eq!(error, Some((503, "storage_unavailable", true)));
         Ok(())
     }
 }

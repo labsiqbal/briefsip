@@ -397,7 +397,12 @@ mod tests {
             ("banned", json!(true), json!(false)),
         ] {
             user[field] = invalid;
-            assert_eq!(Auth::mailboxes(&user, &actor).unwrap_err().status, 401);
+            assert_eq!(
+                Auth::mailboxes(&user, &actor)
+                    .err()
+                    .map(|error| error.status),
+                Some(401)
+            );
             user[field] = valid;
         }
         Ok(())

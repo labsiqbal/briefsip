@@ -259,37 +259,53 @@ mod tests {
         }
         for offset in [-301, 301] {
             let headers = signed_headers(body, NOW / 1000 + offset, ID)?;
-            assert_eq!(event(body, &headers, SECRET, NOW).unwrap_err().status, 401);
+            assert_eq!(
+                event(body, &headers, SECRET, NOW)
+                    .err()
+                    .map(|error| error.status),
+                Some(401)
+            );
         }
 
         assert_eq!(
             event(body, &headers, "wrong-secret", NOW)
-                .unwrap_err()
-                .status,
-            401
+                .err()
+                .map(|error| error.status),
+            Some(401)
         );
         let mut changed = body.to_vec();
         changed.push(b' ');
         assert_eq!(
-            event(&changed, &headers, SECRET, NOW).unwrap_err().status,
-            401
+            event(&changed, &headers, SECRET, NOW)
+                .err()
+                .map(|error| error.status),
+            Some(401)
         );
         let mut changed = headers.clone();
         changed.insert(
             "x-briefsip-id",
             axum::http::HeaderValue::from_static("different"),
         );
-        assert_eq!(event(body, &changed, SECRET, NOW).unwrap_err().status, 401);
+        assert_eq!(
+            event(body, &changed, SECRET, NOW)
+                .err()
+                .map(|error| error.status),
+            Some(401)
+        );
         let mut duplicated = headers;
         duplicated.append("x-briefsip-time", axum::http::HeaderValue::from_static("1"));
         assert_eq!(
-            event(body, &duplicated, SECRET, NOW).unwrap_err().status,
-            401
+            event(body, &duplicated, SECRET, NOW)
+                .err()
+                .map(|error| error.status),
+            Some(401)
         );
         let invalid_id = signed_headers(body, NOW / 1000, "bad/id")?;
         assert_eq!(
-            event(body, &invalid_id, SECRET, NOW).unwrap_err().status,
-            401
+            event(body, &invalid_id, SECRET, NOW)
+                .err()
+                .map(|error| error.status),
+            Some(401)
         );
 
         for invalid in [
@@ -303,8 +319,10 @@ mod tests {
         ] {
             let headers = signed_headers(invalid, NOW / 1000, ID)?;
             assert_eq!(
-                event(invalid, &headers, SECRET, NOW).unwrap_err().status,
-                400
+                event(invalid, &headers, SECRET, NOW)
+                    .err()
+                    .map(|error| error.status),
+                Some(400)
             );
         }
         Ok(())

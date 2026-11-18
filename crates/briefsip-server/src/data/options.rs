@@ -242,7 +242,10 @@ mod tests {
         assert_eq!(stored.get(name), Some(&B64.encode(&key)));
         drop(stored);
         options.write(name, "corrupt", false)?;
-        assert_eq!(options.sync_key().unwrap_err().code, "keystore_unavailable");
+        assert_eq!(
+            options.sync_key().err().map(|error| error.code),
+            Some("keystore_unavailable")
+        );
         options.test_keyring_locked = true;
         let writes = std::cell::Cell::new(0);
         let locked = ensure_sync_key(
@@ -252,10 +255,16 @@ mod tests {
                 Ok(())
             },
         );
-        assert_eq!(locked.unwrap_err().code, "keystore_unavailable");
+        assert_eq!(
+            locked.err().map(|error| error.code),
+            Some("keystore_unavailable")
+        );
         assert_eq!(writes.get(), 0);
         let lost_write = ensure_sync_key(|| Ok(None), |_| Ok(()));
-        assert_eq!(lost_write.unwrap_err().code, "keystore_unavailable");
+        assert_eq!(
+            lost_write.err().map(|error| error.code),
+            Some("keystore_unavailable")
+        );
         Ok(())
     }
 }
