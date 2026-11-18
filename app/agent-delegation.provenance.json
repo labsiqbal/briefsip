@@ -178,7 +178,7 @@
       "app/harness-store.ts",
       "app/harness.ts",
       "app/server.ts",
-      "app/turn-stream.ts",
+      "app/shared/turn-stream.ts",
       "app/src/ui/transcript.ts",
       "app/src/ui/TurnActivity.tsx",
       "app/src/ui/AgentConversation.tsx",

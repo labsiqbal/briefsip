@@ -4,7 +4,7 @@ import { usePolling } from './hooks/usePolling';
 import { useEffect, useRef, useState } from 'react';
 import { Copy, Ellipsis, KeyRound, Plus } from 'lucide-react';
 import { ActionMenu, Alert, Badge, Button, Card, Checkbox, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, SkeletonRows, Tooltip, useConfirm, RecoveryAlert } from './ui/kit';
-import { mcpScopeCatalog as scopes, type McpScope as Scope } from '../mcp-scopes';
+import { mcpScopeCatalog as scopes, type McpScope as Scope } from '../shared/mcp-scopes';
 type PeerToken = { id: string; name: string; scopes: Scope[]; created: number; lastUsed: number | null; revoked: number | null };
 type Command = { path: string; body: { id: string; name?: string; scopes?: Scope[] } };
 const scopeLabels: Partial<Record<Scope, string>> = {

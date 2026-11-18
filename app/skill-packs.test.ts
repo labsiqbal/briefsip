@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
-import { restoreSkillCommand } from './skill-command.ts';
+import { restoreSkillCommand } from './shared/skill-command.ts';
 
 test('packs pin members and apply lifecycle atomically without replacing manual skills', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-packs-')), options = { database: join(dir, 'state.sqlite') };

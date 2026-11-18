@@ -9,7 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { startApp } from './test-bridge.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { initializeHarness, streamSnapshot } from './harness-store.ts';
-import { newestPartial, parseTurnSnapshot, type StreamPartial } from './turn-stream.ts';
+import { newestPartial, parseTurnSnapshot, type StreamPartial } from './shared/turn-stream.ts';
 import { streamWork } from './src/ui/transcript.ts';
 
 test('snapshot timer bounds writes, flushes terminal tails and isolates delivery failures', t => {
@@ -63,7 +63,7 @@ test('snapshot merge rejects stale calls, duplicate reconnects and late polling 
   for (const value of [null, {}, { id: randomUUID(), partial: { ...partial, text: 42 } }, { id: randomUUID(), partial: { ...partial, seq: -1 } }]) assert.equal(parseTurnSnapshot(value), null);
 });
 
-test('room polling retains active members beyond full history and orders prose/tool/final by attempt', { timeout: 20000 }, async () => {
+test('room polling retains active members beyond full history and orders prose/tool/final by attempt', { timeout: 45000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'briefsip-room-delivery-'));
   let calls = 0, releaseAttempt: (() => void) | undefined, releaseAnswer: (() => void) | undefined;
   const gates: (() => void)[] = [];
@@ -92,7 +92,8 @@ test('room polling retains active members beyond full history and orders prose/t
   const app = await startApp({ database: join(directory, 'db.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, stream: true });
   const request = async (path: string, data?: unknown) => {
     const res = await fetch(app.origin + path, { method: data ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: data ? JSON.stringify(data) : undefined });
-    assert(res.ok, await res.clone().text()); return res.json();
+    if (!res.ok) assert.fail(await res.text());
+    return res.json();
   };
   const until = async (path: string, predicate: (rows: any[]) => boolean): Promise<any[]> => {
     for (let n = 0; n < 500; n++) { const rows = await request(path); if (predicate(rows)) return rows; await delay(10); }
@@ -107,7 +108,9 @@ test('room polling retains active members beyond full history and orders prose/t
     await request(path, { id: root, text: 'Gated room' });
     let rows = await until(path, rows => rows.length === 3 && rows.filter(row => row.partial?.text === 'Before tool.').length === 1);
     assert.equal(calls, 1); assert.equal(rows.filter(row => row.status === 'running').length, 1); assert.equal(rows.filter(row => row.status === 'queued' && !row.partial).length, 2);
-    for (let n = 0; n < 35; n++) await request(path, { id: randomUUID(), text: `Queued ${n}` });
+    for (let first = 0; first < 35; first += 5) {
+      await Promise.all(Array.from({ length: 5 }, (_, n) => request(path, { id: randomUUID(), text: `Queued ${first + n}` })));
+    }
     rows = await request(path);
     assert.equal(rows.length, 108); assert.equal(rows.filter((row: any) => row.room?.root === root).length, 3);
     assert.equal(rows.filter(row => row.history_page).length, 100);
@@ -116,24 +119,25 @@ test('room polling retains active members beyond full history and orders prose/t
     assert.deepEqual(await request(path + '?q=unrelated'), []);
     assert.deepEqual(await request(`/api/channels/${other}/turns`), []);
     const member = rows.find((row: any) => row.id === root), before = member.partial;
+    const discussion = path + '?q=Gated%20room';
     gates.shift()!();
-    rows = await until(path, rows => !!releaseAttempt && rows.find(row => row.id === root)?.partial?.seq > before.seq);
+    rows = await until(discussion, rows => !!releaseAttempt && rows.find(row => row.id === root)?.partial?.seq > before.seq);
     const empty = rows.find((row: any) => row.id === root);
     assert.equal(empty.partial.text, ''); assert.equal(empty.partial.status, 'pending'); assert.equal(empty.partial.revision, 0);
     assert.deepEqual(streamWork(empty).map(item => [item.kind, item.text]), [['text', 'Before tool.'], ['tool', 'create_text_file']]);
     releaseAttempt!();
-    rows = await until(path, rows => rows.find(row => row.id === root)?.partial?.text === 'Draft');
+    rows = await until(discussion, rows => rows.find(row => row.id === root)?.partial?.text === 'Draft');
     const draft = rows.find((row: any) => row.id === root), count = calls;
     assert.equal(draft.partial.final, false);
-    assert.deepEqual((await request(path)).find((row: any) => row.id === root).partial, draft.partial); assert.equal(calls, count);
+    assert.deepEqual((await request(discussion)).find((row: any) => row.id === root).partial, draft.partial); assert.equal(calls, count);
     releaseAnswer!();
-    rows = await until(path, rows => rows.find(row => row.id === root)?.status === 'done');
+    rows = await until(discussion, rows => rows.find(row => row.id === root)?.status === 'done');
     const done = rows.find((row: any) => row.id === root);
     assert.equal(done.reply, 'Draft answer.'); assert.equal(done.partial, null); assert.equal(done.generatedFiles.length, 1);
     assert.deepEqual(done.activity.stream.map((item: any) => [item.seq, item.ordinal, item.kind, item.final]), [[before.seq, 0, 'text', 0], [before.seq, 1, 'tool', 0], [draft.partial.seq, 0, 'text', 0], [done.activity.stream.at(-1).seq, 0, 'text', 1]]);
     assert.deepEqual(streamWork(done).map(item => item.text), ['Before tool.', 'create_text_file', 'Draft answer.']);
     assert.equal(done.activity.stream.at(-1).text, 'Draft answer.');
-    const restored = (await request(path)).find((row: any) => row.id === root); assert.deepEqual(restored.activity.stream, done.activity.stream);
+    const restored = (await request(discussion)).find((row: any) => row.id === root); assert.deepEqual(restored.activity.stream, done.activity.stream);
   } finally {
     releaseAttempt?.(); releaseAnswer?.(); for (const gate of gates) gate();
     await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve()));

@@ -5,8 +5,8 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseSkillFiles } from './skill-files.ts';
-import { restoreSkillCommand } from './skill-command.ts';
+import { parseSkillFiles } from './shared/skill-files.ts';
+import { restoreSkillCommand } from './shared/skill-command.ts';
 import { startApp } from './test-bridge.ts';
 
 const files = [

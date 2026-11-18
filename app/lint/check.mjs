@@ -35,7 +35,7 @@ for (const module of browserSafeModules) {
   await check("import './test-bridge.ts';", module, boundary);
   await check("import '@clerk/backend';", module, boundary);
 }
-await check("import { parseDocument } from 'yaml';", 'skill-files.ts');
+await check("import { parseDocument } from 'yaml';", 'shared/skill-files.ts');
 await check('debugger;', 'hub/probe.ts', 'no-debugger');
 await check('function probe() { return; throw new Error(); }', 'server.ts', 'no-unreachable');
 

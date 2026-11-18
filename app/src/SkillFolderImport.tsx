@@ -2,8 +2,8 @@ import { downloadBlob } from './hooks/downloadBlob';
 import { useEffect, useRef, useState } from 'react';
 import { FileUp, FolderUp } from 'lucide-react';
 import { Button } from './ui/kit';
-import { parseSkillFiles, skillFileFromBytes, type SkillFile } from '../skill-files';
-import { readSkillZip, writeSkillZip } from '../skill-zip';
+import { parseSkillFiles, skillFileFromBytes, type SkillFile } from '../shared/skill-files';
+import { readSkillZip, writeSkillZip } from '../shared/skill-zip';
 
 export function SkillFolderImport({ disabled, onImport, onBusy, compact = false, onError }: { disabled: boolean; onImport: (files: SkillFile[]) => void; onBusy: (busy: boolean) => void; compact?: boolean; onError?: (message: string) => void }) {
   const [busy, setBusy] = useState(false), [error, setErrorState] = useState('');

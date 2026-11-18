@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSpeechPreferenceStore, parseSpeechPreference, speechPreferenceKey } from './speech-preference.ts';
-import { speechVoiceKey } from './speech.ts';
+import { createSpeechPreferenceStore, parseSpeechPreference, speechPreferenceKey } from './shared/speech-preference.ts';
+import { speechVoiceKey } from './shared/speech.ts';
 
 function fixture(initial: Record<string, string> = {}) {
   const values = new Map(Object.entries(initial)), events = new EventTarget();

@@ -1,8 +1,8 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { Info, Square, Volume2 } from 'lucide-react';
 import { Button, Card, Row, Section, Select, Switch, IconButton, Badge, Tooltip } from './ui/kit';
-import { createSpeechPlayer, voiceKey } from '../speech';
-import { speechPreferenceStore } from '../speech-preference';
+import { createSpeechPlayer, voiceKey } from '../shared/speech';
+import { speechPreferenceStore } from '../shared/speech-preference';
 import './SpeechPlayback.css';
 
 const engine = typeof window !== 'undefined' && 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window ? window.speechSynthesis : null;

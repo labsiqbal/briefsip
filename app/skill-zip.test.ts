@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { deflateRawSync } from 'node:zlib';
-import { parseSkillFiles, skillFileBytes, skillFileFromBytes, skillBinaryLimit } from './skill-files.ts';
-import { readSkillZip, writeSkillZip } from './skill-zip.ts';
+import { parseSkillFiles, skillFileBytes, skillFileFromBytes, skillBinaryLimit } from './shared/skill-files.ts';
+import { readSkillZip, writeSkillZip } from './shared/skill-zip.ts';
 
 const files = [{ path: 'SKILL.md', content: '---\nname: portable\ndescription: Portable fixture\n---\nUse reference files.\n' }, { path: 'references/note.txt', content: 'Exact bytes\r\n' }];
 const view = (bytes: Uint8Array) => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

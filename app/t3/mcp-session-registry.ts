@@ -2,8 +2,8 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 
-import { mcpScopes, type McpScope } from '../mcp-scopes.ts';
-export { mcpScopes, type McpScope } from '../mcp-scopes.ts';
+import { mcpScopes, type McpScope } from '../shared/mcp-scopes.ts';
+export { mcpScopes, type McpScope } from '../shared/mcp-scopes.ts';
 export const defaultSessionScopes: McpScope[] = [
   'agents:read', 'agents:profile', 'agents:message', 'history:read', 'conversations:read', 'conversations:write',
   'projects:read', 'projects:write', 'routines:read', 'routines:write', 'workflows:read',
