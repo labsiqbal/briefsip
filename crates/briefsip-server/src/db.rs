@@ -7,6 +7,8 @@ use std::{
     path::Path,
 };
 
+mod automation;
+
 mod sql {
     include!(concat!(env!("OUT_DIR"), "/schema.rs"));
 }
@@ -248,7 +250,7 @@ pub fn migrate(db: &Connection, now: i64, through: i64) -> Result<()> {
                     provider_tables(db)?;
                     crate::turns::initialize_canonical(db).map_err(|error| error.message)?;
                     crate::files::init_canonical_schema(db)?;
-                    crate::automation::project::initialize(db).map_err(|error| error.message)?;
+                    automation::upgrade(db)?;
                 }
                 db.execute_batch(sql)?;
                 if next == 1 {
@@ -282,6 +284,10 @@ pub fn migrate(db: &Connection, now: i64, through: i64) -> Result<()> {
                     .optional()?;
                 if saved != Some((name.to_string(), digest(sql))) {
                     return Err("Schema migration checksum mismatch".into());
+                }
+                if next == 5 {
+                    // Legacy schedule mappings may become eligible after the schema is installed.
+                    automation::upgrade(db)?;
                 }
             }
             if next == 1 {

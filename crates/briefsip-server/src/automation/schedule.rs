@@ -65,13 +65,15 @@ pub fn interval(value: &Value) -> i64 {
     match string(value, "kind") {
         "legacy_interval" => value["intervalMs"].as_i64().unwrap_or(0),
         "interval" => {
+            // Legacy routine intervals store exact seconds as fractional minutes.
             (value["amount"].as_f64().unwrap_or(0.)
                 * match string(value, "unit") {
                     "minute" => 60000.,
                     "hour" => 3600000.,
                     "day" => 86400000.,
                     _ => 0.,
-                }) as i64
+                })
+            .round() as i64
         }
         _ => 0,
     }

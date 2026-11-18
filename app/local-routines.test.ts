@@ -150,7 +150,7 @@ test('project routine runs use project folders and post one system report per ou
 test('scheduled cron catches up once and unavailable project folders do not starve other routines', async () => {
   const { createServer } = await import('node:http');
   const { mkdirSync } = await import('node:fs');
-  const { nextScheduleTimes } = await import('./schedule-spec.ts');
+  const { nextScheduleTimes } = await import('./test-support/schedule-spec.ts');
   const home = mkdtempSync(resolve('node_modules/.routine-scheduler-')), folder = join(home, 'work');
   mkdirSync(folder);
   let calls = 0;
