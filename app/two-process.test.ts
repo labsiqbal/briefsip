@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
 import { startCanonicalApp } from './test-bridge.ts';
 import { openDeviceRuntime } from './device-runtime.ts';
-import { startRustDeviceEnrollment, startRustDeviceConnection, enrollRustDevice, startRustDeviceTask, runRustDeviceTask, crashRustDeviceTask, exportRustDeviceRecovery, type RecoveryExport } from './test-support/rust-device-host.ts';
+import { startDeviceFaultProxy, startRustDeviceEnrollment, startRustDeviceConnection, enrollRustDevice, startRustDeviceTask, runRustDeviceTask, crashRustDeviceTask, exportRustDeviceRecovery, type RecoveryExport } from './test-support/rust-device-host.ts';
 import type { ActionContext } from './test-support/task-protocol.ts';
 import { rustBinary } from './rust-binary.ts';
 import { rustServerOutput } from './rust-test-server.ts';
@@ -488,11 +488,12 @@ async function workflowConfigurationFixture() {
   } catch (error) { await runtime.close(); await f.close(); throw error; }
 }
 
-async function rustWorkflowConfigurationFixture() {
+async function rustWorkflowConfigurationFixture(withFaults = false) {
   const f = await fixture(), database = join(f.dir, 'workflow-home.sqlite'), keyring = join(f.dir, 'workflow-keys.json');
+  const proxy = withFaults ? await startDeviceFaultProxy(f.origin) : undefined;
   let connection: ReturnType<typeof startRustDeviceConnection> | undefined;
-  const close = async () => { await connection?.stop(); await f.close(); };
-  const config = () => ({ database, server: f.origin(), keyring });
+  const close = async () => { await connection?.stop(); await proxy?.close(); await f.close(); };
+  const config = () => ({ database, server: proxy?.origin ?? f.origin(), keyring });
   try {
     writeFileSync(keyring, '{}', { mode: 0o600 });
     await enrollRustDevice(config(), f.jwt());
@@ -501,12 +502,12 @@ async function rustWorkflowConfigurationFixture() {
       const active = connection = startRustDeviceConnection(config());
       return { state: () => active.state() ?? { phase: 'connecting', generation: 0 }, stop: active.stop };
     } };
-    return { ...f, ...await prepareWorkflowConfiguration(f), keys, runtime, hostOptions: config(), close };
+    return { ...f, ...await prepareWorkflowConfiguration(f), keys, runtime, hostOptions: config(), proxy, close };
   } catch (error) { await close(); throw error; }
 }
 
-async function protectedWorkflowWaitFixture(subject = 'user_owner', timeoutSeconds = 60, rustDevice = true) {
-  const f = rustDevice ? await rustWorkflowConfigurationFixture() : await workflowConfigurationFixture();
+async function protectedWorkflowWaitFixture(subject = 'user_owner', timeoutSeconds = 60, withFaults = false) {
+  const f = await rustWorkflowConfigurationFixture(withFaults);
   try {
     const connection = f.runtime.connect(); await until(() => connection.state().phase === 'connected');
     const graph = { entry: 'event', maxSteps: 2, nodes: [{ id: 'event', kind: 'wait', event: 'ready', timeoutSeconds, next: 'out' }, { id: 'out', kind: 'output' }] };
@@ -613,19 +614,20 @@ test('protected workflow event commits one transition and keeps exact retries af
 
 test('protected workflow wait discards delayed reveal and event replies after authority changes', async t => {
   for (const kind of ['reveal','event'] as const) for (const change of ['revision','rules','assignment','mapping','cancel','expiry','revoke','disconnect'] as const) await t.test(`${kind}/${change}`, async () => {
-    const f = await protectedWorkflowWaitFixture('user_collaborator', change === 'expiry' ? 2 : 60, false), originalFetch = globalThis.fetch;
+    const f = await protectedWorkflowWaitFixture('user_collaborator', change === 'expiry' ? 2 : 60, true);
+    const proxy = f.proxy!;
     let held = false, release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     const browser = generateKeyPairSync('x25519'), reveal = { requestId: randomUUID(), ephemeralPublicKey: browser.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url'), expectedSecretGeneration: 1 };
     const secret = [...f.keys.values].find(([key]) => key.includes('/event-wait/'))![1], delivery = randomUUID(), body = '{"event":"ready","payload":"once"}', time = String(Math.floor(Date.now() / 1000));
     const send = async () => {
       if (kind === 'reveal') return f.send(f.waitPath + '/connection', { ...reveal, requestId: randomUUID() });
-      const response = await originalFetch(f.origin() + f.waitPath + '/events', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': delivery, 'X-Briefsip-Signature': createHmac('sha256', secret).update(`${time}\n${delivery}\n${body}`).digest('hex') }, body });
+      const response = await fetch(f.origin() + f.waitPath + '/events', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': delivery, 'X-Briefsip-Signature': createHmac('sha256', secret).update(`${time}\n${delivery}\n${body}`).digest('hex') }, body });
       return { status: response.status, body: await response.json() };
     };
     const db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
     try {
-      globalThis.fetch = async (url, init) => { if (String(url).endsWith(`/wait-${kind}-results`)) { held = true; await gate; } return originalFetch(url, init); };
+      proxy.fault({ path: '/wait-' + kind + '-results', before: () => { held = true; return gate; } });
       const pending = send(); await until(() => held);
       assert.equal((await send()).status, 429, 'One pending request per home');
       if (change === 'revision') db.prepare('UPDATE workflow_runs SET revision=revision+1 WHERE id=?').run(f.run);
@@ -637,7 +639,7 @@ test('protected workflow wait discards delayed reveal and event replies after au
       if (change === 'revoke') { const device = (await f.send('/api/devices')).body.data[0]; assert.equal((await f.send(`/api/devices/${device.id}/revoke`, { requestId: randomUUID(), expectedRevision: device.revision })).status, 200); }
       const stopping = change === 'disconnect' ? f.connection.stop() : undefined;
       if (stopping) await until(async () => (await f.send('/api/devices')).body.data[0].status !== 'ready');
-      release(); globalThis.fetch = originalFetch;
+      proxy.fault(); release();
       await stopping;
       const denied = await pending;
       assert([403,404,409,503].includes(denied.status), JSON.stringify(denied));
@@ -645,7 +647,7 @@ test('protected workflow wait discards delayed reveal and event replies after au
       assert.equal(db.prepare("SELECT count(*) n FROM receipts WHERE scope LIKE 'workflow-wait-event:%'").get()!.n, 0);
       if (change === 'rules' || change === 'revision') assert.equal((await send()).status, 200, 'Fresh request uses changed authority');
       if (change === 'expiry') { await until(async () => (await f.send(f.path)).body.data.status === 'failed'); assert.equal((await f.send(f.waitPath)).body.data.status, 'expired'); }
-    } finally { release(); globalThis.fetch = originalFetch; db.close(); await f.close(); }
+    } finally { release(); db.close(); await f.close(); }
   });
 });
 
