@@ -17,6 +17,7 @@ pub mod resources;
 mod vnc;
 pub use desktop::Manager;
 mod proxy;
+pub(crate) use proxy::denied as denied_outbound_ip;
 
 use crate::{local_error, web::Failure, AppState};
 use axum::{

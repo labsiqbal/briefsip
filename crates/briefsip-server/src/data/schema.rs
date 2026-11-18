@@ -68,6 +68,11 @@ fn initialize_mode(database: &Database, canonical: bool) -> crate::db::Result<()
         }
         environment::initialize(db)?;
         for (table, name, definition) in [
+            (
+                "agents",
+                "web_access",
+                "INTEGER NOT NULL DEFAULT 1 CHECK(web_access IN(0,1))",
+            ),
             ("local_projects", "archived", "INTEGER NOT NULL DEFAULT 0"),
             (
                 "local_projects",
