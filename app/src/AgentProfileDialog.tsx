@@ -49,12 +49,13 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
 
   const [runtime, setRuntime] = useState(profile?.runtime ?? (recovery.command ? recovery.command.runtime ?? 'api' : 'codex'));
+  const runtimeChosen = useRef(false);
   const [runtimeChoices, setRuntimeChoices] = useState<{ runtime: HarnessRuntime; label: string; available: boolean; enabled: boolean; model?: string; models?: { id: string; label: string }[] }[]>([]);
   const [harnessModel, setHarnessModel] = useState<string | null>(null);
   const [runtimeError, setRuntimeError] = useState('');
   useEffect(() => {
     let stopped = false;
-    void api<{ choices: typeof runtimeChoices; defaultRuntime?: Runtime }>(profile ? `/api/agents/${profile.id}/runtimes` : '/api/runtimes').then(data => { if (stopped) return; setRuntimeChoices(data.choices); if (!profile && !recovery.command && data.defaultRuntime) setRuntime(data.defaultRuntime); }).catch(error => { if (!stopped) setRuntimeError(message(error)); });
+    void api<{ choices: typeof runtimeChoices; defaultRuntime?: Runtime }>(profile ? `/api/agents/${profile.id}/runtimes` : '/api/runtimes').then(data => { if (stopped) return; setRuntimeChoices(data.choices); if (!profile && !recovery.command && !runtimeChosen.current && data.defaultRuntime) setRuntime(data.defaultRuntime); }).catch(error => { if (!stopped) setRuntimeError(message(error)); });
     return () => { stopped = true; };
   }, [profile]);
   const [account, setAccount] = useState(profile?.provider_account ?? recovery.command?.providerAccount ?? '');
@@ -149,7 +150,7 @@ export function AgentForm({ model, focusComputer = false, profile: liveProfile, 
   const modelFields = <>
     {profile?.runtime === 'api' && <Button type="button" onClick={event => { flushSync(() => setRuntime('codex')); event.currentTarget.form?.requestSubmit(); }} disabled={locked || busy}>Use Codex</Button>}
     <Field label="Run with" error={runtimeError}>
-      <span className="agent-profile__runtime"><Select label="Run with" valueLabel={runtime !== 'api' && !runtimeChoices.some(choice => choice.runtime === runtime && choice.available && choice.enabled) ? ({ codex: 'Codex', claude: 'Claude Code', hermes: 'Hermes', antigravity: 'Antigravity', grok: 'Grok', pi: 'Pi', opencode: 'OpenCode', gemini: 'Gemini', kiro: 'Kiro' })[runtime] : undefined} value={runtime} onChange={value => { setRuntime(value as Runtime); setHarnessModel(null); }} disabled={locked || busy} options={[{ value: 'api', label: <span className="agent-profile__runtime-label"><Globe size={16} aria-hidden />API model</span> }, ...runtimeChoices.filter(choice => choice.available && choice.enabled).map(choice => { const Icon = { codex: Terminal, claude: Sparkles, hermes: Wind, antigravity: Orbit, grok: Eclipse, pi: Circle, opencode: Code, gemini: Bot, kiro: Mountain }[choice.runtime]; return { value: choice.runtime, label: <span className="agent-profile__runtime-label"><Icon size={16} aria-hidden />{choice.label}</span> }; })]} /></span>
+      <span className="agent-profile__runtime"><Select label="Run with" valueLabel={runtime !== 'api' && !runtimeChoices.some(choice => choice.runtime === runtime && choice.available && choice.enabled) ? ({ codex: 'Codex', claude: 'Claude Code', hermes: 'Hermes', antigravity: 'Antigravity', grok: 'Grok', pi: 'Pi', opencode: 'OpenCode', gemini: 'Gemini', kiro: 'Kiro' })[runtime] : undefined} value={runtime} onChange={value => { runtimeChosen.current = true; setRuntime(value as Runtime); setHarnessModel(null); }} disabled={locked || busy} options={[{ value: 'api', label: <span className="agent-profile__runtime-label"><Globe size={16} aria-hidden />API model</span> }, ...runtimeChoices.filter(choice => choice.available && choice.enabled).map(choice => { const Icon = { codex: Terminal, claude: Sparkles, hermes: Wind, antigravity: Orbit, grok: Eclipse, pi: Circle, opencode: Code, gemini: Bot, kiro: Mountain }[choice.runtime]; return { value: choice.runtime, label: <span className="agent-profile__runtime-label"><Icon size={16} aria-hidden />{choice.label}</span> }; })]} /></span>
     </Field>
     <Field label="Provider" error={accountError && <>{accountError} <button type="button" className="k-link" onClick={() => setAccountReload(value => value + 1)}>Reload</button></>}>
       <Select value={account} onChange={setAccount} disabled={locked || !['api', 'codex', 'claude'].includes(runtime)} options={accountOptions} />

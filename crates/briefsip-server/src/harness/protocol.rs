@@ -49,6 +49,45 @@ pub fn elicitation(params: &Value) -> Value {
     json!({"action":"accept","content":content})
 }
 
+fn models(value: &Value) -> Value {
+    let mut result = Vec::new();
+    let state = value
+        .get("models")
+        .filter(|v| !v.is_null())
+        .unwrap_or(&value["_meta"]["modelState"]);
+    for model in state["availableModels"].as_array().into_iter().flatten() {
+        let id = string(model, "modelId");
+        result.push(json!({"id":id,"label":if string(model,"name").is_empty(){id}else{string(model,"name")}}));
+    }
+    for option in value["configOptions"].as_array().into_iter().flatten() {
+        if string(option, "category") != "model" && string(option, "id") != "model" {
+            continue;
+        }
+        for item in option["options"].as_array().into_iter().flatten() {
+            let options = item["options"].as_array();
+            for model in options
+                .into_iter()
+                .flatten()
+                .chain(std::iter::once(item).filter(|_| options.is_none()))
+            {
+                let id = string(model, "value");
+                result.push(json!({"id":id,"label":if string(model,"name").is_empty(){id}else{string(model,"name")}}));
+            }
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    Value::Array(
+        result
+            .into_iter()
+            .filter(|v| {
+                let id = string(v, "id");
+                !id.is_empty() && id.encode_utf16().count() <= 256 && seen.insert(id.to_owned())
+            })
+            .take(256)
+            .collect(),
+    )
+}
+
 pub async fn probe(
     path: &std::path::Path,
     runtime: &str,
@@ -104,8 +143,16 @@ pub async fn probe(
         .ok()?;
     Some((
         value["result"]["protocolVersion"] == 1,
-        Value::Null,
-        json!([]),
+        if runtime == "hermes" {
+            json!(value["result"]["authMethods"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|m| m["type"] == "agent"))
+        } else {
+            Value::Null
+        },
+        models(&value["result"]),
     ))
 }
 

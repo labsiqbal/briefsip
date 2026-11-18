@@ -178,9 +178,10 @@ pub fn browse(state: &AppState, path: Option<&str>) -> Result<Value> {
     {
         let entry = entry.map_err(|_| error(400, "Folder is unavailable."))?;
         if entry.file_type().is_ok_and(|v| v.is_dir()) {
-            let child = path.join(entry.file_name());
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let child = path.join(&name);
             if validate(state, &json!(child), false, true).is_ok() {
-                dirs.push(json!({"name":entry.file_name(),"path":child}));
+                dirs.push(json!({"name":name,"path":child.to_string_lossy()}));
             }
         }
     }
@@ -190,5 +191,7 @@ pub fn browse(state: &AppState, path: Option<&str>) -> Result<Value> {
             .cmp(&string(b, "name").to_lowercase())
     });
     dirs.truncate(200);
-    Ok(json!({"path":path,"parent":if path==home()?{None}else{path.parent()},"folders":dirs}))
+    Ok(
+        json!({"path":path,"parent":if path==home()?{None}else{path.parent().map(|v|v.to_string_lossy().into_owned())},"folders":dirs}),
+    )
 }

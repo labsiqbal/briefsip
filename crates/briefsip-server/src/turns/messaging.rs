@@ -257,8 +257,12 @@ fn delivery(
         .unwrap_or(0)
         + 1;
     db.execute(
-        "INSERT INTO threads(id,agent,name) VALUES(?,?,'Agent delivery')",
-        [&thread, recipient],
+        "INSERT INTO threads(id,agent,name) VALUES(?,?,?)",
+        params![
+            thread,
+            recipient,
+            data::delivery::name(string(&sender, "name"), text, None)?
+        ],
     )?;
     db.execute("INSERT INTO turns(id,agent,thread,parent,text,status,created,message_depth,paused) VALUES(?,?,?,?,?,'queued',?,?,?)",params![id,recipient,thread,string(turn,"id"),text.trim(),iso(db,state.config.now())?,depth,i64::from(remote.is_some())])?;
     db.execute(

@@ -47,7 +47,7 @@ export type SelectOption = { value: string; label: ReactNode; hint?: ReactNode; 
 export function Select({ value, onChange, options, disabled, placeholder, valueLabel, name, label, size = 'md' }: { value: string; onChange: (value: string) => void; options: SelectOption[]; disabled?: boolean; placeholder?: string; valueLabel?: ReactNode; name?: string; label?: string; size?: 'sm' | 'md' }) {
   const field = useField();
   const encode = (v: string) => v === '' ? '\u0000' : v, decode = (v: string) => v === '\u0000' ? '' : v;
-  return <RadixSelect.Root value={encode(value)} onValueChange={next => onChange(decode(next))} disabled={disabled} name={name}>
+  return <RadixSelect.Root value={encode(value)} onValueChange={next => { if (next) onChange(decode(next)); }} disabled={disabled} name={name}>
     <RadixSelect.Trigger id={field?.id} aria-describedby={field?.describedBy} aria-invalid={field?.invalid || undefined} aria-label={label} className={cx('k-input', 'k-select', size === 'sm' && 'k-select--sm')}>
       <RadixSelect.Value placeholder={placeholder}>{valueLabel}</RadixSelect.Value>
       <RadixSelect.Icon className="k-select__chev"><ChevronDown size={14} aria-hidden /></RadixSelect.Icon>

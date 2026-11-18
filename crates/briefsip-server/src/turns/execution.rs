@@ -105,11 +105,12 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
             let lead = one(db,"SELECT a.name FROM agents a JOIN channel_members m ON m.agent=a.id WHERE m.channel=? AND a.id=? AND NOT EXISTS(SELECT 1 FROM agent_visibility v WHERE v.agent=a.id AND v.hidden=1)",params![channel,room["lead"].as_str()])?.map(|r|string(&r,"name").to_owned()).unwrap_or_else(||"No lead".to_owned());
             let roster=all(db,"SELECT a.id,a.name,a.role FROM agents a JOIN channel_members m ON m.agent=a.id WHERE m.channel=? AND NOT EXISTS(SELECT 1 FROM agent_visibility v WHERE v.agent=a.id AND v.hidden=1) ORDER BY a.id",[channel])?;
             system.push_str(&format!(
-                "\n\nChannel: {}\nLead: {}\n{}\nMembers: {}",
-                string(&room, "name"),
-                lead,
+                "\n\nYou are participating in channel {}. Channel purpose: {}\nYour member ID: {}. Members: {}. Lead: {}. Use delegation for subtasks and transfer only to hand over ownership.",
+                json!(string(&room, "name")),
                 string(&room, "instructions"),
-                json!(roster)
+                string(&turn, "agent"),
+                json!(roster),
+                lead
             ));
         }
         if let Some(workspace) = tools::workspace(state, db, &turn)? {
@@ -142,6 +143,13 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
             string(&profile, "instructions"),
             profile["revision"]
         ));
+        if let Some(delivery) = one(db, "SELECT a.name,r.expects_reply FROM agent_deliveries d JOIN agent_requests r ON r.id=d.request JOIN turns t ON t.id=r.turn JOIN agents a ON a.id=t.agent WHERE d.turn=?", [id])? {
+            system.push_str(&format!("\nMessage from teammate {}. {}", delivery["name"], if delivery["expects_reply"] == 1 {
+                "Complete the task; your final answer is returned automatically to the requester. Never send an acknowledgment or send work back to the requester."
+            } else {
+                "Informational message only. No reply is requested or relayed. Do not start another teammate exchange."
+            }));
+        }
         let context_channel = super::messaging::channel(db, id)?;
         if crate::automation::model(db, id)?.is_none() {
             let memory_scope = context_channel

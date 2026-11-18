@@ -106,7 +106,11 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
     let db = state.database.lock().map_err(|_| Failure::storage())?;
     let result = match path.split('/').skip(1).collect::<Vec<_>>().as_slice() {
         ["api", "mcp-server", "peer-tokens"] => {
-            registry::peers(state, &db.connection, &value, get)?
+            let mut peers = registry::peers(state, &db.connection, &value, get)?;
+            if get {
+                peers["endpoint"] = json!(url(state));
+            }
+            peers
         }
         ["api", "mcp-server", "peer-tokens", id, "revoke"] => {
             registry::revoke_peer(state, &db.connection, id, &value)?

@@ -72,6 +72,7 @@ test('teammate messages correlate groups, isolate context, persist receipts and 
     const request = { id: randomUUID(), text: 'ask both' }; await post(path, request, 202);
     const waiting = await until(path, request.id, row => row.agentMessages?.length === 2 && row.agentMessages.some((item: any) => item.status === 'done'));
     assert.equal(waiting.status, 'queued'); assert.equal(waiting.reply, null);
+    assert.equal((await rows(`/api/agents/${beta.id}/threads`)).find((thread: any) => thread.id === waiting.agentMessages.find((message: any) => message.agent === beta.id).thread).name, 'Alpha asked: shared task');
     assert.equal(calls.filter(call => call.model === 'alpha').length, 2);
     assert.equal((await rows(`/api/agents/${beta.id}/turns`)).length, 1);
     const bypass = randomUUID(); await post(path, { id: bypass, text: 'user bypass' }, 202);

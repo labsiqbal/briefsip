@@ -19,7 +19,7 @@ export function streamWork(turn: { partial?: StreamPartial | null; activity?: Tu
 
 type ActivityTurn = { status: string; paused: number; created: string; activity?: TurnActivityData; questions?: { answer: string | null }[] };
 export const liveTurn = (turn: ActivityTurn) => ['queued', 'running'].includes(turn.status) && !turn.paused && !turn.questions?.some(question => question.answer === null);
-export const livePartial = (turn: { status: string; paused: number; partial?: { status: string; text: string } | null }) => turn.status === 'running' && !turn.paused && turn.partial?.status === 'pending' && !!turn.partial.text;
+export const livePartial = (turn: { status: string; paused: number; partial?: { status: string; text: string } | null }) => turn.status === 'running' && !turn.paused && !!turn.partial && ['pending', 'received'].includes(turn.partial.status) && !!turn.partial.text;
 export const turnPollDelay = (turns: { status: string }[]) => turns.some(turn => ['queued', 'running'].includes(turn.status)) ? 400 : 1200;
 
 export function activityLabel(turn: ActivityTurn, now: number) {
