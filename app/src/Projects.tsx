@@ -1,7 +1,7 @@
 import { usePolling } from './hooks/usePolling';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { ChevronRight, Ellipsis, Folder, FolderOpen, Hash, Plus, X } from 'lucide-react';
-import type { LocalProject } from '../local-projects';
+import type { LocalProject } from '../shared/local-project';
 import { ActionMenu, Alert, Badge, Button, Card, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, TabPanel, Tabs, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
 import { AgentAvatar } from './AgentAvatar';
 import { SourceControl } from './SourceControl';

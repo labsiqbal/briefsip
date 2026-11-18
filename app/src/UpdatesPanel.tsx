@@ -2,8 +2,8 @@ import { usePolling } from './hooks/usePolling';
 // Machine summary and restart confirmation adapted from T3 UpdateEverythingDialog (MIT).
 import { useEffect, useRef, useState } from 'react';
 import { Download, Monitor } from 'lucide-react';
-import type { PairedMachine } from '../machines';
-import type { UpdateState } from '../updates';
+import type { PairedMachine } from '../shared/machines';
+import type { UpdateState } from '../shared/updates';
 import { Alert, Badge, Button, Card, Dialog, EmptyState, PageHeader, Row, Section, SkeletonRows, Switch, useConfirm } from './ui/kit';
 import './ui/updates.css';
 import './machines-data.css';

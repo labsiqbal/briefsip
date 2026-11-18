@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './test-bridge.ts';
-import { restoreAgentCreation } from './agent-create.ts';
+import { restoreAgentCreation } from './shared/agent-create.ts';
 
 test('creation recovery keeps exact command and rejects malformed authority', () => {
   const command = { id: randomUUID(), name: 'Agent baru', model: 'fixture', backupModel: '', instructions: 'Help with research', threadLimit: 2, providerAccount: '', setup: true };

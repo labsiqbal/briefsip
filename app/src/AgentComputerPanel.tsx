@@ -2,8 +2,8 @@ import { useCallback, useState } from 'react';
 import { Alert, Badge, Button } from './ui/kit';
 import { Monitor } from 'lucide-react';
 import { useVisiblePolling } from './hooks/useVisiblePolling';
-import type { DesktopStatus } from '../agent-desktop';
-import type { ComputerControl, ComputerWait } from '../agent-computer';
+import type { DesktopStatus } from '../shared/computer';
+import type { ComputerControl, ComputerWait } from '../shared/computer';
 export type ComputerStatus = DesktopStatus & { enabled: boolean; revision: number; control: ComputerControl; requests: ComputerWait[] };
 export type ComputerRequest = <T>(path: string, body?: unknown) => Promise<T>;
 

@@ -6,7 +6,7 @@ import { useComputerSettings } from './AgentComputerSettings';
 import RFB from '@novnc/novnc';
 import { ClipboardType, Ellipsis, ExternalLink, Monitor, RefreshCw, X } from 'lucide-react';
 import { ActionMenu, ActionPopover, Alert, Badge, Button, Card, Field, IconButton, Input, useConfirm, RecoveryAlert } from './ui/kit';
-import type { ComputerWait } from '../agent-computer';
+import type { ComputerWait } from '../shared/computer';
 import type { ComputerRequest, ComputerStatus } from './AgentComputerPanel';
 import './computer-viewer.css';
 

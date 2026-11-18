@@ -1,0 +1,1 @@
+export type Spec = { kind: 'instant'; at: number } | { kind: 'once'; date: string; time: string } | { kind:'cron';expression:string } | { kind: 'interval'; amount: number; unit: 'minute' | 'hour' | 'day'; anchorAt: number } | { kind: 'legacy_interval'; intervalMs: number; anchorAt: number };

@@ -46,7 +46,7 @@ import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 import sharp from 'sharp';
 import { parseAgentTemplate, templateCommand } from './agent-template.ts';
-import { restoreAgentCreation } from './agent-create.ts';
+import { restoreAgentCreation } from './shared/agent-create.ts';
 
 type ProviderReply = string | { id: string; name: string; args?: object } | number;
 async function fixture(answer: (body: any) => ProviderReply) {
