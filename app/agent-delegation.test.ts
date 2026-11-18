@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('delegation isolates child context and durably wakes idle parent exactly once', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-delegation-'));

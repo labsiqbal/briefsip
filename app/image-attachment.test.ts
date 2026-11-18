@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { imageType, imagePart, imageLimit } from './image-attachment.ts';
 import { anthropicRequest, type ProviderFamily } from './provider.ts';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZ84AAAAASUVORK5CYII=', 'base64');
 test('image headers and inline provider conversion are bounded and never use remote URLs', () => {

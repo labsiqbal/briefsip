@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 for (const automatic of [true, false]) test(`channel context names lead for ${automatic ? 'automatic routing and execution' : 'explicit execution'}`, async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-channel-context-'));

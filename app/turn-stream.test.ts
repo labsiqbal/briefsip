@@ -6,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { initializeHarness, streamSnapshot } from './harness-store.ts';
 import { newestPartial, parseTurnSnapshot, type StreamPartial } from './turn-stream.ts';

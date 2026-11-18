@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer, request as httpRequest, type Server } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { machineOrigin } from './machines.ts';
 import { fakePeerTokenIssuer } from './machines.fixture.ts';
 

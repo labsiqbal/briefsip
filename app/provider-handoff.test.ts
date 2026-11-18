@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import type { ProviderFamily } from './provider.ts';
 
 for (const [source, target] of [['openai-compatible', 'openai-compatible'], ['openai-compatible', 'gemini'], ['anthropic', 'gemini'], ['gemini', 'openai-compatible'], ['gemini', 'anthropic'], ['openai-compatible', 'anthropic'], ['anthropic', 'openai-compatible']] as [ProviderFamily, ProviderFamily][]) {

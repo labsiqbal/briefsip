@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { initializeMcpSessions, mintAgentSession, verifyBearer, revokeAgentSession } from './t3/mcp-session-registry.ts';
 import type { McpScope } from './mcp-server.ts';
 const allScopes: McpScope[] = ['agents:read','agents:message','history:read'];

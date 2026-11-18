@@ -5,7 +5,7 @@ import { createServer, request as httpRequest } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('script messages and answers share grants, scope, receipts, redaction and rate admission', async t => {
   // Keep admission checks within one rate window even on a busy host.

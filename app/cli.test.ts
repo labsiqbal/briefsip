@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { cli } from './cli.ts';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('CLI routine lists and histories stay within the selected granted agent', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-cli-routines-')), directory = join(dir, 'scripts');

@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('agent memory writes preserve scope, user selection, atomic errors and resume receipts', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-memory-tools-'));

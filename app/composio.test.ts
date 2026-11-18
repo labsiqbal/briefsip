@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { once } from 'node:events';
 import { DatabaseSync } from 'node:sqlite';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { createComposio, composioToolName } from './composio.ts';
 import { restoreConnectedAppCommand } from './connected-app-command.ts';
 const canary='COMPOSIO_CANARY_6vR9pX8m7Q4b';

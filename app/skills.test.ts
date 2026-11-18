@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { restoreSkillCommand } from './skill-command.ts';
 
 test('skill revisions stay pinned, disable isolates agent context and receipts survive restart', async () => {

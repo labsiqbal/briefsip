@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { restoreSkillCommand } from './skill-command.ts';
 
 test('packs pin members and apply lifecycle atomically without replacing manual skills', async () => {

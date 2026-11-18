@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import sharp from 'sharp';
 import { createAvatars } from './avatars.ts';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('avatar tool scopes files, journals atomic changes and preserves user changes on restart', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-avatar-tool-'));

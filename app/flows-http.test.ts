@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('routine flow dispatch joins once, snapshots edits and recovers interrupted steps', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-flow-http-')), calls: { model: string; prompt: string }[] = [];

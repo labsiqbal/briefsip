@@ -6,7 +6,7 @@ import { linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workspaceBindings, workspaceInspect, workspaceRead } from './workspace-files.ts';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('workspace browser API pages text and directories while enforcing host binding and read boundaries', async () => {
   const dir=mkdtempSync(join(tmpdir(),'briefsip-workspace-browser-')),root=join(dir,'root');mkdirSync(root);

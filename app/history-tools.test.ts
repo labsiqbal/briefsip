@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { subscribe, unsubscribe } from 'node:diagnostics_channel';
 
 test('agent history tools retrieve old originals and reject foreign conversations', async () => {

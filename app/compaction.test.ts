@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('incremental compaction keeps source scopes, originals, provenance and failure fallback', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-compaction-'));

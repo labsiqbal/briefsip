@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { restoreChatCommand } from './conversation-command.ts';
 
 test('attachment-only messages validate, recover and retry in direct chats, threads and rooms', async () => {

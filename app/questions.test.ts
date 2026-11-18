@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('question cards persist, answer once in scope, and resume without repeating effects', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-questions-'));

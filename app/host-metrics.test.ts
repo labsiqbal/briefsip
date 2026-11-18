@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { cpuPercent, processCpuPercent, diskMetrics, memoryAvailable, memoryLimit, createHostMetrics } from './host-metrics.ts';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('CPU units, disk reservations/thresholds and available memory retain honest semantics', () => {
   const before = { idle: 100, total: 200, cores: 2 };

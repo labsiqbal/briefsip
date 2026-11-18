@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { createHarnessAdapter, harnessAvailability, harnessRuntimes, type HarnessRuntime, type HarnessStart } from './harness.ts';
 import { initializeHarness } from './harness-store.ts';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { dispatchCapabilities } from './dispatch.ts';
 async function collect<T>(source: AsyncIterable<T>) { const events: T[] = []; for await (const event of source) events.push(event); return events; }
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));

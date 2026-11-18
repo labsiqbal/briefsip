@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 async function fixture(t: { after: (fn: () => Promise<void>) => void }, hub = false) {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-delete-')), database = join(dir, 'state.sqlite');

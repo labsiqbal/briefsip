@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync } from 'node
 import { resolve, join } from 'node:path';
 import { homedir } from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('conversation panel reads isolate files, previews, project folders and Git; revoked members lose access', async () => {
   const root = mkdtempSync(resolve('node_modules/.panel-test-')), home = join(homedir(), `.briefsip-panel-test-${randomUUID()}`); mkdirSync(home);

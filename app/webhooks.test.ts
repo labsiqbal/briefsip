@@ -7,7 +7,7 @@ import { createServer, request as httpRequest } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('webhook receipts isolate, deduplicate, rotate and persist ignored events', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-webhooks-')), prompts: string[] = [];

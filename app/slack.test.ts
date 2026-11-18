@@ -8,7 +8,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {initializeSlack,bindSlack,recordSlackEnvelope,finishSlack,deliverSlack,slackApi,SlackError} from './slack.ts';
 import {runSlack,slackAgentStep,slackSocket,slackSessionRequest} from './slack-runner.ts';
-import {startApp} from './server.ts';
+import {startApp} from './test-bridge.ts';
 import {localScript} from './script-client.ts';
 
 const envelope=(n:number,text='Hello',user='UUSER',root?:string)=>({type:'events_api',envelope_id:`envelope-${n}`,payload:{type:'event_callback',team_id:'TTEAM',api_app_id:'AAPP',event_id:`Ev${n}`,authorizations:[{team_id:'TTEAM',user_id:'UBOT',is_bot:true}],event:{type:'message',channel_type:'im',channel:'DCHAT',user,text,ts:`1700000000.${String(n).padStart(6,'0')}`,...(root?{thread_ts:root}:{})}}});

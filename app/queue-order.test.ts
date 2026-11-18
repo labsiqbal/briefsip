@@ -5,7 +5,7 @@ import { createServer, type ServerResponse } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('queue order survives restart, preserves transcript order, blocks edits and scopes, supplies reordered context', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-queue-edit-'));

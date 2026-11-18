@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { usageTokens, initializeUsage, readUsage } from './usage.ts';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('usage preserves unknown counts, zero and exact sums beyond JS safe integers', () => {
   assert.deepEqual(usageTokens(null), [null, null, null]);

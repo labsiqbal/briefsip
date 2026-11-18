@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createServer, get } from 'node:http';
 import { execFileSync } from 'node:child_process';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { restoreWorkspace, workspaceSnapshot } from './backup.ts';
 import { createLocalProjects, initializeLocalProjects, ProjectError } from './local-projects.ts';
 const scratch = () => mkdtempSync(resolve('node_modules/.projects-test-'));

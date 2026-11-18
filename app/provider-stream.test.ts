@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createInterface } from 'node:readline';
 import { readProviderStream, streamTermination } from './provider-stream.ts';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import type { ProviderFamily } from './provider.ts';
 
 const sse = (value: unknown) => `data: ${typeof value === 'string' ? value : JSON.stringify(value)}\n\n`;
@@ -165,7 +165,7 @@ test('SIGKILL preserves committed stream text without automatic provider replay'
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(directory, 'db.sqlite'), stream: true, baseURL: `http://127.0.0.1:${address.port}/v1` };
-  const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', `import {startApp} from ${JSON.stringify(new URL('./server.ts', import.meta.url).href)};const app=await startApp(JSON.parse(process.env.BRIEFSIP_TEST_OPTIONS));console.log(app.origin);`], { env: { ...process.env, BRIEFSIP_TEST_OPTIONS: JSON.stringify(options) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', `import {startApp} from ${JSON.stringify(new URL('./test-bridge.ts', import.meta.url).href)};const app=await startApp(JSON.parse(process.env.BRIEFSIP_TEST_OPTIONS));console.log(app.origin);`], { env: { ...process.env, BRIEFSIP_TEST_OPTIONS: JSON.stringify(options) }, stdio: ['ignore', 'pipe', 'pipe'] });
   const exited = once(child, 'exit'), output = createInterface({ input: child.stdout }); child.stderr.resume();
   let app: Awaited<ReturnType<typeof startApp>> | undefined;
   try {

@@ -5,7 +5,7 @@ import { createServer, request as httpRequest } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('local scripts require token and current agent grant, keep payload and retry identity', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-scripts-'));

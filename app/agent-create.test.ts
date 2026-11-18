@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { restoreAgentCreation } from './agent-create.ts';
 
 test('creation recovery keeps exact command and rejects malformed authority', () => {
@@ -75,7 +75,7 @@ import { generateKeyPairSync, sign } from 'node:crypto';
 import type { HumanActor } from './auth.ts';
 import { ProtocolError, digestCommand, sha256 } from './protocol.ts';
 import { parseCanonicalAgentCreation, restoreCanonicalAgentCreation } from './agent-create.ts';
-import { retainedToolNames } from './server.ts';
+import { retainedToolNames } from './test-bridge.ts';
 import sharp from 'sharp';
 
 function canonicalFixture() {

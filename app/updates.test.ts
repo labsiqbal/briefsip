@@ -11,7 +11,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { rustBinary } from './rust-binary.ts';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { launcherRequest } from './updates.ts';
 import { launcherCommand } from './rust-test-launcher.ts';
 import { durableWrite, fileManifest, latestRelease, selectRelease, selectedRelease, verifyRelease } from './update-release.mjs';

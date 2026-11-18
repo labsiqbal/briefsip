@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('local sites retain URLs, isolate owners, reject stale writes and recover without resurrection', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-sites-')), options = { database: join(directory, 'test.sqlite'), port: 0 };

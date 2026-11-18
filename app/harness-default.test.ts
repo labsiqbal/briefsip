@@ -4,7 +4,7 @@ import { existsSync, readFileSync, statSync, mkdtempSync, writeFileSync, chmodSy
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { codexProviderConfig, createHarnessHome, workspaceCommand } from './harness-session.ts';
 
 test('Codex custom provider uses selected model and environment credential in disposable home', () => {

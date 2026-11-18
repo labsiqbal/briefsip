@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('agent flow edits preserve ownership, revisions and ordered receipts across restart', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-flow-tools-'));

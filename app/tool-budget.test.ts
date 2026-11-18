@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('nine distinct tools complete before per-task budget requests a final answer without tools', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-tool-budget-'));

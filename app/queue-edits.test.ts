@@ -5,7 +5,7 @@ import { createServer, type ServerResponse } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { readQueueEdit } from './src/hooks/useQueueEditLease.ts';
 
 test('saved queued edit recovers exact command and rejects corrupt browser data', () => {

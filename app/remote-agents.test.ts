@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { restoreRemoteMessage } from './remote-message-command.ts';
 
 type App=Awaited<ReturnType<typeof startApp>>;

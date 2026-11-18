@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { activityLabel, livePartial, turnPollDelay } from './src/ui/transcript.ts';
 
 const created = '2026-11-14T00:00:00.000Z';

@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { mcpScopes, defaultSessionScopes, type McpScope } from './t3/mcp-session-registry.ts';
 async function fixture() {
  const dir=mkdtempSync(join(tmpdir(),'briefsip-m4-')),database=join(dir,'state.sqlite'),clients:Client[]=[];

@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('tested MCP updates bind origin/revision, rotate credentials and invalidate grants exactly once', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-mcp-update-')), oldToken = 'old-fixture-token', newToken = 'new-fixture-token';

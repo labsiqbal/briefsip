@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { scriptDiscovery } from './script-discovery.ts';
 
 test('duplicate discovery startup cannot interrupt the owning server task', async () => {

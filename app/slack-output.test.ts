@@ -6,7 +6,7 @@ import {randomUUID} from 'node:crypto';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {startApp} from './server.ts';
+import {startApp} from './test-bridge.ts';
 import {slackApi,initializeSlack,bindSlack,recordSlackEnvelope,recoverSlackReply} from './slack.ts';
 import {slackAgentStep} from './slack-runner.ts';
 import {localScript} from './script-client.ts';

@@ -26,7 +26,7 @@ test('a hostile MCP output schema cannot block HTTP, exceed the worker deadline 
   await new Promise<void>(resolve => external.listen(0, '127.0.0.1', resolve)); await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const ea = external.address(), pa = provider.address(); assert(ea && typeof ea !== 'string' && pa && typeof pa !== 'string');
   const options = { database: join(dir, 'test.sqlite'), baseURL: `http://127.0.0.1:${pa.port}/v1` };
-  const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', `import { startApp } from './server.ts'; const app = await startApp(${JSON.stringify(options)}); console.log(app.origin);`], { cwd: import.meta.dirname, stdio: ['ignore', 'pipe', 'pipe'], env: { PATH: process.env.PATH } });
+  const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', `import { startApp } from './test-bridge.ts'; const app = await startApp(${JSON.stringify(options)}); console.log(app.origin);`], { cwd: import.meta.dirname, stdio: ['ignore', 'pipe', 'pipe'], env: { PATH: process.env.PATH } });
   const exited = new Promise(resolve => child.once('exit', resolve));
   try {
     const origin = await new Promise<string>((resolve, reject) => { let raw = ''; child.stdout.on('data', chunk => { raw += chunk; if (raw.includes('\n')) resolve(raw.trim()); }); child.once('error', reject); child.once('exit', () => reject(new Error('Child exited before ready'))); });

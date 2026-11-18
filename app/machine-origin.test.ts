@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('machine identity uses the first allowed origin so paired peers keep matching it', async () => {
   const directory = mkdtempSync('/dev/shm/machine-origin-');
