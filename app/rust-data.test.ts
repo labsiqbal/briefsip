@@ -5,16 +5,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { startApp } from './test-bridge.ts';
 import { startRustServer } from './rust-test-server.ts';
 
-test('Rust forks preserve bounded persisted transcripts and restart receipts', { skip: process.env.BRIEFSIP_TEST_SERVER !== 'rust', timeout: 20000 }, async () => {
+test('Rust forks preserve bounded persisted transcripts and restart receipts', { timeout: 20000 }, async () => {
   const { boundedTranscript } = await import('./dispatch.ts');
   const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-fork-')), database = join(root, 'db.sqlite');
-  delete process.env.BRIEFSIP_TEST_SERVER;
   let app: Awaited<ReturnType<typeof startRustServer>> | undefined;
   try {
-    const node = await startApp({ database }); await node.close(); process.env.BRIEFSIP_TEST_SERVER = 'rust';
+    const initial = await startRustServer({ database }); await initial.close();
     const db = new DatabaseSync(database), agent = randomUUID(), cutoff = randomUUID();
     db.prepare("INSERT INTO agents(id,name,model,instructions) VALUES(?,'Fork fixture','fixture','Help')").run(agent);
     for (let i = 0; i < 42; i++) db.prepare("INSERT INTO turns(id,agent,text,reply,status,created) VALUES(?,?,?,?,'done','2026-01-02T03:04:05.000Z')").run(i === 41 ? cutoff : randomUUID(), agent, 'Question ' + i + 'x'.repeat(17000), 'Answer ' + i + 'y'.repeat(25000));
@@ -29,18 +27,17 @@ test('Rust forks preserve bounded persisted transcripts and restart receipts', {
     assert.deepEqual(await fork(), created);
     await app.close(); app = await startRustServer({ database }); assert.deepEqual(await fork(), created);
     assert.equal((await fetch(app.origin + `/api/threads/${created.id}/fork-context`, { headers: { Authorization: 'Bearer fixture' } })).status, 403);
-  } finally { process.env.BRIEFSIP_TEST_SERVER = 'rust'; await app?.close(); rmSync(root, { recursive: true, force: true }); }
+  } finally { await app?.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
-test('Rust data reads preserve persisted Node history and local CRUD receipts', { skip: process.env.BRIEFSIP_TEST_SERVER !== 'rust', timeout: 20000 }, async () => {
+test('Rust data reads preserve seeded history and local CRUD receipts across restart', { timeout: 20000 }, async () => {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-data-')), database = join(root, 'db.sqlite');
-  delete process.env.BRIEFSIP_TEST_SERVER;
-  let node: Awaited<ReturnType<typeof startApp>> | undefined;
+  let initial: Awaited<ReturnType<typeof startRustServer>> | undefined;
   let rust: Awaited<ReturnType<typeof startRustServer>> | undefined;
   try {
-    node = await startApp({ database });
+    initial = await startRustServer({ database });
     const agent = randomUUID(), turn = randomUUID();
-    await node.close(); node = undefined;
+    await initial.close(); initial = undefined;
     const db = new DatabaseSync(database);
     db.prepare('INSERT INTO agents(id,name,model,instructions) VALUES(?,?,?,?)').run(agent, 'Saved agent', 'fixture', 'Help');
     db.prepare("INSERT INTO turns(id,agent,text,status,reply,created) VALUES(?,?,?,'done',?,?)").run(turn, agent, 'Saved question', 'Saved answer', '2026-01-02T03:04:05.000Z');
@@ -65,12 +62,11 @@ test('Rust data reads preserve persisted Node history and local CRUD receipts', 
     db.prepare("INSERT INTO provider_stream_segments VALUES(?,0,'text-0','text',?,'',0,1)").run(roomCall, '“[SILENT]”');
     db.close();
     const paths = [`/api/agents/${agent}/turns`, '/api/usage', '/api/conversations/settings', `/api/agents/${agent}/threads`, '/api/channels', `/api/channels/${channel}/turns`, `/api/agents/${agent}/panel`, `/api/threads/${thread}/panel/files`];
-    node = await startApp({ database });
+    initial = await startRustServer({ database });
     const expected = [];
-    for (const path of paths) { const res: Response = await fetch(node.origin + path); assert.equal(res.status, 200); expected.push(await res.json()); }
-    await node.close(); node = undefined;
-    process.env.BRIEFSIP_TEST_SERVER = 'rust';
-    rust = await startRustServer({ database });
+    for (const path of paths) { const res: Response = await fetch(initial.origin + path); assert.equal(res.status, 200); expected.push(await res.json()); }
+    await initial.close(); initial = undefined;
+      rust = await startRustServer({ database });
     for (let i = 0; i < paths.length; i++) { const res: Response = await fetch(rust.origin + paths[i]); assert.equal(res.status, 200, paths[i] + ' ' + await (res.status === 200 ? Promise.resolve('') : res.text())); assert.deepEqual(await res.json(), expected[i], paths[i]); }
     const post = async (path: string, body: unknown, status = 200) => { const res: Response = await fetch(rust!.origin + path, { method: 'POST', headers: { Origin: rust!.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const result = await res.json(); assert.equal(res.status, status, JSON.stringify(result)); return result; };
     const command = { id: randomUUID(), name: 'Side' }, path = `/api/agents/${agent}/threads`;
@@ -80,17 +76,16 @@ test('Rust data reads preserve persisted Node history and local CRUD receipts', 
     const deletion = { id: randomUUID(), revision: 1 };
     assert.equal((await post(`/api/threads/${created.id}/delete`, deletion)).deleted, 1);
     assert.equal((await post(`/api/threads/${created.id}/delete`, deletion)).deleted, 1);
-  } finally { process.env.BRIEFSIP_TEST_SERVER = 'rust'; await node?.close(); await rust?.close(); rmSync(root, { recursive: true, force: true }); }
+  } finally { await initial?.close(); await rust?.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
-test('Rust deletion rolls back FK closure, preserves room history and retries external cleanup', { skip: process.env.BRIEFSIP_TEST_SERVER !== 'rust', timeout: 20000 }, async () => {
+test('Rust deletion rolls back FK closure, preserves room history and retries external cleanup', { timeout: 20000 }, async () => {
   const { mkdirSync, writeFileSync, existsSync } = await import('node:fs');
   const { execFileSync } = await import('node:child_process');
   const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-delete-')), database = join(root, 'db.sqlite');
-  delete process.env.BRIEFSIP_TEST_SERVER;
   let app: Awaited<ReturnType<typeof startRustServer>> | undefined;
   try {
-    const node = await startApp({ database }); await node.close(); process.env.BRIEFSIP_TEST_SERVER = 'rust';
+    const initial = await startRustServer({ database }); await initial.close();
     const db = new DatabaseSync(database), agent = randomUUID(), other = randomUUID(), direct = randomUUID(), room = randomUUID(), channel = randomUUID();
     const desktop = join(root, 'agent-desktops', agent), workspace = join(root, 'workspace');
     mkdirSync(desktop, { recursive: true }); writeFileSync(join(desktop, 'saved'), 'saved'); mkdirSync(workspace);
@@ -123,10 +118,10 @@ test('Rust deletion rolls back FK closure, preserves room history and retries ex
     assert.equal(history[0].agent, null); assert.equal(history[0].reply, 'Saved reply'); assert.equal(history[0].agent_name, 'Deleted agent');
     const saved = new DatabaseSync(database); assert.deepEqual(saved.prepare('PRAGMA foreign_key_check').all(), []);
     assert.equal(saved.prepare('SELECT count(*) AS n FROM agent_delete_checkpoints').get()!.n, 0); saved.close();
-  } finally { process.env.BRIEFSIP_TEST_SERVER = 'rust'; await app?.close(); rmSync(root, { recursive: true, force: true }); }
+  } finally { await app?.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
-test('Rust canonical projects preserve ownership, CAS and durable command receipts', { skip: process.env.BRIEFSIP_TEST_SERVER !== 'rust', timeout: 20000 }, async () => {
+test('Rust canonical projects preserve ownership, CAS and durable command receipts', { timeout: 20000 }, async () => {
   const { generateKeyPairSync, sign } = await import('node:crypto');
   const { initializeCanonicalSchema } = await import('./schema.ts');
   const { createProjectAccess } = await import('./project-access.ts');

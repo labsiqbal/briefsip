@@ -11,7 +11,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { initializeCanonicalSchema } from './schema.ts';
 import { startRustServer } from './rust-test-server.ts';
 
-test('Rust JWKS rotates keys, rejects unknown signatures and enforces audience', { skip: process.env.BRIEFSIP_TEST_SERVER !== 'rust' }, async () => {
+test('Rust JWKS rotates keys, rejects unknown signatures and enforces audience', async () => {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-jwks-'));
   const keys = [generateKeyPairSync('rsa', { modulusLength: 2048 }), generateKeyPairSync('rsa', { modulusLength: 2048 })];
   let rotated = false, calls = 0;
@@ -24,7 +24,7 @@ test('Rust JWKS rotates keys, rejects unknown signatures and enforces audience',
   finally { await app.close(); api.closeAllConnections(); await new Promise<void>(ready=>api.close(()=>ready())); rmSync(root,{recursive:true,force:true}); }
 });
 
-test('Rust opens every canonical schema version and rejects migration drift', { skip: process.env.BRIEFSIP_TEST_SERVER !== 'rust' }, async () => {
+test('Rust opens every canonical schema version and rejects migration drift', async () => {
   const root=mkdtempSync(join(tmpdir(),'briefsip-rust-schema-'));
   const auth={secretKey:'sk_test_fixture',publishableKey:'pk_test_fixture',issuer:'https://fixture.clerk.accounts.dev',origin:'https://briefsip.example',development:true};
   const inspect=(database:string) => { const db=new DatabaseSync(database); try { initializeCanonicalSchema(db); return db.prepare("SELECT type,name,tbl_name FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all().map(row => ({...row, ...(row.type==='table'?{columns:db.prepare(`PRAGMA table_info(${row.name})`).all()}:{} )})); } finally {db.close();} };
@@ -43,7 +43,7 @@ test('Rust opens every canonical schema version and rejects migration drift', { 
   } finally {rmSync(root,{recursive:true,force:true});}
 });
 
-test('Rust canonical TLS serves protocol errors over a verified fixture certificate', { skip: process.env.BRIEFSIP_TEST_SERVER !== 'rust' }, async () => {
+test('Rust canonical TLS serves protocol errors over a verified fixture certificate', async () => {
   const root=mkdtempSync(join(tmpdir(),'briefsip-rust-tls-'));
   try {
     execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',join(root,'key'),'-out',join(root,'cert'),'-days','1','-subj','/CN=localhost','-addext','subjectAltName=IP:127.0.0.1'],{stdio:'ignore'});

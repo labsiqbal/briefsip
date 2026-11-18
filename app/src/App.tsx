@@ -22,7 +22,7 @@ import { HarnessApprovalCard, type HarnessApproval } from './HarnessApprovalCard
 import './ui/csp-nonce';
 import { RestoreCheckpoint } from './SourceControl';
 import { ComputerViewer, ComputerRequestCard } from './ComputerViewer';
-import type { ComputerWait } from '../agent-computer';
+import type { ComputerWait } from '../shared/computer';
 import { AgentComputerPanel } from './AgentComputerPanel';
 import { restoreChatCommand, restoreChannelCommand, type ChatCommand, type ChannelCommand } from '../conversation-command';
 import { AgentForm } from './AgentProfileDialog';
@@ -515,9 +515,9 @@ function WorkflowConversation({ agent, threadId, configured, onOpenAgent, onOpen
   return <Chat key={thread.id} agent={agent} thread={thread} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />;
 }
 
-type Routine = { trigger: 'schedule' | 'webhook' | 'manual' | 'script'; id: string; agent: string; name: string; prompt: string; next_at: number; interval_ms: number | null; enabled: number; revision: number; project?: string | null; project_name?: string | null; report_to?: string; report_section?: string | null; schedule?: import('../schedule-spec').Spec | null; schedule_zone?: string | null; routineReport?: { run: string; status: string; thread: string }; owner_name?: string; flow_agents?: number; last_source?: string | null; last_scheduled_at?: number | null; last_status?: string | null; last_paused?: number | null; last_no_update?: number | null; last_created?: string | null; last_thread?: string | null };
+type Routine = { trigger: 'schedule' | 'webhook' | 'manual' | 'script'; id: string; agent: string; name: string; prompt: string; next_at: number; interval_ms: number | null; enabled: number; revision: number; project?: string | null; project_name?: string | null; report_to?: string; report_section?: string | null; schedule?: import('../shared/routine-schedule').Spec | null; schedule_zone?: string | null; routineReport?: { run: string; status: string; thread: string }; owner_name?: string; flow_agents?: number; last_source?: string | null; last_scheduled_at?: number | null; last_status?: string | null; last_paused?: number | null; last_no_update?: number | null; last_created?: string | null; last_thread?: string | null };
 type RoutineRun = { paused: number; source: string; no_update: number; turn: string; thread: string; scheduled_at: number | null; created: string; missed: number; status: string; reply: string | null; error: string | null };
-type RoutineCommand = { routineId: string | null; data: { id: string; revision?: number; trigger?: 'schedule' | 'webhook' | 'manual' | 'script'; name: string; prompt: string; nextAt?: number; intervalSeconds?: number | null; schedule?: import('../schedule-spec').Spec; zone?: string; project?: string | null; reportTo?: string; enabled: boolean } };
+type RoutineCommand = { routineId: string | null; data: { id: string; revision?: number; trigger?: 'schedule' | 'webhook' | 'manual' | 'script'; name: string; prompt: string; nextAt?: number; intervalSeconds?: number | null; schedule?: import('../shared/routine-schedule').Spec; zone?: string; project?: string | null; reportTo?: string; enabled: boolean } };
 const routineReportLabel = (routine: Routine) => routine.report_section ? `${routine.project_name ?? 'Project'} / # ${routine.report_section}` : routine.report_to === 'direct' ? "Owner agent's direct chat" : "Only in the run's own conversation";
 function SectionRoutines({channel,onOpen}:{channel:string;onOpen?:(agent:string,thread:string)=>void}) {
   const [rows,setRows]=useState<Routine[] | null>(null),[error,setError]=useState('');
@@ -736,7 +736,7 @@ function relativeRun(value: string | number) {
   return new Intl.RelativeTimeFormat('en', { numeric: 'auto' }).format(Math.round(seconds / (unit === 'day' ? 86400 : unit === 'hour' ? 3600 : unit === 'minute' ? 60 : 1)), unit);
 }
 const runStatus = (run: { paused?: number | null; no_update?: number | null; status?: string | null }) => run.paused ? 'Paused' : run.no_update ? 'No updates' : statusNames[run.status ?? ''] ?? run.status ?? 'Never run';
-function RoutinesHub({ agents, projects, initialAgent, onOpen }: { agents: Agent[]; projects: import('../local-projects').LocalProject[]; initialAgent?: string; onOpen: (owner: string, thread: string) => void }) {
+function RoutinesHub({ agents, projects, initialAgent, onOpen }: { agents: Agent[]; projects: import('../shared/local-project').LocalProject[]; initialAgent?: string; onOpen: (owner: string, thread: string) => void }) {
   type Command = { routine: string; action: 'test' | 'edit' | 'delete'; data: { id: string; revision: number } & Record<string, unknown> };
   const key = 'briefsip:routine-hub-command';
   const [recovered] = useState(() => {
@@ -843,7 +843,7 @@ function RoutineDetail({ routine, locked, recovery, onBack, onEdit, onRun, onTog
     </Tabs>
   </div>;
 }
-function RoutineForm({ owner, agents, projects, routine, onBack, onSaved }: { owner: Agent; agents: Agent[]; projects: import('../local-projects').LocalProject[]; routine: Routine | null; onBack: () => void; onSaved: (routine: Routine) => void }) {
+function RoutineForm({ owner, agents, projects, routine, onBack, onSaved }: { owner: Agent; agents: Agent[]; projects: import('../shared/local-project').LocalProject[]; routine: Routine | null; onBack: () => void; onSaved: (routine: Routine) => void }) {
   const [agent, setAgent] = useState(owner);
   const key = `briefsip:routine-command:${agent.id}`;
   const pending = useRef<RoutineCommand | null>(pendingRoutine(owner.id));

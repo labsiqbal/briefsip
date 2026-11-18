@@ -62,7 +62,7 @@ test('fan-out serves one verified executable archive to 0.10.27 and waits beyond
   cleanup.push(() => { for (const timer of timers) clearTimeout(timer); proxy.closeAllConnections(); return new Promise<void>(done => proxy.close(() => done())); });
   const fixture = join(dir, 'peer.mjs');
   writeFileSync(fixture, `import {startApp} from ${JSON.stringify(pathToFileURL(join(peer, 'app/server.ts')).href)};const app=await startApp(JSON.parse(process.argv[2]));console.log(app.origin);process.once('SIGTERM',()=>void app.close().then(()=>process.exit(0)));`);
-  const child = spawn(process.execPath, ['--experimental-strip-types', fixture, JSON.stringify({ database: join(dir, 'peer.sqlite'), allowedOrigins: [origin], updates: { releasesDir: join(dir, 'received'), launcherSocket: socket } })], { env: { ...process.env, BRIEFSIP_TEST_SERVER: 'node' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['--experimental-strip-types', fixture, JSON.stringify({ database: join(dir, 'peer.sqlite'), allowedOrigins: [origin], updates: { releasesDir: join(dir, 'received'), launcherSocket: socket } })], { stdio: ['ignore', 'pipe', 'pipe'] });
   let stderr = ''; child.stderr.on('data', chunk => { stderr += chunk; });
   cleanup.push(async () => { if (child.exitCode === null && child.signalCode === null) { const exited = once(child, 'exit'); child.kill('SIGTERM'); const timer = setTimeout(() => child.kill('SIGKILL'), 5000); try { await exited; } finally { clearTimeout(timer); } } });
   peerOrigin = await new Promise<string>((done, reject) => {

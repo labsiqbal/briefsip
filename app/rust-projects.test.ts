@@ -10,7 +10,7 @@ import { initializeCanonicalSchema } from './schema.ts';
 import { startCanonicalApp } from './test-bridge.ts';
 import { startRustServer } from './rust-test-server.ts';
 
-test('Rust project automation matches Node scopes, receipts, versions, calendars, schedules and webhook rotation', { skip: process.env.BRIEFSIP_TEST_SERVER !== 'rust' }, async t => {
+test('Rust project automation matches Node scopes, receipts, versions, calendars, schedules and webhook rotation', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-rust-projects-'));
   const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });

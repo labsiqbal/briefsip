@@ -1,5 +1,5 @@
 import { rustHubFacade } from './rust-hub-test-bridge.ts';
-import type { HubLinkOptions } from './hub-link.ts';
+import type { HubLinkOptions } from './rust-hub-test-bridge.ts';
 import { connectorsTestBridge } from './rust-connectors-test-bridge.ts';
 import type { AgentDesktopManager } from './agent-desktop.ts';
 import { computerTestBridge } from './rust-computer-test-bridge.ts';

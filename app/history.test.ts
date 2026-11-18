@@ -32,7 +32,7 @@ test('history pages preserve order and conversation boundaries across restart', 
         const id = randomUUID(); await post(path, { id, text: `${path} message ${n}` });
         let done = false;
         for (let attempt = 0; attempt < 100; attempt++) {
-          if ((await get(path)).at(-1)?.status === 'done') { done = true; break; }
+          if ((await get(`${path}?focus=${id}`))[0]?.status === 'done') { done = true; break; }
           await new Promise(resolve => setTimeout(resolve, 5));
         }
         assert(done);

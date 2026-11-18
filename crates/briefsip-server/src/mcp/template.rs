@@ -236,4 +236,123 @@ mod tests {
             Some("fixture:a%20b/c".into())
         );
     }
+
+    #[test]
+    fn template_variables_and_expansion_are_bounded_and_encoded() -> Result<()> {
+        for (template, args, expected) in [
+            (
+                "fixture://data/{x,y}",
+                json!({"x":"a/b","y":"#?"}),
+                "fixture://data/a%2Fb,%23%3F",
+            ),
+            (
+                "fixture://data/{+path}",
+                json!({"path":"a/b%2F?q=x"}),
+                "fixture://data/a/b%2F?q=x",
+            ),
+            (
+                "fixture://data{/path*}{?q,filters*}",
+                json!({"path":["a/b","c"],"q":"A B","filters":{"first":"x&y","empty":""}}),
+                "fixture://data/a%2Fb/c?q=A%20B&first=x%26y&empty=",
+            ),
+            (
+                "fixture://data{;x,y}",
+                json!({"x":"","y":"ok"}),
+                "fixture://data;x;y=ok",
+            ),
+            (
+                "fixture://data{.ext}{#hash}",
+                json!({"ext":"json","hash":"a/b"}),
+                "fixture://data.json#a/b",
+            ),
+            (
+                "fixture://data/{x:1}/{x:2}",
+                json!({"x":"😀ab"}),
+                "fixture://data/%F0%9F%98%80/%F0%9F%98%80a",
+            ),
+            (
+                "fixture://data{?x%20y}",
+                json!({"x%20y":"ok"}),
+                "fixture://data?x%20y=ok",
+            ),
+            (
+                "fixture://data/{+x*}",
+                json!({"x":{"a/b":"c/d"}}),
+                "fixture://data/a/b=c/d",
+            ),
+            ("fixture://data{?x}", json!({"x":[]}), "fixture://data"),
+            ("fixture://data{;x}", json!({"x":{}}), "fixture://data"),
+            (
+                "fixture://data?one=1{&x}",
+                json!({"x":{}}),
+                "fixture://data?one=1",
+            ),
+            (
+                "fixture://data{?list}",
+                json!({"list":["red","green","blue"]}),
+                "fixture://data?list=red,green,blue",
+            ),
+            (
+                "fixture://data{?keys}",
+                json!({"keys":{"semi":";","dot":".","comma":","}}),
+                "fixture://data?keys=semi,%3B,dot,.,comma,%2C",
+            ),
+            (
+                "fixture://data{;keys*}",
+                json!({"keys":{"semi":";","dot":".","comma":","}}),
+                "fixture://data;semi=%3B;dot=.;comma=%2C",
+            ),
+            (
+                "fixture://data{+keys}",
+                json!({"keys":{"semi":";","dot":".","comma":","}}),
+                "fixture://datasemi,;,dot,.,comma,,",
+            ),
+            (
+                "fixture://data{?x,x}",
+                json!({"x":"ok"}),
+                "fixture://data?x=ok&x=ok",
+            ),
+            (
+                "fixture://data/{x}",
+                json!({"x":"!'()*"}),
+                "fixture://data/%21%27%28%29%2A",
+            ),
+        ] {
+            assert_eq!(expand(template, &args)?, expected, "{template}");
+        }
+        let arguments = schema("fixture://data/{id:3}{?q,list*,map*}")?;
+        for valid in [
+            json!({"id":"abc","q":"","list":["a"],"map":{"k":"v"}}),
+            json!({}),
+        ] {
+            assert!(super::super::validate::valid(&arguments, &valid));
+        }
+        for invalid in [
+            json!({"uri":"fixture://unexpected"}),
+            json!({"id":["a"]}),
+            json!({"q":1}),
+            json!({"list":[1]}),
+            json!({"map":{"nested":{}}}),
+            json!({"q":"x".repeat(2001)}),
+        ] {
+            assert!(!super::super::validate::valid(&arguments, &invalid));
+        }
+        for template in [
+            "fixture://{",
+            "fixture://{}",
+            "fixture://{x:0}",
+            "fixture://{x:10000}",
+            "fixture://{x**}",
+            "fixture://{__proto__}",
+            "fixture://{constructor}",
+            "fixture://{x y}",
+            "fixture://{x,,y}",
+        ] {
+            assert!(schema(template).is_err(), "{template}");
+        }
+        assert!(expand("fixture://data{?constructor}", &json!({})).is_err());
+        assert!(expand("relative/{id}", &json!({"id":"x"})).is_err());
+        assert!(expand("fixture://{x}{x}", &json!({"x":"a".repeat(1500)})).is_err());
+        Ok(())
+    }
 }

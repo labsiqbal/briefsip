@@ -8,11 +8,10 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { startRustServer } from './rust-test-server.ts';
 import { htmlPreview } from './html-preview.ts';
-import { pdfFixture } from './pdf-fixture.ts';
+import { pdfFixture } from './test-support/pdf-fixture.ts';
 import { readFileSync } from 'node:fs';
 import { createWorkspaceGit } from './workspace-git.ts';
 
-const rust = { skip: process.env.BRIEFSIP_TEST_SERVER !== 'rust' };
 async function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-files-')), database = join(root, 'app.sqlite'), workspace = join(root, 'workspace');
   mkdirSync(workspace);
@@ -34,7 +33,7 @@ async function fixture() {
     upload(path: string, bytes: Uint8Array, name = 'report.bin') { return fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(name) }, body: Buffer.from(bytes) }); },
   };
 }
-test('Rust files preserve bytes, retry scope, deletion tombstones and archive state across restart', rust, async () => {
+test('Rust files preserve bytes, retry scope, deletion tombstones and archive state across restart', async () => {
   const f = await fixture();
   try {
     const scope = `/api/channels/${f.channel}/files`, id = randomUUID(), path = `${scope}/${id}`, bytes = Buffer.from([0,255,128,13,65]);
@@ -58,7 +57,7 @@ test('Rust files preserve bytes, retry scope, deletion tombstones and archive st
     assert.equal((await f.upload(`${scope}/${randomUUID()}`, Buffer.alloc(10 * 1024 * 1024 + 1))).status, 413);
   } finally { await f.close(); }
 });
-test('Rust HTML preview matches sanitizer contract and local site revisions never resurrect deleted sites', rust, async () => {
+test('Rust HTML preview matches sanitizer contract and local site revisions never resurrect deleted sites', async () => {
   const f = await fixture();
   try {
     const source = '<h1 style="color:red;position:fixed;background-image:url(https://bad.test)">Title</h1><details open><summary>More</summary><p>Text &amp; more</p></details><script>fetch("/api/agents")</script><img src="https://bad.test"><iframe src="/api/agents"></iframe><svg><script>bad()</script></svg>';
@@ -74,7 +73,7 @@ test('Rust HTML preview matches sanitizer contract and local site revisions neve
     await f.request(path, { ...edit, id: randomUUID(), revision: 3 }, 410);
   } finally { await f.close(); }
 });
-test('Rust skill and pack transactions preserve pinned versions, receipts and rollback conflicts', rust, async () => {
+test('Rust skill and pack transactions preserve pinned versions, receipts and rollback conflicts', async () => {
   const f = await fixture();
   try {
     const command = { id: randomUUID(), revision: 0, name: 'Research', description: 'Fixture', content: 'One' };
@@ -94,7 +93,7 @@ test('Rust skill and pack transactions preserve pinned versions, receipts and ro
     assert.deepEqual(await f.request('/api/skills', command), skill);
   } finally { await f.close(); }
 });
-test('Rust workspace pages and Git reads reject traversal, links, filters and inherited Git configuration', rust, async () => {
+test('Rust workspace pages and Git reads reject traversal, links, filters and inherited Git configuration', async () => {
   const f = await fixture();
   try {
     const agents = await f.request('/api/agents');
@@ -119,7 +118,7 @@ test('Rust workspace pages and Git reads reject traversal, links, filters and in
   } finally { await f.close(); }
 });
 
-test('Rust PDF and image previews preserve bytes, cache scope, deletion and binary boundaries', rust, async () => {
+test('Rust PDF and image previews preserve bytes, cache scope, deletion and binary boundaries', async () => {
   const f = await fixture();
   try {
     const scope = `/api/agents/${f.agent}/files`, id = randomUUID(), pdf = pdfFixture('Rust PDF');
@@ -141,7 +140,7 @@ test('Rust PDF and image previews preserve bytes, cache scope, deletion and bina
   } finally { await f.close(); }
 });
 
-test('Rust shared data reads stay isolated and backup preserves embedded data and private file bytes', rust, async () => {
+test('Rust shared data reads stay isolated and backup preserves embedded data and private file bytes', async () => {
   const f = await fixture();
   try {
     const dataPath = join(f.root, 'data.sqlite'), data = new DatabaseSync(dataPath);
@@ -165,7 +164,7 @@ test('Rust shared data reads stay isolated and backup preserves embedded data an
   } finally { await f.close(); }
 });
 
-test('Rust checkpoint HTTP restores Node checkpoints, rejects stale confirmation and preserves safety recovery', rust, async () => {
+test('Rust checkpoint HTTP restores Node checkpoints, rejects stale confirmation and preserves safety recovery', async () => {
   const f = await fixture();
   try {
     const git = (...args: string[]) => execFileSync('git', ['-c', 'core.hooksPath=/dev/null', ...args], { cwd: f.workspace, encoding: 'utf8' }).trimEnd();

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Spec } from '../schedule-spec';
+import type { Spec } from '../shared/routine-schedule';
 import { Alert, Checkbox, Field, Input, Select } from './ui/kit';
 
 export type RoutineTiming = { schedule: Spec; zone: string } | { nextAt: number; intervalSeconds: number | null; zone: string };

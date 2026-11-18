@@ -1563,7 +1563,7 @@ for(const name of ['no_update','report_failure'] as const) test(`canonical routi
   await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));
   const address=provider.address();if(!address||typeof address==='string')throw new Error('Missing provider fixture address');const providerOrigin=`http://127.0.0.1:${address.port}`;
   async function launch(taskId:string,checkpoint?:string){
-    child=spawn(process.execPath,['--experimental-strip-types','recovery-fixture.mjs'],{cwd:new URL('.',import.meta.url),env:{...process.env,BRIEFSIP_RECOVERY_FIXTURE:JSON.stringify({mode:'loop',database,keys,server:f.origin(),effect:providerOrigin,taskId,checkpoint})},timeout:30000,stdio:['ignore','ignore','pipe','ipc']});
+    child=spawn(process.execPath,['--experimental-strip-types','test-support/recovery-fixture.mjs'],{cwd:new URL('.',import.meta.url),env:{...process.env,BRIEFSIP_RECOVERY_FIXTURE:JSON.stringify({mode:'loop',database,keys,server:f.origin(),effect:providerOrigin,taskId,checkpoint})},timeout:30000,stdio:['ignore','ignore','pipe','ipc']});
     let errors='';child.stderr!.on('data',chunk=>{errors+=chunk;});const exited=once(child,'exit');
     const message=await Promise.race([once(child,'message').then(([message])=>message),exited.then(()=>{throw new Error(`Routine fixture exited: ${errors}`);})]);
     return {child,exited,message};
@@ -2452,7 +2452,7 @@ test('home execution loop survives SIGKILL across provider and tool results with
   try {
     await runtime.enroll(f.jwt()); await runtime.close(); writeFileSync(keys, JSON.stringify(Object.fromEntries(store.values)), { mode: 0o600 });
     async function launch(taskId: string, checkpoint?: string) {
-      child = spawn(process.execPath, ['--experimental-strip-types', 'recovery-fixture.mjs'], { cwd: new URL('.', import.meta.url), env: { ...process.env, BRIEFSIP_RECOVERY_FIXTURE: JSON.stringify({ mode: 'loop', database, keys, server: f.origin(), effect: providerOrigin, taskId, checkpoint }) }, timeout: 30000, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+      child = spawn(process.execPath, ['--experimental-strip-types', 'test-support/recovery-fixture.mjs'], { cwd: new URL('.', import.meta.url), env: { ...process.env, BRIEFSIP_RECOVERY_FIXTURE: JSON.stringify({ mode: 'loop', database, keys, server: f.origin(), effect: providerOrigin, taskId, checkpoint }) }, timeout: 30000, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
       let errors = ''; child.stderr!.on('data', chunk => { errors += chunk; }); const exited = once(child, 'exit');
       const message = await Promise.race([once(child, 'message').then(([message]) => message), exited.then(() => { throw new Error(`Loop fixture exited: ${errors}`); })]);
       return { child, exited, message };
@@ -3012,7 +3012,7 @@ test('SIGKILL recovery proves no send before marker and never repeats marked eff
     assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Crash recovery'})).status,201);
     assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Agent',model:'fixture',backupModel:'',instructions:'Research',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
     async function start(config:Record<string,unknown>) {
-      child=spawn(process.execPath,['--experimental-strip-types','recovery-fixture.mjs'],{cwd:new URL('.',import.meta.url),env:{...process.env,BRIEFSIP_RECOVERY_FIXTURE:JSON.stringify({database,keys,server:f.origin(),effect:effectOrigin, ...config})},timeout:30000,stdio:['ignore','ignore','pipe','ipc']});
+      child=spawn(process.execPath,['--experimental-strip-types','test-support/recovery-fixture.mjs'],{cwd:new URL('.',import.meta.url),env:{...process.env,BRIEFSIP_RECOVERY_FIXTURE:JSON.stringify({database,keys,server:f.origin(),effect:effectOrigin, ...config})},timeout:30000,stdio:['ignore','ignore','pipe','ipc']});
       let errors='';child.stderr!.on('data',chunk=>{errors+=chunk;});
       const exited=once(child,'exit');
       const message=await Promise.race([once(child,'message').then(([message])=>message),exited.then(()=>{throw new Error(`Recovery fixture exited: ${errors}`);})]);

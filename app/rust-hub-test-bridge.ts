@@ -1,7 +1,19 @@
 import { DatabaseSync } from 'node:sqlite';
-import type { HubLinkOptions } from './hub-link.ts';
 import { ProtocolError } from './protocol.ts';
 import type WebSocket from 'ws';
+import type { ClientOptions } from 'ws';
+
+type KeyEntry = { getPassword(): string | null; setPassword(value: string): void };
+export type HubLinkOptions = {
+  fetch?: typeof fetch;
+  webSocket?: (url: string, options: ClientOptions) => WebSocket;
+  origin: string;
+  hubSigningPublicKey: string;
+  development?: boolean;
+  entry?: (service: string, name: string) => KeyEntry;
+  reconnectMs?: number;
+  now?: () => number;
+};
 
 export function hubTestTransport(options?: HubLinkOptions) {
   const sockets = new Map<string, { socket: WebSocket; events: string[]; closed: boolean }>();

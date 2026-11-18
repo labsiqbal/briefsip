@@ -188,8 +188,132 @@ pub fn receipt(db: &Connection, turn: &str, call: &str) -> Result<Option<Value>>
 mod tests {
     #[test]
     fn check_runners() {
-        assert!(super::check_command("npm run build").is_ok_and(|v| v));
-        assert!(super::check_command("/bin/sh -lc 'cargo test'").is_ok_and(|v| v));
-        assert!(super::check_command("echo cargo test").is_ok_and(|v| !v));
+        for command in [
+            "npm test",
+            "npm run build",
+            "pnpm test:unit",
+            "node --test app.test.mjs",
+            "node cart.test.mjs",
+            "node tests/cart.test.js",
+            "python3 -m unittest",
+            "cargo test",
+            "/bin/sh -lc 'cargo test'",
+        ] {
+            assert!(
+                super::check_command(command).is_ok_and(|value| value),
+                "{command}"
+            );
+        }
+        for command in [
+            "echo done",
+            "cat test.js",
+            "touch result.txt",
+            "echo pytest",
+            "cat jest.js",
+            "echo node --test",
+            "echo cargo test",
+        ] {
+            assert!(
+                super::check_command(command).is_ok_and(|value| !value),
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn evidence_stamps_invalidate_after_edits_and_distinguish_review_kinds() -> super::Result<()> {
+        use super::*;
+        let db = Connection::open_in_memory()?;
+        db.execute_batch(
+            "CREATE TABLE turns(id TEXT, agent TEXT, channel TEXT, thread TEXT, tool_budget_used INTEGER);
+             INSERT INTO turns VALUES('turn','agent',NULL,NULL,0);
+             CREATE TABLE files(id TEXT, scope TEXT, name TEXT, digest TEXT, bytes BLOB, created TEXT);
+             CREATE TABLE flow_tool_calls(turn TEXT, call_id TEXT, call TEXT, result TEXT);
+             CREATE TABLE harness_steps(turn TEXT, name TEXT);
+             CREATE TABLE generated_files(turn TEXT);
+             CREATE TABLE computer_actions(turn TEXT, call_id TEXT, image BLOB);
+             CREATE TABLE turn_verification(turn TEXT PRIMARY KEY, review TEXT, kind TEXT, stamp TEXT, nudged INTEGER);
+             CREATE TABLE verification_artifacts(turn TEXT, source TEXT, file TEXT, kind TEXT, stamp TEXT);",
+        )?;
+        let turn = json!({"id":"turn","text":"Create a result"});
+        let profile = json!({});
+        let review_kind = |kind: &str| -> Result<Value> {
+            review(
+                &db,
+                &turn,
+                &json!({"kind":kind,"review":"Compared with the request"}),
+            )
+        };
+        let tool = |id: &str, name: &str, args: Value, result: Value| -> Result<()> {
+            let call = json!({"function":{"name":name,"arguments":args.to_string()}});
+            db.execute(
+                "INSERT INTO flow_tool_calls VALUES('turn',?,?,?)",
+                params![id, call.to_string(), result.to_string()],
+            )?;
+            Ok(())
+        };
+        command(
+            &db,
+            "turn",
+            "native-check",
+            "node result.test.mjs",
+            "1 test passed",
+            Some(0),
+            false,
+        )?;
+        let recorded = Some(json!({"recorded":true,"evidenceInWorkLog":true}));
+        assert_eq!(receipt(&db, "turn", "native-check")?, recorded);
+        assert!(!nudge(&db, "turn", &turn, &profile)?);
+        tool(
+            "readback",
+            "run_shell",
+            json!({"command":"cat result.txt"}),
+            json!({"output":"Requested result","exitCode":0}),
+        )?;
+        assert_eq!(review_kind("code")?["verified"], true);
+        assert!(!nudge(&db, "turn", &turn, &profile)?);
+        db.execute("INSERT INTO harness_steps VALUES('turn','fileChange')", [])?;
+        assert_eq!(review_kind("code")?["verified"], false);
+        assert_eq!(receipt(&db, "turn", "native-check")?, None);
+        assert!(nudge(&db, "turn", &turn, &profile)?);
+        assert!(!nudge(&db, "turn", &turn, &profile)?);
+        let report: Vec<u8> = db.query_row(
+            "SELECT bytes FROM files WHERE name='test-summary.md'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert!(String::from_utf8_lossy(&report).contains("1 test passed"));
+        tool("capture", "computer_screenshot", json!({}), json!({}))?;
+        db.execute(
+            "INSERT INTO computer_actions VALUES('turn','capture',?)",
+            [b"screenshot fixture".as_slice()],
+        )?;
+        assert_eq!(review_kind("ui")?["verified"], true);
+        assert_eq!(review_kind("routine")?["verified"], false);
+        db.execute("DELETE FROM turn_verification", [])?;
+        db.execute("INSERT INTO harness_steps VALUES('turn','fileChange')", [])?;
+        tool(
+            "routine",
+            "read_routine",
+            json!({}),
+            json!({"routine":{"id":"routine"}}),
+        )?;
+        assert!(!nudge(&db, "turn", &turn, &profile)?);
+        assert_eq!(review_kind("routine")?["verified"], true);
+        tool(
+            "custom-check",
+            "run_shell",
+            json!({"command":"python3 custom_check.py","check":true}),
+            json!({"output":"","exitCode":0}),
+        )?;
+        capture(&db, "turn")?;
+        assert_eq!(receipt(&db, "turn", "custom-check")?, recorded);
+        assert_eq!(review_kind("code")?["verified"], true);
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM verification_artifacts", [], |r| r
+                .get::<_, u32>(0))?,
+            4
+        );
+        Ok(())
     }
 }

@@ -4,9 +4,9 @@ import { fileURLToPath } from 'node:url';
 import tseslint from 'typescript-eslint';
 
 const root = dirname(fileURLToPath(import.meta.url));
-// Runtime closure of src's root imports. Every member receives the same boundary checks.
+// Browser imports outside src receive the same boundary checks.
 export const browserSafeModules = [
-  'agent-create.ts', 'agent-template.ts', 'agent-visibility.ts', 'connected-app-command.ts',
+  'shared/agent-create.ts', 'agent-template.ts', 'shared/agent-visibility.ts', 'connected-app-command.ts',
   'conversation-command.ts', 'diff-lines.ts', 'flows.ts', 'mcp-scopes.ts', 'memory-command.ts',
   'navigation.ts', 'panel-width.ts', 'presentation.ts', 'question-answer.ts', 'remote-message-command.ts',
   'site-command.ts', 'skill-command.ts', 'skill-files.ts', 'skill-pack-schema.ts', 'skill-zip.ts',

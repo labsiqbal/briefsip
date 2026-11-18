@@ -9,12 +9,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import { nativeReleaseFixture } from './native-release-fixture.ts';
+import { nativeReleaseFixture } from './test-support/native-release-fixture.ts';
 import { launcherCommand } from './rust-test-launcher.ts';
 import { fileManifest, selectRelease } from '../scripts/release-lib.mjs';
 import { launcherRequest } from './rust-launcher-test.ts';
 
-const rust = true;
 const delay = (ms: number) => new Promise(done => setTimeout(done, ms));
 async function until<T>(read: () => Promise<T | false>, message = 'Launcher test timed out'): Promise<T> {
   for (let i = 0; i < 150; i++) { try { const result = await read(); if (result) return result; } catch {} await delay(50); }
@@ -115,7 +114,7 @@ test('launcher rejects tampered startup and public persisted state', async () =>
   } finally { await f.close(); }
 });
 
-test('Rust launcher selects native release, checks chunked health, snapshots, and stops orphan on parent death', { skip: !rust }, async () => {
+test('Rust launcher selects native release, checks chunked health, snapshots, and stops orphan on parent death', async () => {
   const f = await fixture();
   try {
     const first = f.publish('1.0.0'); selectRelease(f.releases, 'current', first.id); const process = f.start(); await until(async () => await f.read());

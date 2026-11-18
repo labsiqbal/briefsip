@@ -134,8 +134,19 @@ mod tests {
         let binding = uuid::Uuid::new_v4().to_string();
         let project = uuid::Uuid::new_v4().to_string();
         let mut value = json!({"bindingId":binding,"projectId":project,"directory":directory,"write":true,"expectedRevision":0});
-        assert_eq!(save(&mut db, &value)?["revision"], 1);
-        assert_eq!(load(&db, &binding, &project, 1)?["write"], true);
+        assert_eq!(
+            save(&mut db, &value)?,
+            json!({"bindingId":binding,"projectId":project,"write":true,"revision":1})
+        );
+        assert_eq!(
+            load(&db, &binding, &project, 1)?,
+            json!({"directory":directory,"write":true,"revision":1})
+        );
+        let other = uuid::Uuid::new_v4().to_string();
+        assert_eq!(
+            load(&db, &binding, &other, 1).err().map(|e| e.status),
+            Some(404)
+        );
         assert_eq!(
             save(&mut db, &value).err().map(|e| e.code),
             Some("stale_revision")
@@ -146,7 +157,15 @@ mod tests {
             save(&mut db, &value).err().map(|e| e.code),
             Some("binding_project_conflict")
         );
-        value["projectId"] = project.into();
+        value["projectId"] = project.clone().into();
+        value["write"] = false.into();
+        assert_eq!(
+            save(&mut db, &value)?,
+            json!({"bindingId":binding,"projectId":project,"write":false,"revision":2})
+        );
+        assert_eq!(load(&db, &binding, &project, 2)?["write"], false);
+        value["bindingId"] = uuid::Uuid::new_v4().to_string().into();
+        value["expectedRevision"] = 0.into();
         let link = directory.join("link");
         std::os::unix::fs::symlink(&directory, &link).map_err(|_| Failure::storage())?;
         value["directory"] = link.to_string_lossy().as_ref().into();

@@ -22,23 +22,26 @@ fn memory(text: &str, key: &str) -> Option<u64> {
             .checked_mul(1024)
     })
 }
+fn cgroup_limit(limits: [Option<&str>; 2], total: Option<u64>) -> Option<u64> {
+    let limit = limits
+        .into_iter()
+        .flatten()
+        .filter_map(|value| value.trim().parse::<u64>().ok())
+        .min()?;
+    Some(limit.min(total?))
+}
 fn constrained_memory(total: Option<u64>) -> Option<(u64, u64)> {
     let group = fs::read_to_string("/proc/self/cgroup").ok()?;
     let group = group.lines().find_map(|line| line.strip_prefix("0::"))?;
     let path = std::path::Path::new("/sys/fs/cgroup").join(group.trim_start_matches('/'));
-    let read = |name| {
-        fs::read_to_string(path.join(name))
-            .ok()?
-            .trim()
-            .parse::<u64>()
-            .ok()
-    };
-    let limit = [read("memory.max"), read("memory.high")]
-        .into_iter()
-        .flatten()
-        .min()?
-        .min(total?);
-    Some((limit, limit.saturating_sub(read("memory.current")?)))
+    let limits = ["memory.max", "memory.high"].map(|name| fs::read_to_string(path.join(name)).ok());
+    let limit = cgroup_limit(limits.each_ref().map(|value| value.as_deref()), total)?;
+    let current = fs::read_to_string(path.join("memory.current"))
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()?;
+    Some((limit, limit.saturating_sub(current)))
 }
 fn cpu() -> (u64, u64, usize) {
     let text = fs::read_to_string("/proc/stat").unwrap_or_default();
@@ -60,6 +63,19 @@ fn cpu() -> (u64, u64, usize) {
         cores += 1;
     }
     (idle, total, cores)
+}
+fn host_cpu_percent(before: (u64, u64, usize), after: (u64, u64, usize)) -> Option<f64> {
+    let (before_idle, before_total, before_cores) = before;
+    let (idle, total, cores) = after;
+    let elapsed = total.checked_sub(before_total)?;
+    let idle = idle.checked_sub(before_idle)?;
+    (cores > 0 && cores == before_cores && elapsed > 0 && idle <= elapsed)
+        .then(|| ((1.0 - idle as f64 / elapsed as f64) * 1000.0).round() / 10.0)
+}
+fn process_cpu_percent(before: u64, after: u64, elapsed: Duration) -> Option<f64> {
+    after
+        .checked_sub(before)
+        .map(|used| (used as f64 / elapsed.as_nanos() as f64 * 1000.0).round() / 10.0)
 }
 fn disk(value: rustix::fs::StatVfs) -> Option<Value> {
     let (blocks, free, available, size) = (
@@ -110,16 +126,13 @@ impl Metrics {
         let percent = self
             .previous
             .and_then(|(_, before_idle, before_total, before_cores, _)| {
-                let elapsed = total.checked_sub(before_total)?;
-                let idle = idle.checked_sub(before_idle)?;
-                (cores > 0 && cores == before_cores && elapsed > 0 && idle <= elapsed)
-                    .then(|| ((1.0 - idle as f64 / elapsed as f64) * 1000.0).round() / 10.0)
+                host_cpu_percent(
+                    (before_idle, before_total, before_cores),
+                    (idle, total, cores),
+                )
             });
         let process_percent = self.previous.and_then(|(before, _, _, _, cpu)| {
-            let elapsed = now.duration_since(before).as_nanos() as f64;
-            process
-                .checked_sub(cpu)
-                .map(|v| (v as f64 / elapsed * 1000.0).round() / 10.0)
+            process_cpu_percent(cpu, process, now.duration_since(before))
         });
         let meminfo = fs::read_to_string("/proc/meminfo").unwrap_or_default();
         let available = memory(&meminfo, "MemAvailable:");
@@ -193,5 +206,75 @@ mod tests {
             Some(20480)
         );
         assert_eq!(memory("MemAvailable: -1 kB\n", "MemAvailable:"), None);
+    }
+
+    #[test]
+    fn disk_space_and_cpu_units_preserve_measurement_semantics() {
+        let before = (100, 200, 2);
+        assert_eq!(host_cpu_percent(before, (120, 300, 2)), Some(80.0));
+        for after in [(100, 200, 2), (120, 300, 4), (90, 300, 2), (220, 300, 2)] {
+            assert_eq!(host_cpu_percent(before, after), None);
+        }
+        assert_eq!(
+            process_cpu_percent(10, 1_000_000_010, Duration::from_secs(1)),
+            Some(100.0)
+        );
+        assert_eq!(
+            process_cpu_percent(10, 2_000_000_010, Duration::from_secs(1)),
+            Some(200.0)
+        );
+        assert_eq!(process_cpu_percent(10, 9, Duration::from_secs(1)), None);
+        let space = |blocks, free, available, block_size| {
+            disk(rustix::fs::StatVfs {
+                f_bsize: block_size,
+                f_frsize: block_size,
+                f_blocks: blocks,
+                f_bfree: free,
+                f_bavail: available,
+                f_files: 0,
+                f_ffree: 0,
+                f_favail: 0,
+                f_fsid: 0,
+                f_flag: rustix::fs::StatVfsMountFlags::empty(),
+                f_namemax: 0,
+            })
+        };
+        assert_eq!(
+            space(100, 20, 10, 1024),
+            Some(json!({
+                "total":"102400","available":"10240","used":"81920","reserved":"10240","percent":88.8,"pressure":"normal"
+            }))
+        );
+        assert_eq!(
+            space(100, 10, 9, 1024).map(|v| v["pressure"].clone()),
+            Some(json!("warning"))
+        );
+        assert_eq!(
+            space(100, 10, 1, 1024).map(|v| v["pressure"].clone()),
+            Some(json!("critical"))
+        );
+        assert!(space(0, 0, 0, 1).is_none());
+        assert!(space(100, 1, 2, 1).is_none());
+        assert_eq!(
+            space(9_007_199_254_740_993, 2, 1, 4096).map(|v| v["total"].clone()),
+            Some(json!("36893488147419107328"))
+        );
+    }
+
+    #[test]
+    fn cgroup_memory_reports_the_tightest_finite_limit() {
+        let total = Some(32 * 1024 * 1024 * 1024);
+        assert_eq!(cgroup_limit([Some("max"), None], total), None);
+        assert_eq!(cgroup_limit([Some("-1"), Some("unavailable")], total), None);
+        assert_eq!(
+            cgroup_limit([Some("536870912\n"), Some("1073741824")], total),
+            Some(536870912)
+        );
+        assert_eq!(
+            cgroup_limit([Some("1073741824"), Some("536870912")], total),
+            Some(536870912)
+        );
+        assert_eq!(cgroup_limit([Some("34359738369"), None], total), total);
+        assert_eq!(cgroup_limit([Some("536870912"), None], None), None);
     }
 }

@@ -2,7 +2,6 @@ import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import * as sessions from './t3/mcp-session-registry.ts';
-import type { createMcpServer } from './mcp-server.ts';
 import type { AgentSessionIssuer } from './harness.ts';
 import { extractPdf, PdfError } from './pdf-text.ts';
 type HarnessOptions = { issuer?: AgentSessionIssuer };
@@ -48,22 +47,15 @@ export async function harnessTestBridge(harness?: HarnessOptions) {
   return { config: { origin: `http://127.0.0.1:${address.port}`, token }, close: async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); } };
 }
 
-export function rustMcpFacade(database: string): ReturnType<typeof createMcpServer> {
+export function rustMcpFacade(database: string) {
   const invoke = <T>(fn: (db: DatabaseSync) => T): T => {
     const db = new DatabaseSync(database); db.exec('PRAGMA busy_timeout=5000');
     try { return fn(db); } finally { db.close(); }
   };
   return {
-    mintAgentSession: input => invoke(db => sessions.mintAgentSession(db, input)),
-    revokeAgentSession: id => invoke(db => sessions.revokeAgentSession(db, id)),
-    verifyBearer: value => invoke(db => sessions.verifyBearer(db, value)),
-    createPeerToken: input => invoke(db => sessions.createPeerToken(db, input)),
-    listPeerTokens: () => invoke(db => sessions.listPeerTokens(db)),
-    revokePeerToken: (id, input) => invoke(db => sessions.revokePeerToken(db, id, input)),
-    revokeEndedSessions: () => invoke(db => sessions.revokeEndedSessions(db)),
-    registerTool: () => { throw new Error('not ported: runtime MCP tool registration through test facade'); },
-    toolNames: () => { throw new Error('not ported: runtime MCP declarations through test facade'); },
-    handle: async () => { throw new Error('not ported: in-process MCP HTTP dispatch through test facade'); },
-    close: () => {},
+    mintAgentSession: (input: sessions.AgentSessionInput) => invoke(db => sessions.mintAgentSession(db, input)),
+    revokeAgentSession: (id: string) => invoke(db => sessions.revokeAgentSession(db, id)),
+    verifyBearer: (value: string) => invoke(db => sessions.verifyBearer(db, value)),
+    createPeerToken: (input: Parameters<typeof sessions.createPeerToken>[1]) => invoke(db => sessions.createPeerToken(db, input)),
   };
 }

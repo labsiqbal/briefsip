@@ -10,7 +10,7 @@ import { startApp } from './test-bridge.ts';
 import { rustBinary } from './rust-binary.ts';
 import { mcpScopes } from './t3/mcp-session-registry.ts';
 
-test('Rust ACP and Pi execute fake protocols with model selection and approvals', { skip: process.env.BRIEFSIP_TEST_SERVER !== 'rust' }, async () => {
+test('Rust ACP and Pi execute fake protocols with model selection and approvals', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-rust-acp-')), executable = join(dir, 'fake-acp');
   writeFileSync(executable, `#!${process.execPath}\n` + readFileSync(new URL('./fixtures/fake-acp.mjs', import.meta.url), 'utf8').split('\n').slice(1).join('\n')); chmodSync(executable, 0o700);
   const agent = randomUUID(), runtimes = ['hermes', 'grok', 'opencode', 'gemini', 'kiro', 'antigravity', 'pi'];
@@ -40,7 +40,7 @@ test('Rust ACP and Pi execute fake protocols with model selection and approvals'
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('Rust MCP feature receipts, scopes, cursors and stdio forwarding', { skip: process.env.BRIEFSIP_TEST_SERVER !== 'rust' }, async () => {
+test('Rust MCP feature receipts, scopes, cursors and stdio forwarding', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-rust-harness-'));
   const app = await startApp({ database: join(dir, 'state.sqlite'), baseURL: 'http://127.0.0.1:1/v1', apiKey: 'fixture-key' });
   try {

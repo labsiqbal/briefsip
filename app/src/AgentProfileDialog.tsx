@@ -3,8 +3,8 @@ import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'rea
 import { flushSync } from 'react-dom';
 import { Tabs as RadixTabs } from 'radix-ui';
 import { Brain, ChevronRight, Ellipsis, Globe, Terminal, Bot, Sparkles, Orbit, Wind, Circle, Code, Eclipse, Mountain } from 'lucide-react';
-import type { Runtime, HarnessRuntime } from '../harness';
-import { restoreAgentCreation, type AgentCreation } from '../agent-create';
+import type { Runtime, HarnessRuntime } from '../shared/runtime';
+import { restoreAgentCreation, type AgentCreation } from '../shared/agent-create';
 import { AgentAvatar, AvatarEditor } from './AgentAvatar';
 import { MascotAvatar } from './ui/avatar-shapes';
 import { CompactionPanel } from './CompactionPanel';

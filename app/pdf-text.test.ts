@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { pdfFixture as document } from './pdf-fixture.ts';
+import { pdfFixture as document } from './test-support/pdf-fixture.ts';
 import { createServer, type ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';

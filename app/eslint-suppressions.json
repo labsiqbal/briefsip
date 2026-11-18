@@ -24,26 +24,6 @@
       "count": 8
     }
   },
-  "hub-link.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    }
-  },
-  "mcp-feature-tools.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 22
-    }
-  },
-  "mcp.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 3
-    }
-  },
-  "models.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
-  },
   "script-client.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1

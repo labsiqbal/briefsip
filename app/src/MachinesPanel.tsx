@@ -4,7 +4,7 @@ import { usePolling } from './hooks/usePolling';
 import { copyText } from './ui/clipboard';
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, ChevronRight, Copy, Ellipsis, Monitor, Plus } from 'lucide-react';
-import type { Environment, PairedMachine, PeerAgentSummary } from '../machines';
+import type { Environment, PairedMachine, PeerAgentSummary } from '../shared/machines';
 import { ActionMenu, Alert, Badge, Button, Card, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, SkeletonRows, Switch, Textarea, Tooltip, useConfirm } from './ui/kit';
 import { Markdown } from './Markdown';
 import { restoreRemoteMessage } from '../remote-message-command';

@@ -14,7 +14,6 @@ import sharp from 'sharp';
 import { execFileSync } from 'node:child_process';
 import { createWorkspaceGit } from './workspace-git.ts';
 
-const rust = process.env.BRIEFSIP_TEST_SERVER === 'rust';
 async function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-data-gaps-')), database = join(directory, 'db.sqlite');
   const keys = generateKeyPairSync('rsa', { modulusLength: 2048 }), key = randomBytes(32), lookupKey = randomBytes(32), keyId = randomUUID();
@@ -37,7 +36,7 @@ async function fixture() {
   return { database, owner, member, key, keyId, request, keyring(locked: boolean) { options.testKeyringLocked = locked; }, mailbox(value: string) { mailbox = value; }, lock(value: boolean) { locked = value; }, async restart() { await app.close(); app = await startRustServer(options); }, async close() { await app.close(); upstream.closeAllConnections(); await new Promise<void>(ready => upstream.close(() => ready())); rmSync(directory, { recursive: true, force: true }); } };
 }
 
-test('Rust invitation ciphertext opens in Node; verified mailbox, receipts, revoke and restart stay scoped', { skip: !rust }, async () => {
+test('Rust invitation ciphertext opens in Node; verified mailbox, receipts, revoke and restart stay scoped', async () => {
   const f = await fixture();
   try {
     const project = randomUUID(); await f.request('/api/projects', { requestId: randomUUID(), id: project, name: 'Invitation fixture' }, 201);
@@ -65,7 +64,7 @@ test('Rust invitation ciphertext opens in Node; verified mailbox, receipts, revo
   } finally { await f.close(); }
 });
 
-test('Rust sync snapshots page, hash and replay; delta cursors survive restart and reject tampering', { skip: !rust }, async () => {
+test('Rust sync snapshots page, hash and replay; delta cursors survive restart and reject tampering', async () => {
   const f = await fixture();
   try {
     const project = randomUUID(); await f.request('/api/projects', { requestId: randomUUID(), id: project, name: 'First' }, 201);
@@ -91,7 +90,7 @@ test('Rust sync snapshots page, hash and replay; delta cursors survive restart a
   } finally { await f.close(); }
 });
 
-test('Rust avatars preserve decoded pixels across resizing, alpha, JPEG, WebP and orientation', { skip: !rust }, async () => {
+test('Rust avatars preserve decoded pixels across resizing, alpha, JPEG, WebP and orientation', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-avatar-parity-'));
   const app = await startRustServer({ database: join(directory, 'db.sqlite') });
   const request = async (path: string, body?: unknown, status = 200) => {
@@ -105,7 +104,7 @@ test('Rust avatars preserve decoded pixels across resizing, alpha, JPEG, WebP an
       const raw = Buffer.alloc(width * height * channels);
       for (let i = 0; i < raw.length; i++) {
         const x = Math.floor(i / channels) % width, y = Math.floor(i / channels / width), c = i % channels;
-        raw[i] = !rust || width === 256 && height === 256 ? (i * 37 + (i >>> 8) * 13) % 256
+        raw[i] = width === 256 && height === 256 ? (i * 37 + (i >>> 8) * 13) % 256
           : c === 0 ? 30 + Math.floor(180 * x / width) : c === 1 ? 40 + Math.floor(160 * y / height)
           : c === 2 ? 70 + Math.floor(60 * (x / width + y / height)) : 200;
       }
@@ -114,23 +113,20 @@ test('Rust avatars preserve decoded pixels across resizing, alpha, JPEG, WebP an
       await request(`/api/agents/${agent.id}/avatar`, { id: randomUUID(), revision: revision++, image: input.toString('base64') });
       const response = await fetch(`${app.origin}/api/agents/${agent.id}/avatar/image`); assert.equal(response.status, 200);
       const actual = Buffer.from(await response.arrayBuffer());
-      if (!rust) assert(actual.equals(expected), `${width}x${height} ${format} orientation ${orientation}`);
-      else {
-        const meta = await sharp(actual).metadata(), reference = await sharp(expected).metadata();
-        assert.equal(meta.width, reference.width); assert.equal(meta.height, reference.height);
-        assert.equal(meta.format, reference.format); assert.equal(meta.channels, reference.channels);
-        assert.equal(meta.space, reference.space); assert.equal(meta.depth, reference.depth);
-        const pixels = await sharp(actual).raw().toBuffer(), expectedPixels = await sharp(expected).raw().toBuffer();
-        const tolerance = width === 256 && height === 256 ? 0 : format === 'png' ? 4 : format === 'webp' ? 8 : 5;
-        assert.equal(pixels.length, expectedPixels.length);
-        for (let i = 0; i < pixels.length; i++) assert(Math.abs(pixels[i] - expectedPixels[i]) <= tolerance,
-          `${width}x${height} ${format} orientation ${orientation}: pixel ${i}, ${pixels[i]} vs ${expectedPixels[i]}, tolerance ${tolerance}`);
-      }
+      const meta = await sharp(actual).metadata(), reference = await sharp(expected).metadata();
+      assert.equal(meta.width, reference.width); assert.equal(meta.height, reference.height);
+      assert.equal(meta.format, reference.format); assert.equal(meta.channels, reference.channels);
+      assert.equal(meta.space, reference.space); assert.equal(meta.depth, reference.depth);
+      const pixels = await sharp(actual).raw().toBuffer(), expectedPixels = await sharp(expected).raw().toBuffer();
+      const tolerance = width === 256 && height === 256 ? 0 : format === 'png' ? 4 : format === 'webp' ? 8 : 5;
+      assert.equal(pixels.length, expectedPixels.length);
+      for (let i = 0; i < pixels.length; i++) assert(Math.abs(pixels[i] - expectedPixels[i]) <= tolerance,
+        `${width}x${height} ${format} orientation ${orientation}: pixel ${i}, ${pixels[i]} vs ${expectedPixels[i]}, tolerance ${tolerance}`);
     }
   } finally { await app.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
-test('Rust workspace and sidebar preserve UTF-16 slices; script grants replay and visibility skips are durable', { skip: !rust }, async () => {
+test('Rust workspace and sidebar preserve UTF-16 slices; script grants replay and visibility skips are durable', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-wire-parity-')), database = join(directory, 'db.sqlite'), agent = randomUUID();
   const options = { database, fixedClock: Date.now(), scriptToken: 'fixture-script-token-abcdefghijklmnopqrstuvwxyz', workspaces: [{ agent, directory, write: true }] };
   let app = await startRustServer(options);
@@ -180,7 +176,7 @@ test('Rust workspace and sidebar preserve UTF-16 slices; script grants replay an
   } finally { await app.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
-test('Rust checkpoint project bindings use the turn agent grant and preserve panel file access', { skip: !rust }, async () => {
+test('Rust checkpoint project bindings use the turn agent grant and preserve panel file access', async () => {
   const directory = mkdtempSync(join(process.env.HOME!, 'briefsip-project-checkpoint-')), database = join(directory, 'data/db.sqlite'), workspace = join(directory, 'workspace');
   mkdirSync(join(directory, 'data')); mkdirSync(workspace); writeFileSync(join(workspace, 'note.txt'), 'Checkpoint');
   execFileSync('git', ['init', '-q', workspace]);

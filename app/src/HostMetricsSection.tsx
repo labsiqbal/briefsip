@@ -1,6 +1,6 @@
 import { usePolling } from './hooks/usePolling';
 import { useState } from 'react';
-import type { HostMetrics } from '../host-metrics';
+import type { HostMetrics } from '../shared/host-metrics';
 import { Alert, Badge, Card, Collapsible, IconButton, Row, Section, Tooltip } from './ui/kit';
 import './machines-data.css';
 import { RefreshCw } from 'lucide-react';

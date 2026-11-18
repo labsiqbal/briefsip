@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './test-bridge.ts';
-import { visibilityCommand } from './agent-visibility.ts';
+import { visibilityCommand } from './shared/agent-visibility.ts';
 import { messageAgents } from './agent-messages.ts';
 
 test('hidden agents finish active work, hold queue across restart, reject new work and skip missed schedules', async () => {

@@ -17,7 +17,7 @@ test('Rust runtime source contains no unfinished port markers', () => {
   assert.deepEqual(hits, []);
 });
 
-test('Rust accepts every production environment name', { skip: process.env.BRIEFSIP_TEST_SERVER !== 'rust', timeout: 90000 }, async () => {
+test('Rust accepts every production environment name', { timeout: 90000 }, async () => {
   const directory = mkdtempSync('/dev/shm/b102-env-'); chmodSync(directory, 0o700);
   const id = '00000000-0000-4000-8000-000000000001';
   const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
@@ -38,7 +38,7 @@ test('Rust accepts every production environment name', { skip: process.env.BRIEF
       BRIEFSIP_HUB_ORIGIN: 'https://127.0.0.1:45982', BRIEFSIP_HUB_SIGNING_PUBLIC_KEY: hubKey,
       BRIEFSIP_ORIGIN: 'http://127.0.0.1:45983', BRIEFSIP_SERVER_URL: 'http://127.0.0.1:45983', BRIEFSIP_CANONICAL_DB: join(directory, 'canonical.sqlite'),
       CLERK_SECRET_KEY: 'sk_test_fixture', CLERK_PUBLISHABLE_KEY: 'pk_test_fixture', CLERK_ISSUER: 'https://fixture.clerk.accounts.dev', CLERK_AUDIENCE: 'briefsip',
-      BRIEFSIP_TLS_CERT: join(directory, 'cert'), BRIEFSIP_TLS_KEY: join(directory, 'key'), BRIEFSIP_TEST_SERVER: 'rust',
+      BRIEFSIP_TLS_CERT: join(directory, 'cert'), BRIEFSIP_TLS_KEY: join(directory, 'key'),
     };
     for (const prefix of ['OPENAI', 'ANTHROPIC', 'GEMINI']) {
       values[`${prefix}_BASE_URL`] = 'http://127.0.0.1:45984/v1'; values[`${prefix}_API_KEY`] = 'dummy-provider-key'; values[`${prefix}_MODEL`] = 'fixture';
@@ -47,12 +47,12 @@ test('Rust accepts every production environment name', { skip: process.env.BRIEF
       values[`BRIEFSIP_${prefix}_BASE_URL`] = 'http://127.0.0.1:45985/v1'; values[`BRIEFSIP_${prefix}_API_KEY`] = 'dummy-media-key'; values[`BRIEFSIP_${prefix}_MODEL`] = 'fixture';
     }
     const names = new Set<string>(['BRIEFSIP_TLS_CERT', 'BRIEFSIP_TLS_KEY', 'BRIEFSIP_SERVER_URL', 'BRIEFSIP_ORIGIN', 'BRIEFSIP_CANONICAL_DB', 'CLERK_SECRET_KEY', 'CLERK_PUBLISHABLE_KEY', 'CLERK_ISSUER', 'CLERK_AUDIENCE']);
-    const excluded = /(?:\.test\.ts$|-it\.ts$|^rust-|^(?:cli|device-runtime|slack-runner|telegram-runner)\.ts$)/;
+    const excluded = /(?:\.test\.ts$|-it\.ts$|^rust-|^(?:cli|device-runtime|slack-runner)\.ts$)/;
     for (const name of readdirSync(import.meta.dirname).filter(name => name.endsWith('.ts') && !excluded.test(name))) {
       const source = readFileSync(join(import.meta.dirname, name), 'utf8');
       for (const match of source.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)) names.add(match[1]);
     }
-    assert.deepEqual([...names].filter(name => !(name in values)), [], 'New Node env reads need a startup fixture');
+    assert.deepEqual([...names].filter(name => !(name in values)), [], 'New runtime env reads need a startup fixture');
     const env = { ...Object.fromEntries([...names].map(name => [name, values[name]])), BRIEFSIP_COMPOSIO: 'http://127.0.0.1:45986' };
     for (const mode of ['openai-compatible', 'anthropic', 'gemini', 'canonical']) {
       const port = await freePort(), data = join(directory, mode); mkdirSync(data);
@@ -76,6 +76,6 @@ test('Rust accepts every production environment name', { skip: process.env.BRIEF
         assert.equal(status, mode === 'canonical' ? 426 : 200, `${mode}: ${failure}`);
       } finally { await stop(child, closed); }
     }
-    console.log(`Node env contract: ${names.size} names accepted across 4 startup modes`);
+    console.log(`Runtime env contract: ${names.size} names accepted across 4 startup modes`);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });

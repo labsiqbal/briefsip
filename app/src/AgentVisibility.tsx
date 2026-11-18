@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { visibilityCommand } from '../agent-visibility';
+import { visibilityCommand } from '../shared/agent-visibility';
 import { Alert, Badge, Button, Card, Row, useConfirm, RecoveryAlert } from './ui/kit';
 
 export function AgentVisibility({ agent, request, onChanged }: { agent: { id: string; name: string; hidden?: boolean; visibility_revision?: number }; request: <T>(path: string, body?: unknown) => Promise<T>; onChanged: () => Promise<void> }) {
