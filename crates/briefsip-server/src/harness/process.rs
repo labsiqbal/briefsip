@@ -139,6 +139,19 @@ impl Process {
             .map_err(|_| error(502, "Coding harness input timed out."))?
             .map_err(|_| stopped())
     }
+    pub async fn cancel(mut self, notification: Value) {
+        // Remember descendants before the notification lets the parent exit.
+        if let Ok(mut owned) = self.owned.lock() {
+            track(self.root, &self.birth, &mut owned);
+        }
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(150);
+        if tokio::time::timeout_at(deadline, self.send(notification))
+            .await
+            .is_ok_and(|result| result.is_ok())
+        {
+            tokio::time::sleep_until(deadline).await;
+        }
+    }
     pub async fn next(&mut self) -> Result<Value> {
         loop {
             let buf = self.stdout.fill_buf().await.map_err(|_| stopped())?;

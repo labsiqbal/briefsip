@@ -225,7 +225,6 @@
     "app/src/ConversationAttachments.tsx": "5a6ad328876edf98c3b9182464c53ba03d1cbbdfd230d020026ed53c939af1d1",
     "app/src/ui/chat.css": "bc21abfc6b27a7538937300db7fcb71587442b42d130fe47c6e6ed7a2b142d8e",
     "app/harness.ts": "dc104f72a04e5dd6e29db98c01189150d23adbca1516b4a3e763b0cf2f869edb",
-    "app/t3/acp-harness.ts": "4a0817f8050a355602adb44b325135077adb89cee7b9bc47fea09fc63d6ce9a8",
     "app/t3/pi-harness-extension.mjs": "824ccffde84859f769048761599feee6de2b3b4fe0665342b124232d499246eb",
     "app/t3/harness-mcp-bridge.mjs": "4075660689e41894b7d3a3198f77df0f7d081faad9271b52439e465963081ee3",
     "app/t3/path.ts": "d4d073dfa6643312958fe9882927f27dba8c5e8f690aa67dba0efc00d72a4ea9"
@@ -788,13 +787,12 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "a040202b8828016c94416da76ab587009512376ba9e4e55ea54b70a71e1a10ca",
       "localPaths": [
-        "app/t3/acp-harness.ts",
-        "app/harness.ts"
+        "crates/briefsip-server/src/harness/store.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "ACP initialization, new/load/resume, model selection, cancel, one-use permissions and process ownership translated to bounded Node JSONL, promises and AbortSignal. Briefsip workspace descriptor APIs replace client filesystem services.",
+      "adaptation": "ACP session setup, JSONL prompt streaming, model selection, one-use permission and cancellation through the Rust driver.",
       "compatibilityCheck": "app/acp-harness.test.ts"
     },
     {
@@ -802,12 +800,12 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "7d84a02ce0fd10cd6881f1ebd95d96d6981bf3d61a680a252222916a35401425",
       "localPaths": [
-        "app/t3/acp-harness.ts"
+        "crates/briefsip-server/src/harness/protocol.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "ACP text/tool update fields and initialize _meta.modelState discovery translated to structural guards; UI aggregation remains Briefsip-owned.",
+      "adaptation": "ACP model state and config options feed the Rust runtime probe.",
       "compatibilityCheck": "app/acp-harness.test.ts"
     },
     {
@@ -841,12 +839,12 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "7134f392df696b0857982fd6587d528532a80d03c7d32369128d8524ef1f5731",
       "localPaths": [
-        "app/t3/acp-harness.ts"
+        "crates/briefsip-server/src/harness/store.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Standalone agy acp launch and supervised default mode. No managed downloads, client impersonation or auth UI. Unsupported desktop launcher rejected.",
+      "adaptation": "Rust runs the standalone Antigravity ACP CLI in supervised default mode.",
       "compatibilityCheck": "app/acp-harness.test.ts"
     },
     {
@@ -867,12 +865,12 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "e244293785ee9d973bfb01832df94a19ef647e8ab27044926a9ac9ef6ae2ee4e",
       "localPaths": [
-        "app/t3/acp-harness.ts"
+        "crates/briefsip-server/src/harness/store.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Grok supervised argv, extension initialize metadata and ctrl_c cancellation metadata. Persistent native grants never selected.",
+      "adaptation": "Grok supervised ACP arguments and ctrl_c cancellation metadata in the Rust driver.",
       "compatibilityCheck": "app/acp-harness.test.ts"
     },
     {
@@ -880,12 +878,12 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "60c08bad085be5f578365221d491904c19aa9e2c53bcdb0a85f1abfe063f2c8d",
       "localPaths": [
-        "app/t3/acp-harness.ts"
+        "crates/briefsip-server/src/harness/mod.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Installed local registry command resolves without a shell; Hermes acp command uses generic protocol. Registry installation excluded.",
+      "adaptation": "Resolve installed ACP executables without a shell or installation.",
       "compatibilityCheck": "app/acp-harness.test.ts"
     },
     {
@@ -893,12 +891,12 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "b024441f22f1e97e2a2f8baaa7dbb488c44c539d18cf57609aa564b61a28077a",
       "localPaths": [
-        "app/t3/acp-harness.ts"
+        "crates/briefsip-server/src/harness/store.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Native Pi JSONL request correlation, failure and process lifecycle translated without Effect.",
+      "adaptation": "Pi JSONL RPC requests and responses through the Rust driver.",
       "compatibilityCheck": "app/acp-harness.test.ts"
     },
     {
@@ -906,12 +904,12 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "7e0bdf7d706b47507b7aced7aa6e55f507f5fcef9e3ff4f49be142c70172e0ba",
       "localPaths": [
-        "app/t3/acp-harness.ts"
+        "crates/briefsip-server/src/harness/store.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Pi text and tool events, model selection and extension confirm requests map to Briefsip harness events and approvals. Sessions ephemeral with Briefsip transcript; resume capability false.",
+      "adaptation": "Pi text, tool events, model selection and scoped approvals with ephemeral sessions.",
       "compatibilityCheck": "app/acp-harness.test.ts"
     },
     {
@@ -919,12 +917,12 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "8c1fa982ce717bc320139bf2eedc50d398c727211a9521342d03181fa1eaee05",
       "localPaths": [
-        "app/t3/acp-harness.ts"
+        "crates/briefsip-server/src/harness/store.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Explicit extension and restrictive discovery flags, offline startup and environment-only session credentials.",
+      "adaptation": "Launch Pi offline with an explicit extension and scoped MCP credentials in the child environment.",
       "compatibilityCheck": "app/acp-harness.test.ts"
     },
     {
@@ -2434,7 +2432,7 @@
       ],
       "localPaths": [
         "crates/briefsip-server/src/turns/instructions.json",
-        "app/t3/acp-harness.ts"
+        "crates/briefsip-server/src/harness/store.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",

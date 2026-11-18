@@ -375,6 +375,42 @@ pub(super) fn acp_args(runtime: &str, path: &Path) -> Vec<String> {
         _ => vec!["acp".into()],
     }
 }
+struct TurnProcess<'a> {
+    process: Option<Process>,
+    notification: Option<Value>,
+    config: &'a config::Config,
+    turn: &'a str,
+}
+impl Drop for TurnProcess<'_> {
+    fn drop(&mut self) {
+        if let Some(notification) = self.notification.take() {
+            if let Ok(mut processes) = self.config.stopping_processes.lock() {
+                if let Some(process) = self.process.take() {
+                    processes.insert(
+                        self.turn.to_owned(),
+                        tokio::spawn(process.cancel(notification)),
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn launch_turn(
+    db: &rusqlite::Connection,
+    turn: &str,
+    launch: impl FnOnce() -> Result<Process>,
+) -> Result<Process> {
+    if !exists(
+        db,
+        "SELECT 1 FROM turns WHERE id=? AND status IN('queued','running') AND paused=0",
+        [turn],
+    )? {
+        return Err(error(409, "Task has stopped."));
+    }
+    launch()
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn execute(
     state: &AppState,
@@ -508,10 +544,23 @@ async fn execute(
             instructions.clone(),
         ]);
     }
-    let mut process = Process::launch(&executable, &args, workspace, &env)?;
+    let turn_id = string(turn, "id");
+    let mut child = TurnProcess {
+        process: Some({
+            // Serialize the final state check and spawn with Stop.
+            let db = state.database.lock().map_err(|_| Failure::storage())?;
+            launch_turn(&db.connection, turn_id, || {
+                Process::launch(&executable, &args, workspace, &env)
+            })?
+        }),
+        notification: None,
+        config: &state.config.harness,
+        turn: turn_id,
+    };
+    let process = child.process.as_mut().ok_or_else(Failure::storage)?;
     let mut seq = 0;
     if runtime == "codex" {
-        rpc(&mut process,&mut seq,"initialize",json!({"clientInfo":{"name":"briefsip","title":"Briefsip","version":"0.1.0"},"capabilities":{"experimentalApi":true}})).await?;
+        rpc(process,&mut seq,"initialize",json!({"clientInfo":{"name":"briefsip","title":"Briefsip","version":"0.1.0"},"capabilities":{"experimentalApi":true}})).await?;
         process.send(json!({"method":"initialized"})).await?;
         let environment = {
             let guard = state.database.lock().map_err(|_| Failure::storage())?;
@@ -533,7 +582,7 @@ async fn execute(
             params["threadId"] = json!(id);
         }
         let response = rpc(
-            &mut process,
+            process,
             &mut seq,
             if saved.is_some() {
                 "thread/resume"
@@ -584,7 +633,7 @@ async fn execute(
             }
         }
     } else {
-        let init=rpc(&mut process,&mut seq,"initialize",json!({"protocolVersion":1,"clientInfo":{"name":"briefsip","version":"0.1.0"},"clientCapabilities":{"fs":{"readTextFile":true,"writeTextFile":true},"terminal":false}})).await?;
+        let init=rpc(process,&mut seq,"initialize",json!({"protocolVersion":1,"clientInfo":{"name":"briefsip","version":"0.1.0"},"clientCapabilities":{"fs":{"readTextFile":true,"writeTextFile":true},"terminal":false}})).await?;
         if init["protocolVersion"] != 1 {
             return Err(error(
                 502,
@@ -597,7 +646,7 @@ async fn execute(
                 .is_some_and(|v| v.iter().any(|v| v["id"] == "oauth-personal"))
         {
             rpc(
-                &mut process,
+                process,
                 &mut seq,
                 "authenticate",
                 json!({"methodId":"oauth-personal"}),
@@ -609,7 +658,7 @@ async fn execute(
             params["sessionId"] = json!(id);
         }
         let setup = rpc(
-            &mut process,
+            process,
             &mut seq,
             if saved.is_some() {
                 "session/load"
@@ -622,6 +671,14 @@ async fn execute(
         session = saved
             .clone()
             .unwrap_or_else(|| string(&setup, "sessionId").into());
+        if !session.is_empty() && session.len() <= 256 {
+            let mut params = json!({"sessionId":session});
+            if runtime == "grok" {
+                params["_meta"] = json!({"cancelTrigger":"ctrl_c"});
+            }
+            child.notification =
+                Some(json!({"jsonrpc":"2.0","method":"session/cancel","params":params}));
+        }
         let models = setup["models"]["availableModels"]
             .as_array()
             .unwrap_or(&Vec::new())
@@ -637,7 +694,7 @@ async fn execute(
             .is_some_and(|v| v.iter().any(|v| v["id"] == "default"))
         {
             rpc(
-                &mut process,
+                process,
                 &mut seq,
                 "session/set_mode",
                 json!({"sessionId":session,"modeId":"default"}),
@@ -648,7 +705,7 @@ async fn execute(
         }
         if !native_model.is_empty() {
             rpc(
-                &mut process,
+                process,
                 &mut seq,
                 "session/set_model",
                 json!({"sessionId":session,"modelId":native_model}),
@@ -680,7 +737,7 @@ async fn execute(
         let prompt_id;
         if runtime == "codex" {
             let context = additional_context(&instructions);
-            let result=rpc(&mut process,&mut seq,"turn/start",json!({"threadId":session,"additionalContext":context,"input":[{"type":"text","text":prompt}],"cwd":workspace,"approvalPolicy":"on-request","sandboxPolicy":if binding.write{json!({"type":"workspaceWrite","writableRoots":[workspace],"networkAccess":false,"excludeTmpdirEnvVar":true,"excludeSlashTmp":true})}else{json!({"type":"readOnly"})}})).await?;
+            let result=rpc(process,&mut seq,"turn/start",json!({"threadId":session,"additionalContext":context,"input":[{"type":"text","text":prompt}],"cwd":workspace,"approvalPolicy":"on-request","sandboxPolicy":if binding.write{json!({"type":"workspaceWrite","writableRoots":[workspace],"networkAccess":false,"excludeTmpdirEnvVar":true,"excludeSlashTmp":true})}else{json!({"type":"readOnly"})}})).await?;
             if !result["turn"]["id"].is_string() {
                 return Err(process::stopped());
             }
@@ -1190,6 +1247,7 @@ async fn execute(
         }
         break;
     }
+    child.notification = None;
     let reply = snapshot.finish()?;
     let db = state.database.lock().map_err(|_| Failure::storage())?;
     db.connection.execute("UPDATE provider_calls SET status='received',finished=?,input_tokens=?,output_tokens=?,total_tokens=? WHERE seq=?",rusqlite::params![data::iso(&db.connection,state.config.now())?,usage[0],usage[1],usage[0].zip(usage[1]).map(|(a,b)|a+b),call])?;
@@ -1372,6 +1430,41 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn acp_abort_before_launch_spawns_nothing() -> crate::db::Result<()> {
+        let db = rusqlite::Connection::open_in_memory()?;
+        db.execute_batch(
+            "CREATE TABLE turns(id TEXT PRIMARY KEY, status TEXT, paused INTEGER);
+            INSERT INTO turns VALUES ('turn', 'running', 0);
+            UPDATE turns SET status='cancelled' WHERE id='turn';",
+        )?;
+        let scratch = process::ProbeHome::new()?;
+        let marker = scratch.0.join("launched");
+        let result = launch_turn(&db, "turn", || {
+            std::fs::File::create(&marker).map_err(|_| Failure::storage())?;
+            Process::launch(Path::new("/bin/true"), &[], &scratch.0, &HashMap::new())
+        });
+        assert_eq!(result.err().map(|failure| failure.status), Some(409));
+        assert!(!marker.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_and_prefix_reject_escapes_and_shell_syntax() -> crate::db::Result<()> {
+        let scratch = process::ProbeHome::new()?;
+        let workspace = scratch.0.join("work");
+        std::fs::create_dir(&workspace)?;
+        std::os::unix::fs::symlink(&scratch.0, workspace.join("escape"))?;
+        assert!(inside(&workspace, "new.txt"));
+        assert!(!inside(&workspace, "escape/new.txt"));
+        assert!(!inside(&workspace, "../outside"));
+        assert_eq!(command_prefix("echo hello"), Some("echo hello"));
+        assert_eq!(command_prefix("echo hello; curl attacker"), None);
+        assert!(command_prefix(&"x".repeat(512)).is_some());
+        assert_eq!(command_prefix(&"x".repeat(513)), None);
+        Ok(())
+    }
 
     #[test]
     fn codex_home_keeps_credentials_out_of_private_config() -> crate::db::Result<()> {

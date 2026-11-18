@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './test-bridge.ts';
-import { harnessEnv, harnessAvailability, insideWorkspace, commandPrefix, type HarnessRuntime } from './harness.ts';
+import type { HarnessRuntime } from './shared/runtime.ts';
 process.env.BRIEFSIP_HARNESS_CANARY = 'never-inherit-this-canary';
 const fakeSource = readFileSync(new URL('./fixtures/fake-harness.mjs', import.meta.url), 'utf8');
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -231,11 +231,12 @@ for(const runtime of ['codex','claude'] as const) {
   });
   test(`${runtime}: bounded output fails without replay`,async()=>{const f=await fixture(runtime);try{const id=await f.send('OVERSIZE'),row=await f.until(id,row=>row.status==='failed');assert.match(row.error,/output line exceeded/);assert.equal(f.minted.length,1);assert.equal(f.revoked.length,1);}finally{await f.close();}});
 }
-test('environment excludes credential and loader canaries; workspace symlink and prefix limits',()=>{
-  const directory=mkdtempSync(join(tmpdir(),'briefsip-harness-boundary-'));try{mkdirSync(join(directory,'work'));symlinkSync('/tmp',join(directory,'work','escape'));const env=harnessEnv({PATH:'/usr/bin',HOME:'/fake',LANG:'C',OPENAI_API_KEY:'canary',COMPOSIO_API_KEY:'canary',NODE_OPTIONS:'canary'});assert.deepEqual(Object.keys(env).sort(),['HOME','LANG','PATH']);assert(insideWorkspace(join(directory,'work'),'new.txt'));assert(!insideWorkspace(join(directory,'work'),'escape/new.txt'));assert(!insideWorkspace(join(directory,'work'),'../outside'));assert.equal(commandPrefix('echo hello'),'echo hello');assert.equal(commandPrefix('echo hello; curl attacker'),null);}finally{rmSync(directory,{recursive:true,force:true});}
-});
 test('runtime changes require confirmation and revision; missing workspaces are provisioned',async()=>{
-  const f=await fixture('codex');try{await f.request(f.path+'/edit',{id:randomUUID(),revision:2,...f.profile,runtime:'api'},409);await f.request(f.path+'/edit',{id:randomUUID(),revision:1,...f.profile,runtime:'api',confirmRuntime:true},409);const command={id:randomUUID(),revision:2,...f.profile,runtime:'api',confirmRuntime:true};await f.request(f.path+'/edit',command);await f.request(f.path+'/edit',command);const directory=await f.request('/api/agents');assert.equal(directory.agents[0].runtime,'api');assert.equal(directory.agents[0].revision,3);const other=await f.request('/api/agents',{id:randomUUID(),...f.profile});const choices=await f.request(`/api/agents/${other.id}/runtimes`);assert(choices.choices.every((choice:any)=>choice.enabled===choice.available));await f.request(`/api/agents/${other.id}/edit`,{id:randomUUID(),revision:1,...f.profile,runtime:'codex',confirmRuntime:true});assert.equal((await harnessAvailability('codex',null)).available,false);}finally{await f.close();}
+  const f=await fixture('codex');try{await f.request(f.path+'/edit',{id:randomUUID(),revision:2,...f.profile,runtime:'api'},409);await f.request(f.path+'/edit',{id:randomUUID(),revision:1,...f.profile,runtime:'api',confirmRuntime:true},409);const command={id:randomUUID(),revision:2,...f.profile,runtime:'api',confirmRuntime:true};await f.request(f.path+'/edit',command);await f.request(f.path+'/edit',command);const directory=await f.request('/api/agents');assert.equal(directory.agents[0].runtime,'api');assert.equal(directory.agents[0].revision,3);const other=await f.request('/api/agents',{id:randomUUID(),...f.profile});const choices=await f.request(`/api/agents/${other.id}/runtimes`);assert(choices.choices.every((choice:any)=>choice.enabled===choice.available));await f.request(`/api/agents/${other.id}/edit`,{id:randomUUID(),revision:1,...f.profile,runtime:'codex',confirmRuntime:true});rmSync(f.options.harness.executables.codex);
+    await f.restart();
+    const missing = (await f.request('/api/runtimes')).choices.find((choice: { runtime: string }) => choice.runtime === 'codex');
+    assert.equal(missing.available, false);
+    assert.equal(missing.version, null);}finally{await f.close();}
 });
 
 for (const runtime of ['codex','claude'] as const) test(`${runtime}: done check nudges once and preserves native session`, async () => {

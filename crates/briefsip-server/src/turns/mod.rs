@@ -341,6 +341,7 @@ fn run_reserved(state: &AppState, active: &mut HashMap<String, Active>, id: Stri
     let task_state = state.clone();
     tokio::spawn(async move {
         let result = tokio::select! { result=execution::run(&task_state,&id) => result, _=receiver.changed()=>Err(error(409,"Turn stopped.")) };
+        crate::harness::settle_process(&task_state, &id).await;
         if let Err(failure) = result {
             if let Ok(db) = task_state.database.lock() {
                 if failure.message == "Turn stopped."
