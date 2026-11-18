@@ -246,9 +246,17 @@ pub(crate) async fn local(state: &AppState, request: Request) -> Result<Response
 pub fn start(state: AppState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut events = state.events.subscribe();
-        let mut timer = tokio::time::interval(std::time::Duration::from_secs(1));
+        let canonical = state.auth.is_some();
+        let period = std::time::Duration::from_secs(1);
+        let start = tokio::time::Instant::now()
+            + if canonical {
+                period
+            } else {
+                std::time::Duration::ZERO
+            };
+        let mut timer = tokio::time::interval_at(start, period);
         loop {
-            tokio::select! {_ = events.recv()=>(), _=timer.tick()=>()}
+            tokio::select! {_ = events.recv(), if !canonical=>(), _=timer.tick()=>()}
             if crate::turns::pending(&state) {
                 continue;
             }

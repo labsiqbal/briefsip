@@ -8,6 +8,7 @@ struct Job {
     result: oneshot::Sender<Result<Value>>,
 }
 static JOBS: OnceLock<Mutex<HashMap<String, Job>>> = OnceLock::new();
+static PROVISIONS: OnceLock<Mutex<HashMap<String, (String, i64)>>> = OnceLock::new();
 fn jobs() -> Result<std::sync::MutexGuard<'static, HashMap<String, Job>>> {
     JOBS.get_or_init(Default::default)
         .lock()
@@ -159,6 +160,9 @@ pub(super) fn disconnect(device: &str) {
     if let Ok(mut jobs) = jobs() {
         jobs.retain(|_, j| j.request["sourceDeviceId"] != device);
     }
+    if let Ok(mut sent) = PROVISIONS.get_or_init(Default::default).lock() {
+        sent.remove(device);
+    }
 }
 #[allow(dead_code)]
 pub fn connection(db: &Connection, device: &str, generation: i64, now: i64) -> bool {
@@ -179,6 +183,18 @@ pub fn provision(db: &Connection, value: &Value, now: i64) -> Result<bool> {
     if value["authorityGeneration"] != stream.principal.authority {
         return Ok(false);
     }
+    let mut sent = PROVISIONS
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|_| Failure::storage())?;
+    let device = &stream.principal.device;
+    let provision_id = text(value, "provisionId");
+    if sent
+        .get(device)
+        .is_some_and(|(id, at)| id == provision_id && now.saturating_sub(*at) < 5000)
+    {
+        return Ok(false);
+    }
     let frame = db::canonical(
         &json!({"v":1,"connectionGeneration":stream.generation,"kind":"wait.provision.v1","body":value}),
     ) + "\n";
@@ -189,7 +205,11 @@ pub fn provision(db: &Connection, value: &Value, now: i64) -> Result<bool> {
             "Wait provision exceeds the frame limit.",
         ));
     }
-    Ok(stream.sender.try_send(frame).is_ok())
+    if stream.sender.try_send(frame).is_err() {
+        return Ok(false);
+    }
+    sent.insert(device.clone(), (provision_id.to_owned(), now));
+    Ok(true)
 }
 fn enqueue(
     db: &Connection,

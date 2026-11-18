@@ -327,6 +327,12 @@ async fn canonical_request(
     request: Request,
     request_id: &mut String,
 ) -> Result<Response, Failure> {
+    if (request.uri().path().starts_with("/api/turn-waits/")
+        || request.uri().path().starts_with("/api/workflow-waits/"))
+        && request.uri().path().ends_with("/events")
+    {
+        return tasks::wait_routes::event(state, request, request_id).await;
+    }
     if request.uri().path().starts_with("/api/projects/")
         && request.uri().path().ends_with("/webhook-events")
     {
@@ -472,6 +478,11 @@ async fn canonical_request(
     }
     if let Some(response) =
         computer::devices::human(state, &path, &method, &body, &actor, &headers).await?
+    {
+        return Ok(response);
+    }
+    if let Some(response) =
+        tasks::wait_routes::human_route(state, &actor, &path, &method, &body).await?
     {
         return Ok(response);
     }

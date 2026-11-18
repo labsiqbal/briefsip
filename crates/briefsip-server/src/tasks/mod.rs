@@ -10,6 +10,7 @@ mod reads;
 mod recovery;
 mod shared;
 mod sources;
+pub(crate) mod wait_routes;
 pub(crate) mod waits;
 
 pub fn maintain(state: &AppState) -> Result<()> {
