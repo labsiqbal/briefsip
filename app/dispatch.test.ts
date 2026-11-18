@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './test-bridge.ts';
-import { restoreChatCommand } from './conversation-command.ts';
+import { restoreChatCommand } from './src/conversation-command.ts';
 
 async function until<T>(read: () => T | Promise<T>, predicate: (value: T) => boolean): Promise<T> {
   let last: T | undefined;

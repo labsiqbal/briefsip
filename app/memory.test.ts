@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
-import { memoryCommand, memoryDraft } from './memory-command.ts';
+import { memoryCommand, memoryDraft } from './src/memory-command.ts';
 
 test('memory CRUD, exact retry, isolated provider search and bounded context survive restart', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-memory-'));

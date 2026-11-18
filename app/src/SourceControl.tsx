@@ -1,6 +1,6 @@
 import { usePolling } from './hooks/usePolling';
-import { diffLines } from '../diff-lines';
-export { diffLines } from '../diff-lines';
+import { diffLines } from './diff-lines';
+export { diffLines } from './diff-lines';
 // Branch and diff-status patterns adapted from T3 (MIT); see ../t3/provenance.json.
 import { useEffect, useRef, useState } from 'react';
 import { ChevronRight, GitBranch, RefreshCw, RotateCcw } from 'lucide-react';

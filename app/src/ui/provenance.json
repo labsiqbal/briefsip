@@ -49,7 +49,7 @@
       "entries": [
         {
           "sourcePath": "apps/web/src/hooks/useTheme.ts",
-          "localPath": "app/presentation.ts; app/src/ui/themes.ts",
+          "localPath": "app/src/presentation.ts; app/src/ui/themes.ts",
           "adaptation": "Independent palette and appearance preferences, guarded browser storage, native system appearance and CSS application. Existing Briefsip version-1 preferences migrate to the Briefsip palette without overwriting storage."
         },
         {

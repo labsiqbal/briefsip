@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { parseRoute, routePath, resultTarget, type ResultTarget } from '../../navigation.ts';
+import { parseRoute, routePath, resultTarget, type ResultTarget } from '../navigation.ts';
 
 export function navigateResult(result?: ResultTarget) {
   const route = parseRoute(window.location.pathname + window.location.search);

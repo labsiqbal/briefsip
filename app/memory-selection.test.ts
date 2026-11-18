@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
-import { memoryCommand, memoryDraft } from './memory-command.ts';
+import { memoryCommand, memoryDraft } from './src/memory-command.ts';
 
 test('automatic memory selection is atomic, user-protected, scoped and durable across resume', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-selection-'));

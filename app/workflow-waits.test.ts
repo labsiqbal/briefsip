@@ -7,13 +7,13 @@ import { join } from 'node:path';
 import { createServer, request as httpRequest } from 'node:http';
 import { startApp } from './test-bridge.ts';
 import { restoreWorkspace } from './test-support/backup.ts';
-import { validateWorkflow, validateWorkflowDraft, workflowEdges, workflowTransition } from './workflows.ts';
+import { validateWorkflow, validateWorkflowDraft, workflowEdges } from './src/workflows.ts';
 
 test('event wait validates bounded graph settings and preserves draft links', () => {
   const wait = { id: 'wait', kind: 'wait' as const, event: 'ready', timeoutSeconds: 60, next: 'out' };
   const graph = { entry: 'wait', maxSteps: 3, nodes: [wait, { id: 'out', kind: 'output' }] };
   assert.deepEqual(validateWorkflow(graph, new Set()).nodes[0], wait);
-  assert.deepEqual(workflowEdges(wait), ['out']); assert.equal(workflowTransition(wait, ''), 'out');
+  assert.deepEqual(workflowEdges(wait), ['out']);
   for (const timeoutSeconds of [0, -1, .5, 604801, NaN, '60', null]) assert.throws(() => validateWorkflow({ ...graph, nodes: [{ ...wait, timeoutSeconds }, graph.nodes[1]] }, new Set()));
   assert.throws(() => validateWorkflow({ ...graph, nodes: [{ ...wait, event: '' }, graph.nodes[1]] }, new Set()));
   assert.equal(validateWorkflowDraft({ ...graph, nodes: [{ ...wait, event: '', next: '' }, graph.nodes[1]] }).nodes[0].kind, 'wait');
@@ -93,6 +93,7 @@ test('signed workflow events are scoped, durable, once-only, expiring and cancel
     const [first, duplicate] = await Promise.all([send(path, connection.secret, body, delivery), send(path, connection.secret, body, delivery)]);
     assert.deepEqual(duplicate, first);
     const done = await state(run.id, 'done'); assert.equal(done.last, 'Processed event.'); assert.equal(calls.length, 1); assert(calls[0].includes('SYNTHETIC-123')); assert(!calls[0].includes(connection.secret));
+    assert.deepEqual(done.steps.map((step: { node: string }) => step.node), ['event', 'process', 'out']);
     assert.deepEqual(await send(path, connection.secret, body, delivery), first);
     await send(path, connection.secret, JSON.stringify({ event: 'invoice.paid', payload: 2 }), delivery, 409);
     await request(path, undefined, 404);

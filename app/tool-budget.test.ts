@@ -45,7 +45,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 import sharp from 'sharp';
-import { parseAgentTemplate, templateCommand } from './agent-template.ts';
+import { parseAgentTemplate, templateCommand } from './shared/agent-template.ts';
 import { restoreAgentCreation } from './shared/agent-create.ts';
 
 type ProviderReply = string | { id: string; name: string; args?: object } | number;

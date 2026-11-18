@@ -24,7 +24,7 @@ for (const [file, prefix] of [['src/lint-probe.ts', '../'], ['src/hub/lint-probe
   for (const specifier of [`${prefix}server.ts`, `${prefix}hub/server`, `${prefix}./server.ts`, `${prefix}server.ts?raw`, '/server.ts'])
     for (const code of [`import '${specifier}';`, `export * from '${specifier}';`, `import('${specifier}');`])
       await check(code, file, boundary);
-  for (const code of ["import type { Stats } from 'node:fs';", "import { type Stats } from 'fs';", `import type { App } from '${prefix}server.ts';`, `export type * from '${prefix}server.ts';`, `import { type App } from '${prefix}server.ts';`, `import { diffLines, type DiffLine } from '${prefix}diff-lines';`, "import './local';", "import type { App } from 'node:sqlite';"])
+  for (const code of ["import type { Stats } from 'node:fs';", "import { type Stats } from 'fs';", `import type { App } from '${prefix}server.ts';`, `export type * from '${prefix}server.ts';`, `import { type App } from '${prefix}server.ts';`, `import { diffLines, type DiffLine } from '${prefix}src/diff-lines';`, "import './local';", "import type { App } from 'node:sqlite';"])
     await check(code, file);
 }
 await check("import { Button } from '../ui/kit';", 'src/hub/probe.ts');

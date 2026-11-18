@@ -6,7 +6,7 @@ import { ArrowLeft } from 'lucide-react';
 import { ComputerViewer } from './ComputerViewer';
 import { EmptyState, IconButton, Button } from './ui/kit';
 import type { PanelRequest } from './RightPanel';
-import type { ResultTarget } from '../navigation';
+import type { ResultTarget } from './navigation';
 
 export function ResultURLPreview({ target, computer, name, request, onBack }: { target: ResultTarget; computer?: string; name: string; request: PanelRequest; onBack: () => void }) {
   const status = useURLPreview(target.path);

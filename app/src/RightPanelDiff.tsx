@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { GitBranch, WrapText } from 'lucide-react';
 import { Alert, Badge, Card, EmptyState, Row, Section, Select, SkeletonRows, IconButton } from './ui/kit';
 import { usePolling } from './hooks/usePolling';
-import { diffLines, splitDiffLines } from '../diff-lines';
+import { diffLines, splitDiffLines } from './diff-lines';
 import type { PanelRequest } from './RightPanel';
 export type GitStatus = { isRepo: boolean; branch?: string | null; changedFiles?: { code: string; path: string }[] };
 type Diff = { text: string; truncated: boolean; binaryFiles: string[] };

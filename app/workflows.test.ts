@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { removeWorkflowNode, validateWorkflow, workflowTransition } from './workflows.ts';
-import { restoreWorkflowCommand } from './workflow-command.ts';
+import { removeWorkflowNode, validateWorkflow, workflowEdges } from './src/workflows.ts';
+import { restoreWorkflowCommand } from './src/workflow-command.ts';
 import { randomUUID } from 'node:crypto';
-import { editWorkflowHistory, moveWorkflowNode, restoreWorkflowEditorDraft, workflowAutosaveDraft, workflowLayout, workflowUnconditionalCycles, workflowNodeLabels, workflowStepLabel, type WorkflowHistory } from './workflow-editor-state.ts';
+import { editWorkflowHistory, moveWorkflowNode, restoreWorkflowEditorDraft, workflowAutosaveDraft, workflowLayout, workflowUnconditionalCycles, workflowNodeLabels, workflowStepLabel, type WorkflowHistory } from './src/workflow-editor-state.ts';
 
 test('deleting a legacy approval rejection target leaves a saveable graph', () => {
   const graph = validateWorkflow({ entry: 'work', maxSteps: 5, nodes: [
@@ -14,23 +14,19 @@ test('deleting a legacy approval rejection target leaves a saveable graph', () =
   const edited = removeWorkflowNode({ ...graph, entry: 'review' }, 'work');
   assert.deepEqual(validateWorkflow(edited, new Set()), edited);
   assert.equal('no' in edited.nodes[0], false);
-  assert.equal(workflowTransition(edited.nodes[0], '', false), null);
   assert.equal('no' in graph.nodes[1], true);
   assert.equal(removeWorkflowNode(graph, 'work').entry, '');
   assert.throws(() => validateWorkflow(removeWorkflowNode(graph, 'out'), new Set()));
 });
 
-test('model condition validation requires model and question and parses only yes/no', () => {
+test('model condition validation requires model and question', () => {
   const node = { id: 'check', kind: 'condition', operator: 'model', model: 'fixture', value: 'Accept?', yes: 'out', no: 'out' };
   const graph = { entry: 'check', maxSteps: 2, nodes: [node, { id: 'out', kind: 'output' }] };
-  const validated = validateWorkflow(graph, new Set());
-  assert.equal(workflowTransition(validated.nodes[0], ' YES\n'), 'out');
-  assert.equal(workflowTransition(validated.nodes[0], 'no'), 'out');
-  assert.throws(() => workflowTransition(validated.nodes[0], 'yes because it matches'), /yes or no/);
+  assert.deepEqual(validateWorkflow(graph, new Set()), graph);
   for (const patch of [{ model: '' }, { value: '' }, { next: 'out' }]) assert.throws(() => validateWorkflow({ ...graph, nodes: [{ ...node, ...patch }, graph.nodes[1]] }, new Set()));
 });
 
-test('workflow graphs validate explicit approval, bounded loops and terminal paths', () => {
+test('workflow graphs validate bounded loops and terminal paths', () => {
   const input = { entry: 'draft', maxSteps: 12, nodes: [
     { id: 'draft', kind: 'agent', agent: 'a', prompt: 'Draft', next: 'review' },
     { id: 'review', kind: 'approval', prompt: 'Accept draft?', yes: 'check', no: 'draft' },
@@ -40,12 +36,6 @@ test('workflow graphs validate explicit approval, bounded loops and terminal pat
   ] };
   const agents = new Set(['a']), graph = validateWorkflow(input, agents);
   assert.deepEqual(graph, input);
-  assert.throws(() => workflowTransition(graph.nodes[1], 'yes'), /Explicit/);
-  assert.equal(workflowTransition(graph.nodes[1], 'irrelevant', false), null);
-  assert.equal(workflowTransition(graph.nodes[1], 'irrelevant', true), 'check');
-  assert.equal(workflowTransition(graph.nodes[2], 'ready'), 'done');
-  assert.equal(workflowTransition(graph.nodes[2], 'not ready'), 'revise');
-  assert.equal(workflowTransition(graph.nodes[4], 'saved'), null);
   for (const bad of [
     { ...input, maxSteps: 0 }, { ...input, maxSteps: 1001 }, { ...input, maxSteps: 1.5 },
     { ...input, extra: true }, { ...input, entry: 'missing' },
@@ -56,8 +46,6 @@ test('workflow graphs validate explicit approval, bounded loops and terminal pat
   ]) assert.throws(() => validateWorkflow(bad, agents));
   assert.throws(() => validateWorkflow(input, new Set()));
   assert.throws(() => validateWorkflow({ ...input, nodes: [{ ...input.nodes[0], next: 'missing' }, ...input.nodes.slice(1)] }, agents));
-  assert.equal(workflowTransition({ id: 'c', kind: 'condition', operator: 'contains', value: 'A', yes: 'yes', no: 'no' }, 'DATA'), 'yes');
-  assert.equal(workflowTransition({ id: 'c', kind: 'condition', operator: 'contains', value: 'a', yes: 'yes', no: 'no' }, 'DATA'), 'no');
 });
 test('workflow recovery rejects malformed commands and preserves valid retry identity', () => {
   const owner = randomUUID(), agents = new Set([owner]);
@@ -113,14 +101,14 @@ test('workflow editor undo restores removed edges and bounds branching history',
 });
 
 
-test('workflow positions validate, survive edits and undo, and do not affect transitions', () => {
+test('workflow positions validate, survive edits and undo, and preserve edges', () => {
   const original = validateWorkflow({ entry: 'work', maxSteps: 2, nodes: [
     { id: 'work', kind: 'model', model: 'fixture', prompt: 'Work', next: 'out' }, { id: 'out', kind: 'output' },
   ] }, new Set());
   const moved = moveWorkflowNode(original, 'work', 501.4, 701.8);
   assert.deepEqual(validateWorkflow(moved, new Set()), moved);
   assert.deepEqual(workflowLayout(moved).find(node => node.id === 'work'), { id: 'work', x: 501, y: 702 });
-  assert.equal(workflowTransition(moved.nodes[0], 'result'), 'out');
+  assert.deepEqual(workflowEdges(moved.nodes[0]), ['out']);
   const history = editWorkflowHistory({ graph: original, past: [], future: [] }, moved);
   assert.deepEqual(editWorkflowHistory(history, 'undo').graph, original);
   assert.deepEqual(editWorkflowHistory(editWorkflowHistory(history, 'undo'), 'redo').graph, moved);

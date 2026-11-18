@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
-import { parseAgentTemplate, templateCommand } from './agent-template.ts';
+import { parseAgentTemplate, templateCommand } from './shared/agent-template.ts';
 
 test('backup model is opt-in, bounded, durable and never replays after activity or uncertainty', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-fallback-'));

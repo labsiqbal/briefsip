@@ -1,4 +1,4 @@
-import { parseAgentTemplate } from '../agent-template.ts';
+import { parseAgentTemplate } from '../shared/agent-template.ts';
 
 export function parseCanonicalAgentCreation(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid agent creation data.');

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ShieldCheck } from 'lucide-react';
 import { Alert, Badge, Button, Card, CodeBlock, Collapsible, Row, useConfirm, RecoveryAlert } from './ui/kit';
-import { restoreConnectedAppCommand, type ConnectedAppCommand } from '../connected-app-command';
+import { restoreConnectedAppCommand, type ConnectedAppCommand } from './connected-app-command';
 export type AppApproval = { id: string; toolkit: string; tool: string; slug: string; account: string; arguments: Record<string, unknown>; state: string; decision: string; revision: number };
 export function ApprovalCard({ approval, path, status, archived, request }: { approval: AppApproval; path: string; status: string; archived: boolean; request: <T>(path: string, data?: unknown) => Promise<T> }) {
   const key = `briefsip:app-approval:${path}:${approval.id}`, confirm = useConfirm();

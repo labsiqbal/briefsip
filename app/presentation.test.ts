@@ -1,9 +1,9 @@
-import { clampPanelWidth, maxPanelWidth } from './panel-width.ts';
+import { clampPanelWidth, maxPanelWidth } from './src/panel-width.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { colorThemes, themeTokenValues } from './src/ui/themes.ts';
-import { defaultPresentation, parsePresentation, presentationKey, readPresentation } from './presentation.ts';
+import { defaultPresentation, parsePresentation, presentationKey, readPresentation } from './src/presentation.ts';
 
 test('presentation settings validate persisted values and fail safely without overwriting storage', () => {
   assert.deepEqual(parsePresentation(null), defaultPresentation);

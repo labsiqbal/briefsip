@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Blocks, ChevronLeft, ChevronRight, Ellipsis, Search } from 'lucide-react';
 import { ActionMenu, Alert, Badge, Button, Card, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, Tooltip, useConfirm, RecoveryAlert } from './ui/kit';
 import type { LocalProject } from '../shared/local-project';
-import { restoreConnectedAppCommand, type ConnectedAppCommand } from '../connected-app-command';
+import { restoreConnectedAppCommand, type ConnectedAppCommand } from './connected-app-command';
 type Toolkit = { slug: string; name: string; description: string; managedAuth: boolean };
 type Catalog = { configured: boolean; items: Toolkit[]; categories: { id: string; name: string }[]; next_after: string | null };
 type KeyStatus = { source: 'settings' | 'environment' | 'none'; revision: number; last4?: string };

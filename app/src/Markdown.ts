@@ -1,4 +1,4 @@
-import { parseRoute, routePath, type ResultTarget } from '../navigation.ts';
+import { parseRoute, routePath, type ResultTarget } from './navigation.ts';
 import { navigateResult } from './hooks/useResultRoute.ts';
 import type { AttachmentFile } from './attachments';
 import { MessageCopyButton } from './ui/MessageCopyButton.ts';

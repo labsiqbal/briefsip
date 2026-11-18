@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { diffLines, splitDiffLines } from './diff-lines.ts';
+import { diffLines, splitDiffLines } from './src/diff-lines.ts';
 test('diff gutters distinguish metadata, real hunk contents and missing newline markers', () => {
   const text = 'diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -3,2 +3,3 @@\n-old\n---old dash\n+new\n+++new plus\n+last\n\\ No newline at end of file\n';
   const lines = diffLines(text);
