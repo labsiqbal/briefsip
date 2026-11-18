@@ -82,6 +82,7 @@ pub async fn create(root: &Path, id: &str) -> Result<Arc<Archive>> {
     if !release::id(id) {
         return Err(error(400, "Invalid release ID."));
     }
+    preflight(&root.join(id), &mut 0, &mut 0)?;
     let key = root.join(id);
     let entry = {
         let mut archives = ARCHIVES.lock().await;
@@ -105,7 +106,6 @@ async fn build(root: &Path, id: &str) -> Result<Archive> {
     if !release::id(id) {
         return Err(error(400, "Invalid release ID."));
     }
-    preflight(&root.join(id), &mut 0, &mut 0)?;
     release::verify(root, id)?;
     let directory = Temporary::new(root, "archive")?;
     let file = directory.0.join("release.tar.gz");
