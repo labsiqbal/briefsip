@@ -11,8 +11,7 @@ import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
 import { startCanonicalApp } from './test-bridge.ts';
-import { openDeviceRuntime } from './device-runtime.ts';
-import { startDeviceFaultProxy, startRustDeviceEnrollment, startRustDeviceConnection, enrollRustDevice, startRustDeviceTask, runRustDeviceTask, crashRustDeviceTask, exportRustDeviceRecovery, type RecoveryExport } from './test-support/rust-device-host.ts';
+import { startDeviceFetchProxy, rustDeviceFixture, withDeviceProvider, startDeviceFaultProxy, startRustDeviceEnrollment, startRustDeviceConnection, enrollRustDevice, startRustDeviceTask, runRustDeviceTask, crashRustDeviceTask, exportRustDeviceRecovery, type RecoveryExport } from './test-support/rust-device-host.ts';
 import type { ActionContext } from './test-support/task-protocol.ts';
 import { rustBinary } from './rust-binary.ts';
 import { rustServerOutput } from './rust-test-server.ts';
@@ -50,7 +49,7 @@ async function workspaceSnapshot(db: DatabaseSync, owner?: string) {
 }
 
 async function protectedWaitFixture() {
-  const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'event-home.sqlite'), server: f.origin(), development: true, entry: keys.entry });
+  const f = await fixture(), runtime = f.device(join(f.dir, 'event-home.sqlite'));
   try {
     await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
     const home = (await f.send('/api/devices')).body.data[0], project = randomUUID(), agent = randomUUID();
@@ -63,14 +62,14 @@ async function protectedWaitFixture() {
     let waitId = '';
     await until(async () => { const detail = (await f.send(`/api/tasks/${taskId}`)).body.data; waitId = detail.results[0]?.content?.id; return !!waitId; });
     await runtime.recoverPending();
-    return { ...f, keys, runtime, connection, home, project, agent, taskId, waitId, ownership: owned.ownership };
+    return { ...f, keys: runtime.keys, runtime, connection, home, project, agent, taskId, waitId, ownership: owned.ownership };
   } catch (error) { await runtime.close(); await f.close(); throw error; }
 }
 
 test('protected turn event verifies on home, saves one receipt and resumes with exact raw payload', async () => {
-  const f = await protectedWaitFixture(), { keys, runtime, connection, taskId, waitId, ownership } = f;
+  const f = await protectedWaitFixture(), { runtime, connection, taskId, waitId, ownership } = f;
   try {
-    const secret = [...keys.values].find(([key]) => key.includes('/event-wait/'))![1], delivery = randomUUID();
+    const secret = [...runtime.keys.values].find(([key]) => key.includes('/event-wait/'))![1], delivery = randomUUID();
     const small = '{ "event": "ready", "payload": {"message":"hello 🌏"} }', body = small + ' '.repeat(65536 - Buffer.byteLength(small));
     const eventPath = `/api/turn-waits/${waitId}/events`, timestamp = String(Math.floor(Date.now() / 1000));
     const sendEvent = async (text = body, eventId = delivery, time = timestamp, extra: Record<string,string> = {}) => {
@@ -110,7 +109,7 @@ test('protected turn event verifies on home, saves one receipt and resumes with 
     assert.equal(after.revision, detail.revision, 'Retry cannot advance task revision');
     assert.equal((await f.send(`/api/tasks/${taskId}/control`, { requestId: randomUUID(), expectedRevision: after.revision, operation: 'cancel' })).status, 200);
     assert.deepEqual((await sendEvent()).body, accepted.body, 'Accepted delivery remains evidence after task ends');
-    assert.equal([...keys.values].filter(([key]) => key.includes('/event-wait/')).length, 1);
+    assert.equal([...runtime.keys.values].filter(([key]) => key.includes('/event-wait/')).length, 1);
     const source = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
     const owner = (await f.send('/api/session')).body.data.accountId;
     const snapshot = await workspaceSnapshot(source, owner); source.close();
@@ -156,9 +155,9 @@ test('protected turn event rejects delayed verification after scope or connectio
 });
 
 test('protected turn wait uses outbound stream and recovers lost host ACK without another key or wait', async () => {
-  const f = await fixture(), keys = memoryKeys(), originalFetch = globalThis.fetch;
+  const f = await fixture(), originalFetch = globalThis.fetch;
   const database = join(f.dir, 'wait-home.sqlite');
-  let runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: keys.entry });
+  let runtime = f.device(database);
   let lost = false;
   try {
     await runtime.enroll(f.jwt());
@@ -179,23 +178,24 @@ test('protected turn wait uses outbound stream and recovers lost host ACK withou
     await until(() => lost);
     globalThis.fetch = originalFetch;
     await connection.stop();
-    const keyFile = join(f.dir, 'wait-probe-keys.json'); writeFileSync(keyFile, JSON.stringify(Object.fromEntries(keys.values)), { mode: 0o600 });
-    const source = `import { openDeviceRuntime } from ${JSON.stringify(new URL('./device-runtime.ts', import.meta.url).href)};
-      import { readFileSync } from 'node:fs'; import { DatabaseSync } from 'node:sqlite';
-      const keys=JSON.parse(readFileSync(process.argv[2],'utf8')); let posts=0; const original=globalThis.fetch;
-      globalThis.fetch=(url,init)=>{if(String(url).endsWith('/wait-secret-results'))posts++;return original(url,init);};
-      const runtime=openDeviceRuntime({database:process.argv[1],server:process.argv[3],development:true,entry:(service,name)=>({getPassword:()=>keys[service+'/'+name]??null,setPassword:()=>{throw new Error('No writes expected');}})});
-      const connection=runtime.connect(),until=performance.now()+30000;while(connection.state().phase!=='connected'){if(performance.now()>until)throw new Error('Probe connection timeout');await new Promise(resolve=>setTimeout(resolve,50));}
-      await runtime.recoverPending();const db=new DatabaseSync(process.argv[1]);const state=db.prepare('SELECT state FROM device_wait_secrets').get().state;db.close();
-      process.send({posts,state});await runtime.close();process.disconnect();`;
-    const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', source, database, keyFile, f.origin()], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
-    const childExit = once(child, 'exit');
+    let posts = 0;
+    globalThis.fetch = (url, init) => {
+      if (String(url).endsWith('/wait-secret-results')) posts++;
+      return originalFetch(url, init);
+    };
+    const probe = f.device(database), probeConnection = probe.connect();
     try {
-      const [probe] = await once(child, 'message', { signal: AbortSignal.timeout(30000) });
-      assert.deepEqual(probe, { posts: 0, state: 'ready' }, 'Second host must not ACK or change wait evidence while original runner holds lock');
-      const [status] = await childExit; assert.equal(status, 0);
-    } finally { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); await childExit; }
+      await until(() => probeConnection.state().phase === 'connected');
+      assert.deepEqual(await probe.recoverPending(), []);
+      const host = new DatabaseSync(database);
+      try {
+        assert.deepEqual({ posts, state: host.prepare('SELECT state FROM device_wait_secrets').get()!.state },
+          { posts: 0, state: 'ready' }, 'Second host must not ACK or change wait evidence while original runner holds lock');
+      } finally { host.close(); }
+    } finally { await probe.close(); globalThis.fetch = originalFetch; }
+    await runtime.close();
     await f.restart();
+    runtime = f.device(database);
     connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
     await until(() => {
       const host = new DatabaseSync(database);
@@ -207,7 +207,7 @@ test('protected turn wait uses outbound stream and recovers lost host ACK withou
       assert.equal(canonical.prepare('SELECT count(*) n FROM turn_waits').get()!.n, 1);
       assert.equal(canonical.prepare('SELECT state FROM wait_provisions').get()!.state, 'activated');
       assert.equal(canonical.prepare("SELECT count(*) n FROM receipts WHERE scope='wait-secret-results'").get()!.n, 1);
-      const secrets = [...keys.values].filter(([reference]) => reference.includes('/event-wait/'));
+      const secrets = [...runtime.keys.values].filter(([reference]) => reference.includes('/event-wait/'));
       assert.equal(secrets.length, 1);
       for (const table of ['wait_provisions', 'turn_waits', 'receipts', 'task_results']) assert(!JSON.stringify(canonical.prepare('SELECT * FROM ' + table).all()).includes(secrets[0][1]));
     } finally { canonical.close(); }
@@ -224,7 +224,7 @@ test('protected turn wait uses outbound stream and recovers lost host ACK withou
     const encrypted = await f.send(path, reveal); assert.equal(encrypted.status, 200, JSON.stringify(encrypted.body));
     const value = encrypted.body.data, device = (await f.send('/api/devices')).body.data.find((row: { id: string }) => row.id === home.id), owner = (await f.send('/api/session')).body.data.accountId;
     assert.deepEqual(Object.keys(value).sort(), ['requestId','waitKey','sourceDeviceId','deviceGeneration','secretGeneration','expiresAt','iv','ciphertext','tag'].sort());
-    const secret = [...keys.values].find(([key]) => key.includes('/event-wait/'))![1];
+    const secret = [...runtime.keys.values].find(([key]) => key.includes('/event-wait/'))![1];
     assert(!JSON.stringify(encrypted.body).includes(secret));
     const decrypt = (privateKey = browser.privateKey, associatedOwner = owner) => {
       const shared = diffieHellman({ privateKey, publicKey: createPublicKey({ key: Buffer.from(JSON.parse(device.descriptor_json).encryptionPublicKey, 'base64url'), type: 'spki', format: 'der' }) });
@@ -269,7 +269,7 @@ test('protected turn wait uses outbound stream and recovers lost host ACK withou
       assert.equal((await f.send(`/api/projects/${project}/agents/${agent}/rules`, { requestId: randomUUID(), expectedParticipationRevision: 1, rules: 'Updated project context' }, 'user_owner', 'PUT')).status, 200);
     } finally { releaseResult(); globalThis.fetch = originalFetch; }
     assert.equal((await beforeRulesChange).status, 409, 'Delayed reveal cannot cross project rules/capability revisions');
-    const retained = [...keys.values].filter(([key]) => key.includes('/event-wait/'));
+    const retained = [...runtime.keys.values].filter(([key]) => key.includes('/event-wait/'));
     assert.equal(retained.length, 1); assert.equal(retained[0][1], secret);
     const inspect = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
     try { for (const table of ['wait_provisions','turn_waits','receipts','task_results','sync_events']) assert(!JSON.stringify(inspect.prepare('SELECT * FROM ' + table).all()).includes(secret)); }
@@ -281,7 +281,7 @@ test('protected turn wait uses outbound stream and recovers lost host ACK withou
 });
 
 test('canonical shared data isolates project images and recovers one write after lost reply and restart',async()=>{
-  const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry}),originalFetch=globalThis.fetch;
+  const f=await fixture(),runtime=f.device(join(f.dir,'home.sqlite')),originalFetch=globalThis.fetch;
   try{
     await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
     const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),other=randomUUID(),agent=randomUUID();
@@ -318,7 +318,7 @@ test('canonical shared data isolates project images and recovers one write after
 });
 
 test('canonical avatar removal recovers its original result after a lost reply, later image and restart',async()=>{
-  const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry}),originalFetch=globalThis.fetch;
+  const f=await fixture(),runtime=f.device(join(f.dir,'home.sqlite')),originalFetch=globalThis.fetch;
   try{
     await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
     const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),agent=randomUUID(),image=await sharp({create:{width:256,height:256,channels:4,background:'#206060'}}).png().toBuffer();
@@ -341,7 +341,7 @@ test('canonical avatar removal recovers its original result after a lost reply, 
 });
 
 test('canonical site management keeps project scope and recovers one deletion after a lost reply and restart',async()=>{
-  const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry}),originalFetch=globalThis.fetch;
+  const f=await fixture(),runtime=f.device(join(f.dir,'home.sqlite')),originalFetch=globalThis.fetch;
   try{
     await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
     const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),otherProject=randomUUID(),agent=randomUUID(),site=randomUUID(),foreign=randomUUID();
@@ -378,8 +378,8 @@ test('canonical site management keeps project scope and recovers one deletion af
 });
 
 test('canonical questions survive lost RPC and answer replies, restart and home outage without duplicate work', async () => {
-  const f=await fixture(),keys=memoryKeys(),originalFetch=globalThis.fetch;
-  const runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry});
+  const f=await fixture(),originalFetch=globalThis.fetch;
+  const runtime=f.device(join(f.dir,'home.sqlite'));
   let closed=false;
   try {
     await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
@@ -448,6 +448,14 @@ async function fixture() {
   };
   const options = { database: join(dir, 'canonical.sqlite'), auth, clerk, syncKey: () => syncSecret, routineWebhookKeys };
   let app = await startCanonicalApp(options); auth.origin = app.origin;
+  const proxy = await startDeviceFetchProxy(() => app.origin);
+  const hosts = new Set<ReturnType<typeof rustDeviceFixture>>();
+  const device = (database: string) => {
+    const host = rustDeviceFixture(database, proxy);
+    hosts.add(host);
+    return host;
+  };
+
   const jwt = (subject = 'user_owner') => {
     const now = Math.floor(Date.now() / 1000), header = Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'fixture', typ: 'JWT' })).toString('base64url'), claims = Buffer.from(JSON.stringify({ iss: auth.issuer, sub: subject, sid: `sess_${subject}`, azp: auth.origin, exp: now + 300, nbf: now - 1, iat: now - 1 })).toString('base64url');
     return `${header}.${claims}.${sign('RSA-SHA256', Buffer.from(`${header}.${claims}`), keys.privateKey).toString('base64url')}`;
@@ -456,7 +464,7 @@ async function fixture() {
     const response = await fetch(app.origin + path, { method, headers: { Authorization: `Bearer ${jwt(subject)}`, Origin: auth.origin, Connection: 'close', 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': body?.requestId ?? randomUUID() }, ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
   };
-  return { dir, jwt, send, webhookKeys, webhookFault, stderr: () => rustServerOutput(app.origin).stderr, stdout: () => rustServerOutput(app.origin).stdout, origin: () => app.origin, startAgain: (database=options.database,port=0) => startCanonicalApp({...options,database,port}), async restart() { const ready = ((await send('/api/devices')).body.data ?? []).filter((device:any)=>device.status==='ready').map((device:any)=>device.id); const port = new URL(app.origin).port; await app.close(); app = await startCanonicalApp({ ...options, port: Number(port) }); if(ready.length)await until(async()=>{const devices=(await send('/api/devices')).body.data;return ready.every((id:string)=>devices.some((device:any)=>device.id===id&&device.status==='ready'));}); }, async restoreFrom(backup:string){
+  return { dir, jwt, send, device, webhookKeys, webhookFault, stderr: () => rustServerOutput(app.origin).stderr, stdout: () => rustServerOutput(app.origin).stdout, origin: () => app.origin, startAgain: (database=options.database,port=0) => startCanonicalApp({...options,database,port}), async restart() { const ready = ((await send('/api/devices')).body.data ?? []).filter((device:any)=>device.status==='ready').map((device:any)=>device.id); const port = new URL(app.origin).port; await app.close(); app = await startCanonicalApp({ ...options, port: Number(port) }); if(ready.length)await until(async()=>{const devices=(await send('/api/devices')).body.data;return ready.every((id:string)=>devices.some((device:any)=>device.id===id&&device.status==='ready'));}); }, async restoreFrom(backup:string){
     const port=Number(new URL(app.origin).port);await app.close();renameSync(options.database,options.database+'.unavailable');
     const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
     const gate = JSON.parse(execFileSync(binary, ['--restore-read-only', backup, options.database], { encoding: 'utf8' }));
@@ -464,7 +472,10 @@ async function fixture() {
     const reconciled = await send('/api/restore/reconcile', { requestId: randomUUID(), bootstrap: gate.bootstrap });
     assert.equal(reconciled.status, 200, JSON.stringify(reconciled.body));
     return reconciled.body.data as { session: string; recoveryGeneration: string; expiresAt: number };
-  }, close: async () => { await app.close(); rmSync(dir, { recursive: true, force: true }); } };
+  }, close: async () => {
+    try { await Promise.all([...hosts].map(host => host.close())); await proxy.close(); }
+    finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
+  } };
 }
 async function until(check: () => boolean | Promise<boolean>, timeout = 30000) {
   const deadline = performance.now() + timeout;
@@ -481,10 +492,10 @@ async function prepareWorkflowConfiguration(f: Awaited<ReturnType<typeof fixture
 }
 
 async function workflowConfigurationFixture() {
-  const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'workflow-home.sqlite'), server: f.origin(), development: true, entry: keys.entry });
+  const f = await fixture(), runtime = f.device(join(f.dir, 'workflow-home.sqlite'));
   try {
     await runtime.enroll(f.jwt());
-    return { ...f, ...await prepareWorkflowConfiguration(f), keys, runtime, close: async () => { await runtime.close(); await f.close(); } };
+    return { ...f, ...await prepareWorkflowConfiguration(f), keys: runtime.keys, runtime, close: async () => { await runtime.close(); await f.close(); } };
   } catch (error) { await runtime.close(); await f.close(); throw error; }
 }
 
@@ -1405,7 +1416,7 @@ test('canonical workflow run and step pages preserve old approvals and admission
 
 test('canonical routine manual run waits for its home and recovers lost replies and restart without moving schedule',async()=>{
   const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=fixtureDatabase(join(f.dir,'canonical.sqlite')),originalFetch=globalThis.fetch;
-  const otherRuntime=openDeviceRuntime({database:join(f.dir,'manual-other-home.sqlite'),server:f.origin(),development:true,entry:f.keys.entry});
+  const otherRuntime=f.device(join(f.dir,'manual-other-home.sqlite'));
   const command={requestId:routine,id:routine,revision:0,name:'Manual',prompt:'PRIVATE_MANUAL_PROMPT',nextAt:Date.now()+600000,intervalSeconds:300,enabled:false};
   const request={requestId:randomUUID()};let calls=0;
   try{
@@ -1544,7 +1555,7 @@ test('canonical routine runtime coalesces offline intervals once and retains tas
 
 test('canonical routine runtime snapshots flows and hands off once using current home authority',async()=>{
   const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
-  const secondRuntime=openDeviceRuntime({database:join(f.dir,'routine-second-home.sqlite'),server:f.origin(),development:true,entry:f.keys.entry});
+  const secondRuntime=f.device(join(f.dir,'routine-second-home.sqlite'));
   try{
     await secondRuntime.enroll(f.jwt());
     const connection=f.runtime.connect();await until(()=>connection.state().phase==='connected');
@@ -2340,7 +2351,7 @@ async function loopTask(f: Awaited<ReturnType<typeof fixture>>, runtime: { devic
 }
 
 test('signed task and device mutations publish atomic scoped observations across retry and restart', async () => {
-  const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'sync-home.sqlite'), server: f.origin(), development: true, entry: keys.entry });
+  const f = await fixture(), runtime = f.device(join(f.dir, 'sync-home.sqlite'));
   try {
     const project = randomUUID(); assert.equal((await f.send('/api/projects', { requestId: randomUUID(), id: project, name: 'Device sync' })).status, 201);
     const path = '/api/sync?projectId=' + project, first = (await f.send(path)).body.data;
@@ -2390,36 +2401,12 @@ async function rustTaskFixture(f: Awaited<ReturnType<typeof fixture>>, filename:
   const options = { database, keyring, server };
   writeFileSync(keyring, '{}', { mode: 0o600 });
   const { deviceId } = await enrollRustDevice(options, f.jwt());
-  async function withProvider<T>(provide: (context: ActionContext) => unknown, run: (origin: string) => Promise<T>) {
-    let providerFailure: unknown;
-    const server = createServer(async (req, res) => {
-      try {
-        let raw = '';
-        for await (const chunk of req) raw += chunk;
-        res.end(JSON.stringify(await provide(JSON.parse(raw))));
-      } catch (error) {
-        providerFailure = error;
-        res.writeHead(502).end();
-      }
-    });
-    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-    try {
-      const address = server.address();
-      assert(address && typeof address !== 'string');
-      return await run(`http://127.0.0.1:${address.port}`);
-    } catch (error) {
-      throw providerFailure ?? error;
-    } finally {
-      server.closeAllConnections();
-      await new Promise<void>(resolve => server.close(() => resolve()));
-    }
-  }
   return {
     deviceId: () => deviceId,
     runTask: (taskId: string, provide: (context: ActionContext) => unknown) =>
-      withProvider(provide, origin => runRustDeviceTask(options, taskId, origin)),
+      withDeviceProvider(provide, origin => runRustDeviceTask(options, taskId, origin)),
     crashTask: (taskId: string, provide: (context: ActionContext) => unknown, checkpoint: string) =>
-      withProvider(provide, origin => crashRustDeviceTask(options, taskId, origin, checkpoint)),
+      withDeviceProvider(provide, origin => crashRustDeviceTask(options, taskId, origin, checkpoint)),
   };
 }
 
@@ -2577,7 +2564,7 @@ test('home execution loop uses explicit uncertainty retry reservation and never 
 });
 
 test('home execution loop consumes resolved late-known output without repeating its provider call', async () => {
-  const f = await fixture(), keys = memoryKeys(), database = join(f.dir, 'known-loop.sqlite'), runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: keys.entry }), originalFetch = globalThis.fetch;
+  const f = await fixture(), database = join(f.dir, 'known-loop.sqlite'), runtime = f.device(database), originalFetch = globalThis.fetch;
   try {
     await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
     const { taskId } = await loopTask(f, runtime); let calls = 0, prepared: Record<string, any> = {}, lastReport: Record<string, any> = {};
@@ -2595,9 +2582,7 @@ test('home execution loop consumes resolved late-known output without repeating 
     await connection.stop(); await runtime.close();
     const recovery = await f.send(`/api/tasks/${taskId}/recovery-session`, { requestId: randomUUID(), expectedAuthorityGeneration: prepared.ownership.authorityGeneration, sourceDeviceId: home.id, sourceDeviceGeneration: prepared.ownership.deviceGeneration });
     assert.equal(recovery.status, 201);
-    const keyring = database + '.keys.json';
-    writeFileSync(keyring, JSON.stringify(Object.fromEntries(keys.values)), { mode: 0o600 });
-    const exported = exportRustDeviceRecovery({ database, keyring, server: f.origin() }, taskId, [String(prepared.actionId)], randomUUID(), recovery.body.data.recoveryGeneration, true);
+    const exported = exportRustDeviceRecovery(runtime.options, taskId, [String(prepared.actionId)], randomUUID(), recovery.body.data.recoveryGeneration, true);
     const response = await fetch(f.origin() + `/api/tasks/${taskId}/recovery-results`, { method: 'POST', headers: { Authorization: `Bearer ${f.jwt()}`, Origin: f.origin(), 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': exported.requestId, 'X-Briefsip-Recovery': recovery.body.data.session }, body: JSON.stringify(exported) });
     assert.equal(response.status, 200, await response.text());
     assert.equal(exported.envelope.entries[0].effectStatus, 'known');
@@ -2634,7 +2619,7 @@ test('home execution loop persists provider wait across reply loss and preserves
 });
 
 test('home execution loop holds missing bindings and enforces provider slots before dispatch', async () => {
-  const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'capacity-loop.sqlite'), server: f.origin(), development: true, entry: keys.entry });
+  const f = await fixture(), runtime = f.device(join(f.dir, 'capacity-loop.sqlite'));
   const releases: (() => void)[] = [], running: Promise<unknown>[] = [];
   const hold = () => new Promise<unknown>(resolve => { releases.push(() => resolve({ text: 'Released answer' })); });
   try {
@@ -2659,8 +2644,8 @@ test('home execution loop holds missing bindings and enforces provider slots bef
 });
 
 for (const lostAt of ['request', 'reply', 'receipt', 'revoked', 'storage'] as const) test(`canonical completion recovery handles ${lostAt} without another provider call`, async () => {
-  const f = await fixture(), keys = memoryKeys(), database = join(f.dir, 'completion-home.sqlite');
-  let runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: keys.entry });
+  const f = await fixture(), database = join(f.dir, 'completion-home.sqlite');
+  let runtime = f.device(database);
   const originalFetch = globalThis.fetch;
   let calls = 0;
   try {
@@ -2696,7 +2681,7 @@ for (const lostAt of ['request', 'reply', 'receipt', 'revoked', 'storage'] as co
       const db = new DatabaseSync(database);
       try { db.exec("CREATE TRIGGER fail_recovery_marker BEFORE UPDATE OF intent_json ON device_journal WHEN json_extract(NEW.intent_json,'$.completionError') IS NOT NULL BEGIN SELECT RAISE(ABORT,'completion marker write failed'); END"); } finally { db.close(); }
     }
-    runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: keys.entry });
+    runtime = f.device(database);
     const reconnected = runtime.connect(); await until(() => reconnected.state().phase === 'connected');
     await until(() => runtime.recoveryStatus().results.some(row => row.actionId === actionId && (lostAt === 'storage' ? row.error === 'recovery_storage_unavailable' : lostAt === 'revoked' ? row.error === 'execution_denied' : row.state === 'completed')));
     if (lostAt === 'storage') {
@@ -2707,7 +2692,7 @@ for (const lostAt of ['request', 'reply', 'receipt', 'revoked', 'storage'] as co
     if (lostAt === 'revoked' || lostAt === 'storage') {
       assert.deepEqual(await runtime.recoverPending(), []);
       await runtime.close();
-      runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: keys.entry });
+      runtime = f.device(database);
       const restarted = runtime.connect(); await until(() => restarted.state().phase === 'connected');
       assert.deepEqual(await runtime.recoverPending(), []);
       const db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
@@ -2723,7 +2708,7 @@ for (const lostAt of ['request', 'reply', 'receipt', 'revoked', 'storage'] as co
     assert.equal(detail.state, 'completed'); assert.equal(detail.results.length, 1); assert.equal(calls, 1);
     assert.deepEqual(await runtime.recoverPending(), []);
     await runtime.close();
-    runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: keys.entry });
+    runtime = f.device(database);
     const restarted = runtime.connect(); await until(() => restarted.state().phase === 'connected');
     assert.deepEqual(await runtime.recoverPending(), []);
     const inspect = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
@@ -2737,7 +2722,7 @@ for (const lostAt of ['request', 'reply', 'receipt', 'revoked', 'storage'] as co
 });
 
 for (const scenario of ['pause', 'cancel', 'latest', 'invalid', 'setup', 'revoked'] as const) test(`canonical completion enforces ${scenario} through signed HTTP`, async () => {
-  const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'completion-controls.sqlite'), server: f.origin(), development: true, entry: keys.entry });
+  const f = await fixture(), runtime = f.device(join(f.dir, 'completion-controls.sqlite'));
   const protocolCode = (expected: string) => (error: unknown) => error instanceof ProtocolError && error.code === expected;
   try {
     await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
@@ -2810,9 +2795,9 @@ test('canonical listener rejects a second server on the same database and releas
 });
 
 test('cross-device reassign survives lost reply and restart, preserves old results and waits for fixed recipient home', async () => {
-  const f = await fixture(), a = memoryKeys(), b = memoryKeys();
-  const first = openDeviceRuntime({ database: join(f.dir,'a.sqlite'), server: f.origin(), development: true, entry: a.entry });
-  const second = openDeviceRuntime({ database: join(f.dir,'b.sqlite'), server: f.origin(), development: true, entry: b.entry });
+  const f = await fixture();
+  const first = f.device(join(f.dir,'a.sqlite'));
+  const second = f.device(join(f.dir,'b.sqlite'));
   const originalFetch = globalThis.fetch;
   let effects = 0;
   try {
@@ -2925,8 +2910,8 @@ test('device key loss fails closed and concurrent stream replacement fences old 
 });
 
 test('lost enrollment ACK resumes same request and explicit reenroll/rotation preserve home identity', async () => {
-  const f = await fixture(), store = memoryKeys(), database = join(f.dir, 'device.sqlite');
-  let runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: store.entry });
+  const f = await fixture(), database = join(f.dir, 'device.sqlite');
+  let runtime = f.device(database);
   const originalFetch = globalThis.fetch; let drop = true;
   try {
     globalThis.fetch = async (input, init) => {
@@ -2948,8 +2933,8 @@ test('lost enrollment ACK resumes same request and explicit reenroll/rotation pr
     const before = JSON.parse(readFileSync(`${database}.host/identity.json`, 'utf8'));
     const rotated = await runtime.enroll(f.jwt(), 'rotate'); assert.equal(rotated.deviceId, home); assert.equal(rotated.generation, 3);
     const after = JSON.parse(readFileSync(`${database}.host/identity.json`, 'utf8')); assert.notEqual(after.signingRef, before.signingRef); assert.equal(after.descriptor.keyRevision, 2);
-    assert([...store.values.keys()].some(key => key.endsWith('/' + before.signingRef)));
-    await runtime.close(); runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: store.entry });
+    assert([...runtime.keys.values.keys()].some(key => key.endsWith('/' + before.signingRef)));
+    await runtime.close(); runtime = f.device(database);
     const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
   } finally { globalThis.fetch = originalFetch; await runtime.close(); await f.close(); }
 });
@@ -2976,8 +2961,8 @@ test('canonical task HTTP survives lost acceptance response/restart without disp
 });
 
 test('signed host HTTP admission commits once and result ACK survives canonical restart', async () => {
-  const f = await fixture(), store = memoryKeys(), database = join(f.dir, 'device.sqlite');
-  const runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: store.entry });
+  const f = await fixture(), database = join(f.dir, 'device.sqlite');
+  const runtime = f.device(database);
   const originalFetch = globalThis.fetch;
   try {
     await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
@@ -3012,15 +2997,15 @@ test('signed host HTTP admission commits once and result ACK survives canonical 
     const db = new DatabaseSync(database), canonical = fixtureDatabase(join(f.dir,'canonical.sqlite'));
     try {
       const refs = String(db.prepare('SELECT executor_refs_json FROM device_state WHERE id=1').get()!.executor_refs_json), receipts = JSON.stringify(canonical.prepare('SELECT result_json FROM receipts').all());
-      for (const [name, token] of store.values) if (name.includes('/executor/')) { assert(!refs.includes(token)); assert(!receipts.includes(token)); }
+      for (const [name, token] of runtime.keys.values) if (name.includes('/executor/')) { assert(!refs.includes(token)); assert(!receipts.includes(token)); }
       assert.equal(canonical.prepare('SELECT count(*) n FROM task_results').get()!.n, 1);
     } finally { db.close(); canonical.close(); }
   } finally { globalThis.fetch = originalFetch; await runtime.close(); await f.close(); }
 });
 
 test('journal-backed host dispatches once, retries publication only and refuses lost or late commit grants', { timeout: 20000 }, async () => {
-  const f = await fixture(), store = memoryKeys(), database = join(f.dir, 'device.sqlite');
-  const runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: store.entry });
+  const f = await fixture(), database = join(f.dir, 'device.sqlite');
+  const runtime = f.device(database);
   const originalFetch = globalThis.fetch;
   let calls = 0;
   try {
@@ -3202,9 +3187,9 @@ test('stalled normal requests cannot starve control reads and disconnected reque
 });
 
 test('canonical transfer survives lost RPC reply and canonical restart without duplicate successor or caller effects', async () => {
-  const f=await fixture(), keys=memoryKeys(), targetKeys=memoryKeys();
-  const home=openDeviceRuntime({database:join(f.dir,'source.sqlite'),server:f.origin(),development:true,entry:keys.entry});
-  const target=openDeviceRuntime({database:join(f.dir,'target.sqlite'),server:f.origin(),development:true,entry:targetKeys.entry});
+  const f=await fixture();
+  const home=f.device(join(f.dir,'source.sqlite'));
+  const target=f.device(join(f.dir,'target.sqlite'));
   const originalFetch=globalThis.fetch;let effects=0;
   try {
     await home.enroll(f.jwt());await target.enroll(f.jwt());const connection=home.connect();await until(()=>connection.state().phase==='connected');
@@ -3237,10 +3222,9 @@ test('canonical transfer survives lost RPC reply and canonical restart without d
 });
 
 test('owner recovers revoked-device journal through HTTP without device session or repeated effect',async()=>{
-  const f=await fixture(),keys=memoryKeys(),database=join(f.dir,'recover-device.sqlite');
-  const runtime=openDeviceRuntime({database,server:f.origin(),development:true,entry:keys.entry});
-  const keyring = database + '.keys.json';
-  const options = { database, keyring, server: f.origin() };
+  const f=await fixture(),database=join(f.dir,'recover-device.sqlite');
+  const runtime=f.device(database);
+  const options = runtime.options, { keyring } = options;
   const exportRecovery = (...args: Parameters<typeof exportRustDeviceRecovery> extends [unknown, ...infer Rest] ? Rest : never) =>
     exportRustDeviceRecovery(options, ...args);
   const originalFetch=globalThis.fetch;let calls=0;
@@ -3256,7 +3240,7 @@ test('owner recovers revoked-device journal through HTTP without device session 
     await assert.rejects(runtime.executeAction({taskId,actionId,sequence:0,actionKind:'read',ownership:owned.ownership,payload:{operation:'one effect'},context,grantRevision:1},()=>{calls++;return{text:'Original output'};}),/Report offline/);
     globalThis.fetch=originalFetch;
     const current=(await f.send('/api/devices')).body.data[0];assert.equal((await f.send(`/api/devices/${home.id}/revoke`,{requestId:randomUUID(),expectedRevision:current.revision})).status,200);
-    await connection.stop(); await runtime.close(); writeFileSync(keyring, JSON.stringify(Object.fromEntries(keys.values)), { mode: 0o600 });
+    await connection.stop(); await runtime.close();
     const start={requestId:randomUUID(),expectedAuthorityGeneration:owned.ownership.authorityGeneration,sourceDeviceId:home.id,sourceDeviceGeneration:owned.ownership.deviceGeneration};
     const session=await f.send(`/api/tasks/${taskId}/recovery-session`,start);assert.equal(session.status,201,JSON.stringify(session.body));
     assert.equal((await f.send(`/api/tasks/${taskId}/recovery-session`,start)).body.data.session,undefined);
@@ -3281,7 +3265,7 @@ test('owner recovers revoked-device journal through HTTP without device session 
     assert.equal((await send('results',historical)).status,200);
     const local=new DatabaseSync(database);let signingRef:string;
     try{signingRef=String(local.prepare('SELECT signing_ref FROM device_enrollment_keys WHERE device_generation=?').get(owned.ownership.deviceGeneration)!.signing_ref);}finally{local.close();}
-    const keyName=[...keys.values.keys()].find(name=>name.endsWith('/'+signingRef))!,privateKey=keys.values.get(keyName)!;
+    const keyName=[...runtime.keys.values.keys()].find(name=>name.endsWith('/'+signingRef))!,privateKey=runtime.keys.values.get(keyName)!;
     const rotatedKeys = JSON.parse(readFileSync(keyring, 'utf8'));
     assert.equal(rotatedKeys[keyName], privateKey);
     delete rotatedKeys[keyName];
@@ -3293,9 +3277,8 @@ test('owner recovers revoked-device journal through HTTP without device session 
 });
 
 test('disaster recovery imports original host result without original server and never enables dispatch',async()=>{
-  const f=await fixture(),keys=memoryKeys(),database=join(f.dir,'home.sqlite'),runtime=openDeviceRuntime({database,server:f.origin(),development:true,entry:keys.entry});
-  const keyring = database + '.keys.json';
-  const options = { database, keyring, server: f.origin() };
+  const f=await fixture(),database=join(f.dir,'home.sqlite'),runtime=f.device(database);
+  const options = runtime.options;
   const exportRecovery = (...args: Parameters<typeof exportRustDeviceRecovery> extends [unknown, ...infer Rest] ? Rest : never) =>
     exportRustDeviceRecovery(options, ...args);
   const originalFetch=globalThis.fetch;let calls=0,backup:Awaited<ReturnType<typeof workspaceSnapshot>>|undefined;
@@ -3311,7 +3294,7 @@ test('disaster recovery imports original host result without original server and
     await assert.rejects(runtime.executeAction({taskId,actionId,sequence:0,actionKind:'read',ownership:owned.ownership,payload:{operation:'one call'},context,grantRevision:1},()=>{calls++;return{text:'Saved on original host'};}),/Original server lost/);
     await connection.stop();
     await assert.rejects(runtime.startTask(taskId),error=>error instanceof ProtocolError&&error.code==='device_offline');
-    await runtime.close(); writeFileSync(keyring, JSON.stringify(Object.fromEntries(keys.values)), { mode: 0o600 });globalThis.fetch=originalFetch;
+    await runtime.close();globalThis.fetch=originalFetch;
     const source=fixtureDatabase(join(f.dir,'canonical.sqlite'));try{backup=await workspaceSnapshot(source);}finally{source.close();}
     const proof=await f.restoreFrom(backup.file);
     assert.notEqual(proof.recoveryGeneration,owned.ownership.authorityGeneration);
@@ -3341,9 +3324,8 @@ test('disaster recovery imports original host result without original server and
 });
 
 test('disaster recovery quarantines signed post-backup actions and tasks without publishing or admitting them',async()=>{
-  const f=await fixture(),keys=memoryKeys(),database=join(f.dir,'home.sqlite'),runtime=openDeviceRuntime({database,server:f.origin(),development:true,entry:keys.entry});
-  const keyring = database + '.keys.json';
-  const options = { database, keyring, server: f.origin() };
+  const f=await fixture(),database=join(f.dir,'home.sqlite'),runtime=f.device(database);
+  const options = runtime.options;
   const exportRecovery = (...args: Parameters<typeof exportRustDeviceRecovery> extends [unknown, ...infer Rest] ? Rest : never) =>
     exportRustDeviceRecovery(options, ...args);
   const originalFetch=globalThis.fetch;let calls=0,backup:Awaited<ReturnType<typeof workspaceSnapshot>>|undefined;
@@ -3364,7 +3346,7 @@ test('disaster recovery quarantines signed post-backup actions and tasks without
       const owned=await runtime.startTask(taskId),context=await runtime.taskContext(taskId,owned.ownership,owned.revision),actionId=randomUUID();actions.push({taskId,actionId});
       await assert.rejects(runtime.executeAction({taskId,actionId,sequence:0,actionKind:'read',ownership:owned.ownership,payload:{operation:'one call'},context,grantRevision:1},()=>{calls++;return{text:'Keep result on original host'};}),/Original server lost/);
     }
-    await connection.stop(); await runtime.close(); writeFileSync(keyring, JSON.stringify(Object.fromEntries(keys.values)), { mode: 0o600 });globalThis.fetch=originalFetch;const proof=await f.restoreFrom(backup.file);
+    await connection.stop(); await runtime.close();globalThis.fetch=originalFetch;const proof=await f.restoreFrom(backup.file);
     const send=async(taskId:string,body:RecoveryExport,session=proof.session,subject='user_owner')=>{
       const response=await fetch(f.origin()+`/api/tasks/${taskId}/recovery-import`,{method:'POST',headers:{Authorization:`Bearer ${f.jwt(subject)}`,Origin:f.origin(),Connection:'close','Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':body.requestId,'X-Briefsip-Recovery':session},body:JSON.stringify(body)});
       return{status:response.status,body:await response.json()};
@@ -3393,7 +3375,7 @@ test('disaster recovery quarantines signed post-backup actions and tasks without
 });
 
 test('canonical memory RPC isolates projects and retains committed memory after a lost reply',async()=>{
-  const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry});
+  const f=await fixture(),runtime=f.device(join(f.dir,'home.sqlite'));
   const originalFetch=globalThis.fetch;
   try{
     await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
@@ -3433,7 +3415,7 @@ test('canonical memory RPC isolates projects and retains committed memory after 
 });
 
 test('canonical history RPC pages scoped originals and retains exact reads after a lost reply',async()=>{
-  const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry});
+  const f=await fixture(),runtime=f.device(join(f.dir,'home.sqlite'));
   const originalFetch=globalThis.fetch;
   try{
     await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
@@ -3490,7 +3472,7 @@ test('canonical history RPC pages scoped originals and retains exact reads after
 });
 
 test('canonical skill reads recover exact pinned text after lost response, disable and server restart', async () => {
-  const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry});
+  const f=await fixture(),runtime=f.device(join(f.dir,'home.sqlite'));
   const originalFetch=globalThis.fetch;
   try{
     await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
@@ -3540,7 +3522,7 @@ test('canonical skill reads recover exact pinned text after lost response, disab
 });
 
 test('canonical agent directory isolates projects and recovers exact roster after lost reply', async () => {
-  const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry}),originalFetch=globalThis.fetch;
+  const f=await fixture(),runtime=f.device(join(f.dir,'home.sqlite')),originalFetch=globalThis.fetch;
   try{
     await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
     const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),other=randomUUID(),agent=randomUUID(),peer=randomUUID(),foreign=randomUUID();
@@ -3565,7 +3547,7 @@ test('canonical agent directory isolates projects and recovers exact roster afte
 });
 
 test('canonical teammate sends retain one scoped delivery on its fixed home after lost reply and restart', async () => {
-  const f=await fixture(),keys=memoryKeys(),remoteKeys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'sender.sqlite'),server:f.origin(),development:true,entry:keys.entry}),remote=openDeviceRuntime({database:join(f.dir,'recipient.sqlite'),server:f.origin(),development:true,entry:remoteKeys.entry}),originalFetch=globalThis.fetch;
+  const f=await fixture(),runtime=f.device(join(f.dir,'sender.sqlite')),remote=f.device(join(f.dir,'recipient.sqlite')),originalFetch=globalThis.fetch;
   try{
     await runtime.enroll(f.jwt());await remote.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
     const homes=(await f.send('/api/devices')).body.data,home=homes.find((row:{id:string})=>row.id===runtime.deviceId()),otherHome=homes.find((row:{id:string})=>row.id===remote.deviceId()),project=randomUUID(),agent=randomUUID(),peer=randomUUID();
@@ -3602,7 +3584,7 @@ test('canonical teammate sends retain one scoped delivery on its fixed home afte
 });
 
 test('canonical setup creation retains one restricted task and creation receipt after lost response and restart',async()=>{
-  const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'setup-home.sqlite'),server:f.origin(),development:true,entry:keys.entry}),originalFetch=globalThis.fetch;
+  const f=await fixture(),runtime=f.device(join(f.dir,'setup-home.sqlite')),originalFetch=globalThis.fetch;
   try{
     await runtime.enroll(f.jwt());const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),agent=randomUUID(),binding=randomUUID();
     assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Setup'})).status,201);
@@ -3626,7 +3608,7 @@ test('canonical setup creation retains one restricted task and creation receipt 
 });
 
 test('canonical caller interruption retains one notice and fences remote deliveries after lost result and restart',async()=>{
-  const f=await fixture(),keys=memoryKeys(),remoteKeys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'caller.sqlite'),server:f.origin(),development:true,entry:keys.entry}),remote=openDeviceRuntime({database:join(f.dir,'worker.sqlite'),server:f.origin(),development:true,entry:remoteKeys.entry}),originalFetch=globalThis.fetch;
+  const f=await fixture(),runtime=f.device(join(f.dir,'caller.sqlite')),remote=f.device(join(f.dir,'worker.sqlite')),originalFetch=globalThis.fetch;
   let releaseEffect:(()=>void)|undefined;
   try{
     await runtime.enroll(f.jwt());await remote.enroll(f.jwt());const connection=runtime.connect(),remoteConnection=remote.connect();await until(()=>connection.state().phase==='connected'&&remoteConnection.state().phase==='connected');
@@ -3664,7 +3646,7 @@ test('canonical caller interruption retains one notice and fences remote deliver
 });
 
 test('canonical profile edits recover exact result without replacing later edits or current task instructions', async () => {
-  const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry}),originalFetch=globalThis.fetch;
+  const f=await fixture(),runtime=f.device(join(f.dir,'home.sqlite')),originalFetch=globalThis.fetch;
   try{
     await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
     const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),agent=randomUUID();
@@ -3687,7 +3669,7 @@ test('canonical profile edits recover exact result without replacing later edits
 });
 
 test('canonical provider settings use home binding metadata and recover saved result after lost reply', async () => {
-  const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry}),originalFetch=globalThis.fetch;
+  const f=await fixture(),runtime=f.device(join(f.dir,'home.sqlite')),originalFetch=globalThis.fetch;
   try{
     await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
     const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),agent=randomUUID(),binding=randomUUID();
@@ -3715,7 +3697,7 @@ test('canonical provider settings use home binding metadata and recover saved re
 });
 
 test('canonical routine reads and edits isolate project configuration and recover original flow after lost reply', async () => {
-  const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry}),originalFetch=globalThis.fetch;
+  const f=await fixture(),runtime=f.device(join(f.dir,'home.sqlite')),originalFetch=globalThis.fetch;
   try{
     await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
     const home=(await f.send('/api/devices')).body.data[0],project=randomUUID(),other=randomUUID(),agent=randomUUID(),routine=randomUUID(),hidden=randomUUID();
@@ -3771,7 +3753,7 @@ async function routineWebhookFixture() {
 
 test('canonical routine webhook admits once offline and recovers lost response restart edits and rotation', async () => {
   const f = await routineWebhookFixture(), db = fixtureDatabase(join(f.dir, 'canonical.sqlite')), originalFetch = globalThis.fetch;
-  const other = openDeviceRuntime({ database: join(f.dir, 'webhook-other.sqlite'), server: f.origin(), development: true, entry: f.keys.entry });
+  const other = f.device(join(f.dir, 'webhook-other.sqlite'));
   let calls = 0;
   try {
     const secret = f.hook.data.secret, binding = randomUUID(), owner = (await f.send('/api/session')).body.data.accountId;

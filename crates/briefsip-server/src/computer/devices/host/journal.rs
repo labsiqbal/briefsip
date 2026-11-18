@@ -391,7 +391,7 @@ impl Host {
         mut saved: Value,
         runner: &str,
         recover: bool,
-    ) -> Result<()> {
+    ) -> Result<Value> {
         let task = id(&row["task_id"])?;
         let action = id(&row["action_id"])?;
         let request = id(&saved["completeRequestId"])?;
@@ -406,7 +406,7 @@ impl Host {
                 if recover { RECOVERY_TIMEOUT } else { TIMEOUT },
             )
             .await;
-        match response {
+        let response = match response {
             Ok(response) => {
                 self.checkpoint("completion-reply").await;
                 let data = &response["data"];
@@ -438,62 +438,98 @@ impl Host {
                     return Err(receipt_mismatch());
                 }
                 saved["completionReceipt"] = receipt.clone();
+                Ok(response)
             }
             Err(err) if recover && !err.retryable && err.status != 401 => {
                 saved["completionError"] = err.code.into();
+                Err(err)
             }
             Err(err) => return Err(err),
-        }
-        self.db.execute(
-            "UPDATE device_journal SET intent_json=? WHERE action_id=?",
-            params![db::canonical(&saved), action],
-        )?;
-        Ok(())
+        };
+        self.db
+            .execute(
+                "UPDATE device_journal SET intent_json=? WHERE action_id=?",
+                params![db::canonical(&saved), action],
+            )
+            .map_err(|_| {
+                if response.is_err() {
+                    fail(
+                        500,
+                        "recovery_storage_unavailable",
+                        "Could not save the completion recovery error.",
+                    )
+                } else {
+                    Failure::storage()
+                }
+            })?;
+        response
     }
 
-    pub(super) async fn recover_journal(&mut self, token: &str) -> Result<()> {
+    pub(super) async fn recover_action(&mut self, token: &str, row: &Value) -> Result<Value> {
+        let saved = intent(row)?;
+        let ownership = &saved["ownership"];
+        let enrolled = self.identity.descriptor.as_ref().ok_or_else(missing)?;
+        if ownership["taskId"] != row["task_id"]
+            || ownership["deviceGeneration"] != enrolled["deviceGeneration"]
+            || ownership["authorityGeneration"] != enrolled["authorityGeneration"]
+            || ownership["executorGeneration"] != row["executor_generation"]
+        {
+            return Err(fail(
+                409,
+                "ownership_conflict",
+                "Journal evidence belongs to another enrollment.",
+            ));
+        }
+        let runner = self.executor_token(&id(&row["task_id"])?, ownership)?;
+        if row["state"] == "acknowledged" {
+            self.complete_recovered(token, row, saved, &runner, true)
+                .await?;
+            return Ok(json!({"state":"completed"}));
+        }
+        if saved["runner"] == self.executor.as_ref().ok_or_else(missing)?.runner
+            && (row["state"] == "in_flight" || row["send_marker"] == 0)
+        {
+            return Err(fail(
+                409,
+                "recovery_required",
+                "Action is owned by the live runner.",
+            ));
+        }
+        self.reconcile(token, row, &saved, &runner, RECOVERY_TIMEOUT)
+            .await?;
+        latest_row(&self.db, &id(&row["action_id"])?)
+    }
+
+    pub(super) async fn recover_journal(&mut self, token: &str) -> Result<Vec<Value>> {
+        let recovery = self.recovery.clone();
+        let _guard = recovery.lock().await;
         let pending = rows(&self.db, "SELECT j.* FROM device_journal j LEFT JOIN device_outbox o ON o.action_id=j.action_id
             WHERE (j.state<>'acknowledged' AND (o.state IS NULL OR o.state<>'acknowledged')) OR
             (j.state='acknowledged' AND j.action_kind='provider' AND json_extract(j.intent_json,'$.completeRequestId') IS NOT NULL
                 AND json_extract(j.intent_json,'$.completionReceipt') IS NULL AND json_extract(j.intent_json,'$.completionError') IS NULL)
             ORDER BY j.journal_sequence LIMIT 40", [])?;
         if pending.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
         self.acquire_executor()?;
         let deadline = tokio::time::Instant::now() + RECOVERY_TIMEOUT;
+        let mut evidence = Vec::new();
         for row in pending {
-            let result = tokio::time::timeout_at(deadline, async {
-                let saved = intent(&row)?;
-                let ownership = &saved["ownership"];
-                let enrolled = self.identity.descriptor.as_ref().ok_or_else(missing)?;
-                if ownership["taskId"] != row["task_id"]
-                    || ownership["deviceGeneration"] != enrolled["deviceGeneration"]
-                    || ownership["authorityGeneration"] != enrolled["authorityGeneration"]
-                    || ownership["executorGeneration"] != row["executor_generation"]
-                {
-                    return Err(fail(
-                        409,
-                        "ownership_conflict",
-                        "Journal evidence belongs to another enrollment.",
-                    ));
-                }
-                let runner = self.executor_token(&id(&row["task_id"])?, &saved["ownership"])?;
-                if row["state"] == "acknowledged" {
-                    self.complete_recovered(token, &row, saved, &runner, true)
-                        .await
-                } else {
-                    self.reconcile(token, &row, &saved, &runner, RECOVERY_TIMEOUT)
-                        .await
-                }
-            })
-            .await;
+            if self.tasks.is_active(text(&row, "task_id"))? {
+                continue;
+            }
+            let result = tokio::time::timeout_at(deadline, self.recover_action(token, &row)).await;
+            let mut item = json!({"taskId":row["task_id"],"actionId":row["action_id"]});
             match result {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => eprintln!("Device journal recovery deferred: {}", err.code),
+                Ok(Ok(result)) => item["state"] = result["state"].clone(),
+                Ok(Err(err)) => {
+                    eprintln!("Device journal recovery deferred: {}", err.code);
+                    item["error"] = err.code.into();
+                }
                 Err(_) => break,
             }
+            evidence.push(item);
         }
-        Ok(())
+        Ok(evidence)
     }
 }

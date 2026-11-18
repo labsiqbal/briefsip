@@ -67,7 +67,7 @@ impl Host {
         Ok(proof)
     }
 
-    async fn acquire_task(
+    pub(super) async fn acquire_task(
         &mut self,
         token: &str,
         mut record: Value,
