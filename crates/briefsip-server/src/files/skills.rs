@@ -699,3 +699,33 @@ pub async fn handle(state: &AppState, req: Request, parts: &[&str]) -> Result<Re
     })?;
     Ok(json_response(200, result))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pack_migration_preserves_manual_skill_bindings() -> crate::db::Result<()> {
+        let db = Connection::open_in_memory()?;
+        db.execute_batch(
+            "CREATE TABLE agents(id TEXT PRIMARY KEY); INSERT INTO agents VALUES ('a');
+             CREATE TABLE skills(id TEXT PRIMARY KEY,name TEXT NOT NULL,revision INTEGER NOT NULL) STRICT;
+             CREATE TABLE skill_versions(skill TEXT,revision INTEGER,name TEXT,description TEXT,content TEXT,PRIMARY KEY(skill,revision)) STRICT;
+             CREATE TABLE agent_skills(agent TEXT,skill TEXT,version INTEGER,enabled INTEGER,revision INTEGER,removed INTEGER,PRIMARY KEY(agent,skill)) STRICT;
+             INSERT INTO skills VALUES ('s','Manual',1);
+             INSERT INTO skill_versions VALUES ('s',1,'Manual','Description','Content');
+             INSERT INTO agent_skills VALUES ('a','s',1,1,4,0);",
+        )?;
+
+        super::super::init_schema(&db, false)?;
+        super::super::init_schema(&db, false)?;
+        let binding = one(&db, "SELECT * FROM agent_skills", []).map_err(|error| error.message)?;
+        assert_eq!(
+            binding,
+            Some(
+                json!({"agent":"a","skill":"s","version":1,"enabled":1,"revision":4,"removed":0,"pack":null})
+            )
+        );
+        Ok(())
+    }
+}

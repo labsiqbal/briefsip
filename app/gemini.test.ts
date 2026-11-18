@@ -5,29 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { geminiChoice, geminiRequest, geminiTokens, geminiURL } from './gemini.ts';
-import { readProviderStream } from './provider-stream.ts';
 import { startApp } from './test-bridge.ts';
-
-test('Gemini translation preserves signed parts and refuses incomplete effects', async () => {
-  const parts = [{ text: 'Reasoning', thought: true }, { functionCall: { name: 'read_history', args: {} }, thoughtSignature: 'signed' }];
-  const choice = geminiChoice({ candidates: [{ content: { role: 'model', parts }, finishReason: 'STOP' }] });
-  const call = choice.message.tool_calls[0];
-  assert.equal(geminiChoice({ candidates: [{ content: { parts: [{ functionCall: { name: 'list_agents' } }] }, finishReason: 'STOP' }] }).message.tool_calls[0].function.arguments, '{}');
-  for (const invalid of [{ text: 'hidden call', functionCall: { name: 'delete_file', args: {} } }, { text: 'bad flag', thought: 'true' }, { functionCall: { name: 'read_history', args: null } }, { functionCall: { name: 'read_history', id: {} } }]) assert.throws(() => geminiChoice({ candidates: [{ content: { role: 'model', parts: [invalid, parts[1]] }, finishReason: 'STOP' }] }));
-  const body = geminiRequest([{ role: 'system', content: 'System' }, { role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AA==' } }] }, { role: 'assistant', content: null, tool_calls: [call] }, { role: 'tool', tool_call_id: call.id, content: '{}' }], [], 100);
-  assert.deepEqual(body.contents[1].parts, parts); assert.equal(body.contents[2].parts[0].functionResponse.name, 'read_history');
-  assert.equal(body.contents[0].parts[0].inlineData.mimeType, 'image/png');
-  assert.equal(choice.message.content, ''); assert.deepEqual(geminiTokens({ promptTokenCount: 3, candidatesTokenCount: 4, thoughtsTokenCount: 2, totalTokenCount: 9 }), [3, 6, 9]);
-  assert.deepEqual(geminiTokens({}), [null, null, null]);
-  for (const model of ['../key', 'bad?key=x', 'x/y']) assert.throws(() => geminiURL('https://example.test/v1beta', model, true));
-  for (const finishReason of ['MAX_TOKENS', 'SAFETY', 'MALFORMED_FUNCTION_CALL']) assert.throws(() => geminiChoice({ candidates: [{ content: { role: 'model', parts }, finishReason }] }));
-  async function* stream(events: unknown[]) { for (const event of events) yield Buffer.from(`data: ${JSON.stringify(event)}\n\n`); }
-  let visible = '';
-  const output = await readProviderStream(stream([{ promptFeedback: { safetyRatings: [] }, candidates: [{ content: { parts: [{ text: 'hidden', thought: true }, { text: 'Hello ' }] } }] }, { candidates: [{ content: { role: 'model', parts: [{ text: 'world' }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 1 } }]), 'gemini', text => { visible = text; });
-  assert.equal(visible, 'Hello world'); assert.equal(geminiChoice(output).message.content, 'Hello world');
-  await assert.rejects(readProviderStream(stream([{ candidates: [{ content: { role: 'model', parts: [{ text: 'partial' }] } }] }]), 'gemini', () => {}));
-});
 
 test('Gemini HTTP streaming, signed tool recovery, models and cancellation', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-gemini-'));

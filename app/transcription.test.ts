@@ -7,18 +7,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 import { DatabaseSync } from 'node:sqlite';
-import { audioFormat, transcriptionUsage, createTranscriber } from './transcription.ts';
 
 function mp4Header(brand: string) {
   const bytes = Buffer.alloc(24); bytes.writeUInt32BE(24); bytes.write('ftyp', 4); bytes.write(brand, 8); bytes.write('isom', 16); bytes.write('mp42', 20); return bytes;
 }
-
-test('audio detection recognizes MP4 brands and rejects malformed ftyp and image containers', () => {
-  for (const brand of ['M4A ', 'M4B ', 'isom', 'mp41', 'mp42', 'iso2', 'iso5', 'iso6']) assert.equal(audioFormat(mp4Header(brand)), 'mp4');
-  for (const brand of ['avif', 'heic', 'mif1', 'xxxx']) assert.equal(audioFormat(mp4Header(brand)), null);
-  for (const size of [0, 1, 8, 15, 17, 25, 0xffffffff]) { const bytes = mp4Header('M4A '); bytes.writeUInt32BE(size); assert.equal(audioFormat(bytes), null); }
-  assert.equal(audioFormat(mp4Header('M4A ').subarray(0, 15)), null);
-});
 
 test('HTTP transcription requires consent, isolates files and never silently replays uncertain requests', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-transcription-'));
@@ -204,22 +196,43 @@ test('transcription rejects redirects and oversized output, and script grants ca
 });
 
 
-test('transcription usage preserves unknown counts, duration and legacy operations', async () => {
-  for (const value of [null, [], 1, { type: 'unknown' }, { type: 'duration', seconds: -1 }, { type: 'duration', seconds: Infinity }, { type: 'duration', seconds: '3' }]) assert.equal(transcriptionUsage(value), null);
-  assert.deepEqual(transcriptionUsage({ type: 'duration', seconds: 1.25 }), { type: 'duration', seconds: 1.25 });
-  assert.deepEqual(transcriptionUsage({ type: 'duration', seconds: 0 }), { type: 'duration', seconds: 0 });
-  assert.equal(transcriptionUsage({ type: 'tokens', input_tokens: '2', output_tokens: -1, total_tokens: 1.1 }), null);
-  const db = new DatabaseSync(':memory:');
-  db.exec("CREATE TABLE files(id TEXT PRIMARY KEY); CREATE TABLE transcriptions(id TEXT PRIMARY KEY,file TEXT NOT NULL,request TEXT NOT NULL,model TEXT NOT NULL,origin TEXT NOT NULL,status TEXT NOT NULL,result TEXT,created TEXT NOT NULL) STRICT; INSERT INTO transcriptions VALUES ('old','file','{}','m','http://localhost','pending',NULL,'2026-01-01');");
-  const transcriber = createTranscriber(db, fn => fn());
+test('Rust upgrades legacy transcription operations and reports unknown and duration usage', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'briefsip-transcription-legacy-'));
+  const database = join(directory, 'state.sqlite');
+  let app = await startApp({ database });
   try {
-    assert.equal(transcriber.info('file', new Uint8Array()).operation?.status, 'uncertain');
-    assert.equal(transcriber.info('file', new Uint8Array()).operation?.usage, null);
-    assert.equal(transcriber.usageSummary()?.unknown, 1);
-    db.prepare('UPDATE transcriptions SET usage=?').run(JSON.stringify(transcriptionUsage({ type: 'duration', seconds: 1.25 })));
-    assert.equal(transcriber.usageSummary()?.seconds, 1.25);
-    assert.equal(transcriber.usageSummary()?.total_tokens, null);
-  } finally { await transcriber.close(); db.close(); }
+    const agent = await (await fetch(app.origin + '/api/agents', {
+      method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ runtime: 'api', id: randomUUID(), name: 'Legacy', model: 'fixture', instructions: 'Help.' }),
+    })).json();
+    const file = randomUUID(), operation = randomUUID(), path = `/api/agents/${agent.id}/files/${file}`;
+    assert.equal((await fetch(app.origin + path, {
+      method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/octet-stream', 'X-File-Name': 'old.wav' },
+      body: 'RIFF0000WAVEfixture',
+    })).status, 200);
+    await app.close();
+    const seed = new DatabaseSync(database);
+    try {
+      seed.exec('ALTER TABLE transcriptions DROP COLUMN usage');
+      seed.prepare("INSERT INTO transcriptions VALUES (?,?,'{}','fixture','http://localhost','pending',NULL,'2026-01-01')").run(operation, file);
+    } finally { seed.close(); }
+    app = await startApp({ database });
+    const endpoint = path + '?transcription=1';
+    const info = await (await fetch(app.origin + endpoint)).json();
+    assert.equal(info.operation.status, 'uncertain');
+    assert.equal(info.operation.usage, null);
+    const usage = async () => (await (await fetch(app.origin + '/api/usage')).json()).transcription;
+    assert.equal((await usage()).unknown, 1);
+    const migrated = new DatabaseSync(database);
+    try {
+      migrated.prepare('UPDATE transcriptions SET usage=? WHERE id=?').run(JSON.stringify({ type: 'duration', seconds: 1.25 }), operation);
+    } finally { migrated.close(); }
+    assert.equal((await usage()).seconds, 1.25);
+    assert.equal((await usage()).total_tokens, null);
+  } finally {
+    await app.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('cancelling streamed transcription persists without publication or replay', async t => {

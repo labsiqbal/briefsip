@@ -10,12 +10,13 @@ import { startRustServer } from './rust-test-server.ts';
 import { runRustConnector, runRustConnectorJournal } from './rust-connectors-runner.ts';
 import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
 import { encryptMail, serializeMailEnvelope } from './mail.ts';
-import { composioToolName } from './composio.ts';
+import { composioToolName } from './test-support/composio-tool-name.ts';
 
 test('Rust Composio approval recovery, revocation, schema checks and uncertain writes remain fenced', async () => {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-composio-')), database = join(root, 'db');
   const key = 'FIXTURE_COMPOSIO_KEY_93', agent = randomUUID(), responses: string[] = [], effects: unknown[] = [];
-  let mode = 'read', disconnected = false;
+  let mode = 'read', disconnected = false, reachedUpstream!: () => void;
+  const upstreamAccepted = new Promise<void>(resolve => { reachedUpstream = resolve; });
   const remote = createServer(async (request, response) => {
     assert.equal(request.headers['x-api-key'], key);
     let raw = ''; for await (const part of request) raw += part;
@@ -26,6 +27,7 @@ test('Rust Composio approval recovery, revocation, schema checks and uncertain w
       response.end(JSON.stringify({ items: ['READ', 'WRITE'].map(kind => ({ slug: `GMAIL_${kind}`, name: kind, description: key, toolkit: { slug: 'gmail' }, version: 'fixture', tags: [kind === 'READ' ? 'readOnlyHint' : 'createHint'], input_parameters: { type: 'object', properties: { target: { type: 'string' } }, required: ['target'], additionalProperties: false } })) })); return;
     }
     effects.push(JSON.parse(raw));
+    if (mode === 'crash') { reachedUpstream(); return; }
     if (mode === 'uncertain') { disconnected = true; request.socket.destroy(); return; }
     response.end(JSON.stringify({ successful: true, data: { result: key } }));
   });
@@ -73,6 +75,27 @@ test('Rust Composio approval recovery, revocation, schema checks and uncertain w
     await request(`${turns}/${uncertain}/app-approvals/${last.id}`, { id: randomUUID(), revision: last.revision, decision: 'allow' });
     await settled(uncertain, row => row.approvals?.some((item: any) => item.state === 'uncertain')); assert(disconnected); assert.equal(effects.length, 3);
     await app.close(); app = await startRustServer(options); assert.equal(effects.length, 3);
+    mode = 'crash';
+    const killed = await run();
+    const beforeCrash = (await settled(killed, row => row.approvals?.some((item: any) => item.state === 'approval'))).approvals[0];
+    await request(`${turns}/${killed}/app-approvals/${beforeCrash.id}`, { id: randomUUID(), revision: beforeCrash.revision, decision: 'allow' });
+    let crashDeadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([upstreamAccepted, new Promise<never>((_, reject) => {
+        crashDeadline = setTimeout(() => reject(new Error('Composio fixture never accepted the pending write.')), 5000);
+      })]);
+    } finally { clearTimeout(crashDeadline); }
+    const dispatched = new DatabaseSync(database);
+    try { assert.equal(dispatched.prepare('SELECT state FROM composio_calls WHERE turn=?').get(killed)!.state, 'running'); }
+    finally { dispatched.close(); }
+    await app.crash();
+    app = await startRustServer(options);
+    const crash = await settled(killed, row => row.status === 'interrupted');
+    assert.equal(crash.approvals[0].state, 'uncertain');
+    await request(`${turns}/${killed}/resume`, { id: randomUUID(), revision: crash.revision, acknowledgeUncertain: true });
+    const failed = await settled(killed, row => row.status === 'failed');
+    assert.match(failed.error, /uncertain/);
+    assert.equal(effects.length, 4, 'Acknowledging uncertainty must never send the write again.');
     assert(!responses.join('').includes(key)); assert(!readFileSync(database).includes(Buffer.from(key)));
   } finally { await app.close(); await Promise.all([close(remote), close(provider)]); rmSync(root, { recursive: true, force: true }); }
 });

@@ -1,16 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { startAudioRecording } from './src/audio-recording.ts';
-import { audioFormat } from './transcription.ts';
-
-test('WebM recognition requires bounded EBML header and exact DocType', () => {
-  const valid = Buffer.from([0x1a,0x45,0xdf,0xa3,0x87,0x42,0x82,0x84,0x77,0x65,0x62,0x6d]);
-  assert.equal(audioFormat(valid), 'webm');
-  for (let n = 0; n < valid.length; n++) assert.equal(audioFormat(valid.subarray(0,n)), null);
-  const wrong = Buffer.from(valid); wrong[8] = 0x6d; assert.equal(audioFormat(wrong), null);
-  const huge = Buffer.from(valid); huge[4] = 0xff; assert.equal(audioFormat(huge), null);
-  const missing = Buffer.from(valid); missing[5] = 0x43; assert.equal(audioFormat(missing), null);
-});
 
 test('microphone lifecycle stops tracks, rejects oversized data and drops late permission after cancellation', async t => {
   const saved = new Map(['MediaRecorder','navigator','isSecureContext'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis,key)]));

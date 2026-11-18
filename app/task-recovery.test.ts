@@ -11,7 +11,7 @@ import { initializeDeviceSchema, transaction } from './schema.ts';
 import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
 import { openExecutorJournal, type ActionContext } from './executor-journal.ts';
 import { initializeMemory, rememberMemory } from './test-support/memory.ts';
-import { initializeSkills, saveSkill } from './skills.ts';
+import { requireSkillSchema as initializeSkills, seedSkillVersion as saveSkill } from './test-support/skill-fixture.ts';
 import { initializeQuestions } from './test-support/questions.ts';
 import { initializeSharedData } from './shared-data.ts';
 import { initializeCompaction } from './test-support/compaction.ts';

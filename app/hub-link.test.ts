@@ -471,7 +471,7 @@ test('computer input requires local approval and action lease; revoke leaves unc
 });
 
 test('connected app calls require local approval and lease; revocation after dispatch is uncertain and never replayed', async t => {
-    const { composioToolName } = await import('./composio.ts');
+    const { composioToolName } = await import('./test-support/composio-tool-name.ts');
     let effects = 0, lose = false, release: () => void = () => {};
     const remote = createServer(async (req, res) => {
         let raw = ''; for await (const chunk of req) raw += chunk;

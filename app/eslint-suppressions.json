@@ -1,22 +1,7 @@
 {
-  "agent-desktop.benchmark.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
-  },
   "cli.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 11
-    }
-  },
-  "composio.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 7
-    }
-  },
-  "gemini.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 5
     }
   },
   "harness.ts": {

@@ -8,9 +8,8 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createInterface } from 'node:readline';
-import { readProviderStream, streamTermination } from './provider-stream.ts';
 import { startApp } from './test-bridge.ts';
-import type { ProviderFamily } from './provider.ts';
+import type { ProviderFamily } from './test-support/provider-endpoint.ts';
 
 const sse = (value: unknown) => `data: ${typeof value === 'string' ? value : JSON.stringify(value)}\n\n`;
 const chunk = (delta: unknown, finish_reason: string | null = null) => ({ choices: [{ index: 0, delta, finish_reason }] });
@@ -20,49 +19,9 @@ const textDelta = (text: string) => ({ type: 'content_block_delta', index: 0, de
 const blockStop = { type: 'content_block_stop', index: 0 };
 const messageDelta = (stop_reason = 'end_turn') => ({ type: 'message_delta', delta: { stop_reason }, usage: { output_tokens: 4 } });
 const messageStop = { type: 'message_stop' };
-async function* bytes(text: string, size = 1) { const value = Buffer.from(text); for (let offset = 0; offset < value.length; offset += size) yield value.subarray(offset, offset + size); }
-
-test('explicit finish-reason compatibility accepts clean EOF but rejects interruption and missing finish', async () => {
-  assert.equal(streamTermination(undefined), 'marker'); assert.throws(() => streamTermination('unknown'));
+test('Rust rejects invalid provider stream termination settings', async () => {
+  await assert.rejects(startApp({ database: ':memory:', streamTermination: 'unknown' }), /stream termination|BRIEFSIP_STREAM_TERMINATION/i);
   await assert.rejects(startApp({ database: ':memory:', provider: 'anthropic', streamTermination: 'finish-reason' }), /only supported/);
-  const complete = [chunk({ content: 'Result' }), chunk({}, 'stop')].map(sse).join('');
-  const result: any = await readProviderStream(bytes(complete), 'openai-compatible', () => {}, 'finish-reason');
-  assert.equal(result.choices[0].message.content, 'Result');
-  await assert.rejects(readProviderStream(bytes(complete), 'openai-compatible', () => {}));
-  await assert.rejects(readProviderStream(bytes(sse(chunk({ content: 'Partial' }))), 'openai-compatible', () => {}, 'finish-reason'));
-  await assert.rejects(readProviderStream(bytes(complete + 'data: {"choices":'), 'openai-compatible', () => {}, 'finish-reason'), /Incomplete SSE/);
-  async function* interrupted() { yield Buffer.from(complete); throw new Error('Socket closed'); }
-  await assert.rejects(readProviderStream(interrupted(), 'openai-compatible', () => {}, 'finish-reason'), /Socket closed/);
-});
-
-test('SSE parsing handles split UTF-8, multiline data, tools and refuses incomplete or malformed streams', async () => {
-  let latest = '';
-  const stream = ': comment\r\n\r\n' + [chunk({ role: 'assistant', content: 'Halo ' }), chunk({ content: '世界' }), chunk({}, 'stop'), { choices: [], usage: { prompt_tokens: 2, completion_tokens: 4, total_tokens: 6 } }, '[DONE]'].map(sse).join('').replaceAll('\n', '\r\n');
-  const result = await readProviderStream(bytes(stream), 'openai-compatible', text => { latest = text; });
-  assert.equal(latest, 'Halo 世界'); assert.deepEqual(result.usage, { prompt_tokens: 2, completion_tokens: 4, total_tokens: 6 });
-  await readProviderStream(bytes(stream.replaceAll('\r\n', '\r')), 'openai-compatible', () => {});
-  const multiline = 'data: {"choices":\ndata: [{"index":0,"delta":{"content":"Yes"},"finish_reason":"stop"}]}\n\n' + sse('[DONE]');
-  await readProviderStream(bytes(multiline), 'openai-compatible', () => {});
-  await assert.rejects(readProviderStream(bytes('event: error\n' + sse(chunk({ content: 'Not an answer' }, 'stop')) + sse('[DONE]')), 'openai-compatible', () => {}));
-  const tools = [chunk({ tool_calls: [{ index: 0, id: 'call', type: 'function', function: { name: 'read_history', arguments: '{' } }] }), chunk({ tool_calls: [{ index: 0, function: { arguments: '}' } }] }), chunk({}, 'tool_calls'), '[DONE]'].map(sse).join('');
-  const tool: any = await readProviderStream(bytes(tools, 17), 'openai-compatible', () => {}); assert.equal(tool.choices[0].message.tool_calls[0].function.arguments, '{}');
-  const extra = { google: { thought_signature: 'opaque-signature' }, vendor: { version: 1 } };
-  const metadata = (value: unknown) => sse(chunk({ tool_calls: [{ index: 0, extra_content: value }] }));
-  const finish = sse(chunk({}, 'tool_calls'));
-  for (const position of ['early', 'late']) {
-    const signed = position === 'early' ? metadata(extra) + tools : tools.replace(finish, metadata(extra) + metadata({ vendor: { version: 1 }, google: extra.google }) + finish);
-    const parsed: any = await readProviderStream(bytes(signed, 3), 'openai-compatible', () => {});
-    assert.deepEqual(parsed.choices[0].message.tool_calls[0].extra_content, extra);
-  }
-  for (const invalid of [null, [], false, 'signature']) await assert.rejects(readProviderStream(bytes(metadata(invalid) + tools), 'openai-compatible', () => {}));
-  await assert.rejects(readProviderStream(bytes(metadata(extra) + metadata({ google: { thought_signature: 'changed' } }) + tools), 'openai-compatible', () => {}), /Conflicting/);
-  const native = [start, { type: 'ping' }, blockStart, textDelta('Native'), blockStop, messageDelta(), messageStop].map(sse).join('');
-  const anthropic: any = await readProviderStream(bytes(native, 3), 'anthropic', () => {}); assert.equal(anthropic.content[0].text, 'Native'); assert.deepEqual(anthropic.usage, { input_tokens: 2, output_tokens: 4, cache_read_input_tokens: 3 });
-  const unknownUsage: any = await readProviderStream(bytes([start, blockStart, textDelta('Answer'), blockStop, { type: 'message_delta', delta: { stop_reason: 'end_turn' } }, messageStop].map(sse).join('')), 'anthropic', () => {});
-  assert.equal(unknownUsage.usage.output_tokens, null);
-  for (const malformed of [sse(chunk({ content: 'Partial' })), sse(chunk({}, 'stop')), sse('[DONE]'), sse(chunk({ tool_calls: [{ index: 1 }] })), sse(chunk({ content: 42 })), sse({ error: { message: 'secret' } }), tools.replace('read_history', 'x'.repeat(201))]) await assert.rejects(readProviderStream(bytes(malformed, 100), 'openai-compatible', () => {}));
-  for (const malformed of [[start, textDelta('wrong')], [start, blockStart, messageDelta(), messageStop], [start, blockStart, blockStop, messageStop], [start, start], [start, { type: 'error', error: { message: 'secret' } }]]) await assert.rejects(readProviderStream(bytes(malformed.map(sse).join(''), 100), 'anthropic', () => {}));
-  await assert.rejects(readProviderStream(bytes('x'.repeat(2 * 1024 * 1024 + 1), 65536), 'openai-compatible', () => {}), /2 MiB/);
 });
 
 for (const family of ['openai-compatible', 'anthropic'] as ProviderFamily[]) test(`${family} streaming persists partial text, gates tools, cancels and resumes without replay`, async () => {

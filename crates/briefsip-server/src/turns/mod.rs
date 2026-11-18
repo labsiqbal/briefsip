@@ -93,6 +93,10 @@ pub fn initialize_canonical(db: &Connection) -> Result<()> {
             "ALTER TABLE queue_edits ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0",
         )?;
     }
+    let columns = all(db, "PRAGMA table_info(transcriptions)", [])?;
+    if !columns.iter().any(|column| column["name"] == "usage") {
+        db.execute("ALTER TABLE transcriptions ADD COLUMN usage TEXT", [])?;
+    }
     Ok(())
 }
 

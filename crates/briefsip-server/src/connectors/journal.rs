@@ -102,3 +102,41 @@ pub fn private_file(path: &Path, limit: u64) -> crate::db::Result<File> {
     }
     Ok(file)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn refuses_concurrent_ownership_and_unsafe_journal_files() -> crate::db::Result<()> {
+        let root = std::env::temp_dir().join(format!("briefsip-journal-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root)?;
+        let result = (|| -> crate::db::Result<()> {
+            for platform in ["slack", "telegram"] {
+                let directory = root.join(platform);
+                let first = Journal::open(&directory, platform)?;
+                assert!(Journal::open(&directory, platform).is_err());
+                assert!(directory.join("owner.lock").exists());
+                drop(first);
+                assert!(!directory.join("owner.lock").exists());
+                drop(Journal::open(&directory, platform)?);
+                let outside = root.join("outside");
+                fs::write(&outside, "KEEP")?;
+                let database = directory.join(format!("{platform}.sqlite"));
+                fs::remove_file(&database)?;
+                symlink(&outside, database)?;
+                let rejected = match Journal::open(&directory, platform) {
+                    Err(error) => error,
+                    Ok(_) => panic!("unsafe journal opened"),
+                };
+                assert!(rejected.to_string().contains("private and regular"));
+                assert!(!directory.join("owner.lock").exists());
+                assert_eq!(fs::read(&outside)?, b"KEEP");
+            }
+            Ok(())
+        })();
+        fs::remove_dir_all(root)?;
+        result
+    }
+}

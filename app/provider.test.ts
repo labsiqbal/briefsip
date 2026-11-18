@@ -5,30 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { anthropicRequest, anthropicChoice, anthropicTokens, providerFamily, providerURL } from './provider.ts';
 import { startApp } from './test-bridge.ts';
-
-test('Anthropic translation preserves message roles, tools and honest usage', () => {
-  const body = anthropicRequest('model', [
-    { role: 'system', content: 'System' }, { role: 'system', content: 'Summary' },
-    { role: 'user', content: 'Question' }, { role: 'user', content: 'Other participant' },
-    { role: 'assistant', content: null, tool_calls: [{ id: 'call', function: { name: 'lookup', arguments: '{"query":"x"}' } }] },
-    { role: 'tool', tool_call_id: 'call', content: 'Result' },
-  ], [{ function: { name: 'lookup', description: 'Read', parameters: { type: 'object' } } }], 2048);
-  assert.equal(body.max_tokens, 2048); assert.equal(body.stream, false);
-  assert.deepEqual(body.system, [{ type: 'text', text: 'System' }, { type: 'text', text: 'Summary' }]);
-  assert.equal(body.messages.length, 3); assert.equal(body.messages[0].content.length, 2);
-  assert.deepEqual(body.messages[1].content, [{ type: 'tool_use', id: 'call', name: 'lookup', input: { query: 'x' } }]);
-  assert.deepEqual(body.messages[2].content, [{ type: 'tool_result', tool_use_id: 'call', content: 'Result' }]);
-  assert.deepEqual(body.tool_choice, { type: 'auto', disable_parallel_tool_use: true });
-  assert.deepEqual(anthropicTokens({ input_tokens: 3, output_tokens: 4, cache_creation_input_tokens: 5, cache_read_input_tokens: 6 }), [14, 4, 18]);
-  assert.deepEqual(anthropicTokens({ input_tokens: 0, output_tokens: 0 }), [0, 0, 0]);
-  assert.deepEqual(anthropicTokens({ input_tokens: 3, output_tokens: 4, cache_read_input_tokens: '6' }), [null, 4, null]);
-  assert.deepEqual(anthropicTokens(null), [null, null, null]);
-  for (const value of [false, {}, { type: 'message', role: 'assistant', content: [{ type: 'thinking', thinking: 'hidden' }] }, { type: 'message', role: 'assistant', content: [{ type: 'tool_use', id: 'x', name: 'read', input: [] }] }]) assert.throws(() => anthropicChoice(value));
-  assert.equal(providerFamily(undefined), 'openai-compatible'); assert.throws(() => providerFamily('typo'));
-  for (const base of ['http://public.example/v1', 'https://key:secret@example.com/v1', 'https://example.com/v1?key=secret']) assert.throws(() => providerURL(base, '/messages'));
-});
 
 test('native Anthropic messages, catalog, tools, resume, cancellation and fallback use one explicit provider', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-anthropic-'));

@@ -1,6 +1,5 @@
-import { connectorJournal } from './connector-journal.ts';
 import { runRustConnector } from './rust-connectors-runner.ts';
-import { connectorJournalCommand } from './test-support/connector-journal-command.ts';
+import { connectorJournalCommand, openConnectorJournalFixture } from './test-support/connector-journal-command.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
@@ -57,25 +56,25 @@ test('Telegram offline recovery preserves sent parts and rejects repeated operat
   await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));const address=server.address();assert(address&&typeof address!=='string');
   const remote=telegramApi('123:'+'x'.repeat(24),`http://127.0.0.1:${address.port}`);
   try{
-    let state=connectorJournal(directory,'telegram.sqlite');
-    try{initializeTelegram(state.db);queueTelegramReply(state.db,id,4,2,'a'.repeat(4096)+'tail');await deliverTelegramReply(state.db,id,remote);assert.equal(command('inspect',id).status,1);}finally{state.close();}
+    let state=openConnectorJournalFixture('telegram',directory);
+    try{initializeTelegram(state);queueTelegramReply(state,id,4,2,'a'.repeat(4096)+'tail');await deliverTelegramReply(state,id,remote);}finally{state.close();}
     let inspected=JSON.parse(command('inspect',id).stdout);assert.equal(inspected.reply.status,'uncertain');assert.equal(inspected.reply.part,1);assert.equal(inspected.revision,0);
     assert.equal(command('recover',id,'0','retry').status,1);assert.equal(command('recover',id,'1','retry','--accept-duplicate-risk').status,1);
     assert.equal(command('recover',id,'0','retry','--accept-duplicate-risk').status,0);
-    state=connectorJournal(directory,'telegram.sqlite');try{initializeTelegram(state.db);await deliverTelegramReply(state.db,id,remote);}finally{state.close();}
+    state=openConnectorJournalFixture('telegram',directory);try{initializeTelegram(state);await deliverTelegramReply(state,id,remote);}finally{state.close();}
     assert.equal(calls.length,3);assert.equal(calls[2].text,'tail');
     assert.equal(command('recover',id,'0','retry','--accept-duplicate-risk').status,1,'Old command cannot retry a newly uncertain attempt');
     inspected=JSON.parse(command('inspect',id).stdout);assert.equal(inspected.revision,1);assert.equal(inspected.decisions[0].status,'uncertain');assert.equal(inspected.decisions[0].part,1);
     lost=false;assert.equal(command('recover',id,'1','retry','--accept-duplicate-risk').status,0);
-    state=connectorJournal(directory,'telegram.sqlite');try{initializeTelegram(state.db);await deliverTelegramReply(state.db,id,remote);}finally{state.close();}
+    state=openConnectorJournalFixture('telegram',directory);try{initializeTelegram(state);await deliverTelegramReply(state,id,remote);}finally{state.close();}
     inspected=JSON.parse(command('inspect',id).stdout);assert.equal(inspected.reply.status,'sent');assert.equal(inspected.reply.message_ids,'[1,4]');assert.equal(calls[3].text,'tail');
     assert.equal(command('recover',id,'2','retry','--accept-duplicate-risk').status,1);
-    const rejected=randomUUID();state=connectorJournal(directory,'telegram.sqlite');try{queueTelegramReply(state.db,rejected,4,2,'Rejected');state.db.prepare("UPDATE telegram_outbox SET status='failed',error='Rejected' WHERE id=?").run(rejected);}finally{state.close();}
+    const rejected=randomUUID();state=openConnectorJournalFixture('telegram',directory);try{queueTelegramReply(state,rejected,4,2,'Rejected');state.prepare("UPDATE telegram_outbox SET status='failed',error='Rejected' WHERE id=?").run(rejected);}finally{state.close();}
     assert.equal(command('recover',rejected,'0','discard').status,1);assert.equal(command('recover',rejected,'0','discard','--confirm').status,0);
     inspected=JSON.parse(command('inspect',rejected).stdout);assert.equal(inspected.reply.status,'discarded');assert.equal(inspected.decisions[0].error,'Rejected');
-    state=connectorJournal(directory,'telegram.sqlite');try{initializeTelegram(state.db);await deliverTelegramReply(state.db,rejected,remote);}finally{state.close();}assert.equal(calls.length,4);
+    state=openConnectorJournalFixture('telegram',directory);try{initializeTelegram(state);await deliverTelegramReply(state,rejected,remote);}finally{state.close();}assert.equal(calls.length,4);
     assert.equal(command('recover',rejected,'1','retry','--accept-duplicate-risk').status,1);
-    const interrupted=randomUUID();state=connectorJournal(directory,'telegram.sqlite');try{queueTelegramReply(state.db,interrupted,4,2,'Interrupted');state.db.prepare("UPDATE telegram_outbox SET status='sending' WHERE id=?").run(interrupted);}finally{state.close();}
+    const interrupted=randomUUID();state=openConnectorJournalFixture('telegram',directory);try{queueTelegramReply(state,interrupted,4,2,'Interrupted');state.prepare("UPDATE telegram_outbox SET status='sending' WHERE id=?").run(interrupted);}finally{state.close();}
     inspected=JSON.parse(command('inspect',interrupted).stdout);assert.equal(inspected.reply.status,'uncertain');assert.equal(inspected.revision,0);
     assert.equal(command('recover',interrupted,'0','discard','--confirm').status,0);
   }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));rmSync(directory,{recursive:true,force:true});}
@@ -185,17 +184,13 @@ test('Telegram bridge submits once through granted side-thread API and isolates 
   } finally {db.close();await app.close();provider.closeAllConnections();await new Promise<void>(resolve=>provider.close(()=>resolve()));rmSync(dir,{recursive:true,force:true});}
 });
 
-test('Telegram journal refuses concurrent ownership, unsafe files and mismatched bot startup', async () => {
-  const {mkdtempSync,mkdirSync,rmSync,writeFileSync,symlinkSync,existsSync} = await import('node:fs');
+test('Rust Telegram runner rejects a mismatched bot identity and releases its journal lock', async () => {
+  const {mkdtempSync,rmSync,existsSync} = await import('node:fs');
   const {tmpdir}=await import('node:os');const {join}=await import('node:path');
   const root=mkdtempSync(join(tmpdir(),'briefsip-telegram-lock-'));
   const server=createServer((_req,res)=>res.end(JSON.stringify({ok:true,result:{id:124,is_bot:true}})));
   await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));const address=server.address();assert(address&&typeof address!=='string');
   try{
-    const path=join(root,'safe'),first=connectorJournal(path,'telegram.sqlite');initializeTelegram(first.db);
-    assert.throws(()=>connectorJournal(path,'telegram.sqlite'));first.close();const second=connectorJournal(path,'telegram.sqlite');second.close();
-    const unsafe=join(root,'unsafe');mkdirSync(unsafe,{mode:0o700});writeFileSync(join(root,'outside'),'KEEP');symlinkSync(join(root,'outside'),join(unsafe,'telegram.sqlite'));
-    assert.throws(()=>connectorJournal(unsafe,'telegram.sqlite'),/private and regular/);assert(!existsSync(join(unsafe,'owner.lock')));
     await assert.rejects(runRustConnector('telegram', {directory:join(root,'mismatch'),scriptDirectory:join(root,'absent'),agent:randomUUID(),token:'123:'+'x'.repeat(24),users:[4],origin:`http://127.0.0.1:${address.port}`},new AbortController().signal),/identity mismatch/);
     assert(!existsSync(join(root,'mismatch','owner.lock')));
   }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));rmSync(root,{recursive:true,force:true});}

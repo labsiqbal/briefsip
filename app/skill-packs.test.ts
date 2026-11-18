@@ -1,6 +1,3 @@
-import { DatabaseSync } from 'node:sqlite';
-import { initializeSkills } from './skills.ts';
-import { initializePacks } from './skill-packs.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -56,15 +53,4 @@ test('packs pin members and apply lifecycle atomically without replacing manual 
     assert.deepEqual(restoreSkillCommand(JSON.stringify({ path: '/api/skill-packs', body: create })), { path: '/api/skill-packs', body: create });
     assert.throws(() => restoreSkillCommand(JSON.stringify({ path: '/api/skill-packs', body: { ...create, members: [] } })));
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
-});
-
-test('pack migration preserves existing manual skill bindings', () => {
-  const db = new DatabaseSync(':memory:');
-  try {
-    db.exec("CREATE TABLE agents(id TEXT PRIMARY KEY); INSERT INTO agents VALUES ('a');");
-    initializeSkills(db);
-    db.exec("INSERT INTO skills VALUES ('s','Manual',1); INSERT INTO skill_versions VALUES ('s',1,'Manual','Description','Content'); INSERT INTO agent_skills VALUES ('a','s',1,1,4,0);");
-    initializePacks(db); initializePacks(db);
-    assert.deepEqual({ ...db.prepare('SELECT * FROM agent_skills').get() }, { agent: 'a', skill: 's', version: 1, enabled: 1, revision: 4, removed: 0, pack: null });
-  } finally { db.close(); }
 });
