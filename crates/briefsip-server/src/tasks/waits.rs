@@ -137,8 +137,15 @@ pub fn secret_result(db: &Connection, p: &Principal, v: &Value, now: i64) -> Res
     let request = id(&v["requestId"])?;
     let provision_id = id(&v["provisionId"])?;
     hex(&v["payloadDigest"], "payloadDigest")?;
+    let generation = revision(&v["secretGeneration"], 1)?;
+    revision(&v["sourceDeviceGeneration"], 1)?;
+    let key = string(v, "waitKey");
     if !matches!(string(v, "state"), "ready" | "failed")
-        || v["state"] == "ready" && (!v["secretRef"].is_string() || v.get("errorCode").is_some())
+        || key.is_empty()
+        || key.encode_utf16().count() > 1024
+        || v["state"] == "ready"
+            && (v["secretRef"].as_str() != Some(canonical(&json!([key, generation])).as_str())
+                || v.get("errorCode").is_some())
         || v["state"] == "failed"
             && (!matches!(
                 string(v, "errorCode"),
@@ -231,13 +238,6 @@ pub fn secret_result(db: &Connection, p: &Principal, v: &Value, now: i64) -> Res
     Ok(ack)
 }
 pub fn maintain(db: &Connection, now: i64) -> Result<()> {
-    if !exists(
-        db,
-        "SELECT 1 FROM authority_state WHERE serving_state='active'",
-        [],
-    )? {
-        return Ok(());
-    }
     transaction(db, || {
         for row in all(db,"SELECT w.*,d.account FROM wait_provisions w JOIN devices d ON d.id=w.source_device JOIN tasks t ON t.id=json_extract(w.request_json,'$.provision.target.taskId') WHERE w.state='pending' AND(w.deadline<=? OR t.state<>'running' OR t.revision<>json_extract(w.request_json,'$.command.expectedRevision') OR d.status IN('revoked','blocked') OR d.generation<>w.source_generation) ORDER BY w.deadline,w.id LIMIT 40",[now])?{
             let saved=data::json(&row["request_json"])?;let task=task(db,string(&saved["provision"]["target"],"taskId"))?;

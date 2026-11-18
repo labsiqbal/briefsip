@@ -15,38 +15,45 @@ pub(crate) mod waits;
 pub fn maintain(state: &AppState) -> Result<()> {
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let db = &guard.connection;
-    waits::maintain(db, state.config.now())?;
-    let due=all(db,"SELECT w.id,w.turn,t.id task,t.project,t.state,w.deadline FROM turn_waits w JOIN tasks t ON t.logical_turn=w.turn WHERE w.status='waiting' AND (w.deadline<=? OR t.state IN('cancelled','failed','transferred')) ORDER BY w.deadline,w.id LIMIT 40",[state.config.now()])?;
-    if due.is_empty() {
-        waits::send(db, state.config.now())?;
+    if !exists(
+        db,
+        "SELECT 1 FROM authority_state WHERE id=1 AND serving_state='active'",
+        [],
+    )? {
         return Ok(());
     }
-    transaction(db, || {
-        for wait in due {
-            let expired = n(&wait, "deadline") <= state.config.now();
-            db.execute(
-                "UPDATE turn_waits SET status=? WHERE id=?",
-                [
-                    if expired { "expired" } else { "closed" },
-                    string(&wait, "id"),
-                ],
-            )?;
-            if expired
-                && !matches!(
-                    string(&wait, "state"),
-                    "cancelled" | "completed" | "failed" | "transferred"
-                )
-            {
+    let now = state.config.now();
+    waits::maintain(db, now)?;
+    let due=all(db,"SELECT w.id,w.turn,t.id task,t.project,t.state,w.deadline FROM turn_waits w JOIN tasks t ON t.logical_turn=w.turn WHERE w.status='waiting' AND (w.deadline<=? OR t.state IN('cancelled','failed','transferred')) ORDER BY w.deadline,w.id LIMIT 40",[now])?;
+    if !due.is_empty() {
+        transaction(db, || {
+            for wait in due {
+                let expired = n(&wait, "deadline") <= now;
                 db.execute(
-                    "UPDATE tasks SET state='failed',revision=revision+1 WHERE id=?",
-                    [string(&wait, "task")],
+                    "UPDATE turn_waits SET status=? WHERE id=?",
+                    [
+                        if expired { "expired" } else { "closed" },
+                        string(&wait, "id"),
+                    ],
                 )?;
-                db.execute("UPDATE turns SET status='failed',revision=revision+1,error='Event wait timed out.' WHERE id=?",[string(&wait,"turn")])?;
-                observe(db, &task(db, string(&wait, "task"))?, state.config.now())?;
+                if expired
+                    && !matches!(
+                        string(&wait, "state"),
+                        "cancelled" | "completed" | "failed" | "transferred"
+                    )
+                {
+                    db.execute(
+                        "UPDATE tasks SET state='failed',revision=revision+1 WHERE id=?",
+                        [string(&wait, "task")],
+                    )?;
+                    db.execute("UPDATE turns SET status='failed',revision=revision+1,error='Event wait timed out.' WHERE id=?",[string(&wait,"turn")])?;
+                    observe(db, &task(db, string(&wait, "task"))?, now)?;
+                }
             }
-        }
-        Ok(())
-    })
+            Ok(())
+        })?;
+    }
+    waits::send(db, now)
 }
 
 use crate::{

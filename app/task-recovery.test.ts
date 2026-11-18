@@ -2,11 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID, randomBytes, generateKeyPairSync, sign } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
-import { once } from 'node:events';
+import { execFileSync } from 'node:child_process';
 import type { HumanActor } from './auth.ts';
 import { initializeCanonicalSchema, initializeDeviceSchema } from './schema.ts';
 import { openExecutorJournal, type ActionContext } from './executor-journal.ts';
@@ -17,40 +16,46 @@ import { initializeSharedData } from './shared-data.ts';
 import { initializeCompaction } from './compaction.ts';
 import { initializeFlows } from './flow-store.ts';
 import { initializeSites, saveSite } from './sites.ts';
-import { createProjectAccess } from './project-access.ts';
-import { createDevices, parseLinkChallenge, deviceLinkBody, descriptorBody, type DeviceDescriptor } from './devices.ts';
+import { parseLinkChallenge, deviceLinkBody, descriptorBody, type DeviceDescriptor } from './device-protocol.ts';
 import { canonicalJson, digestCommand, sha256, ProtocolError } from './protocol.ts';
-import { canonicalToolDigest, createTaskRecovery, parseTaskCommand, parseOwnership, journalEntryBody, stopEvidenceBody, recoveryEnvelopeBody, type StopEvidence, type JournalEntry } from './task-recovery.ts';
+import { canonicalToolDigest, parseOwnership, journalEntryBody, stopEvidenceBody, recoveryEnvelopeBody, type StopEvidence, type JournalEntry } from './task-protocol.ts';
 import { prepareRestoreBootstrap, issueRestoreSession, workspaceSnapshot, restoreWorkspace } from './backup.ts';
 import { rustTaskTestBridge } from './rust-task-test-bridge.ts';
+import { startRustServer } from './rust-test-server.ts';
 import { parseWaitProvision } from './wait-provisions.ts';
 import { initializeRoutineConfigurations } from './routine-store.ts';
 
-async function fixture(tools = ['transfer_task']) {
+async function fixture(tools = ['transfer_task'], testPathPrefix?: string) {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-recovery-rust-')), database = join(directory, 'canonical.sqlite');
-  const db = new DatabaseSync(database); initializeCanonicalSchema(db);
+  const db = new DatabaseSync(database); db.exec('PRAGMA busy_timeout=5000'); initializeCanonicalSchema(db);
   const actor = (subject: string): HumanActor => ({ accountId: randomUUID(), issuer: 'https://fixture.example', subject, sessionId: `sess_${subject}`, expiresAt: Date.now() + 60000 });
   const owner = actor('owner'), member = actor('member'), foreign = actor('foreign');
   for (const a of [owner, member, foreign]) db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(a.accountId, a.issuer, a.subject, Date.now());
-  const auth = { requireCurrent(a: HumanActor) { if (db.prepare('SELECT blocked FROM accounts WHERE id=?').get(a.accountId)?.blocked !== 0) throw new ProtocolError(401, 'session_invalid', 'Denied'); return a; }, async verifiedMailboxes() { return []; } };
-  const access = createProjectAccess(db, auth, () => { throw new Error('No mail'); }, tools);
-  const devices = createDevices(db, auth), signing = generateKeyPairSync('ed25519'), installation = generateKeyPairSync('ed25519'), encryption = generateKeyPairSync('x25519');
-  const encoded = (key: typeof signing.publicKey) => key.export({ type: 'spki', format: 'der' }).toString('base64url');
-  const candidate = parseLinkChallenge({ requestId: randomUUID(), installationId: randomUUID(), deviceId: randomUUID(), mode: 'new', installationPublicKey: encoded(installation.publicKey), deviceSigningKey: encoded(signing.publicKey), deviceEncryptionKey: encoded(encryption.publicKey), deviceLabel: 'Home', requestedCapabilities: ['execution'], zone: 'Asia/Jakarta', zoneRevision: 1 });
-  const challenge = devices.createChallenge(owner, candidate, owner.accountId), bytes = Buffer.from(JSON.stringify(deviceLinkBody(candidate, challenge)));
-  const descriptor: Omit<DeviceDescriptor, 'signature'> = { v: 1, accountId: owner.accountId, installationId: candidate.installationId, deviceId: candidate.deviceId, authorityGeneration: challenge.authorityGeneration, deviceGeneration: 1, keyRevision: 1, zone: candidate.zone, zoneRevision: 1, signingPublicKey: candidate.deviceSigningKey, encryptionPublicKey: candidate.deviceEncryptionKey };
-  const linked = devices.link(owner, { requestId: randomUUID(), challengeId: challenge.challengeId, nonce: challenge.nonce, installationSignature: sign(null, bytes, installation.privateKey).toString('base64url'), deviceSignature: sign(null, bytes, signing.privateKey).toString('base64url'), descriptor: { ...descriptor, signature: sign(null, Buffer.from(JSON.stringify(descriptorBody(descriptor))), signing.privateKey).toString('base64url') } }, owner.accountId);
-  const project = randomUUID(), agent = randomUUID(), home = candidate.deviceId;
-  access.createProject(owner, { requestId: randomUUID(), id: project, name: 'A' });
-  await access.createAgent(owner, { requestId: agent, id: agent, name: 'Agent', model: 'fixture', backupModel: '', instructions: 'Research', threadLimit: 2, projectId: project, homeDeviceId: home, expectedProjectRevision: 1, expectedHomeDeviceRevision: 1, providerBinding: null });
-  db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(project, member.accountId);
-  const native = await rustTaskTestBridge(database, signing, String(linked.data.deviceSession)), tasks = native.tasks;
-  function command(change: Record<string, unknown> = {}) {
-    const c = { requestId: randomUUID(), projectId: project, agentId: agent, homeDeviceId: home, payload: { v: 1, kind: 'direct', message: { text: 'Research this', files: [] } }, expectedRevisions: { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 }, ...change };
-    return { ...c, payloadDigest: digestCommand(['briefsip-task-payload-v1', c.requestId, c.projectId, c.agentId, c.homeDeviceId, c.payload, c.expectedRevisions]) };
+  const signing = generateKeyPairSync('ed25519'), installation = generateKeyPairSync('ed25519'), encryption = generateKeyPairSync('x25519');
+  const { tasks, access, devices, close } = await rustTaskTestBridge(database, signing, testPathPrefix);
+  try {
+    const encoded = (key: typeof signing.publicKey) => key.export({ type: 'spki', format: 'der' }).toString('base64url');
+    const candidate = parseLinkChallenge({ requestId: randomUUID(), installationId: randomUUID(), deviceId: randomUUID(), mode: 'new', installationPublicKey: encoded(installation.publicKey), deviceSigningKey: encoded(signing.publicKey), deviceEncryptionKey: encoded(encryption.publicKey), deviceLabel: 'Home', requestedCapabilities: ['execution'], zone: 'Asia/Jakarta', zoneRevision: 1 });
+    const challenge = devices.createChallenge(owner, candidate), bytes = Buffer.from(JSON.stringify(deviceLinkBody(candidate, challenge)));
+    const descriptor: Omit<DeviceDescriptor, 'signature'> = { v: 1, accountId: owner.accountId, installationId: candidate.installationId, deviceId: candidate.deviceId, authorityGeneration: challenge.authorityGeneration, deviceGeneration: 1, keyRevision: 1, zone: candidate.zone, zoneRevision: 1, signingPublicKey: candidate.deviceSigningKey, encryptionPublicKey: candidate.deviceEncryptionKey };
+    devices.link(owner, { requestId: randomUUID(), challengeId: challenge.challengeId, nonce: challenge.nonce, installationSignature: sign(null, bytes, installation.privateKey).toString('base64url'), deviceSignature: sign(null, bytes, signing.privateKey).toString('base64url'), descriptor: { ...descriptor, signature: sign(null, Buffer.from(JSON.stringify(descriptorBody(descriptor))), signing.privateKey).toString('base64url') } });
+    const project = randomUUID(), agent = randomUUID(), home = candidate.deviceId;
+    access.createProject(owner, { requestId: randomUUID(), id: project, name: 'A' });
+    access.createAgent(owner, { requestId: agent, id: agent, name: 'Agent', model: 'fixture', backupModel: '', instructions: 'Research', threadLimit: 2, projectId: project, homeDeviceId: home, expectedProjectRevision: 1, expectedHomeDeviceRevision: 1, providerBinding: null });
+    db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(project, member.accountId);
+    db.prepare('UPDATE agent_projects SET capabilities_json=? WHERE project=? AND agent=?').run(canonicalJson({ v: 1, tools, resources: [] }), project, agent);
+    function command(change: Record<string, unknown> = {}) {
+      const c = { requestId: randomUUID(), projectId: project, agentId: agent, homeDeviceId: home, payload: { v: 1, kind: 'direct', message: { text: 'Research this', files: [] } }, expectedRevisions: { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 }, ...change };
+      return { ...c, payloadDigest: digestCommand(['briefsip-task-payload-v1', c.requestId, c.projectId, c.agentId, c.homeDeviceId, c.payload, c.expectedRevisions]) };
+    }
+    const principal = { deviceId: home, accountId: owner.accountId, generation: 1, authorityGeneration: challenge.authorityGeneration };
+    return { db, owner, member, foreign, project, agent, home, tasks, access, devices, command, signing, principal, async close() { await close(); db.close(); rmSync(directory, { recursive: true, force: true }); } };
+  } catch (error) {
+    await close();
+    db.close();
+    rmSync(directory, { recursive: true, force: true });
+    throw error;
   }
-  const principal = { deviceId: home, accountId: owner.accountId, generation: 1, authorityGeneration: challenge.authorityGeneration };
-  return { db, owner, member, foreign, project, agent, home, tasks, access, devices, command, signing, principal, async close() { await native.close(); devices.close(); db.close(); rmSync(directory, { recursive: true, force: true }); } };
 }
 const code = (expected: string) => (error: unknown) => error instanceof ProtocolError && error.code === expected;
 
@@ -100,8 +105,8 @@ async function preparedTask() {
   return { ...f, taskId, token, ownership, actionId, payloadDigest, lockProof, commit, context };
 }
 
-async function canonicalTaskTools(tools=['ask_user']) {
-  const f=await fixture(tools);
+async function canonicalTaskTools(tools=['ask_user'], testPathPrefix?: string) {
+  const f=await fixture(tools, testPathPrefix);
   const start=(actor=f.owner,payload:Record<string,unknown>={v:1,kind:'direct',message:{text:'Ask first',files:[]}})=>{
     const expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1,...(payload.kind==='channel'?{channel:1}:{}),...(payload.kind==='side'?{thread:1}:{})};
     const command=f.command({payload,expectedRevisions});f.tasks.admit(actor,command);
@@ -266,6 +271,8 @@ test('canonical turn wait reserves one deadline and activates only after matchin
     await assert.rejects(rpc.async(), code('device_offline'));
     assert.equal(f.db.prepare('SELECT deadline FROM wait_provisions').get()!.deadline, row.deadline);
     const result = { requestId: randomUUID(), provisionId: provision.provisionId, payloadDigest: provision.payloadDigest, waitKey: provision.waitKey, secretGeneration: 1, sourceDeviceGeneration: 1, state: 'ready', secretRef: JSON.stringify([provision.waitKey, 1]) };
+    assert.throws(() => f.tasks.waitSecretResult(f.principal, { ...result, secretRef: 'mismatched reference' }), code('wait_invalid'));
+    assert.equal(f.db.prepare('SELECT count(*) n FROM turn_waits').get()!.n, 0);
     const ack = f.tasks.waitSecretResult(f.principal, result);
     assert.equal(ack.data.state, 'activated');
     assert.equal(f.db.prepare('SELECT count(*) n FROM turn_waits').get()!.n, 1);
@@ -305,20 +312,24 @@ test('pending turn wait closes after cancellation, stale target or failed keyrin
   }
 });
 
-test('canonical maintenance expires pending and activated waits once without reviving closed keys', async t => {
+test('canonical maintenance expires pending and activated waits once without reviving closed keys', async () => {
   for (const activated of [false, true]) {
     const f = await canonicalTaskTools(['wait_for_event']);
     try {
-      const task = f.start(), rpc = f.stage(task, { event: 'ready', timeoutSeconds: 60 }, 'wait_for_event');
+      const task = f.start(), rpc = f.stage(task, { event: 'ready', timeoutSeconds: 2 }, 'wait_for_event');
       await assert.rejects(rpc.async(), code('device_offline'));
       const row = f.db.prepare('SELECT * FROM wait_provisions').get()!, provision = parseWaitProvision(JSON.parse(String(row.request_json)).provision);
       const result = { requestId: randomUUID(), provisionId: provision.provisionId, payloadDigest: provision.payloadDigest, waitKey: provision.waitKey, secretGeneration: 1, sourceDeviceGeneration: 1, state: 'ready', secretRef: JSON.stringify([provision.waitKey, 1]) };
       if (activated) f.tasks.waitSecretResult(f.principal, result);
-      t.mock.method(Date, 'now', () => provision.deadline);
-      f.tasks.maintainWaitProvisions();
+      const until = provision.deadline + 5000;
+      while (f.db.prepare('SELECT state FROM tasks WHERE id=?').get(task.taskId)!.state !== 'failed') {
+        assert(Date.now() < until, 'Rust maintenance expires the wait');
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      assert(Date.now() >= provision.deadline);
       assert.equal(f.db.prepare('SELECT state FROM tasks WHERE id=?').get(task.taskId)!.state, 'failed');
       const revision = f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(task.taskId)!.revision;
-      f.tasks.maintainWaitProvisions();
+      await new Promise(resolve => setTimeout(resolve, 1100));
       assert.equal(f.db.prepare('SELECT revision FROM tasks WHERE id=?').get(task.taskId)!.revision, revision);
       if (!activated) {
         assert.equal(f.tasks.waitSecretResult(f.principal, result).data.state, 'closed');
@@ -328,14 +339,14 @@ test('canonical maintenance expires pending and activated waits once without rev
         assert.equal(f.tasks.waitSecretResult(f.principal, result).data.state, 'activated', 'Exact ACK remains immutable after expiry');
       }
       assert.equal(f.db.prepare('SELECT count(*) n FROM task_results').get()!.n, 1);
-    } finally { t.mock.restoreAll(); await f.close(); }
+    } finally { await f.close(); }
   }
 });
 
 test('canonical wait maintenance survives SQLite failure and retries after storage recovers', async () => {
   const f = await canonicalTaskTools(['wait_for_event']);
   let snapshot: Awaited<ReturnType<typeof workspaceSnapshot>> | undefined;
-  let child: ReturnType<typeof spawn> | undefined;
+  let restarted: Awaited<ReturnType<typeof startRustServer>> | undefined;
   try {
     const task = f.start(), rpc = f.stage(task, { event: 'ready', timeoutSeconds: 60 }, 'wait_for_event');
     await assert.rejects(rpc.async(), code('device_offline'));
@@ -344,18 +355,25 @@ test('canonical wait maintenance survives SQLite failure and retries after stora
     snapshot = await workspaceSnapshot(f.db, f.owner.accountId);
     const saved = new DatabaseSync(snapshot.file);
     saved.exec("UPDATE turn_waits SET deadline=0; CREATE TRIGGER fail_wait_maintenance BEFORE UPDATE ON turn_waits BEGIN SELECT RAISE(ABORT,'fixture wait maintenance failure'); END"); saved.close();
-    const source = `import { startCanonicalApp } from ${JSON.stringify(new URL('./test-bridge.ts', import.meta.url).href)};
-      const app=await startCanonicalApp({database:process.argv[1],auth:{secretKey:'sk_test_fixture',publishableKey:'pk_test_'+Buffer.from('fixture.clerk.accounts.dev$').toString('base64'),issuer:'https://fixture.clerk.accounts.dev',origin:'http://127.0.0.1',development:true}});
-      process.on('message',async()=>{await app.close();process.disconnect();});process.send(app.origin);`;
-    child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', source, snapshot.file], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
-    let errors = ''; child.stderr?.on('data', chunk => { errors += String(chunk).slice(0, 2000); });
-    const [origin] = await once(child, 'message', { signal: AbortSignal.timeout(10000) });
+    restarted = await startRustServer({
+      database: snapshot.file,
+      auth: {
+        secretKey: 'sk_test_fixture',
+        publishableKey: 'pk_test_' + Buffer.from('fixture.clerk.accounts.dev$').toString('base64'),
+        issuer: 'https://fixture.clerk.accounts.dev',
+        origin: 'http://127.0.0.1',
+        development: true,
+      },
+    });
     await new Promise(resolve => setTimeout(resolve, 1400));
-    assert.equal(child.exitCode, null, errors);
-    const response = await fetch(origin + '/api/session', { headers: { 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': randomUUID() } });
+    const response = await fetch(restarted.origin + '/api/session', {
+      headers: { 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': randomUUID() },
+      signal: AbortSignal.timeout(5000),
+    });
     assert(response.status >= 400 && response.status < 500);
     const probe = new DatabaseSync(snapshot.file);
     try {
+      probe.exec('PRAGMA busy_timeout=5000');
       assert.equal(probe.prepare('SELECT status FROM turn_waits').get()!.status, 'waiting');
       probe.exec('DROP TRIGGER fail_wait_maintenance');
       const deadline = Date.now() + 5000;
@@ -365,7 +383,7 @@ test('canonical wait maintenance survives SQLite failure and retries after stora
       }
     } finally { probe.close(); }
   } finally {
-    if (child && child.exitCode === null && child.signalCode === null) { const exited = once(child, 'exit'); child.send('close'); await exited; }
+    await restarted?.close();
     snapshot?.cleanup(); await f.close();
   }
 });
@@ -420,21 +438,92 @@ test('canonical shared data keeps schema ownership, collaborator scope, validati
   }finally{await f.close();}
 });
 
+function sharedWorkerGate() {
+  const python = execFileSync('python3', ['-I', '-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).trim();
+  const directory = mkdtempSync(join(tmpdir(), 'briefsip-query-gate-'));
+  const hold = join(directory, 'hold');
+  writeFileSync(join(directory, 'python3'), `#!${python}
+import os, pathlib, sys, time
+
+root = pathlib.Path(__file__).parent
+hold = root / 'hold'
+if len(sys.argv) > 2 and sys.argv[2].endswith('/shared-data-worker.py') and hold.exists():
+    (root / ('started-' + str(os.getpid()))).touch()
+    while hold.exists():
+        time.sleep(0.005)
+
+os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+`, { mode: 0o700 });
+  return {
+    directory,
+    arm() {
+      for (const name of readdirSync(directory)) if (name.startsWith('started-')) rmSync(join(directory, name));
+      writeFileSync(hold, '');
+    },
+    async started(count: number) {
+      const deadline = performance.now() + 2000;
+      while (readdirSync(directory).filter(name => name.startsWith('started-')).length < count) {
+        assert(performance.now() < deadline, 'Rust started the expected shared query workers');
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    },
+    release() { rmSync(hold, { force: true }); },
+    close() { rmSync(directory, { recursive: true, force: true }); },
+  };
+}
+
 test('canonical shared data rechecks cancellation and authority across worker I/O and preserves concurrent conflicts',async()=>{
-  const f=await canonicalTaskTools(['query_data','list_data_tables']);initializeSharedData(f.db,true);
-  try{
-    const first=f.start(),second=f.start(),run=(task:typeof first,sql:string)=>f.stage(task,{sql},'query_data').async();
-    await run(first,'CREATE TABLE notes(text TEXT)');
-    const pending=f.stage(first,{sql:"INSERT INTO notes VALUES ('Once')"},'query_data');
-    const one=pending.async(),two=pending.async();await assert.rejects(pending.async(),code('server_capacity'));
-    const saved=await one;assert.deepEqual(await two,saved);assert.equal(saved.data.resultContent.revision,2);
-    const results=await Promise.all([run(first,"INSERT INTO notes VALUES ('First')"),run(second,"INSERT INTO notes VALUES ('Second')")]);
-    assert.equal(results.filter(result=>typeof result.data.resultContent.error==='string').length,1);assert.match(String(results.find(result=>result.data.resultContent.error)!.data.resultContent.error),/Data changed/);
-    const stale=run(first,"INSERT INTO notes VALUES ('Stale')");f.db.prepare('UPDATE agents SET revision=revision+1 WHERE id=?').run(f.agent);await assert.rejects(stale,code('context_stale'));assert.equal(f.db.prepare('SELECT revision FROM shared_data WHERE project=?').get(f.project)!.revision,3);
-    const cancelled=run(second,"INSERT INTO notes VALUES ('Cancelled')");
-    const revision=Number(f.tasks.lookup(f.owner,second.taskId).data.revision);f.tasks.control(f.owner,second.taskId,{requestId:randomUUID(),expectedRevision:revision,operation:'cancel'});
-    await assert.rejects(cancelled,code('ownership_conflict'));assert.equal(f.db.prepare('SELECT revision FROM shared_data WHERE project=?').get(f.project)!.revision,3);
-  }finally{await f.close();}
+  const gate = sharedWorkerGate();
+  const f = await canonicalTaskTools(['query_data', 'list_data_tables'], gate.directory).catch(error => {
+    gate.close(); throw error;
+  });
+  initializeSharedData(f.db, true);
+  try {
+    const first = f.start(), second = f.start();
+    const stage = (task: typeof first, sql: string) => f.stage(task, { sql }, 'query_data');
+    await stage(first, 'CREATE TABLE notes(text TEXT)').async();
+
+    const pending = stage(first, "INSERT INTO notes VALUES ('Once')");
+    gate.arm();
+    const repeated = Promise.all([pending.async(), pending.async()]);
+    await gate.started(2);
+    await assert.rejects(pending.async(), code('server_capacity'));
+    gate.release();
+    const [saved, duplicate] = await repeated;
+    assert.deepEqual(duplicate, saved);
+    assert.equal(saved.data.resultContent.revision, 2);
+
+    const a = stage(first, "INSERT INTO notes VALUES ('First')"), b = stage(second, "INSERT INTO notes VALUES ('Second')");
+    gate.arm();
+    const concurrent = Promise.all([a.async(), b.async()]);
+    await gate.started(2);
+    gate.release();
+    const results = await concurrent;
+    assert.equal(results.filter(result => typeof result.data.resultContent.error === 'string').length, 1);
+    assert.match(String(results.find(result => result.data.resultContent.error)!.data.resultContent.error), /Data changed/);
+
+    gate.arm();
+    const stale = stage(first, "INSERT INTO notes VALUES ('Stale')").async();
+    const staleRejected = assert.rejects(stale, code('context_stale'));
+    await gate.started(1);
+    f.db.prepare('UPDATE agents SET revision=revision+1 WHERE id=?').run(f.agent);
+    gate.release();
+    await staleRejected;
+    assert.equal(f.db.prepare('SELECT revision FROM shared_data WHERE project=?').get(f.project)!.revision, 3);
+
+    gate.arm();
+    const cancelled = stage(second, "INSERT INTO notes VALUES ('Cancelled')").async();
+    const cancelledRejected = assert.rejects(cancelled, code('ownership_conflict'));
+    await gate.started(1);
+    const revision = Number(f.tasks.lookup(f.owner, second.taskId).data.revision);
+    f.tasks.control(f.owner, second.taskId, { requestId: randomUUID(), expectedRevision: revision, operation: 'cancel' });
+    await cancelledRejected;
+    assert.equal(f.db.prepare('SELECT revision FROM shared_data WHERE project=?').get(f.project)!.revision, 3);
+  } finally {
+    gate.release();
+    await f.close();
+    gate.close();
+  }
 });
 
 test('canonical cancellation kills SQL workers and releases query capacity',async()=>{
@@ -450,8 +539,9 @@ test('canonical cancellation kills SQL workers and releases query capacity',asyn
 
 test('canonical questions validate limits and atomically pause, answer and retain cancellation',async()=>{
   const f=await canonicalTaskTools();
+  let disconnect: (() => void) | undefined;
   try{
-    f.db.prepare("UPDATE devices SET status='ready' WHERE id=?").run(f.home);
+    disconnect = await f.devices.connect(f.principal, 'Asia/Jakarta', 1);
     const task=f.start();
     for(const args of [{question:'?',choices:['Yes',' Yes ']},{question:'',choices:[]},{question:'?',choices:Array(9).fill('x')},{question:'?',choices:[2]},{question:'x'.repeat(2001),choices:[]}])assert.equal((f.stage(task,args)().data.resultContent as {status:number}).status,400);
     assert.deepEqual(f.tasks.lookup(f.owner,task.taskId).data.questions,[]);
@@ -475,7 +565,7 @@ test('canonical questions validate limits and atomically pause, answer and retai
     const stopped=f.tasks.control(f.owner,cancelled.taskId,{requestId:randomUUID(),expectedRevision:pendingResult.receipt.recordRevision,operation:'cancel'});
     assert.deepEqual(pending(),pendingResult);assert.throws(()=>f.tasks.answer(f.owner,cancelled.taskId,pendingId,{requestId:randomUUID(),expectedRevision:stopped.receipt.recordRevision,text:'Late'}),code('question_closed'));
     assert.equal(f.tasks.lookup(f.owner,cancelled.taskId).data.state,'cancelled');
-  }finally{await f.close();}
+  }finally{disconnect?.();await f.close();}
 });
 
 test('canonical question answers enforce private human, conversation, project and current collaborator access',async()=>{
@@ -767,8 +857,8 @@ test('offline task admission is durable, scoped, immutable and exact without pro
     assert.throws(() => f.tasks.admit(f.foreign, command), code('resource_not_found'));
     assert.throws(() => f.tasks.admit(f.member, command), code('execution_denied'));
     assert.throws(() => f.tasks.admit(f.owner, f.command({ expectedRevisions: { ...command.expectedRevisions, capability: 2 } })), code('stale_revision'));
-    assert.throws(() => parseTaskCommand({ ...command, secret: 'forbidden' }), code('unknown_field'));
-    assert.throws(() => parseTaskCommand({ ...command, payload: { ...command.payload, role: 'admin' } }), code('unknown_field'));
+    assert.throws(() => f.tasks.admit(f.owner, { ...command, secret: 'forbidden' }), code('unknown_field'));
+    assert.throws(() => f.tasks.admit(f.owner, { ...command, payload: { ...command.payload, role: 'admin' } }), code('unknown_field'));
     f.db.prepare('UPDATE agent_projects SET revision=2 WHERE project=? AND agent=?').run(f.project, f.agent);
     assert.equal(f.tasks.admit(f.owner, command).status, 200);
     assert.equal(f.tasks.lookup(f.owner, command.requestId).data.currentTaskId, command.requestId);
@@ -796,8 +886,8 @@ test('task messages require files, preserve line breaks, and closed union reject
   try {
     const command = f.command({ payload: { v: 1, kind: 'direct', message: { text: 'First\nSecond\tIndented', files: [] } } });
     assert.equal(f.tasks.admit(f.owner, command).status, 202);
-    assert.throws(() => parseTaskCommand(f.command({ payload: { v: 1, kind: 'direct', message: { text: 'No files' } } })), code('invalid_attachments'));
-    assert.throws(() => parseTaskCommand(f.command({ payload: { v: 1, kind: 'channel', channelId: randomUUID(), threadId: randomUUID(), routing: 'assigned', message: { text: 'Mixed', files: [] } }, expectedRevisions: { ...command.expectedRevisions, channel: 1 } })), code('invalid_task_payload'));
+    assert.throws(() => f.tasks.admit(f.owner, f.command({ payload: { v: 1, kind: 'direct', message: { text: 'No files' } } })), code('invalid_attachments'));
+    assert.throws(() => f.tasks.admit(f.owner, f.command({ payload: { v: 1, kind: 'channel', channelId: randomUUID(), threadId: randomUUID(), routing: 'assigned', message: { text: 'Mixed', files: [] } }, expectedRevisions: { ...command.expectedRevisions, channel: 1 } })), code('invalid_task_payload'));
     assert.throws(() => f.tasks.admit(f.owner, f.command({ payload: { v: 1, kind: 'direct', message: { text: 'Foreign attachment', files: [randomUUID()] } } })), code('resource_not_found'));
     assert.equal(f.db.prepare('SELECT count(*) AS n FROM tasks').get()!.n, 1);
   } finally { await f.close(); }
