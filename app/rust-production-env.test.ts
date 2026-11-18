@@ -46,7 +46,7 @@ test('Rust accepts every production environment name', { skip: process.env.BRIEF
     for (const prefix of ['IMAGE', 'TRANSCRIPTION']) {
       values[`BRIEFSIP_${prefix}_BASE_URL`] = 'http://127.0.0.1:45985/v1'; values[`BRIEFSIP_${prefix}_API_KEY`] = 'dummy-media-key'; values[`BRIEFSIP_${prefix}_MODEL`] = 'fixture';
     }
-    const names = new Set<string>(['BRIEFSIP_TLS_CERT', 'BRIEFSIP_TLS_KEY']);
+    const names = new Set<string>(['BRIEFSIP_TLS_CERT', 'BRIEFSIP_TLS_KEY', 'BRIEFSIP_SERVER_URL', 'BRIEFSIP_ORIGIN', 'BRIEFSIP_CANONICAL_DB', 'CLERK_SECRET_KEY', 'CLERK_PUBLISHABLE_KEY', 'CLERK_ISSUER', 'CLERK_AUDIENCE']);
     const excluded = /(?:\.test\.ts$|-it\.ts$|^rust-|^(?:cli|device-runtime|slack-runner|telegram-runner)\.ts$)/;
     for (const name of readdirSync(import.meta.dirname).filter(name => name.endsWith('.ts') && !excluded.test(name))) {
       const source = readFileSync(join(import.meta.dirname, name), 'utf8');
