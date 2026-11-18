@@ -7,7 +7,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 import { DatabaseSync } from 'node:sqlite';
-import { captureAgentReplies, capturedAgentReplies } from './agent-messages.ts';
 
 test('new user turns capture only ready same-scope group replies once across retries and restart', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-reply-capture-'));
@@ -130,27 +129,4 @@ test('new user turns capture only ready same-scope group replies once across ret
   } finally {
     await app.close(); holdGamma = false; release.splice(0).forEach(resolve => resolve()); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(directory, { recursive: true, force: true });
   }
-});
-
-test('automation ancestry excludes nested result groups from user capture', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-capture-scope-')), database = join(directory, 'state.sqlite');
-  const app = await startApp({ database }); await app.close();
-  const db = new DatabaseSync(database);
-  try {
-    const a = randomUUID(), b = randomUUID(), root = randomUUID(), source = randomUUID(), child = randomUUID(), user = randomUUID(), routine = randomUUID(), group = randomUUID();
-    for (const id of [a, b]) db.prepare('INSERT INTO agents(id,name,model,instructions) VALUES (?,?,?,?)').run(id, id, 'fixture', 'Help');
-    const insert = (id: string, agent: string, parent: string | null, status: string) => db.prepare('INSERT INTO turns(id,agent,parent,text,status,created,reply) VALUES (?,?,?,?,?,?,?)').run(id, agent, parent, 'fixture', status, new Date().toISOString(), status === 'done' ? 'EVIDENCE' : null);
-    insert(root, a, null, 'queued'); insert(source, b, root, 'queued'); insert(child, a, source, 'done'); insert(user, b, null, 'queued');
-    db.prepare('INSERT INTO routines(id,agent,name,prompt,next_at,enabled) VALUES (?,?,?,?,?,?)').run(routine, a, 'Automation', 'Run', Date.now(), 0);
-    db.prepare('INSERT INTO routine_runs(routine,scheduled_at,turn,missed) VALUES (?,?,?,?)').run(routine, null, root, 0);
-    db.prepare('INSERT INTO agent_requests(id,turn,call_id,expects_reply) VALUES (?,?,?,1)').run(group, source, 'call');
-    db.prepare('INSERT INTO agent_deliveries VALUES (?,?)').run(group, child);
-    db.exec('BEGIN'); captureAgentReplies(db, user); db.exec('COMMIT');
-    assert.deepEqual(capturedAgentReplies(db, user), []);
-    db.prepare('DELETE FROM routine_runs WHERE turn=?').run(root);
-    const ordinary = randomUUID(); insert(ordinary, b, null, 'queued');
-    db.exec('BEGIN'); captureAgentReplies(db, ordinary); db.exec('COMMIT');
-    assert.equal(capturedAgentReplies(db, ordinary)[0].reply, 'EVIDENCE');
-    captureAgentReplies(db, user); assert.deepEqual(capturedAgentReplies(db, user), []);
-  } finally { db.close(); rmSync(directory, { recursive: true, force: true }); }
 });

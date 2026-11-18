@@ -8,7 +8,6 @@ import { randomUUID } from 'node:crypto';
 import { createHarnessAdapter, harnessAvailability, harnessRuntimes, type HarnessRuntime, type HarnessStart } from './harness.ts';
 import { initializeHarness } from './harness-store.ts';
 import { startApp } from './test-bridge.ts';
-import { dispatchCapabilities } from './dispatch.ts';
 async function collect<T>(source: AsyncIterable<T>) { const events: T[] = []; for await (const event of source) events.push(event); return events; }
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const source = readFileSync(new URL('./fixtures/fake-acp.mjs', import.meta.url), 'utf8');
@@ -37,7 +36,6 @@ for (const runtime of ['hermes', 'antigravity', 'grok', 'opencode', 'gemini', 'k
       assert.match(sessionPrompt.params.prompt[0].text, /<briefsip_context>\nBriefsip native context/);
       assert.equal(sessionPrompt.params.prompt[1].text, 'hello');
       assert.equal(message.params.clientCapabilities.terminal, false);
-      assert.equal(dispatchCapabilities(runtime).steer, false);
     } finally { await f.close(); }
   });
 }

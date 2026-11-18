@@ -1,5 +1,3 @@
-import { DatabaseSync } from 'node:sqlite';
-import { initializeConversations, maintainConversations, listConversations, conversationSettings, recordDeliveryConversation, deliveryName } from './conversations.ts';
 import { restoreThreadCommand } from './thread-command.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -216,40 +214,6 @@ test('conversation commands protect Main chat, revisions, queued work and delete
     await post('/api/conversations/settings', { id: randomUUID(), autoArchive: false });
     await app.close(); app = await startApp(options); assert.deepEqual(await post(remove, deletion), deleted); assert.deepEqual(await get(list), []); assert.deepEqual(await get('/api/conversations/settings'), { autoArchive: false });
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
-});
-
-test('delivery origin migration, activity ordering, rename retention and seven-day archive use a fake clock', () => {
-  const db = new DatabaseSync(':memory:');
-  db.exec(`CREATE TABLE agents(id TEXT PRIMARY KEY,name TEXT); CREATE TABLE threads(id TEXT PRIMARY KEY,agent TEXT,name TEXT,revision INTEGER DEFAULT 1,archived INTEGER DEFAULT 0,deleted INTEGER DEFAULT 0);
-    CREATE TABLE turns(seq INTEGER,id TEXT PRIMARY KEY,thread TEXT,agent TEXT,parent TEXT,origin TEXT,text TEXT,status TEXT,paused INTEGER DEFAULT 0,reply TEXT);
-    CREATE TABLE agent_deliveries(turn TEXT,request TEXT); CREATE TABLE agent_requests(id TEXT,turn TEXT); CREATE TABLE local_project_threads(thread TEXT);`);
-  try {
-    db.exec(`INSERT INTO agents VALUES ('helper','Helper'),('lead','Right Hand');
-      INSERT INTO threads(id,agent,name) VALUES ('legacy','helper','Message from Right Hand'),('peer','helper','Message from Briefsip: omarchy'),('renamed','helper','Owner title'),('owner','helper','Owner side');
-      UPDATE threads SET revision=2 WHERE id='renamed';
-      INSERT INTO turns VALUES (1,'parent',NULL,'lead',NULL,NULL,'Main','done',0,NULL),(2,'child','legacy','helper','parent',NULL,'Review the release notes','done',0,'Ready'),(3,'remote','peer','helper',NULL,'peer:Briefsip: omarchy','Check cross-machine delivery','done',0,'Ready'),(4,'named','renamed','helper','parent',NULL,'Keep custom title','done',0,'Ready');
-      INSERT INTO agent_requests VALUES ('request','parent'); INSERT INTO agent_deliveries VALUES ('child','request'),('named','request');`);
-    initializeConversations(db);
-    assert.equal(db.prepare("SELECT name FROM threads WHERE id='legacy'").get()!.name, 'Right Hand asked: Review the release notes');
-    assert.equal(db.prepare("SELECT name FROM threads WHERE id='peer'").get()!.name, 'Briefsip on omarchy: Check cross-machine delivery');
-    assert.equal(db.prepare("SELECT name FROM threads WHERE id='renamed'").get()!.name, 'Owner title');
-    assert.equal(listConversations(db, 'helper').filter(row => row.delivery).length, 3);
-    db.exec("UPDATE delivery_conversations SET activity=1 WHERE thread='legacy'; UPDATE delivery_conversations SET activity=2 WHERE thread='peer'");
-    assert(listConversations(db, 'helper').findIndex(row => row.id === 'peer') < listConversations(db, 'helper').findIndex(row => row.id === 'legacy'));
-    initializeConversations(db); assert.equal(db.prepare("SELECT revision FROM threads WHERE id='legacy'").get()!.revision, 2);
-    const day = 86400000, start = 2000000000000;
-    maintainConversations(db, start); maintainConversations(db, start + 7 * day - 1); assert.equal(db.prepare("SELECT archived FROM threads WHERE id='peer'").get()!.archived, 0);
-    db.exec("INSERT INTO turns VALUES (5,'grandchild',NULL,'helper','remote',NULL,'Still working','queued',1,NULL)");
-    maintainConversations(db, start + 7 * day); assert.equal(db.prepare("SELECT archived FROM threads WHERE id='peer'").get()!.archived, 0); assert.equal(db.prepare("SELECT archived FROM threads WHERE id='legacy'").get()!.archived, 1);
-    assert.equal(db.prepare("SELECT archived FROM threads WHERE id='owner'").get()!.archived, 0); assert.equal(db.prepare('SELECT sum(deleted) n FROM threads').get()!.n, 0);
-    db.exec("UPDATE turns SET status='cancelled',paused=0 WHERE id='grandchild'"); maintainConversations(db, start + 8 * day);
-    db.exec('UPDATE conversation_settings SET auto_archive=0'); maintainConversations(db, start + 30 * day); assert.equal(conversationSettings(db).autoArchive, false); assert.equal(db.prepare("SELECT archived FROM threads WHERE id='peer'").get()!.archived, 0);
-    db.exec('UPDATE conversation_settings SET auto_archive=1'); maintainConversations(db, start + 30 * day); assert.equal(db.prepare("SELECT archived FROM threads WHERE id='peer'").get()!.archived, 1);
-    const archivedRevision = db.prepare("SELECT revision FROM threads WHERE id='peer'").get()!.revision; maintainConversations(db, start + 31 * day); assert.equal(db.prepare("SELECT revision FROM threads WHERE id='peer'").get()!.revision, archivedRevision);
-    db.exec("UPDATE threads SET archived=0 WHERE id='peer'; UPDATE delivery_conversations SET settled_at=NULL WHERE thread='peer'"); maintainConversations(db, start + 32 * day); maintainConversations(db, start + 38 * day); assert.equal(db.prepare("SELECT archived FROM threads WHERE id='peer'").get()!.archived, 0);
-    db.exec("INSERT INTO threads(id,agent,name) VALUES ('fresh','helper','Pending')"); recordDeliveryConversation(db, 'fresh', 'Right Hand', 'Inspect   this\nrequest'); assert.equal(db.prepare("SELECT name FROM threads WHERE id='fresh'").get()!.name, 'Right Hand asked: Inspect this request');
-    assert(deliveryName('Agent', 'x'.repeat(100)).length <= 80);
-  } finally { db.close(); }
 });
 
 test('conversation recovery retains exact request and refuses corrupt or foreign routes', () => {

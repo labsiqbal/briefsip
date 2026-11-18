@@ -429,6 +429,7 @@ mod tests {
             "SILENT]",
             "[SILENT] nothing new",
             "Use NO_REPLY here",
+            &"x".repeat(65),
             "\u{feff}NO_REPLY",
         ] {
             assert!(!silent(text)?, "{text}");
@@ -444,6 +445,42 @@ mod tests {
             ["smith", "hand", "lin"]
         );
         assert!(mentions("mail@Ann.com @Annabelle @@Ann", &members)?.is_empty());
+        Ok(())
+    }
+    #[test]
+    fn reply_and_watermark_roll_back_together_on_failed_publication() -> Result<()> {
+        let db = Connection::open_in_memory()?;
+        crate::db::migrate(&db, 0, crate::db::SCHEMA_VERSION).map_err(|_| Failure::storage())?;
+        db.execute_batch(
+            "ALTER TABLE turns ADD COLUMN stopped_at TEXT;
+             INSERT INTO agents(id,name,model,instructions) VALUES ('a','A','fixture','Help');
+             INSERT INTO turns(id,agent,text,status,created) VALUES ('room','a','Brief','running','fixture');
+             INSERT INTO room_discussions(root,members,mentioned) VALUES ('room','[\"a\"]',1);
+             INSERT INTO room_turns(turn,root,round) VALUES ('room','room',1);
+             INSERT INTO room_admissions VALUES ('room',0,15,'Fixture context');
+             CREATE TRIGGER reject_watermark BEFORE INSERT ON room_watermarks
+             BEGIN SELECT RAISE(ABORT,'injected publication failure'); END;",
+        )?;
+        assert!(transaction(&db, || finish(&db, "room", "Must roll back")).is_err());
+        assert_eq!(
+            one(&db, "SELECT status,reply FROM turns WHERE id='room'", [])?,
+            Some(json!({"status":"running","reply":null}))
+        );
+        assert!(!exists(&db, "SELECT 1 FROM room_messages", [])?);
+        assert!(!exists(&db, "SELECT 1 FROM room_watermarks", [])?);
+
+        db.execute_batch("DROP TRIGGER reject_watermark")?;
+        transaction(&db, || finish(&db, "room", "Published reply"))?;
+        assert!(exists(
+            &db,
+            "SELECT 1 FROM room_messages WHERE text='Published reply'",
+            []
+        )?);
+        assert!(exists(
+            &db,
+            "SELECT 1 FROM room_watermarks WHERE through=15",
+            []
+        )?);
         Ok(())
     }
 }

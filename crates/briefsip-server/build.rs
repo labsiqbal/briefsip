@@ -30,27 +30,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             name.to_uppercase()
         ));
     }
-    for (file, name) in [
-        ("agent-visibility.ts", "VISIBILITY"),
-        ("agent-messages.ts", "MESSAGES"),
-        ("agent-delegation.ts", "DELEGATION"),
-        ("remote-agents.ts", "REMOTE"),
-        ("room-chat.ts", "ROOMS"),
-    ] {
-        println!("cargo:rerun-if-changed=../../app/{file}");
-        let source = fs::read_to_string(app.join(file))?;
-        let sql = source
-            .split_once("db.exec(`")
-            .ok_or("Missing schema batch")?
-            .1
-            .split_once("`)")
-            .ok_or("Unclosed schema batch")?
-            .0;
-        if sql.contains("${") {
-            return Err("Schema interpolation needs explicit Rust migration".into());
-        }
-        generated.push_str(&format!("pub const {name}: &str = {sql:?};\n"));
+    println!("cargo:rerun-if-changed=../../app/remote-agents.ts");
+    let source = fs::read_to_string(app.join("remote-agents.ts"))?;
+    let sql = source
+        .split_once("db.exec(`")
+        .ok_or("Missing remote-agent schema batch")?
+        .1
+        .split_once("`)")
+        .ok_or("Unclosed remote-agent schema batch")?
+        .0;
+    if sql.contains("${") {
+        return Err("Schema interpolation needs explicit Rust migration".into());
     }
+    generated.push_str(&format!("pub const REMOTE: &str = {sql:?};\n"));
     fs::write(
         Path::new(&env::var("OUT_DIR")?).join("schema.rs"),
         generated,

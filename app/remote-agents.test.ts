@@ -104,7 +104,7 @@ test('kill switch cancels an active peer turn before any more remote work is adm
   finally{release();await f.close();}
 });
 
-import { resolveAgentTarget } from './agent-delegation.ts';
+import { resolveAgentTarget } from './test-support/agent-delegation.ts';
 test('address resolution keeps exact IDs, refuses ambiguous names and excludes offline rosters',()=>{
   const db=new DatabaseSync(':memory:'),agent=randomUUID(),host=randomUUID();
   try{db.exec('CREATE TABLE agents(id TEXT,name TEXT); CREATE TABLE paired_machines(environment_id TEXT,name TEXT,state TEXT,status TEXT,agents TEXT)');db.prepare('INSERT INTO paired_machines VALUES (?,?,?,?,?)').run(host,'B','paired','online',JSON.stringify([{id:agent,name:'Beta',role:'Personal agent',model:'fixture',status:'idle'}]));assert.deepEqual(resolveAgentTarget('Beta@B',db),{kind:'remote',machine:host,agent});assert.deepEqual(resolveAgentTarget(`${agent}@${host}`,db),{kind:'remote',machine:host,agent});assert.equal(resolveAgentTarget('Beta@Unpaired',db),null);assert.equal(remoteRoster(db)[0].online,true);assert.equal(remoteRoster(db)[0].machine,'B');db.prepare('UPDATE paired_machines SET status=?').run('offline');assert.deepEqual(remoteRoster(db),[]);assert.equal(resolveAgentTarget('Beta@B',db)?.kind,'remote');db.prepare('INSERT INTO paired_machines VALUES (?,?,?,?,?)').run(randomUUID(),'B','paired','online','[]');assert.equal(resolveAgentTarget('Beta@B',db),null);assert.equal(resolveAgentTarget(`${agent}@${host}`,db)?.kind,'remote');}

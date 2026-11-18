@@ -999,10 +999,10 @@
         "cancelDelegatedTask"
       ],
       "sourceSha256": "1953abfb22164a93b918b3c4f55b71533416f0c9f5cfad81a7c837fea8fe4930",
-      "localPath": "app/agent-delegation.ts",
+      "localPath": "crates/briefsip-server/src/turns/messaging.rs",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
-      "adaptation": "Translated durable completion wake and descendant cancellation to SQLite/Node."
+      "adaptation": "Implemented durable completion wake and descendant cancellation in Rust and SQLite."
     },
     {
       "sourcePath": "apps/server/src/mcp/toolkits/orchestrator/handlers.ts",
@@ -1013,7 +1013,7 @@
         "task_cancel"
       ],
       "sourceSha256": "ce9941d24795e63718c13e7c33dce637ac7af8914490173ab78dd4e04b8ca70b",
-      "localPath": "app/agent-delegation.ts",
+      "localPath": "crates/briefsip-server/src/turns/messaging.rs",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "adaptation": "Translated tool contracts to local function tools."
@@ -2433,14 +2433,14 @@
         "t3AcpPromptWithInstructions"
       ],
       "localPaths": [
-        "app/base-instructions.ts",
+        "crates/briefsip-server/src/turns/instructions.json",
         "app/t3/acp-harness.ts"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt compact app guidance, active-tool filtering and ACP context blocks to Briefsip tools and trust boundaries; no T3 orchestration runtime.",
-      "compatibilityCheck": "app/base-instructions.test.ts; app/harness.test.ts; app/acp-harness.test.ts"
+      "compatibilityCheck": "Rust base_guidance_names_only_enabled_tools and codex_context_chunks_preserve_multibyte_text; app/harness.test.ts; app/acp-harness.test.ts"
     },
     {
       "sourcePath": "packages/provider-core/src/server/runtimeInstructions.ts",
@@ -2450,13 +2450,13 @@
         "buildRuntimeInstructions"
       ],
       "localPaths": [
-        "app/base-instructions.ts"
+        "crates/briefsip-server/src/turns/instructions.json"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt runtime identity and inline Markdown file links to Briefsip file URLs; Briefsip extends the app guidance with bounded verification, request review and work-log evidence.",
-      "compatibilityCheck": "app/base-instructions.test.ts; app/harness.test.ts; app/acp-harness.test.ts; app/self-verification.test.ts; app/navigation.test.ts"
+      "compatibilityCheck": "Rust base_guidance_names_only_enabled_tools and codex_context_chunks_preserve_multibyte_text; app/harness.test.ts; app/acp-harness.test.ts; app/self-verification.test.ts; app/navigation.test.ts"
     },
     {
       "sourcePath": "apps/server/src/provider/CodexDeveloperInstructions.ts",
@@ -2467,7 +2467,8 @@
         "buildCodexAdditionalContext"
       ],
       "localPaths": [
-        "app/base-instructions.ts",
+        "app/test-support/additional-context.ts",
+        "crates/briefsip-server/src/harness/store.rs",
         "app/harness.ts",
         "app/harness-store.ts"
       ],
@@ -2475,7 +2476,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt numbered application-context entries capped at 4000 UTF-8 bytes; Claude native system append and ACP prompt context preserve harness prompts.",
-      "compatibilityCheck": "app/base-instructions.test.ts; app/harness.test.ts; app/acp-harness.test.ts"
+      "compatibilityCheck": "Rust base_guidance_names_only_enabled_tools and codex_context_chunks_preserve_multibyte_text; app/harness.test.ts; app/acp-harness.test.ts"
     },
     {
       "sourcePath": "app/base-instructions.ts",

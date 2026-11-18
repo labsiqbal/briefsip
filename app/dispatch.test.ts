@@ -7,7 +7,6 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './test-bridge.ts';
 import { restoreChatCommand } from './conversation-command.ts';
-import { dispatchCapabilities } from './dispatch.ts';
 
 async function until<T>(read: () => T | Promise<T>, predicate: (value: T) => boolean): Promise<T> {
   let last: T | undefined;
@@ -177,13 +176,11 @@ test('fork stores bounded immutable cutoff, same agent, idempotency and channel 
   } finally { await f.close(); }
 });
 
-test('composer recovery validates dispatch mode/target; runtime capability degradation explicit', () => {
+test('composer recovery validates dispatch mode and target', () => {
   const command = { id: randomUUID(), text: 'Guidance', dispatchMode: 'steer', targetTurn: randomUUID() };
   assert.deepEqual(restoreChatCommand(JSON.stringify(command), false), command);
   assert.throws(() => restoreChatCommand(JSON.stringify({ ...command, dispatchMode: 'auto' }), false));
   assert.throws(() => restoreChatCommand(JSON.stringify({ ...command, targetTurn: 'bad' }), false));
-  assert.deepEqual(dispatchCapabilities('api'), { queue: true, restart: true, steer: true });
-  for (const runtime of ['codex', 'claude', 'hermes', 'antigravity', 'grok', 'pi', 'opencode', 'gemini', 'kiro']) assert.equal(dispatchCapabilities(runtime).steer, false);
 });
 
 test('restart during uncertain MCP effect keeps its receipt and never replays external call', async () => {

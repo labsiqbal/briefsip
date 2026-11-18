@@ -8,15 +8,20 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './test-bridge.ts';
 import { visibilityCommand } from './shared/agent-visibility.ts';
-import { messageAgents } from './agent-messages.ts';
 
 test('hidden agents finish active work, hold queue across restart, reject new work and skip missed schedules', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-visibility-'));
-  let held: ServerResponse | undefined; const calls: string[] = [];
+  let held: ServerResponse | undefined; const calls: string[] = [], rosterIds: string[] = [];
   const finish = (res: ServerResponse) => res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Finished' } }] }));
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
-    const text = JSON.parse(raw).messages.at(-1).content; calls.push(text);
+    const last = JSON.parse(raw).messages.at(-1), text = last.content;
+    if (text === 'CHECK ROSTER') return res.end(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ id: 'list', type: 'function', function: { name: 'list_agents', arguments: '{}' } }] } }] }));
+    if (last.role === 'tool') {
+      const result = JSON.parse(text);
+      if (Array.isArray(result.agents)) { rosterIds.push(...result.agents.map((agent: { id: string }) => agent.id)); return finish(res); }
+    }
+    calls.push(text);
     if (text === 'WAIT') return res.end(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ id: 'wait', type: 'function', function: { name: 'wait_for_event', arguments: JSON.stringify({ event: 'ready', timeoutSeconds: 3600 }) } }] } }] }));
     if (text === 'HOLD') held = res; else finish(res);
   });
@@ -74,13 +79,15 @@ test('hidden agents finish active work, hold queue across restart, reject new wo
     await app.close(); app = await startApp(options);
     assert.equal((await request('/api/agents')).agents.find((agent: any) => agent.id === a.id).hidden, true);
     assert.equal((await request(direct)).find((t: any) => t.id === queued).status, 'queued');
+    const source = randomUUID(), rosterPath = `/api/agents/${b.id}/turns`;
+    await request(rosterPath, { id: source, text: 'CHECK ROSTER' }, 202);
+    await until(async () => (await request(rosterPath)).find((t: any) => t.id === source)?.status === 'done');
+    assert(rosterIds.includes(c.id));
+    assert(!rosterIds.includes(a.id));
     await app.close();
     const db = new DatabaseSync(options.database);
-    try {
-      const source = randomUUID(); db.prepare("INSERT INTO turns(id,agent,text,status,created) VALUES (?,?,'source','done','2026-11-11T00:00:00Z')").run(source, b.id);
-      assert(!messageAgents(db, source).some(agent => agent.id === a.id));
-      db.prepare('UPDATE routines SET next_at=? WHERE id=?').run(Date.now() - 180000, routine.id);
-    } finally { db.close(); }
+    try { db.prepare('UPDATE routines SET next_at=? WHERE id=?').run(Date.now() - 180000, routine.id); }
+    finally { db.close(); }
     app = await startApp(options);
     const restore = { id: randomUUID(), revision: 1, hidden: false };
     await request(visibility, restore); await request(visibility, restore);
