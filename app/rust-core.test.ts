@@ -17,7 +17,7 @@ test('core serves exact static bytes, strict asset CSP, HTML 404 and local bound
     const response = await fetch(app.origin + asset);
     const expected = await import('node:fs/promises').then(fs => fs.readFile(new URL('./dist' + asset, import.meta.url)));
     assert.deepEqual(Buffer.from(await response.arrayBuffer()), expected);
-    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal(response.headers.get('cache-control'), 'public, max-age=31536000, immutable');
     assert(!response.headers.get('content-security-policy')!.includes('nonce-'));
     for (const path of ['/missing/path', '/rooms/deleted', '/settings/nope']) {
       const missing = await fetch(app.origin + path); assert.equal(missing.status, 404); assert.match(missing.headers.get('content-type')!, /text\/html/); await missing.text();
