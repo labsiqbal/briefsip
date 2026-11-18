@@ -11,6 +11,7 @@ mod files;
 mod harness;
 mod mcp;
 mod media;
+mod restore;
 mod tasks;
 mod turns;
 mod updates;
@@ -434,6 +435,10 @@ async fn canonical_request(
     } else {
         json!({})
     };
+    if path == "/api/restore/reconcile" && method == Method::POST {
+        let value = restore::reconcile(state, &actor, &body)?;
+        return Ok(json_response(200, json!({"ok":true,"data":value})));
+    }
     if let Some(response) = automation::project::route(
         state,
         &path,
@@ -511,6 +516,15 @@ async fn main() -> db::Result<()> {
     }
     if std::env::args().nth(1).as_deref() == Some("--mcp-stdio") {
         return mcp::stdio().await;
+    }
+    if std::env::args().nth(1).as_deref() == Some("--restore-read-only") {
+        let [source, target]: [std::ffi::OsString; 2] = std::env::args_os()
+            .skip(2)
+            .collect::<Vec<_>>()
+            .try_into()
+            .map_err(|_| "Use --restore-read-only BACKUP NEW_DATABASE.")?;
+        println!("{}", restore::read_only(source.as_ref(), target.as_ref())?);
+        return Ok(());
     }
     let mut config = Config::read()?;
     harness::hydrate(&mut config.harness).await;
@@ -605,6 +619,7 @@ async fn main() -> db::Result<()> {
         .merge(automation::routes())
         .route("/api/session", any(dispatch))
         .route("/api/session/logout", any(dispatch))
+        .route("/api/restore/reconcile", any(dispatch))
         .route("/api/agents", any(dispatch))
         .route("/api/agents/{id}/turns/stream", any(dispatch))
         .route("/api/threads/{id}/turns/stream", any(dispatch))
