@@ -292,7 +292,7 @@ mod tests {
         let encoded = STANDARD.encode(bytes);
         let (result, files) = content(
             &json!({"content":[
-                {"type":"resource","resource":{"uri":"fixture://binary","blob":encoded}},
+                {"type":"resource","resource":{"uri":"file:///fixture/never-opened","blob":encoded}},
                 {"type":"audio","mimeType":"audio/wav","data":encoded},
                 {"type":"resource","resource":{"uri":"fixture://text","text":"untrusted"}},
                 {"type":"resource_link","uri":"https://example.test/file","name":"link"}
@@ -302,7 +302,7 @@ mod tests {
         assert_eq!(files.len(), 2);
         assert_eq!(files[0].1, bytes);
         assert_eq!(files[0].2, "mcp-1.bin");
-        assert_eq!(files[0].4.as_deref(), Some("fixture://binary"));
+        assert_eq!(files[0].4.as_deref(), Some("file:///fixture/never-opened"));
         assert_eq!(files[1].2, "mcp-2.wav");
         assert_eq!(result["omitted"], 1);
         let resource: Value = serde_json::from_str(
