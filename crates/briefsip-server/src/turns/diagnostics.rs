@@ -37,7 +37,7 @@ pub fn bounded(raw: &str) -> String {
     format!("{}\n…", &raw[..raw.floor_char_boundary(MAX_BYTES)])
 }
 
-fn mask_fields(value: &mut Value) {
+fn mask_fields(value: &mut Value, secrets: &[String]) {
     match value {
         Value::Object(fields) => {
             for (key, item) in fields {
@@ -58,11 +58,12 @@ fn mask_fields(value: &mut Value) {
                 {
                     *item = json!("[REDACTED]");
                 } else {
-                    mask_fields(item);
+                    mask_fields(item, secrets);
                 }
             }
         }
-        Value::Array(items) => items.iter_mut().for_each(mask_fields),
+        Value::Array(items) => items.iter_mut().for_each(|item| mask_fields(item, secrets)),
+        Value::String(raw) => *raw = text(raw, secrets),
         _ => {}
     }
 }
@@ -75,7 +76,7 @@ pub fn display(value: &Value, secrets: &[String]) -> Option<String> {
         return Some(bounded(&text(raw, secrets)));
     }
     let mut value = value.clone();
-    mask_fields(&mut value);
+    mask_fields(&mut value, secrets);
     let raw = serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
     Some(bounded(&text(&raw, secrets)))
 }

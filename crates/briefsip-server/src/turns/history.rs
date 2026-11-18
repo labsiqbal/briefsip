@@ -433,7 +433,7 @@ mod tests {
             "value-with spaces",
             "fixture-unconfigured-value",
         ] {
-            assert!(!wire.contains(secret));
+            assert!(!wire.contains(secret), "synthetic secret exposed: {secret}");
         }
         for header in [
             ("origin", "https://foreign.invalid"),
