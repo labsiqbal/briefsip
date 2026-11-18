@@ -2,7 +2,7 @@ use super::{control, error, Result};
 use crate::{web::Failure, AppState};
 use axum::{
     extract::{
-        ws::{Message, WebSocketUpgrade},
+        ws::{CloseFrame, Message, WebSocketUpgrade},
         FromRequestParts, Request,
     },
     response::{IntoResponse, Response},
@@ -12,10 +12,22 @@ use std::{
     collections::HashMap,
     fs::File,
     os::{fd::AsRawFd, unix::fs::FileTypeExt},
-    sync::Mutex,
+    sync::{atomic::Ordering, Mutex},
     time::Duration,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+const PROTOCOL: &str = "briefsip-vnc-v1";
+const SAMPLE_BYTES: usize = 16 * 1024;
+const WRITE_TIMEOUT: Duration = Duration::from_secs(15);
+fn desktop_stopped() -> Failure {
+    Failure::new(409, "desktop_stopped", "Computer is not running.")
+}
+fn viewer_limit() -> Failure {
+    Failure::new(429, "viewer_limit", "Too many computer viewers.")
+}
+fn unavailable() -> Failure {
+    error(503, "Desktop VNC socket is unavailable or unsafe.")
+}
 #[derive(Clone)]
 struct Ticket {
     agent: String,
@@ -53,7 +65,7 @@ impl Viewers {
             return Err(error(409, "Take control before sending computer input."));
         }
         if !matches!(current["state"].as_str(), Some("running" | "idle")) {
-            return Err(error(409, "Computer is not running."));
+            return Err(desktop_stopped());
         }
         let mut tickets = self.tickets.lock().map_err(|_| Failure::storage())?;
         tickets.retain(|_, t| t.expires > s.config.now());
@@ -69,7 +81,7 @@ impl Viewers {
             .unwrap_or(0)
             >= 3
         {
-            return Err(error(429, "Too many computer viewers."));
+            return Err(viewer_limit());
         }
         let token = format!(
             "{}{}",
@@ -97,14 +109,14 @@ fn socket(s: &AppState, agent: &str) -> Result<File> {
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW,
         Mode::empty(),
     )
-    .map_err(|_| error(503, "Desktop VNC socket is unavailable or unsafe."))?;
+    .map_err(|_| unavailable())?;
     let fd = openat(
         &directory,
         "vnc.sock",
         OFlags::PATH | OFlags::NOFOLLOW,
         Mode::empty(),
     )
-    .map_err(|_| error(503, "Desktop VNC socket is unavailable or unsafe."))?;
+    .map_err(|_| unavailable())?;
     let file = File::from(fd);
     if !file
         .metadata()
@@ -112,7 +124,7 @@ fn socket(s: &AppState, agent: &str) -> Result<File> {
         .file_type()
         .is_socket()
     {
-        return Err(error(503, "Desktop VNC socket is unavailable or unsafe."));
+        return Err(unavailable());
     }
     Ok(file)
 }
@@ -132,7 +144,11 @@ pub async fn upgrade(s: AppState, request: Request, agent: String) -> Result<Res
     let (mut parts, _) = request.into_parts();
     let upgrade = WebSocketUpgrade::from_request_parts(&mut parts, &s)
         .await
-        .map_err(|_| error(400, "Invalid WebSocket upgrade."))?;
+        .map_err(|_| error(400, "Invalid WebSocket upgrade."))?
+        .protocols([PROTOCOL, "binary"]);
+    let measured = upgrade
+        .selected_protocol()
+        .is_some_and(|value| value == PROTOCOL);
     let ticket = s
         .computer
         .viewers
@@ -144,36 +160,114 @@ pub async fn upgrade(s: AppState, request: Request, agent: String) -> Result<Res
     if ticket.agent != agent || ticket.origin != origin || ticket.expires <= s.config.now() {
         return Err(error(401, "Computer viewer ticket is invalid or expired."));
     }
-    let d = s
-        .computer
-        .get(&agent)?
-        .ok_or_else(|| error(409, "Computer is not running."))?;
-    let file = socket(&s, &agent)?;
-    let backend = tokio::net::UnixStream::connect(format!("/proc/self/fd/{}", file.as_raw_fd()))
-        .await
-        .map_err(|_| error(503, "Desktop VNC socket is unavailable or unsafe."))?;
-    drop(file);
-    {
+    let connection = async {
+        let desktop = s.computer.get(&agent)?.ok_or_else(desktop_stopped)?;
+        let revoked = desktop.disconnected.subscribe();
+        if desktop.stopped.load(Ordering::SeqCst) {
+            return Err(desktop_stopped());
+        }
+        let file = socket(&s, &agent)?;
+        let backend =
+            tokio::net::UnixStream::connect(format!("/proc/self/fd/{}", file.as_raw_fd()))
+                .await
+                .map_err(|_| unavailable())?;
         let mut active = s
             .computer
             .viewers
             .active
             .lock()
             .map_err(|_| Failure::storage())?;
-        let n = active.entry(agent.clone()).or_default();
-        if *n >= 3 {
-            return Err(error(429, "Too many computer viewers."));
+        let count = active.entry(agent.clone()).or_default();
+        if *count >= 3 {
+            return Err(viewer_limit());
         }
-        *n += 1;
-    }
-    let response=upgrade.max_message_size(262152).max_frame_size(262152).on_upgrade(move|mut ws|async move{let (mut reader,mut writer)=backend.into_split();let mut filter=Filter::default();let mut revoked=d.disconnected.subscribe();let mut buffer=vec![0;65536];let mut heartbeat=tokio::time::interval(Duration::from_secs(30));let mut received=tokio::time::Instant::now();loop{tokio::select!{
- _=revoked.changed()=>break,
- _=heartbeat.tick()=>{if received.elapsed()>Duration::from_secs(90){break;}
-if ws.send(Message::Ping(Vec::new().into())).await.is_err(){break;}},
- data=reader.read(&mut buffer)=>{let Ok(n)=data else{break;};if n==0||tokio::time::timeout(Duration::from_secs(5),ws.send(Message::Binary(buffer[..n].to_vec().into()))).await.is_err(){break;}},
- message=ws.recv()=>{received=tokio::time::Instant::now();match message{Some(Ok(Message::Binary(bytes)))=>{let can=||ticket.mode=="control"&&control::read(&s,&agent).is_ok_and(|v|v["enabled"]==true&&v["control"]["mode"]=="user"&&v["control"]["revision"]==ticket.revision);match filter.feed(&bytes,can()){Ok((output,input))=>{if input{d.activity.store(s.config.now(),std::sync::atomic::Ordering::SeqCst);}
-if !output.is_empty()&&!matches!(tokio::time::timeout(Duration::from_secs(1),writer.write_all(&output)).await,Ok(Ok(()))){break;}},Err(_)=>break}},Some(Ok(Message::Ping(v)))=>{if ws.send(Message::Pong(v)).await.is_err(){break;}},Some(Ok(Message::Pong(_)))=>{},_=>break}}
- }}let _=tokio::time::timeout(Duration::from_secs(1),writer.write_all(&filter.release())).await;let _=writer.shutdown().await;let _=ws.send(Message::Close(None)).await;if let Ok(mut active)=s.computer.viewers.active.lock(){if let Some(n)=active.get_mut(&agent){*n=n.saturating_sub(1);if *n==0{active.remove(&agent);}}}});
+        *count += 1;
+        Ok((desktop, revoked, backend))
+    };
+    let (desktop, mut revoked, backend) = match connection.await {
+        Ok(connection) => connection,
+        Err(error) if measured => {
+            let code = match error.code {
+                "viewer_limit" => 4408,
+                "desktop_stopped" => 4409,
+                _ => 1011,
+            };
+            return Ok(upgrade
+                .on_upgrade(move |mut ws| async move {
+                    let _ = ws
+                        .send(Message::Close(Some(CloseFrame {
+                            code,
+                            reason: "".into(),
+                        })))
+                        .await;
+                })
+                .into_response());
+        }
+        Err(error) => return Err(error),
+    };
+    let response = upgrade.max_message_size(262152).max_frame_size(262152)
+        .on_upgrade(move |mut ws| async move {
+            let (mut reader, mut writer) = backend.into_split();
+            let mut filter = Filter::default();
+            let mut buffer = vec![0; SAMPLE_BYTES];
+            let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
+            let mut received = tokio::time::Instant::now();
+            let sample_sent = !measured || matches!(
+                tokio::time::timeout(WRITE_TIMEOUT, ws.send(Message::Binary(buffer.clone().into()))).await,
+                Ok(Ok(()))
+            );
+            let code = if sample_sent {
+                loop {
+                    tokio::select! {
+                        _ = revoked.changed() => {
+                            break if desktop.stopped.load(Ordering::SeqCst) { 4409 } else { 1000 };
+                        }
+                        _ = heartbeat.tick() => {
+                            if received.elapsed() > Duration::from_secs(90) { break 4410; }
+                            if ws.send(Message::Ping(Vec::new().into())).await.is_err() { break 1011; }
+                        }
+                        data = reader.read(&mut buffer) => {
+                            let Ok(n) = data else { break 1011; };
+                            if n == 0 { break 1011; }
+                            match tokio::time::timeout(WRITE_TIMEOUT, ws.send(Message::Binary(buffer[..n].to_vec().into()))).await {
+                                Ok(Ok(())) => {}
+                                Ok(Err(_)) => break 1011,
+                                Err(_) => break 4410,
+                            }
+                        }
+                        message = ws.recv() => {
+                            received = tokio::time::Instant::now();
+                            match message {
+                                Some(Ok(Message::Binary(bytes))) => {
+                                    let can_input = ticket.mode == "control" && control::read(&s, &agent)
+                                        .is_ok_and(|v| v["enabled"] == true && v["control"]["mode"] == "user" && v["control"]["revision"] == ticket.revision);
+                                    let Ok((output, input)) = filter.feed(&bytes, can_input) else { break 1002; };
+                                    if input { desktop.activity.store(s.config.now(), Ordering::SeqCst); }
+                                    if !output.is_empty() && !matches!(tokio::time::timeout(Duration::from_secs(1), writer.write_all(&output)).await, Ok(Ok(()))) { break 1011; }
+                                }
+                                Some(Ok(Message::Ping(value))) => {
+                                    if ws.send(Message::Pong(value)).await.is_err() { break 1011; }
+                                }
+                                Some(Ok(Message::Pong(_))) => {}
+                                _ => break 1000,
+                            }
+                        }
+                    }
+                }
+            } else {
+                4410
+            };
+            let _ = tokio::time::timeout(Duration::from_secs(1), writer.write_all(&filter.release())).await;
+            let _ = writer.shutdown().await;
+            let close = Message::Close(Some(CloseFrame { code, reason: "".into() }));
+            let _ = tokio::time::timeout(Duration::from_secs(1), ws.send(close)).await;
+            if let Ok(mut active) = s.computer.viewers.active.lock() {
+                if let Some(count) = active.get_mut(&agent) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 { active.remove(&agent); }
+                }
+            }
+        });
     Ok(response.into_response())
 }
 #[derive(Default)]
@@ -250,7 +344,7 @@ impl Filter {
             if n == 0 || b.len() < n {
                 break;
             }
-            let message = self.pending.drain(..n).collect::<Vec<_>>();
+            let mut message = self.pending.drain(..n).collect::<Vec<_>>();
             if self.handshake < 3 {
                 if self.handshake == 0 && message != b"RFB 003.008\n"
                     || self.handshake > 0 && message[0] != 1
@@ -264,6 +358,9 @@ impl Filter {
             let kind = message[0];
             if kind == 251 {
                 continue;
+            }
+            if kind == 2 {
+                limit_continuous_updates(&mut message);
             }
             if [4, 5, 6, 255].contains(&kind) {
                 if !can_input {
@@ -316,9 +413,45 @@ impl Filter {
         output
     }
 }
+fn limit_continuous_updates(message: &mut Vec<u8>) {
+    let encodings = message[4..].chunks_exact(4);
+    if !encodings.clone().any(|code| code == (-32i32).to_be_bytes()) {
+        return;
+    }
+    // Low-quality Tight uses one outstanding framebuffer request at a time.
+    let retained = encodings
+        .filter(|code| *code != (-313i32).to_be_bytes())
+        .flatten()
+        .copied()
+        .collect::<Vec<_>>();
+    message.truncate(4);
+    message[2..4].copy_from_slice(&((retained.len() / 4) as u16).to_be_bytes());
+    message.extend(retained);
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn slow_encodings_keep_tight_and_disable_continuous_updates() -> Result<()> {
+        let mut filter = Filter::default();
+        filter.feed(b"RFB 003.008\n\x01\x01", false)?;
+        let encodings = |quality: i32| {
+            [
+                vec![2, 0, 0, 4],
+                [7, quality, -250, -313].map(i32::to_be_bytes).concat(),
+            ]
+            .concat()
+        };
+        let fast = encodings(-26);
+        assert_eq!(filter.feed(&fast, false)?, (fast, false));
+        let slow = encodings(-32);
+        assert!(filter.feed(&slow[..7], false)?.0.is_empty());
+        let mut expected = slow[..16].to_vec();
+        expected[3] = 3;
+        assert_eq!(filter.feed(&slow[7..], false)?, (expected, false));
+        Ok(())
+    }
+
     #[test]
     fn fragmented_handshake_and_live_input_fence() -> Result<()> {
         let mut f = Filter::default();

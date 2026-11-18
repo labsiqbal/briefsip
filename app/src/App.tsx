@@ -114,12 +114,16 @@ function plainPreview(text?: string) {
 type SidebarSummary = { agent: string; preview: string; time: string | null; status: string };
 type Pending = ChatCommand;
 const statusNames: Record<string, string> = { queued: 'Queued', running: 'Replying', done: 'Done', failed: 'Failed', interrupted: 'Interrupted', cancelled: 'Cancelled' };
-class HttpError extends Error { status: number; constructor(status: number, text: string) { super(text); this.status = status; } }
+class HttpError extends Error {
+  status: number;
+  code?: string;
+  constructor(status: number, text: string, code?: string) { super(text); this.status = status; this.code = code; }
+}
 async function api<T>(path: string, data?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(path, { ...(data ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) } : {}), signal })
     .catch(() => { throw new Error('Briefsip connection lost. Check your connection, then try again.'); });
   const body = await response.json();
-  if (!response.ok) throw new HttpError(response.status, body.error ?? `HTTP ${response.status}`);
+  if (!response.ok) throw new HttpError(response.status, body.error ?? `HTTP ${response.status}`, body.code);
   return body;
 }
 const message = (error: unknown) => error instanceof Error ? error.message : 'Connection failed. Try again.';

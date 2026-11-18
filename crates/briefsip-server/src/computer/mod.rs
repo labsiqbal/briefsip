@@ -147,7 +147,16 @@ async fn entry(State(state): State<AppState>, request: Request) -> Response {
         machines::handle(&state, request).await
     }
     .await;
-    let mut response = result.unwrap_or_else(|e| local_error(e.status, &e.message));
+    let mut response = result.unwrap_or_else(|e| {
+        if path.ends_with("/computer/vnc-ticket") {
+            crate::json_response(
+                e.status,
+                serde_json::json!({"error":e.message,"code":e.code}),
+            )
+        } else {
+            local_error(e.status, &e.message)
+        }
+    });
     crate::security_headers(&mut response);
     response
 }

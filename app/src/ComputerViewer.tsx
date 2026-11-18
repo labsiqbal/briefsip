@@ -11,6 +11,13 @@ import type { ComputerRequest, ComputerStatus } from './AgentComputerPanel';
 import './computer-viewer.css';
 
 type ControlCommand = { id: string; revision: number; operation: 'take' | 'hand-back' | 'dismiss'; turn?: string };
+type ScreenError = 'limit' | 'connection' | 'timeout' | 'stopped';
+const screenErrorText: Record<ScreenError, string> = {
+  limit: 'Viewer limit reached. Close another viewer.',
+  connection: 'Screen connection failed.',
+  timeout: 'Screen connection timed out.',
+  stopped: 'Desktop stopped.',
+};
 export function useComputerControl(agent: string, request: ComputerRequest, suspended = false) {
   const key = `briefsip-computer-control:${agent}`;
   const [status, setStatus] = useState<ComputerStatus | null>(null), [error, setError] = useState('');
@@ -84,37 +91,83 @@ export function ComputerViewer({ agent, name, request, popout = false, onClose, 
   const controls = useComputerControl(agent, request, stopping), { status } = controls;
   const settings = useComputerSettings(agent, request, controls.setStatus);
   const confirm = useConfirm();
-  const [visible, setVisible] = useState(!document.hidden), [text, setText] = useState(''), [screenError, setScreenError] = useState(false), [starting, setStarting] = useState(false), [sendingText, setSendingText] = useState(false);
+  const [visible, setVisible] = useState(!document.hidden), [text, setText] = useState(''), [screenError, setScreenError] = useState<ScreenError | null>(null), [starting, setStarting] = useState(false), [sendingText, setSendingText] = useState(false);
   const [connected, setConnected] = useState(false), [connection, setConnection] = useState(0);
   const screen = useRef<HTMLDivElement>(null), canvas = useRef<HTMLDivElement>(null), rfb = useRef<RFB | null>(null), handBack = useRef<HTMLButtonElement>(null), inputFlight = useRef(0);
   const user = status?.control.mode === 'user', running = !!status && ['running','idle'].includes(status.state);
   useEffect(() => {
     if (!running || !visible || controls.locked || stopping || !canvas.current) return;
-    let stopped = false, disconnected = false, client: RFB | undefined;
-    let clipboard: EventListener | undefined;
-    setConnected(false); setScreenError(false);
+    let stopped = false;
+    let socket: WebSocket | undefined, client: RFB | undefined;
+    setConnected(false); setScreenError(null);
     const element = canvas.current;
-    void request<{ ticket: string }>(`/api/agents/${agent}/computer/vnc-ticket`, { mode: user && !controls.locked ? 'control' : 'watch', revision: status?.control.revision }).then(({ ticket }) => {
+    const connecting = new AbortController();
+    const fail = (reason: ScreenError) => {
+      connecting.abort();
+      if (stopped) return;
+      setConnected(false);
+      setScreenError(reason);
+    };
+    AbortSignal.timeout(15000).addEventListener('abort', () => {
+      fail('timeout');
+      stopped = true;
+      socket?.close();
+    }, { signal: connecting.signal });
+    const connectionFailed = () => {
+      fail('connection');
+      void request<ComputerStatus>(`/api/agents/${agent}/computer`).then(latest => {
+        if (!stopped && latest.state === 'off') fail('stopped');
+      }).catch(() => {});
+    };
+    void request<{ ticket: string }>(`/api/agents/${agent}/computer/vnc-ticket`, { mode: user ? 'control' : 'watch', revision: status?.control.revision }).then(({ ticket }) => {
       if (stopped) return;
       const url = new URL(`/api/agents/${agent}/computer/vnc`, location.href); url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'; url.searchParams.set('ticket', ticket);
-      client = new RFB(element, url.href, { shared: true, wsProtocols: ['binary'] });
-      client.viewOnly = !user || controls.locked; client.scaleViewport = true; client.resizeSession = false; client.background = 'transparent'; client.focusOnClick = !!user;
-      client.addEventListener('connect', () => { if (!stopped) setConnected(true); });
-      client.addEventListener('disconnect', () => { disconnected = true; if (!stopped) { setConnected(false); setScreenError(true); } });
-      client.addEventListener('securityfailure', () => { if (!stopped) setScreenError(true); });
-      clipboard = (event: Event) => {
-        const value = (event as CustomEvent<{ text?: unknown }>).detail?.text;
-        if (stopped || !user || controls.locked || typeof value !== 'string') return;
-        if (value.length > 4000) { controls.setError('Clipboard text exceeds 4000 characters. Copy a smaller selection.'); return; }
-        setText(value);
-      };
-      client.addEventListener('clipboard', clipboard);
-      rfb.current = client;
-    }).catch(() => { if (!stopped) setScreenError(true); });
+      const channel = new WebSocket(url, ['briefsip-vnc-v1', 'binary']);
+      socket = channel;
+      channel.binaryType = 'arraybuffer';
+      channel.addEventListener('close', event => {
+        if (stopped) return;
+        if (event.code === 4408) fail('limit');
+        else if (event.code === 4409) fail('stopped');
+        else if (event.code === 4410) fail('timeout');
+        else connectionFailed();
+      }, { once: true });
+      channel.addEventListener('open', () => {
+        const opened = performance.now();
+        const attach = (slow: boolean) => {
+          if (stopped) return;
+          client = new RFB(element, channel, { shared: true });
+          if (slow) { client.qualityLevel = 0; client.compressionLevel = 6; }
+          client.viewOnly = !user; client.scaleViewport = true; client.resizeSession = false; client.background = 'transparent'; client.focusOnClick = !!user;
+          client.addEventListener('connect', () => {
+            connecting.abort();
+            if (!stopped) setConnected(true);
+          }, { once: true });
+          client.addEventListener('clipboard', event => {
+            const value = (event as CustomEvent<{ text?: unknown }>).detail?.text;
+            if (stopped || !user || typeof value !== 'string') return;
+            if (value.length > 4000) { controls.setError('Clipboard text exceeds 4000 characters. Copy a smaller selection.'); return; }
+            setText(value);
+          });
+          rfb.current = client;
+        };
+        // The 16 KiB sample takes about 130 ms at 1 Mbps on the viewer socket.
+        if (channel.protocol === 'briefsip-vnc-v1') channel.addEventListener('message', () => attach(performance.now() - opened > 130), { once: true });
+        else attach(false);
+      }, { once: true });
+    }).catch(error => {
+      if (stopped) return;
+      if (error?.code === 'viewer_limit') fail('limit');
+      else if (error?.code === 'desktop_stopped') fail('stopped');
+      else connectionFailed();
+    });
     return () => {
       stopped = true;
-      if (client && !disconnected) client.disconnect();
-      if (client && clipboard) client.removeEventListener('clipboard', clipboard);
+      connecting.abort();
+      if (socket && socket.readyState < WebSocket.CLOSING) {
+        if (client) client.disconnect();
+        else socket.close();
+      }
       rfb.current = null; element.replaceChildren();
     };
   }, [agent, running, visible, connection, user, controls.locked, stopping, status?.control.revision, request]);
@@ -175,7 +228,7 @@ export function ComputerViewer({ agent, name, request, popout = false, onClose, 
   const statusTone = statusLabel === 'Live' ? 'success' : statusLabel === 'Starting' ? 'warn' : 'neutral';
   const waits = running ? status?.requests ?? [] : [];
   const locked = controls.locked || settings.locked || starting || stopping;
-  const placeholder = !visible ? 'Viewer paused while window is hidden.' : running && screenError ? 'Live screen unavailable.' : !status ? 'Loading computer status...' : !status.available ? 'Computer is disabled on this server.' : !status.enabled ? 'No computer assigned.' : starting || status.state === 'starting' ? 'Starting computer...' : running ? 'Connecting to computer...' : 'Computer is off.';
+  const placeholder = !visible ? 'Viewer paused while window is hidden.' : screenError ? screenErrorText[screenError] : !status ? 'Loading computer status...' : !status.available ? 'Computer is disabled on this server.' : !status.enabled ? 'No computer assigned.' : starting || status.state === 'starting' ? 'Starting computer...' : running ? 'Connecting to computer...' : 'Computer is off.';
   return <div ref={controls.ref} className="computer-viewer bs-root">
     {url && <div className="k-row-actions"><span className="right-panel__path">{url}</span><Button size="sm" disabled={!running || !user || controls.locked} onClick={() => void input('computer_open_url', { url })}>Open URL</Button></div>}
     <div ref={settings.section} className="computer-viewer__poll" />
@@ -212,8 +265,8 @@ export function ComputerViewer({ agent, name, request, popout = false, onClose, 
       {running && <div ref={canvas} className="computer-viewer__canvas" aria-label={`${name}'s live computer screen`} />}
       {(!running || !visible || !connected) && <div className="computer-viewer__empty" role="status" aria-live="polite">
         {(starting || status?.state === 'starting' || running && visible && !screenError) ? <span className="k-spinner computer-viewer__spinner" aria-hidden /> : <Monitor size={28} strokeWidth={1.5} aria-hidden />}
-        {(running || starting || status?.state === 'starting' || !status) && <p>{placeholder}</p>}
-        {screenError && running ? <><span className="computer-viewer__empty-hint">Close another viewer if three are already open.</span><Button size="sm" onClick={() => setConnection(value => value + 1)}>Reconnect</Button></> : !running && status?.available && !starting && status.state !== 'starting' && <Button size="sm" variant="primary" disabled={locked} onClick={() => void start()}>Turn on computer</Button>}
+        {(running || starting || status?.state === 'starting' || !status || screenError === 'stopped') && <p>{placeholder}</p>}
+        {screenError && running && visible ? <Button size="sm" onClick={() => setConnection(value => value + 1)}>Reconnect</Button> : !running && status?.available && !starting && status.state !== 'starting' && <Button size="sm" variant="primary" disabled={locked} onClick={() => void start()}>Turn on computer</Button>}
       </div>}
     </div>
   </div>;
