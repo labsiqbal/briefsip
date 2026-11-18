@@ -176,12 +176,130 @@ pub async fn run<T>(
     };
     prepared.output = Some(decode(input).await?);
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
+    #[cfg(test)]
+    tests::after_decode(&guard.connection)?;
     work(&guard.connection, &mut prepared)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::params;
+    use serde_json::json;
+    use std::{
+        cell::RefCell,
+        sync::{Arc, Mutex},
+    };
+    use tokio::sync::Mutex as AsyncMutex;
+
+    type DecodeHook = fn(&Connection) -> Result<(), Failure>;
+    thread_local! {
+        static AFTER_DECODE: RefCell<Option<DecodeHook>> = const { RefCell::new(None) };
+    }
+    static DECODER_TEST: AsyncMutex<()> = AsyncMutex::const_new(());
+
+    pub(super) fn after_decode(db: &Connection) -> Result<(), Failure> {
+        match AFTER_DECODE.take() {
+            Some(hook) => hook(db),
+            None => Ok(()),
+        }
+    }
+
+    #[tokio::test]
+    async fn avatar_decode_rechecks_cancel_and_revision_before_commit() -> crate::db::Result<()> {
+        let _decoder = DECODER_TEST.lock().await;
+        struct TestDirectory(std::path::PathBuf);
+        impl Drop for TestDirectory {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let directory = TestDirectory(
+            std::env::temp_dir().join(format!("briefsip-avatar-{}", uuid::Uuid::new_v4())),
+        );
+        let config: crate::config::Config =
+            serde_json::from_value(json!({"database":directory.0.join("avatar.sqlite")}))?;
+        let database = crate::db::open(&config.database, false, 0)?;
+        crate::data::initialize(&database)?;
+        crate::files::init(&database.connection)?;
+        crate::turns::initialize(&database.connection).map_err(|e| e.message)?;
+        crate::mcp::initialize(&database.connection).map_err(|e| e.message)?;
+        let db = &database.connection;
+        let file = uuid::Uuid::new_v4().to_string();
+        let mut png = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(8, 8).write_to(&mut png, image::ImageFormat::Png)?;
+        db.execute_batch(
+            "INSERT INTO agents(id,name,model,instructions) VALUES('agent','Agent','','')",
+        )?;
+        db.execute(
+            "INSERT INTO files(id,scope,name,digest,bytes,created) VALUES(?,'agents:agent','image.png','',?,'')",
+            params![file, png.into_inner()],
+        )?;
+        db.execute(
+            "INSERT INTO turns(id,agent,text,status,created,attachments) VALUES('turn','agent','','running','',?)",
+            [json!([file]).to_string()],
+        )?;
+        let computer = Arc::new(crate::computer::Manager::new(&config).map_err(|e| e.to_string())?);
+        let state = AppState {
+            database: Arc::new(Mutex::new(database)),
+            config: Arc::new(config),
+            origin: "http://127.0.0.1".to_owned(),
+            auth: None,
+            events: crate::events::Hub::new(),
+            computer,
+            turns: crate::turns::Runtime::default(),
+            trial_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        };
+        let turn = json!({"id":"turn","agent":"agent"});
+        let call = |id| json!({"id":id,"function":{"name":"set_avatar","arguments":json!({"image":file,"revision":0}).to_string()}});
+
+        AFTER_DECODE.set(Some(|db| {
+            db.execute("UPDATE turns SET status='cancelled' WHERE id='turn'", [])?;
+            Ok(())
+        }));
+        let stopped = crate::turns::tools::run(&state, &turn, &call("cancel"))
+            .await
+            .err()
+            .ok_or("Avatar committed after cancellation")?;
+        assert_eq!(stopped.message, "Task has stopped.");
+        {
+            let guard = state
+                .database
+                .lock()
+                .map_err(|_| "Fixture database lock poisoned")?;
+            let db = &guard.connection;
+            for table in ["agent_avatars", "avatar_commands", "flow_tool_calls"] {
+                let count: i64 =
+                    db.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))?;
+                assert_eq!(count, 0, "{table}");
+            }
+            db.execute("UPDATE turns SET status='running' WHERE id='turn'", [])?;
+        }
+
+        AFTER_DECODE.set(Some(|db| {
+            db.execute("INSERT INTO agent_avatars VALUES('agent',1,NULL)", [])?;
+            Ok(())
+        }));
+        let conflict = crate::turns::tools::run(&state, &turn, &call("conflict"))
+            .await
+            .err()
+            .ok_or("Avatar committed over a newer revision")?;
+        assert_eq!(conflict.status, 409);
+        let guard = state
+            .database
+            .lock()
+            .map_err(|_| "Fixture database lock poisoned")?;
+        let db = &guard.connection;
+        assert_eq!(
+            super::super::agents::avatar_read(db, "agent").map_err(|e| e.message)?,
+            json!({"revision":1,"present":false})
+        );
+        let count: i64 = db.query_row("SELECT count(*) FROM avatar_commands", [], |r| r.get(0))?;
+        assert_eq!(count, 0);
+        let count: i64 = db.query_row("SELECT count(*) FROM flow_tool_calls", [], |r| r.get(0))?;
+        assert_eq!(count, 0);
+        Ok(())
+    }
     #[test]
     fn narrow_images_crop_before_scaling_without_unbounded_allocation(
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -205,6 +323,7 @@ mod tests {
     #[tokio::test]
     async fn decoder_admission_timeout_and_failure_release_capacity(
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let _decoder = DECODER_TEST.lock().await;
         let first = DECODERS.try_acquire()?;
         let second = DECODERS.try_acquire()?;
         let busy = decode(Vec::new())

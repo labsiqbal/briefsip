@@ -7,7 +7,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import sharp from 'sharp';
-import { createAvatars } from './avatars.ts';
 import { startApp } from './test-bridge.ts';
 
 test('avatar tool scopes files, journals atomic changes and preserves user changes on restart', async () => {
@@ -62,7 +61,12 @@ test('avatar tool scopes files, journals atomic changes and preserves user chang
     assert.deepEqual(await request(avatar), { revision: 1, present: true });
     const sideImage = await upload(sidePath); args = { image: sideImage, revision: 1 }; await run(sidePath, [sideImage]); assert.equal(result.revision, 2);
     args = { image: null, revision: 2 }; before = () => request(avatar, { id: randomUUID(), revision: 2, image: png.toString('base64') });
-    await run(path); assert.equal(result.status, 409); assert.equal((await request(avatar)).revision, 3);
+    const conflict = await run(path); assert.equal(result.status, 409); assert.equal((await request(avatar)).revision, 3);
+    const journal = new DatabaseSync(options.database, { readOnly: true });
+    try {
+      const rows = journal.prepare('SELECT result FROM flow_tool_calls WHERE turn=?').all(conflict);
+      assert.deepEqual(rows.map(row => JSON.parse(String(row.result))), [result]);
+    } finally { journal.close(); }
     args = { image: null, revision: 3 }; hold = true; continued = false;
     const interrupted = randomUUID(); await request(path + '/turns', { id: interrupted, text: 'Remove avatar' }); await waitFor(async () => continued);
     assert.deepEqual(await request(avatar), { revision: 4, present: false });
@@ -78,26 +82,4 @@ test('avatar tool scopes files, journals atomic changes and preserves user chang
     await app.close(); const db = new DatabaseSync(options.database); db.exec("CREATE TRIGGER reject_avatar_journal BEFORE INSERT ON flow_tool_calls BEGIN SELECT RAISE(ABORT, 'synthetic journal failure'); END"); db.close();
     app = await startApp(options); await run(path, [], 'failed'); assert.deepEqual(await request(avatar), { revision: 6, present: true });
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
-});
-
-
-test('avatar decode completion cannot commit after cancellation or a newer revision', async () => {
-  const db = new DatabaseSync(':memory:');
-  db.exec("CREATE TABLE agents(id TEXT PRIMARY KEY); INSERT INTO agents VALUES ('agent'); CREATE TABLE turns(id TEXT,status TEXT,agent TEXT,channel TEXT); INSERT INTO turns VALUES ('turn','running','agent',NULL); CREATE TABLE generated_files(turn TEXT); CREATE TABLE flow_tool_calls(turn TEXT,call_id TEXT,call TEXT,result TEXT,after_output INTEGER,after_action INTEGER);");
-  const transaction = <T>(fn: () => T): T => { db.exec('BEGIN'); try { const value = fn(); db.exec('COMMIT'); return value; } catch (error) { db.exec('ROLLBACK'); throw error; } };
-  const avatars = createAvatars(db, transaction), signal = new AbortController();
-  const png = await sharp({ create: { width: 256, height: 256, channels: 3, background: '#123456' } }).png().toBuffer();
-  try {
-    // fromTool reaches sharp's first await before returning this promise.
-    const cancelled = avatars.fromTool('turn', 'agent', { id: 'cancel' }, { image: randomUUID(), revision: 0 }, png, 0, signal.signal);
-    db.prepare("UPDATE turns SET status='cancelled'").run();
-    await assert.rejects(cancelled, /cancelled/);
-    assert.equal(avatars.read('agent').revision, 0); assert.equal(db.prepare('SELECT count(*) AS n FROM flow_tool_calls').get()!.n, 0);
-    db.prepare("UPDATE turns SET status='running'").run();
-    const conflict = avatars.fromTool('turn', 'agent', { id: 'conflict' }, { image: randomUUID(), revision: 0 }, png, 0, signal.signal);
-    db.prepare('INSERT INTO agent_avatars VALUES (?,1,NULL)').run('agent');
-    assert.equal((await conflict as { status: number }).status, 409);
-    assert.deepEqual(avatars.read('agent'), { revision: 1, present: false });
-    assert.equal(db.prepare('SELECT count(*) AS n FROM flow_tool_calls').get()!.n, 1);
-  } finally { db.close(); }
 });

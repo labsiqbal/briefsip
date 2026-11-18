@@ -75,7 +75,7 @@ import { initializeCanonicalSchema } from './schema.ts';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import type { HumanActor } from './auth.ts';
 import { ProtocolError, digestCommand, sha256 } from './shared/protocol.ts';
-import { parseCanonicalAgentCreation, restoreCanonicalAgentCreation } from './agent-create.ts';
+import { parseCanonicalAgentCreation, restoreCanonicalAgentCreation } from './test-support/canonical-agent-creation.ts';
 import { retainedToolNames } from './test-bridge.ts';
 import sharp from 'sharp';
 
