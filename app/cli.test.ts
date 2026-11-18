@@ -6,7 +6,16 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
-import { cli } from './cli.ts';
+import { rustBinary } from './rust-binary.ts';
+
+const binary = () => rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
+function cli(args: string[], directory: string) {
+  return new Promise<{ exitCode: number; id?: string; agents?: { id: string }[]; threads?: { id: string }[]; conversation?: { name: string }; turn?: any }>((resolve, reject) => {
+    const child = spawn(binary(), ['script', ...args], { env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = ''; child.stdout.on('data', chunk => { output += chunk; }); child.stderr.resume(); child.on('error', reject);
+    child.on('close', code => { try { const result = JSON.parse(output); assert.equal(result.exitCode, code); resolve(result); } catch (error) { reject(error); } });
+  });
+}
 import { startApp } from './test-bridge.ts';
 
 test('CLI routine lists and histories stay within the selected granted agent', async t => {
@@ -32,7 +41,7 @@ test('CLI routine lists and histories stay within the selected granted agent', a
   t.after(async () => { await app.close(); proxy.closeAllConnections(); await new Promise<void>(resolve => proxy.close(() => resolve())); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); });
   const ui = async (path: string, body: unknown) => { const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const value = await response.json(); assert(response.ok, JSON.stringify(value)); return value; };
   const terminal = (args: string[]) => new Promise<any>((resolve, reject) => {
-    const child = spawn(process.execPath, ['--experimental-strip-types', 'cli.ts', ...args], { cwd: import.meta.dirname, env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(binary(), ['script', ...args], { cwd: import.meta.dirname, env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = ''; child.stdout.on('data', chunk => { output += chunk; }); child.stderr.resume(); child.on('error', reject);
     child.on('close', code => { try { const value = JSON.parse(output); assert.equal(value.exitCode, code); resolve(value); } catch (error) { reject(error); } });
   });
@@ -126,7 +135,7 @@ test('CLI workflow discovery paginates and explicit approvals retain identity af
     const result = await response.json(); assert(response.ok, JSON.stringify(result)); return result;
   };
   const terminal = (args: string[]) => new Promise<any>((resolve, reject) => {
-    const child = spawn(process.execPath, ['--experimental-strip-types', 'cli.ts', ...args], { cwd: import.meta.dirname, env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(binary(), ['script', ...args], { cwd: import.meta.dirname, env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = ''; child.stdout.on('data', chunk => { output += chunk; }); child.stderr.resume(); child.on('error', reject);
     child.on('close', code => { try { const result = JSON.parse(output); assert.equal(code, result.exitCode); resolve(result); } catch (error) { reject(error); } });
   });
@@ -279,12 +288,12 @@ test('script CLI discovers only grants, sends once, waits, preserves retry ID an
     assert.equal((await cli(['cancel',a.id,id], directory)).exitCode, 1);
     assert.equal((await cli(['status',a.id,held.id], directory)).exitCode, 1);
     const output = await new Promise<string>((resolve, reject) => {
-      const child = spawn(process.execPath, ['--experimental-strip-types','cli.ts','list'], { cwd: import.meta.dirname, env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['ignore','pipe','pipe'] });
+      const child = spawn(binary(), ['script','list'], { cwd: import.meta.dirname, env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['ignore','pipe','pipe'] });
       let text = ''; child.stdout.on('data', chunk => { text += chunk; }); child.stderr.resume(); child.on('error', reject); child.on('close', code => { if (code !== 0) reject(new Error(`CLI exit ${code}`)); else resolve(text); });
     });
     assert.equal(JSON.parse(output).agents.length, 2); assert(!output.includes(JSON.parse(readFileSync(join(directory,'connection.json'),'utf8')).token));
     const unicode = await new Promise<string>((resolve, reject) => {
-      const child = spawn(process.execPath, ['--experimental-strip-types','cli.ts','run',a.id,'-','--wait','--timeout','3'], { cwd: import.meta.dirname, env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['pipe','pipe','pipe'] });
+      const child = spawn(binary(), ['script','run',a.id,'-','--wait','--timeout','3'], { cwd: import.meta.dirname, env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['pipe','pipe','pipe'] });
       let text = ''; child.stdout.on('data', chunk => { text += chunk; }); child.stderr.resume(); child.on('error', reject); child.on('close', code => { if (code !== 0) reject(new Error(`CLI exit ${code}: ${text}`)); else resolve(text); });
       child.stdin.write(Buffer.from([0x63,0x61,0x66,0xc3]));
       setTimeout(() => child.stdin.end(Buffer.from([0xa9])), 500);
@@ -383,9 +392,9 @@ test('script CLI discovers only grants, sends once, waits, preserves retry ID an
     const file = join(directory, 'connection.json'), original = readFileSync(file);
     writeFileSync(file, JSON.stringify({ url: 'https://example.com', token: 'x'.repeat(32) }));
     assert.equal((await cli(['list'], directory)).exitCode, 5); writeFileSync(file, original);
-    await assert.rejects(cli(['run',a.id,'Hello','--id'], directory));
-    await assert.rejects(cli(['cancel',a.id], directory));
-    await assert.rejects(cli(['cancel',a.id,id,'--wait'], directory));
+    assert.equal((await cli(['run',a.id,'Hello','--id'], directory)).exitCode, 2);
+    assert.equal((await cli(['cancel',a.id], directory)).exitCode, 2);
+    assert.equal((await cli(['cancel',a.id,id,'--wait'], directory)).exitCode, 2);
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -422,7 +431,7 @@ test('CLI answers retain receipt identity across lost replies and restart', asyn
   }
   async function terminal(args: string[], input?: string) {
     return await new Promise<any>((resolve, reject) => {
-      const child = spawn(process.execPath, ['--experimental-strip-types','cli.ts',...args], { cwd: import.meta.dirname, env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['pipe','pipe','pipe'] });
+      const child = spawn(binary(), ['script',...args], { cwd: import.meta.dirname, env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['pipe','pipe','pipe'] });
       let output = ''; child.stdout.on('data', chunk => { output += chunk; }); child.stderr.resume(); child.on('error', reject);
       child.on('close', code => { try { const result = JSON.parse(output); assert.equal(result.exitCode, code); resolve(result); } catch (error) { reject(error); } }); child.stdin.end(input);
     });

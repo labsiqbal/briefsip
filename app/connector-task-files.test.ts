@@ -7,7 +7,7 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {startApp} from './test-bridge.ts';
-import {localScript} from './script-client.ts';
+import {localScript} from './test-support/script-client.ts';
 import {initializeSlack,bindSlack,recordSlackEnvelope} from './slack.ts';
 import {slackAgentStep} from './slack-runner.ts';
 import {initializeTelegram,bindTelegram,recordTelegramUpdates} from './telegram.ts';

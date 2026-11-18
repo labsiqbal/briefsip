@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { restoreWorkspace } from './backup.ts';
+import { restoreWorkspace } from './test-support/backup.ts';
 import { startApp } from './test-bridge.ts';
 
 test('agent event waits release workers, survive restart, honor pause and accept once', async () => {

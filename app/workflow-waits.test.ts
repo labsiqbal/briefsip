@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, request as httpRequest } from 'node:http';
 import { startApp } from './test-bridge.ts';
-import { restoreWorkspace } from './backup.ts';
+import { restoreWorkspace } from './test-support/backup.ts';
 import { validateWorkflow, validateWorkflowDraft, workflowEdges, workflowTransition } from './workflows.ts';
 
 test('event wait validates bounded graph settings and preserves draft links', () => {

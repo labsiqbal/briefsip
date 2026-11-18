@@ -10,7 +10,7 @@ import { descriptorBody, deviceLinkBody, deviceProofBody, parseLinkChallenge, ty
 import { canonicalToolDigest, journalEntryBody, recoveryEnvelopeBody, stopEvidenceBody } from './test-support/task-protocol.ts';
 import { canonicalJson, digestCommand, sha256 } from './shared/protocol.ts';
 import { initializeMemory } from './test-support/memory.ts';
-import { prepareRestoreBootstrap } from './backup.ts';
+import { prepareRestoreBootstrap } from './test-support/backup.ts';
 import { startRustServer } from './rust-test-server.ts';
 
 test('Rust signed task admission, context fencing, one-use commits and durable results', async () => {

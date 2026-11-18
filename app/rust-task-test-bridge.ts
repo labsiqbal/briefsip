@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { generateKeyPairSync, randomBytes, randomUUID, sign } from 'node:crypto';
-import type { HumanActor } from './auth.ts';
+import type { HumanActor } from './test-support/auth.ts';
 import { deviceProofBody, type LinkChallengeResponse } from './test-support/device-protocol.ts';
 import { ProtocolError, sha256, type Receipt } from './shared/protocol.ts';
 import { startRustServer } from './rust-test-server.ts';

@@ -8,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createServer, get } from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { startApp } from './test-bridge.ts';
-import { restoreWorkspace, workspaceSnapshot } from './backup.ts';
+import { restoreWorkspace, workspaceSnapshot } from './test-support/backup.ts';
 const scratch = () => mkdtempSync(resolve('node_modules/.projects-test-'));
 test('Rust project folders reject system, traversal, home, credential, data and symlink paths before creation', async () => {
   const f = await fixture();

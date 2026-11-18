@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import sharp from 'sharp';
 import { startApp } from './test-bridge.ts';
-import { restoreWorkspace } from './backup.ts';
+import { restoreWorkspace } from './test-support/backup.ts';
 
 test('avatar HTTP validates images, isolates agents, preserves receipts and survives restart', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-avatar-'));

@@ -73,7 +73,7 @@ import { createDevices } from './devices.ts';
 import { descriptorBody, deviceLinkBody, parseLinkChallenge, type DeviceDescriptor } from './test-support/device-protocol.ts';
 import { initializeCanonicalSchema } from './schema.ts';
 import { generateKeyPairSync, sign } from 'node:crypto';
-import type { HumanActor } from './auth.ts';
+import type { HumanActor } from './test-support/auth.ts';
 import { ProtocolError, digestCommand, sha256 } from './shared/protocol.ts';
 import { parseCanonicalAgentCreation, restoreCanonicalAgentCreation } from './agent-create.ts';
 import { retainedToolNames } from './test-bridge.ts';

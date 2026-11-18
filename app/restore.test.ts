@@ -2,17 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { initializeCanonicalSchema } from './schema.ts';
-import { prepareRestoreBootstrap, issueRestoreSession, requireRestoreSession, restoreWorkspace, workspaceSnapshot } from './backup.ts';
+import { checkedRestore, restoreCommand, restoreWorkspace, workspaceSnapshot } from './test-support/backup.ts';
 import { createProjectAccess } from './project-access.ts';
 import { createMailWorker } from './mail.ts';
 import { startApp } from './test-bridge.ts';
-import { cli } from './cli.ts';
+import { restoreIdentity } from './test-support/restore-identity.ts';
 import { sha256, ProtocolError } from './shared/protocol.ts';
-import type { HumanActor } from './auth.ts';
+import type { HumanActor } from './test-support/auth.ts';
 
 test('canonical backup restores private evidence with fresh authority and no revived invitation or execution', async () => {
   const dir=mkdtempSync(join(tmpdir(),'briefsip-restore-')),source=join(dir,'source.sqlite'),destination=join(dir,'restored.sqlite');
@@ -54,7 +54,7 @@ test('canonical backup restores private evidence with fresh authority and no rev
     try{
       const current=restored.prepare('SELECT * FROM authority_state').get()!;
       assert.notEqual(current.generation,authority);assert.equal(current.serving_state,'read_only_recovery');
-      assert.equal(current.recovery_session_hash,null);
+      assert.match(String(current.recovery_session_hash), /^[a-f0-9]{64}$/);
       assert.equal(restored.prepare('SELECT revoked FROM device_sessions').get()!.revoked,1);
       assert.equal(restored.prepare('SELECT status FROM devices').get()!.status,'revoked');
       assert.equal(restored.prepare("SELECT deleted FROM project_members WHERE role='member'").get()!.deleted,1);
@@ -126,11 +126,12 @@ test('read-only restore upgrades legacy canonical owner marker before reconcile'
     const legacy=new DatabaseSync(backup.file);const generation=legacy.prepare('SELECT generation FROM briefsip_backup_authority').get()!.generation;
     legacy.exec('ALTER TABLE briefsip_backup_authority RENAME TO briefsip_backup_authority_new; CREATE TABLE briefsip_backup_authority(generation TEXT NOT NULL) STRICT;');
     legacy.prepare('INSERT INTO briefsip_backup_authority VALUES (?)').run(generation);legacy.exec('DROP TABLE briefsip_backup_authority_new');legacy.close();
-    const restoredPath=join(dir,'restored.sqlite');restoreWorkspace(backup.file,restoredPath,{canonicalOnly:true});
+    const restoredPath=join(dir,'restored.sqlite');
+    const { bootstrapFile } = checkedRestore(['--read-only', backup.file, '--db', restoredPath]);
     const restored=new DatabaseSync(restoredPath);try{
       assert.equal(restored.prepare('SELECT owner_account FROM briefsip_backup_authority').get()!.owner_account,owner.accountId);
-      const gate=prepareRestoreBootstrap(restored);const auth={requireCurrent:(actor:HumanActor)=>actor};
-      assert.equal(issueRestoreSession(restored,auth,owner,gate.bootstrap).recoveryGeneration,gate.recoveryGeneration);
+      const { sessionFile } = checkedRestore(['reconcile','--db',restoredPath,'--bootstrap',bootstrapFile], restoreIdentity(owner, 'https://briefsip.example')());
+      assert.equal(JSON.parse(readFileSync(sessionFile,'utf8')).recoveryGeneration,JSON.parse(readFileSync(bootstrapFile,'utf8')).recoveryGeneration);
     }finally{restored.close();}
   }finally{backup.cleanup();rmSync(dir,{recursive:true,force:true});}
 });
@@ -139,42 +140,50 @@ test('operator CLI restores a canonical backup read-only without script credenti
   const dir=mkdtempSync(join(tmpdir(),'briefsip-restore-cli-')),db=new DatabaseSync(join(dir,'source.sqlite'));initializeCanonicalSchema(db);
   const backup=await workspaceSnapshot(db);db.close();
   try{
-    const target=join(dir,'restored.sqlite'),result=await cli(['restore','--read-only',backup.file,'--db',target],undefined);
+    const target=join(dir,'restored.sqlite'),result=checkedRestore(['--read-only',backup.file,'--db',target]);
     assert.equal(result.exitCode,0);assert.equal(result.database,target);assert.equal(result.state,'read_only_recovery');
     const restored=new DatabaseSync(target);try{assert.equal(restored.prepare('SELECT serving_state FROM authority_state').get()!.serving_state,'read_only_recovery');}finally{restored.close();}
-    await assert.rejects(cli(['restore','--read-only',backup.file,'--db',target,'--activate'],undefined),/restore/);
+    assert.equal(restoreCommand(['--read-only',backup.file,'--db',target,'--activate']).exitCode, 2);
     const legacy=join(dir,'legacy.sqlite'),old=new DatabaseSync(legacy);old.exec("CREATE TABLE briefsip_backup(format TEXT,version INTEGER); INSERT INTO briefsip_backup VALUES ('briefsip-workspace',1)");old.close();
-    const invalid=join(dir,'invalid.sqlite');await assert.rejects(cli(['restore','--read-only',legacy,'--db',invalid],undefined),/canonical backup/);assert(!existsSync(invalid));
+    const invalid=join(dir,'invalid.sqlite');assert.throws(()=>checkedRestore(['--read-only',legacy,'--db',invalid]),/canonical backup/);assert(!existsSync(invalid));
   }finally{backup.cleanup();rmSync(dir,{recursive:true,force:true});}
 });
 
 test('local restore bootstrap requires recorded owner identity and issues expiring ingest-only proof',()=>{
-  const db=new DatabaseSync(':memory:');initializeCanonicalSchema(db);
-  const owner:HumanActor={accountId:randomUUID(),issuer:'https://fixture.example',subject:'owner',sessionId:'owner-session',expiresAt:Date.now()+60000};
-  const stranger={...owner,accountId:randomUUID(),subject:'stranger'},auth={requireCurrent:(a:HumanActor)=>a};
-  for(const actor of [owner,stranger])db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(actor.accountId,actor.issuer,actor.subject,Date.now());
-  const access=createProjectAccess(db,{...auth,verifiedMailboxes:async()=>[]},()=>{throw new Error('No mail');});
-  access.createProject(owner,{requestId:randomUUID(),id:randomUUID(),name:'Owner only'});
-  access.createProject(stranger,{requestId:randomUUID(),id:randomUUID(),name:'Other account project'});
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-restore-proof-')), database = join(dir, 'recovery.sqlite');
+  const db = new DatabaseSync(database); chmodSync(database, 0o600); initializeCanonicalSchema(db);
+  const owner: HumanActor = { accountId: randomUUID(), issuer: 'https://fixture.example', subject: 'owner', sessionId: 'owner-session', expiresAt: Date.now() + 60_000 };
+  const stranger = { ...owner, accountId: randomUUID(), subject: 'stranger' };
+  for (const actor of [owner, stranger]) db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(actor.accountId, actor.issuer, actor.subject, Date.now());
+  const access = createProjectAccess(db, { requireCurrent: (actor: HumanActor) => actor, verifiedMailboxes: async () => [] }, () => { throw new Error('No mail'); });
+  access.createProject(owner, { requestId: randomUUID(), id: randomUUID(), name: 'Owner only' });
+  access.createProject(stranger, { requestId: randomUUID(), id: randomUUID(), name: 'Other project' });
   db.exec('CREATE TABLE briefsip_backup_authority(generation TEXT,owner_account TEXT)');
   db.prepare('INSERT INTO briefsip_backup_authority SELECT generation,? FROM authority_state').run(owner.accountId);
-  const denied=(error:unknown)=>error instanceof ProtocolError&&error.code==='recovery_session_invalid';
-  try{
-    assert.throws(()=>prepareRestoreBootstrap(db),denied);
+  const identity = restoreIdentity(owner, 'https://briefsip.example');
+  const bootstrap = () => checkedRestore(['bootstrap', '--db', database]).bootstrapFile;
+  const reconcile = (path: string, actor: HumanActor = owner) => checkedRestore(['reconcile', '--db', database, '--bootstrap', path], identity(actor));
+  try {
+    assert.throws(bootstrap, /Recovery evidence/);
     db.exec("UPDATE authority_state SET serving_state='read_only_recovery'");
-    const gate=prepareRestoreBootstrap(db);
-    assert.throws(()=>requireRestoreSession(db,auth,owner,gate.bootstrap,gate.recoveryGeneration),denied);
-    assert.throws(()=>issueRestoreSession(db,auth,stranger,gate.bootstrap),denied);
-    assert.throws(()=>issueRestoreSession(db,auth,{...owner,issuer:'https://wrong.example'},gate.bootstrap),denied);
-    const proof=issueRestoreSession(db,auth,owner,gate.bootstrap);
-    assert.equal(requireRestoreSession(db,auth,owner,proof.session,proof.recoveryGeneration).serving_state,'read_only_recovery');
-    assert.throws(()=>issueRestoreSession(db,auth,owner,gate.bootstrap),denied);
-    assert.throws(()=>requireRestoreSession(db,auth,stranger,proof.session,proof.recoveryGeneration),denied);
-    assert.throws(()=>requireRestoreSession(db,auth,owner,proof.session,randomUUID()),denied);
-    const state=db.prepare('SELECT * FROM authority_state').get()!;assert(!JSON.stringify(state).includes(proof.session));assert(!JSON.stringify(state).includes(gate.bootstrap));
+    const gate = bootstrap();
+    const original = JSON.parse(readFileSync(gate,'utf8'));
+    const changed = join(dir, 'changed.json');
+    writeFileSync(changed, JSON.stringify({ ...original, recoveryGeneration: randomUUID() }), { mode: 0o600 });
+    assert.throws(() => reconcile(changed), /recovery authority/);
+    assert.throws(() => reconcile(gate, stranger), /Recovery evidence/);
+    assert.throws(() => reconcile(gate, { ...owner, issuer: 'https://wrong.example' }), /Session is invalid/);
+    const { sessionFile } = reconcile(gate);
+    const proof = JSON.parse(readFileSync(sessionFile,'utf8'));
+    assert.equal(proof.recoveryGeneration, original.recoveryGeneration);
+    assert.equal(statSync(sessionFile).mode & 0o777, 0o600);
+    assert.throws(() => reconcile(gate), /Recovery evidence/);
+    const state = db.prepare('SELECT * FROM authority_state').get()!;
+    assert(!JSON.stringify(state).includes(proof.session)); assert(!JSON.stringify(state).includes(original.bootstrap));
+    const expiring = bootstrap();
     db.exec('UPDATE authority_state SET recovery_expires_at=0');
-    assert.throws(()=>requireRestoreSession(db,auth,owner,proof.session,proof.recoveryGeneration),denied);
-    assert.equal(db.prepare('SELECT count(*) n FROM tasks').get()!.n,0);
-    assert.equal(db.prepare('SELECT serving_state FROM authority_state').get()!.serving_state,'read_only_recovery');
-  }finally{db.close();}
+    assert.throws(() => reconcile(expiring), /Recovery evidence/);
+    assert.equal(db.prepare('SELECT count(*) n FROM tasks').get()!.n, 0);
+    assert.equal(db.prepare('SELECT serving_state FROM authority_state').get()!.serving_state, 'read_only_recovery');
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
