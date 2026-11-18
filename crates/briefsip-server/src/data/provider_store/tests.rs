@@ -31,6 +31,10 @@ struct Fixture {
 
 impl Fixture {
     async fn new() -> crate::db::Result<Self> {
+        Self::with_environment_accounts(true).await
+    }
+
+    async fn with_environment_accounts(configured: bool) -> crate::db::Result<Self> {
         let calls = Arc::new(AtomicUsize::new(0));
         let count = calls.clone();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
@@ -59,13 +63,18 @@ impl Fixture {
         });
         let directory =
             std::env::temp_dir().join(format!("briefsip-provider-test-{}", uuid::Uuid::new_v4()));
-        let mut config: crate::config::Config = serde_json::from_value(json!({
+        let mut options = json!({
             "database": directory.join("briefsip.sqlite"),
-            "baseURL": base,
-            "apiKey": ENV_KEY,
-            "defaultModel": "env-model",
-            "accounts": [{"id":"env", "name":"Environment", "baseURL":base, "apiKey":ENV_KEY}],
-        }))?;
+            "harness": {"executables": {"codex": std::env::current_exe()?, "claude": std::env::current_exe()?}},
+        });
+        if configured {
+            options["baseURL"] = json!(base);
+            options["apiKey"] = json!(ENV_KEY);
+            options["defaultModel"] = json!("env-model");
+            options["accounts"] =
+                json!([{"id":"env", "name":"Environment", "baseURL":base, "apiKey":ENV_KEY}]);
+        }
+        let mut config: crate::config::Config = serde_json::from_value(options)?;
         config.data.validate()?;
         let database = crate::db::open(&config.database, false, 0)?;
         crate::data::initialize(&database)?;
@@ -129,6 +138,76 @@ impl Drop for Fixture {
 
 fn id() -> String {
     uuid::Uuid::new_v4().to_string()
+}
+
+#[tokio::test]
+async fn agent_directory_checks_each_runtime_and_bound_account() -> crate::db::Result<()> {
+    let fixture = Fixture::with_environment_accounts(false).await?;
+    let agent = id();
+    let profile = json!({
+        "id": agent, "name": "Coder", "instructions": "Answer", "model": "model-a",
+        "runtime": "codex",
+    });
+    assert_eq!(
+        fixture
+            .request("/api/agents", Some(profile.clone()), ORIGIN)
+            .await
+            .0,
+        201
+    );
+    let (_, directory) = fixture.request("/api/agents", None, ORIGIN).await;
+    assert_eq!(directory["configured"], false);
+    assert_eq!(directory["agents"][0]["runnable"], false);
+    assert_eq!(
+        directory["agents"][0]["blocked_reason"],
+        "Codex needs an OpenAI-compatible provider."
+    );
+    assert_eq!(
+        fixture
+            .request(
+                &format!("/api/agents/{agent}/turns"),
+                Some(json!({"id":id(),"text":"Answer"})),
+                ORIGIN,
+            )
+            .await
+            .0,
+        503
+    );
+
+    let account = id();
+    assert_eq!(
+        fixture
+            .request(
+                "/api/provider-accounts",
+                Some(json!({
+                    "id": account, "name": "Router", "provider": "openai-compatible",
+                    "baseURL": fixture.base, "apiKey": KEY, "defaultModel": "model-a",
+                })),
+                ORIGIN
+            )
+            .await
+            .0,
+        201
+    );
+    let (_, directory) = fixture.request("/api/agents", None, ORIGIN).await;
+    assert_eq!(directory["configured"], false);
+    let mut profile = profile;
+    profile["id"] = json!(id());
+    profile["runtime"] = json!("api");
+    profile["providerAccount"] = json!(account);
+    assert_eq!(
+        fixture
+            .request("/api/agents", Some(profile), ORIGIN)
+            .await
+            .0,
+        201
+    );
+    let (_, directory) = fixture.request("/api/agents", None, ORIGIN).await;
+    assert_eq!(directory["configured"], true);
+    assert_eq!(directory["agents"][0]["runnable"], false);
+    assert_eq!(directory["agents"][1]["runnable"], true);
+    assert_eq!(directory["agents"][1]["blocked_reason"], Value::Null);
+    Ok(())
 }
 
 #[tokio::test]

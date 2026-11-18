@@ -10,9 +10,10 @@ const providers = {
 };
 type Provider = keyof typeof providers;
 type Request = <T>(path: string, data?: unknown) => Promise<T>;
-type Account = { id: string; name: string; host: string; configured: boolean; defaultModel: string; provider: Provider } & (
+export type ProviderAccount = { id: string; name: string; host: string; configured: boolean; defaultModel: string; provider: Provider } & (
   { source: 'environment' } | { source: 'settings'; baseURL: string; revision: number }
 );
+type Account = ProviderAccount;
 type SavedAccount = Extract<Account, { source: 'settings' }>;
 const message = (error: unknown) => error instanceof Error ? error.message : 'Request failed. Try again.';
 
@@ -67,7 +68,7 @@ export function ProvidersPanel({ request }: { request: Request }) {
   </div>;
 }
 
-function ProviderForm({ account, request, onClose, onSaved }: { account?: SavedAccount; request: Request; onClose: () => void; onSaved: (account: SavedAccount) => void }) {
+export function ProviderForm({ account, request, onClose, onSaved }: { account?: SavedAccount; request: Request; onClose?: () => void; onSaved: (account: SavedAccount) => void }) {
   const form = useId();
   const [id] = useState(() => crypto.randomUUID());
   const [provider, setProvider] = useState<Provider>(account?.provider ?? 'openai-compatible');
@@ -84,11 +85,11 @@ function ProviderForm({ account, request, onClose, onSaved }: { account?: SavedA
     setError('');
   }
 
-  return <Dialog open title={account ? 'Edit provider' : 'Add provider'} onOpenChange={open => { if (!open && !busy) onClose(); }} footer={<>
+  const actions = <>
     <Button type="submit" form={form} name="action" value="test" busy={busy === 'test'} disabled={!!busy}>Test</Button>
     <Button type="submit" form={form} name="action" value="save" variant="primary" busy={busy === 'save'} disabled={!!busy || !canSave}>Save</Button>
-  </>}>
-    <form id={form} className="k-stack" onSubmit={event => {
+  </>;
+  const fields = <form id={form} className="k-stack" onSubmit={event => {
       event.preventDefault();
       if (busy) return;
       const action = (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value') === 'save' ? 'save' : 'test';
@@ -118,8 +119,9 @@ function ProviderForm({ account, request, onClose, onSaved }: { account?: SavedA
       <Field label="Default model"><Select value={models ? defaultModel : ''} disabled={!!busy || !models?.length} options={models?.length ? models.map(model => ({ value: model, label: model })) : [{ value: '', label: account?.defaultModel || 'Test to load models' }]} onChange={setDefaultModel} /></Field>
       {models && <span role="status" className="k-field__hint">{models.length ? `${models.length} models found` : 'No models found'}</span>}
       {error && <Alert tone="error">{error}</Alert>}
-    </form>
-  </Dialog>;
+      {!onClose && <div className="k-row-actions">{actions}</div>}
+    </form>;
+  return onClose ? <Dialog open title={account ? 'Edit provider' : 'Add provider'} onOpenChange={open => { if (!open && !busy) onClose(); }} footer={actions}>{fields}</Dialog> : fields;
 }
 
 function ProviderModels({ account, request }: { account: Account; request: Request }) {

@@ -208,13 +208,23 @@ pub(super) fn conversation(
 }
 pub fn ready(state: &AppState, db: &Connection, agent: &str) -> Result<()> {
     let profile = data::agents::read(db, agent)?;
-    if profile["runtime"] == "api" {
+    let runtime = string(&profile, "runtime");
+    if runtime == "api" {
         account(state, db, agent)?;
-    } else if crate::harness::executable(state, string(&profile, "runtime")).is_none() {
+        return Ok(());
+    }
+    if crate::harness::executable(state, runtime).is_none() {
         return Err(error(
             503,
             "Coding runtime requires an installed executable on PATH.",
         ));
+    }
+    let accounts = data::providers::accounts(state)?;
+    let account = accounts
+        .iter()
+        .find(|account| account.id == string(&profile, "provider_account"));
+    if let Some(reason) = data::agents::provider_blocked_reason(runtime, account) {
+        return Err(error(503, reason));
     }
     Ok(())
 }

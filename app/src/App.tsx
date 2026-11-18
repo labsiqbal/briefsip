@@ -3,7 +3,7 @@ import { HiddenAgents } from './AgentSidebar';
 import { useConversationRequests } from './hooks/useConversationRequests';
 import { useRouteThread } from './hooks/useRouteThread';
 import { useAppRoute, useRouteFallback } from './hooks/useAppRoute';
-import type { SettingsSection } from './navigation';
+import { parseRoute, routePath, type SettingsSection } from './navigation';
 import { useNarrowSidebar } from './hooks/useNarrowSidebar';
 import { useMessageChanged } from './hooks/useMessageChanged';
 import { useOptimisticTurns } from './hooks/useOptimisticTurns';
@@ -44,6 +44,8 @@ import { SpeechPlayback } from './SpeechPlayback';
 import { useConversationAttachments } from './ConversationAttachments';
 import { Attachments } from './Attachments';
 import { ProvidersPanel } from './ProvidersPanel';
+import { EnginesPanel } from './EnginesPanel';
+import { FirstRun } from './FirstRun';
 import { TurnActivity } from './ui/TurnActivity';
 import { AgentMessage, ChatComposer, ChatEmptyState, ChatHeader, ChatTranscript, ChatTurn, HumanMessage, TurnStatus } from './ui/ChatPrimitives';
 import { liveTurn, livePartial, turnPollDelay, type TurnActivityData } from './ui/transcript';
@@ -58,7 +60,7 @@ import { QuestionCard, type Question } from './QuestionCard';
 import { ApprovalCard, type AppApproval } from './ApprovalCard';
 import { CompactionPanel } from './CompactionPanel';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, useId, type FormEvent, type ReactNode } from 'react';
-import { Link as LinkIcon, Archive, BarChart3, BookOpen, Database, Download, KeyRound, Palette, Plug, SlidersHorizontal, Bell, BellOff, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, GitFork, ListRestart, Square, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Cable, Trash2, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
+import { Link as LinkIcon, Archive, BarChart3, BookOpen, Cpu, Database, Download, KeyRound, Palette, Plug, SlidersHorizontal, Bell, BellOff, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, GitFork, ListRestart, Square, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Cable, Trash2, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
 import { PanelResizeHandle, sidebarPanel, useResizablePanel } from './ui/resizable';
@@ -205,7 +207,7 @@ function ForkHistory({ context, scope, depth = 0 }: { context: ForkContext; scop
 }
 
 type DetailsContent = { chats: ReactNode; onManageRoutines?: () => void };
-function Chat({ agent, configured, channel, thread, members = [], onRead, onRestored, onEdit, onOpenAgent, onOpenChannel, menuItems = [], detailsExtra, rename }: { rename?: ReactNode; menuItems?: MenuItem[]; detailsExtra?: DetailsContent; onOpenChannel?: (channel: string) => void; onOpenAgent?: (agent: string, thread: string) => void; onRead?: () => Promise<void>; onRestored?: () => Promise<void>; onEdit?: () => void; agent: Agent | Channel; configured: boolean; channel?: Channel; thread?: Thread; members?: Agent[] }) {
+function Chat({ agent, configured, firstRun, channel, thread, members = [], onRead, onRestored, onEdit, onOpenAgent, onOpenChannel, menuItems = [], detailsExtra, rename }: { rename?: ReactNode; menuItems?: MenuItem[]; detailsExtra?: DetailsContent; onOpenChannel?: (channel: string) => void; onOpenAgent?: (agent: string, thread: string) => void; onRead?: () => Promise<void>; onRestored?: () => Promise<void>; onEdit?: () => void; agent: Agent | Channel; configured: boolean; firstRun?: boolean; channel?: Channel; thread?: Thread; members?: Agent[] }) {
   const confirm = useConfirm();
   const archived = !!(channel?.archived || thread?.archived || (!channel && (agent as Agent).hidden));
   const scope = thread ? `thread:${thread.id}` : channel ? `channel:${agent.id}` : agent.id;
@@ -236,6 +238,11 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
   const [addressedTurn, setAddressedTurn] = useState('');
   const dispatchTarget = activeTurns.find(turn => channel ? turn.id === addressedTurn : true);
   const canSteer = !!dispatchTarget?.capabilities.steer;
+  const targets = channel ? members.filter(member => !dispatchTarget || member.id === dispatchTarget.agent) : [agent as Agent];
+  const blockedAgent = targets.find(target => target.runnable === false);
+  const canSend = !blockedAgent && (targets.length ? targets.every(target => target.runnable ?? configured) : false);
+  const needsProvider = blockedAgent?.provider_available === false || !blockedAgent && targets.length > 0 && !canSend;
+  const firstMessage = firstRun && !thread && !turns?.length;
   const draftKey = `briefsip:draft:${scope}`;
   const [draft, setDraft] = useState(() => { try { return sessionStorage.getItem(draftKey) ?? ''; } catch { return ''; } });
   const [recovery] = useState(() => {
@@ -309,7 +316,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
   }, [turns, pending, storageKey, draftKey, attachmentKey]);
   async function send(event: FormEvent, forcedMode?: 'queue' | 'steer') {
     event.preventDefault();
-    if (requestActive.current || pastedFiles.length || attachments.uploading || blocked || (!pending && !draft.trim() && !attached.length)) return;
+    if (requestActive.current || pastedFiles.length || attachments.uploading || blocked || (!pending && (!canSend || !draft.trim() && !attached.length))) return;
     if (archived) { setError('Restore the conversation before sending a new message.'); return; }
     const mode = dispatchTarget ? forcedMode ?? 'queue' : 'queue';
     const request = pending ?? { id: crypto.randomUUID(), text: draft.trim(), ...(mode !== 'queue' ? { dispatchMode: mode, targetTurn: dispatchTarget!.id, ...(channel ? { recipient: dispatchTarget!.agent } : {}) } : {}), ...(channel && mode === 'queue' && dispatchTarget ? { recipient: dispatchTarget.agent } : {}), ...(attached.length ? { files: attached } : {}),  };
@@ -453,16 +460,21 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
       </ChatTranscript>
       <footer className="composer-area">
         {!channel && (agent as Agent).hidden ? <HiddenAgentBanner agent={agent as Agent} request={api} onChanged={onRestored} /> : archived && <p className="composer__note">Archived</p>}
-        {!configured && <p className="composer__note">{!channel && 'provider_account' in agent && !!agent.provider_account && agent.provider_available === false ? 'Provider account unavailable. Choose a provider in the agent profile.' : 'Provider not configured. Check Settings > Providers.'}</p>}
+        {!canSend && !archived && <p className="composer__note composer__note--blocked">
+          {needsProvider && <a className="k-link" href={routePath({ ...parseRoute(window.location.pathname + window.location.search), settings: 'providers' })}>Connect a provider</a>}
+          {blockedAgent?.blocked_reason && <span>{blockedAgent.blocked_reason}</span>}
+          {!targets.length && 'No available members.'}
+        </p>}
+        {firstMessage && canSend && <p className="composer__note">Send first message</p>}
         {error && <div className="composer__error" role="alert"><span>{error} {pending && 'Use Retry send to check the same request without creating a duplicate message.'}</span></div>}
         {blocked && <div className="composer__error" role="alert"><span>Message recovery data could not be read. Sending is blocked. Check history to confirm the previous message was not sent.</span><Button size="sm" variant="ghost" onClick={async () => { if (!await confirm({ title: 'Discard recovery data?', description: 'The previous message may already have been received. Check history before sending another message.', confirm: 'Discard message recovery', danger: true })) return; try { sessionStorage.removeItem(storageKey); setBlocked(false); setError(''); nextFrame(() => composer.current?.focus()); } catch { setError('Recovery data could not be deleted. Check site storage.'); } }}>Discard message recovery</Button></div>}
         <QueuedRunsControl turns={queueTurns.filter(queued)} path={path} target={dispatchTarget} request={api} archived={archived} onChanged={refreshTurns} onOrder={() => setQueueOrderOpen(true)} />
         <ChatComposer attachments={attachments.composer} hasAttachments={!!attached.length} onPasteFiles={files => { if (pastedFiles.length) { setError('Wait for pasted files to finish uploading.'); return; } setPastedFiles(files); }} mentions={channel ? members : []} onMention={value => { setDraft(value); try { sessionStorage.setItem(draftKey, value); } catch { setError('Draft was not saved. Copy your message before leaving.'); } }} label={channel ? `Message #${channel.section_name ?? channel.name}` : `Message ${agent.name}`} inputRef={composer} multiline={draft.includes('\n')} onSubmit={send} onSendKey={event => { void send(event, (event.ctrlKey || event.metaKey) && canSteer ? 'steer' : 'queue'); }} onAttach={attachments.choose} attachmentDisabledReason={archived || blocked || !!pending || busy || attachments.uploading ? 'Attachments unavailable' : undefined} actions={attachments.recordingAction}
           recipient={channel && activeTurns.length > 0 ? <Select size="sm" label="Addressed member" value={dispatchTarget?.id ?? ''} disabled={busy || !!pending || blocked} onChange={setAddressedTurn} options={[{ value: '', label: 'Everyone' }, ...activeTurns.map(turn => ({ value: turn.id, label: members.find(member => member.id === turn.agent)?.name ?? turn.agent }))]} /> : undefined}
           stopAction={runningRoom && !archived ? <RoomStop key={runningRoom.root} room={runningRoom} path={path} archived={archived} onStopped={() => { refreshTurns(); composer.current?.focus(); }} /> : runningTurn && !archived ? <CancelTurn key={runningTurn.id} primary turn={runningTurn.id} path={path} request={api} onCancelled={() => { refreshTurns(); composer.current?.focus(); }} /> : undefined}
-          input={{ id: 'message', value: pending?.text ?? draft, readOnly: blocked || !!pending || busy, onChange: event => { setDraft(event.target.value); try { sessionStorage.setItem(draftKey, event.target.value); } catch { setError('Draft was not saved in the browser. Copy the message before switching agents.'); } } }}
+          input={{ id: 'message', ...(firstMessage && { placeholder: 'Try: Say hello' }), value: pending?.text ?? draft, readOnly: blocked || !!pending || busy, onChange: event => { setDraft(event.target.value); try { sessionStorage.setItem(draftKey, event.target.value); } catch { setError('Draft was not saved in the browser. Copy the message before switching agents.'); } } }}
           busy={busy} retry={!!pending}
-          sendDisabled={!!pastedFiles.length || attachments.uploading || blocked || archived || !configured || busy || (!pending && !draft.trim() && !attached.length)}
+          sendDisabled={!!pastedFiles.length || attachments.uploading || blocked || archived || busy || (!pending && (!canSend || !draft.trim() && !attached.length))}
           sendLabel={busy ? 'Sending...' : pending ? 'Retry send' : dispatchTarget ? 'Queue message' : 'Send message'}
           sendTitle={pending ? 'Retry send' : dispatchTarget ? `Queue message (Enter to queue${canSteer ? ', Ctrl/Cmd+Enter to steer' : ''})` : 'Send (Enter)'} />
         {(focusedTask || before) && <p className="composer__foot">{focusedTask ? channel ? 'Task family shown' : 'Selected message shown' : 'Older messages · 100 per page'}</p>}
@@ -907,7 +919,7 @@ function RoutineForm({ owner, agents, projects, routine, onBack, onSaved }: { ow
   </Dialog>;
 }
 
-function AgentConversations({ agent, onRestored, configured, onEdit, onExport, workflowAgents, initialThread, onOpenAgent, onOpenChannel, onSelectThread, onManageRoutines }: { onRestored: () => Promise<void>; onExport: () => void; onManageRoutines: (agent: string) => void; onOpenChannel: (channel: string) => void; agent: Agent; workflowAgents: Agent[]; configured: boolean; onEdit: () => void; initialThread: string; onSelectThread: (thread: string, replace?: boolean) => void; onOpenAgent: (owner: string, thread: string) => void }) {
+function AgentConversations({ agent, onRestored, configured, firstRun, onEdit, onExport, workflowAgents, initialThread, onOpenAgent, onOpenChannel, onSelectThread, onManageRoutines }: { onRestored: () => Promise<void>; onExport: () => void; onManageRoutines: (agent: string) => void; onOpenChannel: (channel: string) => void; agent: Agent; workflowAgents: Agent[]; configured: boolean; firstRun?: boolean; onEdit: () => void; initialThread: string; onSelectThread: (thread: string, replace?: boolean) => void; onOpenAgent: (owner: string, thread: string) => void }) {
   const [threads, setThreads] = useState<Thread[]>([]), [error, setError] = useState('');
   const selected = initialThread;
   const [form, setForm] = useState<Thread | null>(null), [loaded, setLoaded] = useState(false);
@@ -1009,7 +1021,7 @@ function AgentConversations({ agent, onRestored, configured, onEdit, onExport, w
       {!!deliveries.length && <Collapsible variant="section" title={<>From other agents <Badge>{deliveries.length}</Badge></>}><div className="panel-card">{deliveries.map(row)}</div></Collapsible>}
     </section>
   </>;
-  return <><Chat onRestored={onRestored} onOpenChannel={onOpenChannel} onOpenAgent={onOpenAgent} key={thread?.id ?? agent.id} agent={agent} thread={thread} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)}
+  return <><Chat onRestored={onRestored} onOpenChannel={onOpenChannel} onOpenAgent={onOpenAgent} key={thread?.id ?? agent.id} agent={agent} thread={thread} firstRun={firstRun} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)}
     onEdit={thread ? () => setForm(thread) : onEdit}
     menuItems={[{ label: 'New conversation', icon: <Plus size={15} aria-hidden />, onSelect: openForm, disabled: locked }, ...(thread ? actions(thread).map((item, index) => ({ ...item, separator: index === 0 || item.separator })) : []), { label: 'Routines', separator: !!thread, icon: <CalendarClock size={15} aria-hidden />, onSelect: openRoutines }, { label: 'Workflows', icon: <WorkflowIcon size={15} aria-hidden />, onSelect: openWorkflows }, { label: 'Workspace files', icon: <FolderOpen size={15} aria-hidden />, onSelect: openWorkspace }, { label: 'Export template', icon: <Download size={15} aria-hidden />, onSelect: onExport }]}
     detailsExtra={{ chats: conversations, onManageRoutines: openRoutines }} rename={form?.id === selected ? nameEditor : null} /></>;
@@ -1093,7 +1105,7 @@ function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agent
 const settingsGroups: { label: string; items: { id: SettingsSection; label: string; icon: typeof Settings }[] }[] = [
   { label: 'Preferences', items: [{ id: 'general', icon: SlidersHorizontal, label: 'General' }, { id: 'appearance', icon: Palette, label: 'Appearance' }] },
   { label: 'Agents', items: [{ id: 'skills', icon: BookOpen, label: 'Skills' }] },
-  { label: 'Connections', items: [{ id: 'providers', icon: Server, label: 'Providers' }, { id: 'hub', icon: LinkIcon, label: 'briefsip.com' }, { id: 'connected-apps', icon: Plug, label: 'Connected apps' }, { id: 'mcp', icon: Cable, label: 'MCP connections' }] },
+  { label: 'Connections', items: [{ id: 'providers', icon: Server, label: 'Providers' }, { id: 'engines', icon: Cpu, label: 'Engines' }, { id: 'hub', icon: LinkIcon, label: 'briefsip.com' }, { id: 'connected-apps', icon: Plug, label: 'Connected apps' }, { id: 'mcp', icon: Cable, label: 'MCP connections' }] },
   { label: 'System', items: [{ id: 'machines', icon: Monitor, label: 'Machines' }, { id: 'updates', icon: Download, label: 'Updates' }] },
   { label: 'Data', items: [{ id: 'usage', icon: BarChart3, label: 'Usage' }, { id: 'data', icon: Database, label: 'Shared data' }, { id: 'backup', icon: Archive, label: 'Backup & restore' }] },
   { label: 'Advanced', items: [{ id: 'mcp-server', icon: KeyRound, label: 'External access' }] },
@@ -1128,7 +1140,9 @@ function App() {
     if (route.agent === id) navigate({}, true);
     await load(true); await projectState.reload();
   });
-  const [directory, setDirectory] = useState<Directory | null>(null); const selected = route.agent ?? directory?.agents[0]?.id ?? '';
+  const [directory, setDirectory] = useState<Directory | null>(null);
+  const defaultAgent = directory?.agents.find(agent => !agent.hidden && (agent.runnable ?? !!directory.configured));
+  const selected = route.agent ?? defaultAgent?.id ?? '';
   const [channels, setChannels] = useState<Channel[]>([]);
   const selectedChannel = route.room ?? '';
   const [environment, setEnvironment] = useState<Environment | null>(null), [summaries, setSummaries] = useState<SidebarSummary[]>([]);
@@ -1162,6 +1176,7 @@ function App() {
   const projectConversation = routeThread?.thread?.project ? routeThread.thread : null;
   const projectThread = projectConversation ? { project: projectConversation.project!, agent: selected, thread: projectConversation.id, conversation: projectConversation } : null;
   const [dialog, setDialog] = useState<Dialog>(null);
+  const [firstRunAgent, setFirstRunAgent] = useState('');
   const [notificationsMuted, setNotificationsMuted] = useState(() => { try { return localStorage.getItem('briefsip:workflow-notifications-muted') === '1'; } catch { return false; } });
   const [notificationError, setNotificationError] = useState('');
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() => { try { return localStorage.getItem(sidebarTabKey) === 'projects' ? 'projects' : 'agents'; } catch { return 'agents'; } });
@@ -1195,7 +1210,7 @@ function App() {
     try {
       const version = directoryRequest.current;
       const [rooms, agents, summary] = await Promise.all([api<Channel[]>('/api/channels'), api<Directory>('/api/agents'), api<{ summaries: SidebarSummary[] }>('/api/sidebar/summary')]);
-      if (!signal.aborted && version === directoryRequest.current) setDirectory(current => current && ({ ...current, agents: agents.agents.map(fresh => { const old = current.agents.find(item => item.id === fresh.id); return old && old.revision > fresh.revision ? old : fresh; }) }));
+      if (!signal.aborted && version === directoryRequest.current) setDirectory(current => current && ({ ...agents, agents: agents.agents.map(fresh => { const old = current.agents.find(item => item.id === fresh.id); return old && old.revision > fresh.revision ? old : fresh; }) }));
       if (!signal.aborted) { setActivityError(false); setChannels(current => rooms.map(fresh => { const old=current.find(room=>room.id===fresh.id); return {...fresh, activity:Math.max(old?.activity??0,fresh.activity), read_position:Math.max(old?.read_position??0,fresh.read_position)}; })); }
       if (!signal.aborted) { setSummaries(summary.summaries); void projectState.reload().catch(() => {}); }
     } catch { if (!signal.aborted) setActivityError(true); }
@@ -1232,7 +1247,7 @@ function App() {
     setDialog(null); focusComposer();
   };
   const invalidRoute = !!directory && (!!route.agent && !directory.agents.some(agent => agent.id === route.agent) || !!route.room && !channels.some(channel => channel.id === route.room) || !!route.project && !!projectState.root && !project || !!route.machine && remoteMachinesState.loaded && !remoteMachinesState.machines.some(machine => machine.id === route.machine && machine.agents.some(agent => agent.id === route.remoteAgent)));
-  useRouteFallback(!route.notFound && !invalidRoute && !!directory && !route.agent && !route.room && !route.project && !route.view && !route.machine, { ...(directory?.agents[0] ? { agent: directory.agents[0].id } : {}), ...(route.settings ? { settings: route.settings } : {}) }, navigate);
+  useRouteFallback(!route.notFound && !invalidRoute && !!directory && !route.agent && !route.room && !route.project && !route.view && !route.machine, { agent: defaultAgent?.id, settings: route.settings }, navigate);
   const notFound = route.notFound || invalidRoute || routeThread?.missing;
   const settingsName = settingsGroups.flatMap(group => group.items).find(item => item.id === route.settings)?.label;
   const pageTitle = notFound ? 'Page not found' : route.settings ? `Settings · ${settingsName}` : project ? project.name : channel ? `#${channel.section_name ?? channel.name} · ${sectionProject?.name ?? 'Room'}` : route.machine ? remoteMachinesState.machines.find(machine => machine.id === route.machine)?.agents.find(agent => agent.id === route.remoteAgent)?.name : route.view ? route.view === 'routines' ? 'Routines' : 'Workflows' : agent ? `${routeThread?.thread?.name ?? 'Main chat'} · ${agent.name}` : '';
@@ -1281,6 +1296,11 @@ function App() {
     { id: 'new-agent', label: 'New agent', group: 'Create', onSelect: () => { setSettings(null); setDialog('agent'); } },
     { id: 'new-project', label: 'New project', group: 'Create', onSelect: () => { setSettings(null); setDialog('project'); } },
   ];
+  const created = (item: Agent) => {
+    directoryRequest.current++;
+    setDirectory(current => current && { ...current, configured: current.configured || item.runnable === true, agents: [...current.agents.filter(agent => agent.id !== item.id), item] });
+    openAgent(item.id);
+  };
   let content: ReactNode;
   if (error) content = <PageView><div className="empty"><h1>Workspace is not open</h1><p role="alert">{error}</p><button onClick={() => void load()}>Try again</button></div></PageView>;
   else if (!directory) content = <main className="chat chat--empty bs-root"><p className="empty-chat__sub" role="status">Loading workspace...</p></main>;
@@ -1293,9 +1313,8 @@ function App() {
   else if (route.thread && !routeThread?.thread) content = <PageView>{routeThread?.error ? <Alert tone="error">{routeThread.error} Retrying…</Alert> : <p role="status">Loading conversation...</p>}</PageView>;
   else if (projectThread && directory.agents.find(agent => agent.id === projectThread.agent)) { const owner = directory.agents.find(agent => agent.id === projectThread.agent)!; const thread = projectState.projects.find(project => project.id === projectThread.project)?.threads.find(thread => thread.id === projectThread.thread) ?? projectThread.conversation; content = thread ? <Chat onOpenAgent={openThread} key={thread.id} agent={owner} thread={{...thread,revision:1,archived:0,deleted:0}} configured={directory.configured} menuItems={[{label:'Back to project',onSelect:()=>openProject(projectThread.project)}]} /> : <PageView><EmptyState title="Project conversation unavailable" /></PageView>; }
   else if (channel) content = <Chat onOpenAgent={openThread} key={`channel:${channel.id}`} agent={channel} channel={{ ...channel, lead: directory.agents.find(agent => agent.id === channel.lead)?.hidden ? null : channel.lead }} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id) && !agent.hidden)} onEdit={channel.project ? undefined : () => setDialog('edit')} menuItems={channel.project ? [{label:'Back to project',onSelect:()=>openProject(channel.project!)}] : []} configured={directory.configured} />;
-  else if (agent) content = <AgentConversations onRestored={() => load(true)} onExport={() => setAgentContent({ agent, kind: 'export' })} onManageRoutines={id => { setRoutineAgent(id); setView('routines'); }} onOpenChannel={openChannel} key={agent.id} agent={agent} workflowAgents={directory.agents} configured={directory.configured} initialThread={route.thread ?? ''} onSelectThread={(thread, replace) => { navigate(current => ({ ...current, agent: agent.id, thread: thread || undefined, result: current.thread === (thread || undefined) ? current.result : undefined }), replace); focusComposer(); }} onOpenAgent={openThread} onEdit={() => setDialog('edit')} />;
-  else content = <main className="chat chat--empty bs-root"><div className="empty-chat"><div className="empty-chat__title">Create your first agent</div><button type="button" className="btn btn--primary" onClick={() => setDialog('agent')}><Plus size={16} aria-hidden /> New agent</button></div></main>;
-  const created = (item: Agent) => { setDirectory(current => current && { ...current, agents: [...current.agents.filter(agent => agent.id !== item.id), item] }); openAgent(item.id); };
+  else if (agent) content = <AgentConversations onRestored={() => load(true)} onExport={() => setAgentContent({ agent, kind: 'export' })} onManageRoutines={id => { setRoutineAgent(id); setView('routines'); }} onOpenChannel={openChannel} key={agent.id} agent={agent} firstRun={firstRunAgent === agent.id} workflowAgents={directory.agents} configured={directory.configured} initialThread={route.thread ?? ''} onSelectThread={(thread, replace) => { navigate(current => ({ ...current, agent: agent.id, thread: thread || undefined, result: current.thread === (thread || undefined) ? current.result : undefined }), replace); focusComposer(); }} onOpenAgent={openThread} onEdit={() => setDialog('edit')} />;
+  else content = <FirstRun request={api} isClientError={error => error instanceof HttpError && error.status < 500} settingsOpen={!!settings} onCreated={item => { setFirstRunAgent(item.id); created(item); focusComposer(); }} />;
   const navigation = <aside ref={sidebar.ref} className="sidebar bs-root" style={{ width: `${sidebar.width}px` }} aria-label="Workspace navigation" onClick={event => { if (narrowSidebar && (event.target as HTMLElement).closest('.bot-row, .project-navigation__name, .project-navigation__room')) setNarrowOpen(false); }}>
       <div className="sidebar__titlebar">
         <span className="sidebar__bots-label">Briefsip</span>
@@ -1422,6 +1441,7 @@ function App() {
           {!directory ? <p className="empty" role="status">Loading workspace...</p>
             : settings === 'skills' ? <Suspense fallback={<p className="empty" role="status">Loading skill library...</p>}><SkillsPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'providers' ? <ProvidersPanel request={api} />
+            : settings === 'engines' ? <EnginesPanel request={api} />
             : settings === 'updates' ? <UpdatesPanel updates={updates} />
             : settings === 'machines' ? <MachinesPanel request={api} onChanged={() => { void remoteMachinesState.reload(); void api<Environment>('/api/environment').then(setEnvironment).catch(() => setActivityError(true)); }} />
             : settings === 'hub' ? <Suspense fallback={<p className="empty" role="status">Loading hub connection...</p>}><HubConnection agents={directory.agents} request={api} /></Suspense>

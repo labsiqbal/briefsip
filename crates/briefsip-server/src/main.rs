@@ -329,6 +329,7 @@ fn navigation(path: &str) -> bool {
             "general",
             "appearance",
             "providers",
+            "engines",
             "skills",
             "connected-apps",
             "hub",
@@ -797,6 +798,7 @@ mod tests {
     use super::navigation;
     #[test]
     fn navigation_matches_node_paths() {
+        assert!(navigation("/settings/engines"));
         for path in ["/", "/routines", "/workflows", "/settings/appearance", "/agents/00000000-0000-4000-8000-000000000000", "/agents/00000000-0000-4000-8000-000000000000/conversations/00000000-0000-4000-8000-000000000001"] { assert!(navigation(path), "{path}"); }
         for path in [
             "/settings/nope",
