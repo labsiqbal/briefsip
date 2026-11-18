@@ -10,8 +10,9 @@ import { buildEnvironmentCaptureCommand, hydratePosixHome, hydratePosixPath, lis
 import { harnessEnv } from './harness.ts';
 
 const serverURL = new URL('./test-bridge.ts', import.meta.url).href;
+const rust = process.env.BRIEFSIP_TEST_SERVER === 'rust';
 
-for (const broken of [false, true]) test(broken ? 'broken login shell keeps service startup working' : 'service launch discovers Codex exported only by the login shell', { timeout: 20_000 }, async () => {
+for (const broken of [false, true]) test(broken ? 'broken login shell keeps service startup working' : 'service launch discovers Codex exported only by the login shell', { skip: rust, timeout: 20_000 }, async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-login-path-'));
   const bin = join(directory, 'bin'), shell = join(directory, 'login-shell');
   mkdirSync(bin);
