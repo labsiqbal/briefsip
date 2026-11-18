@@ -5,7 +5,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { startApp } from '../../app/server.ts';
+import { startApp } from '../../app/test-bridge.ts';
 
 const cache = path.resolve('.cache');
 fs.mkdirSync(cache, { recursive: true });

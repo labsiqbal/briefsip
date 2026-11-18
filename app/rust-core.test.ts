@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('core serves exact static bytes, strict asset CSP, HTML 404 and local boundary errors', async () => {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-core-static-'));

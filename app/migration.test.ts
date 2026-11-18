@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { initializeCanonicalSchema, schemaVersion } from './schema.ts';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('v1 migration preserves actual legacy rows without inferring ownership or scope', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-migration-')); const database = join(dir, 'legacy.sqlite');

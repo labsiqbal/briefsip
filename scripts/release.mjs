@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { durableWrite, fileManifest, parseRelease, syncDirectory } from '../app/update-release.mjs';
+import { durableWrite, fileManifest, parseRelease, syncDirectory } from './release-lib.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 export function readIssueComments(issue) {
@@ -63,8 +63,8 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
   try {
     // Runtime source only. Never include workspace data, .env, test fixtures or development bundles.
     stageRuntime(source, stage);
-    if (build && rust) {
-      mkdirSync(join(stage, 'bin'), { mode: 0o700 }); cpSync(join(repository, 'target/release/briefsip-server'), join(stage, 'bin/briefsip-server'));
+    if (rust && existsSync(join(repository, 'target/release/briefsip-server')) && existsSync(join(repository, 'target/release/briefsip-launcher'))) {
+      mkdirSync(join(stage, 'bin'), { recursive: true, mode: 0o700 }); cpSync(join(repository, 'target/release/briefsip-server'), join(stage, 'bin/briefsip-server'));
       cpSync(join(repository, 'target/release/briefsip-launcher'), join(stage, 'bin/briefsip-launcher'));
       for (const name of ['briefsip-server', 'briefsip-launcher']) assertNativeDependencies(join(stage, 'bin', name));
       cpSync(join(repository, 'crates/briefsip-launcher/provenance.json'), join(stage, 'bin/launcher-provenance.json'));
@@ -72,14 +72,9 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
       cpSync(join(repository, 'crates/briefsip-server/provenance.json'), join(stage, 'bin/provenance.json'));
       for (const name of ['LICENSE', 'agent-delegation.LICENSE']) cpSync(join(repository, 'app', name), join(stage, 'bin', name));
     }
-    // A missing runtime module crashes the candidate after apply; fail the release here instead.
-    assertRelativeImports(stage);
     mkdirSync(join(stage, 'machine'), { mode: 0o700 });
-    for (const name of ['install-machine.sh', 'uninstall-machine.sh', 'briefsip-launcher.mjs']) cpSync(join(root, 'scripts', name), join(stage, 'machine', name));
-    if (install) execFileSync('npm', ['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: stage, stdio: 'inherit' });
-    // No executable .bin links needed: server runs Node source. Remaining links are rejected by manifest.
-    rmSync(join(stage, 'node_modules/.bin'), { recursive: true, force: true });
-    const info = parseRelease({ id, version, commit, issues, created: new Date().toISOString(), node: process.version, notes: notes ?? git(['log', '-5', '--pretty=%s']), files: fileManifest(stage) });
+    for (const name of ['install-machine.sh', 'uninstall-machine.sh']) cpSync(join(root, 'scripts', name), join(stage, 'machine', name));
+    const info = parseRelease({ id, version, commit, issues, created: new Date().toISOString(), node: 'rust', notes: notes ?? git(['log', '-5', '--pretty=%s']), files: fileManifest(stage) });
     durableWrite(join(stage, 'release.json'), JSON.stringify(info, null, 2) + '\n', 0o644);
     renameSync(stage, target); syncDirectory(releases);
     mkdirSync(join(releases, 'feed'), { recursive: true, mode: 0o700 });
@@ -90,10 +85,12 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
 }
 // Copies the runtime selection a release ships; tests stage the same selection to run the import guard.
 export function stageRuntime(source, stage) {
-  for (const name of readdirSync(source)) if (/\.(ts|mjs)$/.test(name) && !/(?:\.test\.ts|-it\.ts|\.d\.ts)$/.test(name) || ['package.json', 'package-lock.json', 'dist', 't3', 'hub'].includes(name)) cpSync(join(source, name), join(stage, name), { recursive: true, filter: p => !p.endsWith('.test.ts') && !p.endsWith('-it.ts') && !p.endsWith('.d.ts') });
+  for (const name of ['bin', 'dist', 'package.json', 'LICENSE', 'novnc.LICENSE', 't3']) {
+    if (existsSync(join(source, name))) cpSync(join(source, name), join(stage, name), { recursive: true });
+  }
 }
 // Every relative import reachable from a runtime entry point must resolve to a staged file.
-export function assertRelativeImports(stage, entries = ['server.ts', 'cli.ts', 'hub/server.ts', 'update-release.mjs', 'agent-desktop-host.mjs']) {
+export function assertRelativeImports(stage, entries = []) {
   const missing = [], seen = new Set();
   const pattern = /(?:^|\n)\s*(?:import|export)\b[^'"`;]*?from\s*['"](\.{1,2}\/[^'"]+)['"]|\bimport\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)/g;
   const visit = path => {

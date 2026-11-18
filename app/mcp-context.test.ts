@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('MCP resources and prompts require exact grants and remain untrusted journaled data', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-mcp-context-')), token = 'synthetic-mcp-secret';

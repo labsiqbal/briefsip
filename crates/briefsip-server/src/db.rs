@@ -284,6 +284,10 @@ fn local(db: &Connection) -> Result<()> {
     ] {
         column(db, "turns", name, definition)?;
     }
+    provider_tables(db)
+}
+
+pub fn provider_tables(db: &Connection) -> Result<()> {
     db.execute_batch("CREATE TABLE IF NOT EXISTS provider_calls(seq INTEGER PRIMARY KEY AUTOINCREMENT,turn TEXT NOT NULL REFERENCES turns(id),agent TEXT NOT NULL REFERENCES agents(id),model TEXT NOT NULL,origin TEXT NOT NULL,purpose TEXT NOT NULL CHECK(purpose IN('routing','completion')),status TEXT NOT NULL CHECK(status IN('pending','received','failed','interrupted')),created TEXT NOT NULL,finished TEXT,input_tokens INTEGER,output_tokens INTEGER,total_tokens INTEGER) STRICT;")?;
     for (name, definition) in [
         ("phase", "TEXT NOT NULL DEFAULT 'answer'"),

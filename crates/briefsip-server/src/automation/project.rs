@@ -10,6 +10,18 @@ mod workflows;
 fn missing() -> Failure {
     Failure::new(404, "resource_not_found", "Resource not found.")
 }
+fn maintenance_transaction<T>(db: &Connection, work: impl FnOnce() -> Result<T>) -> Result<T> {
+    let tx = rusqlite::Transaction::new_unchecked(db, rusqlite::TransactionBehavior::Deferred)?;
+    let before: i64 = db.query_row("SELECT total_changes()", [], |row| row.get(0))?;
+    let result = work()?;
+    let after: i64 = db.query_row("SELECT total_changes()", [], |row| row.get(0))?;
+    if after == before {
+        tx.rollback()?;
+    } else {
+        tx.commit()?;
+    }
+    Ok(result)
+}
 pub fn initialize(db: &Connection) -> Result<()> {
     db.execute_batch(include_str!("project.sql"))?;
     Ok(())

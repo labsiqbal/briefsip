@@ -32,7 +32,7 @@ await check("import 'node:fs';", 'server.ts');
 await check("import '../server.ts';", 'hub/probe.ts');
 for (const module of browserSafeModules) {
   await check("import 'node:fs';", module, builtin);
-  await check("import './server.ts';", module, boundary);
+  await check("import './test-bridge.ts';", module, boundary);
   await check("import '@clerk/backend';", module, boundary);
 }
 await check("import { parseDocument } from 'yaml';", 'skill-files.ts');

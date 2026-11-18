@@ -140,6 +140,17 @@ pub fn context(db: &Connection, kind: &str, id: &str) -> Result<Value> {
     one(db, sql, [id])?.ok_or_else(|| error(404, "Conversation not found."))
 }
 pub fn init(db: &Connection) -> crate::db::Result<()> {
+    init_mode(db, false)
+}
+pub fn init_canonical(db: &Connection) -> crate::db::Result<()> {
+    init_mode(db, true)
+}
+fn init_mode(db: &Connection, canonical: bool) -> crate::db::Result<()> {
+    if canonical {
+        db.execute_batch("CREATE TABLE IF NOT EXISTS shared_data(project TEXT NOT NULL REFERENCES projects(id),id INTEGER NOT NULL CHECK(id=1),revision INTEGER NOT NULL CHECK(revision>=0),image BLOB,PRIMARY KEY(project,id)) STRICT;")?;
+    } else {
+        db.execute_batch("CREATE TABLE IF NOT EXISTS shared_data(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL,image BLOB) STRICT; INSERT OR IGNORE INTO shared_data VALUES(1,0,NULL); CREATE TABLE IF NOT EXISTS shared_data_commands(id TEXT PRIMARY KEY,request TEXT NOT NULL,result TEXT NOT NULL) STRICT;")?;
+    }
     db.execute_batch(include_str!("schema.sql"))?;
     for (table, name, definition) in [
         ("files", "deleted", "INTEGER NOT NULL DEFAULT 0"),

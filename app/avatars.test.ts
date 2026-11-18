@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import sharp from 'sharp';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { restoreWorkspace } from './backup.ts';
 
 test('avatar HTTP validates images, isolates agents, preserves receipts and survives restart', async () => {

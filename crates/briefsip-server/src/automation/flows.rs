@@ -3,7 +3,7 @@ use std::collections::{BTreeSet, HashSet};
 pub(super) fn validate(db: &Connection, root: &str, links: &Value) -> Result<Value> {
     validate_scope(db, root, links, None)
 }
-pub(super) fn validate_scope(
+pub(crate) fn validate_scope(
     db: &Connection,
     root: &str,
     links: &Value,

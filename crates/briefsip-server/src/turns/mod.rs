@@ -83,9 +83,15 @@ impl Runtime {
     }
 }
 
+pub fn initialize_canonical(db: &Connection) -> Result<()> {
+    db.execute_batch(include_str!("schema.sql"))?;
+    Ok(())
+}
+
 pub fn initialize(db: &Connection) -> Result<()> {
     db.execute_batch(include_str!("schema.sql"))?;
     waits::initialize(db)?;
+    db.execute_batch("UPDATE compaction_attempts SET status='interrupted' WHERE status='pending';UPDATE harness_approvals SET state='expired',revision=revision+1 WHERE state='approval';UPDATE transcriptions SET status='uncertain' WHERE status='pending';")?;
     db.execute("UPDATE turns SET status='interrupted',error='Server stopped during this turn. Check the result before resuming.',revision=revision+1 WHERE status='running'", [])?;
     db.execute("UPDATE provider_calls SET status='interrupted',finished=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE status='pending'", [])?;
     Ok(())
@@ -98,14 +104,16 @@ pub fn stop(state: &AppState) -> Result<()> {
     state.turns.stopping.store(true, Ordering::Release);
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let db = &guard.connection;
-    transaction(db, || {
-        db.execute("UPDATE turns SET status='interrupted',error='Server stopped during this turn. Check the result before resuming.',revision=revision+1 WHERE status='running'",[])?;
-        db.execute(
-            "UPDATE provider_calls SET status='interrupted',finished=? WHERE status='pending'",
-            [iso(db, state.config.now())?],
-        )?;
-        Ok(())
-    })?;
+    if state.auth.is_none() {
+        transaction(db, || {
+            db.execute("UPDATE turns SET status='interrupted',error='Server stopped during this turn. Check the result before resuming.',revision=revision+1 WHERE status='running'",[])?;
+            db.execute(
+                "UPDATE provider_calls SET status='interrupted',finished=? WHERE status='pending'",
+                [iso(db, state.config.now())?],
+            )?;
+            Ok(())
+        })?;
+    }
     if let Ok(active) = state.turns.media.lock() {
         for cancel in active.values() {
             cancel.send_replace(true);

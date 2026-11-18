@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseSkillFiles } from './skill-files.ts';
 import { restoreSkillCommand } from './skill-command.ts';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 const files = [
   { path: 'SKILL.md', content: '\uFEFF---\r\nname: example-skill\r\ndescription: >-\r\n  Use for\r\n  examples.\r\nlicense: Apache-2.0\r\nmetadata:\r\n  version: "1.2.3"\r\n---\r\nRead references/detail.md before answering.\r\n' },

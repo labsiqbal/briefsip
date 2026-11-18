@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { canonicalServerLock, restoreWorkspace, workspaceSnapshot } from './backup.ts';
 import { ProtocolError } from './protocol.ts';
 import { initializeCanonicalSchema } from './schema.ts';

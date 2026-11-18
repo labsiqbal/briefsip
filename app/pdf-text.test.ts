@@ -10,7 +10,7 @@ import childProcess from 'node:child_process';
 import { once } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
 import { extractPdf, isPdf, pdfInputLimit } from './pdf-text.ts';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 async function parserStarted(ready: Promise<void>) {
   let timer: ReturnType<typeof setTimeout> | undefined;

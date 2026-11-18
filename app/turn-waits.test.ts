@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { restoreWorkspace } from './backup.ts';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('agent event waits release workers, survive restart, honor pause and accept once', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-turn-events-'));

@@ -8,7 +8,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import ts from 'typescript';
-import { canonicalJson, ProtocolError, sha256 } from '../protocol.ts';
+import { canonicalJson, ProtocolError, sha256 } from '../shared/protocol.ts';
 import { activateRestoredHub, backupHub, fenceRestoredHub, initializeHubSchema, openHubDatabase, transaction } from './schema.ts';
 import { createHubAuthority, parsePolicy, PERMISSIONS, slug, type IdentityVerifier, type InvocationPolicy, type ParticipationPolicy, type ProjectContext, type VerifiedIdentity } from './project-authority.ts';
 import { createHubRouting, type RoutingFrame } from './routing.ts';
@@ -402,7 +402,7 @@ function guardImports(root: string, source?: string) {
         assert(ts.isStringLiteral(node.moduleSpecifier)); const name=node.moduleSpecifier.text;
         if (allowed.has(name)) return;
         assert(name.startsWith('.'),`Forbidden hub import ${name}`);
-        const target=resolve(dirname(path),name); assert(target.startsWith(`${hub}/`)||target===resolve(root,'protocol.ts'),`Execution boundary import: ${name}`); scan(target);
+        const target=resolve(dirname(path),name); assert(target.startsWith(`${hub}/`)||target===resolve(root,'shared/protocol.ts'),`Execution boundary import: ${name}`); scan(target);
       }
       if(ts.isCallExpression(node)) assert(node.expression.kind!==ts.SyntaxKind.ImportKeyword && !(ts.isIdentifier(node.expression)&&['require','eval','Function'].includes(node.expression.text)),'Dynamic execution/import forbidden');
       ts.forEachChild(node,visit);

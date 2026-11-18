@@ -5,7 +5,7 @@ import { request as httpRequest } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('script approval binds agent and revision, preserves receipts and refuses revoked or deleted streamed retries', async () => {
   const dir=mkdtempSync(join(tmpdir(),'briefsip-script-approval-')), token=randomBytes(32).toString('base64url');

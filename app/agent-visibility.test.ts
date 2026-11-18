@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { visibilityCommand } from './agent-visibility.ts';
 import { messageAgents } from './agent-messages.ts';
 

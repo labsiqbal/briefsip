@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { format } from 'node:util';
 import { once } from 'node:events';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 const key = 'provider-matrix-secret-canary-87362';
 const invalidCatalog = 'The provider returned an invalid model catalog. Check the /models endpoint response.';

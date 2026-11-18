@@ -6,7 +6,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { once } from 'node:events';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { rustBinary } from './rust-binary.ts';
 import { mcpScopes } from './t3/mcp-session-registry.ts';
 

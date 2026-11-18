@@ -1,7 +1,7 @@
 import { createPublicKey, randomBytes, randomUUID, sign, verify, type KeyObject } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
-import { digest, base64url, canonicalJson, closedObject, existingRevision, id, parseJson, ProtocolError, publicKey, sha256 } from '../protocol.ts';
+import { digest, base64url, canonicalJson, closedObject, existingRevision, id, parseJson, ProtocolError, publicKey, sha256 } from '../shared/protocol.ts';
 import type { HubAuthority, NodePrincipal } from './project-authority.ts';
 import type { HubRouting, RoutingFrame } from './routing.ts';
 import { transaction } from './schema.ts';

@@ -13,16 +13,17 @@ fn scan(db: &Connection, kind: &str, sql: &str) -> Result<Vec<Value>> {
     )?
     .ok_or_else(Failure::storage)?;
     let rows = all(db, sql, [string(&cursor, "after_id")])?;
-    db.execute(
-        "UPDATE routine_scheduler_cursors SET after_id=? WHERE kind=?",
-        params![
-            rows.last()
-                .filter(|_| rows.len() == 100)
-                .map(|r| string(r, "id"))
-                .unwrap_or(""),
-            kind
-        ],
-    )?;
+    let after = rows
+        .last()
+        .filter(|_| rows.len() == 100)
+        .map(|r| string(r, "id"))
+        .unwrap_or("");
+    if after != string(&cursor, "after_id") {
+        db.execute(
+            "UPDATE routine_scheduler_cursors SET after_id=? WHERE kind=?",
+            params![after, kind],
+        )?;
+    }
     Ok(rows)
 }
 fn generation(db: &Connection) -> Result<Value> {
@@ -519,8 +520,8 @@ pub(super) fn maintain(state: &AppState, db: &Connection) -> Result<()> {
         ("schedule","SELECT b.*,b.routine AS id FROM routine_schedule_bindings b WHERE b.routine>? ORDER BY b.routine LIMIT 100"),
         ("workflow_schedule","SELECT * FROM schedules WHERE enabled=1 AND id>? ORDER BY id LIMIT 100"),
     ] {
-        for row in transaction(db,||scan(db,kind,sql))? {
-            let result=transaction(db,||{
+        for row in maintenance_transaction(db,||scan(db,kind,sql))? {
+            let result=maintenance_transaction(db,||{
                 let s=Scope{state,db,account:string(&row,"initiator_account"),project:string(&row,"project"),kind:if kind=="workflow_schedule"{"Workflow"}else{"Routine"}};
                 match kind {"flow"=>settle(&s,&row),"schedule"=>routine_schedule(&s,&row),_=>workflow_schedule(&s,&row)}
             });

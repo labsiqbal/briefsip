@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { htmlPreview, previewPolicy } from './html-preview.ts';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('HTML preview removes active content and resource URLs while retaining native details and layout', () => {
   const payload = `<!doctype html><html><head><base href="https://evil.example"><meta http-equiv="refresh" content="0;url=https://evil.example"><style>@import 'https://evil.example/a';</style></head><body onload="alert(1)">

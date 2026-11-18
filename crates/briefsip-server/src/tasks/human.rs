@@ -176,6 +176,19 @@ pub fn control(
         )?;
         return Err(e);
     }
+    if op == "resolve_uncertain"
+        && exists(
+            db,
+            "SELECT 1 FROM task_action_resolutions WHERE action=? AND task=?",
+            [string(&v["decision"], "actionId"), task_id],
+        )?
+    {
+        return Err(fail(
+            409,
+            "resolution_conflict",
+            "Action uncertainty was already resolved.",
+        ));
+    }
     if n(&task, "revision") != expected {
         return Err(stale());
     }

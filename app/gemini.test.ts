@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { geminiChoice, geminiRequest, geminiTokens, geminiURL } from './gemini.ts';
 import { readProviderStream } from './provider-stream.ts';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('Gemini translation preserves signed parts and refuses incomplete effects', async () => {
   const parts = [{ text: 'Reasoning', thought: true }, { functionCall: { name: 'read_history', args: {} }, thoughtSignature: 'signed' }];

@@ -1,13 +1,10 @@
-Check Linux, Node.js >= 22.23.4, bwrap, git, user systemd and optional Tailscale.
-Detect tailnet DNS name with tailscale status --json when available.
-Create private ~/.local/share/briefsip/{releases,scripts,data} and ~/.config/briefsip (0700).
-Download https://nuc.example.ts.net:4317/api/install/release with Bearer [redacted]; limit 1 GiB, SHA-256 and manifest verification; unpack releases/<id>; select current.
-Install launcher, start.sh and uninstall-machine.sh; preserve provider configuration (no credentials supplied).
-Write ~/.config/briefsip/launcher.json and providers.env (0600); install ~/.config/systemd/user/briefsip.service.
+Check Linux, curl, tar, sha256sum and user systemd.
+Download and verify a Rust release archive; limit 1 GiB, SHA-256 and manifest verification.
+Install bin/briefsip-server and bin/briefsip-launcher; preserve provider configuration.
+Write ~/.config/briefsip/launcher.json and env file (0600); install briefsip.service.
 systemctl --user daemon-reload
 systemctl --user enable --now briefsip.service
-loginctl enable-linger <user> (warn if not permitted)
-Run: tailscale serve --bg --https=4317 http://127.0.0.1:4317
-Wait for http://127.0.0.1:4317/api/environment and advertised origin; preserve existing pairing.
-POST https://nuc.example.ts.net:4317/api/install/pairing-code with Bearer [redacted] (consumes token); print one-time code.
-POST http://127.0.0.1:4317/api/environment to set display name; POST http://127.0.0.1:4317/api/machines to pair both ways; print summary.
+Wait for http://127.0.0.1:PORT/api/environment and advertised origin.
+POST source/api/install/pairing-code with Bearer [redacted] (consumes token).
+POST local/api/environment to set display name; POST local/api/machines to pair both ways.
+Run: tailscale serve --bg --https=PORT http://127.0.0.1:PORT

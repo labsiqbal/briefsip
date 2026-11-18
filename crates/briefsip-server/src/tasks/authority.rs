@@ -63,8 +63,8 @@ pub fn dispatch(db: &Connection, task: &Value) -> Result<Value> {
         if row["archived"]==1||row["deleted"]==1||!exists(db,"SELECT 1 FROM record_scopes WHERE table_name=? AND key_json=? AND project=? AND root_kind=? AND root_id=? AND (visibility='project' OR account=?)",params![table,json!([id]).to_string(),string(task,"project"),kind,id,string(task,"initiator_account")])?{return Err(fail(403,"execution_denied","Task conversation is inactive."))}
         let original = one(
             db,
-            "SELECT agent FROM tasks WHERE logical_turn=? AND predecessor_task IS NULL",
-            [string(task, "logical_turn")],
+            "SELECT agent FROM tasks WHERE logical_turn=? AND predecessor_task IS NULL UNION ALL SELECT agent FROM turns WHERE id=? LIMIT 1",
+            [string(task, "logical_turn"),string(task, "logical_turn")],
         )?
         .ok_or_else(missing)?;
         if kind == "thread" && row["agent"] != original["agent"]
@@ -83,24 +83,11 @@ pub fn dispatch(db: &Connection, task: &Value) -> Result<Value> {
         }
         revisions.push(json!({"kind":kind,"id":id,"revision":row["revision"]}));
     }
-    let family = ancestors(db, task)?;
-    let family_ids = json!(family.iter().map(|r| r["id"].clone()).collect::<Vec<_>>()).to_string();
-    // ponytail: automation tasks stay fenced until canonical routine and workflow authority is ported.
-    for table in ["routine_steps", "workflow_steps"] {
-        if data::table(db, table)?
-            && exists(
-                db,
-                &format!("SELECT 1 FROM {table} WHERE turn IN(SELECT value FROM json_each(?))"),
-                [&family_ids],
-            )?
-        {
-            return Err(fail(
-                422,
-                "capability_missing",
-                "Canonical automation execution is not available yet.",
-            ));
-        }
+    let workflow = automation::dispatch(db, task)?;
+    if let Some(run) = workflow {
+        revisions.push(json!({"kind":"workflowRun","id":run["id"],"revision":run["revision"]}));
     }
+    let family = ancestors(db, task)?;
     let ancestors = family.into_iter().skip(1).collect::<Vec<_>>();
     if ancestors.iter().any(|a| a["status"] == "cancelled") {
         return Err(fail(

@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('coordination: durable delegation, transfer, cancellation, rejection and recovery', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-coordination-'));

@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
-import { canonicalJson, closedObject, digest, existingRevision, id, normalizeEmail, ProtocolError, publicKey, sha256, time } from '../protocol.ts';
+import { canonicalJson, closedObject, digest, existingRevision, id, normalizeEmail, ProtocolError, publicKey, sha256, time } from '../shared/protocol.ts';
 import { transaction } from './schema.ts';
 
 export type Role = 'owner' | 'admin' | 'member' | 'viewer';

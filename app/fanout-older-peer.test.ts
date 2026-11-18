@@ -8,8 +8,8 @@ import { createServer, request } from 'node:http';
 import { createServer as controlServer } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { startApp } from './server.ts';
-import { fileManifest, verifyRelease } from './update-release.mjs';
+import { startApp } from './test-bridge.ts';
+import { fileManifest, verifyRelease } from '../scripts/release-lib.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 async function api(origin: string, path: string, body?: unknown) {

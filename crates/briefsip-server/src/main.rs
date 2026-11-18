@@ -533,6 +533,16 @@ async fn main() -> db::Result<()> {
             mcp::initialize(&guard.connection).map_err(|e| e.message)?;
             computer::initialize(&guard.connection)?;
             updates::initialize(&guard.connection)?;
+        } else {
+            db::provider_tables(&guard.connection)?;
+            data::initialize_canonical(&guard)?;
+            turns::initialize_canonical(&guard.connection).map_err(|e| e.message)?;
+            computer::initialize_canonical(&guard.connection)?;
+            connectors::initialize(&guard.connection).map_err(|e| e.message)?;
+            harness::initialize(&guard.connection).map_err(|e| e.message)?;
+            mcp::initialize(&guard.connection).map_err(|e| e.message)?;
+            files::init_canonical(&guard.connection)?;
+            automation::project::initialize(&guard.connection).map_err(|e| e.message)?;
         }
         events.watch(&guard.connection);
     }
@@ -547,7 +557,11 @@ async fn main() -> db::Result<()> {
         listener.local_addr()?
     );
     let tls = config.tls.clone();
-    let auth = config.auth.clone().map(auth::Auth::new).transpose()?;
+    let auth = config
+        .auth
+        .clone()
+        .map(|auth| auth::Auth::new(auth, config.remaining_data.test_canonical_bridge.clone()))
+        .transpose()?;
     let trial_pending = updates::trial(&config);
     let computer = Arc::new(computer::Manager::new(&config)?);
     let state = AppState {

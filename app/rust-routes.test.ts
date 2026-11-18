@@ -1,39 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import ts from 'typescript';
 
-test('Rust route inventory stays within Node matchers and reports ported coverage', t => {
-  const source = ts.createSourceFile('server.ts', readFileSync(new URL('./server.ts', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true);
-  const publicMatchers: RegExp[] = [];
-  const matchers = new Map<string, (path: string) => boolean>();
-  const endpoints = new Map<string, (path: string) => boolean>();
-  const visit = (node: ts.Node) => {
-    if (ts.isStringLiteral(node) && /^\/(?:api(?:\/|$)|mcp(?:\/|$))/.test(node.text)) {
-      const parent = node.parent;
-      const exact = ts.isBinaryExpression(parent)
-        && ['===', '=='].includes(parent.operatorToken.getText(source))
-        && ['path', 'url.pathname'].includes(parent.left.getText(source));
-      const array = ts.isArrayLiteralExpression(parent) && ts.isPropertyAccessExpression(parent.parent) && parent.parent.name.text === 'includes';
-      const prefix = ts.isCallExpression(parent) && ts.isPropertyAccessExpression(parent.expression) && ['startsWith', 'endsWith'].includes(parent.expression.name.text) && parent.expression.expression.getText(source) === 'path';
-      const namespace = ['/api', '/api/', '/mcp/'].includes(node.text);
-      if ((exact || array || prefix) && !namespace) {
-        matchers.set(node.text, path => prefix ? path.startsWith(node.text) : path === node.text);
-        if (exact || array) endpoints.set(node.text, path => path === node.text);
-      }
-    }
-    if (ts.isRegularExpressionLiteral(node)) {
-      const raw = node.getText(source), end = raw.lastIndexOf('/');
-      const pattern = raw.slice(1, end);
-      if (pattern.startsWith('^\\/sites\\/')) publicMatchers.push(new RegExp(pattern, raw.slice(end + 1)));
-      if (pattern.startsWith('^\\/api\\/') || pattern.startsWith('^\\/mcp')) {
-        const matcher = new RegExp(pattern, raw.slice(end + 1)); matchers.set(raw, path => matcher.test(path));
-        if (pattern.endsWith('$')) endpoints.set(raw, path => matcher.test(path));
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(source);
+type Matcher = { kind: 'exact' | 'prefix' | 'regex' | 'regex-exact'; pattern: string; flags?: string; endpoint?: boolean };
+type Inventory = { matchers: Matcher[]; publicMatchers: { pattern: string; flags?: string; endpoint?: boolean }[] };
+const inventory = JSON.parse(readFileSync(new URL('./node-route-inventory.json', import.meta.url), 'utf8')) as Inventory;
+const matcher = (entry: Matcher) => {
+  if (entry.kind === 'exact') return (path: string) => path === entry.pattern;
+  if (entry.kind === 'prefix') return (path: string) => path.startsWith(entry.pattern);
+  const expression = new RegExp(entry.pattern, entry.flags);
+  return (path: string) => expression.test(path);
+};
+
+test('Rust route inventory stays within frozen Node matchers and reports ported coverage', t => {
+  const matchers = new Map(inventory.matchers.map(entry => [entry.kind.startsWith('regex') ? `/${entry.pattern}/${entry.flags ?? ''}` : entry.pattern, matcher(entry)]));
+  const endpoints = new Map(inventory.matchers.filter(entry => entry.endpoint === true).map(entry => [entry.kind.startsWith('regex') ? `/${entry.pattern}/${entry.flags ?? ''}` : entry.pattern, matcher(entry)]));
+  const publicMatchers = inventory.publicMatchers.map(entry => new RegExp(entry.pattern, entry.flags));
   const src = new URL('../crates/briefsip-server/src/', import.meta.url);
   const rust = readdirSync(src, { recursive: true }).filter(name => String(name).endsWith('.rs')).map(name => readFileSync(new URL(String(name), src), 'utf8')).join('\n');
   const routes = [...rust.matchAll(/\.route\(\s*"([^"\n]+)"/g)].map(match => match[1]);
@@ -45,19 +27,20 @@ test('Rust route inventory stays within Node matchers and reports ported coverag
   for (const route of routes) {
     const witness = route.replace(/\{seq\}/g, '1').replace(/\{[^}]+\}/g, id);
     if (!/^\/(?:api(?:\/|$)|mcp(?:\/|$))/.test(route)) {
-      assert(publicMatchers.some(matcher => matcher.test(witness)), `Rust public route absent from Node: ${route}`);
+      assert(publicMatchers.some(publicMatcher => publicMatcher.test(witness)), `Rust public route absent from Node: ${route}`);
       continue;
     }
-    // Node rewrites project environment URLs before matching their operation.
     const environment = witness.replace(/^\/api\/projects\/[^/]+(\/environment(?:\/(?:remove|settings))?)$/, '/api$1');
-    const matches = [...endpoints].filter(([, matcher]) => matcher(witness) || matcher(environment));
+    const matches = [...endpoints].filter(([, testMatcher]) => testMatcher(witness) || testMatcher(environment));
     assert(matches.length > 0, `Rust route absent from Node: ${route}`);
     for (const [name] of matches) ported.add(name);
   }
   const witnesses = routes.map(route => route.replace(/\{seq\}/g, '1').replace(/\{[^}]+\}/g, id));
-  for (const [name, matcher] of matchers) if (!endpoints.has(name) && witnesses.some(witness => matcher(witness))) ported.add(name);
-  assert(![...endpoints.values()].some(matcher => matcher('/api/__inventory_unknown')));
-  assert(![...endpoints.values()].some(matcher => matcher(`/api/agents/${id}/__inventory_unknown`)));
+  for (const [name, testMatcher] of matchers) if (!endpoints.has(name) && witnesses.some(witness => testMatcher(witness))) ported.add(name);
+  assert(![...endpoints.values()].some(testMatcher => testMatcher('/api/__inventory_unknown')));
+  assert(![...endpoints.values()].some(testMatcher => testMatcher(`/api/agents/${id}/__inventory_unknown`)));
+  assert.equal(matchers.size, 206);
+  assert.equal(ported.size, 206);
   t.diagnostic(`ported ${ported.size}/${matchers.size} (${routes.length} Rust route registrations)`);
   for (const name of matchers.keys()) if (!ported.has(name)) t.diagnostic(`missing ${name}`);
   for (const route of routes) t.diagnostic(route);

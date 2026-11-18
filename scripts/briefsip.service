@@ -1,10 +1,10 @@
 [Unit]
-Description=Briefsip server launcher
+Description=Briefsip Rust server launcher
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/node %h/.local/share/briefsip/scripts/briefsip-launcher.mjs --config %h/.config/briefsip/launcher.json
+ExecStart=%h/.local/share/briefsip/current/bin/briefsip-launcher --config %h/.config/briefsip/launcher.json
 Restart=on-failure
 RestartSec=2
 

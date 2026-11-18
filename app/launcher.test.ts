@@ -9,11 +9,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { nativeReleaseFixture } from './native-release-fixture.ts';
 import { launcherCommand } from './rust-test-launcher.ts';
-import { fileManifest, selectRelease } from './update-release.mjs';
-import { launcherRequest } from './updates.ts';
+import { fileManifest, selectRelease } from '../scripts/release-lib.mjs';
+import { launcherRequest } from './rust-launcher-test.ts';
 
-const rust = process.env.BRIEFSIP_TEST_LAUNCHER === 'rust';
+const rust = true;
 const delay = (ms: number) => new Promise(done => setTimeout(done, ms));
 async function until<T>(read: () => Promise<T | false>, message = 'Launcher test timed out'): Promise<T> {
   for (let i = 0; i < 150; i++) { try { const result = await read(); if (result) return result; } catch {} await delay(50); }
@@ -40,12 +41,7 @@ async function fixture() {
   const publish = (version: string) => {
     const id = version + '-12345678', release = join(releases, id); mkdirSync(release);
     writeFileSync(join(release, 'package.json'), JSON.stringify({ version, type: 'module' }));
-    const worker = new URL('./update-backup.ts', import.meta.url).href;
-    writeFileSync(join(release, 'update-backup.ts'), `import {updateBackup} from ${JSON.stringify(worker)}; await updateBackup(...process.argv.slice(2));`);
-    writeFileSync(join(release, 'server.ts'), `import {createServer} from 'node:http';
-let committed;process.on('message',q=>{if(q.type==='update-committed')committed=q.id;});
-const server=createServer((q,r)=>r.end(JSON.stringify({version:${JSON.stringify(version)},committed,connected:process.connected,env:process.env}))).listen(Number(process.env.PORT),'127.0.0.1');
-const stop=()=>server.close(()=>process.exit(0));process.on('SIGTERM',stop);process.on('disconnect',stop);`);
+    nativeReleaseFixture(release, version);
     const seal = () => writeFileSync(join(release, 'release.json'), JSON.stringify({ id, version, files: fileManifest(release) })); seal();
     return { id, version, release, seal };
   };
@@ -75,7 +71,7 @@ test('launcher rejects invalid config, public files, symlinks and hard links', a
   } finally { await f.close(); }
 });
 
-test('launcher parses literal env, overrides routing and delivers Node IPC commit; receipts survive restart', async () => {
+test('launcher parses literal env, overrides routing and delivers native socket commit; receipts survive restart', async () => {
   const f = await fixture();
   try {
     const first = f.publish('1.0.0'); selectRelease(f.releases, 'current', first.id);
@@ -102,7 +98,7 @@ test('launcher rejects corrupt releases and strict socket requests without stopp
   try {
     const first = f.publish('1.0.0'); selectRelease(f.releases, 'current', first.id); f.start(); await until(async () => await f.read());
     for (const request of [{ type: 'status', extra: 1 }, { type: 'other' }, { type: 'apply', id: 'bad', target: first.id, version: first.version }]) await assert.rejects(launcherRequest(f.options, request), /control request|update request/);
-    const bad = f.publish('1.0.1'); writeFileSync(join(bad.release, 'server.ts'), 'tampered');
+    const bad = f.publish('1.0.1'); writeFileSync(join(bad.release, 'bin/briefsip-server'), 'tampered');
     await assert.rejects(launcherRequest(f.options, { type: 'apply', id: randomUUID(), target: bad.id, version: bad.version }), /manifest mismatch/);
     const oversized = createConnection(f.options.launcherSocket); oversized.on('error', () => {}); const closed = once(oversized, 'close'); oversized.write('x'.repeat(4097)); await closed;
     assert.equal((await launcherRequest(f.options, { type: 'status' })).current, first.id);
@@ -114,7 +110,7 @@ test('launcher rejects tampered startup and public persisted state', async () =>
   const f = await fixture();
   try {
     const first = f.publish('1.0.0'); selectRelease(f.releases, 'current', first.id);
-    writeFileSync(join(first.release, 'server.ts'), 'tampered'); await rejectsStart(f, /manifest mismatch/);
+    writeFileSync(join(first.release, 'bin/briefsip-server'), 'tampered'); await rejectsStart(f, /manifest mismatch/);
     const state = join(f.data, 'update-state.json'); chmodSync(state, 0o644); await rejectsStart(f, /private files/);
   } finally { await f.close(); }
 });
@@ -123,7 +119,7 @@ test('Rust launcher selects native release, checks chunked health, snapshots, an
   const f = await fixture();
   try {
     const first = f.publish('1.0.0'); selectRelease(f.releases, 'current', first.id); const process = f.start(); await until(async () => await f.read());
-    const next = f.publish('1.0.1'); mkdirSync(join(next.release, 'bin'));
+    const next = f.publish('1.0.1'); 
     execFileSync('rustc', [fileURLToPath(new URL('../crates/briefsip-launcher/tests/fixtures/server.rs', import.meta.url)), '-o', join(next.release, 'bin/briefsip-server')]);
     writeFileSync(join(next.release, 'version.txt'), next.version); writeFileSync(join(next.release, 'server.ts'), "throw new Error('Node fallback must not run')"); next.seal();
     await launcherRequest(f.options, { type: 'apply', id: randomUUID(), target: next.id, version: next.version });

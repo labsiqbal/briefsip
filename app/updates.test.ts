@@ -10,12 +10,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { nativeReleaseFixture } from './native-release-fixture.ts';
 import { rustBinary } from './rust-binary.ts';
-import { startApp } from './server.ts';
-import { launcherRequest } from './updates.ts';
+import { startApp } from './test-bridge.ts';
+import { launcherRequest } from './rust-launcher-test.ts';
 import { launcherCommand } from './rust-test-launcher.ts';
-import { durableWrite, fileManifest, latestRelease, selectRelease, selectedRelease, verifyRelease } from './update-release.mjs';
-import { receiveRelease, releaseArchive } from './update-archive.ts';
+import { durableWrite, fileManifest, latestRelease, selectRelease, selectedRelease, verifyRelease } from '../scripts/release-lib.mjs';
+import { receiveRelease, releaseArchive } from './rust-update-test.ts';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const { buildRelease } = await import(new URL('../scripts/release.mjs', import.meta.url).href);
 const delay = (ms: number) => new Promise(r=>setTimeout(r,ms));
@@ -25,17 +26,16 @@ async function freePort() { const s=httpServer(); await new Promise<void>(r=>s.l
 function fixture(source:string, version:string, mode='healthy') {
   mkdirSync(join(source,'dist'),{recursive:true}); writeFileSync(join(source,'dist/index.html'),'<title>Briefsip fixture</title>');
   writeFileSync(join(source,'package.json'),JSON.stringify({name:'fixture',version,type:'module'}));
-  const backupURL=new URL('./backup.ts',import.meta.url).href, workerURL=new URL('./update-backup.ts',import.meta.url).href;
-  writeFileSync(join(source,'update-backup.ts'),`import {updateBackup} from ${JSON.stringify(workerURL)}; await updateBackup(...process.argv.slice(2));`);
-  writeFileSync(join(source,'server.ts'),`import {DatabaseSync} from 'node:sqlite';import {createServer} from 'node:http';import {readFileSync} from 'node:fs';import {join} from 'node:path';import {canonicalServerLock} from ${JSON.stringify(backupURL)};
-const file=join(process.env.BRIEFSIP_DATA_DIR,'briefsip.sqlite'),db=new DatabaseSync(file),lock=canonicalServerLock(file);db.exec('PRAGMA foreign_keys=ON;CREATE TABLE IF NOT EXISTS data(value TEXT);CREATE TABLE IF NOT EXISTS turns(status TEXT);');
-const version=JSON.parse(readFileSync(new URL('./package.json',import.meta.url),'utf8')).version;
-if(${JSON.stringify(mode)}!=='healthy')db.exec("DELETE FROM data;INSERT INTO data VALUES('trial damage');");
-if(${JSON.stringify(mode)}==='exit')process.exit(1);
-const server=createServer((q,r)=>{r.setHeader('Content-Type','application/json');r.end(JSON.stringify({version:${JSON.stringify(mode)}==='wrong'?'0.0.0':version}));}).listen(Number(process.env.PORT),'127.0.0.1');
-let closing=false;function close(){if(closing)return;closing=true;server.close(()=>{db.close();lock.close();process.exit(0);});}process.on('SIGTERM',close);process.on('disconnect',close);`);
+  nativeReleaseFixture(source,version,mode);
 }
-function publishFixture(dir:string, version:string, mode='healthy') { const source=join(dir,'source');fixture(source,version,mode);return buildRelease({source,releases:join(dir,'releases'),build:false,install:false,allowDirty:true,notes:`Fixture ${version}`}); }
+function publishFixture(dir:string, version:string, mode='healthy') {
+  if (!existsSync(join(dir,'.git'))) {
+    execFileSync('git',['init'],{cwd:dir,stdio:'ignore'});
+    execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','Fixture'],{cwd:dir,stdio:'ignore'});
+  }
+  const source=join(dir,'source');fixture(source,version,mode);
+  return buildRelease({source,releases:join(dir,'releases'),repository:dir,build:false,install:false,allowDirty:true,notes:`Fixture ${version}`});
+}
 async function launcher(dir:string, current:string) {
   const releases=join(dir,'releases'),data=join(dir,'data');mkdirSync(data,{recursive:true});selectRelease(releases,'current',current);
   const port=await freePort(),config=join(dir,'launcher.json');writeFileSync(config,JSON.stringify({dataDir:data,releasesDir:releases,port,trialTimeoutMs:5000}),{mode:0o600});
@@ -49,9 +49,9 @@ async function api(app:{origin:string},path:string,body?:unknown,status=200,head
 async function mockLauncher(dir:string) {mkdirSync(dir,{recursive:true});const socket=join(dir,'control.sock'),commands=new Map<string,string>();const server=netServer(s=>{let buf='';s.on('data',b=>{buf+=b;if(!buf.includes('\n'))return;const q=JSON.parse(buf);if(q.type==='status')s.end(JSON.stringify({protocol:1,current:'development'})+'\n');else{const digest=JSON.stringify([q.target,q.version]),old=commands.get(q.id);if(old&&old!==digest)s.end('{"error":"Request ID was already used."}\n');else{commands.set(q.id,digest);s.end(JSON.stringify({accepted:true,id:q.id})+'\n');}}});});await new Promise<void>(r=>server.listen(socket,r));chmodSync(socket,0o600);return{socket,commands,async close(){if(server.listening)await new Promise<void>(r=>server.close(()=>r()));}};}
 
 test('release builder publishes verified immutable files before feed metadata and refuses dirty trees',async()=>{
- const dir=temp();try{const source=join(dir,'source'),releases=join(dir,'releases');fixture(source,'1.0.0');writeFileSync(join(source,'.env'),'NEVER_COPY_SECRET');const info=buildRelease({source,releases,build:false,install:false,allowDirty:true,notes:'Native check'});assert.equal(verifyRelease(releases,info.id).version,'1.0.0');assert.equal(latestRelease(releases)!.id,info.id);assert(!existsSync(join(releases,info.id,'.env')));assert(Object.keys(info.files).includes('server.ts'));assert(!Object.keys(info.files).includes('release.json'));const repository=join(dir,'dirty-repository');mkdirSync(repository);execFileSync('git',['init'],{cwd:repository,stdio:'ignore'});execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','Fixture'],{cwd:repository,stdio:'ignore'});writeFileSync(join(repository,'dirty'),'fixture');assert.throws(()=>buildRelease({source,releases,repository,build:false,install:false}),/dirty/);assert.throws(()=>buildRelease({source,releases,build:false,install:false,allowDirty:true}),/already exists/);assert.equal(latestRelease(releases)!.id,info.id);
+ const dir=temp();try{const source=join(dir,'source'),releases=join(dir,'releases');fixture(source,'1.0.0');writeFileSync(join(source,'.env'),'NEVER_COPY_SECRET');const info=buildRelease({source,releases,build:false,install:false,allowDirty:true,notes:'Native check'});assert.equal(verifyRelease(releases,info.id).version,'1.0.0');assert.equal(latestRelease(releases)!.id,info.id);assert(!existsSync(join(releases,info.id,'.env')));assert(Object.keys(info.files).includes('bin/briefsip-server'));assert(!Object.keys(info.files).includes('release.json'));const repository=join(dir,'dirty-repository');mkdirSync(repository);execFileSync('git',['init'],{cwd:repository,stdio:'ignore'});execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','Fixture'],{cwd:repository,stdio:'ignore'});writeFileSync(join(repository,'dirty'),'fixture');assert.throws(()=>buildRelease({source,releases,repository,build:false,install:false}),/dirty/);assert.throws(()=>buildRelease({source,releases,build:false,install:false,allowDirty:true}),/already exists/);assert.equal(latestRelease(releases)!.id,info.id);
  fixture(source,'1.0.1');writeFileSync(join(source,'bad-link'),'',{flag:'w'});mkdirSync(join(source,'t3'));symlinkSync('/etc/passwd',join(source,'t3/unsafe'));assert.throws(()=>buildRelease({source,releases,build:false,install:false,allowDirty:true}),/unsupported/i);assert.equal(latestRelease(releases)!.id,info.id);assert(!readdirSync(releases).some(name=>name.startsWith('.staging-')));
- writeFileSync(join(releases,info.id,'server.ts'),'tampered');assert.throws(()=>verifyRelease(releases,info.id),/SHA-256/);
+ writeFileSync(join(releases,info.id,'bin/briefsip-server'),'tampered');assert.throws(()=>verifyRelease(releases,info.id),/SHA-256/);
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 
@@ -68,10 +68,10 @@ test('release lint failure stops build, tests and packaging; successful gates ru
 test('desktop release sync follows dirty guard and publishes matching version through desktop helper',()=>{
  const dir=temp();try{
  for(const folder of ['app','scripts','desktop/scripts'])mkdirSync(join(dir,folder),{recursive:true});
- cpSync(join(root,'scripts/release.mjs'),join(dir,'scripts/release.mjs'));for(const name of ['install-machine.sh','uninstall-machine.sh','briefsip-launcher.mjs'])cpSync(join(root,'scripts',name),join(dir,'scripts',name));cpSync(join(root,'app/update-release.mjs'),join(dir,'app/update-release.mjs'));
+ cpSync(join(root,'scripts/release.mjs'),join(dir,'scripts/release.mjs'));for(const name of ['install-machine.sh','uninstall-machine.sh'])cpSync(join(root,'scripts',name),join(dir,'scripts',name));cpSync(join(root,'scripts/release-lib.mjs'),join(dir,'scripts/release-lib.mjs'));
  const app={name:'release-fixture',version:'1.0.1',type:'module',scripts:{lint:'node -e "0"',test:'node -e "0"',build:'node -e "0"'}};
  writeFileSync(join(dir,'app/package.json'),JSON.stringify(app));writeFileSync(join(dir,'app/package-lock.json'),JSON.stringify({name:app.name,version:app.version,lockfileVersion:3,packages:{'':app}}));
- writeFileSync(join(dir,'app/server.ts'),'// Fixture runtime');mkdirSync(join(dir,'app/dist'));writeFileSync(join(dir,'app/dist/index.html'),'fixture');
+ nativeReleaseFixture(join(dir,'app'),'1.0.1');mkdirSync(join(dir,'app/dist'));writeFileSync(join(dir,'app/dist/index.html'),'fixture');
  writeFileSync(join(dir,'desktop/package.json'),JSON.stringify({version:'1.0.0'}));writeFileSync(join(dir,'desktop/package-lock.json'),JSON.stringify({version:'1.0.0',packages:{'':{version:'1.0.0'}}}));
  writeFileSync(join(dir,'desktop/scripts/publish-local.mjs'),`import {writeFileSync,readFileSync} from 'node:fs';const version=JSON.parse(readFileSync(new URL('../package.json',import.meta.url))).version;writeFileSync(process.argv[2],version);`);
  const git=(args:string[])=>execFileSync('git',args,{cwd:dir,stdio:'ignore'});git(['init']);git(['add','.']);git(['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','Fixture']);
@@ -148,7 +148,7 @@ test('Rust launcher trials native Rust server, commits over socket, and rolls ba
  const dir=temp();let f:Awaited<ReturnType<typeof launcher>>|undefined;
  try{
   function native(version:string){
-   const release=publishFixture(dir,version),path=join(dir,'releases',release.id);mkdirSync(join(path,'bin'));
+   const release=publishFixture(dir,version),path=join(dir,'releases',release.id);
    cpSync(rustBinary('briefsip-server',process.env.BRIEFSIP_RUST_BINARY),join(path,'bin/briefsip-server'));
    execFileSync('strip',['--strip-debug',join(path,'bin/briefsip-server')]);
    writeFileSync(join(path,'package.json'),JSON.stringify({version,type:'module'}));

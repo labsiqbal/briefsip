@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { anthropicRequest, anthropicChoice, anthropicTokens, providerFamily, providerURL } from './provider.ts';
 import { discoverModels } from './models.ts';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('Anthropic translation preserves message roles, tools and honest usage', () => {
   const body = anthropicRequest('model', [

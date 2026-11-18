@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { startRustServer } from './rust-test-server.ts';
 
 test('Rust forks preserve bounded persisted transcripts and restart receipts', { skip: process.env.BRIEFSIP_TEST_SERVER !== 'rust', timeout: 20000 }, async () => {
@@ -140,7 +140,7 @@ test('Rust canonical projects preserve ownership, CAS and durable command receip
   for (const db of [reference, disk]) { initializeCanonicalSchema(db); db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,?,?,?)').run(account, auth.issuer, 'user_fixture', Date.now()); }
   disk.close();
   const actor = { accountId: account, issuer: auth.issuer, subject: 'user_fixture', sessionId: 'sess_fixture', expiresAt: Date.now() + 60000 };
-  const { retainedToolNames } = await import('./server.ts');
+  const { retainedToolNames } = await import('./test-bridge.ts');
   const access = createProjectAccess(reference, { requireCurrent: value => value, verifiedMailboxes: async () => [] }, () => { throw new Error('No mail in project fixture'); }, retainedToolNames);
   const app = await startRustServer({ database, auth });
   const send = async (path: string, method = 'GET', body?: { requestId: string; [key: string]: unknown }) => { const res: Response = await fetch(app.origin + path, { method, headers: { Authorization: `Bearer ${token}`, Origin: auth.origin, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': body?.requestId ?? randomUUID() }, body: body ? JSON.stringify(body) : undefined }); return { status: res.status, body: await res.json() }; };

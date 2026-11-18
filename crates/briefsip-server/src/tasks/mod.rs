@@ -1,11 +1,60 @@
 mod admission;
 mod authority;
+mod automation;
 mod context;
 pub(crate) mod execution;
 mod human;
+mod messages;
 mod mutations;
+mod reads;
 mod recovery;
+mod shared;
 mod sources;
+pub(crate) mod waits;
+
+pub fn maintain(state: &AppState) -> Result<()> {
+    let guard = state.database.lock().map_err(|_| Failure::storage())?;
+    let db = &guard.connection;
+    if !exists(
+        db,
+        "SELECT 1 FROM authority_state WHERE id=1 AND serving_state='active'",
+        [],
+    )? {
+        return Ok(());
+    }
+    let now = state.config.now();
+    waits::maintain(db, now)?;
+    let due=all(db,"SELECT w.id,w.turn,t.id task,t.project,t.state,w.deadline FROM turn_waits w JOIN tasks t ON t.logical_turn=w.turn WHERE w.status='waiting' AND (w.deadline<=? OR t.state IN('cancelled','failed','transferred')) ORDER BY w.deadline,w.id LIMIT 40",[now])?;
+    if !due.is_empty() {
+        transaction(db, || {
+            for wait in due {
+                let expired = n(&wait, "deadline") <= now;
+                db.execute(
+                    "UPDATE turn_waits SET status=? WHERE id=?",
+                    [
+                        if expired { "expired" } else { "closed" },
+                        string(&wait, "id"),
+                    ],
+                )?;
+                if expired
+                    && !matches!(
+                        string(&wait, "state"),
+                        "cancelled" | "completed" | "failed" | "transferred"
+                    )
+                {
+                    db.execute(
+                        "UPDATE tasks SET state='failed',revision=revision+1 WHERE id=?",
+                        [string(&wait, "task")],
+                    )?;
+                    db.execute("UPDATE turns SET status='failed',revision=revision+1,error='Event wait timed out.' WHERE id=?",[string(&wait,"turn")])?;
+                    observe(db, &task(db, string(&wait, "task"))?, now)?;
+                }
+            }
+            Ok(())
+        })?;
+    }
+    waits::send(db, now)
+}
 
 use crate::{
     auth::Actor,
@@ -234,6 +283,35 @@ pub async fn device(state: &AppState, request: Request, request_id: &str) -> Res
             "Header and body IDs must match.",
         ));
     }
+    if path.ends_with("/context-mutations")
+        && matches!(
+            string(&v["toolCall"]["function"], "name"),
+            "query_data" | "list_data_tables"
+        )
+    {
+        let p = {
+            let guard = state.database.lock().map_err(|_| Failure::storage())?;
+            devices::authenticate(
+                &guard.connection,
+                &headers,
+                "POST",
+                &target,
+                &raw,
+                request_id,
+                false,
+                state.config.now(),
+            )?
+        };
+        let token = crate::text_header(&headers, "x-briefsip-executor").ok_or_else(|| {
+            fail(
+                401,
+                "executor_invalid",
+                "Executor token is not available yet.",
+            )
+        })?;
+        let task_id = id(&json!(path.split('/').nth(3).unwrap_or("")))?;
+        return shared::run(state, &task_id, &p, &v, token).await;
+    }
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let db = &guard.connection;
     let p = devices::authenticate(
@@ -279,6 +357,9 @@ pub async fn device(state: &AppState, request: Request, request_id: &str) -> Res
         }
         _ => Err(missing()),
     })?;
+    if result["waitPending"] == true {
+        return Err(waits::offline());
+    }
     if path.ends_with("/execution") {
         return Ok(crate::json_response(
             200,

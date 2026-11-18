@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createClerkClient } from '@clerk/backend';
 import { createAuth, type AuthConfig } from './auth.ts';
 import { initializeCanonicalSchema } from './schema.ts';
-import { startCanonicalApp } from './server.ts';
+import { startCanonicalApp } from './test-bridge.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -71,7 +71,7 @@ test('canonical listen failure leaves no maintenance running on a closed databas
   await new Promise<void>(resolve => occupied.listen(0, '127.0.0.1', resolve));
   const address = occupied.address(); assert(address && typeof address !== 'string');
   try {
-    await assert.rejects(startCanonicalApp({ database: join(dir, 'db.sqlite'), auth: { ...config, development: true }, port: address.port, mailApiKey: 'resend_fixture', mail: () => ({ from: 'noreply@example.com', origin: config.origin, keyId: randomUUID(), key: Buffer.alloc(32), lookupKey: Buffer.alloc(32) }) }), { code: 'EADDRINUSE' });
+    await assert.rejects(startCanonicalApp({ database: join(dir, 'db.sqlite'), auth: { ...config, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), development: true }, port: address.port }), { code: 'EADDRINUSE' });
     await new Promise(resolve => setTimeout(resolve, 1100));
   } finally { await new Promise<void>(resolve => occupied.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
@@ -79,7 +79,7 @@ test('canonical listen failure leaves no maintenance running on a closed databas
 test('canonical HTTP verifies identity, isolates projects and cannot dispatch legacy routes', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-canonical-'));
   const clerk = createClerkClient({ secretKey: config.secretKey, publishableKey: config.publishableKey, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), telemetry: { disabled: true } });
-  const app = await startCanonicalApp({ database: join(dir, 'db.sqlite'), auth: { ...config, development: true }, clerk });
+  const app = await startCanonicalApp({ database: join(dir, 'db.sqlite'), auth: { ...config, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), development: true }, clerk });
   const send = async (path: string, method = 'GET', body?: { requestId: string; [key: string]: unknown }, token = jwt()) => {
     const response = await fetch(app.origin + path, { method, headers: { Authorization: `Bearer ${token}`, Origin: config.origin, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': body?.requestId ?? randomUUID() }, ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
@@ -135,12 +135,12 @@ test('canonical invitation creates durable outbox and worker delivers through co
   const mailKey = Buffer.alloc(32, 7), lookupKey = Buffer.alloc(32, 9), oldKeyId = randomUUID();
   let mail = { from: 'noreply@example.com', origin: config.origin, keyId: oldKeyId, key: mailKey, lookupKey, keyFor: (keyId: string) => { assert.equal(keyId, oldKeyId); return mailKey; } };
   const clerk = createClerkClient({ secretKey: config.secretKey, publishableKey: config.publishableKey, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), telemetry: { disabled: true } });
-  const options = { database: join(dir, 'db.sqlite'), auth: { ...config, development: true }, clerk, mail: () => mail, mailEndpoint: `http://127.0.0.1:${address.port}/emails` };
+  const options = { mailFrom: 'noreply@example.com', mailOrigin: config.origin, mailApiKey: 'resend_fixture', installationId: randomUUID(), testKeyring: { 'mail-aead/active': oldKeyId, ['mail-aead/' + oldKeyId]: mailKey.toString('base64url'), 'mail-lookup/v1': lookupKey.toString('base64url') }, database: join(dir, 'db.sqlite'), auth: { ...config, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), development: true }, clerk, mail: () => mail, mailEndpoint: `http://127.0.0.1:${address.port}/emails` };
   let app = await startCanonicalApp(options);
   const send = async (path: string, body: Record<string, unknown>) => fetch(app.origin + path, { method: 'POST', headers: { Authorization: `Bearer ${jwt()}`, Origin: config.origin, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': String(body.requestId) }, body: JSON.stringify(body) });
   try {
     const projectId = randomUUID(); const project = await send('/api/projects', { requestId: randomUUID(), id: projectId, name: 'Mail fixture' }); assert.equal(project.status, 201);
-    const invitationId = randomUUID(); const response = await send(`/api/projects/${projectId}/invitations`, { requestId: invitationId, email: 'member@example.com', agentAssignments: [], expiresAt: Date.now() + 60000, expectedProjectRevision: 1 }); assert.equal(response.status, 201);
+    const invitationId = randomUUID(); const response = await send(`/api/projects/${projectId}/invitations`, { requestId: invitationId, email: 'member@example.com', agentAssignments: [], expiresAt: Date.now() + 60000, expectedProjectRevision: 1 }); assert.equal(response.status, 201, await response.clone().text());
     await app.close();
     const db = new DatabaseSync(options.database);
     db.prepare("UPDATE mail_outbox SET state='sending',next_attempt=? WHERE id=?").run(Date.now() - 1, invitationId); db.close();

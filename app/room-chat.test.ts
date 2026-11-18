@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { intentionalSilence, partialSilence, mentionedMembers, finishRoomTurn } from './room-chat.ts';
 
 // UI components are exercised in ui-smoke; native boundary tests keep the saved transcript shape exact.

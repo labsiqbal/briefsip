@@ -1045,7 +1045,9 @@ pub fn ingest(
     if let Some(t) = t.filter(|_| rev > 0 && entries.iter().zip(&actions).any(|(_, a)| a.is_some()))
     {
         db.execute("UPDATE tasks SET state=CASE WHEN ?=1 AND state NOT IN('completed','failed','cancelled','transferred','paused') THEN 'uncertain' ELSE state END,revision=? WHERE id=?",params![i64::from(uncertain),rev,task_id])?;
-        observe(db, &t, now)?;
+        if !recovery {
+            observe(db, &t, now)?;
+        }
     }
     Ok(result)
 }

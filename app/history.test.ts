@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('history pages preserve order and conversation boundaries across restart', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-history-'));

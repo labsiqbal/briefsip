@@ -6,7 +6,7 @@ import {randomUUID} from 'node:crypto';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {startApp} from './server.ts';
+import {startApp} from './test-bridge.ts';
 import {telegramApi,initializeTelegram,bindTelegram,recordTelegramUpdates,recoverTelegramReply,queueTelegramReply,deliverTelegramReply} from './telegram.ts';
 import {telegramLocal,telegramAgentStep} from './telegram-bridge.ts';
 

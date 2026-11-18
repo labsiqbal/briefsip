@@ -51,6 +51,17 @@ pub fn snapshot(
         &pd,
         false,
     )? {
+        let mut old = old;
+        let saved = one(
+            db,
+            "SELECT snapshot_json FROM task_context_snapshots WHERE task=? AND snapshot_id=?",
+            [
+                string(task, "id"),
+                string(&old["data"]["snapshotRef"], "snapshotId"),
+            ],
+        )?
+        .ok_or_else(Failure::storage)?;
+        old["data"]["snapshot"] = data::json(&saved["snapshot_json"])?;
         return Ok(old);
     }
     authority::ownership(&v["ownership"])?;
@@ -103,6 +114,13 @@ pub fn snapshot(
     }
     let mut profile = one(db,"SELECT json_extract(snapshot_json,'$.profile') profile FROM task_context_snapshots WHERE task=? ORDER BY context_revision LIMIT 1",[string(task,"id")])?
         .map(|r| data::json(&r["profile"])).transpose()?.unwrap_or_else(|| json!({"name":current["participation"]["name"],"role":current["participation"]["role"],"model":current["participation"]["model"],"instructions":current["participation"]["instructions"],"revision":current["participation"]["agent_revision"]}));
+    if let Some(step) = one(
+        db,
+        "SELECT model FROM workflow_steps WHERE turn=? AND model IS NOT NULL",
+        [string(task, "logical_turn")],
+    )? {
+        profile["model"] = step["model"].clone();
+    }
     profile["avatarRevision"] = source["avatarRevision"].clone();
     let mut conversation = json!({"kind":payload["kind"],"message":payload["message"],"history":source["history"],"questions":source["questions"],"compaction":source["compaction"]});
     if !source["channel"].is_null() {
@@ -211,15 +229,29 @@ fn tools(db: &Connection, task: &Value, current: &Value, source: &Value) -> Resu
         "SELECT 1 FROM turns WHERE id=? AND profile_setup=1",
         [string(task, "logical_turn")],
     )?;
+    let routine = exists(db, "SELECT 1 FROM routine_steps s JOIN routine_occurrences o ON o.id=s.occurrence WHERE s.turn=? AND s.state='queued' AND o.state='admitted'", [string(task,"logical_turn")])?;
+    if routine {
+        for name in ["no_update", "report_failure"] {
+            tools.push(json!({"type":"function","function":{"name":name,"description":"Finish this routine with a reason.","parameters":{"type":"object","properties":{"reason":{"type":"string","maxLength":2000}},"required":["reason"],"additionalProperties":false}}}));
+        }
+    }
+    let model_only = exists(
+        db,
+        "SELECT 1 FROM workflow_steps WHERE turn=? AND model IS NOT NULL",
+        [string(task, "logical_turn")],
+    )?;
+    let messaging = crate::turns::messaging::allowed(db, string(task, "logical_turn"))?;
     tools.retain(|t| {
         let name = string(&t["function"], "name");
-        tool_fields(name).is_some()
+        !model_only
+            && tool_fields(name).is_some()
+            && (messaging || !matches!(name, "send_message" | "list_agents" | "interrupt_agent"))
             && capabilities["tools"]
                 .as_array()
                 .is_some_and(|c| c.contains(&json!(name)))
             && (!setup || matches!(name, "ask_user" | "edit_profile"))
             && (source["channelContext"] != true || !private(name))
-            && !matches!(name, "no_update" | "report_failure")
+            && (routine || !matches!(name, "no_update" | "report_failure"))
             && (name != "delegate_task" && name != "transfer_task"
                 || payload["kind"] == "channel"
                     && source["recipients"]

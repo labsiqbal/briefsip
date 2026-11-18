@@ -17,7 +17,7 @@ test('Rust runtime source contains no unfinished port markers', () => {
   assert.deepEqual(hits, []);
 });
 
-test('Rust accepts every environment name read by Node server modules', { skip: process.env.BRIEFSIP_TEST_SERVER !== 'rust', timeout: 90000 }, async () => {
+test('Rust accepts every production environment name', { skip: process.env.BRIEFSIP_TEST_SERVER !== 'rust', timeout: 90000 }, async () => {
   const directory = mkdtempSync('/dev/shm/b102-env-'); chmodSync(directory, 0o700);
   const id = '00000000-0000-4000-8000-000000000001';
   const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
@@ -46,12 +46,11 @@ test('Rust accepts every environment name read by Node server modules', { skip: 
     for (const prefix of ['IMAGE', 'TRANSCRIPTION']) {
       values[`BRIEFSIP_${prefix}_BASE_URL`] = 'http://127.0.0.1:45985/v1'; values[`BRIEFSIP_${prefix}_API_KEY`] = 'dummy-media-key'; values[`BRIEFSIP_${prefix}_MODEL`] = 'fixture';
     }
-    const names = new Set<string>();
+    const names = new Set<string>(['BRIEFSIP_TLS_CERT', 'BRIEFSIP_TLS_KEY', 'BRIEFSIP_SERVER_URL', 'BRIEFSIP_ORIGIN', 'BRIEFSIP_CANONICAL_DB', 'CLERK_SECRET_KEY', 'CLERK_PUBLISHABLE_KEY', 'CLERK_ISSUER', 'CLERK_AUDIENCE']);
     const excluded = /(?:\.test\.ts$|-it\.ts$|^rust-|^(?:cli|device-runtime|slack-runner|telegram-runner)\.ts$)/;
     for (const name of readdirSync(import.meta.dirname).filter(name => name.endsWith('.ts') && !excluded.test(name))) {
       const source = readFileSync(join(import.meta.dirname, name), 'utf8');
       for (const match of source.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)) names.add(match[1]);
-      if (name === 'server.ts') for (const match of source.matchAll(/required\('([A-Z][A-Z0-9_]*)'\)/g)) names.add(match[1]);
     }
     assert.deepEqual([...names].filter(name => !(name in values)), [], 'New Node env reads need a startup fixture');
     const env = { ...Object.fromEntries([...names].map(name => [name, values[name]])), BRIEFSIP_COMPOSIO: 'http://127.0.0.1:45986' };

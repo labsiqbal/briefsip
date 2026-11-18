@@ -7,7 +7,7 @@ import { workflowAutosaveDraft } from './workflow-editor-state.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('model conditions choose one branch without tools and reject ambiguous answers', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-workflow-condition-'));

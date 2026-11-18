@@ -49,11 +49,6 @@
       "count": 1
     }
   },
-  "server.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 5
-    }
-  },
   "slack-output.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 3

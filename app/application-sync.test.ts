@@ -10,7 +10,7 @@ import { createApplicationSync, syncKeyring } from './application-sync.ts';
 import { createProjectAccess } from './project-access.ts';
 import { initializeCanonicalSchema } from './schema.ts';
 import { digestCommand, ProtocolError } from './protocol.ts';
-import { startCanonicalApp } from './server.ts';
+import { startCanonicalApp } from './test-bridge.ts';
 import { createServer } from 'node:http';
 import { createMailWorker } from './mail.ts';
 import { createProjectWorkflows, initializeWorkflowConfigurations, initializeWorkflowRuns, initializeWorkflowNotifications } from './workflow-store.ts';

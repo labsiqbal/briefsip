@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { checkCommand, createSelfVerification } from './self-verification.ts';
 
 test('synthetic done without verification gets one nudge, checks precede final, evidence stays outside reply', async () => {

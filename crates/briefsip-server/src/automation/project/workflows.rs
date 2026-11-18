@@ -501,6 +501,23 @@ pub(super) fn run_command(s: &Scope, path: &str, p: &[&str], v: &Value) -> Resul
             )?;
         }
         "retry" => {
+            let admission = one(
+                s.db,
+                "SELECT actor FROM receipts WHERE request_id=?",
+                [run_id],
+            )?
+            .ok_or_else(missing)?;
+            let original = Scope {
+                account: string(&admission, "actor"),
+                ..*s
+            };
+            original.device(string(&w, "agent")).map_err(|_| {
+                Failure::new(
+                    403,
+                    "execution_denied",
+                    "Workflow initiator authority was revoked.",
+                )
+            })?;
             s.device(string(&w, "agent"))?;
             s.scope(
                 "workflow_steps",
@@ -512,8 +529,19 @@ pub(super) fn run_command(s: &Scope, path: &str, p: &[&str], v: &Value) -> Resul
                 string(&w, "id"),
                 w["revision"].as_i64().ok_or_else(Failure::storage)?,
             )?;
-            super::super::workflows::runtime::retry(s.state, s.db, &run, v)
-                .map_err(|e| Failure::new(e.status, "workflow_conflict", e.message))?;
+            super::super::workflows::runtime::retry(s.state, s.db, &run, v).map_err(|e| {
+                let mut failure = Failure::new(
+                    e.status,
+                    if e.status == 429 {
+                        "server_capacity"
+                    } else {
+                        "workflow_conflict"
+                    },
+                    e.message,
+                );
+                failure.retryable = e.status == 429;
+                failure
+            })?;
             let changed = one(
                 s.db,
                 "SELECT retry_settings FROM workflow_runs WHERE id=?",

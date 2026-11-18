@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('provider settings read stays private and excludes endpoint and credentials', async () => {
   const directory=mkdtempSync(join(tmpdir(),'briefsip-provider-read-')), secret=randomUUID();

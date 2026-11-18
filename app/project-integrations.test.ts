@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { composioToolName } from './composio.ts';
 import { validateProjectEnvironment, redactSecrets } from './project-environment.ts';
 const secret='PROJECT_CANARY_j4W8sK3p';

@@ -14,7 +14,7 @@ fn worker() -> PathBuf {
     }
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../app/shared-data-worker.py")
 }
-fn input(mode: &str, v: &Value) -> Result<Value> {
+pub(crate) fn input(mode: &str, v: &Value) -> Result<Value> {
     let keys_allowed = if mode == "list" {
         vec!["after"]
     } else if mode == "drop" {
@@ -77,13 +77,35 @@ async fn prepare(
     admin: bool,
     status: u16,
 ) -> Result<(i64, Option<Vec<u8>>, Value)> {
+    prepare_project(state, request, readonly, admin, status, None).await
+}
+pub(crate) async fn prepare_project(
+    state: &AppState,
+    request: &Value,
+    readonly: bool,
+    admin: bool,
+    status: u16,
+    project: Option<&str>,
+) -> Result<(i64, Option<Vec<u8>>, Value)> {
     let (revision, image) = {
         let db = state.database.lock().map_err(|_| Failure::storage())?;
-        db.connection.query_row(
-            "SELECT revision,image FROM shared_data WHERE id=1",
-            [],
-            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<Vec<u8>>>(1)?)),
-        )?
+        if let Some(project) = project {
+            use rusqlite::OptionalExtension;
+            db.connection
+                .query_row(
+                    "SELECT revision,image FROM shared_data WHERE project=? AND id=1",
+                    [project],
+                    |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<Vec<u8>>>(1)?)),
+                )
+                .optional()?
+                .unwrap_or((0, None))
+        } else {
+            db.connection.query_row(
+                "SELECT revision,image FROM shared_data WHERE id=1",
+                [],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<Vec<u8>>>(1)?)),
+            )?
+        }
     };
     let mut payload = request.clone();
     payload["owner"] = request.get("owner").cloned().unwrap_or(Value::Null);

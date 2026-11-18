@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { closedObject, id, ProtocolError, sha256 } from '../protocol.ts';
+import { closedObject, id, ProtocolError, sha256 } from '../shared/protocol.ts';
 import { parsePolicy, type HubAuthority, type VerifiedIdentity, type ProjectContext } from './project-authority.ts';
 
 /** Only assets reachable from the hub entry are served. Local-owner bundles stay outside this allowlist. */

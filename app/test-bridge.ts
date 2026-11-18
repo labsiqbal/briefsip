@@ -1,0 +1,51 @@
+import { startRustServer } from './rust-test-server.ts';
+
+export const startApp = startRustServer;
+
+export const retainedToolNames = [
+  'ask_user', 'call_mcp_tool', 'cancel_task', 'copy_skill_file', 'create_text_file', 'create_workspace_directory',
+  'create_workspace_file', 'delegate_task', 'delete_site', 'edit_profile', 'generate_image', 'inspect_workspace_file',
+  'interrupt_agent', 'list_agents', 'list_data_tables', 'list_mcp_tools', 'list_routines', 'list_sites', 'list_skills',
+  'list_workspace', 'no_update', 'open_file_in_panel', 'publish_site', 'query_data', 'read_attachment', 'read_history',
+  'read_message', 'read_provider_settings', 'read_routine', 'read_skill', 'read_skill_file', 'read_workspace_file',
+  'remember_memory', 'report_failure', 'search_memory', 'select_memory', 'send_message', 'set_avatar', 'set_routine_flow',
+  'task_status', 'transfer_task', 'wait_for_event', 'wait_task',
+].sort();
+
+import { createServer } from 'node:net';
+import { canonicalTestBridge, type CanonicalFixtures } from './rust-canonical-test-bridge.ts';
+
+type RustServerOptions = Parameters<typeof startRustServer>[0];
+type CanonicalOptions = RustServerOptions & CanonicalFixtures & { syncKey?: () => Uint8Array };
+
+async function freePort(): Promise<number> {
+  const listener = createServer();
+  await new Promise<void>((resolve, reject) => listener.listen(0, '127.0.0.1', () => resolve()).once('error', reject));
+  const address = listener.address();
+  if (!address || typeof address === 'string') throw new Error('Failed to reserve canonical test port');
+  const port = address.port;
+  await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve()));
+  return port;
+}
+
+/** Starts canonical-mode Rust with serializable Clerk, hub, executor, and sync options. */
+export async function startCanonicalApp(options: CanonicalOptions) {
+  const port = options.port && options.port !== 0 ? options.port : await freePort();
+  const auth = options.auth && { ...options.auth };
+  if (auth && /^http:\/\/127\.0\.0\.1$/.test(auth.origin)) {
+    auth.origin = `http://127.0.0.1:${port}`;
+    if (options.auth) Object.assign(options.auth, { origin: auth.origin });
+  }
+  const { clerk, syncKey, routineWebhookKeys, mail, ...serializable } = options;
+  const testKeyring = { ...(serializable.testKeyring ?? {}) };
+  if (typeof syncKey === 'function') {
+    const value = syncKey();
+    if (!(value instanceof Uint8Array) || value.length !== 32) throw new Error('Sync key must be 32 bytes.');
+    testKeyring['sync-hmac/v1'] = Buffer.from(value).toString('base64url');
+  }
+  const bridge = await canonicalTestBridge({ clerk, routineWebhookKeys, mail });
+  try {
+    const app = await startRustServer({ ...serializable, auth, port, testKeyring, testCanonicalBridge: bridge.config });
+    return { ...app, close: async () => { try { await app.close(); } finally { await bridge.close(); } } };
+  } catch (error) { await bridge.close(); throw error; }
+}

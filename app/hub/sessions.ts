@@ -1,6 +1,6 @@
 import { createPublicKey, randomBytes, verify, type JsonWebKey } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
-import { closedObject, normalizeEmail, parseJson, ProtocolError, sha256 } from '../protocol.ts';
+import { closedObject, normalizeEmail, parseJson, ProtocolError, sha256 } from '../shared/protocol.ts';
 import { transaction } from './schema.ts';
 import { singleHeader, type HostGateway } from './host-gateway.ts';
 import type { HubAuthority, IdentityVerifier, VerifiedIdentity } from './project-authority.ts';

@@ -7,7 +7,7 @@ import { telegramInput, telegramApi, initializeTelegram, queueTelegramReply, del
 
 test('Telegram question buttons answer the owning task once across restart and lost responses',async()=>{
   const {mkdtempSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
-  const {startApp}=await import('./server.ts');const {telegramLocal,telegramAgentStep,pollTelegram}=await import('./telegram-bridge.ts');const {bindTelegram,recordTelegramUpdates}=await import('./telegram.ts');
+  const {startApp}=await import('./test-bridge.ts');const {telegramLocal,telegramAgentStep,pollTelegram}=await import('./telegram-bridge.ts');const {bindTelegram,recordTelegramUpdates}=await import('./telegram.ts');
   const root=mkdtempSync(join(tmpdir(),'briefsip-question-buttons-')),agent=randomUUID(),users=new Set([4,5]),sent:any[]=[],answers:any[]=[],providerAnswers:string[]=[];
   const choices=Array.from({length:8},(_,i)=>`${i+1} ${'Long choice '.repeat(10)}${i}`);let sequence=0,updates:any[]=[],lose=true,free=false;
   const provider=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const data=JSON.parse(raw),answer=data.messages.findLast((item:any)=>item.role==='tool');if(answer)providerAnswers.push(JSON.parse(answer.content).answer);res.end(JSON.stringify({choices:[{finish_reason:answer?'stop':'tool_calls',message:answer?{content:'Answered '+JSON.parse(answer.content).answer}:{tool_calls:[{id:'question',type:'function',function:{name:'ask_user',arguments:JSON.stringify({question:'Choose',choices:free?[]:choices})}}]}}]}));});
@@ -147,7 +147,7 @@ test('Telegram bridge submits once through granted side-thread API and isolates 
   const { mkdtempSync, rmSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
-  const { startApp } = await import('./server.ts');
+  const { startApp } = await import('./test-bridge.ts');
   const { bindTelegram, recordTelegramUpdates } = await import('./telegram.ts');
   const { telegramLocal, telegramAgentStep } = await import('./telegram-bridge.ts');
   const dir = mkdtempSync(join(tmpdir(),'briefsip-telegram-')), agent = randomUUID(), users = new Set([4]);
@@ -245,7 +245,7 @@ test('Telegram stop cannot cancel another chat and never starts an unsent task',
 
 for(const ask of [false,true])test(`Telegram runner ${ask?'answers a question':'replies directly'} and releases owned journal on shutdown`,async()=>{
   const {mkdtempSync,rmSync,existsSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
-  const {startApp}=await import('./server.ts');const {runTelegram}=await import('./telegram-runner.ts');
+  const {startApp}=await import('./test-bridge.ts');const {runTelegram}=await import('./telegram-runner.ts');
   const root=mkdtempSync(join(tmpdir(),'briefsip-telegram-run-')),agent=randomUUID(),controller=new AbortController();
   let modelCalls=0,delivered=0;let answerUpdate:any;const offsets:number[]=[];
   const provider=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const data=JSON.parse(raw);modelCalls++;const question=ask&&!data.messages.some((message:any)=>message.role==='tool');res.end(JSON.stringify({choices:[{finish_reason:question?'tool_calls':'stop',message:question?{tool_calls:[{id:'question',type:'function',function:{name:'ask_user',arguments:JSON.stringify({question:'Proceed?',choices:['Yes','No']})}}]}:{content:'Runner reply'}}]}));});

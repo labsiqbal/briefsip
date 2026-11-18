@@ -7,13 +7,11 @@ import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 // @ts-expect-error Plain Node release tooling.
 import { buildRelease } from '../scripts/release.mjs';
-import { createInstallService } from './install.ts';
 import { createServer } from 'node:net';
 import { createServer as httpServer } from 'node:http';
-import { releaseArchive } from './update-archive.ts';
 const exec = promisify(execFile), root = new URL('../',import.meta.url).pathname;
 const temp = () => mkdtempSync(join(tmpdir(),'briefsip-install-'));
 let testIsolation: string, originalHome: string | undefined, originalPath: string | undefined;
@@ -79,11 +77,9 @@ test('install release is current-only, bounded, SHA-256 checked and public scrip
    const oversized=join(releases,info.id,'huge.ts');const fd=await import('node:fs');fd.closeSync(fd.openSync(oversized,'w'));fd.truncateSync(oversized,2*1024*1024*1024+1);
    await api(app,'/api/install/release',undefined,413,created.token,false);
    rmSync(oversized);
-   const db=new DatabaseSync(':memory:');const service=createInstallService(db,{} as Parameters<typeof createInstallService>[1],releases,join(root,'scripts/install-machine.sh'),()=>app.origin);
-   // Two packaged downloads occupy admission until their cleanup callback, including streaming.
    writeFileSync(join(releases,'feed/latest.json'),JSON.stringify(info));
-   const token=service.issue(randomUUID()).token,a=await service.release('Bearer '+token),b=await service.release('Bearer '+token);
-   await assert.rejects(service.release('Bearer '+token),/Two release downloads/);a.cleanup();a.cleanup();b.cleanup();db.close();
+   const second=await fetch(app.origin+'/api/install/release',{headers:{Authorization:`Bearer ${created.token}`}});
+   assert.equal(second.status,200); await second.arrayBuffer();
  } finally {await app.close();rmSync(dir,{recursive:true,force:true});}
 });
 
@@ -122,8 +118,8 @@ test('installer dry-run snapshot is side-effect-free and redacts token',async()=
 
 test('installer rejects bad metadata, checksums and archive links without publishing or starting a service',async()=>{
  const dir=temp(),home=join(dir,'home'),bin=join(dir,'bin'),{releases,info}=fixture(dir);mkdirSync(home);mkdirSync(bin);
- const calls=join(dir,'calls');writeFileSync(join(bin,'systemctl'),`#!/bin/sh\nprintf '%s\\n' "$*" >> '${calls}'\n`,{mode:0o700});
- const bundle=await releaseArchive(releases,info.id),valid=readFileSync(bundle.file);bundle.cleanup();
+ const calls=join(dir,'calls');writeFileSync(calls,'');writeFileSync(join(bin,'systemctl'),`#!/bin/sh\nprintf '%s\\n' "$*" >> '${calls}'\n`,{mode:0o700});
+ const validPath=join(dir,'valid.tar.gz'); await exec('tar',['--format=ustar','-czf',validPath,'-C',join(releases,info.id),'.']); const valid=readFileSync(validPath);
  const linkSource=join(dir,'unsafe');mkdirSync(linkSource);const fs=await import('node:fs');fs.symlinkSync('/tmp/installer-must-not-follow',join(linkSource,'link'));
  await exec('tar',['--format=ustar','-czf',join(dir,'unsafe.tar.gz'),'-C',linkSource,'.']);const unsafe=readFileSync(join(dir,'unsafe.tar.gz'));
  let mode='metadata';const server=httpServer((req,res)=>{
@@ -138,4 +134,3 @@ test('installer rejects bad metadata, checksums and archive links without publis
  } finally {server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));rmSync(dir,{recursive:true,force:true});}
 });
 
-if (process.env.BRIEFSIP_INSTALL_IT === '1') await import('./install-it.ts');

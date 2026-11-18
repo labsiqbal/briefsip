@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { parseAgentTemplate, templateCommand } from './agent-template.ts';
 
 test('backup model is opt-in, bounded, durable and never replays after activity or uncertainty', async t => {

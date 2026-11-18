@@ -5,7 +5,7 @@ import { createServer, request as httpRequest } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('script provider settings keep identity and credentials isolated, reject busy/revoked changes and preserve receipts', async () => {
   const dir=mkdtempSync(join(tmpdir(),'briefsip-script-provider-')),token=randomBytes(32).toString('base64url'),secret=randomBytes(32).toString('base64url');

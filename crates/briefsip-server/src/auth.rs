@@ -13,6 +13,7 @@ use tokio::sync::Mutex as AsyncMutex;
 #[derive(Clone)]
 pub struct Auth {
     config: AuthConfig,
+    bridge: Option<crate::data::options::CanonicalBridge>,
     client: reqwest::Client,
     keys: Arc<AsyncMutex<Option<(i64, JwkSet)>>>,
 }
@@ -27,9 +28,13 @@ fn denied() -> Failure {
 }
 
 impl Auth {
-    pub fn new(config: AuthConfig) -> db::Result<Self> {
+    pub fn new(
+        config: AuthConfig,
+        bridge: Option<crate::data::options::CanonicalBridge>,
+    ) -> db::Result<Self> {
         Ok(Self {
             config,
+            bridge,
             client: reqwest::Client::builder()
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
@@ -51,6 +56,19 @@ impl Auth {
                     return DecodingKey::from_jwk(key).map_err(|_| denied());
                 }
             }
+        }
+        if let Some(bridge) = self.bridge.as_ref().filter(|b| b.clerk) {
+            let set: JwkSet = serde_json::from_value(
+                bridge
+                    .call("clerk-keys", &json!({}))
+                    .map_err(|_| denied())?,
+            )
+            .map_err(|_| denied())?;
+            let key = set
+                .find(&kid)
+                .and_then(|key| DecodingKey::from_jwk(key).ok());
+            *keys = Some((now + 300000, set));
+            return key.ok_or_else(denied);
         }
         let base = self
             .config
@@ -225,6 +243,13 @@ impl Auth {
             e.retryable = true;
             e
         };
+        if let Some(bridge) = self.bridge.as_ref().filter(|b| b.clerk) {
+            let user = bridge
+                .call("clerk-user", &json!({"subject":actor.subject}))
+                .map_err(|_| failed())?;
+            self.require_current(db, actor, now)?;
+            return Self::mailboxes(&user, actor);
+        }
         let mut url = url::Url::parse(&format!("{base}/v1/users/")).map_err(|_| failed())?;
         url.path_segments_mut()
             .map_err(|_| failed())?
@@ -249,6 +274,9 @@ impl Auth {
         }
         let user: Value = serde_json::from_slice(&bytes).map_err(|_| failed())?;
         self.require_current(db, actor, now)?;
+        Self::mailboxes(&user, actor)
+    }
+    fn mailboxes(user: &Value, actor: &Actor) -> Result<Vec<String>, Failure> {
         if user["id"] != actor.subject || user["banned"] == true || user["locked"] == true {
             return Err(denied());
         }
@@ -291,6 +319,9 @@ impl Auth {
         Ok(json!({"state": if revoked { "revoked" } else { "upstream_pending" }}))
     }
     async fn revoke(&self, sid: &str) -> bool {
+        if let Some(bridge) = self.bridge.as_ref().filter(|b| b.clerk) {
+            return bridge.call("clerk-revoke", &json!({"session":sid})).is_ok();
+        }
         let mut url = match url::Url::parse(
             self.config
                 .api_url

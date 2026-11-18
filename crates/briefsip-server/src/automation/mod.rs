@@ -1,4 +1,4 @@
-mod flows;
+pub(crate) mod flows;
 pub mod options;
 pub(crate) mod project;
 mod routines;
@@ -249,13 +249,16 @@ pub fn start(state: AppState) -> tokio::task::JoinHandle<()> {
         let mut timer = tokio::time::interval(std::time::Duration::from_secs(1));
         loop {
             tokio::select! {_ = events.recv()=>(), _=timer.tick()=>()}
-            if crate::turns::pending(&state) {
-                continue;
-            }
             if state.auth.is_some() {
+                if crate::tasks::maintain(&state).is_err() {
+                    eprintln!("Task wait maintenance failed");
+                }
                 if let Err(e) = project::maintain(&state) {
                     eprintln!("Project automation failed: {}", e.message);
                 }
+                continue;
+            }
+            if crate::turns::pending(&state) {
                 continue;
             }
             let result = (|| {

@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import WebSocket from 'ws';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { signedNodeMessage, verifiedNodeMessage } from './hub/node-link.ts';
 import { initializeHubSchema } from './hub/schema.ts';
 import { createHubAuthority, type ParticipationPolicy, type InvocationPolicy } from './hub/project-authority.ts';
@@ -273,7 +273,7 @@ test('node revocation drains its signed frame before closing transport', async t
     assert.equal(f.calls, 0);
 });
 async function childApp(options: Record<string, unknown>, keys: Map<string, string>, localOrigin: string, clock: number) {
-    const code = `import {request} from 'node:http'; import WebSocket from 'ws'; import {startApp} from ${JSON.stringify(new URL('./server.ts', import.meta.url).href)};process.on('message',async message=>{try{const keys=new Map(message.keys), origin=message.options.hubLink.origin, host=new URL(origin).host;
+    const code = `import {request} from 'node:http'; import WebSocket from 'ws'; import {startApp} from ${JSON.stringify(new URL('./test-bridge.ts', import.meta.url).href)};process.on('message',async message=>{try{const keys=new Map(message.keys), origin=message.options.hubLink.origin, host=new URL(origin).host;
 const hubFetch=(url,init)=>new Promise((resolve,reject)=>{const req=request(message.localOrigin+new URL(url).pathname,{method:init.method,headers:{...init.headers,Host:host}},res=>{const chunks=[];res.on('data',c=>chunks.push(c));res.on('end',()=>resolve(new Response(Buffer.concat(chunks),{status:res.statusCode})));});req.on('error',reject);req.end(init.body);});
 const webSocket=(url,settings)=>new WebSocket(url.replace(origin.replace('https','wss'),message.localOrigin.replace('http','ws')),{...settings,headers:{...settings.headers,Host:host}});
 const app=await startApp({...message.options,hubLink:{...message.options.hubLink,now:()=>message.clock,fetch:hubFetch,webSocket,entry:(service,name)=>({getPassword:()=>keys.get(service+'/'+name)??null,setPassword:value=>keys.set(service+'/'+name,value)})}});process.send({kind:'ready',origin:app.origin});}catch{process.send({kind:'failed'});process.exitCode=1;}});`;

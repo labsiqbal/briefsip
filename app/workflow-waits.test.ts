@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, request as httpRequest } from 'node:http';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { restoreWorkspace } from './backup.ts';
 import { validateWorkflow, validateWorkflowDraft, workflowEdges, workflowTransition } from './workflows.ts';
 

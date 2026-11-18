@@ -7,6 +7,20 @@ pub fn run(
     token: &str,
     now: i64,
 ) -> Result<Value> {
+    execute(db, p, task, v, token, now, false, None)
+}
+pub type DataOutcome = Result<(i64, Option<Vec<u8>>, Value)>;
+#[allow(clippy::too_many_arguments)]
+pub fn execute(
+    db: &Connection,
+    p: &Principal,
+    task: &Value,
+    v: &Value,
+    token: &str,
+    now: i64,
+    preflight: bool,
+    data: Option<DataOutcome>,
+) -> Result<Value> {
     fields(
         v,
         &[
@@ -185,9 +199,27 @@ pub fn run(
             | "edit_profile"
             | "read_provider_settings"
             | "set_avatar"
+            | "list_sites"
+            | "delete_site"
+            | "read_history"
+            | "read_message"
+            | "list_skills"
+            | "read_skill"
+            | "read_skill_file"
             | "search_memory"
             | "remember_memory"
             | "select_memory"
+            | "list_agents"
+            | "send_message"
+            | "interrupt_agent"
+            | "list_routines"
+            | "read_routine"
+            | "set_routine_flow"
+            | "no_update"
+            | "report_failure"
+            | "query_data"
+            | "list_data_tables"
+            | "wait_for_event"
     ) {
         return Err(fail(
             422,
@@ -203,6 +235,12 @@ pub fn run(
             "capability_missing",
             "Canonical memory is not available yet.",
         ));
+    }
+    if preflight {
+        return Ok(json!({"validated":true}));
+    }
+    if name == "wait_for_event" {
+        return super::waits::reserve(db, p, task, v, &args, now);
     }
     let result = if name == "transfer_task" {
         let mut paused = task.clone();
@@ -229,13 +267,17 @@ pub fn run(
         json!({"logicalTurnId":result["logicalTurnId"],"previousTaskId":result["previousTaskId"],"taskId":result["taskId"],"homeDeviceId":result["homeDeviceId"],"state":result["state"],"revision":result["revision"]})
     } else {
         db.execute_batch("SAVEPOINT canonical_tool")?;
-        let result = tool(db, task, &current, call, &args, &action, setup);
+        let result = if matches!(name, "query_data" | "list_data_tables") {
+            super::shared::finish(db, task, data.ok_or_else(Failure::storage)?)
+        } else {
+            tool(db, task, &current, call, &args, &action, setup, now)
+        };
         let result = match result {
             Ok(result) => {
                 db.execute_batch("RELEASE canonical_tool")?;
                 result
             }
-            Err(error) if error.status < 500 && error.code != "record_scope_missing" => {
+            Err(error) if error.status < 500 => {
                 db.execute_batch("ROLLBACK TO canonical_tool; RELEASE canonical_tool")?;
                 json!({"error":error.message,"status":error.status})
             }
@@ -250,7 +292,23 @@ pub fn run(
         )?;
         result
     };
-    let encoded = canonical(&result);
+    publish(db, p, task, v, input, &result, now)
+}
+pub fn publish(
+    db: &Connection,
+    p: &Principal,
+    task: &Value,
+    v: &Value,
+    input: &Value,
+    result: &Value,
+    now: i64,
+) -> Result<Value> {
+    let request = string(v, "requestId");
+    let action_id = string(v, "actionId");
+    let pd = string(v, "payloadDigest");
+    let name = string(&v["toolCall"]["function"], "name");
+    let scope = format!("tasks:context-mutations:{}", string(task, "id"));
+    let encoded = canonical(result);
     let rd = hash(&encoded);
     let result_ref = json!({"v":1,"taskId":task["id"],"actionId":action_id,"digest":rd,"size":encoded.len(),"encoding":"canonical-json-v1"});
     db.execute("INSERT INTO task_results(action,task,digest,size,encoding,content_json,created) VALUES(?,?,?,?,'canonical-json-v1',?,?)",params![action_id,string(task,"id"),rd,encoded.len(),encoded,now])?;
@@ -267,19 +325,19 @@ pub fn run(
     observe(db, task, now)?;
     let mut data = json!({"actionId":action_id,"resultRef":result_ref,"resultContent":result});
     if name == "transfer_task" {
-        data["successor"] = result;
+        data["successor"] = result.clone();
     }
     let result = Save {
         account: &p.account,
         task,
-        request: &request,
+        request,
         scope: &scope,
-        payload: &pd,
+        payload: pd,
         now,
     }
     .save(
         db,
-        &action_id,
+        action_id,
         n(task, "revision") + if name == "transfer_task" { 2 } else { 1 },
         200,
         data,
@@ -288,6 +346,7 @@ pub fn run(
     db.execute("INSERT INTO task_reports(action,report_digest,device,journal_sequence,payload_json,result_ref,receipt_id) VALUES(?,?,?,?,?,?,?)",params![action_id,report_digest,p.device,n(input,"journalSequence"),canonical(&report),action_id,request])?;
     Ok(result)
 }
+#[allow(clippy::too_many_arguments)]
 fn tool(
     db: &Connection,
     task: &Value,
@@ -296,10 +355,21 @@ fn tool(
     args: &Value,
     action: &Value,
     setup: bool,
+    now: i64,
 ) -> Result<Value> {
     let agent = string(task, "agent");
     let turn = string(task, "logical_turn");
     match string(&call["function"], "name") {
+        "list_agents" => messages::list(db, task, args),
+        "send_message" => messages::send(db, task, args, call, now),
+        "interrupt_agent" => messages::interrupt(db, task, args, call, now),
+        name @ ("list_routines" | "read_routine" | "set_routine_flow") => {
+            automation::tool(db, task, name, args)
+        }
+        name @ ("read_history" | "read_message") => reads::history(db, task, name, args),
+        name @ ("list_skills" | "read_skill" | "read_skill_file") => {
+            reads::skill(db, task, current, name, args)
+        }
         "edit_profile" => {
             let revision = revision(&args["revision"], 1)?;
             if setup && (args.get("name").is_none() || args.get("instructions").is_none()) {
@@ -433,6 +503,59 @@ fn tool(
             db.execute("UPDATE turns SET status='queued',paused=1,revision=revision+1,error=NULL WHERE id=?",[turn])?;
             Ok(json!({"id":id,"prompt":prompt.trim(),"choices":clean,"answer":null}))
         }
+        name @ ("no_update" | "report_failure") => {
+            let reason = text(&args["reason"], 2000, "reason")?;
+            let step = one(
+                db,
+                "SELECT occurrence FROM routine_steps WHERE turn=?",
+                [turn],
+            )?
+            .ok_or_else(|| {
+                fail(
+                    403,
+                    "execution_denied",
+                    "Routine outcome is only available for an active routine step.",
+                )
+            })?;
+            if !exists(
+                db,
+                "SELECT 1 FROM routine_occurrences WHERE id=? AND state='admitted'",
+                [string(&step, "occurrence")],
+            )? {
+                return Err(fail(
+                    403,
+                    "execution_denied",
+                    "Routine outcome is only available for an active routine step.",
+                ));
+            }
+            if name == "no_update" {
+                db.execute("UPDATE turns SET status='done',no_update=1,reply=?,revision=revision+1 WHERE id=?", params![reason, turn])?;
+            } else {
+                db.execute(
+                    "UPDATE turns SET status='failed',error=?,revision=revision+1 WHERE id=?",
+                    params![reason, turn],
+                )?;
+            }
+            db.execute(
+                "UPDATE tasks SET state=? WHERE id=?",
+                [
+                    if name == "no_update" {
+                        "completed"
+                    } else {
+                        "failed"
+                    },
+                    string(task, "id"),
+                ],
+            )?;
+            db.execute("UPDATE turns SET paused=0 WHERE id=?", [turn])?;
+            db.execute(
+                "UPDATE execution_owners SET stopped=1 WHERE task=?",
+                [string(task, "id")],
+            )?;
+            Ok(
+                json!({"status":if name == "no_update" {"no_update"} else {"failed"},"reason":reason,"taskId":task["id"],"revision":n(task,"revision")+1}),
+            )
+        }
         "read_provider_settings" => {
             let profile = one(
                 db,
@@ -508,6 +631,71 @@ fn tool(
                 )?;
             }
             Ok(result)
+        }
+        "list_sites" | "delete_site" => {
+            let scope = "JOIN record_scopes s ON s.table_name='local_sites' AND s.key_json=json_array(l.id) AND s.project=? AND (s.visibility='project' OR s.account=?) AND s.root_kind='agent' AND s.root_id=l.agent";
+            if call["function"]["name"] == "list_sites" {
+                let after = args
+                    .get("after")
+                    .map(id)
+                    .transpose()
+                    .map_err(|_| fail(400, "invalid_site", "Invalid site list position."))?
+                    .unwrap_or_default();
+                let mut sites = all(db, &format!("SELECT l.id,l.name,l.revision,l.updated FROM local_sites l {scope} WHERE l.agent=? AND l.deleted=0 AND l.id>? ORDER BY l.id LIMIT 11"), params![string(task,"project"),string(task,"initiator_account"),agent,after])?;
+                let next = if sites.len() > 10 {
+                    sites[9]["id"].clone()
+                } else {
+                    Value::Null
+                };
+                sites.truncate(10);
+                for site in &mut sites {
+                    site["path"] = json!(format!("/sites/{}", string(site, "id")));
+                }
+                return Ok(json!({"sites":sites,"next_after":next}));
+            }
+            let site = id(&args["site"])?;
+            revision(&args["revision"], 1)?;
+            if args["revision"] == 9007199254740991_i64 {
+                return Err(fail(400, "invalid_site", "Invalid site revision."));
+            }
+            let mapping = one(
+                db,
+                &format!(
+                    "SELECT s.visibility FROM local_sites l {scope} WHERE l.agent=? AND l.id=?"
+                ),
+                params![
+                    string(task, "project"),
+                    string(task, "initiator_account"),
+                    agent,
+                    site
+                ],
+            )?
+            .ok_or_else(|| {
+                fail(
+                    404,
+                    "resource_not_found",
+                    "Site not found for this project.",
+                )
+            })?;
+            let saved = crate::files::sites::save(
+                db,
+                agent,
+                &json!({"id":action["id"],"site":site,"revision":args["revision"],"delete":true}),
+                now,
+            )?;
+            db.execute(
+                "INSERT INTO record_scopes VALUES('site_commands',?,?,?,?,'agent',?)",
+                params![
+                    json!([action["id"]]).to_string(),
+                    string(task, "initiator_account"),
+                    string(task, "project"),
+                    string(&mapping, "visibility"),
+                    agent
+                ],
+            )?;
+            Ok(
+                json!({"id":saved["id"],"name":saved["name"],"revision":saved["revision"],"deleted":saved["deleted"],"path":null}),
+            )
         }
         "set_avatar" => {
             if !data::integer(&args["revision"], 0, 9007199254740990) {

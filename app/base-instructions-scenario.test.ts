@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('synthetic scenarios record panel without duplicate writes, inline links, workspace context and approved shell', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-base-eval-')), agent = randomUUID();

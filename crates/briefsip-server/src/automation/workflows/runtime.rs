@@ -171,8 +171,12 @@ pub fn retry(state: &AppState, db: &Connection, run: &Value, v: &Value) -> Resul
     if run["status"] != "failed" || run["revision"] != v["revision"] {
         return Err(error(409, "Workflow run changed."));
     }
-    let n = node(run)?;
     let g = data::json(&run["graph"])?;
+    let n = g["nodes"]
+        .as_array()
+        .and_then(|nodes| nodes.iter().find(|n| n["id"] == run["cursor"]))
+        .cloned()
+        .ok_or_else(Failure::storage)?;
     if !["agent", "model", "condition", "parallel"].contains(&string(&n, "kind"))
         || run["steps"].as_i64().unwrap_or(0) >= g["maxSteps"].as_i64().unwrap_or(0)
     {

@@ -9,7 +9,7 @@ import { initializeCanonicalSchema } from './schema.ts';
 import { prepareRestoreBootstrap, issueRestoreSession, requireRestoreSession, restoreWorkspace, workspaceSnapshot } from './backup.ts';
 import { createProjectAccess } from './project-access.ts';
 import { createMailWorker } from './mail.ts';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 import { cli } from './cli.ts';
 import { sha256, ProtocolError } from './protocol.ts';
 import type { HumanActor } from './auth.ts';

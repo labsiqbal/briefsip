@@ -8,7 +8,6 @@ mod tests;
 use config::Config;
 use files::*;
 use nix::{
-    fcntl::{fcntl, FcntlArg, FdFlag},
     sys::{
         signal::{kill, Signal},
         statvfs::statvfs,
@@ -21,11 +20,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
     fs,
-    io::Write,
-    os::{
-        fd::AsRawFd,
-        unix::{fs::PermissionsExt, net::UnixStream as IpcStream},
-    },
+    os::unix::fs::PermissionsExt,
     path::Path,
     process::Stdio,
     rc::Rc,
@@ -71,7 +66,6 @@ struct Attempt {
 }
 struct Managed {
     process: Child,
-    ipc: Option<IpcStream>,
 }
 struct Launcher {
     config: Config,
@@ -128,20 +122,14 @@ impl Launcher {
         }
         let path = path_for(&self.config.releases, id)?;
         let binary = path.join("bin/briefsip-server");
-        let native = binary.exists();
-        let mut command = Command::new(if native {
-            std::env::current_exe()?.into_os_string()
-        } else {
-            "node".into()
-        });
-        if native {
-            command
-                .arg("--run-server")
-                .arg(binary)
-                .arg(std::process::id().to_string());
-        } else {
-            command.args(["--experimental-strip-types", "server.ts"]);
+        if !binary.is_file() {
+            return Err("Release is missing bin/briefsip-server.".into());
         }
+        let mut command = Command::new(std::env::current_exe()?);
+        command
+            .arg("--run-server")
+            .arg(binary)
+            .arg(std::process::id().to_string());
         command
             .current_dir(path)
             .env_clear()
@@ -152,25 +140,8 @@ impl Launcher {
         if trial {
             command.env("BRIEFSIP_UPDATE_TRIAL", self.attempt()?.id);
         }
-        let mut ipc = None;
-        let mut inherited = None;
-        if !native {
-            let (parent, child) = IpcStream::pair()?;
-            command
-                .env("NODE_CHANNEL_FD", child.as_raw_fd().to_string())
-                .env("NODE_CHANNEL_SERIALIZATION_MODE", "json");
-            fcntl(&child, FcntlArg::F_SETFD(FdFlag::empty()))?;
-            inherited = Some(child);
-            ipc = Some(parent);
-        }
         let result = command.spawn();
-        if let Some(fd) = inherited.as_ref() {
-            fcntl(fd, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC))?;
-        }
-        *self.child.borrow_mut() = Some(Managed {
-            process: result?,
-            ipc,
-        });
+        *self.child.borrow_mut() = Some(Managed { process: result? });
         Ok(())
     }
     async fn stop_child(&self) -> Result<()> {
@@ -311,18 +282,6 @@ impl Launcher {
         select(&self.config.releases, "previous", &attempt.from)?;
         self.phase("done", None)?;
         remove(&self.config.releases.join("trial"))?;
-        if let Some(ipc) = self
-            .child
-            .borrow_mut()
-            .as_mut()
-            .and_then(|c| c.ipc.as_mut())
-        {
-            writeln!(
-                ipc,
-                "{}",
-                json!({"type":"update-committed", "id":attempt.id})
-            )?;
-        }
         Ok(())
     }
     fn accept(self: &Rc<Self>, request: &Value) -> Result<Value> {
