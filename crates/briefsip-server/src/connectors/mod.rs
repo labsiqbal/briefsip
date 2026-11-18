@@ -82,6 +82,9 @@ pub fn routes() -> Router<AppState> {
         )
 }
 pub(crate) async fn entry(State(state): State<AppState>, request: Request) -> Response {
+    if state.auth.is_some() && request.uri().path().ends_with("/routines/calendar.ics") {
+        return crate::canonical(&state, request).await;
+    }
     let result = async {
         if state.auth.is_some()
             || !crate::allowed(
