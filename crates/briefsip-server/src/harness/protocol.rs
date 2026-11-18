@@ -97,6 +97,13 @@ pub async fn probe(
     let mut env = HashMap::new();
     env.insert("HOME".into(), home.0.to_string_lossy().into_owned());
     env.insert("PATH".into(), hydrated_path.to_owned());
+    if runtime == "hermes" {
+        env.extend([
+            ("HERMES_YOLO_MODE".into(), "0".into()),
+            ("HERMES_ACP_SKIP_CONFIGURED_MCP".into(), "1".into()),
+            ("HERMES_DISABLE_LAZY_INSTALLS".into(), "1".into()),
+        ]);
+    }
     let mut process = Process::launch(
         path,
         &if runtime == "pi" {
@@ -137,7 +144,7 @@ pub async fn probe(
         return Some((true,Value::Null,json!(models["data"]["models"].as_array().into_iter().flatten().map(|m|json!({"id":format!("{}/{}",string(m,"provider"),string(m,"id")),"label":m["name"]})).collect::<Vec<_>>())));
     }
     process.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientInfo":{"name":"briefsip","version":"0.1.0"},"clientCapabilities":{"terminal":false}}})).await.ok()?;
-    let value = tokio::time::timeout(Duration::from_secs(2), process.next())
+    let value = tokio::time::timeout(Duration::from_secs(15), process.next())
         .await
         .ok()?
         .ok()?;

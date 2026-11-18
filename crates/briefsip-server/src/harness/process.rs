@@ -219,7 +219,7 @@ pub async fn probe(path: &std::path::Path, args: &[&str], hydrated_path: &str) -
         &env,
     )
     .ok()?;
-    let result = tokio::time::timeout(Duration::from_secs(2), async {
+    let result = tokio::time::timeout(Duration::from_secs(10), async {
         let mut bytes = Vec::new();
         (&mut process.stdout)
             .take(64001)
