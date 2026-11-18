@@ -310,7 +310,7 @@ pub async fn device(state: &AppState, request: Request, request_id: &str) -> Res
             )
         })?;
         let task_id = id(&json!(path.split('/').nth(3).unwrap_or("")))?;
-        return shared::run(&state, &task_id, &p, &v, token).await;
+        return shared::run(state, &task_id, &p, &v, token).await;
     }
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let db = &guard.connection;

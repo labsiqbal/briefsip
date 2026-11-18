@@ -308,7 +308,7 @@ pub fn publish(
     let pd = string(v, "payloadDigest");
     let name = string(&v["toolCall"]["function"], "name");
     let scope = format!("tasks:context-mutations:{}", string(task, "id"));
-    let encoded = canonical(&result);
+    let encoded = canonical(result);
     let rd = hash(&encoded);
     let result_ref = json!({"v":1,"taskId":task["id"],"actionId":action_id,"digest":rd,"size":encoded.len(),"encoding":"canonical-json-v1"});
     db.execute("INSERT INTO task_results(action,task,digest,size,encoding,content_json,created) VALUES(?,?,?,?,'canonical-json-v1',?,?)",params![action_id,string(task,"id"),rd,encoded.len(),encoded,now])?;
@@ -330,14 +330,14 @@ pub fn publish(
     let result = Save {
         account: &p.account,
         task,
-        request: &request,
+        request,
         scope: &scope,
-        payload: &pd,
+        payload: pd,
         now,
     }
     .save(
         db,
-        &action_id,
+        action_id,
         n(task, "revision") + if name == "transfer_task" { 2 } else { 1 },
         200,
         data,
