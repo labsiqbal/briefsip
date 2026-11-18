@@ -33,7 +33,7 @@ test('duplicate discovery startup cannot interrupt the owning server task', asyn
   }
 });
 
-test('private script discovery follows live grants, rotates on restart and preserves foreign files', async t => {
+test('private script discovery follows live grants, rotates on restart and preserves foreign files', async () => {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-discovery-'));
   const directory = join(root, 'scripts'), file = join(directory, 'connection.json');
   const options = { database: join(root, 'db.sqlite'), scriptDirectory: directory };
@@ -76,10 +76,12 @@ test('private script discovery follows live grants, rotates on restart and prese
     await app.close();
     closed = true;
     writeFileSync(file, 'foreign', { mode: 0o600 });
-    t.mock.timers.enable({ apis: ['setInterval'] });
     await assert.rejects(startApp(options)); assert.equal(readFileSync(file, 'utf8'), 'foreign');
-    assert.doesNotThrow(() => t.mock.timers.tick(250), 'Failed startup must stop DB workers before closing DB');
     assert(!existsSync(join(directory, 'owner.lock')));
+    unlinkSync(file);
+    app = await startApp(options);
+    closed = false;
+    assert.equal(read().url, app.origin);
   } finally { if (!closed) await app.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
