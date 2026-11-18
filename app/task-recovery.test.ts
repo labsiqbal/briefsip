@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { HumanActor } from './auth.ts';
-import { initializeCanonicalSchema, initializeDeviceSchema } from './schema.ts';
+import { initializeCanonicalSchema, initializeDeviceSchema, transaction } from './schema.ts';
 import { openExecutorJournal, type ActionContext } from './executor-journal.ts';
 import { initializeMemory, rememberMemory } from './memory.ts';
 import { initializeSkills, saveSkill } from './skills.ts';
@@ -164,12 +164,14 @@ async function routineTaskTools() {
   initializeRoutineConfigurations(f.db);
   f.db.prepare('INSERT INTO collaborator_agents VALUES (?,?,?,1,1)').run(f.project,f.member.accountId,f.agent);
   const task=f.start(f.member),routine=randomUUID(),occurrence=randomUUID();
-  f.db.prepare("INSERT INTO routines(id,agent,name,prompt,next_at,enabled) VALUES (?,?,'Outcome','Check work',1000,0)").run(routine,f.agent);
-  f.db.prepare("INSERT INTO record_scopes VALUES ('routines',?,?,?,'project','agent',?)").run(JSON.stringify([routine]),f.owner.accountId,f.project,f.agent);
-  f.db.prepare(`INSERT INTO routine_occurrences(id,routine,project,due_at,schedule_revision,initiator_account,assignment_revision,authority_generation,home_device,zone,zone_revision,missed_count,state,graph_json,task)
-    VALUES (?,?,?,1000,1,?,1,?,?,'Asia/Jakarta',1,0,'admitted',?,?)`).run(occurrence,routine,f.project,f.member.accountId,f.principal.authorityGeneration,f.home,JSON.stringify({root:f.agent,nodes:[f.agent],links:[]}),task.taskId);
-  f.db.prepare("INSERT INTO record_scopes VALUES ('routine_occurrences',?,?,?,'project','agent',?)").run(JSON.stringify([occurrence]),f.owner.accountId,f.project,f.agent);
-  f.db.prepare("INSERT INTO routine_steps VALUES (?,?,?,'queued','')").run(occurrence,f.agent,task.taskId);
+  transaction(f.db, () => {
+    f.db.prepare("INSERT INTO routines(id,agent,name,prompt,next_at,enabled) VALUES (?,?,'Outcome','Check work',1000,0)").run(routine,f.agent);
+    f.db.prepare("INSERT INTO record_scopes VALUES ('routines',?,?,?,'project','agent',?)").run(JSON.stringify([routine]),f.owner.accountId,f.project,f.agent);
+    f.db.prepare(`INSERT INTO routine_occurrences(id,routine,project,due_at,schedule_revision,initiator_account,assignment_revision,authority_generation,home_device,zone,zone_revision,missed_count,state,graph_json,task)
+      VALUES (?,?,?,1000,1,?,1,?,?,'Asia/Jakarta',1,0,'admitted',?,?)`).run(occurrence,routine,f.project,f.member.accountId,f.principal.authorityGeneration,f.home,JSON.stringify({root:f.agent,nodes:[f.agent],links:[]}),task.taskId);
+    f.db.prepare("INSERT INTO record_scopes VALUES ('routine_occurrences',?,?,?,'project','agent',?)").run(JSON.stringify([occurrence]),f.owner.accountId,f.project,f.agent);
+    f.db.prepare("INSERT INTO routine_steps VALUES (?,?,?,'queued','')").run(occurrence,f.agent,task.taskId);
+  });
   return {...f,task,occurrence};
 }
 
