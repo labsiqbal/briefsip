@@ -33,16 +33,35 @@ test('SPA has a fresh matching style nonce while scripts, API and assets keep st
       assert.equal(tags[0][1], nonce);
       assert(html.indexOf(tags[0][0]) < html.indexOf('</head>'));
       nonces.push(nonce);
-      asset = html.match(/(?:src|href)="(\/assets\/[^"]+)"/)![1];
+      asset = html.match(/<script[^>]+src="(\/assets\/[^"]+\.js)"/)![1];
     }
     assert.equal(new Set(nonces).size, nonces.length);
-    for (const path of ['/missing.txt', '/assets/missing.js', '/api/missing']) { const response = await fetch(app.origin + path); assert.equal(response.status, 404); await response.arrayBuffer(); }
+    for (const path of ['/missing.txt', '/assets/missing.js', '/api/missing']) {
+      const response = await fetch(app.origin + path);
+      assert.equal(response.status, 404);
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+      await response.arrayBuffer();
+    }
     for (const path of ['/api/agents', asset]) {
       const response = await fetch(app.origin + path);
       assert.equal(response.status, 200);
       assert.equal(response.headers.get('content-security-policy'), policy);
-      assert.equal(response.headers.get('cache-control'), 'no-store');
+      // Built assets carry a content hash in their name, so they never change.
+      assert.equal(response.headers.get('cache-control'), path === asset ? 'public, max-age=31536000, immutable' : 'no-store');
       await response.arrayBuffer();
     }
+    // Text responses from the built UI are gzip-compressed only when the client accepts it.
+    for (const path of ['/', asset]) {
+      const compressed = await fetch(app.origin + path, { headers: { 'Accept-Encoding': 'gzip' } });
+      assert.equal(compressed.headers.get('content-encoding'), 'gzip');
+      assert.match(compressed.headers.get('vary') ?? '', /accept-encoding/i);
+      const identity = await fetch(app.origin + path, { headers: { 'Accept-Encoding': 'identity' } });
+      assert.equal(identity.headers.get('content-encoding'), null);
+      const withoutNonce = (html: string) => html.replace(/<meta name="csp-nonce" content="[^"]+">/, '');
+      assert.equal(withoutNonce(await compressed.text()), withoutNonce(await identity.text()));
+    }
+    const refused = await fetch(app.origin + asset, { headers: { 'Accept-Encoding': 'gzip;q=0' } });
+    assert.equal(refused.headers.get('content-encoding'), null);
+    await refused.arrayBuffer();
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });

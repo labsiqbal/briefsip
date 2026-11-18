@@ -190,11 +190,39 @@ async fn local(state: &AppState, request: Request) -> Result<Response, Failure> 
         return data::local(state, request).await;
     }
     if request.method() == Method::GET && path != "/api" && !path.starts_with("/api/") {
-        return static_ui(state, path).await;
+        return static_ui(
+            state,
+            path,
+            accepts_gzip(text_header(request.headers(), "accept-encoding")),
+        )
+        .await;
     }
     Ok(local_error(404, "Route not found."))
 }
-async fn static_ui(state: &AppState, path: &str) -> Result<Response, Failure> {
+fn accepts_gzip(header: Option<&str>) -> bool {
+    header.is_some_and(|value| {
+        value.split(',').any(|item| {
+            let mut parts = item.split(';').map(str::trim);
+            parts
+                .next()
+                .is_some_and(|name| name.eq_ignore_ascii_case("gzip"))
+                && !parts.any(|param| {
+                    param
+                        .strip_prefix("q=")
+                        .and_then(|q| q.parse::<f32>().ok())
+                        .is_some_and(|q| q <= 0.0)
+                })
+        })
+    })
+}
+fn gzip(bytes: &[u8]) -> std::io::Result<Vec<u8>> {
+    use flate2::{write::GzEncoder, Compression};
+    use std::io::Write;
+    let mut encoder = GzEncoder::new(Vec::with_capacity(bytes.len() / 3), Compression::default());
+    encoder.write_all(bytes)?;
+    encoder.finish()
+}
+async fn static_ui(state: &AppState, path: &str, gzip_ok: bool) -> Result<Response, Failure> {
     let spa = !path.starts_with("/assets/");
     let file = state.config.dist.join(if spa {
         "index.html"
@@ -246,7 +274,35 @@ async fn static_ui(state: &AppState, path: &str) -> Result<Response, Failure> {
     } else {
         StatusCode::OK
     };
+    let compressible = matches!(
+        mime,
+        "text/html" | "text/javascript" | "text/css" | "image/svg+xml"
+    );
+    let compressed = compressible && gzip_ok && bytes.len() > 1024;
+    if compressed {
+        bytes = tokio::task::spawn_blocking(move || gzip(&bytes))
+            .await
+            .map_err(|_| Failure::storage())?
+            .map_err(|_| Failure::storage())?;
+    }
     let mut response = (status, [(header::CONTENT_TYPE, mime)], bytes).into_response();
+    if compressible {
+        response
+            .headers_mut()
+            .insert(header::VARY, HeaderValue::from_static("accept-encoding"));
+    }
+    if compressed {
+        response
+            .headers_mut()
+            .insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+    }
+    if !spa {
+        // Vite names every built asset by its content hash.
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=31536000, immutable"),
+        );
+    }
     if let Some(policy) = policy {
         response.headers_mut().insert(
             header::CONTENT_SECURITY_POLICY,
@@ -752,5 +808,38 @@ mod tests {
         ] {
             assert!(!navigation(path), "{path}");
         }
+    }
+}
+
+#[cfg(test)]
+mod static_tests {
+    use super::*;
+
+    #[test]
+    fn gzip_acceptance_honours_q_values() {
+        for (header, expected) in [
+            (None, false),
+            (Some("identity"), false),
+            (Some("gzip"), true),
+            (Some("GZIP"), true),
+            (Some("br, gzip;q=0.5"), true),
+            (Some("gzip;q=0"), false),
+            (Some("gzip; q=0.0, deflate"), false),
+            (Some("x-gzip"), false),
+        ] {
+            assert_eq!(accepts_gzip(header), expected, "{header:?}");
+        }
+    }
+
+    #[test]
+    fn gzip_round_trips() -> std::io::Result<()> {
+        use std::io::Read;
+        let text = "const x = 1;\n".repeat(400);
+        let packed = gzip(text.as_bytes())?;
+        assert!(packed.len() < text.len() / 10);
+        let mut unpacked = String::new();
+        flate2::read::GzDecoder::new(&packed[..]).read_to_string(&mut unpacked)?;
+        assert_eq!(unpacked, text);
+        Ok(())
     }
 }
