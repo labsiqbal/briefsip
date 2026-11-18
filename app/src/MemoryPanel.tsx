@@ -1,6 +1,6 @@
 import { useVisiblePolling } from './hooks/useVisiblePolling';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { memoryCommand, memoryDraft, type MemoryCommand, type MemoryDraft, type MemoryEntry } from '../memory-command.ts';
+import { memoryCommand, memoryDraft, type MemoryCommand, type MemoryDraft, type MemoryEntry } from './memory-command.ts';
 
 import { ChevronLeft, ChevronRight, Ellipsis } from 'lucide-react';
 import { ActionMenu, Alert, Button, Card, Checkbox, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, SkeletonRows, Textarea, useConfirm, RecoveryAlert } from './ui/kit';

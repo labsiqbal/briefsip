@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Separator } from 'radix-ui';
-import { clampPanelWidth, maxPanelWidth } from '../../panel-width';
+import { clampPanelWidth, maxPanelWidth } from '../panel-width';
 
 /** A side panel whose width the user drags, kept per browser. `edge` is where the handle sits. */
 export type PanelSpec = { key: string; label: string; edge: 'left' | 'right'; defaultWidth: number; minWidth: number };

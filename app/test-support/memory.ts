@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { memoryCommand } from '../memory-command.ts';
+import { memoryCommand } from '../src/memory-command.ts';
 import { randomUUID } from 'node:crypto';
 export class MemoryError extends Error { status: number; constructor(status: number, message: string) { super(message); this.status = status; } }
 export function initializeMemory(db: DatabaseSync) {

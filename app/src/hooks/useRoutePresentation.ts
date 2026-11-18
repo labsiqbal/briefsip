@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef } from 'react';
-import { routePath, type AppRoute } from '../../navigation';
+import { routePath, type AppRoute } from '../navigation';
 
 export function useRoutePresentation(route: AppRoute, title: string | undefined, selectTab?: (tab: 'agents' | 'projects') => void) {
   const destination = routePath({ ...route, settings: undefined });

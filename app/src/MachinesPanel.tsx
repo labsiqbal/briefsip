@@ -7,7 +7,7 @@ import { Check, ChevronDown, ChevronRight, Copy, Ellipsis, Monitor, Plus } from 
 import type { Environment, PairedMachine, PeerAgentSummary } from '../shared/machines';
 import { ActionMenu, Alert, Badge, Button, Card, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, SkeletonRows, Switch, Textarea, Tooltip, useConfirm } from './ui/kit';
 import { Markdown } from './Markdown';
-import { restoreRemoteMessage } from '../remote-message-command';
+import { restoreRemoteMessage } from './remote-message-command';
 import { TurnActivity } from './ui/TurnActivity';
 import { ChatComposer, ChatEmptyState, ChatHeader, ChatTranscript, HumanMessage, AgentMessage, TurnStatus } from './ui/ChatPrimitives';
 import './ui/machines.css';

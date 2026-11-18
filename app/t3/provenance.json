@@ -630,7 +630,7 @@
       "adaptation": "Text-only bounded unified diff semantics and hunk-body guard for line numbering, expressed using native Git output and a neutral React renderer.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "5e92306220e2e921a00f52e61036bf0ddb3216bff21991b89363d09321f9a9dc",
-      "localPath": "app/diff-lines.ts",
+      "localPath": "app/src/diff-lines.ts",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
@@ -1225,7 +1225,7 @@
       "defaultDecision": "Pinned executable source uses sys.maxsize (unlimited) for AIAgent.max_iterations and resolve_turn_limit; docs and iteration_budget.py docstring still say 500. No finite Hermes default is authoritative at this revision. Briefsip uses Owner-requested finite fallback 90 and bounds profile input to 10-200.",
       "localPaths": [
         "app/server.ts",
-        "app/agent-template.ts",
+        "app/shared/agent-template.ts",
         "app/src/App.tsx",
         "app/src/ui/TurnActivity.tsx"
       ],
@@ -1314,7 +1314,7 @@
       "adaptation": "Adapted unified/split line gutters and local horizontal scrolling; parser moved into pure native module.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "e707de894e7631a8500cfe134bfe40a99eb3f001b74d3ac3f36285d883bbbeb5",
-      "localPath": "app/diff-lines.ts",
+      "localPath": "app/src/diff-lines.ts",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
@@ -1551,7 +1551,7 @@
       "sourceSha256": "c0edea409280f93b81646a3effb1544baf96c498d735273c14b9df7185602d59",
       "localPaths": [
         "app/src/ui/resizable.tsx",
-        "app/panel-width.ts",
+        "app/src/panel-width.ts",
         "app/src/RightPanel.tsx",
         "app/src/ui/layout.tsx",
         "app/src/right-panel-state.ts"
@@ -2358,7 +2358,7 @@
         "Route"
       ],
       "localPaths": [
-        "app/navigation.ts",
+        "app/src/navigation.ts",
         "app/src/hooks/useAppRoute.ts",
         "app/server.ts"
       ],

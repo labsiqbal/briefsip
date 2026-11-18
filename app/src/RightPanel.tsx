@@ -14,7 +14,7 @@ import { ResultURLPreview } from './ResultURLPreview';
 import { ComputerViewer } from './ComputerViewer';
 import { navigateResult, useResultRoute } from './hooks/useResultRoute';
 import { usePanelOverlay } from './hooks/usePanelOverlay';
-import { resultTarget } from '../navigation';
+import { resultTarget } from './navigation';
 import { AgentAvatar } from './AgentAvatar';
 import './right-panel.css';
 

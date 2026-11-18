@@ -235,3 +235,22 @@ pub fn transition(n: &Value, result: &str) -> Result<String> {
     };
     Ok(string(n, if yes { "yes" } else { "no" }).to_owned())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn literal_conditions_choose_exact_and_case_sensitive_branches() -> Result<()> {
+        let equals = json!({"kind":"condition","operator":"equals","value":"ready","yes":"done","no":"revise"});
+        assert_eq!(transition(&equals, "ready")?, "done");
+        assert_eq!(transition(&equals, "not ready")?, "revise");
+
+        let mut contains =
+            json!({"kind":"condition","operator":"contains","value":"A","yes":"yes","no":"no"});
+        assert_eq!(transition(&contains, "DATA")?, "yes");
+        contains["value"] = json!("a");
+        assert_eq!(transition(&contains, "DATA")?, "no");
+        Ok(())
+    }
+}

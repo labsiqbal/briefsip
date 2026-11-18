@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { applyPresentation, parsePresentation, presentationKey, readPresentation, type Presentation } from '../presentation';
+import { applyPresentation, parsePresentation, presentationKey, readPresentation, type Presentation } from './presentation';
 import { colorThemes } from './ui/themes';
 import { Alert, Card, PageHeader, Row, Section, Segmented } from './ui/kit';
 

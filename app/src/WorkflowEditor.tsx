@@ -2,8 +2,8 @@ import { useEffect, useRef, useState, type FormEvent, type SelectHTMLAttributes 
 import { WorkflowGraph as GraphView } from './WorkflowGraph';
 import { ActionMenu, Alert, Button, Field, IconButton, Input, PageHeader, Select, Textarea, useConfirm, useField } from './ui/kit';
 import { Ellipsis, Plus, Redo2, Undo2 } from 'lucide-react';
-import { editWorkflowHistory, moveWorkflowNode, restoreWorkflowEditorDraft, workflowAutosaveDraft, workflowDraftMatches, workflowUnconditionalCycles, type WorkflowHistory } from '../workflow-editor-state';
-import { removeWorkflowNode, validateWorkflow, type WorkflowGraph, type WorkflowNode } from '../workflows.ts';
+import { editWorkflowHistory, moveWorkflowNode, restoreWorkflowEditorDraft, workflowAutosaveDraft, workflowDraftMatches, workflowUnconditionalCycles, type WorkflowHistory } from './workflow-editor-state';
+import { removeWorkflowNode, validateWorkflow, type WorkflowGraph, type WorkflowNode } from './workflows.ts';
 
 export type Workflow = { id: string; agent: string; name: string; revision: number; graph: WorkflowGraph; deleted?: number };
 export type WorkflowDraft = { name: string; graph: WorkflowGraph; revision: number };

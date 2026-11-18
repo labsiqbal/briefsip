@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './test-bridge.ts';
-import { validateWorkflow } from './workflows.ts';
+import { validateWorkflow } from './src/workflows.ts';
 
 test('parallel workflow joins once in branch order, retains failures and cancels all branches', async t => {
   const dir=mkdtempSync(join(tmpdir(),'briefsip-parallel-'));

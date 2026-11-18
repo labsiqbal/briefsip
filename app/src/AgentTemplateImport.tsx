@@ -1,6 +1,6 @@
 import { downloadBlob } from './hooks/downloadBlob';
 import { useEffect, useRef, useState } from 'react';
-import { parseAgentTemplate, restoreTemplateImport, templateCommand, type AgentTemplate } from '../agent-template';
+import { parseAgentTemplate, restoreTemplateImport, templateCommand, type AgentTemplate } from '../shared/agent-template';
 import { Alert, Button, Card, CodeBlock, Field, Input, Section, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
 
 type Agent = { id: string; name: string; role: string; model: string; instructions: string; thread_limit: number; revision: number };

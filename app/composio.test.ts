@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './test-bridge.ts';
 import { composioToolName } from './test-support/composio-tool-name.ts';
-import { restoreConnectedAppCommand } from './connected-app-command.ts';
+import { restoreConnectedAppCommand } from './src/connected-app-command.ts';
 const canary='COMPOSIO_CANARY_6vR9pX8m7Q4b';
 const schema={type:'object',properties:{target:{type:'string'},text:{type:'string'}},required:['target'],additionalProperties:false};
 const rawTool=(slug:string,tags:string[]=[])=>({slug,name:slug,description:`${slug} ${canary}`,toolkit:{slug:'gmail'},version:'20261113_00',input_parameters:schema,tags});

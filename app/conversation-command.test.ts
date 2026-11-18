@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { restoreChatCommand, restoreChannelCommand } from './conversation-command.ts';
+import { restoreChatCommand, restoreChannelCommand } from './src/conversation-command.ts';
 
 test('chat recovery preserves exact retry identity and refuses corrupt or misrouted commands', () => {
   const command = { id: randomUUID(), text: 'Keep original text', files: [randomUUID()] };

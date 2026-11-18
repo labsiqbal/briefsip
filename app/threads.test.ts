@@ -1,4 +1,4 @@
-import { restoreThreadCommand } from './thread-command.ts';
+import { restoreThreadCommand } from './src/thread-command.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';

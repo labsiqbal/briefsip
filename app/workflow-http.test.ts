@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHmac, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { workflowAutosaveDraft } from './workflow-editor-state.ts';
+import { workflowAutosaveDraft } from './src/workflow-editor-state.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -33,7 +33,11 @@ test('model conditions choose one branch without tools and reject ambiguous answ
     ] };
     const workflow = await request(`/api/agents/${agent.id}/workflows`, { id: randomUUID(), revision: 0, name: 'Condition', graph });
     let failedRun: any;
-    for (const value of [' yes\n', 'NO', 'maybe']) {
+    const decisions = [
+      [' yes\n', 'accepted'], ['NO', 'declined'], ['maybe', null],
+      [' YES\n', 'accepted'], ['no', 'declined'], ['yes because it matches', null],
+    ] as const;
+    for (const [value, expected] of decisions) {
       answer = value;
       const run = await request(`/api/workflows/${workflow.id}/run`, { id: randomUUID(), revision: 1, input: 'ORIGINAL_DATA' });
       let current;
@@ -43,13 +47,16 @@ test('model conditions choose one branch without tools and reject ambiguous answ
         await new Promise(resolve => setTimeout(resolve, 20));
       }
       assert.equal(current.last, 'ORIGINAL_DATA');
-      assert.equal(current.status, value === 'maybe' ? 'failed' : 'done');
-      assert.equal(current.steps.length, value === 'maybe' ? 1 : 2);
-      assert.equal(current.steps[0].status, value === 'maybe' ? 'failed' : 'done');
-      if (value !== 'maybe') assert.equal(current.cursor, value === 'NO' ? 'declined' : 'accepted');
-      else failedRun = current;
+      assert.equal(current.status, expected ? 'done' : 'failed');
+      assert.equal(current.steps.length, expected ? 2 : 1);
+      assert.equal(current.steps[0].status, expected ? 'done' : 'failed');
+      if (expected) assert.equal(current.cursor, expected);
+      else {
+        assert.equal(current.error, 'Model condition must answer yes or no.');
+        failedRun = current;
+      }
     }
-    assert.equal(payloads.length, 3);
+    assert.equal(payloads.length, decisions.length);
     for (const payload of payloads) { assert.equal(payload.model, 'decision-model'); assert.equal(payload.tools, undefined); }
     const edited = { ...graph, nodes: [{ ...graph.nodes[0], model: 'fixed-model', value: 'Fixed question', yes: 'declined', no: 'accepted' }, ...graph.nodes.slice(1)] };
     await request(`/api/workflows/${workflow.id}/edit`, { id: randomUUID(), revision: 1, name: 'Fixed', graph: edited });
@@ -64,14 +71,15 @@ test('model conditions choose one branch without tools and reject ambiguous answ
     }
     assert.equal(recovered.status, 'done'); assert.equal(recovered.version, 1); assert.deepEqual(recovered.graph, graph);
     assert.equal(recovered.cursor, 'accepted'); assert.equal(recovered.steps.length, 3); assert.equal(recovered.steps[0].status, 'failed');
-    assert.equal(recovered.last, 'ORIGINAL_DATA'); assert.equal(payloads.length, 4);
-    assert.equal(payloads[3].model, 'fixed-model'); assert.equal(payloads[3].tools, undefined);
-    assert(JSON.stringify(payloads[3].messages).includes('Fixed question'));
+    assert.equal(recovered.last, 'ORIGINAL_DATA'); assert.equal(payloads.length, decisions.length + 1);
+    const retryPayload = payloads[decisions.length];
+    assert.equal(retryPayload.model, 'fixed-model'); assert.equal(retryPayload.tools, undefined);
+    assert(JSON.stringify(retryPayload.messages).includes('Fixed question'));
     assert.equal(JSON.parse(recovered.steps[1].settings).model, 'fixed-model');
     await app.close(); app = await startApp(options);
     await request(retryPath, retry);
     assert.deepEqual((await request(`/api/workflow-runs/${failedRun.id}`)).steps, recovered.steps);
-    assert.equal(payloads.length, 4);
+    assert.equal(payloads.length, decisions.length + 1);
     const stale = await fetch(app.origin + retryPath, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ ...retry, id: randomUUID() }) });
     assert.equal(stale.status, 409); await stale.body?.cancel();
     assert.equal((await request(`/api/agents/${agent.id}/turns`)).length, 0);
@@ -103,7 +111,7 @@ test('workflow HTTP versions, model steps, approval receipts and cancellation su
   }
   try {
     const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Owner', model: 'owner-model', instructions: 'Help.' }, 201);
-    const graph = { entry: 'model', maxSteps: 4, nodes: [
+    const graph = { entry: 'model', maxSteps: 4, positions: { model: { x: 501, y: 702 } }, nodes: [
       { id: 'model', kind: 'model', model: 'override-model', prompt: 'Process', next: 'approve' },
       { id: 'approve', kind: 'approval', prompt: 'Accept?', yes: 'out', no: 'model' }, { id: 'out', kind: 'output' },
     ] };
@@ -129,8 +137,11 @@ test('workflow HTTP versions, model steps, approval receipts and cancellation su
     await request(`/api/workflows/${workflow.id}/run`, launch); assert.equal((await request(`/api/workflows/${workflow.id}/runs`)).length, 1);
     const approve = { id: randomUUID(), revision: run.revision, accepted: true };
     await request(`${runPath}/approve`, { ...approve, accepted: 'yes' }, 400);
+    await request(`${runPath}/approve`, { ...approve, accepted: undefined }, 400);
     await request(`${runPath}/approve`, approve);
-    await until(runPath, data => data.status === 'done');
+    const done = await until(runPath, data => data.status === 'done');
+    assert.deepEqual(done.steps.map((step: { node: string }) => step.node), ['model', 'approve', 'out']);
+    assert.equal(done.cursor, 'out');
     await request(`${runPath}/approve`, approve);
     await request(`${runPath}/approve`, { ...approve, id: randomUUID() }, 409);
     assert.equal((await request(runPath)).version, 1); assert.equal(models.length, 1);

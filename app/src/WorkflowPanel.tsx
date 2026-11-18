@@ -5,10 +5,10 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { WorkflowEditor, type Workflow, type WorkflowDraft } from './WorkflowEditor';
 import { WorkflowSchedule } from './WorkflowSchedule';
 import { WorkflowWebhook, type WorkflowHook } from './WorkflowWebhook';
-import type { WorkflowGraph } from '../workflows';
+import type { WorkflowGraph } from './workflows';
 import { WorkflowGraph as GraphView } from './WorkflowGraph';
-import { restoreWorkflowEditorDraft, workflowDraftMatches, workflowStatusLabels as statuses, workflowStepLabel, workflowNodeLabels } from '../workflow-editor-state';
-import { restoreWorkflowCommand, type WorkflowCommand as Command } from '../workflow-command';
+import { restoreWorkflowEditorDraft, workflowDraftMatches, workflowStatusLabels as statuses, workflowStepLabel, workflowNodeLabels } from './workflow-editor-state';
+import { restoreWorkflowCommand, type WorkflowCommand as Command } from './workflow-command';
 import { ActionMenu, Alert, Badge, Button, Card, CodeBlock, Collapsible, EmptyState, Field, IconButton, PageHeader, Row, Section, SkeletonRows, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
 import { ChevronLeft, ChevronRight, Ellipsis, RefreshCw } from 'lucide-react';
 

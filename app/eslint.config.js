@@ -6,12 +6,9 @@ import tseslint from 'typescript-eslint';
 const root = dirname(fileURLToPath(import.meta.url));
 // Browser imports outside src receive the same boundary checks.
 export const browserSafeModules = [
-  'shared/agent-create.ts', 'agent-template.ts', 'shared/agent-visibility.ts', 'connected-app-command.ts',
-  'conversation-command.ts', 'diff-lines.ts', 'flows.ts', 'mcp-scopes.ts', 'memory-command.ts',
-  'navigation.ts', 'panel-width.ts', 'presentation.ts', 'question-answer.ts', 'remote-message-command.ts',
+  'shared/agent-create.ts', 'shared/agent-template.ts', 'shared/agent-visibility.ts', 'mcp-scopes.ts',
   'site-command.ts', 'skill-command.ts', 'skill-files.ts', 'skill-pack-schema.ts', 'skill-zip.ts',
-  'speech-preference.ts', 'speech.ts', 'thread-command.ts', 'turn-stream.ts', 'workflow-command.ts',
-  'workflow-editor-state.ts', 'workflows.ts',
+  'speech-preference.ts', 'speech.ts', 'turn-stream.ts',
 ];
 // yaml's default/browser export is node-free; its Node entry is not used by Vite.
 const browserSafePackages = new Set(['yaml']);

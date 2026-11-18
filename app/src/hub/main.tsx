@@ -2,7 +2,7 @@ import '../ui/csp-nonce';
 import { createRoot } from 'react-dom/client';
 import { HubApp } from './HubApp';
 import { ConfirmProvider } from '../ui/kit';
-import { applyPresentation, readPresentation } from '../../presentation';
+import { applyPresentation, readPresentation } from '../presentation';
 import '@fontsource-variable/inter';
 import '../ui/tokens.css';
 import '../ui/base.css';

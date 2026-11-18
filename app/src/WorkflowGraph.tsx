@@ -1,6 +1,6 @@
 import { useId, useRef, useState } from 'react';
-import { workflowEdges, type WorkflowGraph as Graph } from '../workflows';
-import { workflowLayout } from '../workflow-editor-state';
+import { workflowEdges, type WorkflowGraph as Graph } from './workflows';
+import { workflowLayout } from './workflow-editor-state';
 import { Collapsible } from './ui/kit';
 import './ui/workflow.css';
 

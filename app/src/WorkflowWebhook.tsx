@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { WorkflowCommand } from '../workflow-command';
+import type { WorkflowCommand } from './workflow-command';
 import { ActionMenu, Alert, Badge, Button, Card, Checkbox, EmptyState, Field, IconButton, Input, Row, Section, SkeletonRows, useConfirm } from './ui/kit';
 import { Ellipsis, RefreshCw } from 'lucide-react';
 

@@ -1,5 +1,5 @@
 import type { Runtime } from './runtime.ts';
-import { parseAgentTemplate } from '../agent-template.ts';
+import { parseAgentTemplate } from './agent-template.ts';
 
 export type AgentCreation = { id: string; name: string; role?: string; model: string; backupModel: string; instructions: string; threadLimit: number; toolBudget?: number; providerAccount: string; setup?: boolean; runtime?: Runtime };
 export function restoreAgentCreation(raw: string | null): AgentCreation | null {

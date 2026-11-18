@@ -1,4 +1,4 @@
-import { parseQuestionAnswer, type QuestionAnswer } from '../question-answer.ts';
+import { parseQuestionAnswer, type QuestionAnswer } from './question-answer.ts';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Card, Checkbox, Field, Textarea, useConfirm } from './ui/kit';
 export type Question = { id: string; prompt: string; choices: string[]; answer: string | null };

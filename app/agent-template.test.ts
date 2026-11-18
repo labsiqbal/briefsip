@@ -4,7 +4,7 @@ import { randomUUID, randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseAgentRole, parseAgentTemplate, restoreTemplateImport, templateCommand } from './agent-template.ts';
+import { parseAgentRole, parseAgentTemplate, restoreTemplateImport, templateCommand } from './shared/agent-template.ts';
 import { startApp } from './test-bridge.ts';
 import sharp from 'sharp';
 
