@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startApp } from './server.ts';
+import { startApp } from './test-bridge.ts';
 
-test('Rust Hermes availability survives a cold ACP start', { skip: process.env.BRIEFSIP_TEST_SERVER !== 'rust', timeout: 30000 }, async () => {
+test('Rust Hermes availability survives a cold ACP start', { timeout: 30000 }, async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-rust-hermes-probe-'));
   const executable = join(directory, 'hermes');
   writeFileSync(executable, `#!${process.execPath}\n` + `
