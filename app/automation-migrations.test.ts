@@ -188,6 +188,28 @@ test('Rust preserves exact legacy elapsed milliseconds during routine catch-up',
   } finally { await f.close(); }
 });
 
+test('Rust retains an upgraded whole-minute routine anchor on metadata-only edit', async () => {
+  const f = fixture();
+  try {
+    f.install('node-routines-before-occurrence-upgrades');
+    const { id } = routine(f);
+    f.db.prepare('UPDATE routines SET interval_ms=300000 WHERE id=?').run(id);
+    await f.start();
+    const path = `/api/projects/${f.project}/routines/${id}`;
+    const { schedule } = await f.request(path);
+    assert.deepEqual(schedule, { kind: 'interval', amount: 5, unit: 'minute', anchorAt: now });
+    // The scheduler advances next_at independently of the original anchor.
+    const advanced = now + 300000;
+    f.db.prepare('UPDATE routines SET next_at=? WHERE id=?').run(advanced, id);
+    const requestId = randomUUID();
+    const edited = await f.request(path + '/edit', {
+      requestId, id: requestId, revision: 2, name: 'Renamed', prompt: 'Private prompt', schedule, enabled: false,
+    });
+    assert.equal(edited.data.next_at, advanced);
+    assert.deepEqual(edited.data.schedule, schedule);
+  } finally { await f.close(); }
+});
+
 test('Rust extends the old manual routine source constraint and preserves the existing cursor revision', async () => {
   const f = fixture();
   try {

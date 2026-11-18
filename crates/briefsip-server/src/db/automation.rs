@@ -69,7 +69,12 @@ pub(super) fn upgrade(db: &Connection) -> Result<()> {
         for (routine, next_at, interval) in rows {
             let spec = match interval {
                 Some(ms) => {
-                    json!({"kind":"interval","amount":ms as f64/60000.0,"unit":"minute","anchorAt":next_at})
+                    let amount = if ms % 60000 == 0 {
+                        json!(ms / 60000)
+                    } else {
+                        json!(ms as f64 / 60000.0)
+                    };
+                    json!({"kind":"interval","amount":amount,"unit":"minute","anchorAt":next_at})
                 }
                 None => json!({"kind":"instant","at":next_at}),
             };
