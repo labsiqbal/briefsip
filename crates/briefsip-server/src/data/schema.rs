@@ -13,6 +13,12 @@ fn column(db: &Connection, table: &str, name: &str, definition: &str) -> crate::
     Ok(())
 }
 pub fn initialize(database: &Database) -> crate::db::Result<()> {
+    initialize_mode(database, false)
+}
+pub fn initialize_canonical(database: &Database) -> crate::db::Result<()> {
+    initialize_mode(database, true)
+}
+fn initialize_mode(database: &Database, canonical: bool) -> crate::db::Result<()> {
     let db = &database.connection;
     deletion::initialize(db)?;
     db.execute_batch("BEGIN IMMEDIATE")?;
@@ -57,6 +63,9 @@ pub fn initialize(database: &Database) -> crate::db::Result<()> {
             }
         }
         db.execute_batch(include_str!("schema.sql"))?;
+        if !canonical {
+            db.execute_batch(include_str!("local.sql"))?;
+        }
         environment::initialize(db)?;
         for (table, name, definition) in [
             ("local_projects", "archived", "INTEGER NOT NULL DEFAULT 0"),
@@ -85,8 +94,11 @@ pub fn initialize(database: &Database) -> crate::db::Result<()> {
             CREATE TABLE IF NOT EXISTS local_project_legacy_channels(channel TEXT PRIMARY KEY REFERENCES channels(id)) STRICT;
             CREATE TRIGGER IF NOT EXISTS channel_turn_created AFTER INSERT ON turns WHEN NEW.channel IS NOT NULL BEGIN UPDATE channels SET activity=activity+1 WHERE id=NEW.channel; END;
             CREATE TRIGGER IF NOT EXISTS channel_turn_changed AFTER UPDATE ON turns WHEN NEW.channel IS NOT NULL AND(NEW.status IS NOT OLD.status OR NEW.reply IS NOT OLD.reply OR NEW.agent IS NOT OLD.agent OR NEW.revision IS NOT OLD.revision) BEGIN UPDATE channels SET activity=activity+1 WHERE id=NEW.channel; END;
-            UPDATE turns SET status='interrupted',error='The process stopped before the result was saved. Check the provider before sending again.' WHERE status='running';
-            UPDATE provider_calls SET status='interrupted' WHERE status='pending';")?;
+            ")?;
+        if canonical {
+            return Ok(());
+        }
+        db.execute_batch("UPDATE turns SET status='interrupted',error='The process stopped before the result was saved. Check the provider before sending again.' WHERE status='running'; UPDATE provider_calls SET status='interrupted' WHERE status='pending';")?;
         for a in all(
             db,
             "SELECT * FROM agents WHERE id NOT IN(SELECT id FROM agent_creations)",

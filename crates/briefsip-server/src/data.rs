@@ -31,7 +31,7 @@ use axum::{
 pub(crate) use history::partial;
 pub use providers::Options;
 use rusqlite::{types::ValueRef, Connection, Params};
-pub use schema::initialize;
+pub use schema::{initialize, initialize_canonical};
 use serde_json::{json, Value};
 pub(crate) use sync::append_mutation;
 

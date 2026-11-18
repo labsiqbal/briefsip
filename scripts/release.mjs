@@ -64,7 +64,7 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
     // Runtime source only. Never include workspace data, .env, test fixtures or development bundles.
     stageRuntime(source, stage);
     if (rust && existsSync(join(repository, 'target/release/briefsip-server')) && existsSync(join(repository, 'target/release/briefsip-launcher'))) {
-      mkdirSync(join(stage, 'bin'), { mode: 0o700 }); cpSync(join(repository, 'target/release/briefsip-server'), join(stage, 'bin/briefsip-server'));
+      mkdirSync(join(stage, 'bin'), { recursive: true, mode: 0o700 }); cpSync(join(repository, 'target/release/briefsip-server'), join(stage, 'bin/briefsip-server'));
       cpSync(join(repository, 'target/release/briefsip-launcher'), join(stage, 'bin/briefsip-launcher'));
       for (const name of ['briefsip-server', 'briefsip-launcher']) assertNativeDependencies(join(stage, 'bin', name));
       cpSync(join(repository, 'crates/briefsip-launcher/provenance.json'), join(stage, 'bin/launcher-provenance.json'));
@@ -85,7 +85,7 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
 }
 // Copies the runtime selection a release ships; tests stage the same selection to run the import guard.
 export function stageRuntime(source, stage) {
-  for (const name of ['dist', 'package.json', 'LICENSE', 'novnc.LICENSE', 't3']) {
+  for (const name of ['bin', 'dist', 'package.json', 'LICENSE', 'novnc.LICENSE', 't3']) {
     if (existsSync(join(source, name))) cpSync(join(source, name), join(stage, name), { recursive: true });
   }
 }

@@ -7,6 +7,41 @@ mod mutations;
 mod recovery;
 mod sources;
 
+pub fn maintain(state: &AppState) -> Result<()> {
+    let guard = state.database.lock().map_err(|_| Failure::storage())?;
+    let db = &guard.connection;
+    let due=all(db,"SELECT w.id,w.turn,t.id task,t.project,t.state,w.deadline FROM turn_waits w JOIN tasks t ON t.logical_turn=w.turn WHERE w.status='waiting' AND (w.deadline<=? OR t.state IN('cancelled','failed','transferred')) ORDER BY w.deadline,w.id LIMIT 40",[state.config.now()])?;
+    if due.is_empty() {
+        return Ok(());
+    }
+    transaction(db, || {
+        for wait in due {
+            let expired = n(&wait, "deadline") <= state.config.now();
+            db.execute(
+                "UPDATE turn_waits SET status=? WHERE id=?",
+                [
+                    if expired { "expired" } else { "closed" },
+                    string(&wait, "id"),
+                ],
+            )?;
+            if expired
+                && !matches!(
+                    string(&wait, "state"),
+                    "cancelled" | "completed" | "failed" | "transferred"
+                )
+            {
+                db.execute(
+                    "UPDATE tasks SET state='failed',revision=revision+1 WHERE id=?",
+                    [string(&wait, "task")],
+                )?;
+                db.execute("UPDATE turns SET status='failed',revision=revision+1,error='Event wait timed out.' WHERE id=?",[string(&wait,"turn")])?;
+                observe(db, &task(db, string(&wait, "task"))?, state.config.now())?;
+            }
+        }
+        Ok(())
+    })
+}
+
 use crate::{
     auth::Actor,
     computer::devices::{self, Principal},

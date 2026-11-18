@@ -30,6 +30,10 @@ use serde_json::Value;
 
 pub type Result<T> = std::result::Result<T, Failure>;
 pub fn initialize(db: &rusqlite::Connection) -> crate::db::Result<()> {
+    db.execute_batch(include_str!("local.sql"))?;
+    initialize_canonical(db)
+}
+pub fn initialize_canonical(db: &rusqlite::Connection) -> crate::db::Result<()> {
     db.execute_batch(include_str!("schema.sql"))?;
     machines::initialize(db)?;
     hub::initialize(db)?;

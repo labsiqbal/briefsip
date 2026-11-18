@@ -17,13 +17,10 @@ CREATE TABLE IF NOT EXISTS coordination(seq INTEGER PRIMARY KEY AUTOINCREMENT,tu
 CREATE TABLE IF NOT EXISTS compactions(scope TEXT PRIMARY KEY,version TEXT NOT NULL,through INTEGER NOT NULL,summary TEXT NOT NULL) STRICT;
 CREATE TABLE IF NOT EXISTS compaction_sources(scope TEXT NOT NULL,seq INTEGER NOT NULL REFERENCES turns(seq),revision INTEGER NOT NULL,status TEXT NOT NULL,PRIMARY KEY(scope,seq)) STRICT;
 CREATE TABLE IF NOT EXISTS compaction_attempts(turn TEXT PRIMARY KEY REFERENCES turns(id),status TEXT NOT NULL,created TEXT NOT NULL) STRICT;
-UPDATE compaction_attempts SET status='interrupted' WHERE status='pending';
 CREATE TABLE IF NOT EXISTS harness_steps(turn TEXT NOT NULL REFERENCES turns(id),id TEXT NOT NULL,name TEXT NOT NULL,state TEXT NOT NULL,PRIMARY KEY(turn,id)) STRICT;
 CREATE TABLE IF NOT EXISTS harness_approvals(id TEXT PRIMARY KEY,turn TEXT NOT NULL REFERENCES turns(id),agent TEXT NOT NULL REFERENCES agents(id),runtime TEXT NOT NULL,workspace TEXT NOT NULL,kind TEXT NOT NULL,description TEXT NOT NULL,command TEXT,prefix TEXT,input TEXT NOT NULL,state TEXT NOT NULL,decision TEXT,revision INTEGER NOT NULL DEFAULT 1) STRICT;
 CREATE TABLE IF NOT EXISTS harness_policies(agent TEXT NOT NULL REFERENCES agents(id),runtime TEXT NOT NULL,workspace TEXT NOT NULL,prefix TEXT NOT NULL,PRIMARY KEY(agent,runtime,workspace,prefix)) STRICT;
 CREATE TABLE IF NOT EXISTS harness_decisions(id TEXT PRIMARY KEY,request TEXT NOT NULL,result TEXT NOT NULL) STRICT;
-UPDATE harness_approvals SET state='expired',revision=revision+1 WHERE state='approval';
 
 CREATE TABLE IF NOT EXISTS image_generations(turn TEXT NOT NULL REFERENCES turns(id),call TEXT NOT NULL,file TEXT REFERENCES files(id),uncertain INTEGER NOT NULL,PRIMARY KEY(turn,call)) STRICT;
 CREATE TABLE IF NOT EXISTS transcriptions(id TEXT PRIMARY KEY,file TEXT NOT NULL REFERENCES files(id),request TEXT NOT NULL,model TEXT NOT NULL,origin TEXT NOT NULL,status TEXT NOT NULL,result TEXT,created TEXT NOT NULL,usage TEXT) STRICT;
-UPDATE transcriptions SET status='uncertain' WHERE status='pending';

@@ -6,9 +6,54 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonicalBridge {
+    pub origin: String,
+    pub token: String,
+    pub clerk: bool,
+    pub mail: bool,
+    pub webhook: bool,
+}
+impl CanonicalBridge {
+    pub(crate) fn call(&self, operation: &str, value: &Value) -> Result<Value> {
+        use std::io::{Read, Write};
+        let url =
+            crate::connectors::config::loopback(&self.origin).map_err(|_| Failure::storage())?;
+        let address =
+            std::net::SocketAddr::from(([127, 0, 0, 1], url.port().ok_or_else(Failure::storage)?));
+        let mut socket =
+            std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_secs(5))
+                .map_err(|_| Failure::storage())?;
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .map_err(|_| Failure::storage())?;
+        socket
+            .set_write_timeout(Some(std::time::Duration::from_secs(5)))
+            .map_err(|_| Failure::storage())?;
+        let body = value.to_string();
+        write!(socket, "POST /{operation} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",self.origin.trim_start_matches("http://"),self.token,body.len(),body).map_err(|_|Failure::storage())?;
+        let mut raw = String::new();
+        socket
+            .take(65537)
+            .read_to_string(&mut raw)
+            .map_err(|_| Failure::storage())?;
+        if raw.len() > 65536 || !raw.starts_with("HTTP/1.1 200 ") {
+            return Err(Failure::storage());
+        }
+        let (_, body) = raw.split_once("\r\n\r\n").ok_or_else(Failure::storage)?;
+        serde_json::from_str::<Value>(body)
+            .map_err(|_| Failure::storage())?
+            .get("value")
+            .cloned()
+            .ok_or_else(Failure::storage)
+    }
+}
+
 #[derive(Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Options {
+    pub test_canonical_bridge: Option<CanonicalBridge>,
     pub script_token: Option<String>,
     pub installation_id: Option<String>,
     pub mail_from: Option<String>,
@@ -61,6 +106,15 @@ impl Options {
         }
     }
     pub fn validate(&self) -> crate::db::Result<()> {
+        if let Some(bridge) = &self.test_canonical_bridge {
+            if std::env::var("BRIEFSIP_TEST_SERVER").as_deref() != Ok("rust") {
+                return Err("Canonical fixture requires Rust test mode".into());
+            }
+            crate::connectors::config::loopback(&bridge.origin)?;
+            if bridge.token.len() != 64 || !bridge.token.bytes().all(|c| c.is_ascii_hexdigit()) {
+                return Err("Invalid canonical fixture token".into());
+            }
+        }
         if self.script_token.as_ref().is_some_and(|s| {
             !(32..=256).contains(&s.len())
                 || !s
@@ -75,6 +129,14 @@ impl Options {
         Ok(())
     }
     pub(crate) fn read(&self, name: &str, mail: bool) -> Result<Option<String>> {
+        if let Some(bridge) = &self.test_canonical_bridge {
+            if bridge.mail && name.starts_with("mail-") {
+                return bridge
+                    .call("mail-key", &json!({"name":name}))
+                    .map(|v| v.as_str().map(str::to_owned))
+                    .map_err(|_| unavailable(true));
+            }
+        }
         if self.test_keyring_locked {
             return Err(unavailable(mail));
         }

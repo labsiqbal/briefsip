@@ -229,7 +229,7 @@ pub(super) fn maintain(state: &AppState) -> Result<()> {
     }
     scheduler::maintain(state, db)?;
     for row in all(db,"SELECT r.id,s.project,c.actor FROM workflow_runs r JOIN record_scopes s ON s.table_name='workflow_runs' AND s.key_json=json_array(r.id) JOIN receipts c ON c.request_id=r.id WHERE r.status IN('ready','waiting') ORDER BY r.created,r.id LIMIT 100",[])?{
-        let result=transaction(db,||{
+        let result=maintenance_transaction(db,||{
             let s=Scope{state,db,account:string(&row,"actor"),project:string(&row,"project"),kind:"Workflow"};
             let (run,w)=workflows::run_root(&s,string(&row,"id"))?;
             if w["deleted"]!=0{return Ok(())}s.device(string(&w,"agent"))?;

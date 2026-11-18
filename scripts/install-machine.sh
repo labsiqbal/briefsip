@@ -23,7 +23,17 @@ case "$port" in ''|*[!0-9]*) echo 'Invalid port.' >&2; exit 1 ;; esac
 home=${HOME-}; case "$home" in /*) ;; *) echo 'HOME must be an absolute path.' >&2; exit 1 ;; esac
 root=$home/.local/share/briefsip; releases=$root/releases; config=$home/.config/briefsip; envfile=$config/launcher.env; unit=$home/.config/systemd/user/briefsip.service
 if [ "$dry" -eq 1 ]; then
-  printf '%s\n' 'Check Linux, curl, tar, sha256sum and user systemd.' 'Download and verify a Rust release archive.' 'Install bin/briefsip-server and bin/briefsip-launcher.' 'Start briefsip.service with the Rust launcher.'
+  printf '%s\n' \
+    'Check Linux, curl, tar, sha256sum and user systemd.' \
+    'Download and verify a Rust release archive; limit 1 GiB, SHA-256 and manifest verification.' \
+    'Install bin/briefsip-server and bin/briefsip-launcher; preserve provider configuration.' \
+    'Write ~/.config/briefsip/launcher.json and env file (0600); install briefsip.service.' \
+    'systemctl --user daemon-reload' \
+    'systemctl --user enable --now briefsip.service' \
+    'Wait for http://127.0.0.1:PORT/api/environment and advertised origin.' \
+    'POST source/api/install/pairing-code with Bearer [redacted] (consumes token).' \
+    'POST local/api/environment to set display name; POST local/api/machines to pair both ways.' \
+    'Run: tailscale serve --bg --https=PORT http://127.0.0.1:PORT'
   exit 0
 fi
 for command in curl tar sha256sum systemctl; do command -v "$command" >/dev/null 2>&1 || { echo "$command is required." >&2; exit 1; }; done
@@ -39,13 +49,20 @@ headers=$stage/headers
 curl -fsSL -D "$headers" -H "Authorization: Bearer $token" -o "$archive" "$source/api/install/release"
 id=$(sed -n 's/^x-briefsip-release:[[:space:]]*//Ip' "$headers" | tr -d '\r' | tail -n 1)
 sha=$(sed -n 's/^x-briefsip-sha256:[[:space:]]*//Ip' "$headers" | tr -d '\r' | tail -n 1)
+size=$(sed -n 's/^x-briefsip-size:[[:space:]]*//Ip' "$headers" | tr -d '\r' | tail -n 1)
 case "$id" in ''|*[!A-Za-z0-9.-]*) echo 'Invalid release metadata.' >&2; exit 1 ;; esac
 case "$sha" in ''|*[!a-f0-9]*) echo 'Invalid release metadata.' >&2; exit 1 ;; esac
-printf '%s  %s\n' "$sha" "$archive" | sha256sum -c - >/dev/null
+case "$size" in ''|*[!0-9]*) echo 'Invalid release metadata.' >&2; exit 1 ;; esac
+[ "$size" -le 1073741824 ] || { echo 'Invalid release metadata.' >&2; exit 1; }
+[ "${#sha}" -eq 64 ] && [ "$(wc -c < "$archive")" -eq "$size" ] || { echo 'Release integrity check failed.' >&2; exit 1; }
+printf '%s  %s\n' "$sha" "$archive" | sha256sum -c - >/dev/null || { echo 'Release integrity check failed.' >&2; exit 1; }
 tar -tzf "$archive" | while IFS= read -r entry; do
   case "$entry" in
-    ''|/*|../*|*/../*) echo 'Unsafe release archive entry.' >&2; exit 1 ;;
+    ''|/*|../*|*/../*) echo 'Unsafe archive entry.' >&2; exit 1 ;;
   esac
+done
+tar -tvzf "$archive" | while IFS= read -r entry; do
+  case "$entry" in -*|d*) ;; *) echo 'Unsafe archive entry.' >&2; exit 1 ;; esac
 done
 tar -xzf "$archive" -C "$stage" --no-same-owner --no-same-permissions --keep-directory-symlink
 if find "$stage" \( -type l -o -type b -o -type c -o -type p \) -print -quit | grep -q .; then echo 'Release archive contains unsupported entries.' >&2; exit 1; fi

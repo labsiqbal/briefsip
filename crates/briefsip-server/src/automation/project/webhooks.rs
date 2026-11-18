@@ -9,6 +9,18 @@ fn unavailable() -> Failure {
     e
 }
 fn key(state: &AppState, name: Option<&str>) -> Result<Option<String>> {
+    if let Some(bridge) = state
+        .config
+        .remaining_data
+        .test_canonical_bridge
+        .as_ref()
+        .filter(|b| b.webhook)
+    {
+        return bridge
+            .call("webhook-read", &json!({"name":name}))
+            .map(|v| v.as_str().map(str::to_owned))
+            .map_err(|_| unavailable());
+    }
     if let Some(name) = name {
         let parts = name.split('/').collect::<Vec<_>>();
         if !matches!(parts.as_slice(), ["routine-webhook", routine, generation, nonce] if uuid(routine) && uuid(nonce) && generation.parse::<u64>().is_ok_and(|n|n>0 && n<=9007199254740991 && n.to_string()==*generation))
@@ -160,21 +172,47 @@ pub(super) fn settings(
         .unwrap_or_default();
     let mut secret = None;
     if v["rotate"] == true {
-        key(s.state, None)?;
-        let value = super::super::webhooks::secret()?;
-        reference = format!(
-            "routine-webhook/{routine}/{generation}/{}",
-            uuid::Uuid::new_v4()
-        );
-        s.state
+        if let Some(bridge) = s
+            .state
             .config
             .remaining_data
-            .write(&reference, &value, false)
-            .map_err(|_| unavailable())?;
-        if key(s.state, Some(&reference))?.as_deref() != Some(&value) {
-            return Err(unavailable());
+            .test_canonical_bridge
+            .as_ref()
+            .filter(|b| b.webhook)
+        {
+            let created = bridge
+                .call(
+                    "webhook-create",
+                    &json!({"routine":routine,"generation":generation}),
+                )
+                .map_err(|_| unavailable())?;
+            reference = created["secretRef"]
+                .as_str()
+                .ok_or_else(unavailable)?
+                .to_owned();
+            secret = Some(
+                created["secret"]
+                    .as_str()
+                    .ok_or_else(unavailable)?
+                    .to_owned(),
+            );
+        } else {
+            key(s.state, None)?;
+            let value = super::super::webhooks::secret()?;
+            reference = format!(
+                "routine-webhook/{routine}/{generation}/{}",
+                uuid::Uuid::new_v4()
+            );
+            s.state
+                .config
+                .remaining_data
+                .write(&reference, &value, false)
+                .map_err(|_| unavailable())?;
+            if key(s.state, Some(&reference))?.as_deref() != Some(&value) {
+                return Err(unavailable());
+            }
+            secret = Some(value);
         }
-        secret = Some(value);
     }
     let fs = normalized
         .get("filters")

@@ -253,6 +253,9 @@ pub fn start(state: AppState) -> tokio::task::JoinHandle<()> {
                 continue;
             }
             if state.auth.is_some() {
+                if crate::tasks::maintain(&state).is_err() {
+                    eprintln!("Task wait maintenance failed");
+                }
                 if let Err(e) = project::maintain(&state) {
                     eprintln!("Project automation failed: {}", e.message);
                 }

@@ -1,0 +1,186 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
+import { once } from 'node:events';
+import { createDecipheriv, randomUUID } from 'node:crypto';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createServer as httpServer, request as httpRequest } from 'node:http';
+import { createServer as netServer } from 'node:net';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
+import { nativeReleaseFixture } from './native-release-fixture.ts';
+import { rustBinary } from './rust-binary.ts';
+import { startApp } from './test-bridge.ts';
+import { launcherRequest } from './rust-launcher-test.ts';
+import { launcherCommand } from './rust-test-launcher.ts';
+import { durableWrite, fileManifest, latestRelease, selectRelease, selectedRelease, verifyRelease } from '../scripts/release-lib.mjs';
+import { receiveRelease, releaseArchive } from './rust-update-test.ts';
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const { buildRelease } = await import(new URL('../scripts/release.mjs', import.meta.url).href);
+const delay = (ms: number) => new Promise(r=>setTimeout(r,ms));
+const temp = () => mkdtempSync(join(tmpdir(),'updates-'));
+async function until<T>(read:()=>Promise<T|undefined|false>, timeout=15000):Promise<T> { const deadline=Date.now()+timeout; while(Date.now()<deadline){const result=await read();if(result)return result;await delay(80);}throw new Error('Update test timed out.'); }
+async function freePort() { const s=httpServer(); await new Promise<void>(r=>s.listen(0,'127.0.0.1',r)); const addr=s.address();assert(addr&&typeof addr!=='string');const p=addr.port;await new Promise<void>(r=>s.close(()=>r()));return p; }
+function fixture(source:string, version:string, mode='healthy') {
+  mkdirSync(join(source,'dist'),{recursive:true}); writeFileSync(join(source,'dist/index.html'),'<title>Briefsip fixture</title>');
+  writeFileSync(join(source,'package.json'),JSON.stringify({name:'fixture',version,type:'module'}));
+  nativeReleaseFixture(source,version,mode);
+}
+function publishFixture(dir:string, version:string, mode='healthy') { const source=join(dir,'source');fixture(source,version,mode);return buildRelease({source,releases:join(dir,'releases'),build:false,install:false,allowDirty:true,notes:`Fixture ${version}`}); }
+async function launcher(dir:string, current:string) {
+  const releases=join(dir,'releases'),data=join(dir,'data');mkdirSync(data,{recursive:true});selectRelease(releases,'current',current);
+  const port=await freePort(),config=join(dir,'launcher.json');writeFileSync(config,JSON.stringify({dataDir:data,releasesDir:releases,port,trialTimeoutMs:5000}),{mode:0o600});
+  let processLog=''; const child=spawn(...launcherCommand(config),{stdio:['ignore','pipe','pipe']});child.stdout!.on('data',b=>{processLog+=b;});child.stderr!.on('data',b=>{processLog+=b;});
+  const options={launcherSocket:join(data,'launcher.sock'),releasesDir:releases};
+  try {await until(async()=>{try{return (await fetch(`http://127.0.0.1:${port}/api/environment`)).ok;}catch{return false;}});}catch(e){await stop(child);throw new Error(String(e)+'\n'+processLog);}
+  return {child,options,data,port,config,get log(){return processLog;},async close(){await stop(child);}};
+}
+async function stop(child:ChildProcess) { if(child.exitCode!==null||child.signalCode!==null)return;const exited=once(child,'exit');child.kill('SIGTERM');const timer=setTimeout(()=>child.kill('SIGKILL'),7000);try{await exited;}finally{clearTimeout(timer);} }
+async function api(app:{origin:string},path:string,body?:unknown,status=200,headers:Record<string,string>={}){const res=await fetch(app.origin+path,{...(body===undefined?{}:{method:'POST',body:JSON.stringify(body),headers:{Origin:app.origin,'Content-Type':'application/json',Connection:'close',...headers}}),...(body===undefined?{headers:{Connection:'close',...headers}}: {})});const value=await res.json();assert.equal(res.status,status,JSON.stringify(value));return value;}
+async function mockLauncher(dir:string) {mkdirSync(dir,{recursive:true});const socket=join(dir,'control.sock'),commands=new Map<string,string>();const server=netServer(s=>{let buf='';s.on('data',b=>{buf+=b;if(!buf.includes('\n'))return;const q=JSON.parse(buf);if(q.type==='status')s.end(JSON.stringify({protocol:1,current:'development'})+'\n');else{const digest=JSON.stringify([q.target,q.version]),old=commands.get(q.id);if(old&&old!==digest)s.end('{"error":"Request ID was already used."}\n');else{commands.set(q.id,digest);s.end(JSON.stringify({accepted:true,id:q.id})+'\n');}}});});await new Promise<void>(r=>server.listen(socket,r));chmodSync(socket,0o600);return{socket,commands,async close(){if(server.listening)await new Promise<void>(r=>server.close(()=>r()));}};}
+
+test('release builder publishes verified immutable files before feed metadata and refuses dirty trees',async()=>{
+ const dir=temp();try{const source=join(dir,'source'),releases=join(dir,'releases');fixture(source,'1.0.0');writeFileSync(join(source,'.env'),'NEVER_COPY_SECRET');const info=buildRelease({source,releases,build:false,install:false,allowDirty:true,notes:'Native check'});assert.equal(verifyRelease(releases,info.id).version,'1.0.0');assert.equal(latestRelease(releases)!.id,info.id);assert(!existsSync(join(releases,info.id,'.env')));assert(Object.keys(info.files).includes('bin/briefsip-server'));assert(!Object.keys(info.files).includes('release.json'));const repository=join(dir,'dirty-repository');mkdirSync(repository);execFileSync('git',['init'],{cwd:repository,stdio:'ignore'});execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','Fixture'],{cwd:repository,stdio:'ignore'});writeFileSync(join(repository,'dirty'),'fixture');assert.throws(()=>buildRelease({source,releases,repository,build:false,install:false}),/dirty/);assert.throws(()=>buildRelease({source,releases,build:false,install:false,allowDirty:true}),/already exists/);assert.equal(latestRelease(releases)!.id,info.id);
+ fixture(source,'1.0.1');writeFileSync(join(source,'bad-link'),'',{flag:'w'});mkdirSync(join(source,'t3'));symlinkSync('/etc/passwd',join(source,'t3/unsafe'));assert.throws(()=>buildRelease({source,releases,build:false,install:false,allowDirty:true}),/unsupported/i);assert.equal(latestRelease(releases)!.id,info.id);assert(!readdirSync(releases).some(name=>name.startsWith('.staging-')));
+ writeFileSync(join(releases,info.id,'bin/briefsip-server'),'tampered');assert.throws(()=>verifyRelease(releases,info.id),/SHA-256/);
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});
+
+test('release lint failure stops build, tests and packaging; successful gates run in order',()=>{
+ const dir=temp(),source=join(dir,'source'),releases=join(dir,'releases');try{
+ fixture(source,'1.0.0');execFileSync('git',['init'],{cwd:dir,stdio:'ignore'});execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','Fixture'],{cwd:dir,stdio:'ignore'});const file=join(source,'package.json'),pkg=JSON.parse(readFileSync(file,'utf8'));
+ pkg.scripts={lint:'node -e "process.exit(7)"',build:'node -e "require(\'node:fs\').writeFileSync(\'built\',\'yes\')"',test:'node -e "const fs=require(\'node:fs\');if(!fs.existsSync(\'built\'))process.exit(8);fs.writeFileSync(\'tested\',\'yes\')"'};
+ writeFileSync(file,JSON.stringify(pkg));assert.throws(()=>buildRelease({source,releases,repository:dir,install:false,allowDirty:true}),/Command failed/);
+ assert(!existsSync(join(source,'tested')));assert(!existsSync(join(source,'built')));assert(!existsSync(releases));
+ pkg.scripts.lint='node -e "0"';writeFileSync(file,JSON.stringify(pkg));buildRelease({source,releases,repository:dir,install:false,allowDirty:true});assert(existsSync(join(source,'built')));assert(existsSync(join(source,'tested')));
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});
+
+test('desktop release sync follows dirty guard and publishes matching version through desktop helper',()=>{
+ const dir=temp();try{
+ for(const folder of ['app','scripts','desktop/scripts'])mkdirSync(join(dir,folder),{recursive:true});
+ cpSync(join(root,'scripts/release.mjs'),join(dir,'scripts/release.mjs'));for(const name of ['install-machine.sh','uninstall-machine.sh'])cpSync(join(root,'scripts',name),join(dir,'scripts',name));cpSync(join(root,'scripts/release-lib.mjs'),join(dir,'scripts/release-lib.mjs'));
+ const app={name:'release-fixture',version:'1.0.1',type:'module',scripts:{lint:'node -e "0"',test:'node -e "0"',build:'node -e "0"'}};
+ writeFileSync(join(dir,'app/package.json'),JSON.stringify(app));writeFileSync(join(dir,'app/package-lock.json'),JSON.stringify({name:app.name,version:app.version,lockfileVersion:3,packages:{'':app}}));
+ nativeReleaseFixture(join(dir,'app'),'1.0.1');mkdirSync(join(dir,'app/dist'));writeFileSync(join(dir,'app/dist/index.html'),'fixture');
+ writeFileSync(join(dir,'desktop/package.json'),JSON.stringify({version:'1.0.0'}));writeFileSync(join(dir,'desktop/package-lock.json'),JSON.stringify({version:'1.0.0',packages:{'':{version:'1.0.0'}}}));
+ writeFileSync(join(dir,'desktop/scripts/publish-local.mjs'),`import {writeFileSync,readFileSync} from 'node:fs';const version=JSON.parse(readFileSync(new URL('../package.json',import.meta.url))).version;writeFileSync(process.argv[2],version);`);
+ const git=(args:string[])=>execFileSync('git',args,{cwd:dir,stdio:'ignore'});git(['init']);git(['add','.']);git(['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','Fixture']);
+ const args=[join(dir,'scripts/release.mjs'),'--desktop','--releases',join(dir,'releases'),'--desktop-feed',join(dir,'desktop-result')];
+ writeFileSync(join(dir,'dirty'),'uncommitted');assert.throws(()=>execFileSync(process.execPath,args,{stdio:'pipe'}),/dirty worktree/);assert.equal(JSON.parse(readFileSync(join(dir,'desktop/package.json'),'utf8')).version,'1.0.0');rmSync(join(dir,'dirty'));
+ execFileSync(process.execPath,args,{stdio:'pipe'});assert.equal(readFileSync(join(dir,'desktop-result'),'utf8'),'1.0.1');assert.equal(latestRelease(join(dir,'releases'))!.version,'1.0.1');
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});
+
+test('launcher commits healthy trial, preserves data and request identity, and refuses competing launcher',async()=>{
+ const dir=temp();let f:Awaited<ReturnType<typeof launcher>>|undefined;try{const first=publishFixture(dir,'1.0.0');f=await launcher(dir,first.id);const second=publishFixture(dir,'1.0.1');const request={type:'apply',id:randomUUID(),target:second.id,version:second.version};assert.equal((await launcherRequest(f.options,request)).accepted,true);assert.equal((await launcherRequest(f.options,request)).accepted,true);await assert.rejects(launcherRequest(f.options,{...request,target:first.id,version:first.version}),/already used/);const outcome=await until(async()=>{const state=await launcherRequest(f!.options,{type:'status'});return (state.lastAttempt as {status?:string})?.status==='done'?state:undefined;});assert.equal(outcome.current,second.id);assert.equal(selectedRelease(join(dir,'releases'),'previous'),first.id);assert.equal((JSON.parse(readFileSync(join(f.data,'update-state.json'),'utf8'))).lastAttempt.status,'done');
+ const rival=spawn(...launcherCommand(f.config),{stdio:'ignore'});const [code]=await once(rival,'exit');assert.notEqual(code,0);assert.equal((await launcherRequest(f.options,{type:'status'})).current,second.id);
+ }finally{await f?.close();rmSync(dir,{recursive:true,force:true});}
+});
+for(const mode of ['wrong','exit'])test(`launcher ${mode} candidate rolls back release and original DB snapshot`,async()=>{
+ const dir=temp();let f:Awaited<ReturnType<typeof launcher>>|undefined;try{const first=publishFixture(dir,'1.0.0');f=await launcher(dir,first.id);
+ // Fixture holds only the side-file server lock, allowing a test-only inspection connection.
+ const db=new DatabaseSync(join(f.data,'briefsip.sqlite'));db.exec("INSERT INTO data VALUES('owner data intact')");db.close();
+ const bad=publishFixture(dir,'1.0.1',mode),id=randomUUID();await launcherRequest(f.options,{type:'apply',id,target:bad.id,version:bad.version});const state=await until(async()=>{const s=await launcherRequest(f!.options,{type:'status'});return (s.lastAttempt as {status?:string})?.status==='rolled-back'?s:undefined;});assert.equal(state.current,first.id);await until(async()=>{try{return (await (await fetch(`http://127.0.0.1:${f!.port}/api/environment`)).json()).version==='1.0.0';}catch{return false;}});const restored=new DatabaseSync(join(f.data,'briefsip.sqlite'));assert.deepEqual(restored.prepare('SELECT value FROM data').all().map(r=>r.value),['owner data intact']);restored.close();assert.equal(selectedRelease(join(dir,'releases')),first.id);assert.match(String((state.lastAttempt as {reason:string}).reason),/health|exited/i);
+ }finally{await f?.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('update API uses owner Host/Origin/JSON rules, refuses unmanaged apply and preserves request identity',async t=>{
+ const dir=temp();const releases=join(dir,'releases');publishFixture(dir,'1.0.1');const control=await mockLauncher(join(dir,'control'));t.after(()=>control.close());let app=await startApp({database:join(dir,'app.sqlite'),updates:{releasesDir:releases,launcherSocket:control.socket}});try{const state=await api(app,'/api/updates');assert.equal(state.launcherAvailable,true);assert.equal(state.available.version,'1.0.1');assert.equal(state.feed.version,'1.0.1');const command={id:randomUUID(),version:'1.0.1'};await api(app,'/api/updates/apply',command,202);await api(app,'/api/updates/apply',command,202);assert.equal(control.commands.size,1);await api(app,'/api/updates/apply',{...command,extra:1},400);await api(app,'/api/updates/apply',{id:'bad',version:'1.0.1'},400);await api(app,'/api/updates/apply',command,403,{Origin:'https://foreign.invalid'});await api(app,'/api/updates/apply',command,403,{'Content-Type':'text/plain'});await api(app,'/api/updates',undefined,403,{Authorization:'Bearer peer-canary'});await api(app,'/api/updates',undefined,403,{Origin:'https://foreign.invalid'});await new Promise<void>((done,reject)=>{const req=httpRequest(app.origin+'/api/updates',{headers:{Host:'foreign.invalid'}},res=>{assert.equal(res.statusCode,403);res.resume();res.on('end',done);});req.on('error',reject);req.end();});await app.close();app=await startApp({database:join(dir,'app.sqlite'),updates:{releasesDir:releases}});assert.equal((await api(app,'/api/updates')).launcherAvailable,false);const denied=await api(app,'/api/updates/apply',command,409);assert.match(denied.error,/launcher/);
+ }finally{await app.close();await control.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('server side lock rejects a second process on the same DB',async()=>{
+ const dir=temp();const a=await startApp({database:join(dir,'app.sqlite')});try{await assert.rejects(startApp({database:join(dir,'app.sqlite')}),/Another canonical server/);}finally{await a.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('peer fan-out needs both owners, grants no default update scope, streams verified release and keeps tokens secret',async t=>{
+ const dir=temp(),tokens:string[]=[],logs:string[]=[];const original=globalThis.fetch,oldLog=console.error;
+ t.after(()=>{globalThis.fetch=original;console.error=oldLog;});
+ globalThis.fetch=async(input,init)=>{const response=await original(input,init);if(String(input).endsWith('/api/pairing/redeem')){const data=await response.clone().json();if(data.token)tokens.push(data.token);}if(String(input).endsWith('/api/machines/reciprocal')&&typeof init?.body==='string')tokens.push(JSON.parse(init.body).token);return response;};console.error=(...args)=>{logs.push(args.map(String).join(' '));};
+ const ctlA=await mockLauncher(join(dir,'ctl-a')),ctlB=await mockLauncher(join(dir,'ctl-b'));t.after(()=>ctlA.close());t.after(()=>ctlB.close());const release=publishFixture(dir,'1.0.1');const a=await startApp({database:join(dir,'a.sqlite'),updates:{releasesDir:join(dir,'releases'),launcherSocket:ctlA.socket}}),b=await startApp({database:join(dir,'b.sqlite'),updates:{releasesDir:join(dir,'b-releases'),launcherSocket:ctlB.socket}});
+ try{const code=await api(b,'/api/pairing-codes',{id:randomUUID()});const machine=await api(a,'/api/machines',{id:randomUUID(),origin:b.origin,code:code.code});const back=(await api(b,'/api/machines')).machines[0];assert.equal(machine.allowUpdates,false);const issued=(await api(a,'/api/mcp-server/peer-tokens')).items;assert(issued.every((token:{scopes:string[]})=>!token.scopes.includes('machine:update')));
+ assert.deepEqual((await api(a,'/api/updates/machines')).machines,[{machine:machine.id,available:false,reason:'Enable updates on both machines.'}]);
+ let command={id:randomUUID(),machines:[machine.id],version:release.version},result=await api(a,'/api/updates/fan-out',command,202);assert.equal(result.machines[0].status,'failed');assert.equal(ctlB.commands.size,0);
+ await api(a,'/api/machines/updates',{id:randomUUID(),environmentId:machine.id,allowed:true});command={...command,id:randomUUID()};result=await api(a,'/api/updates/fan-out',command,202);assert.equal(result.machines[0].status,'failed');assert.equal(ctlB.commands.size,0);
+ await api(b,'/api/machines/updates',{id:randomUUID(),environmentId:back.id,allowed:true});command={...command,id:randomUUID()};result=await api(a,'/api/updates/fan-out',command,202);assert.equal(result.machines[0].status,'accepted',JSON.stringify(result));assert.equal(ctlB.commands.size,1);assert.equal(verifyRelease(join(dir,'b-releases'),release.id).version,release.version);assert.deepEqual(await api(a,'/api/updates/fan-out',command,202),result);assert.equal(ctlB.commands.size,1);await api(a,'/api/updates/fan-out',{...command,version:'1.0.2'},409);
+ await a.refreshMachines();const peers=(await api(a,'/api/updates/machines')).machines;assert.equal(peers[0].machine,machine.id);assert.equal(peers[0].available,true);
+ await api(b,'/api/machines/updates',{id:randomUUID(),environmentId:back.id,allowed:false});command={...command,id:randomUUID()};assert.equal((await api(a,'/api/updates/fan-out',command,202)).machines[0].status,'failed');assert.equal(ctlB.commands.size,1);
+ if(process.env.BRIEFSIP_TEST_SERVER==='rust')for(const name of ['a.sqlite','b.sqlite']){
+  const path=join(dir,name),db=new DatabaseSync(path);const row=db.prepare('SELECT token,origin FROM paired_machines').get()!;db.close();
+  const bytes=Buffer.from(String(row.token),'base64'),cipher=createDecipheriv('aes-256-gcm',readFileSync(path+'.peer-key'),bytes.subarray(0,12));
+  cipher.setAAD(Buffer.from(String(row.origin)));cipher.setAuthTag(bytes.subarray(-16));const token=Buffer.concat([cipher.update(bytes.subarray(12,-16)),cipher.final()]).toString('utf8');if(!tokens.includes(token))tokens.push(token);
+ }
+ assert.equal(tokens.length,2);for(const token of tokens){assert(!JSON.stringify(result).includes(token));assert(!logs.join('\n').includes(token));}await a.close();await b.close();for(const name of readdirSync(dir).filter(name=>name.endsWith('.sqlite'))){const bytes=readFileSync(join(dir,name));for(const token of tokens)assert(!bytes.includes(Buffer.from(token)));}
+ }finally{globalThis.fetch=original;console.error=oldLog;await a.close().catch(()=>{});await b.close().catch(()=>{});await ctlA.close();await ctlB.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('peer SHA-256 mismatch rejects download before publication',async()=>{const dir=temp();try{const info=publishFixture(dir,'1.0.0'),archive=await releaseArchive(join(dir,'releases'),info.id);try{const bytes=readFileSync(archive.file);bytes[bytes.length-1]^=1;await assert.rejects(receiveRelease(new Response(bytes,{headers:{'Content-Type':'application/gzip','X-Briefsip-SHA256':archive.sha256}}),join(dir,'received'),info.id,archive.sha256),/SHA-256 mismatch/);assert(!existsSync(join(dir,'received',info.id)));}finally{archive.cleanup();}}finally{rmSync(dir,{recursive:true,force:true});}});
+
+test('interrupted trial recovers immutable snapshot before restarting previous release',async()=>{
+ const dir=temp();let f:Awaited<ReturnType<typeof launcher>>|undefined, restarted:ChildProcess|undefined;try{const first=publishFixture(dir,'1.0.0');f=await launcher(dir,first.id);const db=new DatabaseSync(join(f.data,'briefsip.sqlite'));db.exec("INSERT INTO data VALUES('before crash')");db.close();const bad=publishFixture(dir,'1.0.1','wrong');await launcherRequest(f.options,{type:'apply',id:randomUUID(),target:bad.id,version:bad.version});await until(async()=>{const state=await launcherRequest(f!.options,{type:'status'});if((state.lastAttempt as {status?:string})?.status!=='verifying')return false;try{const check=new DatabaseSync(join(f!.data,'briefsip.sqlite'));const damaged=check.prepare('SELECT value FROM data').get()?.value==='trial damage';check.close();return damaged;}catch{return false;}});const died=once(f.child,'exit');f.child.kill('SIGKILL');await died;await delay(200);
+ let log='';restarted=spawn(...launcherCommand(f.config),{stdio:['ignore','pipe','pipe']});restarted.stderr!.on('data',b=>{log+=b;});await until(async()=>{try{const s=await launcherRequest(f!.options,{type:'status'});return (s.lastAttempt as {status?:string})?.status==='rolled-back';}catch{return false;}},15000).catch(e=>{throw new Error(String(e)+'\n'+log);});await until(async()=>{try{return (await (await fetch(`http://127.0.0.1:${f!.port}/api/environment`)).json()).version==='1.0.0';}catch{return false;}});const restored=new DatabaseSync(join(f.data,'briefsip.sqlite'));assert.equal(restored.prepare('SELECT value FROM data').get()?.value,'before crash');restored.close();
+ }finally{if(restarted)await stop(restarted);await f?.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('Rust trial gates owner work until matching private socket commit', {skip:process.env.BRIEFSIP_TEST_SERVER!=='rust',timeout:15000},async()=>{
+ const dir=temp(),id=randomUUID(),socket=join(dir,'control.sock');let committed=false,child:ChildProcess|undefined;
+ const control=netServer(client=>{let raw='';client.on('data',chunk=>{raw+=chunk;if(!raw.includes('\n'))return;const q=JSON.parse(raw);client.end(JSON.stringify(q.type==='trial'?{committed:committed&&q.id===id}:{protocol:1,current:'development'})+'\n');});});
+ try{
+  await new Promise<void>(done=>control.listen(socket,done));chmodSync(socket,0o600);const port=await freePort(),app={origin:`http://127.0.0.1:${port}`};
+  child=spawn(rustBinary('briefsip-server',process.env.BRIEFSIP_RUST_BINARY),[],{env:{PATH:process.env.PATH,HOME:dir,PORT:String(port),BRIEFSIP_DATA_DIR:join(dir,'data'),BRIEFSIP_UPDATE_TRIAL:id,BRIEFSIP_LAUNCHER_SOCKET:socket},stdio:'ignore'});
+  await until(async()=>{try{return (await fetch(app.origin+'/api/environment')).ok;}catch{return false;}});
+  await api(app,'/api/updates');await api(app,'/api/agents',undefined,503);await api(app,'/api/machines',undefined,503);await api(app,'/api/pairing-codes',{id:randomUUID()},503);
+  committed=true;await until(async()=>{try{return (await fetch(app.origin+'/api/agents')).status===200;}catch{return false;}});await api(app,'/api/machines');
+ }finally{if(child)await stop(child);await new Promise<void>(done=>control.close(()=>done()));rmSync(dir,{recursive:true,force:true});}
+});
+
+test('Rust launcher trials native Rust server, commits over socket, and rolls back failed health', {skip: process.env.BRIEFSIP_TEST_SERVER!=='rust'||process.env.BRIEFSIP_TEST_LAUNCHER!=='rust',timeout:30000},async()=>{
+ const dir=temp();let f:Awaited<ReturnType<typeof launcher>>|undefined;
+ try{
+  function native(version:string){
+   const release=publishFixture(dir,version),path=join(dir,'releases',release.id);
+   cpSync(rustBinary('briefsip-server',process.env.BRIEFSIP_RUST_BINARY),join(path,'bin/briefsip-server'));
+   execFileSync('strip',['--strip-debug',join(path,'bin/briefsip-server')]);
+   writeFileSync(join(path,'package.json'),JSON.stringify({version,type:'module'}));
+   const info={...release,files:fileManifest(path)};writeFileSync(join(path,'release.json'),JSON.stringify(info));
+   return info;
+  }
+  const first=native('1.0.0');f=await launcher(dir,first.id);const app={origin:`http://127.0.0.1:${f.port}`};
+  assert.equal((await api(app,'/api/environment')).version,'1.0.0');
+  const db=new DatabaseSync(join(f.data,'briefsip.sqlite'));db.exec("CREATE TABLE native_fixture(value TEXT);INSERT INTO native_fixture VALUES('preserved')");db.close();
+  const second=native('1.0.1'),id=randomUUID();
+  await api(app,'/api/updates/apply',{id,version:second.version},202);
+  await until(async()=>{try{return (await launcherRequest(f!.options,{type:'trial',id})).committed===true;}catch{return false;}});
+  await until(async()=>{try{return (await fetch(app.origin+'/api/agents')).status===200;}catch{return false;}});
+  assert.equal((await api(app,'/api/environment')).version,'1.0.1');
+  assert.equal((await api(app,'/api/updates')).current.id,second.id);
+  const third=native('1.0.2');chmodSync(join(dir,'releases',third.id,'bin/briefsip-server'),0o600);
+  third.files=fileManifest(join(dir,'releases',third.id));writeFileSync(join(dir,'releases',third.id,'release.json'),JSON.stringify(third));
+  const failed=randomUUID();await api(app,'/api/updates/apply',{id:failed,version:third.version},202);
+  const rollback=await until(async()=>{const state=await launcherRequest(f!.options,{type:'status'});return (state.lastAttempt as {status?:string})?.status==='rolled-back'?state:undefined;});
+  assert.equal((rollback.lastAttempt as {snapshotReady?:boolean}).snapshotReady,true);
+  assert.match((rollback.lastAttempt as {reason:string}).reason,/health|exited/i);
+  await until(async()=>{try{return (await api(app,'/api/environment')).version==='1.0.1';}catch{return false;}});
+  const restored=new DatabaseSync(join(f.data,'briefsip.sqlite'));assert.equal(restored.prepare('SELECT value FROM native_fixture').get()?.value,'preserved');restored.close();
+ }finally{await f?.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+if(process.env.BRIEFSIP_UPDATE_IT==='1')test('real release build, HTTP update, broken trial rollback and intact workspace', {timeout:900000},async()=>{
+ const dir=temp(),source=join(dir,'real-app'),releases=join(dir,'releases');let f:Awaited<ReturnType<typeof launcher>>|undefined;
+ try{
+ cpSync(join(root,'app'),source,{recursive:true,filter:p=>!p.includes('/node_modules')&&!p.includes('/dist')});symlinkSync(join(root,'app/node_modules'),join(source,'node_modules'),'dir');
+ let pkg=JSON.parse(readFileSync(join(source,'package.json'),'utf8'));pkg.version='0.1.0';writeFileSync(join(source,'package.json'),JSON.stringify(pkg,null,2)+'\n');let lock=JSON.parse(readFileSync(join(source,'package-lock.json'),'utf8'));lock.version=pkg.version;lock.packages[''].version=pkg.version;writeFileSync(join(source,'package-lock.json'),JSON.stringify(lock,null,2)+'\n');
+ async function realBuild(notes:string){await new Promise<void>((done,reject)=>{const builder=spawn(process.execPath,['--input-type=module','-e',`import {buildRelease} from ${JSON.stringify(new URL('../scripts/release.mjs',import.meta.url).href)};buildRelease(${JSON.stringify({source,releases,allowDirty:true,notes})});`],{stdio:'inherit'});builder.once('error',reject);builder.once('exit',code=>code===0?done():reject(new Error('Real release build failed.')));});return latestRelease(releases)!;}
+ const first=await realBuild('Integration v1');f=await launcher(dir,first.id);const config=JSON.parse(readFileSync(f.config,'utf8'));config.trialTimeoutMs=30000;writeFileSync(f.config,JSON.stringify(config),{mode:0o600});await f.close();
+ const child=spawn(...launcherCommand(f.config),{stdio:['ignore','pipe','pipe']});let log='';child.stdout!.on('data',b=>{log+=b;});child.stderr!.on('data',b=>{log+=b;});f={...f,child,async close(){await stop(child);},get log(){return log;}};
+ const app={origin:`http://127.0.0.1:${f.port}`};await until(async()=>{try{return (await originalFetch(app.origin+'/api/environment')).ok;}catch{return false;}},30000);
+ const agent={id:randomUUID(),name:'Owner data survives',model:'fixture',instructions:'Preserve this agent.'};await api(app,'/api/agents',agent,201);
+ function version(v:string){pkg.version=v;lock.version=v;lock.packages[''].version=v;writeFileSync(join(source,'package.json'),JSON.stringify(pkg,null,2)+'\n');writeFileSync(join(source,'package-lock.json'),JSON.stringify(lock,null,2)+'\n');}
+ version('0.1.1');const second=await realBuild('Integration v2');const id=randomUUID();await api(app,'/api/updates/apply',{id,version:second.version},202);await until(async()=>{try{const state=await api(app,'/api/updates');return state.current.version==='0.1.1'&&state.lastAttempt?.status==='done';}catch{return false;}},60000).catch(e=>{throw new Error(String(e)+'\n'+f!.log);});assert.equal((await api(app,'/api/agents')).agents.find((r:{id:string})=>r.id===agent.id).name,agent.name);
+ version('0.1.2');const serverPath=join(source,'server.ts');const code=readFileSync(serverPath,'utf8').replace("if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {", "if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {\n if (process.env.BRIEFSIP_UPDATE_TRIAL) { const damaged = new DatabaseSync(resolve(process.env.BRIEFSIP_DATA_DIR!, 'briefsip.sqlite')); damaged.exec(\"UPDATE agents SET name='BROKEN UPDATE'\"); damaged.close(); throw new Error('Integration broken release'); }");writeFileSync(serverPath,code);const third=await realBuild('Integration broken v3');const badId=randomUUID();await api(app,'/api/updates/apply',{id:badId,version:third.version},202);await until(async()=>{try{const state=await api(app,'/api/updates');return state.current.version==='0.1.1'&&state.lastAttempt?.id===badId&&state.lastAttempt?.status==='rolled-back';}catch{return false;}},60000).catch(e=>{throw new Error(String(e)+'\n'+f!.log);});assert.equal((await api(app,'/api/agents')).agents.find((r:{id:string})=>r.id===agent.id).name,agent.name);assert.equal(selectedRelease(releases),second.id);
+ }catch(error){throw new Error((error instanceof Error ? error.stack : String(error))+'\nCause: '+String((error as {cause?:unknown})?.cause)+'\n'+f?.log);}finally{await f?.close();rmSync(dir,{recursive:true,force:true});}
+});
+const originalFetch=globalThis.fetch;
