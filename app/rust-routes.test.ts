@@ -4,7 +4,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 
 type Matcher = { kind: 'exact' | 'prefix' | 'regex' | 'regex-exact'; pattern: string; flags?: string; endpoint?: boolean };
 type Inventory = { matchers: Matcher[]; publicMatchers: { pattern: string; flags?: string; endpoint?: boolean }[] };
-const inventory = JSON.parse(readFileSync(new URL('./node-route-inventory.json', import.meta.url), 'utf8')) as Inventory;
+const inventory = JSON.parse(readFileSync(new URL('./fixtures/pre-cutover-routes.json', import.meta.url), 'utf8')) as Inventory;
+const nativeRoutes = new Set(['/api/restore/reconcile']);
 const matcher = (entry: Matcher) => {
   if (entry.kind === 'exact') return (path: string) => path === entry.pattern;
   if (entry.kind === 'prefix') return (path: string) => path.startsWith(entry.pattern);
@@ -12,7 +13,7 @@ const matcher = (entry: Matcher) => {
   return (path: string) => expression.test(path);
 };
 
-test('Rust route inventory stays within frozen Node matchers and reports ported coverage', t => {
+test('Rust route inventory covers frozen pre-cutover matchers and native additions', t => {
   const matchers = new Map(inventory.matchers.map(entry => [entry.kind.startsWith('regex') ? `/${entry.pattern}/${entry.flags ?? ''}` : entry.pattern, matcher(entry)]));
   const endpoints = new Map(inventory.matchers.filter(entry => entry.endpoint === true).map(entry => [entry.kind.startsWith('regex') ? `/${entry.pattern}/${entry.flags ?? ''}` : entry.pattern, matcher(entry)]));
   const publicMatchers = inventory.publicMatchers.map(entry => new RegExp(entry.pattern, entry.flags));
@@ -24,15 +25,17 @@ test('Rust route inventory stays within frozen Node matchers and reports ported 
   assert.deepEqual(duplicates, [], `Rust routes registered twice: ${duplicates.join(', ')}`);
   const id = '00000000-0000-4000-8000-000000000001';
   const ported = new Set<string>();
+  assert([...nativeRoutes].every(route => routes.includes(route)));
   for (const route of routes) {
+    if (nativeRoutes.has(route)) continue;
     const witness = route.replace(/\{seq\}/g, '1').replace(/\{[^}]+\}/g, id);
     if (!/^\/(?:api(?:\/|$)|mcp(?:\/|$))/.test(route)) {
-      assert(publicMatchers.some(publicMatcher => publicMatcher.test(witness)), `Rust public route absent from Node: ${route}`);
+      assert(publicMatchers.some(publicMatcher => publicMatcher.test(witness)), `Rust public route absent from the route inventory: ${route}`);
       continue;
     }
     const environment = witness.replace(/^\/api\/projects\/[^/]+(\/environment(?:\/(?:remove|settings))?)$/, '/api$1');
     const matches = [...endpoints].filter(([, testMatcher]) => testMatcher(witness) || testMatcher(environment));
-    assert(matches.length > 0, `Rust route absent from Node: ${route}`);
+    assert(matches.length > 0, `Rust route absent from the route inventory: ${route}`);
     for (const [name] of matches) ported.add(name);
   }
   const witnesses = routes.map(route => route.replace(/\{seq\}/g, '1').replace(/\{[^}]+\}/g, id));

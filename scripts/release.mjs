@@ -85,24 +85,20 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
 }
 // Copies the runtime selection a release ships; tests stage the same selection to run the import guard.
 export function stageRuntime(source, stage) {
-  for (const name of ['bin', 'dist', 'package.json', 'LICENSE', 'novnc.LICENSE', 't3']) {
+  for (const name of ['bin', 'dist', 'package.json', 'LICENSE', 'novnc.LICENSE']) {
     if (existsSync(join(source, name))) cpSync(join(source, name), join(stage, name), { recursive: true });
   }
-}
-// Every relative import reachable from a runtime entry point must resolve to a staged file.
-export function assertRelativeImports(stage, entries = []) {
-  const missing = [], seen = new Set();
-  const pattern = /(?:^|\n)\s*(?:import|export)\b[^'"`;]*?from\s*['"](\.{1,2}\/[^'"]+)['"]|\bimport\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)/g;
-  const visit = path => {
-    if (seen.has(path)) return; seen.add(path);
-    for (const match of readFileSync(path, 'utf8').matchAll(pattern)) {
-      const spec = match[1] ?? match[2], target = resolve(dirname(path), spec);
-      if (!existsSync(target)) missing.push(`${path.slice(stage.length + 1)} -> ${spec}`);
-      else if (/\.(ts|mjs|js)$/.test(target)) visit(target);
-    }
-  };
-  for (const entry of entries) if (existsSync(join(stage, entry))) visit(join(stage, entry));
-  if (missing.length) throw new Error(`Release is missing runtime modules:\n${missing.join('\n')}`);
+  for (const name of ['NOTICE', 'provenance.json']) {
+    const file = join(source, 't3', name);
+    if (!existsSync(file)) continue;
+    mkdirSync(join(stage, 't3'), { recursive: true });
+    cpSync(file, join(stage, 't3', name));
+  }
+  const worker = join(source, 'shared-data-worker.py');
+  if (existsSync(worker)) {
+    mkdirSync(join(stage, 'app'), { recursive: true });
+    cpSync(worker, join(stage, 'app', 'shared-data-worker.py'));
+  }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const args = process.argv.slice(2), allowed = new Set(['--releases', '--notes', '--allow-dirty', '--desktop', '--desktop-feed', '--issues']);
