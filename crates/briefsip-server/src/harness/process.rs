@@ -68,6 +68,7 @@ pub struct Process {
     watch: tokio::task::JoinHandle<()>,
     bytes: usize,
     pending: Vec<u8>,
+    pub(super) clock: Option<super::config::TurnClock>,
 }
 impl Process {
     pub fn launch(
@@ -123,6 +124,7 @@ impl Process {
             watch,
             bytes: 0,
             pending: Vec::new(),
+            clock: None,
         })
     }
     pub async fn send(&mut self, value: Value) -> Result<()> {
@@ -177,8 +179,12 @@ impl Process {
                     self.pending.clear();
                     continue;
                 }
-                return serde_json::from_slice(&std::mem::take(&mut self.pending))
-                    .map_err(|_| error(502, "Coding harness sent invalid protocol data."));
+                let value = serde_json::from_slice(&std::mem::take(&mut self.pending))
+                    .map_err(|_| error(502, "Coding harness sent invalid protocol data."))?;
+                if let Some(clock) = &self.clock {
+                    clock.activity();
+                }
+                return Ok(value);
             }
         }
     }

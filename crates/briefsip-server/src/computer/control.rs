@@ -296,12 +296,15 @@ pub async fn action(
     let current = db(s, |c| control(c, agent, s.config.now()))?;
     if current["mode"] == "user" || name == "computer_request_user" {
         let result = json!({"status":"waiting_for_user","message":if name=="computer_request_user"{"The user must take control before this human-only step can continue."}else{"The user is controlling your computer. Wait until they hand it back."}});
-        tx(s, |c| {
+        let wait = tx(s, |c| {
             let paused=one(c,"UPDATE turns SET status='queued',paused=1,revision=revision+1 WHERE id=? AND status='running' RETURNING revision",[turn])?.ok_or_else(||error(409,"Computer task stopped before waiting."))?;
             c.execute("INSERT INTO computer_waits VALUES(?,?,?,?,'waiting',?) ON CONFLICT(turn) DO UPDATE SET call_id=excluded.call_id,reason=excluded.reason,state='waiting',pause_revision=excluded.pause_revision",params![turn,agent,text(call,"id"),if name=="computer_request_user"{text(args,"reason")}else{""},paused["revision"].as_i64()])?;
             c.execute("INSERT INTO flow_tool_calls(turn,call_id,call,result,after_output,after_action) VALUES(?,?,?,?,?,?)",params![turn,text(call,"id"),call.to_string(),result.to_string(),after_output,after_action])?;
-            Ok(())
+            crate::harness::config::CardWait::checkpoint(s, c, turn)
         })?;
+        if let Some(wait) = wait {
+            wait.keep_paused();
+        }
         return Ok(Outcome {
             result,
             image: None,

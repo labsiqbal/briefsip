@@ -2,6 +2,11 @@ use super::*;
 use serde::Deserialize;
 use std::{collections::BTreeSet, time::Duration};
 
+const DEFAULT_TURN_IDLE_TIMEOUT_MS: u64 = 10 * 60 * 1000;
+const DEFAULT_TURN_MAX_MS: u64 = 60 * 60 * 1000;
+const MIN_TURN_TIMEOUT_MS: u64 = 1;
+const MAX_TURN_TIMEOUT_MS: u64 = 24 * 60 * 60 * 1000;
+
 #[derive(Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
@@ -16,6 +21,10 @@ pub struct Options {
     #[serde(skip)]
     validated_accounts: Vec<Account>,
     pub timeout: Option<u64>,
+    #[serde(skip)]
+    pub turn_idle_timeout_ms: Option<u64>,
+    #[serde(skip)]
+    pub turn_max_ms: Option<u64>,
     pub concurrency: Option<Value>,
     pub project_root: Option<String>,
     pub stream: Option<bool>,
@@ -78,7 +87,28 @@ fn parse_accounts_environment(
         Err(_) => Err("Provider account configuration must be valid JSON".into()),
     }
 }
+fn timeout_environment(name: &str) -> crate::db::Result<Option<u64>> {
+    match std::env::var(name) {
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        raw => raw.ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| (MIN_TURN_TIMEOUT_MS..=MAX_TURN_TIMEOUT_MS).contains(value))
+            .map(Some)
+            .ok_or_else(|| format!("{name} must be an integer between {MIN_TURN_TIMEOUT_MS} and {MAX_TURN_TIMEOUT_MS} milliseconds").into()),
+    }
+}
 impl Options {
+    pub fn turn_idle_timeout(&self) -> Duration {
+        Duration::from_millis(
+            self.turn_idle_timeout_ms
+                .unwrap_or(DEFAULT_TURN_IDLE_TIMEOUT_MS),
+        )
+    }
+
+    pub fn turn_max_timeout(&self) -> Duration {
+        Duration::from_millis(self.turn_max_ms.unwrap_or(DEFAULT_TURN_MAX_MS))
+    }
+
     pub fn environment() -> crate::db::Result<Self> {
         use std::env;
         let provider = env::var("BRIEFSIP_PROVIDER").ok();
@@ -110,6 +140,8 @@ impl Options {
             stream: Some(env::var("BRIEFSIP_STREAM").as_deref() == Ok("1")),
             stream_termination: env::var("BRIEFSIP_STREAM_TERMINATION").ok(),
             max_tokens: parsed("BRIEFSIP_MAX_TOKENS")?,
+            turn_idle_timeout_ms: timeout_environment("BRIEFSIP_TURN_IDLE_TIMEOUT_MS")?,
+            turn_max_ms: timeout_environment("BRIEFSIP_TURN_MAX_MS")?,
             ..Self::default()
         })
     }
@@ -577,5 +609,16 @@ mod tests {
         gemini["streamTermination"] = json!("finish-reason");
         assert!(parse(Some(json!([gemini]))).is_err());
         Ok(())
+    }
+}
+
+pub(crate) fn format_timeout(timeout: Duration) -> String {
+    let millis = timeout.as_millis();
+    if millis > 0 && millis.is_multiple_of(60_000) {
+        format!("{} min", millis / 60_000)
+    } else if millis.is_multiple_of(1000) {
+        format!("{} s", millis / 1000)
+    } else {
+        format!("{millis} ms")
     }
 }
