@@ -82,7 +82,9 @@ test('Rust project grants resolve by room or selected side thread folder and fai
     mkdirSync(other);
     writeFileSync(join(other, 'read.txt'), 'second folder content');
     const p = await f.request('/api/projects', { id: randomUUID(), name: 'Scope', folders: [{ mode: 'existing', path: f.workspace }, { mode: 'existing', path: other }], members: [{ agent: f.agent, write: false }] });
-    assert.equal((await f.send(`/api/agents/${f.agent}/turns`, 'READ')).status, 'failed');
+    const direct = await f.send(`/api/agents/${f.agent}/turns`, 'READ');
+    assert.equal(direct.status, 'done');
+    assert.doesNotMatch(direct.reply, /project bytes|second folder content/);
     assert.match((await f.send(`/api/channels/${p.channel}/turns`, 'READ')).reply, /project bytes/);
     const side = await f.request(`/api/projects/${p.id}/thread`, { id: randomUUID(), revision: 1, agent: f.agent, folder: other, name: 'Second folder' });
     const path = `/api/threads/${side.threads[0].id}/turns`;
@@ -160,8 +162,13 @@ test('project HTTP Owner rules, direct-chat isolation, read/write enforcement, e
       resolve(res.statusCode);
     }).on('error', reject)), 403);
     const direct = `/api/agents/${f.agent}/turns`, room = `/api/channels/${f.project.channel}/turns`;
-    assert.equal((await f.send(direct, 'READ')).status, 'failed');
-    assert.equal(f.calls.at(-1).tools.some((t: any) => t.function.name === 'read_workspace_file'), false);
+    const managed = join(dirname(f.options.database), 'agent-workspaces', f.agent);
+    writeFileSync(join(managed, 'read.txt'), 'agent workspace bytes');
+    const directRead = await f.send(direct, 'READ');
+    assert.equal(directRead.status, 'done', directRead.error);
+    assert.match(directRead.reply, /agent workspace bytes/);
+    assert.doesNotMatch(directRead.reply, /project bytes/);
+    assert.equal(f.calls.at(-1).tools.some((t: any) => t.function.name === 'read_workspace_file'), true);
     const read = await f.send(room, 'READ');
     assert.equal(read.status, 'done', read.error);
     assert.match(read.reply, /project bytes/);
@@ -186,7 +193,9 @@ test('project HTTP Owner rules, direct-chat isolation, read/write enforcement, e
     assert.deepEqual(await f.request(`/api/projects/${f.project.id}/edit`, body), edited);
     assert.equal((await f.request('/api/projects')).projects.length, 1);
     await f.restart({ workspaces: [{ agent: f.agent, directory: f.workspace, write: false }] });
-    assert.equal((await f.send(direct, 'READ')).status, 'done');
+    const envRead = await f.send(direct, 'READ');
+    assert.equal(envRead.status, 'done', envRead.error);
+    assert.match(envRead.reply, /project bytes/);
     const deleted = await f.request(`/api/projects/${f.project.id}/delete`, { id: randomUUID(), revision: 2, confirmed: true });
     assert.equal(deleted.deleted, true);
     assert(existsSync(join(f.workspace, 'made.txt')));
@@ -197,7 +206,7 @@ test('project HTTP Owner rules, direct-chat isolation, read/write enforcement, e
     await f.close();
   }
 });
-test('project harness cwd and read-only native escalation denial; direct chat remains unbound', async () => {
+test('project harness cwd and read-only native escalation denial; direct chat uses the managed folder', async () => {
   const f = await fixture();
   try {
     const binary = join(f.directory, 'fake-harness'), source = readFileSync(new URL('./fixtures/fake-harness.mjs', import.meta.url), 'utf8');
@@ -215,7 +224,10 @@ test('project harness cwd and read-only native escalation denial; direct chat re
       assert(existsSync(join(f.workspace, 'fake-log.jsonl')));
       assert.match(readFileSync(join(f.workspace, 'fake-log.jsonl'), 'utf8'), runtime === 'codex' ? /thread\/start/ : /"type":"init"/);
       assert.equal(done.harnessApprovals.length, 0);
-      await f.request(`/api/agents/${f.agent}/turns`, { id: randomUUID(), text: 'Direct has no folder' }, 503);
+      const direct = await f.send(`/api/agents/${f.agent}/turns`, 'Direct chat');
+      assert.equal(direct.status, 'done', direct.error);
+      const log = join(dirname(f.options.database), 'agent-workspaces', f.agent, 'fake-log.jsonl');
+      assert.match(readFileSync(log, 'utf8'), runtime === 'codex' ? /thread\/start/ : /"type":"init"/);
     }
   }
   finally {

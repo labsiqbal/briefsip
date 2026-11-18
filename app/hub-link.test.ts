@@ -166,8 +166,9 @@ test('browser-approved enrollment, two real local engines, attribution and local
         assert.deepEqual(results.map(r => r.sequence), results.map((_, i) => i + 1));
     }
     assert.equal(f.calls, 2);
-    for (const filename of readdirSync(f.dir)) {
-        const bytes = readFileSync(join(f.dir, filename));
+    for (const file of readdirSync(f.dir, { recursive: true, withFileTypes: true })) {
+        if (!file.isFile()) continue;
+        const filename = join(file.parentPath, file.name), bytes = readFileSync(filename);
         for (const secret of f.keys.values()) {
             assert(!bytes.includes(Buffer.from(secret)), `key leaked into ${filename}`);
             assert(!bytes.includes(Buffer.from(secret, 'base64url')), `raw key leaked into ${filename}`);

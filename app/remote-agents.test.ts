@@ -91,7 +91,13 @@ test('peer tokens never enter database bytes, logs, or outbound message response
   const tokens:string[]=[],logs:string[]=[];const original=globalThis.fetch,log=console.error;
   globalThis.fetch=async(input,init)=>{const response=await original(input,init);if(String(input).endsWith('/api/pairing/redeem')){const value=await response.clone().json();if(value.token)tokens.push(value.token);}if(String(input).endsWith('/api/machines/reciprocal')&&typeof init?.body==='string')tokens.push(JSON.parse(init.body).token);return response;};console.error=(...args)=>{logs.push(args.map(String).join(' '));};
   const f=await fixture(()=> 'Safe reply');
-  try{const id=randomUUID();await api(f.a,'/api/remote-agents/messages',{id,machine:f.machine.id,agent:f.beta.id,text:'Canary'});const response=await until(async()=>{const rows=(await api(f.a,`/api/remote-agents/messages?machine=${f.machine.id}&agent=${f.beta.id}`)).messages;return rows.find((r:any)=>r.status==='done');});assert.equal(tokens.length,2);for(const token of tokens){assert(!JSON.stringify(response).includes(token));assert(!logs.join('\n').includes(token));}await f.a.close();await f.b.close();for(const file of readdirSync(f.dir).filter(file=>!file.endsWith('-key'))){const bytes=readFileSync(join(f.dir,file));for(const token of tokens)assert(!bytes.includes(Buffer.from(token)),`Token leaked into ${file}`);}}
+  try{const id=randomUUID();await api(f.a,'/api/remote-agents/messages',{id,machine:f.machine.id,agent:f.beta.id,text:'Canary'});const response=await until(async()=>{const rows=(await api(f.a,`/api/remote-agents/messages?machine=${f.machine.id}&agent=${f.beta.id}`)).messages;return rows.find((r:any)=>r.status==='done');});assert.equal(tokens.length,2);for(const token of tokens){assert(!JSON.stringify(response).includes(token));assert(!logs.join('\n').includes(token));}await f.a.close();await f.b.close();
+    for (const file of readdirSync(f.dir, { recursive: true, withFileTypes: true })) {
+      if (!file.isFile() || file.name.endsWith('-key')) continue;
+      const path = join(file.parentPath, file.name), bytes = readFileSync(path);
+      for (const token of tokens) assert(!bytes.includes(Buffer.from(token)), `Token leaked into ${path}`);
+    }
+  }
   finally{globalThis.fetch=original;console.error=log;await f.close();}
 });
 
