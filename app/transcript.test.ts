@@ -27,7 +27,8 @@ test('activity duration stops at recorded provider finish; live text and polling
   assert.equal(activityLabel({ ...turn, status: 'queued', activity: undefined }, now), 'Queued');
   const partial = { text: '# Growing answer', status: 'pending' };
   assert.equal(livePartial({ status: 'running', paused: 0, partial }), true);
-  for (const status of ['failed', 'interrupted', 'received']) assert.equal(livePartial({ status: 'running', paused: 0, partial: { ...partial, status } }), false);
+  assert.equal(livePartial({ status: 'running', paused: 0, partial: { ...partial, status: 'received' } }), true);
+  for (const status of ['failed', 'interrupted']) assert.equal(livePartial({ status: 'running', paused: 0, partial: { ...partial, status } }), false);
   assert.equal(livePartial({ status: 'interrupted', paused: 0, partial }), false);
   assert.equal(livePartial({ status: 'running', paused: 1, partial }), false);
   assert.equal(turnPollDelay([{ status: 'running' }]), 400);

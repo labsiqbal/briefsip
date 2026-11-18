@@ -67,6 +67,7 @@ test('Section lane waits for committed speaker reply and admits a labelled share
   } finally { held.release(); }
   const rows=await wait(path,root);
   assert.equal(calls.length,3);
+  for (const call of calls) assert(call.messages[0].content.includes(`Your member ID: ${members.find((member:any)=>member.name===call.model).id}.`));
   assert(calls[1].messages[0].content.includes('First committed finding.'));
   assert(calls[1].messages[0].content.includes(members[0].id));
   assert.equal(rows.find((row:any)=>row.agent===members[0].id).reply,'First committed finding.');

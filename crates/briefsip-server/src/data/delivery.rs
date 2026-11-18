@@ -1,7 +1,6 @@
 use super::*;
 
 pub fn migrate(db: &Connection, now: i64) -> Result<()> {
-    let whitespace = regex::Regex::new(r"[\s\u{feff}]+").map_err(|_| Failure::storage())?;
     for row in all(db,"SELECT th.id,th.name,th.revision,t.text,t.origin,a.name AS sender FROM threads th JOIN turns t ON t.id=(SELECT id FROM turns WHERE thread=th.id ORDER BY seq LIMIT 1) LEFT JOIN agent_deliveries d ON d.turn=t.id LEFT JOIN agent_requests r ON r.id=d.request LEFT JOIN turns parent ON parent.id=r.turn LEFT JOIN agents a ON a.id=parent.agent WHERE NOT EXISTS(SELECT 1 FROM delivery_conversations dc WHERE dc.thread=th.id) AND(d.turn IS NOT NULL OR t.origin LIKE 'peer:%' OR t.origin LIKE 'session:%')",[])? {
         let origin = string(&row, "origin");
         let peer = origin.starts_with("peer:");
@@ -17,15 +16,26 @@ pub fn migrate(db: &Connection, now: i64) -> Result<()> {
         let agent = if peer { "Briefsip" } else { &sender };
         db.execute("INSERT INTO delivery_conversations(thread,sender,machine,activity) VALUES(?,?,?,?)",rusqlite::params![row["id"].as_str(),agent,machine,now])?;
         if row["revision"] == 1 && string(&row,"name").starts_with("Message from ") {
-            let title_prefix = if let Some(machine) = machine {
-                format!("{} on {}: ", prefix(agent,28), prefix(machine,24))
-            } else { format!("{} asked: ", prefix(agent,40)) };
-            let text = whitespace.replace_all(string(&row, "text"), " ");
-            let name = prefix(&format!("{title_prefix}{}",text.trim()),80);
+            let name = name(agent, string(&row, "text"), machine)?;
             db.execute("UPDATE threads SET name=?,revision=revision+1 WHERE id=?",rusqlite::params![name,row["id"].as_str()])?;
         }
     }
     Ok(())
+}
+pub fn name(sender: &str, text: &str, machine: Option<&str>) -> Result<String> {
+    let whitespace = regex::Regex::new(r"[\t-\r \u{00a0}\u{1680}\u{2000}-\u{200a}\u{2028}\u{2029}\u{202f}\u{205f}\u{3000}\u{feff}]+")
+        .map_err(|_| Failure::storage())?;
+    let title = match machine {
+        Some(machine) => format!("{} on {}: ", prefix(sender, 28), prefix(machine, 24)),
+        None => format!("{} asked: ", prefix(sender, 40)),
+    };
+    Ok(prefix(
+        &format!(
+            "{title}{}",
+            whitespace.replace_all(text, " ").trim_matches(' ')
+        ),
+        80,
+    ))
 }
 fn prefix(text: &str, max: usize) -> String {
     let mut count = 0;
@@ -56,6 +66,18 @@ mod tests {
     use super::*;
     #[test]
     fn descendants_delay_archive_and_settings_preserve_renames() -> Result<()> {
+        assert_eq!(
+            name("Right Hand", "Inspect   this\nrequest", None)?,
+            "Right Hand asked: Inspect this request"
+        );
+        assert_eq!(
+            name("Agent", "\u{feff}one\u{a0}two\u{feff}", None)?,
+            "Agent asked: one two"
+        );
+        assert_eq!(
+            name("Agent", "\u{85}text\u{85}", None)?,
+            "Agent asked: \u{85}text\u{85}"
+        );
         let db = Connection::open_in_memory()?;
         db.execute_batch("CREATE TABLE agents(id TEXT,name TEXT); CREATE TABLE threads(id TEXT,name TEXT,revision INTEGER DEFAULT 1,archived INTEGER DEFAULT 0,deleted INTEGER DEFAULT 0); CREATE TABLE turns(seq INTEGER,id TEXT,thread TEXT,agent TEXT,parent TEXT,origin TEXT,text TEXT,status TEXT,paused INTEGER DEFAULT 0); CREATE TABLE agent_deliveries(turn TEXT,request TEXT); CREATE TABLE agent_requests(id TEXT,turn TEXT); CREATE TABLE delivery_conversations(thread TEXT,sender TEXT,machine TEXT,activity INTEGER,settled_at INTEGER); CREATE TABLE conversation_settings(id INTEGER,auto_archive INTEGER); INSERT INTO conversation_settings VALUES(1,1); INSERT INTO agents VALUES('helper','Helper'); INSERT INTO threads(id,name) VALUES('peer','Message from Briefsip: omarchy'),('renamed','Owner title'); INSERT INTO turns(seq,id,thread,agent,origin,text,status) VALUES(1,'remote','peer','helper','peer:Briefsip: omarchy','Inspect   release','done'),(2,'renamed','renamed','helper','session:helper','Check','done');")?;
         migrate(&db, 1)?;

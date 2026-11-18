@@ -3,7 +3,7 @@ pub(crate) mod agents;
 pub(crate) mod avatar;
 pub(crate) mod conversations;
 mod deletion;
-mod delivery;
+pub(crate) mod delivery;
 pub(crate) mod environment;
 mod folders;
 pub(crate) mod history;

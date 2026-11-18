@@ -66,6 +66,7 @@ pub struct Process {
     owned: Arc<Mutex<HashMap<u32, String>>>,
     watch: tokio::task::JoinHandle<()>,
     bytes: usize,
+    pending: Vec<u8>,
 }
 impl Process {
     pub fn launch(
@@ -120,6 +121,7 @@ impl Process {
             owned,
             watch,
             bytes: 0,
+            pending: Vec::new(),
         })
     }
     pub async fn send(&mut self, value: Value) -> Result<()> {
@@ -137,7 +139,6 @@ impl Process {
             .map_err(|_| stopped())
     }
     pub async fn next(&mut self) -> Result<Value> {
-        let mut raw = Vec::new();
         loop {
             let buf = self.stdout.fill_buf().await.map_err(|_| stopped())?;
             if buf.is_empty() {
@@ -148,21 +149,21 @@ impl Process {
                 .position(|b| *b == b'\n')
                 .map(|n| n + 1)
                 .unwrap_or(buf.len());
-            if raw.len() + n > 1024 * 1024 {
+            if self.pending.len() + n > 1024 * 1024 {
                 return Err(error(502, "Coding harness output line exceeded 1 MiB."));
             }
             self.bytes += n;
             if self.bytes > 16 * 1024 * 1024 {
                 return Err(error(502, "Coding harness output exceeded 16 MiB."));
             }
-            raw.extend_from_slice(&buf[..n]);
+            self.pending.extend_from_slice(&buf[..n]);
             self.stdout.consume(n);
-            if raw.last() == Some(&b'\n') {
-                if raw.iter().all(u8::is_ascii_whitespace) {
-                    raw.clear();
+            if self.pending.last() == Some(&b'\n') {
+                if self.pending.iter().all(u8::is_ascii_whitespace) {
+                    self.pending.clear();
                     continue;
                 }
-                return serde_json::from_slice(&raw)
+                return serde_json::from_slice(&std::mem::take(&mut self.pending))
                     .map_err(|_| error(502, "Coding harness sent invalid protocol data."));
             }
         }
@@ -228,12 +229,7 @@ pub async fn probe(path: &std::path::Path, args: &[&str], hydrated_path: &str) -
         if bytes.len() > 64000 || !process.child.wait().await.ok()?.success() {
             return None;
         }
-        Some(
-            String::from_utf8_lossy(&bytes)
-                .chars()
-                .filter(|c| !c.is_control() || *c == '\n')
-                .collect::<String>(),
-        )
+        Some(String::from_utf8_lossy(&bytes).into_owned())
     })
     .await
     .ok()
@@ -271,6 +267,32 @@ pub async fn capture(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn cancelled_read_preserves_partial_protocol_line() -> Result<()> {
+        let home = ProbeHome::new().map_err(|_| Failure::storage())?;
+        let mut process = Process::launch(
+            std::path::Path::new("/bin/sh"),
+            &[
+                "-c".into(),
+                r#"printf '{"ok":'; read -r reply; printf 'true}\n'"#.into(),
+            ],
+            &home.0,
+            &HashMap::new(),
+        )?;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), process.next())
+                .await
+                .is_err()
+        );
+        process.send(json!({})).await?;
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), process.next())
+                .await
+                .map_err(|_| Failure::storage())??,
+            json!({"ok":true})
+        );
+        Ok(())
+    }
     #[tokio::test]
     async fn capture_bounds_output_and_cleans_up_hanging_children() -> crate::db::Result<()> {
         let home = ProbeHome::new()?;

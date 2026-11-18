@@ -300,7 +300,7 @@ pub async fn handle(state: &AppState, req: Request, parts: &[&str]) -> Result<Re
     if section.is_none() {
         let db = state.database.lock().map_err(|_| Failure::storage())?;
         let workspace=scope.workspace.as_ref().map(|w|json!({"name":w.directory.file_name().map(|s|s.to_string_lossy()),"project":scope.project}));
-        let mut result = json!({"workspace":workspace,"computer":scope.agent,"sites":sites(&db.connection,&scope)?,"previews":files(&db.connection,&scope,9007199254740991,true)?});
+        let mut result = json!({"workspace":workspace,"computer":if kind=="channels" {Value::Null}else{json!(scope.agent)},"sites":sites(&db.connection,&scope)?,"previews":files(&db.connection,&scope,9007199254740991,true)?});
         if scope.project.is_none() {
             if let Some(w) = result["workspace"].as_object_mut() {
                 w.remove("project");

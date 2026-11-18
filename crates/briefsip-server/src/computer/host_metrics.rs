@@ -22,6 +22,24 @@ fn memory(text: &str, key: &str) -> Option<u64> {
             .checked_mul(1024)
     })
 }
+fn constrained_memory(total: Option<u64>) -> Option<(u64, u64)> {
+    let group = fs::read_to_string("/proc/self/cgroup").ok()?;
+    let group = group.lines().find_map(|line| line.strip_prefix("0::"))?;
+    let path = std::path::Path::new("/sys/fs/cgroup").join(group.trim_start_matches('/'));
+    let read = |name| {
+        fs::read_to_string(path.join(name))
+            .ok()?
+            .trim()
+            .parse::<u64>()
+            .ok()
+    };
+    let limit = [read("memory.max"), read("memory.high")]
+        .into_iter()
+        .flatten()
+        .min()?
+        .min(total?);
+    Some((limit, limit.saturating_sub(read("memory.current")?)))
+}
 fn cpu() -> (u64, u64, usize) {
     let text = fs::read_to_string("/proc/stat").unwrap_or_default();
     let mut idle = 0;
@@ -106,6 +124,11 @@ impl Metrics {
         let meminfo = fs::read_to_string("/proc/meminfo").unwrap_or_default();
         let available = memory(&meminfo, "MemAvailable:");
         let total_memory = memory(&meminfo, "MemTotal:");
+        let constrained = constrained_memory(total_memory);
+        let available_memory = match (available, constrained) {
+            (Some(host), Some((_, group))) => Some(host.min(group)),
+            _ => available,
+        };
         let rss = memory(
             &fs::read_to_string("/proc/self/status").unwrap_or_default(),
             "VmRSS:",
@@ -134,7 +157,7 @@ impl Metrics {
         let page_size: u64 = db.query_row("PRAGMA page_size", [], |r| r.get(0))?;
         let pages: u64 = db.query_row("PRAGMA page_count", [], |r| r.get(0))?;
         let free: u64 = db.query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
-        let value = json!({"sampledAt":files::timestamp(db,crate::config::now())?,"platform":std::env::consts::OS,"cpu":{"scope":"host","cores":cores,"availableParallelism":std::thread::available_parallelism().map(|n|n.get()).unwrap_or(1),"percent":percent,"intervalMs":interval},"memory":{"total":total_memory,"available":available.filter(|a|total_memory.is_some_and(|t|*a<=t)),"source":"MemAvailable"},"process":{"rss":rss,"cpuPercent":process_percent,"memoryLimit":null,"availableMemory":available,"uptimeSeconds":now.duration_since(*self.started.get_or_insert(now)).as_secs()},"filesystem":state.config.database.parent().and_then(|p|rustix::fs::statvfs(p).ok()).and_then(disk),"storage":{"files":files_out,"databaseBytes":(page_size*pages).to_string(),"reusableBytes":(page_size*free).to_string()}});
+        let value = json!({"sampledAt":files::timestamp(db,crate::config::now())?,"platform":std::env::consts::OS,"cpu":{"scope":"host","cores":cores,"availableParallelism":std::thread::available_parallelism().map(|n|n.get()).unwrap_or(1),"percent":percent,"intervalMs":interval},"memory":{"total":total_memory,"available":available.filter(|a|total_memory.is_some_and(|t|*a<=t)),"source":"MemAvailable"},"process":{"rss":rss,"cpuPercent":process_percent,"memoryLimit":constrained.map(|v|v.0),"availableMemory":available_memory,"uptimeSeconds":now.duration_since(*self.started.get_or_insert(now)).as_secs()},"filesystem":state.config.database.parent().and_then(|p|rustix::fs::statvfs(p).ok()).and_then(disk),"storage":{"files":files_out,"databaseBytes":(page_size*pages).to_string(),"reusableBytes":(page_size*free).to_string()}});
         self.previous = Some((now, idle, total, cores, process));
         self.cached = Some(value.clone());
         Ok(value)

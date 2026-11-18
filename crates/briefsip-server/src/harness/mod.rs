@@ -157,7 +157,15 @@ async fn availability(state: &AppState, runtime: &str) -> Value {
     let Some(path) = executable(state, runtime) else {
         return missing();
     };
-    let version = process::probe(&path, &["--version"], &self::path(state)).await;
+    let version = process::probe(&path, &["--version"], &self::path(state))
+        .await
+        .map(|v| {
+            v.chars()
+                .map(|c| if c.is_ascii_control() { ' ' } else { c })
+                .collect::<String>()
+        })
+        .map(|v| v.trim().chars().take(160).collect::<String>())
+        .filter(|v| !v.is_empty());
     let Some(version) = version else {
         let mut v = missing();
         v["reason"] = json!(
