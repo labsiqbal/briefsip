@@ -114,3 +114,62 @@ test('room POST latency stays flat behind a held discussion', { timeout: 45_000 
     await app.close();
   }
 });
+
+test('a free turn is admitted while other requests keep writing', { timeout: 60_000 }, async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'briefsip-write-admission-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const models: string[] = [];
+  const provider = createServer(request => {
+    let raw = '';
+    request.on('data', chunk => { raw += chunk; });
+    request.on('end', () => { models.push(JSON.parse(raw).model); provider.emit('model', JSON.parse(raw).model); });
+  });
+  await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    provider.closeAllConnections();
+    await new Promise<void>(resolve => provider.close(() => resolve()));
+  });
+  const address = provider.address();
+  assert(address && typeof address !== 'string');
+  const app = await startApp({ database: join(directory, 'db.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` });
+  let writing = true;
+  try {
+    const post = async (path: string, body: object, status: number) => {
+      const response = await fetch(app.origin + path, {
+        method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body), signal: t.signal,
+      });
+      const value = await response.json();
+      assert.equal(response.status, status, JSON.stringify(value));
+      return value;
+    };
+    const members = [randomUUID(), randomUUID(), randomUUID()];
+    for (const [index, id] of members.entries()) {
+      await post('/api/agents', { id, name: `Member ${index}`, runtime: 'api', model: 'member', instructions: 'Help' }, 201);
+    }
+    const free = randomUUID();
+    await post('/api/agents', { id: free, name: 'Free', runtime: 'api', model: 'free', instructions: 'Help' }, 201);
+    const channel = randomUUID();
+    await post('/api/channels', { id: channel, name: 'Room', members, lead: null, instructions: 'Help' }, 201);
+    // A held discussion keeps a deep room queue, which makes each queue scan slower.
+    await Promise.all([once(provider, 'model', { signal: t.signal }), post(`/api/channels/${channel}/turns`, { id: randomUUID(), text: 'Hold' }, 202)]);
+    for (let index = 0; index < 20; index++) await post(`/api/channels/${channel}/turns`, { id: randomUUID(), text: 'Queued' }, 202);
+    // Every agent created here commits a write, so a snapshot taken by the scheduler goes stale.
+    const writers = Array.from({ length: 4 }, async () => {
+      while (writing) await post('/api/agents', { id: randomUUID(), name: 'Writer', runtime: 'api', model: 'writer', instructions: 'Help' }, 201);
+    });
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const start = performance.now();
+    const admitted = new Promise<void>(resolve => { const listen = (model: string) => { if (model === 'free') { provider.off('model', listen); resolve(); } }; provider.on('model', listen); });
+    await post(`/api/agents/${free}/turns`, { id: randomUUID(), text: 'Free work' }, 202);
+    const outcome = await Promise.race([admitted.then(() => 'admitted'), new Promise(resolve => setTimeout(() => resolve('starved'), 3000))]);
+    const elapsed = performance.now() - start;
+    writing = false;
+    await Promise.all(writers);
+    console.log('Free turn admission under writes: %s after %d ms', outcome, Math.round(elapsed));
+    assert.equal(outcome, 'admitted', `Free turn was not admitted within ${elapsed.toFixed(0)} ms while writes continued`);
+  } finally {
+    writing = false;
+    await app.close();
+  }
+});

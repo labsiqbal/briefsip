@@ -183,10 +183,9 @@ pub fn start(state: AppState) -> Result<tokio::task::JoinHandle<()>> {
             let pass = state.turns.requested_pass.load(Ordering::Acquire);
             while changes.try_recv().is_ok() {}
             match schedule(&state, &reader) {
-                Ok(true) => {
+                Ok(()) => {
                     state.turns.scheduled.send_replace(pass);
                 }
-                Ok(false) => {}
                 Err(error) => eprintln!("Turn scheduling failed: {}", error.message),
             }
             tokio::select! { _ = changes.recv() => (), _ = state.turns.wake.notified() => (), _ = timer.tick() => () }
@@ -217,15 +216,15 @@ fn capacity(state: &AppState) -> usize {
         .unwrap_or(4) as usize
 }
 
-fn schedule(state: &AppState, reader: &Connection) -> Result<bool> {
+fn schedule(state: &AppState, reader: &Connection) -> Result<()> {
     maintain(state)?;
     if pending(state) {
-        return Ok(true);
+        return Ok(());
     }
     for root in room::settlements(reader)? {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         if pending(state) {
-            return Ok(true);
+            return Ok(());
         }
         room::settle_root(&guard.connection, &root)?;
     }
@@ -234,7 +233,7 @@ fn schedule(state: &AppState, reader: &Connection) -> Result<bool> {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
         if pending(state) {
-            return Ok(true);
+            return Ok(());
         }
         for steer in all(db,"SELECT DISTINCT dispatch_target FROM turns WHERE dispatch_mode='steer' AND status='queued' AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.id=turns.dispatch_target AND t.status='running')",[])? {
             db.execute("UPDATE turns SET dispatch_mode='queue',dispatch_target=NULL,dispatch_label='Queued after active turn',revision=revision+1 WHERE dispatch_mode='steer' AND dispatch_target=? AND status='queued'",[string(&steer,"dispatch_target")])?;
@@ -253,7 +252,7 @@ fn schedule(state: &AppState, reader: &Connection) -> Result<bool> {
             }
         }
         if active.len() >= capacity {
-            return Ok(true);
+            return Ok(());
         }
         active.keys().cloned().collect::<Vec<_>>()
     };
@@ -264,29 +263,34 @@ fn schedule(state: &AppState, reader: &Connection) -> Result<bool> {
     let selection = select(&snapshot, &reserved, capacity)?;
     snapshot.commit()?;
     if selection.is_empty() || pending(state) {
-        return Ok(true);
+        return Ok(());
     }
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let mut active = state.turns.active.lock().map_err(|_| Failure::storage())?;
-    let admitted = transaction(&guard.connection, || {
-        if pending(state)
-            || data_version(reader)? != version
-            || reserved.iter().any(|id| !active.contains_key(id))
-        {
-            state.turns.wake.notify_one();
-            return Ok(false);
+    let selection = transaction(&guard.connection, || {
+        if pending(state) {
+            return Ok(Vec::new());
         }
+        let unchanged = data_version(reader)? == version
+            && active.len() == reserved.len()
+            && reserved.iter().all(|id| active.contains_key(id));
+        // Running turns write often, so a stale snapshot is selected again under the lock
+        // instead of retried; every pass admits from a consistent view.
+        let selection = if unchanged {
+            selection
+        } else {
+            let current = active.keys().cloned().collect::<Vec<_>>();
+            select(&guard.connection, &current, capacity)?
+        };
         for id in &selection {
             room::admit(&guard.connection, id)?;
         }
-        Ok(true)
+        Ok(selection)
     })?;
-    if admitted {
-        for id in selection {
-            run_reserved(state, &mut active, id);
-        }
+    for id in selection {
+        run_reserved(state, &mut active, id);
     }
-    Ok(admitted)
+    Ok(())
 }
 
 fn data_version(db: &Connection) -> Result<i64> {
