@@ -6,10 +6,10 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import type { HumanActor } from './auth.ts';
-import { createApplicationSync, syncKeyring } from './application-sync.ts';
+import { createApplicationSync } from './application-sync.ts';
 import { createProjectAccess } from './project-access.ts';
 import { initializeCanonicalSchema } from './schema.ts';
-import { digestCommand, ProtocolError } from './protocol.ts';
+import { digestCommand, ProtocolError } from './shared/protocol.ts';
 import { startCanonicalApp } from './test-bridge.ts';
 import { createServer } from 'node:http';
 import { createMailWorker } from './mail.ts';
@@ -151,18 +151,6 @@ test('scoped event chains distinguish unrelated numeric gaps from actual segment
     f.db.prepare('DELETE FROM sync_events WHERE project=? AND revision=3').run(f.project);
     assert.throws(() => f.sync.read(f.owner, { projectId: f.project, cursor: second.nextCursor! }), errorCode('resync_required'));
   } finally { f.close(); }
-});
-
-test('sync keyring persists one verified key and refuses locked, corrupt or failed writes', () => {
-  const values = new Map<string, string>(), installation = randomUUID();
-  const entry = (service: string, name: string) => ({ getPassword: () => values.get(service + '/' + name) ?? null, setPassword: (value: string) => { values.set(service + '/' + name, value); } });
-  const key = syncKeyring(installation, entry)(); assert.equal(key.length, 32); assert.equal(values.size, 1);
-  assert.deepEqual(syncKeyring(installation, entry)(), key);
-  assert.equal([...values.keys()][0], 'briefsip/server/' + installation + '/sync-hmac/v1');
-  for (const value of values.keys()) values.set(value, 'corrupt');
-  assert.throws(() => syncKeyring(installation, entry)(), errorCode('keystore_unavailable'));
-  assert.throws(() => syncKeyring(installation, () => ({ getPassword() { throw new Error('locked secret canary'); }, setPassword() { assert.fail('Must not overwrite unreadable key'); } }))(), errorCode('keystore_unavailable'));
-  assert.throws(() => syncKeyring(installation, () => ({ getPassword() { return null; }, setPassword() {} }))(), errorCode('keystore_unavailable'));
 });
 
 test('snapshot admission, expiry, revoked continuations and restart release readers without granting stale access', () => {

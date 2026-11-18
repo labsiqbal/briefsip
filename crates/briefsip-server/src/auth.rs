@@ -366,3 +366,40 @@ impl Auth {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clerk_mailboxes_require_verified_addresses_and_the_current_user() -> Result<(), Failure> {
+        let actor = Actor {
+            account: "account".into(),
+            subject: "user_fixture".into(),
+            session: "session".into(),
+            expires: 1000,
+        };
+        let mut user = json!({
+            "id": "user_fixture",
+            "banned": false,
+            "locked": false,
+            "email_addresses": [
+                {"email_address": "Member@Example.COM", "verification": {"status": "verified"}},
+                {"email_address": "other@example.com", "verification": {"status": "unverified"}}
+            ]
+        });
+        assert_eq!(Auth::mailboxes(&user, &actor)?, ["member@example.com"]);
+        user["email_addresses"][0]["verification"]["status"] = json!("unverified");
+        assert!(Auth::mailboxes(&user, &actor)?.is_empty());
+        for (field, invalid, valid) in [
+            ("id", json!("other_user"), json!("user_fixture")),
+            ("locked", json!(true), json!(false)),
+            ("banned", json!(true), json!(false)),
+        ] {
+            user[field] = invalid;
+            assert_eq!(Auth::mailboxes(&user, &actor).unwrap_err().status, 401);
+            user[field] = valid;
+        }
+        Ok(())
+    }
+}
