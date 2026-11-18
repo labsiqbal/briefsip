@@ -5,9 +5,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
-import { initializeCanonicalSchema } from './schema.ts';
-import { createDevices, descriptorBody, deviceLinkBody, deviceProofBody } from './devices.ts';
-import { digestCommand, sha256 } from './protocol.ts';
+import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
+import { descriptorBody, deviceLinkBody, deviceProofBody } from './test-support/device-protocol.ts';
+import { digestCommand, sha256 } from './shared/protocol.ts';
 import { startRustServer } from './rust-test-server.ts';
 
 test('Rust signed device enrollment, stream fencing, sessions, receipts and sync match Node contracts', { timeout: 30000 }, async t => {
@@ -15,15 +15,14 @@ test('Rust signed device enrollment, stream fencing, sessions, receipts and sync
   const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const auth = { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://briefsip.example', development: true, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString() };
   const account = randomUUID(), project = randomUUID(), actor = { accountId: account, subject: 'user_fixture', issuer: auth.issuer, sessionId: 'sess_fixture', expiresAt: now + 60000 };
-  const db = new DatabaseSync(database); initializeCanonicalSchema(db, now);
+  const db = new DatabaseSync(database); installFrozenNodeSchema(db);
   db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,?,?,?)').run(account, auth.issuer, actor.subject, now);
   db.prepare("INSERT INTO projects(id,account,name,private) VALUES(?,?,'Fixture',0)").run(project, account);
   db.prepare("INSERT INTO project_members VALUES(?,?,'owner',1,0)").run(project, account);
-  const devices = createDevices(db, { requireCurrent: () => actor }, () => now);
   const input = `${Buffer.from(JSON.stringify({ alg: 'RS256' })).toString('base64url')}.${Buffer.from(JSON.stringify({ iss: auth.issuer, sub: actor.subject, sid: actor.sessionId, azp: auth.origin, exp: Math.floor(now / 1000) + 60, nbf: Math.floor(now / 1000) - 1 })).toString('base64url')}`;
   const token = `${input}.${sign('RSA-SHA256', Buffer.from(input), keys.privateKey).toString('base64url')}`;
   const app = await startRustServer({ database, auth, fixedClock: now }), controller = new AbortController();
-  t.after(async () => { controller.abort(); devices.close(); await app.close(); db.close(); rmSync(dir, { recursive: true, force: true }); });
+  t.after(async () => { controller.abort(); await app.close(); db.close(); rmSync(dir, { recursive: true, force: true }); });
   const headers = (requestId: string) => ({ Authorization: `Bearer ${token}`, Origin: auth.origin, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': requestId });
   const human = async (path: string, value?: Record<string, unknown>, extra: Record<string, string> = {}) => { const response = await fetch(app.origin + path, { method: value ? 'POST' : 'GET', headers: { ...headers(String(value?.requestId ?? randomUUID())), ...extra }, ...(value ? { body: JSON.stringify(value) } : {}) }); return { status: response.status, body: await response.json() }; };
   const installation = generateKeyPairSync('ed25519'), encryption = generateKeyPairSync('x25519');
@@ -46,10 +45,28 @@ test('Rust signed device enrollment, stream fencing, sessions, receipts and sync
   assert.equal((await human('/api/devices/link', { ...request, descriptor: { ...request.descriptor, zone: 'UTC' } })).status, 401);
   const linked = await human('/api/devices/link', request); assert.equal(linked.status, 201, JSON.stringify(linked.body));
   const session = linked.body.data.deviceSession; assert.equal(typeof session, 'string');
-  const replay = await human('/api/devices/link', request), reference = devices.link(actor, request, 'fixture');
-  assert.equal(replay.status, 200); assert.deepEqual(replay.body, { ok: true, data: reference.data, revision: reference.receipt.recordRevision, receipt: reference.receipt });
-  assert.equal(replay.body.data.deviceSession, undefined);
-  assert.deepEqual((await human('/api/devices')).body.data, JSON.parse(JSON.stringify(devices.list(actor))));
+  const replay = await human('/api/devices/link', request);
+  assert.equal(replay.status, 200);
+  assert.deepEqual(replay.body, {
+    ok: true,
+    data: { deviceId: candidate.deviceId, generation: 1, keyRevision: 1, descriptor: request.descriptor },
+    revision: 1,
+    receipt: linked.body.receipt,
+  });
+  assert.deepEqual((await human('/api/devices')).body.data.map(({ descriptor_json, ...row }: Record<string, unknown>) =>
+    ({ ...row, descriptor: JSON.parse(String(descriptor_json)) })), [{
+    id: candidate.deviceId,
+    installation: candidate.installationId,
+    generation: 1,
+    connection_generation: 0,
+    status: 'offline',
+    zone: candidate.zone,
+    zone_revision: 1,
+    last_seen: null,
+    capabilities_json: '["execution"]',
+    revision: 1,
+    descriptor: request.descriptor,
+  }]);
   assert.equal(db.prepare("SELECT count(*) n FROM sync_events WHERE record_kind='device'").get()!.n, 1);
   assert(!String(db.prepare('SELECT result_json FROM receipts WHERE request_id=?').get(request.requestId)!.result_json).includes(session));
   function proof(path: string, session: string | undefined, value?: Record<string, unknown>) {
@@ -93,7 +110,8 @@ test('Rust signed device enrollment, stream fencing, sessions, receipts and sync
     const value = { requestId: randomUUID(), challengeId: challenge.challengeId, nonce: challenge.nonce, installationSignature: sign(null, bytes, installation.privateKey).toString('base64url'), deviceSignature: sign(null, bytes, signing.privateKey).toString('base64url'), descriptor: { ...desc, signature: sign(null, Buffer.from(JSON.stringify(descriptorBody(desc))), signing.privateKey).toString('base64url') }, ...(mode === 'rotate' ? { rotationSignature: sign(null, Buffer.from(JSON.stringify(['briefsip-device-key-transition-v1', sha256(previous.publicKey.export({ type: 'spki', format: 'der' })), body])), previous.privateKey).toString('base64url') } : {}) };
     const linked = await human('/api/devices/link', value); assert.equal(linked.status, 201, JSON.stringify(linked.body)); generation++;
     assert.equal(linked.body.data.generation, generation); activeSession = linked.body.data.deviceSession;
-    assert.deepEqual(devices.enrollmentDescriptor(actor, candidate.deviceId, 1), request.descriptor);
+    const initial = db.prepare('SELECT result_json FROM receipts WHERE request_id=?').get(request.requestId);
+    assert.deepEqual(JSON.parse(String(initial?.result_json)).data.descriptor, request.descriptor);
     const stale = await fetch(app.origin + path, proof(path, fresh, { ...command, requestId: randomUUID() })); assert.equal(stale.status, 401); await stale.json();
   }
   const row = (await human('/api/devices')).body.data[0]; assert.equal((await human(`/api/devices/${row.id}/revoke`, { requestId: randomUUID(), expectedRevision: row.revision })).status, 200);

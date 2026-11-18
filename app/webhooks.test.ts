@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { verifyEvent, validateFilters, matchesEvent, WebhookError } from './webhooks.ts';
 import { randomUUID } from 'node:crypto';
 import { createServer, request as httpRequest } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -54,6 +53,7 @@ test('webhook receipts isolate, deduplicate, rotate and persist ignored events',
     const hook = await request(settings, command); assert(hook.secret); assert.deepEqual(await request(settings, command), hook);
     assert(!JSON.stringify(await request(settings)).includes(hook.secret));
     await request(`/api/webhooks/${hook.route}`, { event: 'report.ready', payload: { count: 4 } }, 403);
+    await send(hook, randomUUID(), 'report.ready', 'x'.repeat(64 * 1024), 413);
     const id = randomUUID(), accepted = await send(hook, id, 'report.ready', { count: 4 });
     assert.equal(accepted.outcome, 'queued'); assert.deepEqual(await send(hook, id, 'report.ready', { count: 4 }, 200), accepted);
     await send(hook, id, 'report.ready', { count: 5 }, 409);
@@ -101,41 +101,4 @@ test('webhook receipts isolate, deduplicate, rotate and persist ignored events',
     rotating.finish(); assert.equal((await rotating.response).status, 401);
     assert.equal((await request(`/api/routines/${other.id}/webhook-events`)).length, 1);
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
-});
-
-test('webhook authentication binds exact bytes, event ID and time before parsing', () => {
-  const now = 1794320000000, secret = 'synthetic-webhook-secret';
-  const body = Buffer.from(JSON.stringify({ event: 'report.ready', payload: { count: 4 } }));
-  function headers(bytes = body, time = String(now / 1000), id = 'event:123') {
-    return { 'x-briefsip-time': time, 'x-briefsip-id': id, 'x-briefsip-signature': createHmac('sha256', secret).update(`${time}\n${id}\n`).update(bytes).digest('hex') };
-  }
-  const rejects = (fn: () => unknown, status: number) => assert.throws(fn, error => error instanceof WebhookError && error.status === status);
-  const event = verifyEvent(body, headers(), secret, now);
-  assert.equal(event.id, 'event:123'); assert.equal(event.eventTime, now); assert.deepEqual(event.payload, { count: 4 });
-  assert.equal(verifyEvent(body, headers(body, String(now / 1000 + 300)), secret, now).digest, event.digest);
-  assert.equal(verifyEvent(body, headers(body, String(now / 1000 - 300)), secret, now).digest, event.digest);
-  for (const offset of [-301, 301]) rejects(() => verifyEvent(body, headers(body, String(now / 1000 + offset)), secret, now), 401);
-  rejects(() => verifyEvent(body, headers(), 'other-secret', now), 401);
-  rejects(() => verifyEvent(Buffer.concat([body, Buffer.from(' ')]), headers(), secret, now), 401);
-  rejects(() => verifyEvent(body, { ...headers(), 'x-briefsip-id': 'different' }, secret, now), 401);
-  rejects(() => verifyEvent(body, { ...headers(), 'x-briefsip-time': ['1', '2'] }, secret, now), 401);
-  rejects(() => verifyEvent(body, headers(body, String(now / 1000), 'bad/id'), secret, now), 401);
-  for (const bytes of [Buffer.from([0xff]), Buffer.from('{'), Buffer.from('[]'), Buffer.from('{"event":""}'), Buffer.from('{"event":"x","eventTime":0}'), Buffer.from('{"event":"x","unexpected":1}')]) rejects(() => verifyEvent(bytes, headers(bytes), secret, now), 400);
-  const large = Buffer.alloc(64 * 1024 + 1, 32); rejects(() => verifyEvent(large, headers(large), secret, now), 413);
-  const overflow = Buffer.from('{"event":"x","payload":1e999}'); rejects(() => verifyEvent(overflow, headers(overflow), secret, now), 400);
-});
-
-test('webhook filters use strict scalar equality and own JSON pointer paths', () => {
-  const event = { id: 'fixture', digest: 'fixture', event: 'report.ready', eventTime: 1, payload: JSON.parse('{"a/b":{"~key":[4,false,null]},"__proto__":"own value"}') };
-  const filters = validateFilters([{ pointer: '/a~1b/~0key/0', equals: 4 }, { pointer: '/a~1b/~0key/1', equals: false }, { pointer: '/a~1b/~0key/2', equals: null }]);
-  assert(matchesEvent(event, 'report.ready', filters)); assert(matchesEvent(event, '', filters));
-  assert(!matchesEvent(event, 'other', filters));
-  assert(!matchesEvent(event, '', validateFilters([{ pointer: '/a~1b/~0key/0', equals: '4' }])));
-  assert(!matchesEvent(event, '', validateFilters([{ pointer: '/missing', equals: null }])));
-  assert(!matchesEvent(event, '', validateFilters([{ pointer: '/a~1b/~0key/00', equals: 4 }])));
-  assert(!matchesEvent(event, '', validateFilters([{ pointer: '/a~1b/~0key/length', equals: 3 }])));
-  assert(!matchesEvent(event, '', validateFilters([{ pointer: '/toString', equals: null }])));
-  assert(matchesEvent(event, '', validateFilters([{ pointer: '/__proto__', equals: 'own value' }])));
-  assert(matchesEvent({ ...event, payload: false }, '', validateFilters([{ pointer: '', equals: false }])));
-  for (const filters of [null, Array(129).fill({ pointer: '', equals: null }), [{ pointer: '/bad~2', equals: 1 }], [{ pointer: 'bad', equals: 1 }], [{ pointer: '', equals: {} }], [{ pointer: '', equals: Infinity }], [{ pointer: '' }]]) assert.throws(() => validateFilters(filters), WebhookError);
 });

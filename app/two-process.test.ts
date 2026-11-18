@@ -14,7 +14,7 @@ import { openDeviceRuntime } from './device-runtime.ts';
 import type { ActionContext } from './executor-journal.ts';
 import { rustBinary } from './rust-binary.ts';
 import { rustServerOutput } from './rust-test-server.ts';
-import { canonicalJson, ProtocolError, digestCommand, sha256 } from './protocol.ts';
+import { canonicalJson, ProtocolError, digestCommand, sha256 } from './shared/protocol.ts';
 import { onceCandidate } from './schedule-time.ts';
 import sharp from 'sharp';
 

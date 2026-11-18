@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 import { canonicalServerLock, restoreWorkspace, workspaceSnapshot } from './backup.ts';
-import { ProtocolError } from './protocol.ts';
+import { ProtocolError } from './shared/protocol.ts';
 import { initializeCanonicalSchema } from './schema.ts';
 import { createApplicationSync } from './application-sync.ts';
 import { createProjectAccess } from './project-access.ts';

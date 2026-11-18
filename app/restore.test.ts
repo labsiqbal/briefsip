@@ -11,7 +11,7 @@ import { createProjectAccess } from './project-access.ts';
 import { createMailWorker } from './mail.ts';
 import { startApp } from './test-bridge.ts';
 import { cli } from './cli.ts';
-import { sha256, ProtocolError } from './protocol.ts';
+import { sha256, ProtocolError } from './shared/protocol.ts';
 import type { HumanActor } from './auth.ts';
 
 test('canonical backup restores private evidence with fresh authority and no revived invitation or execution', async () => {

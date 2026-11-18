@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { closedObject, digestCommand, normalizeEmail, parseJson, ProtocolError, requestMetadata } from './protocol.ts';
+import { closedObject, digestCommand, normalizeEmail, parseJson, ProtocolError, requestMetadata } from './shared/protocol.ts';
 
 test('protocol parser rejects duplicate and unknown fields, canonicalizes command digest', () => {
   assert.deepEqual(parseJson('{"a":1,"b":[true,null]}'), { a: 1, b: [true, null] });

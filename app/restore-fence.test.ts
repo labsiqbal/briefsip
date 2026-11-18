@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process';
 import { initializeCanonicalSchema } from './schema.ts';
 import { canonicalServerLock, prepareRestoreBootstrap, issueRestoreSession, restoreWorkspace, workspaceSnapshot } from './backup.ts';
 import { createAuth, type HumanActor } from './auth.ts';
-import { canonicalJson, sha256 } from './protocol.ts';
+import { canonicalJson, sha256 } from './shared/protocol.ts';
 import { activateRestore, fenceEvidenceBody, planRestoreActivation, prepareRestoreFence, verifyRestoreFence, type FenceEvidence, type FenceRequest, type FenceTrust } from './restore-fence.ts';
 
 async function fixture(version: 1 | 2 | 3 = 3, seed?: (db: DatabaseSync, owner: HumanActor, project: string) => void) {
