@@ -1347,11 +1347,7 @@ pub async fn run(
     env.insert("BRIEFSIP_MCP_TOKEN".into(), token.clone());
     env.insert("BRIEFSIP_MCP_URL".into(), crate::mcp::url(state));
     if runtime == "hermes" {
-        env.extend([
-            ("HERMES_YOLO_MODE".into(), "0".into()),
-            ("HERMES_ACP_SKIP_CONFIGURED_MCP".into(), "1".into()),
-            ("HERMES_DISABLE_LAZY_INSTALLS".into(), "1".into()),
-        ]);
+        env.extend(process::HERMES_ENV.map(|(key, value)| (key.into(), value.into())));
     }
     let mut secrets = vec![token.clone(), account.key.unwrap_or_default()];
     {

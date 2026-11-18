@@ -1,6 +1,7 @@
 use super::*;
 use std::{
     collections::HashMap,
+    path::Path,
     process::Stdio,
     sync::{Arc, Mutex},
 };
@@ -191,6 +192,13 @@ impl Drop for Process {
 pub fn stopped() -> Failure {
     error(502,"Coding harness stopped before completion. Check workspace changes before retrying; this turn was not replayed.")
 }
+pub const HERMES_ENV: [(&str, &str); 3] = [
+    ("HERMES_YOLO_MODE", "0"),
+    ("HERMES_ACP_SKIP_CONFIGURED_MCP", "1"),
+    ("HERMES_DISABLE_LAZY_INSTALLS", "1"),
+];
+pub const HERMES_STARTUP: Duration = Duration::from_secs(20);
+
 pub struct ProbeHome(pub std::path::PathBuf);
 impl ProbeHome {
     pub fn new() -> std::io::Result<Self> {
@@ -199,27 +207,104 @@ impl ProbeHome {
         std::fs::DirBuilder::new().mode(0o700).create(&path)?;
         Ok(Self(path))
     }
+
+    pub fn launch(
+        &self,
+        path: &Path,
+        args: &[String],
+        runtime: &str,
+        hydrated_path: &str,
+    ) -> Option<Process> {
+        let scratch = self.0.to_str()?;
+        let mut env = HashMap::from([
+            ("HOME".into(), scratch.to_owned()),
+            ("PATH".into(), hydrated_path.to_owned()),
+        ]);
+        if runtime != "hermes" {
+            return Process::launch(path, args, &self.0, &env).ok();
+        }
+        let home = std::env::home_dir().filter(|home| home.is_absolute())?;
+        env.insert("HOME".into(), home.to_str()?.to_owned());
+        env.insert("TMPDIR".into(), scratch.to_owned());
+        env.extend(HERMES_ENV.map(|(key, value)| (key.into(), value.into())));
+
+        // Hermes opens PM locks and generation leases even for metadata requests.
+        let mut sandbox: Vec<String> = [
+            "--die-with-parent",
+            "--unshare-net",
+            "--ro-bind",
+            "/",
+            "/",
+            "--dev",
+            "/dev",
+            "--ro-bind-try",
+            "/dev/shm",
+            "/dev/shm",
+            "--bind",
+            scratch,
+            scratch,
+        ]
+        .map(str::to_owned)
+        .into();
+        let installs = home.join(".hermes/installs");
+        for (index, install) in directories(&installs).enumerate() {
+            let lock = install.join(".install.lock");
+            if lock.is_file() {
+                let copy = self.0.join(format!("hermes-lock-{index}"));
+                std::fs::File::create(&copy).ok()?;
+                sandbox.extend([
+                    "--bind".into(),
+                    copy.to_str()?.into(),
+                    lock.to_str()?.into(),
+                ]);
+            }
+            for generation in directories(&install.join("environments")) {
+                let leases = generation.join(".leases");
+                if generation.join(".lease-managed").is_file() && leases.is_dir() {
+                    sandbox.extend(["--tmpfs".into(), leases.to_str()?.into()]);
+                }
+            }
+        }
+        sandbox.extend(["--".into(), path.to_str()?.into()]);
+        sandbox.extend_from_slice(args);
+        Process::launch(Path::new("/usr/bin/bwrap"), &sandbox, &self.0, &env).ok()
+    }
 }
+
+fn directories(path: &Path) -> impl Iterator<Item = std::path::PathBuf> {
+    std::fs::read_dir(path)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .map(|entry| entry.path())
+}
+
 impl Drop for ProbeHome {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
-pub async fn probe(path: &std::path::Path, args: &[&str], hydrated_path: &str) -> Option<String> {
+pub async fn probe(
+    path: &Path,
+    args: &[&str],
+    runtime: &str,
+    hydrated_path: &str,
+) -> Option<String> {
     use tokio::io::AsyncReadExt;
     let home = ProbeHome::new().ok()?;
-    let env = HashMap::from([
-        ("HOME".into(), home.0.to_string_lossy().into_owned()),
-        ("PATH".into(), hydrated_path.to_owned()),
-    ]);
-    let mut process = Process::launch(
+    let mut process = home.launch(
         path,
         &args.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
-        &home.0,
-        &env,
-    )
-    .ok()?;
-    let result = tokio::time::timeout(Duration::from_secs(10), async {
+        runtime,
+        hydrated_path,
+    )?;
+    let budget = if runtime == "hermes" {
+        HERMES_STARTUP
+    } else {
+        Duration::from_secs(10)
+    };
+    let result = tokio::time::timeout(budget, async {
         let mut bytes = Vec::new();
         (&mut process.stdout)
             .take(64001)

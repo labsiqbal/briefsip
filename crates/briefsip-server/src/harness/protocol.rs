@@ -1,6 +1,4 @@
 use super::*;
-use crate::harness::process::Process;
-use std::collections::HashMap;
 
 pub fn elicitation(params: &Value) -> Value {
     if params["serverName"] != "briefsip" || params["mode"] != "form" {
@@ -94,17 +92,7 @@ pub async fn probe(
     hydrated_path: &str,
 ) -> Option<(bool, Value, Value)> {
     let home = process::ProbeHome::new().ok()?;
-    let mut env = HashMap::new();
-    env.insert("HOME".into(), home.0.to_string_lossy().into_owned());
-    env.insert("PATH".into(), hydrated_path.to_owned());
-    if runtime == "hermes" {
-        env.extend([
-            ("HERMES_YOLO_MODE".into(), "0".into()),
-            ("HERMES_ACP_SKIP_CONFIGURED_MCP".into(), "1".into()),
-            ("HERMES_DISABLE_LAZY_INSTALLS".into(), "1".into()),
-        ]);
-    }
-    let mut process = Process::launch(
+    let mut process = home.launch(
         path,
         &if runtime == "pi" {
             vec![
@@ -117,10 +105,9 @@ pub async fn probe(
         } else {
             store::acp_args(runtime, path)
         },
-        &home.0,
-        &env,
-    )
-    .ok()?;
+        runtime,
+        hydrated_path,
+    )?;
     if runtime == "pi" {
         process
             .send(json!({"id":1,"type":"get_state"}))
@@ -144,7 +131,12 @@ pub async fn probe(
         return Some((true,Value::Null,json!(models["data"]["models"].as_array().into_iter().flatten().map(|m|json!({"id":format!("{}/{}",string(m,"provider"),string(m,"id")),"label":m["name"]})).collect::<Vec<_>>())));
     }
     process.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientInfo":{"name":"briefsip","version":"0.1.0"},"clientCapabilities":{"terminal":false}}})).await.ok()?;
-    let value = tokio::time::timeout(Duration::from_secs(15), process.next())
+    let budget = if runtime == "hermes" {
+        process::HERMES_STARTUP
+    } else {
+        Duration::from_secs(15)
+    };
+    let value = tokio::time::timeout(budget, process.next())
         .await
         .ok()?
         .ok()?;

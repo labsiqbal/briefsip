@@ -157,7 +157,7 @@ async fn availability(state: &AppState, runtime: &str) -> Value {
     let Some(path) = executable(state, runtime) else {
         return missing();
     };
-    let version = process::probe(&path, &["--version"], &self::path(state))
+    let version = process::probe(&path, &["--version"], runtime, &self::path(state))
         .await
         .map(|v| {
             v.chars()
@@ -174,7 +174,7 @@ async fn availability(state: &AppState, runtime: &str) -> Value {
         return v;
     };
     if runtime == "antigravity"
-        && process::probe(&path, &["--help"], &self::path(state))
+        && process::probe(&path, &["--help"], runtime, &self::path(state))
             .await
             .is_none_or(|v| !v.lines().any(|l| l.trim().starts_with("acp")))
     {
