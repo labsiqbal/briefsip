@@ -80,6 +80,13 @@ fn code(v: &Value) -> Result<String> {
     }
     Ok(s)
 }
+// Peers know this machine by its first allowed origin, like Node's getOrigin.
+fn public_origin(s: &AppState) -> &str {
+    s.config
+        .allowed_origins
+        .first()
+        .map_or(s.origin.as_str(), String::as_str)
+}
 pub fn machine_origin(v: &str) -> Result<String> {
     if v.len() > 2048 || v.trim() != v {
         return Err(error(400, "Invalid machine origin."));
@@ -153,7 +160,7 @@ pub fn environment(s: &AppState) -> Result<Value> {
     })?
     .ok_or_else(Failure::storage)?;
     v["version"] = version().into();
-    v["origin"] = machine_origin(&s.origin)?.into();
+    v["origin"] = machine_origin(public_origin(s))?.into();
     Ok(v)
 }
 fn visible(s: &AppState, r: &Value) -> Result<Value> {
@@ -693,7 +700,7 @@ async fn redeem(s: &AppState, v: &Value) -> Result<Value> {
         fields(v, &["code", "returnPairing"])?;
         let c = code(&v["code"])?;
         let p = descriptor(&v["returnPairing"])?;
-        if p["id"] == environment(s)?["id"] || p["origin"] == s.origin {
+        if p["id"] == environment(s)?["id"] || p["origin"] == public_origin(s) {
             return Err(invalid());
         }
         Ok((p, c))
