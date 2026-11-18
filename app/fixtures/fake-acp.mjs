@@ -22,7 +22,7 @@ for await (const line of createInterface({ input: process.stdin })) {
   if (value.type === 'prompt') {
     send({ type: 'response', id: value.id, success: true, data: {} });
     send({ type: 'message_start', message: { role: 'assistant' } });
-    if (value.message === 'WAIT') { send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'Waiting.' } }); continue; }
+    if (value.message.includes('WAIT')) { send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'Waiting.' } }); continue; }
     send({ type: 'tool_execution_start', toolCallId: 'pi-tool', toolName: 'bash' });
     send({ type: 'extension_ui_request', method: 'confirm', title: 'Briefsip tool approval', id: 'pi-approval', message: JSON.stringify({ toolName: 'bash', input: { command: 'echo fixture' } }) }); continue;
   }
@@ -45,7 +45,7 @@ for await (const line of createInterface({ input: process.stdin })) {
   if (value.method === 'session/cancel') { writeFileSync('cancel-received', 'yes'); if (prompt) reply(prompt, { stopReason: 'cancelled' }); continue; }
   if (value.method !== 'session/prompt') { if (value.id) send({ id: value.id, error: { code: -32601, message: 'unsupported' } }); continue; }
   prompt = value.id;
-  const content = value.params.prompt[0].text;
+  const content = value.params.prompt.map(block => block.text ?? '').join('\n');
   if (mode !== 'default') { process.exit(2); }
   void (async () => {
     if (content.includes('CRASH')) { update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Partial before crash.' } }); setTimeout(() => process.exit(3), 100); return; }

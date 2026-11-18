@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, type Dispatch, type SetStateAction } from 'react';
-import { newestPartial, parseTurnSnapshot, type StreamPartial } from '../../turn-stream';
+import { newestPartial, parseTurnSnapshot, type StreamPartial } from '../../shared/turn-stream';
 
 type Turn = { id: string; status: string; partial?: StreamPartial | null };
 export function useTurnStream<T extends Turn>(path: string, setTurns: Dispatch<SetStateAction<T[] | null>>, enabled: boolean) {

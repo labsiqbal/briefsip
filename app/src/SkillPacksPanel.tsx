@@ -1,6 +1,6 @@
 import { usePolling } from './hooks/usePolling';
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import { restoreSkillCommand, type SkillCommand } from '../skill-command';
+import { restoreSkillCommand, type SkillCommand } from '../shared/skill-command';
 import { ArrowLeft, ChevronLeft, ChevronRight, Ellipsis, FileText, Package, Plus } from 'lucide-react';
 import { ActionMenu, Alert, Badge, Button, Card, CodeBlock, Collapsible, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, Tooltip, useConfirm, RecoveryAlert } from './ui/kit';
 type Member = { skill: string; version: number; name: string; description: string; content: string };

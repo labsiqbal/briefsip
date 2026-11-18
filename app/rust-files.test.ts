@@ -7,10 +7,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { startRustServer } from './rust-test-server.ts';
-import { htmlPreview } from './html-preview.ts';
 import { pdfFixture } from './test-support/pdf-fixture.ts';
 import { readFileSync } from 'node:fs';
-import { createWorkspaceGit } from './workspace-git.ts';
+import { legacyCheckpointFixture } from './test-support/node-checkpoint-fixture.ts';
 
 async function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-files-')), database = join(root, 'app.sqlite'), workspace = join(root, 'workspace');
@@ -62,7 +61,27 @@ test('Rust HTML preview matches sanitizer contract and local site revisions neve
   try {
     const source = '<h1 style="color:red;position:fixed;background-image:url(https://bad.test)">Title</h1><details open><summary>More</summary><p>Text &amp; more</p></details><script>fetch("/api/agents")</script><img src="https://bad.test"><iframe src="/api/agents"></iframe><svg><script>bad()</script></svg>';
     const scope = `/api/agents/${f.agent}/files`, id = randomUUID(); await f.upload(`${scope}/${id}`, Buffer.from(source), 'report.html');
-    const preview = await f.request(`${scope}/${id}?preview=html`); assert.equal(preview.html, htmlPreview('report.html', Buffer.from(source)));
+    const expected = [
+      "<!doctype html>",
+      "<html lang=\"en\">",
+      "<head>",
+      "<meta charset=\"utf-8\">",
+      "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'\">",
+      "<meta name=\"referrer\" content=\"no-referrer\">",
+      "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
+      "<title>HTML preview</title>",
+      "<style>html{color-scheme:light}body{margin:24px;color:#20242b;background:#fff;font:16px/1.5 Georgia,serif;overflow-wrap:anywhere}*{box-sizing:border-box;max-width:100%}pre{white-space:pre-wrap}table{border-collapse:collapse;display:block;overflow:auto}td,th{border:1px solid #bbc0c8;padding:8px}summary{cursor:pointer;padding:10px;min-height:44px}summary:focus-visible{outline:2px solid #354aa5}figure{margin:0}h1,h2,h3{line-height:1.2}</style>",
+      "</head>",
+      "<body>",
+      "<h1 style=\"color:red\">Title</h1>",
+      "<details open>",
+      "<summary>More</summary>",
+      "<p>Text &amp; more</p>",
+      "</details>",
+      "</body>",
+      "</html>",
+    ].join('');
+    const preview = await f.request(`${scope}/${id}?preview=html`); assert.equal(preview.html, expected);
     const render = await fetch(f.app.origin + `${scope}/${id}?preview=render`); assert.match(render.headers.get('content-security-policy')!, /sandbox/); assert.equal(await render.text(), preview.html);
     const path = `/api/agents/${f.agent}/sites`, command = { id: randomUUID(), name: 'Report', source };
     const first = await f.request(path, command); const edit = { id: randomUUID(), site: first.id, revision: 1, name: 'Next', source: '<p>Next</p>' };
@@ -172,7 +191,7 @@ test('Rust checkpoint HTTP restores Node checkpoints, rejects stale confirmation
     writeFileSync(join(f.workspace, 'note'), 'original'); git('add', '--', 'note'); git('commit', '-q', '-m', 'Initial');
     await f.app.close();
     const seed = new DatabaseSync(f.database), checkpoint = randomUUID();
-    try { await createWorkspaceGit(seed, new Map([[f.agent, { directory: f.workspace, write: true }]]), f.root).capture(f.agent, checkpoint); } finally { seed.close(); }
+    try { await legacyCheckpointFixture(seed, new Map([[f.agent, { directory: f.workspace, write: true }]]), f.root).capture(f.agent, checkpoint); } finally { seed.close(); }
     await f.restart();
     writeFileSync(join(f.workspace, 'note'), 'changed'); writeFileSync(join(f.workspace, 'new'), 'keep in safety checkpoint');
     const path = `/api/agents/${f.agent}/git/checkpoints/${checkpoint}`;

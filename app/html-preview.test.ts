@@ -4,38 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { htmlPreview, previewPolicy } from './html-preview.ts';
 import { startApp } from './test-bridge.ts';
-
-test('HTML preview removes active content and resource URLs while retaining native details and layout', () => {
-  const payload = `<!doctype html><html><head><base href="https://evil.example"><meta http-equiv="refresh" content="0;url=https://evil.example"><style>@import 'https://evil.example/a';</style></head><body onload="alert(1)">
-    <script>window.parent.fetch('/api/agents')</script><iframe srcdoc="<script>alert(1)</script>"></iframe>
-    <object data="https://evil.example"></object><embed src="https://evil.example"><svg><a href="https://evil.example"><text>evil</text></a></svg><math><annotation-xml encoding="text/html"><script>alert(1)</script></annotation-xml></math>
-    <img src="https://evil.example" srcset="https://evil.example"><video poster="https://evil.example"><source src="https://evil.example"></video>
-    <form action="/api/agents"><input name="name"><button formaction="https://evil.example">Submit</button></form>
-    <a href="javascript:alert(1)" ping="https://evil.example" target="_top">Readable link text</a>
-    <details open><summary onclick="alert(1)">Expand me</summary><p style="color:#123456; padding:12px; background-image:url(https://evil.example); position:fixed; font-family:evil">Useful text</p></details>
-    <table><tr><th scope="col">Name</th><td colspan="2">Value</td></tr></table></body></html>`;
-  const output = htmlPreview('Report.HTML', Buffer.from(payload));
-  assert(output.includes(previewPolicy)); assert.match(output, /<details open><summary>Expand me<\/summary>/); assert.match(output, /color:#123456;padding:12px/);
-  assert.match(output, /<th scope="col">Name<\/th>/); assert.match(output, /Readable link text/);
-  assert.doesNotMatch(output, /evil\.example|window\.parent|alert\(1\)|background-image|position:fixed|font-family:evil/);
-  assert.doesNotMatch(output, /<(?:script|iframe|object|embed|svg|math|form|input|button|img|video|source|a|base)\b/i);
-  assert.doesNotMatch(output, /\s(?:on\w+|href|src|srcdoc|srcset|formaction|action|ping|target)=/i);
-  for (const malicious of [
-    '<scr<script>ipt>alert(1)</scr</script>ipt>',
-    '<math><mtext><table><mglyph><style><!--</style><img title="--><img src=x onerror=alert(1)>">',
-    '<noscript><p title="</noscript><img src=x onerror=alert(1)>">test',
-    '<p style="color:expression(alert(1));width:calc(1px + url(x));padding:var(--x);background-color:u\\72l(x)">x</p>',
-    '<template><img src=x onerror=alert(1)></template>',
-  ]) {
-    const safe = htmlPreview('x.htm', Buffer.from(malicious));
-    assert.doesNotMatch(safe, /<(?:script|img|svg|math|template)\b|expression\(|url\(/i);
-  }
-  assert.throws(() => htmlPreview('x.txt', Buffer.from('text')));
-  assert.throws(() => htmlPreview('x.html', Buffer.from([0xff])));
-  assert.throws(() => htmlPreview('x.html', Buffer.alloc(256 * 1024 + 1)));
-});
 
 test('preview endpoint preserves file bytes and enforces direct/channel/thread scope', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-html-'));

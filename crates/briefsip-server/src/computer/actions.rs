@@ -174,15 +174,53 @@ mod tests {
             validate("computer_click", &json!({"x":1279,"y":799}), 1280, 800)?,
             ["mousemove", "1279", "799", "click", "1"]
         );
-        assert!(validate("computer_click", &json!({"x":1280,"y":0}), 1280, 800).is_err());
+        for (action, args) in [
+            ("computer_click", json!({"x":1280,"y":0})),
+            ("computer_click", json!({"x":0,"y":-1})),
+            ("computer_click", json!({"x":0.5,"y":2})),
+            ("computer_click", json!({"x":0,"y":0,"button":"1"})),
+            ("computer_click", json!({"x":0,"y":0,"display":":0"})),
+            ("computer_key", json!({"keys":["--window"]})),
+            ("computer_key", json!({"keys":["exec"]})),
+            ("computer_key", json!({"keys":["Control_L"]})),
+            ("computer_key", json!({"keys":["a","b"]})),
+            ("computer_type", json!({"text":"x\0"})),
+            ("computer_type", json!({"text":"x".repeat(4001)})),
+            ("computer_scroll", json!({"dx":21,"dy":0})),
+            ("computer_scroll", json!({"dx":0,"dy":null})),
+            ("computer_open_url", json!({"url":"file:///etc/passwd"})),
+            ("computer_open_url", json!({"url":"javascript:alert(1)"})),
+            (
+                "computer_open_url",
+                json!({"url":"https://user:secret@example.com"}),
+            ),
+            ("computer_open_url", json!({"url":"http://user@localhost"})),
+            ("computer_screenshot", json!({"agent":"foreign"})),
+            ("unknown", json!({})),
+        ] {
+            assert!(
+                validate(action, &args, 1280, 800).is_err(),
+                "{action} {args}"
+            );
+        }
+        assert_eq!(
+            validate("computer_click", &json!({"x":1919,"y":1199}), 1920, 1200)?,
+            ["mousemove", "1919", "1199", "click", "1"]
+        );
+        assert!(validate("computer_click", &json!({"x":1024,"y":0}), 1024, 640).is_err());
+        assert_eq!(
+            validate(
+                "computer_key",
+                &json!({"keys":["Control_L","a"]}),
+                1280,
+                800
+            )?,
+            ["key", "--clearmodifiers", "Control_L+a"]
+        );
         assert!(validate("computer_key", &json!({"keys":["a","Return"]}), 1280, 800).is_err());
-        assert!(validate(
-            "computer_open_url",
-            &json!({"url":"http://user@localhost"}),
-            1280,
-            800
-        )
-        .is_err());
+        let text = "--window 0; $(anything)";
+        let args = validate("computer_type", &json!({"text":text}), 1280, 800)?;
+        assert_eq!(args[args.len() - 2..], ["--", text]);
         assert_eq!(
             validate("computer_scroll", &json!({"dx":-2,"dy":3}), 1280, 800)?,
             ["click", "--repeat", "2", "6", "click", "--repeat", "3", "5"]

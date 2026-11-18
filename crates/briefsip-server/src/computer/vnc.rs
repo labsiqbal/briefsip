@@ -325,10 +325,43 @@ mod tests {
         assert!(f.feed(b"RFB 003.", false)?.0.is_empty());
         assert_eq!(f.feed(b"008\n\x01\x01", false)?.0, b"RFB 003.008\n\x01\x01");
         let key = [4, 1, 0, 0, 0, 0, 0, 97];
-        assert!(f.feed(&key, false)?.0.is_empty());
-        assert_eq!(f.feed(&key, true)?.0, key);
-        assert_eq!(f.release(), [4, 0, 0, 0, 0, 0, 0, 97]);
+        let pointer = [5, 1, 0, 4, 0, 8];
+        let clipboard = [6, 0, 0, 0, 0, 0, 0, 3, 97, 98, 99];
+        let extended = [255, 0, 0, 1, 0, 0, 0, 97, 0, 0, 0, 30];
+        let request = [3, 0, 0, 0, 0, 0, 5, 0, 3, 32];
+        let mut resize = [0; 24];
+        resize[0] = 251;
+        resize[6] = 1;
+        let frames: [&[u8]; 6] = [&key, &pointer, &clipboard, &extended, &resize, &request];
+        let fragmented = frames.concat();
+        let mut forwarded = Vec::new();
+        for byte in fragmented {
+            let (output, input) = f.feed(&[byte], false)?;
+            assert!(!input);
+            forwarded.extend(output);
+        }
+        assert_eq!(forwarded, request);
+        let expected = [&key[..], &pointer, &clipboard, &extended, &request].concat();
+        assert_eq!(f.feed(&frames.concat(), true)?, (expected, true));
+        for frame in [&key[..], &pointer, &clipboard, &extended] {
+            assert!(f.feed(frame, true)?.1);
+        }
+        assert_eq!(f.feed(&key, false)?, (vec![], false));
+        let released = f.release();
+        assert!(released
+            .windows(8)
+            .any(|part| part == [4, 0, 0, 0, 0, 0, 0, 97]));
+        assert!(released
+            .windows(12)
+            .any(|part| part == [255, 0, 0, 0, 0, 0, 0, 97, 0, 0, 0, 30]));
+        assert!(released.ends_with(&[5, 0, 0, 4, 0, 8]));
         assert!(f.feed(&[99], true).is_err());
+        let mut oversized = Filter::default();
+        oversized.feed(b"RFB 003.008\n\x01\x01", true)?;
+        let mut header = [6, 0, 0, 0, 0, 0, 0, 0];
+        header[4..].copy_from_slice(&(-262145i32).to_be_bytes());
+        assert!(oversized.feed(&header, true).is_err());
+        assert!(Filter::default().feed(b"RFB 003.003\n", true).is_err());
         Ok(())
     }
 }

@@ -4,7 +4,7 @@ import { Badge } from './kit';
 import { Collapsible as Disclosure } from 'radix-ui';
 import { useLiveClock } from '../hooks/useLiveClock';
 import { Markdown } from '../Markdown';
-import type { StreamPartial } from '../../turn-stream';
+import type { StreamPartial } from '../../shared/turn-stream';
 import { activityLabel, liveTurn, streamWork, toolTitle, type TurnActivityData } from './transcript';
 
 type Props = {

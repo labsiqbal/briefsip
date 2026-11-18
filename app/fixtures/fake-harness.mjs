@@ -38,9 +38,12 @@ function finish(allowed = true) {
     send({ type: 'result', subtype: 'success', is_error: false, result: 'fake result', session_id: session, uuid: randomUUID(), duration_ms: 5, duration_api_ms: 5, num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 11, output_tokens: 7, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, modelUsage: {}, permission_denials: [] });
   }
 }
-function run(text) {
+async function run(text) {
   if (text.includes('STREAM_GATE') || text.includes('STREAM_CRASH')) { void streamGate(text); return; }
   prompt = text; log({ type: 'turn', session, prompt }); delta('Harness ');
+  if (text.includes('FIRST_PARTIAL_GATE')) {
+    while (!existsSync('stream-release')) await new Promise(resolve => setTimeout(resolve, 5));
+  }
   if (!codex && text.includes('Create a deliverable.')) { send({ type: 'control_request', request_id: 'sv-stop', request: { subtype: 'hook_callback', callback_id: stopCallback, input: { session_id: session, transcript_path: '', cwd: process.cwd(), hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: 'Done.' } } }); return; }
   if (text.includes('NATIVE_SETUP_FIXTURE') && text.includes('Initial needs:')) { void (async()=>{ const rpc=async(name,args)=>{const r=await fetch(mcpURL,{method:'POST',headers:{Authorization:`Bearer ${process.env.BRIEFSIP_MCP_TOKEN}`,'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:randomUUID(),method:'tools/call',params:{name,arguments:args}})});return {status:r.status,body:await r.json()};}; assert.equal((await rpc('create_text_file',{name:'forbidden',text:'x'})).status,403); const result=await rpc('edit_profile',{revision:1,name:'Native assistant',instructions:'Native setup saved.'});assert(result.body.result,JSON.stringify(result));assert.equal(result.body.result.structuredContent.revision,2,JSON.stringify(result));finish(); })().catch(error=>{log({setupError:String(error)});process.exit(1);});return; }
   if (text.includes('CRASH')) { setTimeout(() => process.exit(19), 20); return; }

@@ -320,33 +320,83 @@ mod tests {
         Ok(())
     }
     #[test]
-    fn private_ranges_and_mapped_forms() {
+    fn private_ranges_and_mapped_forms() -> crate::db::Result<()> {
         for ip in [
-            "0.1.2.3",
-            "10.0.0.1",
-            "100.64.0.1",
-            "127.0.0.1",
-            "169.254.1.1",
-            "172.16.1.1",
-            "192.168.1.1",
-            "224.0.0.1",
-            "240.0.0.1",
+            "0.0.0.0",
+            "0.255.255.255",
+            "10.0.0.0",
+            "10.255.255.255",
+            "100.64.0.0",
+            "100.127.255.255",
+            "127.0.0.0",
+            "127.255.255.255",
+            "169.254.0.0",
+            "169.254.255.255",
+            "172.16.0.0",
+            "172.31.255.255",
+            "192.168.0.0",
+            "192.168.255.255",
+            "224.0.0.0",
+            "239.255.255.255",
+            "240.0.0.0",
+            "255.255.255.255",
+        ] {
+            let ipv4: std::net::Ipv4Addr = ip.parse()?;
+            assert!(denied(ipv4.into()), "{ip}");
+            assert!(denied(ipv4.to_ipv6_mapped().into()), "{ip}");
+            assert!(format!("::ffff:{ip}").parse().is_ok_and(denied), "{ip}");
+        }
+        for ip in [
             "::",
             "::1",
-            "fc00::1",
-            "fe80::1",
-            "ff00::1",
-            "::ffff:127.0.0.1",
+            "0:0:0:0:0:0:0:1",
+            "fc00::",
+            "fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+            "fe80::",
+            "febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+            "ff00::",
+            "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
         ] {
             assert!(ip.parse().is_ok_and(denied), "{ip}");
         }
+        for ip in ["fe80::1%lo", "::ffff:127.0.0.1%lo", "invalid"] {
+            assert!(ip.parse::<IpAddr>().is_err(), "{ip}");
+        }
         for ip in [
-            "1.1.1.1",
+            "1.0.0.0",
+            "9.255.255.255",
+            "11.0.0.0",
             "100.63.255.255",
+            "100.128.0.0",
+            "126.255.255.255",
+            "128.0.0.0",
+            "169.253.255.255",
+            "169.255.0.0",
             "172.15.255.255",
-            "2606:4700:4700::1111",
+            "172.32.0.0",
+            "192.167.255.255",
+            "192.169.0.0",
+            "223.255.255.255",
+            "8.8.8.8",
+            "::ffff:8.8.8.8",
+            "2001:4860:4860::8888",
+            "fbff::",
+            "fec0::",
         ] {
             assert!(ip.parse().is_ok_and(|v| !denied(v)), "{ip}");
         }
+        for host in [
+            "localhost",
+            "printer.local",
+            "NODE.TS.NET.",
+            "local",
+            "ts.net",
+        ] {
+            assert!(denied_host(host), "{host}");
+        }
+        for host in ["example.com", "local.example.com", "ts.net.example.com"] {
+            assert!(!denied_host(host), "{host}");
+        }
+        Ok(())
     }
 }

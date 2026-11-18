@@ -347,3 +347,53 @@ pub async fn extract_pdf(bytes: &[u8]) -> Result<String> {
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn html_preview_removes_active_content_and_keeps_details_and_layout() -> Result<()> {
+        let payload = r##"<!doctype html><html><head><base href="https://evil.example"><meta http-equiv="refresh" content="0;url=https://evil.example"><style>@import 'https://evil.example/a';</style></head><body onload="alert(1)">
+    <script>window.parent.fetch('/api/agents')</script><iframe srcdoc="<script>alert(1)</script>"></iframe>
+    <object data="https://evil.example"></object><embed src="https://evil.example"><svg><a href="https://evil.example"><text>evil</text></a></svg><math><annotation-xml encoding="text/html"><script>alert(1)</script></annotation-xml></math>
+    <img src="https://evil.example" srcset="https://evil.example"><video poster="https://evil.example"><source src="https://evil.example"></video>
+    <form action="/api/agents"><input name="name"><button formaction="https://evil.example">Submit</button></form>
+    <a href="javascript:alert(1)" ping="https://evil.example" target="_top">Readable link text</a>
+    <details open><summary onclick="alert(1)">Expand me</summary><p style="color:#123456; padding:12px; background-image:url(https://evil.example); position:fixed; font-family:evil">Useful text</p></details>
+    <table><tr><th scope="col">Name</th><td colspan="2">Value</td></tr></table></body></html>"##;
+        let output = html("Report.HTML", payload.as_bytes())?;
+        for kept in [
+            POLICY,
+            "<details open><summary>Expand me</summary>",
+            "color:#123456;padding:12px",
+            r#"<th scope="col">Name</th>"#,
+            "Readable link text",
+        ] {
+            assert!(output.contains(kept), "missing {kept}");
+        }
+
+        let removed = regex::Regex::new(
+            r"(?i)evil\.example|window\.parent|alert\(1\)|background-image|position:fixed|font-family:evil|<(?:script|iframe|object|embed|svg|math|form|input|button|img|video|source|a|base)\b|\s(?:on\w+|href|src|srcdoc|srcset|formaction|action|ping|target)=",
+        ).map_err(|_| Failure::storage())?;
+        assert!(!removed.is_match(&output), "{output}");
+        let active =
+            regex::Regex::new(r"(?i)<(?:script|img|svg|math|template)\b|expression\(|url\(")
+                .map_err(|_| Failure::storage())?;
+        for malformed in [
+            "<scr<script>ipt>alert(1)</scr</script>ipt>",
+            r#"<math><mtext><table><mglyph><style><!--</style><img title="--><img src=x onerror=alert(1)>">"#,
+            r#"<noscript><p title="</noscript><img src=x onerror=alert(1)>">test"#,
+            r#"<p style="color:expression(alert(1));width:calc(1px + url(x));padding:var(--x);background-color:u\72l(x)">x</p>"#,
+            "<template><img src=x onerror=alert(1)></template>",
+        ] {
+            let safe = html("x.htm", malformed.as_bytes())?;
+            assert!(!active.is_match(&safe), "{safe}");
+        }
+
+        assert!(html("x.txt", b"text").is_err());
+        assert!(html("x.html", &[0xff]).is_err());
+        assert!(html("x.html", &vec![0; 256 * 1024 + 1]).is_err());
+        Ok(())
+    }
+}

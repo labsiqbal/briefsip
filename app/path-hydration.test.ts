@@ -45,12 +45,15 @@ exec /bin/sh -c "$2"
     let response: Response | undefined;
     while (Date.now() < deadline) {
       assert.equal(child.exitCode, null, stderr);
-      response = await fetch(origin + '/api/runtimes', { signal: AbortSignal.timeout(1000) }).catch(() => undefined);
+      response = await fetch(origin + '/api/environment', { signal: AbortSignal.timeout(1000) }).catch(() => undefined);
       if (response) break;
       await delay(50);
     }
     assert.equal(response?.status, 200, stderr);
-    const runtimes = await response!.json();
+    await response!.arrayBuffer();
+    const catalog = await fetch(origin + '/api/runtimes', { signal: AbortSignal.timeout(10000) });
+    assert.equal(catalog.status, 200, stderr);
+    const runtimes = await catalog.json();
     assert(!stderr.includes('synthetic-secret'));
     if (broken) {
       assert.notEqual(runtimes.choices.find((choice: { runtime: string }) => choice.runtime === 'codex').version, 'codex fixture 1.0');

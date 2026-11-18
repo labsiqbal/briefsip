@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSpeechPlayer, speechChunks, voiceKey } from './speech.ts';
+import { createSpeechPlayer, speechChunks, voiceKey } from './shared/speech.ts';
 
 const local: SpeechSynthesisVoice = { voiceURI: 'local/id', name: 'Lokal', lang: 'id-ID', localService: true, default: false };
 function fixture() {

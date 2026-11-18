@@ -1,4 +1,4 @@
-import type { StreamPartial, StreamSegment } from '../../turn-stream';
+import type { StreamPartial, StreamSegment } from '../../shared/turn-stream';
 
 export type TurnActivityData = {
   artifacts?: { id: string; name: string; kind: string; url: string }[];

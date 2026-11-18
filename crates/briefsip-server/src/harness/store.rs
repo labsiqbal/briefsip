@@ -1374,6 +1374,53 @@ mod tests {
     use super::*;
 
     #[test]
+    fn codex_home_keeps_credentials_out_of_private_config() -> crate::db::Result<()> {
+        let mut account = data::providers::Account {
+            id: "router".into(),
+            name: "Router".into(),
+            family: "openai-compatible".into(),
+            base: "http://127.0.0.1:20128/v1".into(),
+            key: Some("synthetic-secret".into()),
+            model: "cx/gpt-6.1-sol".into(),
+            stream: false,
+            termination: String::new(),
+            max_tokens: 0,
+        };
+        let session = home("codex", &account, &account.model, String::new())
+            .map_err(|failure| failure.message)?;
+        let codex = Path::new(&session.environment["CODEX_HOME"]);
+        let config = codex.join("config.toml");
+        let text = std::fs::read_to_string(&config)?;
+        assert!(text.contains("model = \"cx/gpt-6.1-sol\""));
+        assert!(text.contains("base_url = \"http://127.0.0.1:20128/v1\""));
+        assert!(text.contains("env_key = \"BRIEFSIP_PROVIDER_KEY\""));
+        assert!(!text.contains("synthetic-secret"));
+        assert_eq!(
+            session.environment["BRIEFSIP_PROVIDER_KEY"],
+            "synthetic-secret"
+        );
+        assert_eq!(
+            std::fs::metadata(config)?.permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            std::fs::metadata(&session.path)?.permissions().mode() & 0o777,
+            0o700
+        );
+        assert!(std::fs::read_to_string(codex.join("rules/default.rules"))?
+            .contains("pattern=[\"rm\"], decision=\"prompt\""));
+        let path = session.path.clone();
+        drop(session);
+        assert!(!path.exists());
+        account.base = "https://user:password@example.test/v1".into();
+        assert!(home("codex", &account, "x", String::new()).is_err());
+        account.base = "https://example.test/v1".into();
+        account.family = "anthropic".into();
+        assert!(home("codex", &account, "x", String::new()).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn codex_context_chunks_preserve_multibyte_text() -> Result<()> {
         let text = format!("Header.\n\n{}\n\nFinal paragraph.", "🧪".repeat(3000));
         let context = additional_context(&text);

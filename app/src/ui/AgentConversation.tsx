@@ -8,7 +8,7 @@ import { Collapsible } from './kit';
 import { activityLabel, livePartial, liveTurn, type TurnActivityData } from './transcript';
 import { TurnActivity, turnActivitySteps } from './TurnActivity';
 import { useLiveClock } from '../hooks/useLiveClock';
-import type { StreamPartial } from '../../turn-stream';
+import type { StreamPartial } from '../../shared/turn-stream';
 
 export type Exchange = { id: string; agent: string; name: string; role?: string; machine?: string; thread: string; task?: string; reply: string | null; detailReply?: string | null; error: string | null; status: string; paused: number; truncated: boolean; activity?: TurnActivityData; created?: string; generatedFiles?: { id: string; name: string; size: number; thread: string; deleted?: boolean }[] };
 export function AgentConversation({ items, sender, scope, onOpen }: { items: Exchange[]; sender: string; scope: string; onOpen?: (agent: string, thread: string) => void }) {

@@ -1,35 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, statSync, mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { startApp } from './test-bridge.ts';
-import { codexProviderConfig, createHarnessHome, workspaceCommand } from './harness-session.ts';
-
-test('Codex custom provider uses selected model and environment credential in disposable home', () => {
-  const account = { id: 'router', name: '9Router', provider: 'openai-compatible' as const, baseURL: 'http://127.0.0.1:20128/v1', apiKey: 'synthetic-secret' };
-  const home = createHarnessHome('codex', account, 'cx/gpt-6.1-sol');
-  try {
-    const config = readFileSync(join(home.environment.CODEX_HOME, 'config.toml'), 'utf8');
-    assert.match(config, /model = "cx\/gpt-6.1-sol"/);
-    assert.match(config, /base_url = "http:\/\/127\.0\.0\.1:20128\/v1"/);
-    assert.match(config, /env_key = "BRIEFSIP_PROVIDER_KEY"/);
-    assert(!config.includes(account.apiKey)); assert.equal(home.environment.BRIEFSIP_PROVIDER_KEY, account.apiKey);
-    assert.equal(statSync(join(home.environment.CODEX_HOME, 'config.toml')).mode & 0o777, 0o600);
-    assert.equal(statSync(home.home).mode & 0o777, 0o700);
-    assert.match(readFileSync(join(home.environment.CODEX_HOME, 'rules/default.rules'), 'utf8'), /pattern=\["rm"\], decision="prompt"/);
-    assert.throws(() => codexProviderConfig({ ...account, baseURL: 'https://user:password@example.test/v1' }, 'x'));
-    assert.throws(() => codexProviderConfig({ ...account, provider: 'anthropic' }, 'x'));
-  } finally { home.close(); }
-  assert(!existsSync(home.home));
-});
-
-test('workspace policy allows checks and edits, retains destructive, credentials, messages and publication approvals', () => {
-  for (const command of ['node --test', 'npm test', 'npm run build', 'cat > hello.txt << EOF\nhello\nEOF', 'git diff', 'python3 clean_csv.py']) assert(workspaceCommand(command), command);
-  for (const command of ['rm -rf .', 'git push', 'git reset --hard', 'npm publish', 'curl https://example.test', 'cat ~/.ssh/id_rsa', 'printenv', 'sendmail someone@example.test']) assert(!workspaceCommand(command), command);
-});
-
 test('new agents default to Codex with a managed workspace; API agents keep runtime and switch in one saved command', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-default-')), executable = join(directory, 'codex');
   writeFileSync(executable, `#!${process.execPath}\n` + readFileSync(new URL('./fixtures/fake-harness.mjs', import.meta.url), 'utf8').split('\n').slice(1).join('\n')); chmodSync(executable, 0o700);

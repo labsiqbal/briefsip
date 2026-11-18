@@ -5,8 +5,8 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {rustBinary} from './rust-binary.ts';
-import {parseSkillFiles,skillFileBytes} from './skill-files.ts';
-import {writeSkillZip,readSkillZip} from './skill-zip.ts';
+import {parseSkillFiles,skillFileBytes} from './shared/skill-files.ts';
+import {writeSkillZip,readSkillZip} from './shared/skill-zip.ts';
 
 const binary = () => rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
 const command = (...args: string[]) => spawnSync(binary(), ['skills', ...args], { encoding: 'utf8' });

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './test-bridge.ts';
-import { briefsipToolElicitation, harnessEnv, harnessAvailability, insideWorkspace, commandPrefix, type HarnessRuntime } from './harness.ts';
+import { harnessEnv, harnessAvailability, insideWorkspace, commandPrefix, type HarnessRuntime } from './harness.ts';
 process.env.BRIEFSIP_HARNESS_CANARY = 'never-inherit-this-canary';
 const fakeSource = readFileSync(new URL('./fixtures/fake-harness.mjs', import.meta.url), 'utf8');
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -106,17 +106,22 @@ for(const runtime of ['codex','claude'] as const) {
     } finally { await f.close(); }
   });
   test(`${runtime}: stream, tool activity, MCP lifetime, follow-up and restart resume`,async()=>{
-    const f=await fixture(runtime);try {
-      const streamController = new AbortController();
+    const f=await fixture(runtime);
+    const streamController = new AbortController();
+    try {
       const stream = await fetch(f.app.origin + f.path + '/turns/stream', { signal: streamController.signal });
       const reader = stream.body!.getReader();
-      const first=await f.send('FIRST'),partial=await f.until(first,row=>row.partial?.text||row.status==='failed');assert.equal(partial.status,'running',partial.error);
+      const first = await f.send('FIRST_PARTIAL_GATE');
+      const partial = await f.until(first, row => row.partial?.text || ['done', 'failed', 'cancelled'].includes(row.status));
+      assert.equal(partial.status, 'running', partial.error);
+      assert.equal(partial.partial.text, 'Harness ');
       try {
         const frame = new TextDecoder().decode((await reader.read()).value);
         assert(frame.startsWith('data: '));
         const snapshot = JSON.parse(frame.split('\n\n')[0].slice(6));
         assert.equal(snapshot.id, first); assert.equal(snapshot.partial.text, ''); assert.equal(snapshot.partial.seq, partial.partial.seq);
       } finally { streamController.abort(); }
+      writeFileSync(join(f.workspace, 'stream-release'), '');
 
       const done=await f.until(first,row=>['done','failed'].includes(row.status));assert.equal(done.status,'done',done.error);assert.equal(done.reply,'finished');assert(done.activity.harness.length);assert.equal(done.activity.harness[0].state,'completed');
       const second=await f.send('SECOND');assert.equal((await f.until(second,row=>['done','failed'].includes(row.status))).status,'done');
@@ -126,7 +131,7 @@ for(const runtime of ['codex','claude'] as const) {
       assert(contexts.length >= 3);
       for (const context of contexts) { assert.match(context, /<runtime_info>/); assert.match(context, /open_file_in_panel/); assert.doesNotMatch(context, /computer_screenshot/); assert.match(context, /run_shell/); }
       const usage=await f.request('/api/usage');assert(usage.calls.some((call:any)=>call.input_tokens===11&&call.output_tokens===7));
-    } finally {await f.close();}
+    } finally {streamController.abort();await f.close();}
   });
   test(`${runtime}: Steer degrades to linked Restart with partial context and fresh native session`, async () => {
     const f = await fixture(runtime); try {
@@ -231,16 +236,6 @@ test('environment excludes credential and loader canaries; workspace symlink and
 });
 test('runtime changes require confirmation and revision; missing workspaces are provisioned',async()=>{
   const f=await fixture('codex');try{await f.request(f.path+'/edit',{id:randomUUID(),revision:2,...f.profile,runtime:'api'},409);await f.request(f.path+'/edit',{id:randomUUID(),revision:1,...f.profile,runtime:'api',confirmRuntime:true},409);const command={id:randomUUID(),revision:2,...f.profile,runtime:'api',confirmRuntime:true};await f.request(f.path+'/edit',command);await f.request(f.path+'/edit',command);const directory=await f.request('/api/agents');assert.equal(directory.agents[0].runtime,'api');assert.equal(directory.agents[0].revision,3);const other=await f.request('/api/agents',{id:randomUUID(),...f.profile});const choices=await f.request(`/api/agents/${other.id}/runtimes`);assert(choices.choices.every((choice:any)=>choice.enabled===choice.available));await f.request(`/api/agents/${other.id}/edit`,{id:randomUUID(),revision:1,...f.profile,runtime:'codex',confirmRuntime:true});assert.equal((await harnessAvailability('codex',null)).available,false);}finally{await f.close();}
-});
-
-test('codex MCP elicitations: only Briefsip form approvals are accepted once; others decline', () => {
-  const form = (properties: Record<string, unknown>, required: string[] = []) => ({ serverName: 'briefsip', threadId: 't', mode: 'form', message: 'Allow list_agents?', requestedSchema: { type: 'object', properties, required } });
-  assert.deepEqual(briefsipToolElicitation(form({ decision: { type: 'string', enum: ['accept', 'acceptAlways', 'decline'] } }, ['decision'])), { action: 'accept', content: { decision: 'accept' } });
-  assert.deepEqual(briefsipToolElicitation(form({ persist: { type: 'boolean' } })), { action: 'accept', content: { persist: false } });
-  assert.deepEqual(briefsipToolElicitation(form({})), { action: 'accept', content: {} });
-  assert.deepEqual(briefsipToolElicitation(form({ reason: { type: 'string' } }, ['reason'])), { action: 'decline' });
-  assert.deepEqual(briefsipToolElicitation({ ...form({}), serverName: 'other-server' }), { action: 'decline' });
-  assert.deepEqual(briefsipToolElicitation({ serverName: 'briefsip', threadId: 't', mode: 'url', url: 'https://example.com' }), { action: 'decline' });
 });
 
 for (const runtime of ['codex','claude'] as const) test(`${runtime}: done check nudges once and preserves native session`, async () => {
