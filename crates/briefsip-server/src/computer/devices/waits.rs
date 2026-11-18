@@ -503,16 +503,19 @@ mod tests {
             reply["payloadDigest"]=json!("0".repeat(64));
             assert_eq!(resolve(&db,&p,&reply,false,1000).err().map(|e|e.code),Some("wait_invalid"));
             reply["payloadDigest"]=frame["body"]["payloadDigest"].clone();
+            reply["result"]["requestId"]=json!(uuid::Uuid::new_v4().to_string());
+            assert_eq!(resolve(&db,&p,&reply,false,1000).err().map(|e|e.code),Some("wait_invalid"));
+            reply["result"]["requestId"]=request["requestId"].clone();
             assert_eq!(resolve(&db,&p,&reply,false,1000)?["accepted"],true);
             assert_eq!(result.try_recv().map_err(|_|Failure::storage())??,reply["result"]);
             assert_eq!(resolve(&db,&p,&reply,false,1000).err().map(|e|e.code),Some("wait_invalid"));
             let bytes=vec![42;65536];
             let event=json!({"waitKey":"wait-fixture","sourceDeviceId":p.device,"deviceGeneration":1,"authorityGeneration":p.authority,"secretGeneration":1,"expiresAt":10000,"connectionGeneration":7,"byteLength":65536,"bodyDigest":byte_digest(&bytes),"headers":{"x-briefsip-time":"1","x-briefsip-id":"event:fixture","x-briefsip-signature":"0".repeat(64)}});
             let (id,mut result)=enqueue(&db,&event,Some(&bytes),1000)?;
-            let frames=frames.recv().await.ok_or_else(Failure::storage)?;
-            assert_eq!(frames.lines().count(),3);
+            let event_frames=frames.recv().await.ok_or_else(Failure::storage)?;
+            assert_eq!(event_frames.lines().count(),3);
             let mut restored=Vec::new();
-            for (index,frame) in frames.lines().enumerate() {
+            for (index,frame) in event_frames.lines().enumerate() {
                 assert!(frame.len()<65536);
                 let frame:Value=serde_json::from_str(frame).map_err(|_|Failure::storage())?;
                 assert_eq!(frame["body"]["offset"],index*24576);
@@ -522,11 +525,26 @@ mod tests {
             let reply=json!({"requestId":id,"payloadDigest":digest(&json!(["briefsip-wait-event-v1",event])),"result":{"id":"event:fixture","digest":event["bodyDigest"],"eventTime":1}});
             assert_eq!(resolve(&db,&p,&reply,true,1000)?["accepted"],true);
             assert_eq!(result.try_recv().map_err(|_|Failure::storage())??,reply["result"]);
-            let (_,mut result)=enqueue(&db,&request,None,1000)?;
-            disconnect(&p.device);
-            assert!(matches!(result.try_recv(),Err(oneshot::error::TryRecvError::Closed)));
             assert!(!connection(&db,&p.device,2,1000));
             assert!(!connection(&db,&p.device,1,31001));
+            for _ in 0..4 {
+                assert!(send(&p.device,7,"occupied\n".into())?);
+            }
+            assert_eq!(enqueue(&db,&request,None,1000).err().map(|e|e.code),Some("device_offline"));
+            for _ in 0..4 {
+                assert_eq!(frames.try_recv().map_err(|_|Failure::storage())?,"occupied\n");
+            }
+            let (id,mut result)=enqueue(&db,&request,None,1000)?;
+            let payload_digest=digest(&json!(["briefsip-wait-reveal-v1",request]));
+            let failed=json!({"requestId":id,"payloadDigest":payload_digest,"errorCode":"keystore_unavailable"});
+            assert_eq!(resolve(&db,&p,&failed,false,1000)?["accepted"],true);
+            assert_eq!(result.try_recv().map_err(|_|Failure::storage())?.err().map(|e|e.code),Some("keystore_unavailable"));
+            let (id,mut result)=enqueue(&db,&request,None,1000)?;
+            close_stream(&p.device)?;
+            assert!(matches!(result.try_recv(),Err(oneshot::error::TryRecvError::Closed)));
+            let delayed=json!({"requestId":id,"payloadDigest":payload_digest,"errorCode":"keystore_unavailable"});
+            assert_eq!(resolve(&db,&p,&delayed,false,1000).err().map(|e|e.code),Some("wait_invalid"));
+            assert_eq!(enqueue(&db,&request,None,1000).err().map(|e|e.code),Some("device_offline"));
             Ok(())
         }.await;
         close_stream(&p.device)?;

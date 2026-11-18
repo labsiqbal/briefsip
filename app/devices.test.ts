@@ -1,179 +1,238 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, randomBytes, randomUUID, sign, type KeyObject } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { createDevices } from './devices.ts';
-import { descriptorBody, deviceLinkBody, deviceProofBody, parseLinkChallenge, type DeviceDescriptor, type DeviceProof } from './test-support/device-protocol.ts';
-import { initializeCanonicalSchema } from './schema.ts';
-import { sha256, digestCommand, ProtocolError } from './shared/protocol.ts';
-import type { HumanActor } from './test-support/auth.ts';
-import type { WaitRevealRequest } from './wait-connection.ts';
+import { sha256, digestCommand } from './shared/protocol.ts';
+import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
+import { descriptorBody, deviceLinkBody, deviceProofBody } from './test-support/device-protocol.ts';
+import { startApp } from './test-bridge.ts';
 
-function fixture() {
-  const db = new DatabaseSync(':memory:'); initializeCanonicalSchema(db); let clock = Date.now();
-  const owner: HumanActor = { accountId: randomUUID(), subject: 'user_owner', issuer: 'https://fixture.example', sessionId: 'sess_owner', expiresAt: clock + 60000 };
-  db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(owner.accountId, owner.issuer, owner.subject, clock);
-  const auth = { requireCurrent(actor: HumanActor) { assert.equal(actor.accountId, owner.accountId); return actor; } };
-  const devices = createDevices(db, auth, () => clock), installation = generateKeyPairSync('ed25519');
-  let signing = generateKeyPairSync('ed25519'), encryption = generateKeyPairSync('x25519');
-  const encode = (key: typeof installation.publicKey) => key.export({ type: 'spki', format: 'der' }).toString('base64url');
-  const command = { requestId: randomUUID(), installationId: randomUUID(), deviceId: randomUUID(), mode: 'new' as 'new' | 'reenroll' | 'rotate', installationPublicKey: encode(installation.publicKey), deviceSigningKey: encode(signing.publicKey), deviceEncryptionKey: encode(encryption.publicKey), deviceLabel: 'Home A', requestedCapabilities: ['execution'], zone: 'Asia/Jakarta', zoneRevision: 1 };
-  function enrollment(change = {}) {
-    const input = parseLinkChallenge({ ...command, ...change, requestId: randomUUID() });
-    const response = devices.createChallenge(owner, input, 'fixture');
-    const desc: Omit<DeviceDescriptor, 'signature'> = { v: 1, accountId: owner.accountId, installationId: input.installationId, deviceId: input.deviceId, authorityGeneration: response.authorityGeneration, deviceGeneration: response.deviceGeneration, keyRevision: response.keyRevision, zone: input.zone, zoneRevision: input.zoneRevision, signingPublicKey: input.deviceSigningKey, encryptionPublicKey: input.deviceEncryptionKey };
-    const body = deviceLinkBody(input, response), bodyBytes = Buffer.from(JSON.stringify(body));
-    return { input, response, body, request: { requestId: randomUUID(), challengeId: response.challengeId, nonce: response.nonce, installationSignature: sign(null, bodyBytes, installation.privateKey).toString('base64url'), deviceSignature: sign(null, bodyBytes, signing.privateKey).toString('base64url'), descriptor: { ...desc, signature: sign(null, Buffer.from(JSON.stringify(descriptorBody(desc))), signing.privateKey).toString('base64url') } } };
+test('signed device enrollment and heartbeat preserve challenge, key and session evidence', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-device-evidence-'));
+  const database = join(dir, 'canonical.sqlite'), now = Date.now();
+  const jwt = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const auth = {
+    secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture',
+    issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://briefsip.example',
+    development: true, jwtKey: jwt.publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+  };
+  const accountId = randomUUID(), sub = 'user_device_evidence', sid = 'sess_device_evidence';
+  const stream = new AbortController();
+  let clock = now, app: Awaited<ReturnType<typeof startApp>>;
+  const db = new DatabaseSync(database);
+  t.after(async () => {
+    stream.abort();
+    await app?.close();
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  installFrozenNodeSchema(db);
+  db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,?,?,?)').run(accountId, auth.issuer, sub, now);
+
+  app = await startApp({ database, auth, fixedClock: clock });
+  async function restart(at: number) {
+    await app.close();
+    clock = at;
+    app = await startApp({ database, auth, fixedClock: clock });
   }
-  function proof(token: string | undefined, generation: number, method: string, path: string, body = Buffer.alloc(0), change = {}) {
-    const requestId = body.length ? JSON.parse(body.toString()).requestId : randomUUID();
-    const p: Omit<DeviceProof, 'signature'> = { deviceId: command.deviceId, deviceGeneration: generation, authorityGeneration: String(db.prepare('SELECT generation FROM authority_state').get()!.generation), requestId, nonce: randomBytes(32).toString('base64url'), iat: Math.floor(clock / 1000), exp: Math.floor(clock / 1000) + 60, method, path, bodyDigest: sha256(body), ...change };
-    return { requestId, headers: new Headers({ ...(token ? { Authorization: `Device ${token}` } : {}), 'X-Briefsip-Proof': JSON.stringify({ ...p, signature: sign(null, Buffer.from(JSON.stringify(deviceProofBody(p))), signing.privateKey).toString('base64url') }) }) };
+  function headers(requestId: string) {
+    return { Origin: auth.origin, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': requestId };
   }
-  return { db, owner, devices, command, enrollment, proof, encode, setSigning(key: { publicKey: KeyObject; privateKey: KeyObject }) { signing = key; command.deviceSigningKey = encode(key.publicKey); }, signing: () => signing, clock: () => clock, advance(ms: number) { clock += ms; } };
-}
+  async function human<T extends { requestId: string }>(path: string, value: T, status: number) {
+    const claims = { iss: auth.issuer, sub, sid, azp: auth.origin, exp: Math.floor(clock / 1000) + 60, nbf: Math.floor(clock / 1000) - 1 };
+    const unsigned = [JSON.stringify({ alg: 'RS256' }), JSON.stringify(claims)].map(part => Buffer.from(part).toString('base64url')).join('.');
+    const token = unsigned + '.' + sign('RSA-SHA256', Buffer.from(unsigned), jwt.privateKey).toString('base64url');
+    const response = await fetch(app.origin + path, {
+      method: 'POST', headers: { ...headers(value.requestId), Authorization: 'Bearer ' + token }, body: JSON.stringify(value),
+    });
+    const body = await response.json();
+    assert.equal(response.status, status, JSON.stringify(body));
+    return body;
+  }
 
-test('enrollment consumes decoded nonce once, binds signed timezone and never replays session secret', () => {
-  const f = fixture(); const { db, devices, owner } = f;
-  try {
-    const e = f.enrollment();
-    assert.equal(db.prepare('SELECT nonce_digest FROM link_challenges').get()!.nonce_digest, sha256(Buffer.from(e.response.nonce, 'base64url')));
-    assert(!String(db.prepare('SELECT candidate_json FROM link_challenges').get()!.candidate_json).includes(e.response.nonce));
-    assert.throws(() => devices.link(owner, { ...e.request, nonce: randomBytes(32).toString('base64url') }, 'fixture'), /session|proof/);
-    const linked = devices.link(owner, e.request, 'fixture'); assert.equal(linked.status, 201); assert.equal(typeof linked.data.deviceSession, 'string');
-    const row = db.prepare('SELECT * FROM devices').get()!; assert.equal(row.zone, 'Asia/Jakarta'); assert.equal(row.zone_revision, 1);
-    const replay = devices.link(owner, e.request, 'fixture'); assert.equal(replay.status, 200); assert.equal(replay.data.deviceSession, undefined);
-    assert.equal(db.prepare('SELECT count(*) AS n FROM devices').get()!.n, 1); assert.equal(db.prepare('SELECT count(*) AS n FROM device_sessions').get()!.n, 1);
-    const saved = db.prepare('SELECT result_json FROM receipts WHERE request_id=?').get(e.request.requestId)!; assert(!String(saved.result_json).includes(String(linked.data.deviceSession)));
-    assert.throws(() => devices.link(owner, { ...e.request, requestId: randomUUID() }, 'fixture'), /Challenge/);
-  } finally { devices.close(); db.close(); }
-});
+  const installation = generateKeyPairSync('ed25519'), encryption = generateKeyPairSync('x25519');
+  const originalKey = generateKeyPairSync('ed25519');
+  const der = (key: KeyObject) => key.export({ type: 'spki', format: 'der' });
+  const newCandidate = {
+    requestId: randomUUID(), installationId: randomUUID(), deviceId: randomUUID(), mode: 'new' as const,
+    installationPublicKey: der(installation.publicKey).toString('base64url'),
+    deviceSigningKey: der(originalKey.publicKey).toString('base64url'),
+    deviceEncryptionKey: der(encryption.publicKey).toString('base64url'),
+    deviceLabel: 'Home', requestedCapabilities: ['execution'], zone: 'Asia/Jakarta', zoneRevision: 1,
+  };
+  const devicePath = `/api/devices/${newCandidate.deviceId}`;
+  const challengePath = '/api/devices/link-challenges', linkPath = '/api/devices/link';
 
-test('device proof nonce, body, expiry and current generation gate heartbeat and session refresh', () => {
-  const f = fixture(), { db, devices, owner } = f;
-  try {
-    const linked = devices.link(owner, f.enrollment().request, 'fixture'), token = String(linked.data.deviceSession), path = `/api/devices/${f.command.deviceId}/heartbeat`;
-    const p = f.proof(token, 1, 'GET', '/stream'); const principal = devices.authenticate(p.headers, 'GET', '/stream', Buffer.alloc(0), p.requestId, 'fixture');
-    assert.throws(() => devices.authenticate(p.headers, 'GET', '/stream', Buffer.alloc(0), p.requestId, 'fixture'), /Nonce/);
-    const stream = devices.openStream(principal, () => {});
-    const command = { requestId: randomUUID(), connectionGeneration: stream.connectionGeneration, zone: 'Asia/Jakarta', zoneRevision: 1, journalWatermark: 0 };
-    const bytes = Buffer.from(JSON.stringify(command)), signed = f.proof(token, 1, 'POST', path, bytes);
-    assert.throws(() => devices.authenticate(signed.headers, 'POST', path, Buffer.from('{}'), signed.requestId, 'fixture'), /session/);
-    const current = devices.authenticate(signed.headers, 'POST', path, bytes, signed.requestId, 'fixture');
-    const heartbeat = devices.heartbeat(current, command); assert.equal(heartbeat.status, 200); assert.equal(db.prepare('SELECT status FROM devices').get()!.status, 'ready');
-    assert.equal(devices.heartbeat(current, command).status, 200);
-    assert.throws(() => devices.heartbeat(current, { ...command, requestId: randomUUID(), zone: 'UTC' }), /Time zone/);
-    devices.heartbeat(current, { ...command, requestId: randomUUID(), zone: 'UTC', zoneRevision: 2 });
-    const oldZone = JSON.parse(String(db.prepare('SELECT descriptor_json FROM devices').get()!.descriptor_json)); assert.equal(oldZone.zone, 'Asia/Jakarta');
-    const stale = f.proof(token, 1, 'GET', '/stream', Buffer.alloc(0), { exp: Math.floor(f.clock() / 1000) - 61, iat: Math.floor(f.clock() / 1000) - 120 });
-    assert.throws(() => devices.authenticate(stale.headers, 'GET', '/stream', Buffer.alloc(0), stale.requestId, 'fixture'), /session/);
-    const refreshBody = Buffer.from(JSON.stringify({ requestId: randomUUID(), expectedGeneration: 1 })), refresh = f.proof(undefined, 1, 'POST', '/session', refreshBody);
-    const refreshPrincipal = devices.authenticate(refresh.headers, 'POST', '/session', refreshBody, refresh.requestId, 'fixture', true);
-    assert.equal(devices.refreshSession(refreshPrincipal, JSON.parse(refreshBody.toString())).generation, 1);
-    assert.throws(() => devices.requireCurrent(principal), /session/);
-  } finally { devices.close(); db.close(); }
-});
+  async function enrollment(mode: 'new' | 'reenroll' | 'rotate', key = originalKey, expectedGeneration = 0) {
+    const candidate = {
+      ...newCandidate, requestId: randomUUID(), mode, deviceSigningKey: der(key.publicKey).toString('base64url'),
+      ...(mode === 'new' ? {} : { expectedGeneration, expectedKeyRevision: 1, zone: 'UTC', zoneRevision: 2 }),
+    };
+    const challenge = (await human(challengePath, candidate, 201)).data;
+    const body = deviceLinkBody(candidate, challenge), bytes = Buffer.from(JSON.stringify(body));
+    const descriptor = {
+      v: 1 as const, accountId, installationId: candidate.installationId, deviceId: candidate.deviceId,
+      authorityGeneration: challenge.authorityGeneration, deviceGeneration: challenge.deviceGeneration,
+      keyRevision: challenge.keyRevision, zone: candidate.zone, zoneRevision: candidate.zoneRevision,
+      signingPublicKey: candidate.deviceSigningKey, encryptionPublicKey: candidate.deviceEncryptionKey,
+    };
+    const request = {
+      requestId: randomUUID(), challengeId: challenge.challengeId, nonce: challenge.nonce,
+      installationSignature: sign(null, bytes, installation.privateKey).toString('base64url'),
+      deviceSignature: sign(null, bytes, key.privateKey).toString('base64url'),
+      descriptor: { ...descriptor, signature: sign(null, Buffer.from(JSON.stringify(descriptorBody(descriptor))), key.privateKey).toString('base64url') },
+    };
+    return { body, bytes, request, challenge };
+  }
 
-test('reenroll and key rotation fence old sessions while preserving original descriptor evidence', () => {
-  const f = fixture(), { db, devices, owner } = f;
-  try {
-    const first = devices.link(owner, f.enrollment().request, 'fixture');
-    const oldKey = f.signing(), e = f.enrollment({ mode: 'reenroll', expectedGeneration: 1, expectedKeyRevision: 1 });
-    const reenrolled = devices.link(owner, e.request, 'fixture'); assert.equal(reenrolled.data.generation, 2);
-    const old = f.proof(String(first.data.deviceSession), 1, 'GET', '/stream'); assert.throws(() => devices.authenticate(old.headers, 'GET', '/stream', Buffer.alloc(0), old.requestId, 'fixture'), /session/);
-    f.setSigning(generateKeyPairSync('ed25519'));
-    const rotate = f.enrollment({ mode: 'rotate', expectedGeneration: 2, expectedKeyRevision: 1 });
-    assert.throws(() => devices.link(owner, rotate.request, 'fixture'), /Old key/);
-    const oldThumb = publicThumb(oldKey.publicKey);
-    const rotated = devices.link(owner, { ...rotate.request, rotationSignature: sign(null, Buffer.from(JSON.stringify(['briefsip-device-key-transition-v1', oldThumb, rotate.body])), oldKey.privateKey).toString('base64url') }, 'fixture');
-    assert.equal(rotated.data.generation, 3); assert.equal(rotated.data.keyRevision, 2);
-    assert.equal(devices.enrollmentDescriptor(owner, f.command.deviceId, 1).signingPublicKey, f.encode(oldKey.publicKey));
-    assert.equal(db.prepare('SELECT count(*) AS n FROM device_sessions WHERE revoked=0').get()!.n, 1);
-  } finally { devices.close(); db.close(); }
-});
-function publicThumb(key: KeyObject) { return sha256(key.export({ type: 'spki', format: 'der' })); }
+  const invalidCandidates = [
+    [{ zone: '+07:00' }, 400], [{ zone: 'Etc/Unknown' }, 400], [{ zoneRevision: 0 }, 400],
+    [{ requestedCapabilities: ['root'] }, 422], [{ installationPublicKey: newCandidate.deviceSigningKey }, 400],
+    [{ deviceEncryptionKey: newCandidate.deviceSigningKey }, 400],
+    [{ deviceSigningKey: newCandidate.deviceSigningKey + '=' }, 400], [{ extra: true }, 400],
+  ] as const;
+  for (const [index, [change, status]] of invalidCandidates.entries()) {
+    if (index === 5) await restart(clock + 60001);
+    await human(challengePath, { ...newCandidate, ...change, requestId: randomUUID() }, status);
+  }
+  await restart(clock + 60001);
+  const first = await enrollment('new');
+  assert.equal(first.body[10], digestCommand(['briefsip-device-capabilities-v1', ['execution']]));
+  const savedChallenge = db.prepare('SELECT nonce_digest,candidate_json FROM link_challenges WHERE id=?').get(first.request.challengeId)!;
+  assert.equal(savedChallenge.nonce_digest, sha256(Buffer.from(first.request.nonce, 'base64url')));
+  assert(!String(savedChallenge.candidate_json).includes(first.request.nonce));
 
-test('wait reveal transport binds signed results, bounds pending jobs and clears them on connection changes', async () => {
-  const f = fixture(), { db, devices, owner } = f;
-  try {
-    const linked = devices.link(owner, f.enrollment().request, 'fixture'), proof = f.proof(String(linked.data.deviceSession), 1, 'GET', '/stream');
-    const principal = devices.authenticate(proof.headers, 'GET', '/stream', Buffer.alloc(0), proof.requestId, 'fixture');
-    let frame: { body: { jobId: string; request: WaitRevealRequest; payloadDigest: string } }, blocked = false;
-    let stream = devices.openStream(principal, () => {}, value => { frame = JSON.parse(value); return !blocked; });
-    const ready = () => devices.heartbeat(principal, { requestId: randomUUID(), connectionGeneration: stream.connectionGeneration, zone: 'Asia/Jakarta', zoneRevision: 1, journalWatermark: 0 }); ready();
-    const request = (): WaitRevealRequest => ({ requestId: randomUUID(), waitKey: randomUUID(), sourceDeviceId: principal.deviceId, deviceGeneration: principal.generation, authorityGeneration: principal.authorityGeneration, secretGeneration: 1, ownerAccountId: owner.accountId, expiresAt: f.clock() + 60000, ephemeralPublicKey: f.encode(generateKeyPairSync('x25519').publicKey), connectionGeneration: stream.connectionGeneration });
-    const complete = () => ({ requestId: frame!.body.jobId, payloadDigest: frame!.body.payloadDigest, result: { requestId: frame!.body.request.requestId, waitKey: frame!.body.request.waitKey, sourceDeviceId: principal.deviceId, deviceGeneration: principal.generation, secretGeneration: 1, expiresAt: frame!.body.request.expiresAt, iv: Buffer.alloc(12).toString('base64url'), ciphertext: Buffer.alloc(64).toString('base64url'), tag: Buffer.alloc(16).toString('base64url') } });
-    const pending = devices.requestWaitReveal(request()), result = complete();
-    assert.throws(() => devices.requestWaitReveal(request()), { code: 'server_capacity' });
-    assert.throws(() => devices.resolveWaitReveal(principal, { ...result, payloadDigest: '0'.repeat(64) }), { code: 'wait_invalid' });
-    assert.throws(() => devices.resolveWaitReveal(principal, { ...result, result: { ...result.result, requestId: randomUUID() } }), { code: 'wait_invalid' });
-    devices.resolveWaitReveal(principal, result); assert.deepEqual(await pending, result.result);
-    assert.throws(() => devices.resolveWaitReveal(principal, result), { code: 'wait_invalid' });
-    const disconnected = assert.rejects(devices.requestWaitReveal(request()), { code: 'device_offline' });
-    const delayed = complete(); stream.disconnect(); await disconnected;
-    assert.throws(() => devices.resolveWaitReveal(principal, delayed), { code: 'wait_invalid' });
-    assert.throws(() => devices.requestWaitReveal(request()), { code: 'device_offline' });
-    stream = devices.openStream(principal, () => {}, value => { frame = JSON.parse(value); return !blocked; }); ready();
-    blocked = true; await assert.rejects(devices.requestWaitReveal(request()), { code: 'device_offline' }); blocked = false;
-    const failure = assert.rejects(devices.requestWaitReveal(request()), { code: 'keystore_unavailable' });
-    devices.resolveWaitReveal(principal, { requestId: frame!.body.jobId, payloadDigest: frame!.body.payloadDigest, errorCode: 'keystore_unavailable' }); await failure;
-    const revoked = assert.rejects(devices.requestWaitReveal(request()), { code: 'device_offline' });
-    devices.revoke(owner, principal.deviceId, { requestId: randomUUID(), expectedRevision: db.prepare('SELECT revision FROM devices WHERE id=?').get(principal.deviceId)!.revision }); await revoked;
-  } finally { devices.close(); db.close(); }
-});
+  const alien = generateKeyPairSync('ed25519');
+  const invalidProofs = [
+    [{ nonce: randomBytes(32).toString('base64url') }, 401],
+    [{ deviceSignature: sign(null, first.bytes, alien.privateKey).toString('base64url') }, 401],
+    [{ descriptor: { ...first.request.descriptor, zone: 'UTC' } }, 401],
+    [{ rotationSignature: first.request.deviceSignature }, 400],
+  ] as const;
+  for (const [change, status] of invalidProofs) await human(linkPath, { ...first.request, ...change }, status);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM devices').get()!.n, 0);
+  await restart(first.challenge.expiresAt);
+  assert.equal((await human(linkPath, first.request, 410)).error.code, 'challenge_expired');
+  const capped = await enrollment('new');
+  db.prepare(`WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<3)
+    INSERT INTO link_challenges SELECT printf('00000000-0000-4000-8000-%012d',i),
+    account,sid,installation,device,installation_thumbprint,signing_thumbprint,encryption_thumbprint,
+    candidate_json,printf('%064d',i),expires_at,0 FROM n CROSS JOIN link_challenges WHERE id=?`).run(capped.request.challengeId);
+  const liveChallenges = () => db.prepare('SELECT count(*) n FROM link_challenges WHERE expires_at>?').get(clock)!.n;
+  assert.equal(liveChallenges(), 4);
+  const limited = await human(challengePath, { ...newCandidate, requestId: randomUUID() }, 429);
+  assert.equal(limited.error.code, 'rate_limited');
+  assert(limited.error.details.retryAfterMs > 0);
+  assert.equal(liveChallenges(), 4);
+  await restart(capped.challenge.expiresAt + 1);
+  const valid = await enrollment('new');
+  assert.equal(liveChallenges(), 1);
+  const linked = await human(linkPath, valid.request, 201), session = linked.data.deviceSession;
+  assert.equal(typeof session, 'string');
+  const replay = await human(linkPath, valid.request, 200);
+  assert.deepEqual(replay.data, {
+    deviceId: newCandidate.deviceId, generation: 1, keyRevision: 1, descriptor: valid.request.descriptor,
+  });
+  assert.equal(db.prepare('SELECT count(*) AS n FROM devices').get()!.n, 1);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM device_sessions').get()!.n, 1);
+  const evidence = () => String(db.prepare('SELECT result_json FROM receipts WHERE request_id=?').get(valid.request.requestId)!.result_json);
+  assert(!evidence().includes(session));
+  assert.equal((await human(linkPath, { ...valid.request, requestId: randomUUID() }, 409)).error.code, 'challenge_used');
+  for (let n = 0; n < 4; n++) {
+    await human(challengePath, {
+      ...newCandidate, requestId: randomUUID(), installationId: randomUUID(), deviceId: randomUUID(),
+    }, 201);
+  }
+  assert.equal((await human(challengePath, { ...newCandidate, requestId: randomUUID() }, 429)).error.code, 'rate_limited');
 
-test('closed device keys, zones and signatures reject malformed or substituted enrollment', () => {
-  const f = fixture(), { devices, owner, db } = f;
-  try {
-    for (const change of [{ zone: '+07:00' }, { zone: 'Etc/Unknown' }, { zoneRevision: 0 }, { requestedCapabilities: ['root'] }, { installationPublicKey: f.command.deviceSigningKey }, { deviceEncryptionKey: f.command.deviceSigningKey }, { deviceSigningKey: f.command.deviceSigningKey + '=' }, { extra: true }]) assert.throws(() => devices.createChallenge(owner, { ...f.command, ...change }, 'fixture'));
-    f.advance(60001);
-    const e = f.enrollment();
-    assert.equal(e.body[10], digestCommand(['briefsip-device-capabilities-v1', ['execution']]));
-    const alien = generateKeyPairSync('ed25519');
-    for (const change of [{ deviceSignature: sign(null, Buffer.from(JSON.stringify(e.body)), alien.privateKey).toString('base64url') }, { descriptor: { ...e.request.descriptor, zone: 'UTC' } }, { rotationSignature: e.request.deviceSignature }]) assert.throws(() => devices.link(owner, { ...e.request, ...change }, 'fixture'));
-    assert.equal(db.prepare('SELECT count(*) AS n FROM devices').get()!.n, 0);
-    f.advance(120001); assert.throws(() => devices.link(owner, e.request, 'fixture'), /Challenge/);
-  } finally { devices.close(); db.close(); }
-});
+  function proof<T extends { requestId: string }>(path: string, token?: string, value?: T, times: { iat?: number; exp?: number } = {}) {
+    const body = value && JSON.stringify(value), requestId = value?.requestId ?? randomUUID();
+    const p = {
+      deviceId: newCandidate.deviceId, deviceGeneration: 1, authorityGeneration: valid.challenge.authorityGeneration,
+      requestId, nonce: randomBytes(32).toString('base64url'), iat: Math.floor(clock / 1000), exp: Math.floor(clock / 1000) + 60,
+      method: body ? 'POST' : 'GET', path, bodyDigest: sha256(body ?? ''), ...times,
+    };
+    return {
+      method: p.method, body,
+      headers: {
+        ...headers(requestId), ...(token ? { Authorization: 'Device ' + token } : {}),
+        'X-Briefsip-Proof': JSON.stringify({ ...p, signature: sign(null, Buffer.from(JSON.stringify(deviceProofBody(p))), originalKey.privateKey).toString('base64url') }),
+      },
+    };
+  }
+  async function signed(path: string, init: RequestInit, status: number) {
+    const response = await fetch(app.origin + path, init);
+    const body = await response.json();
+    assert.equal(response.status, status, JSON.stringify(body));
+    return body;
+  }
+  const streamPath = devicePath + '/stream', opened = proof(streamPath, session);
+  const response = await fetch(app.origin + streamPath, { ...opened, signal: stream.signal });
+  assert.equal(response.status, 200);
+  const reader = response.body!.getReader();
+  const connected = JSON.parse(new TextDecoder().decode((await reader.read()).value));
+  assert.equal(connected.kind, 'connected');
+  assert.equal((await signed(streamPath, opened, 409)).error.code, 'proof_replayed');
 
-test('challenge hard cap, bounded cleanup and transient admission recover after expiry', () => {
-  const f = fixture(), { devices, owner, db } = f;
-  try {
-    f.enrollment();
-    db.exec(`WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<3)
-      INSERT INTO link_challenges SELECT printf('00000000-0000-4000-8000-%012d',i),account,sid,installation,device,installation_thumbprint,signing_thumbprint,encryption_thumbprint,candidate_json,printf('%064d',i),expires_at,0 FROM n CROSS JOIN (SELECT * FROM link_challenges LIMIT 1)`);
-    const count = () => db.prepare('SELECT count(*) AS n FROM link_challenges').get()!.n;
-    assert.equal(count(), 4); assert.throws(() => devices.createChallenge(owner, { ...f.command, requestId: randomUUID() }, 'fixture'), error => error instanceof ProtocolError && error.status === 429 && Number(error.details?.retryAfterMs) > 0); assert.equal(count(), 4);
-    f.advance(120001); f.enrollment(); assert.equal(count(), 1);
-    for (let n = 0; n < 4; n++) { try { devices.createChallenge(owner, { ...f.command, requestId: randomUUID(), installationId: randomUUID(), deviceId: randomUUID() }, 'fixture'); } catch {} }
-    assert.throws(() => devices.createChallenge(owner, f.command, 'fixture'), error => error instanceof ProtocolError && error.status === 429);
-    f.advance(60001);
-    db.exec('DELETE FROM link_challenges');
-    db.prepare('INSERT INTO link_challenges VALUES (?,?,?,?,?,?,?,?,?,?,?,0)').run(randomUUID(), owner.accountId, owner.sessionId, f.command.installationId, f.command.deviceId, 'i', 's', 'e', '{}', 'root', f.clock() - 1);
-    db.exec(`WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<1500)
-      INSERT INTO link_challenges SELECT printf('00000000-0000-4000-8000-%012d',i),account,sid,installation,device,installation_thumbprint,signing_thumbprint,encryption_thumbprint,candidate_json,printf('%064d',i),expires_at,0 FROM n CROSS JOIN (SELECT * FROM link_challenges LIMIT 1)`);
-    devices.maintain(); assert.equal(count(), 501); devices.maintain(); assert.equal(count(), 0);
-    f.enrollment(); assert.equal(count(), 1);
-  } finally { devices.close(); db.close(); }
-});
+  const row = () => db.prepare('SELECT status,zone,zone_revision,descriptor_json FROM devices WHERE id=?').get(newCandidate.deviceId)!;
+  assert.equal(row().zone, 'Asia/Jakarta');
+  assert.equal(row().zone_revision, 1);
+  const path = devicePath + '/heartbeat';
+  const heartbeat = { requestId: randomUUID(), connectionGeneration: connected.connectionGeneration, zone: 'Asia/Jakarta', zoneRevision: 1, journalWatermark: 0 };
+  const beat = proof(path, session, heartbeat);
+  await signed(path, { ...beat, body: JSON.stringify({ ...heartbeat, journalWatermark: 1 }) }, 401);
+  const firstBeat = await signed(path, beat, 200);
+  assert.equal(row().status, 'ready');
+  assert.deepEqual(await signed(path, proof(path, session, heartbeat), 200), firstBeat);
+  await signed(path, proof(path, session, { ...heartbeat, requestId: randomUUID(), zone: 'UTC' }), 409);
+  await signed(path, proof(path, session, { ...heartbeat, requestId: randomUUID(), zone: 'UTC', zoneRevision: 2 }), 200);
+  assert.equal(row().zone, 'UTC');
+  assert.equal(JSON.parse(String(row().descriptor_json)).zone, 'Asia/Jakarta');
+  const seconds = Math.floor(clock / 1000);
+  await signed(streamPath, proof(streamPath, session, undefined, { iat: seconds - 120, exp: seconds - 61 }), 401);
 
-test('proof replay guard survives skew and full nonce table refuses without mutation', () => {
-  const f = fixture(), { devices, owner, db } = f;
-  try {
-    const linked = devices.link(owner, f.enrollment().request, 'fixture'), token = String(linked.data.deviceSession);
-    const proof = f.proof(token, 1, 'GET', '/stream');
-    devices.authenticate(proof.headers, 'GET', '/stream', Buffer.alloc(0), proof.requestId, 'fixture');
-    f.advance(61000);
-    assert.throws(() => devices.authenticate(proof.headers, 'GET', '/stream', Buffer.alloc(0), proof.requestId, 'fixture'), /Nonce/);
-    f.advance(61000);
-    assert.throws(() => devices.authenticate(proof.headers, 'GET', '/stream', Buffer.alloc(0), proof.requestId, 'fixture'), /session/);
-    devices.maintain(); assert.equal(db.prepare('SELECT count(*) AS n FROM proof_replays').get()!.n, 0);
-    db.exec(`WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<4096)
-      INSERT INTO proof_replays SELECT id,printf('%064d',i),${f.clock() + 60000} FROM n CROSS JOIN devices`);
-    const full = f.proof(token, 1, 'GET', '/stream');
-    assert.throws(() => devices.authenticate(full.headers, 'GET', '/stream', Buffer.alloc(0), full.requestId, 'fixture'), error => error instanceof ProtocolError && error.status === 429);
-    assert.equal(db.prepare('SELECT count(*) AS n FROM proof_replays').get()!.n, 4096);
-    f.advance(60001); devices.maintain();
-    const renewed = f.proof(token, 1, 'GET', '/stream'); devices.authenticate(renewed.headers, 'GET', '/stream', Buffer.alloc(0), renewed.requestId, 'fixture');
-  } finally { devices.close(); db.close(); }
+  const refreshPath = devicePath + '/session';
+  const refresh = { requestId: randomUUID(), expectedGeneration: 1 };
+  const fresh = (await signed(refreshPath, proof(refreshPath, undefined, refresh), 200)).data;
+  assert.equal(fresh.generation, 1);
+  await signed(streamPath, proof(streamPath, session), 401);
+  stream.abort();
+  await reader.cancel().catch(() => {});
+
+  const freshProof = proof(streamPath, fresh.deviceSession);
+  const openedFresh = await fetch(app.origin + streamPath, freshProof);
+  assert.equal(openedFresh.status, 200);
+  await openedFresh.body!.cancel();
+  const firstSeen = clock;
+  await restart(firstSeen + 61000);
+  assert.equal((await signed(streamPath, freshProof, 409)).error.code, 'proof_replayed');
+  await restart(firstSeen + 122000);
+  assert.equal((await signed(streamPath, freshProof, 401)).error.code, 'device_session_invalid');
+  const nonceCount = () => db.prepare('SELECT count(*) n FROM proof_replays').get()!.n;
+  assert.equal(nonceCount(), 0);
+  db.prepare(`WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<4096)
+    INSERT INTO proof_replays SELECT ?,printf('%064d',i),? FROM n`).run(newCandidate.deviceId, clock + 60000);
+  assert.equal((await signed(streamPath, proof(streamPath, fresh.deviceSession), 429)).error.code, 'rate_limited');
+  assert.equal(nonceCount(), 4096);
+  await restart(clock + 60001);
+  const recovered = await fetch(app.origin + streamPath, proof(streamPath, fresh.deviceSession));
+  assert.equal(recovered.status, 200);
+  await recovered.body!.cancel();
+
+  const reenroll = await enrollment('reenroll', originalKey, 1);
+  assert.equal((await human(linkPath, reenroll.request, 201)).data.generation, 2);
+  await signed(streamPath, proof(streamPath, fresh.deviceSession), 401);
+  const newKey = generateKeyPairSync('ed25519'), rotation = await enrollment('rotate', newKey, 2);
+  assert.equal((await human(linkPath, rotation.request, 409)).error.code, 'old_key_unavailable');
+  const transition = ['briefsip-device-key-transition-v1', sha256(der(originalKey.publicKey)), rotation.body];
+  const rotated = await human(linkPath, {
+    ...rotation.request, rotationSignature: sign(null, Buffer.from(JSON.stringify(transition)), originalKey.privateKey).toString('base64url'),
+  }, 201);
+  assert.equal(rotated.data.generation, 3);
+  assert.equal(rotated.data.keyRevision, 2);
+  assert.deepEqual(JSON.parse(evidence()).data.descriptor, valid.request.descriptor);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM device_sessions WHERE revoked=0').get()!.n, 1);
 });
