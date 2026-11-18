@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Spec } from '../shared/routine-schedule';
+import { readJson } from './http';
 import { Alert, Checkbox, Field, Input, Select } from './ui/kit';
 
 export type RoutineTiming = { schedule: Spec; zone: string } | { nextAt: number; intervalSeconds: number | null; zone: string };
@@ -35,7 +36,7 @@ export function RoutineSchedule({ initial, initialNextAt, initialInterval, initi
   useEffect(() => {
     if (initialZone) return;
     let stopped = false;
-    void fetch('/api/routine-schedule').then(async response => { const result = await response.json(); if (!response.ok) throw new Error(result.error); return result; }).then(result => { if (!stopped) setZone(result.zone); }).catch(error => { if (!stopped) setZoneError(error.message); });
+    void fetch('/api/routine-schedule').then(response => readJson<{ zone: string }>(response)).then(result => { if (!stopped) setZone(result.zone); }).catch(error => { if (!stopped) setZoneError(error.message); });
     return () => { stopped = true; };
   }, [initialZone]);
   useEffect(() => {
@@ -56,7 +57,7 @@ export function RoutineSchedule({ initial, initialNextAt, initialInterval, initi
     let stopped = false; setPreview(null); setError(''); onChange(null);
     const timer = setTimeout(() => {
       const query = new URLSearchParams({ zone, schedule:serialized });
-      void fetch(`/api/routine-schedule?${query}`).then(async response => { const result = await response.json(); if (!response.ok) throw new Error(result.error); return result; }).then(result => {
+      void fetch(`/api/routine-schedule?${query}`).then(response => readJson<{ times: number[]; zone: string }>(response)).then(result => {
         if (stopped) return;
         setPreview(result);
         const schedule = JSON.parse(serialized) as Spec;

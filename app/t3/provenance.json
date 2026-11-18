@@ -2573,5 +2573,128 @@
       "adaptation": "Rust translation of the existing Briefsip Codex form-elicitation policy and protocol checks; one-time forms remain session-bound.",
       "compatibilityCheck": "app/rust-harness.test.ts"
     }
+  ],
+  "updateEverythingSourceEntries": [
+    {
+      "sourcePath": "apps/web/src/components/sidebar/SidebarUpdateCapsule.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "1352a18a18fd2b897bd2f89e28ce00a0b6c7b2bc2190566e3a19ae20fe72287e",
+      "symbols": [
+        "SidebarUpdateCapsule"
+      ],
+      "localPaths": [
+        "app/src/SidebarUpdateCapsule.tsx",
+        "app/src/ui/updates.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Render availability and run outcomes in the Briefsip sidebar using kit controls.",
+      "compatibilityCheck": "app/updateEverything.logic.test.ts"
+    },
+    {
+      "sourcePath": "apps/web/src/components/sidebar/UpdateEverythingDialog.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "f5248da6ebc68ed769981f67355099511422deeefd926e8cb3a1b423cf560fcc",
+      "symbols": [
+        "UpdateEverythingDialog",
+        "UpdateEverythingDialogContent"
+      ],
+      "localPaths": [
+        "app/src/UpdateEverythingDialog.tsx"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Keep one machine row, running-work warning, release version and explicit confirmation with Briefsip Radix Dialog.",
+      "compatibilityCheck": "app/updateEverything.logic.test.ts"
+    },
+    {
+      "sourcePath": "apps/web/src/components/sidebar/useUpdateEverything.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "7075140c043fe6d8581832fd8ffd9b1a182775fc2cc120c4b8722ab58a9ff3af",
+      "symbols": [
+        "useUpdateEverything"
+      ],
+      "localPaths": [
+        "app/src/hooks/useUpdateEverything.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt update orchestration to Briefsip HTTP polling, submitting paired machines before restarting the connected server.",
+      "compatibilityCheck": "app/updateEverything.logic.test.ts"
+    },
+    {
+      "sourcePath": "apps/web/src/components/sidebar/updateEverything.logic.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "f320db5f913d33a614fcca11a20244501c7b68aca23802d29759b01996fe74c8",
+      "symbols": [
+        "collectServerUpdateTargets",
+        "describeUpdateEverything",
+        "describeUpdateCapsule",
+        "resolveUpdateRunMachineStatus"
+      ],
+      "localPaths": [
+        "app/src/updateEverything.logic.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Retain target eligibility and skip reasons, one row per machine, progress counts and outcome resolution against launcher receipts.",
+      "compatibilityCheck": "app/updateEverything.logic.test.ts"
+    },
+    {
+      "sourcePath": "apps/web/src/components/sidebar/updateEverything.logic.test.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "ecdec631758ae2b29119734c3f91fed886aba0823b20101c8ab31a223eff2497",
+      "symbols": [
+        "collectServerUpdateTargets",
+        "describeUpdateEverything",
+        "describeUpdateCapsule",
+        "runUpdateEverything"
+      ],
+      "localPaths": [
+        "app/updateEverything.logic.test.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Port eligible and skipped machine assertions, restarting-work counts, ordering and capsule outcome checks to Node test and Briefsip models.",
+      "compatibilityCheck": "app/updateEverything.logic.test.ts"
+    },
+    {
+      "sourcePath": "apps/web/src/components/sidebar/updateEverythingRun.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "a6d8a1088be9f0e74fd6a288f5aee967da66571298db63145ad79dbd6f5b5891",
+      "symbols": [
+        "saveUpdateEverythingResult",
+        "startDesktopUpdateLaunchNotice"
+      ],
+      "localPaths": [
+        "app/src/updateEverythingRun.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt saved run and receipt recovery to same-tab reloads and Briefsip idempotent command bodies.",
+      "compatibilityCheck": "app/updateEverything.logic.test.ts"
+    },
+    {
+      "sourcePath": "apps/web/src/components/sidebar/SidebarUpdateReleaseNotes.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "b6f30d85176945edba0c95e3666e8988f1b843d0311e3c55d34677344612f043",
+      "symbols": [
+        "SidebarUpdateReleaseNotes"
+      ],
+      "localPaths": [
+        "app/src/SidebarUpdateReleaseNotes.tsx"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Show target release notes in an optional disclosure using the Briefsip feed and kit.",
+      "compatibilityCheck": "app/updateEverything.logic.test.ts"
+    }
   ]
 }

@@ -1,4 +1,5 @@
 import { downloadBlob } from './hooks/downloadBlob';
+import { readJson } from './http';
 import { useVisiblePolling } from './hooks/useVisiblePolling';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -33,7 +34,7 @@ export function WorkspacePanel({ agent, request, onClose, basePath = `/api/agent
     const current=generation.current;setDownloading(true);setDownloadError('');
     try {
       const response=await fetch(`${basePath}/download?${new URLSearchParams({path:location.path})}`);
-      if(!response.ok)throw new Error((await response.json()).error);
+      if (!response.ok) await readJson(response, 'Download failed. Try again.');
       const blob=await response.blob();if(current!==generation.current)return;
       downloadBlob(blob, location.path.split('/').pop()!);
     } catch(reason) {if(current===generation.current)setDownloadError(reason instanceof TypeError?'Download interrupted. Check the connection and try again.':reason instanceof Error?reason.message:'Download failed. Try again.');}

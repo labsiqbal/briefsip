@@ -228,11 +228,6 @@
       "count": 1
     }
   },
-  "src/UpdatesPanel.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
-      "count": 1
-    }
-  },
   "src/UsagePanel.tsx": {
     "briefsip-lifecycle/no-component-effects": {
       "count": 1

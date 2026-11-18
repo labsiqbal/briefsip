@@ -28,6 +28,12 @@ for (const [file, prefix] of [['src/lint-probe.ts', '../'], ['src/hub/lint-probe
     await check(code, file);
 }
 await check("import { Button } from '../ui/kit';", 'src/hub/probe.ts');
+const safeJson = 'no-restricted-syntax';
+await check('response.json();', 'src/lint-probe.ts', safeJson);
+await check("response['json']();", 'src/hub/lint-probe.ts', safeJson);
+await check('readJson(response);', 'src/lint-probe.ts');
+await check('response.json();', 'server.ts');
+
 await check("import 'node:fs';", 'server.ts');
 await check("import '../server.ts';", 'hub/probe.ts');
 for (const module of browserSafeModules) {
