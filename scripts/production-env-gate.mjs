@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { fileManifest } from '../app/update-release.mjs';
+import { fileManifest } from './release-lib.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 

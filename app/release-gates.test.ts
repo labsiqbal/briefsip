@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseRelease } from './update-release.mjs';
+import { parseRelease } from '../scripts/release-lib.mjs';
 const { buildRelease, assertNativeDependencies } = await import(new URL('../scripts/release.mjs', import.meta.url).href);
 
 function fixture() {
@@ -14,7 +14,7 @@ function fixture() {
   writeFileSync(join(dir, '.gitignore'), 'releases/\n');
   mkdirSync(join(dir, 'app'));
   writeFileSync(join(dir, 'app/package.json'), JSON.stringify({ version: '1.0.0', type: 'module' }));
-  writeFileSync(join(dir, 'app/server.ts'), '// Fixture runtime\n');
+  mkdirSync(join(dir, 'app/dist')); writeFileSync(join(dir, 'app/dist/index.html'), 'Fixture UI\n');
   git('add', '.');
   git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'Fixture');
   git('branch', 't3/shipped');
@@ -80,7 +80,7 @@ test('release without issues warns loudly', t => {
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
 });
 
-test('Rust resource failure prevents publication; successful staging retains Node and notices', () => {
+test('Rust resource failure prevents publication; successful staging retains UI and notices', () => {
   const f = fixture(), bin = mkdtempSync(join(tmpdir(), 'release-cargo-')), previousPath = process.env.PATH;
   try {
     for (const directory of ['scripts', 'crates/briefsip-server', 'crates/briefsip-launcher', 'target/release']) mkdirSync(join(f.dir, directory), { recursive: true });
@@ -124,14 +124,14 @@ console.log(value === 'missing' ? 'libvips.so => not found' : value === 'externa
     assert.equal(dependencies.length, 4);
     assert(dependencies.at(-2)!.endsWith('/bin/briefsip-server'));
     assert(dependencies.at(-1)!.endsWith('/bin/briefsip-launcher'));
-    assert.equal(readFileSync(join(stage, 'server.ts'), 'utf8'), '// Fixture runtime\n');
+    assert.equal(readFileSync(join(stage, 'dist/index.html'), 'utf8'), 'Fixture UI\n');
     assert.equal(readFileSync(join(stage, 'bin/briefsip-server'), 'utf8'), 'fixture binary');
     for (const name of ['LICENSE', 'agent-delegation.LICENSE']) assert.equal(readFileSync(join(stage, 'bin', name), 'utf8'), 'Fixture notice');
     assert.equal(readFileSync(join(stage, 'bin/provenance.json'), 'utf8'), '{}');
     assert.equal(readFileSync(join(stage, 'bin/briefsip-launcher'), 'utf8'), 'fixture launcher');
     assert.equal(readFileSync(join(stage, 'bin/launcher-provenance.json'), 'utf8'), '{"launcher":true}');
     assert.equal(readFileSync(join(stage, 'bin/launcher.NOTICE'), 'utf8'), 'T3 MIT notice');
-    assert.equal(readFileSync(join(stage, 'machine/briefsip-launcher.mjs'), 'utf8'), readFileSync(new URL('../scripts/briefsip-launcher.mjs', import.meta.url), 'utf8'));
+    assert.equal(readFileSync(join(stage, 'machine/install-machine.sh'), 'utf8'), readFileSync(new URL('../scripts/install-machine.sh', import.meta.url), 'utf8'));
     const checks = readFileSync(join(f.dir, 'cargo-checks'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
     assert.equal(checks.length, 20);
     assert(checks.some(args => args.join(' ') === 'build --release --locked'));
@@ -142,8 +142,8 @@ test('release CLI demonstrates passing and failing --issues using a fixture gh r
   const f = fixture(), bin = mkdtempSync(join(tmpdir(), 'release-gh-'));
   try {
     mkdirSync(join(f.dir, 'scripts'));
-    for (const name of ['release.mjs', 'install-machine.sh', 'uninstall-machine.sh', 'briefsip-launcher.mjs']) cpSync(new URL(`../scripts/${name}`, import.meta.url), join(f.dir, 'scripts', name));
-    cpSync(new URL('./update-release.mjs', import.meta.url), join(f.dir, 'app/update-release.mjs'));
+    for (const name of ['release.mjs', 'release-lib.mjs', 'install-machine.sh', 'uninstall-machine.sh']) cpSync(new URL(`../scripts/${name}`, import.meta.url), join(f.dir, 'scripts', name));
+    cpSync(new URL('../scripts/release-lib.mjs', import.meta.url), join(f.dir, 'scripts/release-lib.mjs'));
     const pkg = { name: 'release-gate-fixture', version: '1.0.0', type: 'module', scripts: { lint: 'node -e "0"', test: 'node -e "0"', build: 'node -e "0"' } };
     writeFileSync(join(f.dir, 'app/package.json'), JSON.stringify(pkg));
     writeFileSync(join(f.dir, 'app/package-lock.json'), JSON.stringify({ name: pkg.name, version: pkg.version, lockfileVersion: 3, packages: { '': pkg } }));

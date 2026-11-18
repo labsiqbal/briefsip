@@ -9,7 +9,7 @@ import { createServer as controlServer } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { startApp } from './test-bridge.ts';
-import { fileManifest, verifyRelease } from './update-release.mjs';
+import { fileManifest, verifyRelease } from '../scripts/release-lib.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 async function api(origin: string, path: string, body?: unknown) {
@@ -61,7 +61,7 @@ test('fan-out serves one verified executable archive to 0.10.27 and waits beyond
   const address = proxy.address(); assert(address && typeof address !== 'string'); const origin = `http://127.0.0.1:${address.port}`;
   cleanup.push(() => { for (const timer of timers) clearTimeout(timer); proxy.closeAllConnections(); return new Promise<void>(done => proxy.close(() => done())); });
   const fixture = join(dir, 'peer.mjs');
-  writeFileSync(fixture, `import {startApp} from ${JSON.stringify(pathToFileURL(join(peer, 'app/test-bridge.ts')).href)};const app=await startApp(JSON.parse(process.argv[2]));console.log(app.origin);process.once('SIGTERM',()=>void app.close().then(()=>process.exit(0)));`);
+  writeFileSync(fixture, `import {startApp} from ${JSON.stringify(pathToFileURL(join(peer, 'app/server.ts')).href)};const app=await startApp(JSON.parse(process.argv[2]));console.log(app.origin);process.once('SIGTERM',()=>void app.close().then(()=>process.exit(0)));`);
   const child = spawn(process.execPath, ['--experimental-strip-types', fixture, JSON.stringify({ database: join(dir, 'peer.sqlite'), allowedOrigins: [origin], updates: { releasesDir: join(dir, 'received'), launcherSocket: socket } })], { env: { ...process.env, BRIEFSIP_TEST_SERVER: 'node' }, stdio: ['ignore', 'pipe', 'pipe'] });
   let stderr = ''; child.stderr.on('data', chunk => { stderr += chunk; });
   cleanup.push(async () => { if (child.exitCode === null && child.signalCode === null) { const exited = once(child, 'exit'); child.kill('SIGTERM'); const timer = setTimeout(() => child.kill('SIGKILL'), 5000); try { await exited; } finally { clearTimeout(timer); } } });

@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:net';
-import { fileManifest } from '../app/update-release.mjs';
+import { fileManifest } from './release-lib.mjs';
 import { performance } from 'node:perf_hooks';
 import { pathToFileURL } from 'node:url';
 
@@ -41,7 +41,7 @@ export async function measureRust(binary, budgets) {
     try { await closed; } finally { clearTimeout(timeout); rmSync(directory, { recursive: true, force: true }); }
   }
 }
-export async function measureRustLauncher(binary, budgets) {
+export async function measureRustLauncher(binary, server, budgets) {
   const budget = budgets.rustLauncher;
   if (!Number.isFinite(budget?.idleRssMiB) || budget.idleRssMiB <= 0) throw new Error('Invalid Rust launcher budget: idleRssMiB');
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-launcher-budget-'));
@@ -53,11 +53,9 @@ export async function measureRustLauncher(binary, budgets) {
     const port = socket.address().port;
     await new Promise(ready => socket.close(ready));
     mkdirSync(release, { recursive: true });
+    mkdirSync(join(release, 'bin'));
+    cpSync(resolve(server), join(release, 'bin/briefsip-server'));
     writeFileSync(join(release, 'package.json'), JSON.stringify({ version: '1.0.0', type: 'module' }));
-    writeFileSync(join(release, 'server.ts'), `import {createServer} from 'node:http';
-const server=createServer((q,r)=>r.end(JSON.stringify({version:'1.0.0'}))).listen(Number(process.env.PORT),'127.0.0.1');
-const stop=()=>server.close(()=>process.exit(0));process.on('SIGTERM',stop);process.on('disconnect',stop);
-`);
     writeFileSync(join(release, 'release.json'), JSON.stringify({ id, version: '1.0.0', files: fileManifest(release) }));
     symlinkSync(id, join(releases, 'current'));
     const config = join(directory, 'launcher.json');
@@ -95,6 +93,6 @@ const stop=()=>server.close(()=>process.exit(0));process.on('SIGTERM',stop);proc
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   if (!process.argv[4]) throw new Error('Rust launcher binary is required by the resource gate');
   const budgets = JSON.parse(readFileSync(process.argv[3] ?? new URL('./budgets.json', import.meta.url), 'utf8'));
-  await measureRustLauncher(process.argv[4], budgets);
+  await measureRustLauncher(process.argv[4], process.argv[2], budgets);
   await measureRust(process.argv[2], budgets);
 }
