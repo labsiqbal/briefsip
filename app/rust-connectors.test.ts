@@ -9,7 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { startRustServer } from './rust-test-server.ts';
 import { runRustConnector, runRustConnectorJournal } from './rust-connectors-runner.ts';
 import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
-import { encryptMail, serializeMailEnvelope } from './mail.ts';
+import { encryptMail, serializeMailEnvelope } from './test-support/mail-fixture.ts';
 import { composioToolName } from './test-support/composio-tool-name.ts';
 
 test('Rust Composio approval recovery, revocation, schema checks and uncertain writes remain fenced', async () => {

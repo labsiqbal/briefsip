@@ -54,10 +54,8 @@ impl Api {
                 .as_u64()
                 .is_some_and(|n| (400..500).contains(&n))
         {
-            return Err(error(
-                value["error_code"].as_u64().unwrap_or(400) as u16,
-                "Telegram rejected request.",
-            ));
+            let code = value["error_code"].as_u64().unwrap_or(400) as u16;
+            return Err(error(code, format!("Telegram rejected request ({code}).")));
         }
         if !status.is_success() || value["ok"] != true {
             return Err(error(502, "Telegram request outcome is uncertain."));
@@ -249,6 +247,15 @@ fn record(db: &Connection, updates: &Value, options: &Options) -> Result<i64> {
                     {
                         return Err(error(409, "Telegram update identity conflict"));
                     }
+                    let stored = one(
+                        db,
+                        "SELECT remote AS id,name,size FROM telegram_media WHERE turn=?",
+                        [string(&prior, "turn")],
+                    )?
+                    .unwrap_or(Value::Null);
+                    if stored != input["media"] {
+                        return Err(error(409, "Telegram attachment identity conflict"));
+                    }
                 } else if number(&input, "update") >= number(&binding, "offset") {
                     let previous=one(db,"SELECT thread FROM telegram_inbox WHERE chat=? ORDER BY update_id DESC LIMIT 1",params![input["chat"].as_i64()])?;
                     let thread = match previous {
@@ -334,16 +341,50 @@ async fn work(db: &Connection, options: &Options, local: &Local, api: &Api) -> R
     let base = format!("/api/scripts/agents/{}", options.agent);
     for c in all(db,"SELECT c.*,a.run,a.revision,q.turn,q.thread,q.choices FROM telegram_callbacks c LEFT JOIN telegram_approvals a ON a.notice=c.notice LEFT JOIN telegram_questions q ON q.id=c.notice WHERE c.status='queued' ORDER BY c.rowid LIMIT 100",[])?{
         if !allowed(options,number(&c,"chat")){db.execute("UPDATE telegram_callbacks SET status='revoked' WHERE notice=?",[string(&c,"notice")])?;continue;}
-        let reply=if c["run"].is_string(){let result=local.request(&format!("{base}/workflow-runs/{}/approve",string(&c,"run")),Some(&json!({"id":c["id"],"revision":c["revision"],"accepted":c["selection"]==1}))).await;if result.is_err(){"Approval could not be applied. Check the latest status in Briefsip."}else if c["selection"]==1{"Approval received."}else{"Rejection received."}}else{
-            let choices=crate::data::json(&c["choices"])?;let result=local.request(&format!("{base}/threads/{}/turns/{}/questions/{}/answer",string(&c,"thread"),string(&c,"turn"),string(&c,"notice")),Some(&json!({"id":c["id"],"text":choices[number(&c,"selection")as usize]}))).await;match result{Ok(_)=>"Answer received.",Err(e)if [400,404,409].contains(&e.status)=>"Answer could not be applied. Check task status in Briefsip.",Err(e)=>return Err(e)}};
+        let reply = if c["run"].is_string() {
+            let decision = json!({"id":c["id"],"revision":c["revision"],"accepted":c["selection"]==1});
+            match local.request(&format!("{base}/workflow-runs/{}/approve",string(&c,"run")), Some(&decision)).await {
+                Ok(_) if c["selection"]==1 => "Approval received.",
+                Ok(_) => "Rejection received.",
+                Err(e) if [400,404,409].contains(&e.status) => "Approval could not be applied. Check the latest status in Briefsip.",
+                Err(e) => return Err(e),
+            }
+        } else {
+            let choices = crate::data::json(&c["choices"])?;
+            let answer = json!({"id":c["id"],"text":choices[number(&c,"selection") as usize]});
+            match local.request(&format!("{base}/threads/{}/turns/{}/questions/{}/answer",string(&c,"thread"),string(&c,"turn"),string(&c,"notice")), Some(&answer)).await {
+                Ok(_) => "Answer received.",
+                Err(e) if [400,404,409].contains(&e.status) => "Answer could not be applied. Check task status in Briefsip.",
+                Err(e) => return Err(e),
+            }
+        };
         transaction(db,||{queue(db,string(&c,"id"),&c,reply)?;db.execute("UPDATE telegram_callbacks SET status='done' WHERE notice=?",[string(&c,"notice")])?;Ok(())})?;
     }
-    for row in all(db,"SELECT * FROM telegram_inbox WHERE status IN('queued','submitting','running') ORDER BY text LIKE '/stop %' DESC,checked,update_id LIMIT 100",[])?{
+    for entry in all(db,"SELECT update_id FROM telegram_inbox WHERE status IN('queued','submitting','running') ORDER BY text LIKE '/stop %' DESC,checked,update_id LIMIT 100",[])?{
+        let Some(row) = one(db,"SELECT * FROM telegram_inbox WHERE update_id=? AND status IN('queued','submitting','running')",params![entry["update_id"].as_i64()])? else { continue };
+
         if !allowed(options,number(&row,"chat")){db.execute("UPDATE telegram_inbox SET status='revoked' WHERE update_id=?",params![row["update_id"].as_i64()])?;continue;}
         db.execute("UPDATE telegram_inbox SET checked=(SELECT coalesce(max(checked),0)+1 FROM telegram_inbox) WHERE update_id=?",params![row["update_id"].as_i64()])?;
         let result=process(db,options,local,api,&base,&row).await;
-        if let Err(e)=result{if ![400,404,409].contains(&e.status){return Err(e);}
-if [404,409].contains(&e.status){db.execute("INSERT OR IGNORE INTO telegram_closed_threads VALUES(?)",[string(&row,"thread")])?;}finish(db,&row,"Message cannot be processed in this conversation. Check the previous task in Briefsip. Send a new message to start a new conversation.")?;}
+        if let Err(e)=result {
+            let media = exists(db,"SELECT 1 FROM telegram_media WHERE turn=?",[string(&row,"turn")])?;
+            if media && [413,415].contains(&e.status) {
+                finish(db,&row,"Attachment rejected. PDF must contain readable text up to 32 KiB. Scanned PDFs require OCR. Check the file, then send a new message.")?;
+                continue;
+            }
+            if ![400,404,409].contains(&e.status) {
+                return Err(e);
+            }
+            let command = string(&row,"text").split(' ').next().unwrap_or("");
+            if !media && ["/workflow","/workflows","/approve","/stop"].contains(&command) {
+                finish(db,&row,"Workflow request denied. Check the latest revision, status, and permissions in Briefsip.")?;
+                continue;
+            }
+            if [404,409].contains(&e.status) {
+                db.execute("INSERT OR IGNORE INTO telegram_closed_threads VALUES(?)",[string(&row,"thread")])?;
+            }
+            finish(db,&row,"Message cannot be processed in this conversation. Check the previous task in Briefsip. Send a new message to start a new conversation.")?;
+        }
     }
     for row in all(
         db,
@@ -423,7 +464,7 @@ async fn process(
                 )?;
                 return finish(db, row, "Task cancelled before sending to the agent.");
             }
-            local
+            let result = local
                 .request(
                     &format!(
                         "{base}/threads/{}/turns/{}/cancel",
@@ -432,7 +473,21 @@ async fn process(
                     ),
                     Some(&json!({"id":row["turn"]})),
                 )
-                .await?;
+                .await;
+            if let Err(e) = result {
+                if [404, 409].contains(&e.status) {
+                    return finish(
+                        db,
+                        row,
+                        "Task cannot be cancelled. Check the latest status in Briefsip.",
+                    );
+                }
+                return Err(e);
+            }
+            db.execute(
+                "UPDATE telegram_inbox SET status='running' WHERE update_id=?",
+                params![target["update_id"].as_i64()],
+            )?;
             return finish(
                 db,
                 row,
@@ -441,16 +496,18 @@ async fn process(
         }
         if media.is_none() && text.starts_with("/answer") {
             let parts: Vec<_> = text.splitn(3, ' ').collect();
-            let question =
-                if parts.len() == 3 && uuid(parts[1]) && parts[2].encode_utf16().count() <= 4000 {
-                    one(
-                        db,
-                        "SELECT * FROM telegram_questions WHERE id=? AND chat=?",
-                        params![parts[1], row["chat"].as_i64()],
-                    )?
-                } else {
-                    None
-                };
+            let question = if parts.len() == 3
+                && uuid(parts[1])
+                && (1..=4000).contains(&parts[2].encode_utf16().count())
+            {
+                one(
+                    db,
+                    "SELECT * FROM telegram_questions WHERE id=? AND chat=?",
+                    params![parts[1], row["chat"].as_i64()],
+                )?
+            } else {
+                None
+            };
             let Some(q) = question else {
                 return finish(
                     db,
@@ -458,7 +515,7 @@ async fn process(
                     "Question not found for this conversation. Use /answer QUESTION_ID answer.",
                 );
             };
-            local
+            let result = local
                 .request(
                     &format!(
                         "{base}/threads/{}/turns/{}/questions/{}/answer",
@@ -468,7 +525,13 @@ async fn process(
                     ),
                     Some(&json!({"id":row["turn"],"text":parts[2]})),
                 )
-                .await?;
+                .await;
+            if let Err(e) = result {
+                if [400, 404, 409].contains(&e.status) {
+                    return finish(db, row, "Answer rejected. Choose an available answer or check task status in Briefsip.");
+                }
+                return Err(e);
+            }
             return finish(db, row, "Answer accepted.");
         }
         db.execute(
@@ -613,17 +676,29 @@ async fn process(
         return Ok(());
     }
     super::media::snapshot(db, "telegram", base, row, turn, local, None).await?;
-    finish(
-        db,
-        row,
-        if turn["status"] == "done" {
-            string(turn, "reply")
-        } else if turn["status"] == "cancelled" {
-            "Task cancelled."
-        } else {
-            "Task failed. Check details in Briefsip."
-        },
-    )
+    let mut text = match string(turn, "status") {
+        "done" => turn["reply"]
+            .as_str()
+            .filter(|text| !text.is_empty())
+            .unwrap_or("Task finished without a text reply."),
+        "cancelled" => "Task cancelled.",
+        _ => "Task failed. Check details in Briefsip.",
+    }
+    .to_owned();
+    let files = turn["generatedFiles"].as_array();
+    for _ in files.into_iter().flatten().filter(|file| {
+        file["size"]
+            .as_u64()
+            .is_none_or(|size| size > 10 * 1024 * 1024)
+    }) {
+        text.push_str(
+            "\nResult file is too large for this connector. Download it through Briefsip.",
+        );
+    }
+    if turn["status"] != "done" && files.is_some_and(|files| !files.is_empty()) {
+        text.push_str("\nCreated files were sent as a partial result.");
+    }
+    finish(db, row, &text)
 }
 async fn deliver(db: &Connection, local: &Local, api: &Api, base: &str, row: &Value) -> Result<()> {
     let id = string(row, "id");
@@ -698,7 +773,11 @@ async fn deliver(db: &Connection, local: &Local, api: &Api, base: &str, row: &Va
                     [
                         if definitive { "failed" } else { "uncertain" },
                         if definitive {
-                            "Telegram rejected request."
+                            other
+                                .as_ref()
+                                .err()
+                                .map(|e| e.message.as_str())
+                                .unwrap_or("")
                         } else {
                             "Telegram delivery not confirmed; automatic retry disabled."
                         },
@@ -727,6 +806,60 @@ async fn deliver(db: &Connection, local: &Local, api: &Api, base: &str, row: &Va
     }
     Ok(())
 }
+async fn poll(db: &Connection, options: &Options, api: &Api) -> Result<i64> {
+    let binding = one(db, "SELECT offset FROM telegram_binding WHERE id=1", [])?
+        .ok_or_else(Failure::storage)?;
+    let updates=api.call("getUpdates",&json!({"offset":binding["offset"],"limit":20,"timeout":25,"allowed_updates":["message","callback_query"]})).await?;
+    let offset = record(db, &updates, options)?;
+    for update in updates
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|u| number(u, "update_id") < offset)
+    {
+        let query = string(&update["callback_query"], "id");
+        if query.is_empty() || query.len() > 256 {
+            continue;
+        }
+        let accepted = if let Some(choice) = callback(db, update, options)? {
+            one(
+                db,
+                "SELECT selection FROM telegram_callbacks WHERE notice=?",
+                [string(&choice, "notice")],
+            )?
+            .is_some_and(|recorded| recorded["selection"] == choice["selection"])
+        } else {
+            false
+        };
+        let text = if accepted {
+            "Choice recorded. Result sent to the conversation."
+        } else {
+            "Button is invalid or the choice was already recorded."
+        };
+        let _ = api
+            .call(
+                "answerCallbackQuery",
+                &json!({"callback_query_id":query,"text":text}),
+            )
+            .await;
+    }
+    Ok(offset)
+}
+fn bind(db: &Connection, bot: i64, agent: &str) -> Result<()> {
+    if one(db, "SELECT bot,agent FROM telegram_binding WHERE id=1", [])?
+        .is_some_and(|b| b["bot"] != bot || b["agent"] != agent)
+    {
+        return Err(error(
+            409,
+            "Telegram journal belongs to another bot or agent",
+        ));
+    }
+    db.execute(
+        "INSERT OR IGNORE INTO telegram_binding(id,bot,agent) VALUES(1,?,?)",
+        params![bot, agent],
+    )?;
+    Ok(())
+}
 pub async fn run(db: &Connection, options: &Options) -> Result<()> {
     if options.users.iter().any(|u| {
         !u.as_i64()
@@ -742,18 +875,7 @@ pub async fn run(db: &Connection, options: &Options) -> Result<()> {
     {
         return Err(error(400, "Telegram bot identity mismatch"));
     }
-    if one(db, "SELECT bot,agent FROM telegram_binding WHERE id=1", [])?
-        .is_some_and(|b| b["bot"] != bot["id"] || b["agent"] != options.agent)
-    {
-        return Err(error(
-            409,
-            "Telegram journal belongs to another bot or agent",
-        ));
-    }
-    db.execute(
-        "INSERT OR IGNORE INTO telegram_binding(id,bot,agent) VALUES(1,?,?)",
-        params![bot["id"].as_i64(), options.agent],
-    )?;
+    bind(db, number(&bot, "id"), &options.agent)?;
     let local = Local::read(&options.script_directory)
         .map_err(|_| error(403, "Script discovery is unavailable or unsafe."))?;
     local
@@ -762,23 +884,9 @@ pub async fn run(db: &Connection, options: &Options) -> Result<()> {
             None,
         )
         .await?;
-    let poll = async {
+    let incoming = async {
         loop {
-            let binding = one(db, "SELECT offset FROM telegram_binding WHERE id=1", [])?
-                .ok_or_else(Failure::storage)?;
-            let updates=api.call("getUpdates",&json!({"offset":binding["offset"],"limit":20,"timeout":25,"allowed_updates":["message","callback_query"]})).await?;
-            let offset = record(db, &updates, options)?;
-            for update in updates
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter(|u| number(u, "update_id") < offset)
-            {
-                let query = &update["callback_query"];
-                if !string(query, "id").is_empty() && string(query, "id").len() <= 256 {
-                    let _=api.call("answerCallbackQuery",&json!({"callback_query_id":query["id"],"text":"Choice recorded. Result sent to the conversation."})).await;
-                }
-            }
+            poll(db, options, &api).await?;
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
         #[allow(unreachable_code)]
@@ -792,9 +900,12 @@ pub async fn run(db: &Connection, options: &Options) -> Result<()> {
         #[allow(unreachable_code)]
         Ok::<(), Failure>(())
     };
-    tokio::try_join!(poll, worker)?;
+    tokio::try_join!(incoming, worker)?;
     Ok(())
 }
 pub(super) fn finish_input(db: &Connection, row: &Value, text: &str) -> Result<()> {
     finish(db, row, text)
 }
+
+#[cfg(test)]
+mod tests;

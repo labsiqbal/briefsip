@@ -210,6 +210,9 @@ fn record(db: &Connection, v: &Value, options: &Options) -> Result<Option<String
         let Some(notice) = notice else {
             return Ok(ack);
         };
+        if notice["channel"] != p["channel"]["id"] || notice["sender"] != p["user"]["id"] {
+            return Ok(ack);
+        }
         if notice["status"] == "sending" {
             return Ok(None);
         }
@@ -340,9 +343,13 @@ fn record(db: &Connection, v: &Value, options: &Options) -> Result<Option<String
                 } else {
                     "media-invalid"
                 }
-            } else if text.starts_with("!workflow ") {
+            } else if text == "!workflow" || text.starts_with("!workflow ") {
                 "workflow"
-            } else if text == "!workflows" || text.starts_with("!approve ") {
+            } else if text == "!workflows"
+                || text.starts_with("!workflows ")
+                || text == "!approve"
+                || text.starts_with("!approve ")
+            {
                 "workflow-command"
             } else {
                 "message"
@@ -540,7 +547,7 @@ async fn process(db: &Connection, local: &Local, api: &Api, base: &str, row: &Va
     }
     if !media_input && row["status"] == "queued" {
         if text == "!status" {
-            let active=all(db,"SELECT turn,status FROM slack_inbox WHERE channel=? AND sender=? AND root=? AND event<>? AND status IN('queued','submitting','running') ORDER BY rowid LIMIT 20",[string(row,"channel"),string(row,"sender"),string(row,"root"),string(row,"event")])?;
+            let active=all(db,"SELECT turn,status FROM slack_inbox WHERE channel=? AND sender=? AND root=? AND event<>? AND kind<>'workflow-command' AND (status<>'queued' OR kind='media' OR (text<>'!status' AND substr(text,1,5)<>'!stop' AND substr(text,1,7)<>'!answer')) AND status IN('queued','submitting','running') ORDER BY rowid LIMIT 20",[string(row,"channel"),string(row,"sender"),string(row,"root"),string(row,"event")])?;
             return finish(
                 db,
                 row,
@@ -566,7 +573,7 @@ async fn process(db: &Connection, local: &Local, api: &Api, base: &str, row: &Va
         if text.starts_with("!stop") {
             let id = text.strip_prefix("!stop ").filter(|id| uuid(id));
             let target = if let Some(id) = id {
-                one(db,"SELECT * FROM slack_inbox WHERE turn=? AND channel=? AND sender=? AND root=? AND event<>? AND status IN('queued','submitting','running')",[id,string(row,"channel"),string(row,"sender"),string(row,"root"),string(row,"event")])?
+                one(db,"SELECT * FROM slack_inbox WHERE turn=? AND channel=? AND sender=? AND root=? AND event<>? AND kind<>'workflow-command' AND (status<>'queued' OR kind='media' OR (text<>'!status' AND substr(text,1,5)<>'!stop' AND substr(text,1,7)<>'!answer')) AND status IN('queued','submitting','running')",[id,string(row,"channel"),string(row,"sender"),string(row,"root"),string(row,"event")])?
             } else {
                 None
             };
@@ -590,7 +597,7 @@ async fn process(db: &Connection, local: &Local, api: &Api, base: &str, row: &Va
                     None,
                 );
             }
-            local
+            let result = local
                 .request(
                     &format!(
                         "{base}/threads/{}/turns/{}/cancel",
@@ -599,7 +606,21 @@ async fn process(db: &Connection, local: &Local, api: &Api, base: &str, row: &Va
                     ),
                     Some(&json!({"id":row["turn"]})),
                 )
-                .await?;
+                .await;
+            if let Err(e) = result {
+                if [404, 409].contains(&e.status) {
+                    db.execute(
+                        "UPDATE slack_inbox SET status='unavailable' WHERE event=?",
+                        [string(&target, "event")],
+                    )?;
+                    return finish(db, row, "Local delivery stopped. Task cannot be cancelled; check the latest status in Briefsip.", None);
+                }
+                return Err(e);
+            }
+            db.execute(
+                "UPDATE slack_inbox SET status='running' WHERE event=?",
+                [string(&target, "event")],
+            )?;
             return finish(
                 db,
                 row,
@@ -609,7 +630,10 @@ async fn process(db: &Connection, local: &Local, api: &Api, base: &str, row: &Va
         }
         if text.starts_with("!answer") {
             let p: Vec<_> = text.splitn(3, ' ').collect();
-            let q = if p.len() == 3 && uuid(p[1]) && p[2].encode_utf16().count() <= 4000 {
+            let q = if p.len() == 3
+                && uuid(p[1])
+                && (1..=4000).contains(&p[2].encode_utf16().count())
+            {
                 one(db,"SELECT * FROM slack_questions WHERE id=? AND channel=? AND sender=? AND root=?",[p[1],string(row,"channel"),string(row,"sender"),string(row,"root")])?
             } else {
                 None
@@ -622,7 +646,7 @@ async fn process(db: &Connection, local: &Local, api: &Api, base: &str, row: &Va
                     None,
                 );
             };
-            local
+            let result = local
                 .request(
                     &format!(
                         "{base}/threads/{}/turns/{}/questions/{}/answer",
@@ -632,7 +656,18 @@ async fn process(db: &Connection, local: &Local, api: &Api, base: &str, row: &Va
                     ),
                     Some(&json!({"id":row["turn"],"text":p[2]})),
                 )
-                .await?;
+                .await;
+            if let Err(e) = result {
+                if [400, 404, 409].contains(&e.status) {
+                    return finish(
+                        db,
+                        row,
+                        "Answer rejected. Check the question and task status in Briefsip.",
+                        None,
+                    );
+                }
+                return Err(e);
+            }
             return finish(db, row, "Answer received.", None);
         }
     }
@@ -809,7 +844,7 @@ async fn deliver(db: &Connection, local: &Local, api: &Api, base: &str, row: &Va
                 let mut body=json!({"channel":row["channel"],"thread_ts":row["root"],"text":text,"mrkdwn":false,"parse":"none","link_names":false,"unfurl_links":false,"unfurl_media":false,"reply_broadcast":false});
                 if part+1==chunks.len(){let choices=one(db,"SELECT choices FROM slack_question_choices WHERE id=?",[id])?.map(|r|crate::data::json(&r["choices"])).transpose()?.unwrap_or(json!([]));let approval=exists(db,"SELECT 1 FROM slack_approvals WHERE notice=?",[id])?;
                     let elements=if approval{["yes","no"].iter().map(|v|json!({"type":"button","action_id":format!("briefsip_approve_{v}"),"text":{"type":"plain_text","text":if *v=="yes"{"Approve"}else{"Reject"}},"value":format!("approval:{id}:{v}")})).collect::<Vec<_>>()}else{choices.as_array().into_iter().flatten().enumerate().map(|(i,c)|json!({"type":"button","action_id":format!("briefsip_answer_{i}"),"text":{"type":"plain_text","text":format!("{}. {}{}",i+1,c.as_str().unwrap_or("").chars().take(45).collect::<String>(),if c.as_str().unwrap_or("").chars().count()>45{"..."}else{""})},"value":format!("question:{id}:{i}")})).collect()};
-                    if !elements.is_empty(){let plain=text.replace("&amp;","&").replace("&lt;","<").replace("&gt;",">").chars().collect::<Vec<_>>();let mut blocks=plain.chunks(2000).map(|c|json!({"type":"section","text":{"type":"plain_text","text":c.iter().collect::<String>(),"emoji":false}})).collect::<Vec<_>>();blocks.push(json!({"type":"actions","elements":elements}));body["blocks"]=json!(blocks);}
+                    if !elements.is_empty(){let plain=text.replace("&lt;","<").replace("&gt;",">").replace("&amp;","&");let mut blocks=super::media::chunks(&plain,2000,false).into_iter().map(|part|json!({"type":"section","text":{"type":"plain_text","text":part,"emoji":false}})).collect::<Vec<_>>();blocks.push(json!({"type":"actions","elements":elements}));body["blocks"]=json!(blocks);}
                 }
                 let response=api.call("chat.postMessage",&body).await?;if response["channel"]!=row["channel"]||!stamp(&response["ts"]){return Err(error(502,"Slack request outcome is uncertain."));}timestamps.as_array_mut().ok_or_else(Failure::storage)?.push(response["ts"].clone());db.execute("UPDATE slack_outbox SET status=?,part=?,timestamps=? WHERE id=?",params![if part+1==chunks.len(){"sent"}else{"queued"},(part+1)as i64,timestamps.to_string(),id])?;
             }Ok::<_,Failure>(())
@@ -852,11 +887,28 @@ async fn work(db: &Connection, options: &Options, local: &Local, api: &Api) -> R
         let result=local.request(&format!("{base}/threads/{}/turns/{}/questions/{}/answer",string(&row,"thread"),string(&row,"turn"),string(&row,"question")),Some(&json!({"id":row["id"],"text":row["answer"]}))).await;
         let text=match result{Ok(_)=>"Answer received.",Err(e)if [400,404,409].contains(&e.status)=>"Answer rejected. Check the question and task status in Briefsip.",Err(e)=>return Err(e)};let mut response=row.clone();response["turn"]=row["id"].clone();finish(db,&response,text,None)?;db.execute("UPDATE slack_question_callbacks SET status='done' WHERE id=?",[string(&row,"id")])?;
     }
-    for row in all(db,"SELECT * FROM slack_inbox WHERE status IN('queued','submitting','running') ORDER BY text LIKE '!stop %' DESC,checked,rowid LIMIT 100",[])?{
+    for entry in all(db,"SELECT event FROM slack_inbox WHERE status IN('queued','submitting','running') ORDER BY text LIKE '!stop %' DESC,checked,rowid LIMIT 100",[])?{
+        let Some(row) = one(db,"SELECT * FROM slack_inbox WHERE event=? AND status IN('queued','submitting','running')",[string(&entry,"event")])? else { continue };
+
         if !allowed(options,string(&row,"sender"))||!channel(options,string(&row,"channel")){db.execute("UPDATE slack_inbox SET status='revoked' WHERE event=?",[string(&row,"event")])?;continue;}
         db.execute("UPDATE slack_inbox SET checked=(SELECT coalesce(max(checked),0)+1 FROM slack_inbox) WHERE event=?",[string(&row,"event")])?;
-        if let Err(e)=process(db,local,api,&base,&row).await{if ![400,404,409].contains(&e.status){return Err(e);}
-if [404,409].contains(&e.status){db.execute("INSERT OR IGNORE INTO slack_closed_threads VALUES(?)",[string(&row,"thread")])?;}finish(db,&row,"Message could not be processed. Check the task in Briefsip; a new message will open a new conversation.",None)?;}
+        if let Err(e)=process(db,local,api,&base,&row).await {
+            if row["kind"]=="media" && [413,415].contains(&e.status) {
+                finish(db,&row,"Attachment rejected. Combined text including PDF text is limited to 32 KiB. Scanned PDFs require OCR. Check the file, then send a new message.",None)?;
+                continue;
+            }
+            if ![400,404,409].contains(&e.status) {
+                return Err(e);
+            }
+            if !["message","media"].contains(&string(&row,"kind")) || row["kind"]=="message" && row["status"]=="queued" && string(&row,"text").starts_with("!stop") {
+                finish(db,&row,"Request rejected. Check the revision and latest status in Briefsip.",None)?;
+                continue;
+            }
+            if [404,409].contains(&e.status) {
+                db.execute("INSERT OR IGNORE INTO slack_closed_threads VALUES(?)",[string(&row,"thread")])?;
+            }
+            finish(db,&row,"Message could not be processed. Check the task in Briefsip; a new message will open a new conversation.",None)?;
+        }
     }
     for row in all(
         db,
@@ -952,6 +1004,18 @@ async fn socket(db: &Connection, options: &Options, url: &str) -> Result<bool> {
         }
     }
 }
+fn bind(db: &Connection, team: &str, app: &str, bot: &str, agent: &str) -> Result<()> {
+    if one(db, "SELECT * FROM slack_binding", [])?.is_some_and(|r| {
+        r["team"] != team || r["app"] != app || r["bot"] != bot || r["agent"] != agent
+    }) {
+        return Err(error(409, "Slack journal identity mismatch"));
+    }
+    db.execute(
+        "INSERT OR IGNORE INTO slack_binding VALUES(1,?,?,?,?)",
+        [team, app, bot, agent],
+    )?;
+    Ok(())
+}
 pub async fn run(db: &Connection, options: &Options) -> Result<()> {
     if options.users.iter().any(|u| {
         !u.as_str()
@@ -986,15 +1050,7 @@ pub async fn run(db: &Connection, options: &Options) -> Result<()> {
     {
         return Err(error(400, "Invalid Slack binding"));
     }
-    if one(db, "SELECT * FROM slack_binding", [])?.is_some_and(|r| {
-        r["team"] != team || r["app"] != app || r["bot"] != bot || r["agent"] != options.agent
-    }) {
-        return Err(error(409, "Slack journal identity mismatch"));
-    }
-    db.execute(
-        "INSERT OR IGNORE INTO slack_binding VALUES(1,?,?,?,?)",
-        [team, app, bot, &options.agent],
-    )?;
+    bind(db, team, app, bot, &options.agent)?;
     let local = Local::read(&options.script_directory)
         .map_err(|_| error(403, "Script discovery is unavailable or unsafe."))?;
     local
@@ -1024,3 +1080,6 @@ pub async fn run(db: &Connection, options: &Options) -> Result<()> {
     tokio::try_join!(listen, worker)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

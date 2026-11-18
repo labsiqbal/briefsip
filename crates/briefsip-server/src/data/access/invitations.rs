@@ -1,6 +1,6 @@
 use super::*;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine};
-use ring::{aead, hmac};
+use ring::hmac;
 use std::{
     collections::HashMap,
     sync::{Mutex, OnceLock},
@@ -131,41 +131,6 @@ fn equal(a: &str, b: &str) -> bool {
     use subtle::ConstantTimeEq;
     a.as_bytes().ct_eq(b.as_bytes()).into()
 }
-fn encrypt(
-    invitation: &str,
-    generation: &str,
-    email_hash: &str,
-    payload: &Value,
-    key_id: &str,
-    key: &[u8],
-) -> Result<(Vec<u8>, String)> {
-    let mut nonce = [0; 12];
-    getrandom::getrandom(&mut nonce).map_err(|_| Failure::storage())?;
-    let aad = json!([
-        "briefsip-mail-outbox-v1",
-        invitation,
-        1,
-        generation,
-        email_hash
-    ])
-    .to_string();
-    let plain = payload.to_string();
-    let mut bytes = plain.as_bytes().to_vec();
-    let key = aead::UnboundKey::new(&aead::AES_256_GCM, key)
-        .map_err(|_| super::super::options::unavailable(true))?;
-    let tag = aead::LessSafeKey::new(key)
-        .seal_in_place_separate_tag(
-            aead::Nonce::assume_unique_for_key(nonce),
-            aead::Aad::from(aad.as_bytes()),
-            &mut bytes,
-        )
-        .map_err(|_| Failure::storage())?;
-    let envelope = json!({"v":1,"alg":"AES-256-GCM","keyId":key_id,"nonce":B64.encode(nonce),"ciphertext":B64.encode(bytes),"tag":B64.encode(tag.as_ref())});
-    Ok((
-        envelope.to_string().into_bytes(),
-        digest_bytes(plain.as_bytes()),
-    ))
-}
 pub(super) fn create(
     state: &AppState,
     db: &Connection,
@@ -223,8 +188,14 @@ pub(super) fn create(
             .or_else(|| state.config.auth.as_ref().map(|a| a.origin.as_str()))
             .ok_or_else(|| super::super::options::unavailable(true))?;
         let payload = json!({"to":command["email"],"from":from,"subject":"Briefsip project invitation","text":format!("Open {origin}/invitations/{request}#{} to join the Briefsip project.",B64.encode(token))});
-        let (envelope, payload_digest) =
-            encrypt(request, &generation, &email_hash, &payload, &key_id, &key)?;
+        let (envelope, payload_digest) = crate::connectors::mail::seal(
+            request,
+            &generation,
+            &email_hash,
+            &payload,
+            &key_id,
+            &key,
+        )?;
         db.execute(
             "INSERT INTO invitations VALUES(?,?,?,?,NULL,'pending_delivery',?,?,?,NULL,1)",
             rusqlite::params![

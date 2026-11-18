@@ -64,7 +64,7 @@ pub struct Options {
     #[serde(skip)]
     stored: Arc<Mutex<HashMap<String, String>>>,
 }
-pub(super) fn unavailable(mail: bool) -> Failure {
+pub(crate) fn unavailable(mail: bool) -> Failure {
     let mut error = if mail {
         Failure::new(
             503,

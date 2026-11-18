@@ -16,6 +16,50 @@ fn decode(value: &Value) -> Result<Vec<u8>> {
         .filter(|bytes| B64.encode(bytes) == encoded)
         .ok_or_else(|| invalid("Invalid mail envelope."))
 }
+fn aad(invitation: &Value, revision: &Value, generation: &Value, email_hash: &Value) -> String {
+    json!([
+        "briefsip-mail-outbox-v1",
+        invitation,
+        revision,
+        generation,
+        email_hash
+    ])
+    .to_string()
+}
+
+pub(crate) fn seal(
+    invitation: &str,
+    generation: &str,
+    email_hash: &str,
+    payload: &Value,
+    key_id: &str,
+    key: &[u8],
+) -> Result<(Vec<u8>, String)> {
+    let mut nonce = [0; 12];
+    getrandom::getrandom(&mut nonce).map_err(|_| Failure::storage())?;
+    let aad = aad(
+        &json!(invitation),
+        &json!(1),
+        &json!(generation),
+        &json!(email_hash),
+    );
+    let plaintext = payload.to_string();
+    let mut bytes = plaintext.as_bytes().to_vec();
+    let key =
+        UnboundKey::new(&AES_256_GCM, key).map_err(|_| crate::data::options::unavailable(true))?;
+    let tag = LessSafeKey::new(key)
+        .seal_in_place_separate_tag(
+            Nonce::assume_unique_for_key(nonce),
+            Aad::from(aad.as_bytes()),
+            &mut bytes,
+        )
+        .map_err(|_| Failure::storage())?;
+    let envelope = json!({"v":1,"alg":"AES-256-GCM","keyId":key_id,"nonce":B64.encode(nonce),"ciphertext":B64.encode(bytes),"tag":B64.encode(tag.as_ref())});
+    Ok((
+        envelope.to_string().into_bytes(),
+        format!("{:x}", Sha256::digest(plaintext.as_bytes())),
+    ))
+}
 fn open(row: &Value, ciphertext: &[u8], key: &[u8]) -> Result<Vec<u8>> {
     if ciphertext.len() > 512 * 1024 {
         return Err(invalid("Invalid mail envelope."));
@@ -40,14 +84,12 @@ fn open(row: &Value, ciphertext: &[u8], key: &[u8]) -> Result<Vec<u8>> {
     bytes.extend_from_slice(&tag);
     let key = UnboundKey::new(&AES_256_GCM, key)
         .map_err(|_| Failure::new(503, "mail_key_unavailable", "Mail key is unavailable."))?;
-    let aad = json!([
-        "briefsip-mail-outbox-v1",
-        row["id"],
-        row["revision"],
-        row["authority_generation"],
-        row["email_hash"]
-    ])
-    .to_string();
+    let aad = aad(
+        &row["id"],
+        &row["revision"],
+        &row["authority_generation"],
+        &row["email_hash"],
+    );
     let plain = LessSafeKey::new(key)
         .open_in_place(
             Nonce::assume_unique_for_key(nonce),
@@ -305,4 +347,165 @@ pub fn start(state: AppState) -> tokio::task::JoinHandle<()> {
             }
         }
     })
+}
+
+const ACTIVE_KEY: &str = "mail-aead/active";
+const LOOKUP_KEY: &str = "mail-lookup/v1";
+
+fn keyring_update(
+    rotate: bool,
+    read: impl Fn(&str) -> Result<Option<String>>,
+    write: impl Fn(&str, &str) -> Result<()>,
+) -> Result<String> {
+    let unavailable = || crate::data::options::unavailable(true);
+    let previous = read(ACTIVE_KEY)?;
+    let read_key = |name: &str| {
+        let encoded = read(name)?.ok_or_else(unavailable)?;
+        B64.decode(&encoded)
+            .ok()
+            .filter(|bytes| bytes.len() == 32 && B64.encode(bytes) == encoded)
+            .ok_or_else(unavailable)
+    };
+    let new_key = |name: &str| {
+        let mut bytes = [0; 32];
+        getrandom::getrandom(&mut bytes).map_err(|_| unavailable())?;
+        write(name, &B64.encode(bytes))?;
+        if read_key(name)? != bytes {
+            return Err(unavailable());
+        }
+        Ok(())
+    };
+    if let Some(id) = &previous {
+        if !uuid(id) {
+            return Err(unavailable());
+        }
+        if !rotate {
+            read_key(&format!("mail-aead/{id}"))?;
+            read_key(LOOKUP_KEY)?;
+            return Ok(id.clone());
+        }
+    } else if rotate {
+        return Err(unavailable());
+    }
+    if !rotate && read(LOOKUP_KEY)?.is_none() {
+        new_key(LOOKUP_KEY)?;
+    }
+    read_key(LOOKUP_KEY)?;
+    let id = super::runner::new_id();
+    new_key(&format!("mail-aead/{id}"))?;
+    let result = write(ACTIVE_KEY, &id).and_then(|_| {
+        if read(ACTIVE_KEY)?.as_deref() == Some(&id) {
+            Ok(())
+        } else {
+            Err(unavailable())
+        }
+    });
+    if let Err(error) = result {
+        if let Some(previous) =
+            previous.filter(|_| read(ACTIVE_KEY).ok().flatten().as_deref() == Some(&id))
+        {
+            write(ACTIVE_KEY, &previous)?;
+        }
+        return Err(error);
+    }
+    Ok(id)
+}
+
+pub(crate) fn keyring_command(args: &[String]) -> crate::db::Result<()> {
+    let [command] = args else {
+        return Err("Use mail-keyring provision or mail-keyring rotate.".into());
+    };
+    if !matches!(command.as_str(), "provision" | "rotate") {
+        return Err("Use mail-keyring provision or mail-keyring rotate.".into());
+    }
+    let options = crate::data::options::Options::environment();
+    options.validate()?;
+    let id = keyring_update(
+        command == "rotate",
+        |name| options.read(name, true),
+        |name, value| options.write(name, value, true),
+    )
+    .map_err(|error| error.message)?;
+    println!("{}", json!({"keyId":id}));
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        cell::{Cell, RefCell},
+        collections::HashMap,
+    };
+
+    #[test]
+    fn mail_envelope_round_trip_checks_fresh_nonce_aad_tag_and_digest() -> Result<()> {
+        let id = super::super::runner::new_id();
+        let generation = super::super::runner::new_id();
+        let key_id = super::super::runner::new_id();
+        let hash = "ab".repeat(32);
+        let key = [42; 32];
+        let payload = json!({"to":"owner@example.test","from":"no-reply@example.test","subject":"Invite","text":"Join"});
+        let (first, digest) = seal(&id, &generation, &hash, &payload, &key_id, &key)?;
+        let (second, second_digest) = seal(&id, &generation, &hash, &payload, &key_id, &key)?;
+        let mut envelope: Value = serde_json::from_slice(&first).map_err(|_| Failure::storage())?;
+        let other: Value = serde_json::from_slice(&second).map_err(|_| Failure::storage())?;
+        assert_ne!(envelope["nonce"], other["nonce"]);
+        assert_eq!(envelope["keyId"], key_id);
+        assert_eq!(digest, second_digest);
+        let mut row = json!({"id":id,"revision":1,"authority_generation":generation,"email_hash":hash,"payload_digest":digest});
+        let restored = open(&row, &first, &key)?;
+        assert_eq!(restored, payload.to_string().as_bytes());
+        row["revision"] = json!(2);
+        assert_eq!(
+            open(&row, &first, &key).err().map(|e| e.code),
+            Some("mail_auth_failed")
+        );
+        row["revision"] = json!(1);
+        let mut tag = decode(&envelope["tag"])?;
+        tag[0] ^= 1;
+        envelope["tag"] = json!(B64.encode(tag));
+        assert_eq!(
+            open(&row, envelope.to_string().as_bytes(), &key)
+                .err()
+                .map(|e| e.code),
+            Some("mail_auth_failed")
+        );
+        row["payload_digest"] = json!("00".repeat(32));
+        assert_eq!(
+            open(&row, &first, &key).err().map(|e| e.code),
+            Some("mail_payload_conflict")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn keyring_rotation_retains_old_keys_and_rolls_back_failed_active_pointer() -> Result<()> {
+        let entries = RefCell::new(HashMap::<String, String>::new());
+        let fault = Cell::new(false);
+        let read = |name: &str| Ok(entries.borrow().get(name).cloned());
+        let write = |name: &str, value: &str| {
+            entries.borrow_mut().insert(name.into(), value.into());
+            if name == ACTIVE_KEY && fault.replace(false) {
+                return Err(crate::data::options::unavailable(true));
+            }
+            Ok(())
+        };
+        assert_eq!(read(ACTIVE_KEY)?, None);
+        let first = keyring_update(false, read, write)?;
+        let first_name = format!("mail-aead/{first}");
+        let first_key = read(&first_name)?;
+        let lookup_key = read(LOOKUP_KEY)?;
+        assert_eq!(decode(&json!(first_key))?.len(), 32);
+        assert_ne!(first_key, lookup_key);
+        assert_eq!(keyring_update(false, read, write)?, first);
+        let second = keyring_update(true, read, write)?;
+        assert_ne!(first, second);
+        assert_eq!(read(&first_name)?, first_key);
+        assert_eq!(read(LOOKUP_KEY)?, lookup_key);
+        fault.set(true);
+        assert!(keyring_update(true, read, write).is_err());
+        assert_eq!(read(ACTIVE_KEY)?.as_deref(), Some(second.as_str()));
+        Ok(())
+    }
 }

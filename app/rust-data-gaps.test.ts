@@ -8,7 +8,7 @@ import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
 import { startRustServer } from './rust-test-server.ts';
-import { decryptMail } from './mail.ts';
+import { decryptMail } from './test-support/mail-fixture.ts';
 import { digestCommand } from './shared/protocol.ts';
 import sharp from 'sharp';
 import { execFileSync } from 'node:child_process';

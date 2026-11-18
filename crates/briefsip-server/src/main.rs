@@ -530,6 +530,9 @@ async fn main() -> db::Result<()> {
     if std::env::args().nth(1).as_deref() == Some("--connector-config") {
         return connectors::runner::run().await;
     }
+    if std::env::args().nth(1).as_deref() == Some("mail-keyring") {
+        return connectors::mail::keyring_command(&std::env::args().skip(2).collect::<Vec<_>>());
+    }
     if std::env::args().nth(1).as_deref() == Some("--mcp-stdio") {
         return mcp::stdio().await;
     }
