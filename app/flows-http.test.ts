@@ -49,6 +49,7 @@ test('routine flow dispatch joins once, snapshots edits and recovers interrupted
     failC = true;
     const runRequest = { id: randomUUID(), revision: routine.revision };
     const db = new DatabaseSync(options.database);
+    db.exec('PRAGMA busy_timeout=5000');
     try {
       db.exec("CREATE TRIGGER fail_flow_handoff BEFORE UPDATE ON flow_steps WHEN OLD.status='waiting' AND NEW.status='queued' BEGIN SELECT RAISE(ABORT,'fixture handoff failure'); END");
       const blocked = await request(`/api/routines/${routine.id}/test`, runRequest);

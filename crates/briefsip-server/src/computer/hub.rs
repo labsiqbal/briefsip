@@ -1407,15 +1407,20 @@ pub async fn run_effect<T>(
     operation: impl std::future::Future<Output = Result<T>>,
 ) -> Result<T> {
     if let Some(effect) = effect {
+        let expired = || {
+            Failure::new(
+                403,
+                "local_policy_denied",
+                "Hub action lease expired. Check prior effects before retrying.",
+            )
+        };
+        // timeout_at polls the operation once before its deadline check; an expired lease must not start it.
+        if tokio::time::Instant::now() >= effect.deadline {
+            return Err(expired());
+        }
         tokio::time::timeout_at(effect.deadline, operation)
             .await
-            .map_err(|_| {
-                Failure::new(
-                    403,
-                    "local_policy_denied",
-                    "Hub action lease expired. Check prior effects before retrying.",
-                )
-            })?
+            .map_err(|_| expired())?
     } else {
         operation.await
     }
@@ -2188,6 +2193,14 @@ mod tests {
         let dispatched = AtomicBool::new(false);
         let result = run_effect(&effect, async {
             tokio::time::sleep(Duration::from_millis(10)).await;
+            dispatched.store(true, Ordering::Release);
+            Ok(())
+        })
+        .await;
+        assert!(result.is_err());
+        assert!(!dispatched.load(Ordering::Acquire));
+        // An operation that would finish on its first poll still must not run.
+        let result = run_effect(&effect, async {
             dispatched.store(true, Ordering::Release);
             Ok(())
         })
