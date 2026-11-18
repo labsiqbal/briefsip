@@ -228,8 +228,13 @@ async fn reveal(state: &AppState, actor: &Actor, target: &Target, body: &Value) 
     request["ephemeralPublicKey"] = body["ephemeralPublicKey"].clone();
     request["ownerAccountId"] = json!(actor.account);
     let result = devices::waits::request(state, &request, None).await?;
-    let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let now = state.config.now();
+    state
+        .auth
+        .as_ref()
+        .ok_or_else(Failure::storage)?
+        .require_current(&state.database, actor, now)?;
+    let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let current = target.scope(state, &guard.connection, (actor, expected))?;
     if current.fingerprint != scope.fingerprint || n(&result, "expiresAt") <= now {
         return Err(invalid());

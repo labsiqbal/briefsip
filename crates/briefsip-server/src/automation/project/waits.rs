@@ -112,6 +112,16 @@ pub(crate) fn activate(
     let target = &provision["target"];
     let id = string(target, "runId");
     let project = string(provision, "projectId");
+    if !pending {
+        if let Some(row) = one(
+            db,
+            "SELECT result_json FROM receipts WHERE request_id=? AND project=? AND scope=? AND payload_digest=?",
+            params![provision["provisionId"].as_str(),project,format!("workflow-wait-activation:{id}"),provision["payloadDigest"].as_str()],
+        )? {
+            let saved = data::json(&row["result_json"])?;
+            return Ok(json!({"state":saved["data"]["state"],"receipt":saved["receipt"]}));
+        }
+    }
     let admission = one(
         db,
         "SELECT actor FROM receipts WHERE request_id=? AND project=?",
