@@ -34,7 +34,7 @@ test('Rust opens every canonical schema version and rejects migration drift', as
   const inspect = (database: string) => {
     const db = new DatabaseSync(database, { readOnly: true });
     try {
-      assert.equal(db.prepare('SELECT max(version) AS version FROM schema_migrations').get()?.version, 5);
+      assert.equal(db.prepare('SELECT max(version) AS version FROM schema_migrations').get()?.version, 6);
       const schema = db.prepare("SELECT type,name,tbl_name FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
       assert.deepEqual(schema.filter(row => row.type === 'index' && indexes.includes(String(row.name))).map(row => row.name), indexes);
       return schema.map(row => ({
@@ -61,11 +61,11 @@ test('Rust opens every canonical schema version and rejects migration drift', as
     await reopened.close();
     assert.deepEqual(inspect(database), expected, 'Rust schema after restart');
     const db = new DatabaseSync(database);
-    db.prepare("INSERT INTO schema_migrations VALUES(6,'future','future',0)").run();
+    db.prepare("INSERT INTO schema_migrations VALUES(7,'future','future',0)").run();
     db.close();
     await assert.rejects(startRustServer({ database, auth }), /Database schema is newer than this server/);
     const drift = new DatabaseSync(database);
-    drift.exec("DELETE FROM schema_migrations WHERE version=6; UPDATE schema_migrations SET checksum='bad' WHERE version=5");
+    drift.exec("DELETE FROM schema_migrations WHERE version=7; UPDATE schema_migrations SET checksum='bad' WHERE version=6");
     drift.close();
     await assert.rejects(startRustServer({ database, auth }), /Schema migration checksum mismatch/);
   } finally {rmSync(root,{recursive:true,force:true});}
