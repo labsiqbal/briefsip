@@ -191,12 +191,7 @@ impl Fixture {
         if let Some(cursor) = cursor {
             query.push(("cursor".to_owned(), cursor.to_owned()));
         }
-        let response = crate::data::sync::read(&self.state, account, &query)?;
-        let bytes = to_bytes(response.into_body(), 256 * 1024)
-            .await
-            .map_err(|_| Failure::storage())?;
-        let body: Value = serde_json::from_slice(&bytes).map_err(|_| Failure::storage())?;
-        Ok(body["data"].clone())
+        sync_response(crate::data::sync::read(&self.state, account, &query)?).await
     }
 
     fn add_agent(&self, id: &str) -> Result<()> {
@@ -370,6 +365,14 @@ fn flow(revision: i64, links: Value) -> Value {
     body
 }
 
+async fn sync_response(response: Response) -> Result<Value> {
+    let bytes = to_bytes(response.into_body(), 256 * 1024)
+        .await
+        .map_err(|_| Failure::storage())?;
+    let body: Value = serde_json::from_slice(&bytes).map_err(|_| Failure::storage())?;
+    Ok(body["data"].clone())
+}
+
 fn sync_events(page: &Value) -> &[Value] {
     let Some(events) = page["page"]["events"].as_array() else {
         panic!("Missing sync events: {page}");
@@ -381,7 +384,21 @@ fn sync_events(page: &Value) -> &[Value] {
 async fn sync_snapshot_continuation_expires_at_sixty_seconds_in_the_same_process() -> Result<()> {
     let start = epoch("2024-01-01T00:00:00Z");
     let mut f = Fixture::new(start)?;
+    let project = uuid::Uuid::new_v4().to_string();
+    let owner = uuid::Uuid::new_v4().to_string();
     f.db(|db| {
+        db.execute(
+            "INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,'fixture','expiry',0)",
+            [&owner],
+        )?;
+        db.execute(
+            "INSERT INTO projects(id,account,name,private) VALUES(?,?,'Snapshot expiry',0)",
+            [&project, &owner],
+        )?;
+        db.execute(
+            "INSERT INTO project_members VALUES(?,?,'owner',1,0)",
+            [&project, &owner],
+        )?;
         for n in 0..600 {
             let id = format!("20000000-0000-4000-8000-{n:012}");
             db.execute(
@@ -390,38 +407,32 @@ async fn sync_snapshot_continuation_expires_at_sixty_seconds_in_the_same_process
             )?;
             db.execute(
                 "INSERT INTO project_members VALUES(?,?,'member',1,0)",
-                [PROJECT, &id],
+                [&project, &id],
             )?;
         }
         Ok(())
     })?;
-    let first = f.sync(OWNER, None).await?;
-    let second = f.sync(OWNER, None).await?;
-    assert!(first["nextPage"].is_string() && second["nextPage"].is_string());
-    let continue_page = |f: &Fixture, page: &Value| {
-        crate::data::sync::read(
-            &f.state,
-            OWNER,
-            &[
-                ("projectId".to_owned(), PROJECT.to_owned()),
-                ("page".to_owned(), string(page, "nextPage").to_owned()),
-            ],
-        )
+    let read = |f: &Fixture, page: Option<&Value>| {
+        let mut query = vec![("projectId".to_owned(), project.clone())];
+        if let Some(page) = page {
+            query.push(("page".to_owned(), string(page, "nextPage").to_owned()));
+        }
+        crate::data::sync::read(&f.state, &owner, &query)
     };
+    let first = sync_response(read(&f, None)?).await?;
+    let second = sync_response(read(&f, None)?).await?;
+    assert!(first["nextPage"].is_string() && second["nextPage"].is_string());
     f.clock(start + 59999);
-    assert_eq!(
-        continue_page(&f, &first)?.status(),
-        axum::http::StatusCode::OK
-    );
+    assert_eq!(read(&f, Some(&first))?.status(), axum::http::StatusCode::OK);
     f.clock(start + 60000);
     assert_eq!(
-        continue_page(&f, &second)
+        read(&f, Some(&second))
             .err()
             .ok_or_else(|| fixture_error("expired snapshot"))?
             .code,
         "resync_required"
     );
-    assert!(f.sync(OWNER, None).await?["nextPage"].is_string());
-    crate::data::sync::discard_account_snapshots(OWNER);
+    assert!(sync_response(read(&f, None)?).await?["nextPage"].is_string());
+    crate::data::sync::discard_account_snapshots(&owner);
     Ok(())
 }
