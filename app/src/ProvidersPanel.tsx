@@ -1,26 +1,127 @@
-import { useEffect, useRef, useState } from 'react';
-import { Server } from 'lucide-react';
-import { Alert, Badge, Button, Card, Collapsible, EmptyState, Input, PageHeader, Row, Section, SkeletonRows } from './ui/kit';
+import { useEffect, useId, useRef, useState } from 'react';
+import { Ellipsis, Plus, Server } from 'lucide-react';
+import { ActionMenu, Alert, Badge, Button, Card, Collapsible, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, useConfirm } from './ui/kit';
 
-type Request = <T>(path: string) => Promise<T>;
-type Account = { id: string; name: string; host: string; configured: boolean; defaultModel: string };
+const path = '/api/provider-accounts';
+const providers = {
+  'openai-compatible': { label: 'OpenAI-compatible', baseURL: 'https://api.openai.com/v1' },
+  anthropic: { label: 'Anthropic', baseURL: 'https://api.anthropic.com/v1' },
+  gemini: { label: 'Gemini', baseURL: 'https://generativelanguage.googleapis.com/v1beta' },
+};
+type Provider = keyof typeof providers;
+type Request = <T>(path: string, data?: unknown) => Promise<T>;
+type Account = { id: string; name: string; host: string; configured: boolean; defaultModel: string; provider: Provider } & (
+  { source: 'environment' } | { source: 'settings'; baseURL: string; revision: number }
+);
+type SavedAccount = Extract<Account, { source: 'settings' }>;
+const message = (error: unknown) => error instanceof Error ? error.message : 'Request failed. Try again.';
+
 export function ProvidersPanel({ request }: { request: Request }) {
   const [accounts, setAccounts] = useState<Account[] | null>(null), [error, setError] = useState(''), [reload, setReload] = useState(0);
+  const [editing, setEditing] = useState<SavedAccount | 'new' | null>(null);
+  const [removing, setRemoving] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
+  const add = useRef<HTMLButtonElement>(null);
+  const confirm = useConfirm();
   useEffect(() => { heading.current?.focus(); }, []);
   useEffect(() => {
     let alive = true;
-    setError('');
-    void request<Account[]>('/api/provider-accounts').then(rows => { if (alive) setAccounts(rows); }).catch(error => { if (alive) setError(error instanceof Error ? error.message : 'Providers could not be loaded.'); });
+    void request<Account[]>(path).then(rows => { if (alive) setAccounts(rows); }).catch(error => { if (alive) setError(message(error)); });
     return () => { alive = false; };
   }, [request, reload]);
-  return <div className="k-page bs-root"><PageHeader headingRef={heading} title="Providers" />
-    {error ? <Alert tone="error" actions={<Button size="sm" onClick={() => setReload(value => value + 1)}>Retry</Button>}>{error}</Alert> : !accounts ? <SkeletonRows /> : !accounts.length ? <EmptyState icon={<Server size={20} aria-hidden />} title="No providers" /> : accounts.map(account => <Section key={account.id} title={account.name}><Card>
-      <Row title="Host" trailing={<><span className="provider-fact">{account.host || 'Not configured'}</span><Badge tone={account.configured ? 'success' : undefined}>{account.configured ? 'Configured' : 'Not configured'}</Badge></>} />
-      <ProviderModels account={account} request={request} />
-    </Card></Section>)}
+
+  async function remove(account: SavedAccount) {
+    setRemoving(true);
+    try {
+      if (!await confirm({ title: 'Remove provider?', description: account.name, confirm: 'Remove', danger: true })) return;
+      setError('');
+      await request(`${path}/${account.id}/delete`, { id: crypto.randomUUID() });
+      setAccounts(current => current?.filter(item => item.id !== account.id) ?? null);
+      add.current?.focus();
+    } catch (error) { setError(message(error)); }
+    finally { setRemoving(false); }
+  }
+  function saved(result: SavedAccount) {
+    setAccounts(current => current?.some(account => account.id === result.id)
+      ? current.map(account => account.id === result.id ? result : account)
+      : [...current ?? [], result]);
+    setEditing(null);
+  }
+
+  const visible = accounts?.filter(account => account.configured || account.source === 'settings');
+  return <div className="k-page bs-root">
+    <PageHeader headingRef={heading} title="Providers" actions={<Button ref={add} variant="primary" disabled={accounts === null} icon={<Plus size={14} aria-hidden />} onClick={() => { setError(''); setEditing('new'); }}>Add provider</Button>} />
+    {error && <Alert tone="error" actions={!accounts && <Button size="sm" onClick={() => { setError(''); setReload(value => value + 1); }}>Retry</Button>}>{error}</Alert>}
+    {!visible ? !error && <SkeletonRows /> : !visible.length ? <EmptyState icon={<Server size={20} aria-hidden />} title="No providers" /> : visible.map(account => <Section key={account.id} title={account.name} actions={account.source === 'settings'
+      ? <ActionMenu label={`Actions for ${account.name}`} trigger={<IconButton label={`Actions for ${account.name}`} disabled={removing}><Ellipsis size={16} aria-hidden /></IconButton>} items={[
+        { label: 'Edit', onSelect: () => { setError(''); setEditing(account); } },
+        { label: 'Remove', danger: true, onSelect: () => { void remove(account); } },
+      ]} />
+      : <Badge>From server environment</Badge>}>
+      <Card>
+        <Row title="Host" trailing={<><span className="provider-fact">{account.host || 'Not configured'}</span><Badge tone={account.configured ? 'success' : undefined}>{account.configured ? 'Configured' : 'Not configured'}</Badge></>} />
+        <ProviderModels key={account.source === 'settings' ? account.revision : account.id} account={account} request={request} />
+      </Card>
+    </Section>)}
+    {editing && <ProviderForm account={editing === 'new' ? undefined : editing} request={request} onClose={() => setEditing(null)} onSaved={saved} />}
   </div>;
 }
+
+function ProviderForm({ account, request, onClose, onSaved }: { account?: SavedAccount; request: Request; onClose: () => void; onSaved: (account: SavedAccount) => void }) {
+  const form = useId();
+  const [id] = useState(() => crypto.randomUUID());
+  const [provider, setProvider] = useState<Provider>(account?.provider ?? 'openai-compatible');
+  const [baseURL, setBaseURL] = useState(account?.baseURL ?? providers[provider].baseURL);
+  const [defaultModel, setDefaultModel] = useState(account?.defaultModel ?? '');
+  const [models, setModels] = useState<string[] | null>(null);
+  const [busy, setBusy] = useState<'test' | 'save' | null>(null);
+  const [error, setError] = useState('');
+  const endpoint = account ? `${path}/${account.id}` : path;
+  const canSave = models?.includes(defaultModel) ?? false;
+
+  function connectionChanged() {
+    setModels(null);
+    setError('');
+  }
+
+  return <Dialog open title={account ? 'Edit provider' : 'Add provider'} onOpenChange={open => { if (!open && !busy) onClose(); }} footer={<>
+    <Button type="submit" form={form} name="action" value="test" busy={busy === 'test'} disabled={!!busy}>Test</Button>
+    <Button type="submit" form={form} name="action" value="save" variant="primary" busy={busy === 'save'} disabled={!!busy || !canSave}>Save</Button>
+  </>}>
+    <form id={form} className="k-stack" onSubmit={event => {
+      event.preventDefault();
+      if (busy) return;
+      const action = (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value') === 'save' ? 'save' : 'test';
+      if (action === 'save' && !canSave) return;
+      const fields = new FormData(event.currentTarget);
+      const body = { id, provider, baseURL, name: fields.get('name'), apiKey: fields.get('apiKey') };
+      setBusy(action);
+      setError('');
+      if (action === 'test') {
+        setModels(null);
+        void request<{ models: string[] }>(`${endpoint}/test`, body).then(({ models }) => {
+          setModels(models);
+          setDefaultModel(current => models.includes(current) ? current : models[0] ?? '');
+        }).catch(error => setError(message(error))).finally(() => setBusy(null));
+      } else {
+        void request<SavedAccount>(account ? `${endpoint}/edit` : endpoint, { ...body, defaultModel, ...(account && { revision: account.revision }) })
+          .then(onSaved).catch(error => setError(message(error))).finally(() => setBusy(null));
+      }
+    }}>
+      <Field label="Type"><Select value={provider} disabled={!!busy} options={Object.entries(providers).map(([value, { label }]) => ({ value, label }))} onChange={value => {
+        const next = value as Provider;
+        setProvider(next); setBaseURL(providers[next].baseURL); connectionChanged();
+      }} /></Field>
+      <Field label="Name"><Input name="name" required maxLength={80} defaultValue={account?.name} readOnly={!!busy} onChange={() => setError('')} /></Field>
+      <Field label="Base URL"><Input name="baseURL" type="url" required maxLength={2048} value={baseURL} readOnly={!!busy} spellCheck={false} autoCapitalize="none" onChange={event => { setBaseURL(event.target.value); connectionChanged(); }} /></Field>
+      <Field label="API key" hint={account && 'Blank keeps the saved key.'}><Input name="apiKey" type="password" required={!account} maxLength={8192} autoComplete="new-password" readOnly={!!busy} onChange={connectionChanged} /></Field>
+      <Field label="Default model"><Select value={models ? defaultModel : ''} disabled={!!busy || !models?.length} options={models?.length ? models.map(model => ({ value: model, label: model })) : [{ value: '', label: account?.defaultModel || 'Test to load models' }]} onChange={setDefaultModel} /></Field>
+      {models && <span role="status" className="k-field__hint">{models.length ? `${models.length} models found` : 'No models found'}</span>}
+      {error && <Alert tone="error">{error}</Alert>}
+    </form>
+  </Dialog>;
+}
+
 function ProviderModels({ account, request }: { account: Account; request: Request }) {
   const [query, setQuery] = useState(''), [closed, setClosed] = useState<string[]>([]);
   const [models, setModels] = useState<string[] | null>(null), [error, setError] = useState(''), [reload, setReload] = useState(0);

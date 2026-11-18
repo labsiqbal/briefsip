@@ -13,7 +13,8 @@ mod sql {
     include!(concat!(env!("OUT_DIR"), "/schema.rs"));
 }
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
-pub const SCHEMA_VERSION: i64 = 5;
+pub const SCHEMA_VERSION: i64 = 6;
+const PROVIDER_ACCOUNTS: &str = include_str!("data/provider-accounts.sql");
 const CANONICAL_INDEXES: &str = concat!(
     include_str!("files/indexes.sql"),
     include_str!("turns/indexes.sql"),
@@ -223,6 +224,7 @@ pub fn migrate(db: &Connection, now: i64, through: i64) -> Result<()> {
             (sql::MIGRATIONV3, "v3_task_fencing"),
             (sql::MIGRATIONV4, "v4_sync_retention"),
             (CANONICAL_INDEXES, "v5_canonical_indexes"),
+            (PROVIDER_ACCOUNTS, "v6_provider_accounts"),
         ];
         for (index, (sql, name)) in migrations.iter().enumerate() {
             let next = index as i64 + 1;
@@ -351,6 +353,7 @@ fn local(db: &Connection) -> Result<()> {
         column(db, "turns", name, definition)?;
     }
     provider_tables(db)?;
+    db.execute_batch(PROVIDER_ACCOUNTS)?;
     db.execute_batch(include_str!("provider-indexes.sql"))?;
     Ok(())
 }
