@@ -501,7 +501,7 @@ async function rustWorkflowConfigurationFixture() {
       const active = connection = startRustDeviceConnection(config());
       return { state: () => active.state() ?? { phase: 'connecting', generation: 0 }, stop: active.stop };
     } };
-    return { ...f, ...await prepareWorkflowConfiguration(f), keys, runtime, close };
+    return { ...f, ...await prepareWorkflowConfiguration(f), keys, runtime, hostOptions: config(), close };
   } catch (error) { await close(); throw error; }
 }
 
@@ -1575,9 +1575,9 @@ test('canonical routine runtime snapshots flows and hands off once using current
 });
 
 for(const name of ['no_update','report_failure'] as const) test(`canonical routine ${name} recovers terminal result after home SIGKILL and server restart without fan-out`,async()=>{
-  const f=await workflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
-  const keys=join(f.dir,'routine-keys.json'),database=join(f.dir,'workflow-home.sqlite'),reason=name==='no_update'?'Checked all sources; nothing changed.':'Required service access is missing.';
-  let calls=0,child:ReturnType<typeof spawn>|undefined;
+  const f=await rustWorkflowConfigurationFixture(),routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
+  const reason=name==='no_update'?'Checked all sources; nothing changed.':'Required service access is missing.';
+  let calls=0;
   const provider=createServer(async(req,res)=>{
     let body='';for await(const chunk of req)body+=chunk;
     const {snapshot}=JSON.parse(body);assert(snapshot.tools.some((tool:any)=>tool.function.name===name),'Actual routine step offers outcome tools');calls++;
@@ -1585,12 +1585,6 @@ for(const name of ['no_update','report_failure'] as const) test(`canonical routi
   });
   await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));
   const address=provider.address();if(!address||typeof address==='string')throw new Error('Missing provider fixture address');const providerOrigin=`http://127.0.0.1:${address.port}`;
-  async function launch(taskId:string,checkpoint?:string){
-    child=spawn(process.execPath,['--experimental-strip-types','test-support/recovery-fixture.mjs'],{cwd:new URL('.',import.meta.url),env:{...process.env,BRIEFSIP_RECOVERY_FIXTURE:JSON.stringify({mode:'loop',database,keys,server:f.origin(),effect:providerOrigin,taskId,checkpoint})},timeout:30000,stdio:['ignore','ignore','pipe','ipc']});
-    let errors='';child.stderr!.on('data',chunk=>{errors+=chunk;});const exited=once(child,'exit');
-    const message=await Promise.race([once(child,'message').then(([message])=>message),exited.then(()=>{throw new Error(`Routine fixture exited: ${errors}`);})]);
-    return {child,exited,message};
-  }
   try{
     const connection=f.runtime.connect();await until(()=>connection.state().phase==='connected');
     const home=(await f.send('/api/devices')).body.data.find((row:any)=>row.id===f.home.id),peer=randomUUID(),binding=randomUUID(),owner=(await f.send('/api/session')).body.data.accountId;
@@ -1602,9 +1596,9 @@ for(const name of ['no_update','report_failure'] as const) test(`canonical routi
     const flow=randomUUID();assert.equal((await f.send(detail+'/flow',{requestId:flow,id:flow,revision:0,links:[{from:f.agent,to:peer}]})).status,200);
     const edit=randomUUID();assert.equal((await f.send(detail+'/edit',{...create,requestId:edit,id:edit,revision:1,nextAt:Date.now()-1000})).status,200);
     let run:any;await until(async()=>{run=(await f.send(detail+'/runs')).body.data.items[0];return run?.state==='admitted';});
-    await f.runtime.close();writeFileSync(keys,JSON.stringify(Object.fromEntries(f.keys.values)),{mode:0o600});
-    const running=await launch(run.taskId,'tool-reply');assert.equal(running.message.checkpoint,'tool-reply');
-    running.child.kill('SIGKILL');assert.equal((await running.exited)[1],'SIGKILL');assert.equal(calls,1);
+    await connection.stop();
+    await crashRustDeviceTask(f.hostOptions, run.taskId, providerOrigin, 'tool-reply');
+    assert.equal(calls,1);
     await until(async()=>{run=(await f.send(detail+'/runs')).body.data.items[0];return run.state===(name==='no_update'?'done':'failed');});
     assert.deepEqual(run.steps.map((step:any)=>[step.agentId,step.state,step.taskId]).sort(),[[f.agent,name==='no_update'?'skipped':'failed',run.taskId],[peer,'skipped',null]].sort());
     assert.equal(run.steps.find((step:any)=>step.agentId===f.agent).preview,reason);
@@ -1613,7 +1607,8 @@ for(const name of ['no_update','report_failure'] as const) test(`canonical routi
     const saved=db.prepare("SELECT r.action,r.content_json FROM task_results r JOIN task_actions a ON a.id=r.action WHERE r.task=? AND a.action_kind='canonical'").get(run.taskId)!;
     await f.restart();
     for(let restart=0;restart<2;restart++){
-      const resumed=await launch(run.taskId);assert.equal(resumed.message.state,name==='no_update'?'completed':'failed');assert.equal((await resumed.exited)[0],0);assert.equal(calls,1);
+      const resumed=await runRustDeviceTask(f.hostOptions, run.taskId, providerOrigin);
+      assert.equal(resumed.state,name==='no_update'?'completed':'failed');assert.equal(calls,1);
     }
     assert.equal(db.prepare('SELECT content_json FROM task_results WHERE action=?').get(saved.action)!.content_json,saved.content_json);
     assert.equal(db.prepare('SELECT count(*) n FROM task_actions WHERE task=?').get(run.taskId)!.n,2);
@@ -1621,7 +1616,6 @@ for(const name of ['no_update','report_failure'] as const) test(`canonical routi
     assert.equal(db.prepare('SELECT count(*) n FROM tasks WHERE project=?').get(f.project)!.n,1);
     assert.deepEqual((await f.send(detail+'/runs')).body.data.items[0],run);
   }finally{
-    if(child&&child.exitCode===null&&child.signalCode===null){const exited=once(child,'exit');child.kill('SIGKILL');await exited;}
     provider.closeAllConnections();await new Promise<void>(resolve=>provider.close(()=>resolve()));db.close();await f.close();
   }
 });
