@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createClerkClient } from '@clerk/backend';
 import { createHash, createHmac, createDecipheriv, createPublicKey, diffieHellman, hkdfSync, generateKeyPairSync, sign, randomUUID, randomBytes } from 'node:crypto';
-import { chmodSync, mkdtempSync, rmSync, readFileSync, existsSync, statSync, writeFileSync, renameSync, symlinkSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, readFileSync, existsSync, statSync, writeFileSync, renameSync, symlinkSync } from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer, request as httpRequest } from 'node:http';
@@ -3147,6 +3147,37 @@ test('SIGKILL recovery proves no send before marker and never repeats marked eff
     await new Promise<void>(resolve => provider.close(() => resolve()));
     await f.close();
   }
+});
+
+test('Rust exports prepared, in-flight and reported Node v3 journal evidence offline', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-frozen-journal-'));
+  const source = new URL('./test-support/fixtures/node-device-journal-v3/', import.meta.url);
+  try {
+    const { identity, keyring: syntheticKeys, samples } = JSON.parse(readFileSync(new URL('synthetic.json', source), 'utf8'));
+    const database = join(dir, 'home.sqlite'), keyring = join(dir, 'keys.json'), metadata = database + '.host';
+    writeFileSync(database, '', { mode: 0o600 });
+    const db = new DatabaseSync(database);
+    try { db.exec(readFileSync(new URL('device.sql', source), 'utf8')); } finally { db.close(); }
+    mkdirSync(metadata, { mode: 0o700 });
+    writeFileSync(join(metadata, 'identity.json'), JSON.stringify(identity), { mode: 0o600 });
+    writeFileSync(keyring, JSON.stringify(syntheticKeys), { mode: 0o600 });
+
+    const options = { database, keyring, server: identity.server };
+    const recoveryGeneration = randomUUID();
+    const effects = { not_sent: 'none', uncertain: 'unknown', reported: 'known' } as const;
+    for (const { taskId, actionId, recoveryState } of samples as { taskId: string; actionId: string; recoveryState: keyof typeof effects }[]) {
+      const requestId = randomUUID(), withContent = recoveryState === 'reported';
+      const evidence = exportRustDeviceRecovery(options, taskId, [actionId], requestId, recoveryGeneration, withContent);
+      assert.equal(evidence.envelope.entries.length, 1);
+      const [entry] = evidence.envelope.entries;
+      assert.equal(entry.actionId, actionId);
+      assert.equal(entry.taskId, taskId);
+      assert.equal(entry.state, recoveryState);
+      assert.equal(entry.effectStatus, effects[recoveryState]);
+      assert.deepEqual(evidence.resultContent, withContent ? { text: 'Saved effect' } : undefined);
+      assert.deepEqual(exportRustDeviceRecovery(options, taskId, [actionId], requestId, recoveryGeneration, withContent), evidence);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('stalled normal requests cannot starve control reads and disconnected requests release capacity', async () => {
