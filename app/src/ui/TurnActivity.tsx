@@ -32,7 +32,7 @@ export function TurnActivity({ turn, agentName, onOpenTask, onOpenAgent, onInspe
   const contents = steps.length > 0 && <ol className="activity-list" aria-label="Turn activity">
     {steps.map(step => {
       const item = step.task ? turn.agentMessages?.find(row => row.taskId === step.task) : undefined;
-      const title = <>{step.text}{step.state && <span className="activity-step-state" data-state={step.state}>{step.state}</span>}</>;
+      const title = <>{step.text}{step.state && <span className="activity-step-state" data-state={step.state}> {step.state}</span>}</>;
       return <li key={step.id}>
         {step.prose ? <MessageSquare className="activity-step-icon" aria-hidden /> : <Wrench className="activity-step-icon" aria-hidden />}
         {step.prose ? <div className="legacy"><Markdown text={step.text} scope={scope} origin={window.location.origin} /></div>

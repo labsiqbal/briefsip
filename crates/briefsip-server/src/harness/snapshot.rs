@@ -97,9 +97,32 @@ impl Snapshot {
         let arguments = crate::turns::diagnostics::display(arguments, &self.secrets);
         let failed = crate::turns::diagnostics::tool_failed(result);
         let result = crate::turns::diagnostics::display(result, &self.secrets);
-        let name = crate::turns::diagnostics::text(name, &self.secrets);
+        let key = format!("tool-{id}");
+        let existing = self
+            .segments
+            .iter()
+            .position(|segment| segment["id"] == key);
+        let previous = existing.map(|index| &self.segments[index]);
+        let name = crate::turns::diagnostics::text(
+            if name.is_empty() {
+                previous
+                    .and_then(|segment| segment["text"].as_str())
+                    .unwrap_or("Tool")
+            } else {
+                name
+            },
+            &self.secrets,
+        );
+        let state = if state.is_empty() {
+            previous
+                .and_then(|segment| segment["state"].as_str())
+                .unwrap_or("pending")
+                .to_owned()
+        } else {
+            state.to_owned()
+        };
         let terminal = matches!(
-            state,
+            state.as_str(),
             "completed"
                 | "done"
                 | "failed"
@@ -111,8 +134,7 @@ impl Snapshot {
                 | "aborted"
         );
         self.flush()?;
-        let key = format!("tool-{id}");
-        let index = if let Some(index) = self.segments.iter().position(|s| s["id"] == key) {
+        let index = if let Some(index) = existing {
             index
         } else {
             if self.segments.len() >= 512 {

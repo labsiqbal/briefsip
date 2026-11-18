@@ -90,7 +90,6 @@ export function RunInspector({ target, request }: { target: RunTarget; request: 
     {data && <>
       {data.error && <InspectText label="Run error" text={data.error} />}
       {steps.length > 0 && <ul className="run-inspector__list" aria-label="Steps">{steps.map(step => <StepDetails key={step.id} step={step} state={toolState(step, data.status)} selected={selected?.id === step.id ? target : null} />)}</ul>}
-      {data.engineStderr && <InspectText label="Engine stderr" text={data.engineStderr} />}
       {data.providers.length > 0 && <section className="run-inspector__providers" aria-labelledby="run-provider-calls">
         <h3 id="run-provider-calls">Provider calls</h3>
         <ul className="run-inspector__list">{data.providers.map(call => <li key={call.seq}><details>
@@ -104,6 +103,7 @@ export function RunInspector({ target, request }: { target: RunTarget; request: 
           </dl></div>
         </details></li>)}</ul>
       </section>}
+      {data.engineStderr && <InspectText label="Engine stderr" text={data.engineStderr} />}
       {!steps.length && !data.providers.length && !data.error && !data.engineStderr && <p role="status">No run details</p>}
     </>}
   </div>;

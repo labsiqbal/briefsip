@@ -1178,8 +1178,8 @@ async fn execute(
                     }
                     snapshot.tool(
                         string(update, "toolCallId"),
-                        update["title"].as_str().unwrap_or("Tool"),
-                        update["status"].as_str().unwrap_or("pending"),
+                        string(update, "title"),
+                        string(update, "status"),
                         &update["rawInput"],
                         &update["rawOutput"],
                     )?;
