@@ -10,7 +10,7 @@ import type { HumanActor } from './auth.ts';
 import { initializeCanonicalSchema, initializeDeviceSchema, transaction } from './schema.ts';
 import { openExecutorJournal, type ActionContext } from './executor-journal.ts';
 import { initializeMemory, rememberMemory } from './memory.ts';
-import { initializeSkills, saveSkill } from './skills.ts';
+import { requireSkillSchema as initializeSkills, seedSkillVersion as saveSkill } from './test-support/skill-fixture.ts';
 import { initializeQuestions } from './questions.ts';
 import { initializeSharedData } from './shared-data.ts';
 import { initializeCompaction } from './compaction.ts';
