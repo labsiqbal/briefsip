@@ -596,9 +596,10 @@ async fn websocket_relay_checks_frames_and_revokes_viewers_on_idle_or_death() ->
     let computer = &state.computer;
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
+    const RELAY_PATH: &str = "/relay";
     let router = Router::new()
         .route(
-            "/relay",
+            RELAY_PATH,
             get(
                 |State(state): State<crate::AppState>, request: axum::extract::Request| async move {
                     match super::super::vnc::upgrade(state, request, FIRST.into()).await {
@@ -626,7 +627,7 @@ async fn websocket_relay_checks_frames_and_revokes_viewers_on_idle_or_death() ->
     };
     let connect = || async {
         let mut request =
-            format!("ws://{address}/relay?ticket={}", mint()?).into_client_request()?;
+            format!("ws://{address}{RELAY_PATH}?ticket={}", mint()?).into_client_request()?;
         request
             .headers_mut()
             .insert("origin", state.origin.parse()?);
