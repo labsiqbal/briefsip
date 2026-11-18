@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import * as sessions from './t3/mcp-session-registry.ts';
-import type { AgentSessionIssuer } from './harness.ts';
+import type { AgentSessionIssuer } from './test-support/harness-types.ts';
 import { extractPdf, PdfError } from './pdf-text.ts';
 type HarnessOptions = { issuer?: AgentSessionIssuer };
 
