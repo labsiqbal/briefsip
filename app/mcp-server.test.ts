@@ -10,7 +10,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { startApp } from './test-bridge.ts';
 import { initializeMcpSessions, mintAgentSession, verifyBearer, revokeAgentSession } from './t3/mcp-session-registry.ts';
-import type { McpScope } from './mcp-server.ts';
+import type { McpScope } from './mcp-scopes.ts';
 const allScopes: McpScope[] = ['agents:read','agents:message','history:read'];
 async function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-mcp-server-')), database = join(dir, 'state.sqlite');

@@ -1,5 +1,5 @@
 import { hubTestTransport } from './rust-hub-test-bridge.ts';
-import type { HubLinkOptions } from './hub-link.ts';
+import type { HubLinkOptions } from './rust-hub-test-bridge.ts';
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import type { AgentDesktopManager } from './agent-desktop.ts';
