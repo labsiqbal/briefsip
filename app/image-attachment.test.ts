@@ -6,18 +6,15 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { imageType, imagePart, imageLimit } from './image-attachment.ts';
-import { anthropicRequest, type ProviderFamily } from './provider.ts';
+import type { ProviderFamily } from './test-support/provider-endpoint.ts';
 import { startApp } from './test-bridge.ts';
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZ84AAAAASUVORK5CYII=', 'base64');
-test('image headers and inline provider conversion are bounded and never use remote URLs', () => {
+test('image headers and eventual inline bytes are bounded', () => {
   assert.equal(imageType(png), 'image/png'); assert.equal(imageType(Buffer.from([255,216,255,224])), 'image/jpeg');
   assert.equal(imageType(Buffer.from('RIFF0000WEBPVP8 ')), 'image/webp'); assert.equal(imageType(Buffer.from('<svg></svg>')), null);
   assert.equal(imageType(png.subarray(0, 12)), null); assert.throws(() => imagePart(Buffer.concat([png, Buffer.alloc(imageLimit)])));
   const part = imagePart(png); assert.equal(part.image_url.url, 'data:image/png;base64,' + png.toString('base64'));
-  const native = anthropicRequest('vision', [{ role: 'user', content: [{ type: 'text', text: 'Look' }, part] }], [], 100);
-  assert.deepEqual(native.messages[0].content[1], { type: 'image', source: { type: 'base64', media_type: 'image/png', data: png.toString('base64') } });
-  for (const url of ['https://example.com/private', 'data:image/svg+xml;base64,PHN2Zz4=', 'file:///tmp/private']) assert.throws(() => anthropicRequest('vision', [{ role: 'user', content: [{ type: 'image_url', image_url: { url } }] }], [], 100));
 });
 
 for (const family of ['openai-compatible', 'anthropic', 'gemini'] as ProviderFamily[]) test(`${family} image attachments retain scope, bytes, retry identity and bounded rereading`, async () => {

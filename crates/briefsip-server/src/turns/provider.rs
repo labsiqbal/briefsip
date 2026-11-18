@@ -87,15 +87,7 @@ pub async fn call(
     let endpoint = match account.family.as_str() {
         "anthropic" => format!("{}/messages", account.base.trim_end_matches('/')),
         "gemini" => {
-            let id = model.strip_prefix("models/").unwrap_or(model);
-            if id.is_empty()
-                || id.len() > 151
-                || !id
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-            {
-                return Err(error(502, MALFORMED));
-            }
+            let id = gemini_model(model)?;
             format!(
                 "{}/models/{}:{}{}",
                 account.base.trim_end_matches('/'),
@@ -381,6 +373,17 @@ fn translate(
                         .as_str()
                         .and_then(|s| s.strip_prefix("data:"))
                         .and_then(|s| s.split_once(";base64,"))
+                        .filter(|(mime, data)| {
+                            let payload = data.trim_end_matches('=');
+                            role == "user"
+                                && p["type"] == "image_url"
+                                && ["image/png", "image/jpeg", "image/webp"].contains(mime)
+                                && !payload.is_empty()
+                                && data.len() - payload.len() <= 2
+                                && payload.bytes().all(|byte| {
+                                    byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/')
+                                })
+                        })
                         .ok_or_else(|| error(502, MALFORMED))?;
                     content.push(if family=="anthropic"{json!({"type":"image","source":{"type":"base64","media_type":image.0,"data":image.1}})}else{json!({"inlineData":{"mimeType":image.0,"data":image.1}})});
                 }
@@ -431,6 +434,19 @@ fn translate(
         Ok(v)
     }
 }
+fn gemini_model(model: &str) -> Result<&str> {
+    let id = model.strip_prefix("models/").unwrap_or(model);
+    if !id.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
+        || id.len() > 151
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+    {
+        return Err(error(502, MALFORMED));
+    }
+    Ok(id)
+}
+
 pub fn choice(family: &str, v: &Value) -> Result<Value> {
     if family == "openai-compatible" {
         return v["choices"][0]
@@ -467,6 +483,9 @@ pub fn choice(family: &str, v: &Value) -> Result<Value> {
     if c["finishReason"] != "STOP"
         || v.get("error").is_some()
         || !v["promptFeedback"]["blockReason"].is_null()
+        || c["content"]
+            .get("role")
+            .is_some_and(|role| role != "" && role != "model")
     {
         return Err(error(502, MALFORMED));
     }
@@ -475,6 +494,7 @@ pub fn choice(family: &str, v: &Value) -> Result<Value> {
         .ok_or_else(|| error(502, MALFORMED))?;
     for p in parts {
         if !closed(p, &["text", "functionCall", "thought", "thoughtSignature"])
+            || p.get("text").is_some() == p.get("functionCall").is_some()
             || p.get("thought").is_some_and(|v| !v.is_boolean())
             || p.get("thoughtSignature").is_some_and(|v| !v.is_string())
         {
@@ -484,12 +504,16 @@ pub fn choice(family: &str, v: &Value) -> Result<Value> {
             if p["thought"] != true {
                 text.push(s.to_owned());
             }
-        } else if p["functionCall"]["name"].is_string()
-            && p["functionCall"].get("args").is_none_or(Value::is_object)
-        {
-            calls.push(json!({"id":uuid::Uuid::new_v4().to_string(),"type":"function","function":{"name":p["functionCall"]["name"],"arguments":p["functionCall"].get("args").cloned().unwrap_or(json!({})).to_string()},"geminiParts":parts}));
         } else {
-            return Err(error(502, MALFORMED));
+            let call = &p["functionCall"];
+            if !closed(call, &["name", "args", "id"])
+                || !call["name"].is_string()
+                || !call.get("args").is_none_or(Value::is_object)
+                || !call.get("id").is_none_or(Value::is_string)
+            {
+                return Err(error(502, MALFORMED));
+            }
+            calls.push(json!({"id":uuid::Uuid::new_v4().to_string(),"type":"function","function":{"name":call["name"],"arguments":call.get("args").cloned().unwrap_or(json!({})).to_string()},"geminiParts":parts}));
         }
     }
     if calls.len() > 1 {
@@ -543,4 +567,170 @@ fn usage(family: &str, v: &Value) -> [Option<i64>; 3] {
         }
     };
     [input, output, total]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn anthropic_translation_preserves_roles_tools_and_usage() -> Result<()> {
+        let body = translate(
+            "anthropic",
+            "model",
+            &[
+                json!({"role":"system","content":"System"}),
+                json!({"role":"system","content":"Summary"}),
+                json!({"role":"user","content":"Question"}),
+                json!({"role":"user","content":"Other participant"}),
+                json!({"role":"assistant","content":null,"tool_calls":[{"id":"call","function":{"name":"lookup","arguments":r#"{"query":"x"}"#}}]}),
+                json!({"role":"tool","tool_call_id":"call","content":"Result"}),
+            ],
+            &[
+                json!({"function":{"name":"lookup","description":"Read","parameters":{"type":"object"}}}),
+            ],
+            2048,
+            false,
+        )?;
+        assert_eq!(body["max_tokens"], 2048);
+        assert_eq!(body["stream"], false);
+        assert_eq!(
+            body["system"],
+            json!([{"type":"text","text":"System"},{"type":"text","text":"Summary"}])
+        );
+        let messages = &body["messages"];
+        assert_eq!(messages.as_array().map(Vec::len), Some(3));
+        assert_eq!(messages[0]["content"].as_array().map(Vec::len), Some(2));
+        assert_eq!(
+            messages[1]["content"],
+            json!([{"type":"tool_use","id":"call","name":"lookup","input":{"query":"x"}}])
+        );
+        assert_eq!(
+            messages[2]["content"],
+            json!([{"type":"tool_result","tool_use_id":"call","content":"Result"}])
+        );
+        assert_eq!(
+            body["tool_choice"],
+            json!({"type":"auto","disable_parallel_tool_use":true})
+        );
+        for (counts, expected) in [
+            (
+                json!({"input_tokens":3,"output_tokens":4,"cache_creation_input_tokens":5,"cache_read_input_tokens":6}),
+                [Some(14), Some(4), Some(18)],
+            ),
+            (json!({"input_tokens":0,"output_tokens":0}), [Some(0); 3]),
+            (
+                json!({"input_tokens":3,"output_tokens":4,"cache_read_input_tokens":"6"}),
+                [None, Some(4), None],
+            ),
+            (Value::Null, [None; 3]),
+        ] {
+            assert_eq!(usage("anthropic", &json!({"usage":counts})), expected);
+        }
+        for invalid in [
+            json!(false),
+            json!({}),
+            json!({"type":"message","role":"assistant","content":[{"type":"thinking","thinking":"hidden"}]}),
+            json!({"type":"message","role":"assistant","content":[{"type":"tool_use","id":"x","name":"read","input":[]}]}),
+        ] {
+            assert!(choice("anthropic", &invalid).is_err());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn native_attachment_translation_accepts_only_inline_raster_bytes() -> Result<()> {
+        let translate_image = |family, url| {
+            translate(
+                family,
+                "vision",
+                &[
+                    json!({"role":"user","content":[{"type":"text","text":"Look"},{"type":"image_url","image_url":{"url":url}}]}),
+                ],
+                &[],
+                100,
+                false,
+            )
+        };
+        let body = translate_image("anthropic", "data:image/png;base64,AA==")?;
+        assert_eq!(
+            body["messages"][0]["content"][1],
+            json!({"type":"image","source":{"type":"base64","media_type":"image/png","data":"AA=="}})
+        );
+        for family in ["anthropic", "gemini"] {
+            for url in [
+                "https://example.com/private",
+                "data:image/svg+xml;base64,PHN2Zz4=",
+                "file:///tmp/private",
+            ] {
+                assert!(translate_image(family, url).is_err());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn gemini_preserves_signed_content_and_validates_effects() -> Result<()> {
+        let parts = json!([
+            {"text":"Reasoning","thought":true},
+            {"functionCall":{"name":"read_history","args":{}},"thoughtSignature":"signed"}
+        ]);
+        let candidate = |parts: Value, finish: &str| json!({"candidates":[{"content":{"role":"model","parts":parts},"finishReason":finish}]});
+        let result = choice("gemini", &candidate(parts.clone(), "STOP"))?;
+        let message = &result["message"];
+        assert_eq!(message["content"], "");
+        let call = &message["tool_calls"][0];
+        let body = translate(
+            "gemini",
+            "fixture",
+            &[
+                json!({"role":"system","content":"System"}),
+                json!({"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,AA=="}}]}),
+                json!({"role":"assistant","content":null,"tool_calls":[call]}),
+                json!({"role":"tool","tool_call_id":call["id"],"content":"{}"}),
+            ],
+            &[],
+            100,
+            false,
+        )?;
+        assert_eq!(body["contents"][1]["parts"], parts);
+        assert_eq!(
+            body["contents"][2]["parts"][0]["functionResponse"]["name"],
+            "read_history"
+        );
+        assert_eq!(
+            body["contents"][0]["parts"][0]["inlineData"]["mimeType"],
+            "image/png"
+        );
+
+        let no_args = candidate(json!([{"functionCall":{"name":"list_agents"}}]), "STOP");
+        assert_eq!(
+            choice("gemini", &no_args)?["message"]["tool_calls"][0]["function"]["arguments"],
+            "{}"
+        );
+        for invalid in [
+            json!({"text":"hidden call","functionCall":{"name":"read_history","args":{}}}),
+            json!({"text":"bad flag","thought":"true"}),
+            json!({"functionCall":{"name":"read_history","args":null}}),
+            json!({"functionCall":{"name":"read_history","id":{}}}),
+        ] {
+            assert!(choice("gemini", &candidate(json!([invalid, parts[1]]), "STOP")).is_err());
+        }
+        for finish in ["MAX_TOKENS", "SAFETY", "MALFORMED_FUNCTION_CALL"] {
+            assert!(choice("gemini", &candidate(parts.clone(), finish)).is_err());
+        }
+        for model in ["../key", "bad?key=x", "x/y", ".model"] {
+            assert!(gemini_model(model).is_err());
+        }
+        assert_eq!(gemini_model("models/model-1")?, "model-1");
+        assert_eq!(
+            usage(
+                "gemini",
+                &json!({"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":4,"thoughtsTokenCount":2,"totalTokenCount":9}})
+            ),
+            [Some(3), Some(6), Some(9)]
+        );
+        assert_eq!(usage("gemini", &json!({})), [None; 3]);
+        Ok(())
+    }
 }

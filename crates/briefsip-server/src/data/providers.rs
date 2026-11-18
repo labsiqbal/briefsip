@@ -60,6 +60,18 @@ pub fn address(base: &str) -> crate::db::Result<url::Url> {
     }
     Ok(url)
 }
+fn parse_accounts_environment(
+    raw: std::result::Result<String, std::env::VarError>,
+) -> crate::db::Result<Option<Value>> {
+    match raw {
+        Ok(raw) if raw.len() > 65536 => Err("Provider account configuration exceeds 64 KiB".into()),
+        Ok(raw) => serde_json::from_str(&raw)
+            .map(Some)
+            .map_err(|_| "Provider account configuration must be valid JSON".into()),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(_) => Err("Provider account configuration must be valid JSON".into()),
+    }
+}
 impl Options {
     pub fn environment() -> crate::db::Result<Self> {
         use std::env;
@@ -86,17 +98,7 @@ impl Options {
             api_key: env::var(format!("{prefix}_API_KEY")).ok(),
             default_model: env::var(format!("{prefix}_MODEL")).ok(),
             provider,
-            accounts: match env::var("BRIEFSIP_PROVIDER_ACCOUNTS") {
-                Ok(raw) if raw.len() > 65536 => {
-                    return Err("Provider account configuration exceeds 64 KiB".into())
-                }
-                Ok(raw) => Some(
-                    serde_json::from_str(&raw)
-                        .map_err(|_| "Provider account configuration must be valid JSON")?,
-                ),
-                Err(env::VarError::NotPresent) => None,
-                Err(_) => return Err("Provider account configuration must be valid JSON".into()),
-            },
+            accounts: parse_accounts_environment(env::var("BRIEFSIP_PROVIDER_ACCOUNTS"))?,
             project_root: env::var("BRIEFSIP_PROJECT_ROOT").ok(),
             concurrency: parsed("BRIEFSIP_CONCURRENCY")?,
             stream: Some(env::var("BRIEFSIP_STREAM").as_deref() == Ok("1")),
@@ -448,4 +450,67 @@ pub fn usage(db: &Connection, q: &[(String, String)]) -> Result<Value> {
     Ok(
         json!({"summary":summary,"next_before":if calls.len()>50{calls[49]["seq"].clone()}else{Value::Null},"calls":calls.into_iter().take(50).collect::<Vec<_>>(),"transcription":transcription}),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_account_configuration_rejects_ambiguous_or_unsafe_entries() -> crate::db::Result<()>
+    {
+        let valid = json!({"id":"work","name":"Work","baseURL":"https://example.test/v1","provider":"openai-compatible"});
+        let parse = |accounts: Option<Value>| {
+            Options {
+                accounts,
+                ..Options::default()
+            }
+            .parse_accounts()
+        };
+        assert!(parse_accounts_environment(Err(std::env::VarError::NotPresent))?.is_none());
+        let defaults = parse(None)?;
+        assert_eq!(defaults.len(), 1);
+        assert_eq!(defaults[0].family, "openai-compatible");
+        assert_eq!(defaults[0].termination, "marker");
+        assert!(family(Some("typo")).is_err());
+        for base in [
+            "http://public.example/v1",
+            "https://key:secret@example.com/v1",
+            "https://example.com/v1?key=secret",
+        ] {
+            assert!(address(base).is_err());
+        }
+        assert!(matches!(
+            parse_accounts_environment(Ok("{secret-private-key".into())),
+            Err(error) if !error.to_string().contains("secret-private-key")
+        ));
+        assert!(matches!(
+            parse_accounts_environment(Ok(" ".repeat(65537))),
+            Err(error) if error.to_string().contains("64 KiB")
+        ));
+        let parsed = parse(parse_accounts_environment(Ok(json!([valid]).to_string()))?)?;
+        assert_eq!(parsed[1].id, "work");
+        for accounts in [Value::Null, json!({}), json!([valid, valid])] {
+            assert!(parse(Some(accounts)).is_err());
+        }
+        for (key, value) in [
+            ("id", json!("")),
+            ("apiKey", json!("x\nsecret")),
+            ("baseURL", json!("http://example.test")),
+            ("baseURL", json!("https://user:secret@example.test")),
+            ("provider", json!("other")),
+            ("extra", json!(true)),
+            ("stream", json!("1")),
+            ("maxTokens", json!(0)),
+        ] {
+            let mut account = valid.clone();
+            account[key] = value;
+            assert!(parse(Some(json!([account]))).is_err());
+        }
+        let mut gemini = valid;
+        gemini["provider"] = json!("gemini");
+        gemini["streamTermination"] = json!("finish-reason");
+        assert!(parse(Some(json!([gemini]))).is_err());
+        Ok(())
+    }
 }

@@ -181,6 +181,13 @@ impl Decoder {
                 }
                 self.usage = v["usageMetadata"].clone();
             }
+            if v.get("candidates").is_none()
+                && v["promptFeedback"].is_object()
+                && self.blocks.is_empty()
+                && self.reason.is_none()
+            {
+                return Ok(());
+            }
             let candidates = v["candidates"]
                 .as_array()
                 .filter(|a| a.len() == 1)
@@ -458,6 +465,283 @@ mod tests {
             d.finish("openai-compatible", "finish-reason")?["choices"][0]["message"]["content"],
             "Hello 世界"
         );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod gemini_tests {
+    use super::*;
+
+    #[test]
+    fn streams_visible_text_and_requires_gemini_finish() -> Result<()> {
+        let mut decoder = Decoder::default();
+        let mut visible = String::new();
+        let mut publish = |text: &str| {
+            visible = text.to_owned();
+            Ok(())
+        };
+        for event in [
+            json!({"promptFeedback":{"safetyRatings":[]}}),
+            json!({"candidates":[{"content":{"parts":[{"text":"hidden","thought":true},{"text":"Hello "}]}}]}),
+            json!({"candidates":[{"content":{"role":"model","parts":[{"text":"world"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1}}),
+        ] {
+            decoder.event(&event.to_string(), "gemini", &mut publish)?;
+        }
+        assert_eq!(visible, "Hello world");
+        let result = decoder.finish("gemini", "marker")?;
+        assert_eq!(
+            provider::choice("gemini", &result)?["message"]["content"],
+            "Hello world"
+        );
+
+        let mut incomplete = Decoder::default();
+        incomplete.event(
+            r#"{"candidates":[{"content":{"parts":[{"text":"partial"}]}}]}"#,
+            "gemini",
+            |_| Ok(()),
+        )?;
+        assert!(incomplete.finish("gemini", "marker").is_err());
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod sse_tests {
+    use super::*;
+    use axum::{body::Body, routing::get};
+    use tokio::net::TcpListener;
+
+    async fn fixture(
+        text: impl Into<String>,
+        width: usize,
+        interrupted: bool,
+        family: &str,
+        termination: &str,
+        publish: impl FnMut(&str) -> Result<()>,
+    ) -> Result<Value> {
+        let listener = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .map_err(|e| error(500, e.to_string()))?;
+        let origin = format!(
+            "http://{}",
+            listener
+                .local_addr()
+                .map_err(|e| error(500, e.to_string()))?
+        );
+        let text = text.into();
+        let server = tokio::spawn(async move {
+            let app = Router::new().route(
+                "/",
+                get(move || async move {
+                    let chunks = text
+                        .as_bytes()
+                        .chunks(width)
+                        .map(axum::body::Bytes::copy_from_slice)
+                        .collect::<Vec<_>>();
+                    Body::from_stream(async_stream::stream! {
+                        for chunk in chunks {
+                            yield Ok(chunk);
+                        }
+                        if interrupted {
+                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                            yield Err(std::io::Error::other("simulated broken connection"));
+                        }
+                    })
+                }),
+            );
+            axum::serve(listener, app).await
+        });
+        let parsed = match reqwest::get(origin).await {
+            Ok(response) => read(response, family, termination, publish).await,
+            Err(error) => Err(super::error(500, error.to_string())),
+        };
+        server.abort();
+        parsed
+    }
+
+    fn sse(v: &Value) -> String {
+        format!("data: {v}\n\n")
+    }
+    fn chunk(delta: Value, reason: Value) -> String {
+        sse(&json!({"choices":[{"index":0,"delta":delta,"finish_reason":reason}]}))
+    }
+    const DONE: &str = "data: [DONE]\n\n";
+
+    #[tokio::test]
+    async fn compatible_eof_requires_finish_and_clean_transport() -> Result<()> {
+        let partial = chunk(json!({"content":"Result"}), Value::Null);
+        let complete = partial.clone() + &chunk(json!({}), json!("stop"));
+        let check = |text, interrupted, mode| {
+            fixture(text, 64, interrupted, "openai-compatible", mode, |_| Ok(()))
+        };
+        let result = check(complete.clone(), false, "finish-reason").await?;
+        assert_eq!(result["choices"][0]["message"]["content"], "Result");
+        assert!(check(complete.clone(), false, "marker").await.is_err());
+        assert!(check(partial, false, "finish-reason").await.is_err());
+        assert!(check(
+            complete.clone() + "data: {\"choices\":",
+            false,
+            "finish-reason"
+        )
+        .await
+        .is_err());
+        assert!(check(complete, true, "finish-reason").await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn openai_sse_handles_framing_metadata_and_invalid_events() -> Result<()> {
+        let usage = json!({"prompt_tokens":2,"completion_tokens":4,"total_tokens":6});
+        let stream = String::from(": comment\n\n")
+            + &chunk(json!({"role":"assistant","content":"Halo "}), Value::Null)
+            + &chunk(json!({"content":"世界"}), Value::Null)
+            + &chunk(json!({}), json!("stop"))
+            + &sse(&json!({"choices":[],"usage":usage}))
+            + DONE;
+        for newline in ["\r\n", "\r"] {
+            let mut latest = String::new();
+            let parsed = fixture(
+                stream.replace('\n', newline),
+                1,
+                false,
+                "openai-compatible",
+                "marker",
+                |text| {
+                    latest = text.to_owned();
+                    Ok(())
+                },
+            )
+            .await?;
+            assert_eq!(latest, "Halo 世界");
+            assert_eq!(parsed["usage"], usage);
+        }
+        let check = |data, width| {
+            fixture(
+                data,
+                width,
+                false,
+                "openai-compatible",
+                "marker",
+                |_| Ok(()),
+            )
+        };
+        let multiline = "data: {\"choices\":\ndata: [{\"index\":0,\"delta\":{\"content\":\"Yes\"},\"finish_reason\":\"stop\"}]}\n\n";
+        assert!(check(multiline.to_owned() + DONE, 15).await.is_ok());
+
+        let extra =
+            json!({"google":{"thought_signature":"opaque-signature"},"vendor":{"version":1}});
+        let metadata = |v| {
+            chunk(
+                json!({"tool_calls":[{"index":0,"extra_content":v}]}),
+                Value::Null,
+            )
+        };
+        let start = chunk(
+            json!({"tool_calls":[{"index":0,"id":"call","type":"function","function":{"name":"read_history","arguments":"{"}}]}),
+            Value::Null,
+        );
+        let end = chunk(
+            json!({"tool_calls":[{"index":0,"function":{"arguments":"}"}}]}),
+            Value::Null,
+        );
+        let finish = chunk(json!({}), json!("tool_calls")) + DONE;
+        for tool in [
+            metadata(extra.clone()) + &start + &end + &finish,
+            start.clone()
+                + &end
+                + &metadata(extra.clone())
+                + &metadata(json!({"vendor":{"version":1},"google":extra["google"]}))
+                + &finish,
+        ] {
+            let result = check(tool, 17).await?;
+            let call = &result["choices"][0]["message"]["tool_calls"][0];
+            assert_eq!(call["function"]["arguments"], "{}");
+            assert_eq!(call["extra_content"], extra);
+        }
+        for invalid in [Value::Null, json!([]), json!(false), json!("signature")] {
+            assert!(check(metadata(invalid) + &start + &end + &finish, 100)
+                .await
+                .is_err());
+        }
+        for malformed in [
+            String::from("event: error\n") + multiline + DONE,
+            chunk(json!({"content":"Partial"}), Value::Null),
+            chunk(json!({}), json!("stop")),
+            DONE.to_owned(),
+            chunk(json!({"tool_calls":[{"index":1}]}), Value::Null),
+            chunk(json!({"content":42}), Value::Null),
+            sse(&json!({"error":{"message":"fixture error"}})),
+            start.replace("read_history", &"x".repeat(201)) + &end + &finish,
+            metadata(extra)
+                + &metadata(json!({"google":{"thought_signature":"changed"}}))
+                + &start
+                + &end
+                + &finish,
+            "x".repeat(2 * 1024 * 1024 + 1),
+        ] {
+            assert!(check(malformed, 65536).await.is_err());
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn anthropic_sse_requires_order_and_keeps_unknown_usage() -> Result<()> {
+        let start = json!({"type":"message_start","message":{"type":"message","role":"assistant","content":[],"usage":{"input_tokens":2,"output_tokens":0,"cache_read_input_tokens":3}}});
+        let block = json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}});
+        let delta = json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Native"}});
+        let stop = json!({"type":"content_block_stop","index":0});
+        let done = json!({"type":"message_stop"});
+        let finish = json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}});
+        let check = |events: &[Value]| {
+            fixture(
+                events.iter().map(sse).collect::<String>(),
+                3,
+                false,
+                "anthropic",
+                "marker",
+                |_| Ok(()),
+            )
+        };
+        let mut reported = finish.clone();
+        reported["usage"] = json!({"output_tokens":4});
+        let result = check(&[
+            start.clone(),
+            json!({"type":"ping"}),
+            block.clone(),
+            delta.clone(),
+            stop.clone(),
+            reported,
+            done.clone(),
+        ])
+        .await?;
+        assert_eq!(result["content"][0]["text"], "Native");
+        assert_eq!(
+            result["usage"],
+            json!({"input_tokens":2,"output_tokens":4,"cache_read_input_tokens":3})
+        );
+        let unknown = check(&[
+            start.clone(),
+            block.clone(),
+            delta.clone(),
+            stop.clone(),
+            finish.clone(),
+            done.clone(),
+        ])
+        .await?;
+        assert_eq!(unknown["usage"]["output_tokens"], Value::Null);
+        for malformed in [
+            vec![start.clone(), delta],
+            vec![start.clone(), block.clone(), finish, done.clone()],
+            vec![start.clone(), block, stop, done],
+            vec![start.clone(), start.clone()],
+            vec![
+                start,
+                json!({"type":"error","error":{"message":"fixture error"}}),
+            ],
+        ] {
+            assert!(check(&malformed).await.is_err());
+        }
         Ok(())
     }
 }

@@ -6,18 +6,6 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
-import { providerAccounts, parseProviderAccounts } from './provider-accounts.ts';
-
-test('provider account configuration rejects ambiguous or unsafe entries', () => {
-  const valid = { id: 'work', name: 'Work', baseURL: 'https://example.test/v1', provider: 'openai-compatible' };
-  assert.deepEqual(providerAccounts(undefined), []);
-  assert.deepEqual(parseProviderAccounts(undefined), []);
-  assert.throws(() => parseProviderAccounts('{secret-private-key'), error => error instanceof Error && !error.message.includes('secret-private-key'));
-  assert.throws(() => parseProviderAccounts(' '.repeat(65537)), /64 KiB/);
-  assert.equal(providerAccounts([valid])[0].id, 'work');
-  for (const invalid of [null, {}, [valid, valid], [{ ...valid, id: '' }], [{ ...valid, apiKey: 'x\nsecret' }], [{ ...valid, baseURL: 'http://example.test' }], [{ ...valid, baseURL: 'https://user:secret@example.test' }], [{ ...valid, provider: 'other' }], [{ ...valid, extra: true }], [{ ...valid, stream: '1' }], [{ ...valid, maxTokens: 0 }], [{ ...valid, provider: 'gemini', streamTermination: 'finish-reason' }]]) assert.throws(() => providerAccounts(invalid));
-});
-
 test('agents bind isolated provider accounts across channels, side threads, edit and restart', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-accounts-'));
   const calls: { account: string; body: any }[] = [];
