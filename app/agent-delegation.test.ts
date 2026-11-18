@@ -55,9 +55,7 @@ test('delegation isolates child context and durably wakes idle parent exactly on
 
 
 import { DatabaseSync } from 'node:sqlite';
-import { enforceAgentRate, resolveAgentTarget, initializeDelegation, type AgentLimits } from './agent-delegation.ts';
-
-import { sendAgentMessage } from './agent-messages.ts';
+import type { AgentLimits } from './test-support/agent-delegation.ts';
 
 type Script = (body: any) => Promise<{ name: string; args: unknown } | string> | { name: string; args: unknown } | string;
 async function fixture(script: Script, agentLimits?: Partial<AgentLimits>) {
@@ -164,23 +162,6 @@ for (const limit of ['depth', 'children', 'size']) test(`backend delegation limi
   } finally { child.release(); await f.close(); }
 });
 
-test('rate budget and cooldown survive reopen, then admit after cooldown', async () => {
-  const f = await fixture(() => 'Done');
-  try {
-    const agent = await f.agent('Rate'); await f.stop(); const db = new DatabaseSync(f.database);
-    assert.equal(resolveAgentTarget('Rate', db)?.kind, 'local');
-    for (let i = 0; i < 20; i++) enforceAgentRate(db, agent.id);
-    assert.throws(() => enforceAgentRate(db, agent.id), /rate limit reached/);
-    assert.throws(() => enforceAgentRate(db, agent.id), /cooling down/); db.close();
-    await f.restart(); await f.stop(); const reopened = new DatabaseSync(f.database);
-    try {
-      assert.throws(() => enforceAgentRate(reopened, agent.id), /cooling down/);
-      reopened.exec('UPDATE agent_message_events SET created=0; UPDATE agent_message_cooldowns SET until=0');
-      assert.doesNotThrow(() => enforceAgentRate(reopened, agent.id));
-    } finally { reopened.close(); }
-  } finally { await f.close(); }
-});
-
 test('delegated task authority denies unrelated caller; cancel stops entire mixed-message tree', async () => {
   let beta = '', gamma = '', rootTask = ''; const held = gate();
   const f = await fixture(async body => {
@@ -229,21 +210,22 @@ test('team awareness refreshes role and bounded roster on next provider request'
 });
 
 for (const messageTool of ['delegate_task', 'send_message']) test(`${messageTool} receives actionable rate error across conversations, restart and cooldown`, async () => {
+  const rate = messageTool === 'send_message' ? 20 : 2;
   let target = '';
   const f = await fixture(body => {
     const rs = results(body); if (body.model !== 'Parent') return 'Child result';
     if (body.messages.filter((row: any) => row.role === 'user').at(-1)?.content.startsWith('Delegated task completed')) return 'Received';
-    return rs.length ? JSON.stringify(rs.at(-1)) : messageTool === 'delegate_task' ? { name: messageTool, args: { agent: target, task: 'Work' } } : { name: messageTool, args: { recipients: [target], text: 'Work', expects_reply: false } };
-  }, { rate: 2, rateWindowMs: 300000, cooldownMs: 600000 });
+    return rs.length ? JSON.stringify(rs.at(-1)) : messageTool === 'delegate_task' ? { name: messageTool, args: { agent: 'Child', task: 'Work' } } : { name: messageTool, args: { recipients: [target], text: 'Work', expects_reply: false } };
+  }, messageTool === 'send_message' ? undefined : { rate, rateWindowMs: 300000, cooldownMs: 600000 });
   try {
     target = (await f.agent('Child')).id; const parent = await f.agent('Parent'), path = `/api/agents/${parent.id}/turns`;
     const side = await f.api(`/api/agents/${parent.id}/threads`, { id: randomUUID(), name: 'Other conversation' });
-    for (let index = 0; index < 4; index++) {
-      const workPath = index < 2 ? path : `/api/threads/${side.id}/turns`;
+    for (let index = 0; index < rate + 2; index++) {
+      const workPath = index < rate ? path : `/api/threads/${side.id}/turns`;
       const id = randomUUID(); await f.api(workPath, { id, text: `Work ${index}` });
       const row = (await f.until(workPath, rows => rows.some(row => row.id === id && row.status === 'done'))).find(row => row.id === id);
-      const result = JSON.parse(row.reply); if (index < 2) assert.equal(result.status, messageTool === 'delegate_task' ? 'queued' : 'sent'); else assert.match(result.error, index === 2 ? /rate limit reached/ : /cooling down/);
-      if (index === 2) await f.restart();
+      const result = JSON.parse(row.reply); if (index < rate) assert.equal(result.status, messageTool === 'delegate_task' ? 'queued' : 'sent'); else assert.match(result.error, index === rate ? /rate limit reached/ : /cooling down/);
+      if (index === rate) await f.restart();
     }
     await f.stop(); const db = new DatabaseSync(f.database); db.exec('UPDATE agent_message_events SET created=0; UPDATE agent_message_cooldowns SET until=0'); db.close(); await f.restart();
     const id = randomUUID(); await f.api(path, { id, text: 'After cooldown' }); const row = (await f.until(path, rows => rows.some(row => row.id === id && row.status === 'done'))).find(row => row.id === id); assert.equal(JSON.parse(row.reply).status, messageTool === 'delegate_task' ? 'queued' : 'sent');
@@ -352,20 +334,34 @@ test('concurrent child limit counts tasks still waiting on their async descendan
   } finally { held.release(); await f.close(); }
 });
 
-test('concurrent child budget follows owner completion turns', async () => {
-  const f = await fixture(() => 'Done');
+test('Rust counts active children of an owner completion turn against its inherited budget', async () => {
+  const held = gate();
+  let spareId = '';
+  const f = await fixture(async body => {
+    if (body.model === 'Child') { await held.promise; return 'Child finished'; }
+    if (body.model === 'Spare') assert.fail('A denied child must never start');
+    return { name: 'send_message', args: { recipients: [spareId], text: 'More work', expects_reply: false } };
+  }, { concurrentChildren: 1 });
   try {
     const parent = await f.agent('Parent'), child = await f.agent('Child'), spare = await f.agent('Spare');
-    await f.stop(); const db = new DatabaseSync(f.database);
+    spareId = spare.id;
+    const root = randomUUID(), active = randomUUID(), continuation = randomUUID();
+    await f.stop();
+    const db = new DatabaseSync(f.database);
     try {
-      initializeDelegation(db, { concurrentChildren: 1 });
-      const root = randomUUID(), active = randomUUID(), continuation = randomUUID();
       const insert = db.prepare('INSERT INTO turns(id,agent,parent,text,status,created) VALUES (?,?,?,?,?,?)');
-      insert.run(root, parent.id, null, 'Original task', 'done', new Date().toISOString());
-      insert.run(active, child.id, root, 'Still working', 'queued', new Date().toISOString());
-      insert.run(continuation, parent.id, root, 'Completion input', 'running', new Date().toISOString());
-      assert.throws(() => sendAgentMessage(db, continuation, { id: randomUUID(), function: { name: 'send_message', arguments: JSON.stringify({ recipients: [spare.id], text: 'More work', expects_reply: false }) } }, 0), /Concurrent child limit/);
-      assert.equal(db.prepare('SELECT count(*) n FROM turns').get()!.n, 3);
+      const created = new Date().toISOString();
+      insert.run(root, parent.id, null, 'Original task', 'done', created);
+      insert.run(active, child.id, root, 'Still working', 'queued', created);
+      insert.run(continuation, parent.id, root, 'Completion input', 'queued', created);
     } finally { db.close(); }
-  } finally { await f.close(); }
+    await f.restart();
+
+    const rows = await f.until(`/api/agents/${parent.id}/turns`, turns => turns.some(turn => turn.id === continuation && turn.status === 'failed'));
+    const done = rows.find(turn => turn.id === continuation);
+    assert.match(done.error, /Concurrent child limit.*1 children/);
+    const inspection = new DatabaseSync(f.database, { readOnly: true });
+    try { assert.equal(inspection.prepare('SELECT count(*) AS n FROM turns').get()?.n, 3); }
+    finally { inspection.close(); }
+  } finally { held.release(); await f.close(); }
 });

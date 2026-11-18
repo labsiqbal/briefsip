@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -9,10 +10,13 @@ import { startApp } from './test-bridge.ts';
 
 test('routine flow dispatch joins once, snapshots edits and recovers interrupted steps', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-flow-http-')), calls: { model: string; prompt: string }[] = [];
-  let hold = false, failC = false;
+  let hold = false, failC = false, rootMode = 'normal', holdD = false;
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const data = JSON.parse(raw); calls.push({ model: data.model, prompt: data.messages.at(-1).content });
+    if (holdD && data.model === 'd') return;
+    if (rootMode === 'quiet' && data.model === 'a') return res.end(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ id: randomUUID(), type: 'function', function: { name: 'no_update', arguments: JSON.stringify({ reason: 'No changes.' }) } }] } }] }));
+    if (rootMode === 'large' && data.model === 'a') return res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'x'.repeat(256 * 1024) } }] }));
     if (hold && data.model === 'c') return;
     if (failC && data.model === 'c') return res.end(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ id: randomUUID(), type: 'function', function: { name: 'report_failure', arguments: JSON.stringify({ reason: 'C cannot complete its step.' }) } }] } }] }));
     res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: `${data.model} result` + (data.model === 'd' ? 'x'.repeat(4000) : '') } }] }));
@@ -44,7 +48,16 @@ test('routine flow dispatch joins once, snapshots edits and recovers interrupted
     await request(settings, { id: randomUUID(), revision: 1, links: [...links, { from: d.id, to: b.id }] }, 400);
     failC = true;
     const runRequest = { id: randomUUID(), revision: routine.revision };
-    await request(`/api/routines/${routine.id}/test`, runRequest);
+    const db = new DatabaseSync(options.database);
+    try {
+      db.exec("CREATE TRIGGER fail_flow_handoff BEFORE UPDATE ON flow_steps WHEN OLD.status='waiting' AND NEW.status='queued' BEGIN SELECT RAISE(ABORT,'fixture handoff failure'); END");
+      const blocked = await request(`/api/routines/${routine.id}/test`, runRequest);
+      await until(() => request(`/api/routines/${routine.id}/runs`), data => data[0]?.status === 'done');
+      const steps = (await request(runs)).find((run: { root_turn: string }) => run.root_turn === blocked.turn).steps;
+      assert(steps.filter((step: { agent: string }) => step.agent !== a.id).every((step: { status: string }) => step.status === 'waiting'));
+      assert.equal(db.prepare('SELECT count(*) AS total FROM turns').get()?.total, 1);
+      db.exec('DROP TRIGGER fail_flow_handoff');
+    } finally { db.close(); }
     const completed = await until(() => request(runs), data => data[0]?.steps.every((step: { status: string }) => ['done','failed','skipped'].includes(step.status)));
     assert.equal(completed.length, 1);
     const merge = calls.filter(call => call.model === 'd'); assert.equal(merge.length, 1); assert(merge[0].prompt.includes('b result')); assert(merge[0].prompt.includes('C cannot complete its step.'));
@@ -79,6 +92,35 @@ test('routine flow dispatch joins once, snapshots edits and recovers interrupted
     await request(`/api/routines/${routine.id}/test`, { id: randomUUID(), revision: routine.revision });
     await until(() => request(`/api/routines/${routine.id}/runs`), data => data[0]?.status === 'done');
     assert.equal((await request(runs)).length, 2); assert.equal(calls.filter(call => call.model === 'd').length, 2);
+    await request(settings, { id: randomUUID(), revision: 2, links });
+    const run = async () => (await request(`/api/routines/${routine.id}/test`, { id: randomUUID(), revision: routine.revision })).turn;
+    type Step = { agent: string; status: string; task_status: string | null; thread: string | null };
+    const readSteps = async (id: string): Promise<Step[]> => (await request(runs)).find((item: { root_turn: string }) => item.root_turn === id)?.steps ?? [];
+    const settled = (steps: Step[]) => steps.length > 0 && steps.every(step => ['done', 'failed', 'skipped'].includes(step.status));
+
+    holdD = true;
+    const cancelled = await run();
+    const downstream = await until(() => readSteps(cancelled), steps => steps.some(step => step.agent === d.id && step.task_status === 'running'));
+    const last = downstream.find(step => step.agent === d.id);
+    assert(last?.thread);
+    const lastTurn = (await request(`/api/threads/${last.thread}/turns`))[0];
+    await request(`/api/threads/${last.thread}/turns/${lastTurn.id}/cancel`, { id: randomUUID() });
+    const cancelledSteps = await until(() => readSteps(cancelled), settled);
+    assert.equal(cancelledSteps.find(step => step.agent === d.id)?.status, 'failed');
+
+    const count = calls.length;
+    rootMode = 'quiet';
+    const quiet = await run();
+    assert((await until(() => readSteps(quiet), settled)).every(step => step.status === 'skipped'));
+    rootMode = 'large';
+    const large = await run();
+    const largeSteps = await until(() => readSteps(large), settled);
+    assert.deepEqual(Object.fromEntries(largeSteps.map(step => [step.agent, step.status])), {
+      [a.id]: 'done', [b.id]: 'failed', [c.id]: 'failed', [d.id]: 'skipped',
+    });
+    assert(largeSteps.filter(step => step.agent !== a.id).every(step => step.thread === null));
+    assert.equal(calls.length, count + 2);
+
     const configured = [routine.id];
     for (let i = 0; i < 20; i++) {
       const item = await request(`/api/agents/${b.id}/routines`, { id: randomUUID(), name: `Directory ${i}`, prompt: 'Not executed', nextAt: Date.now() + 3600000, intervalSeconds: null, enabled: false });

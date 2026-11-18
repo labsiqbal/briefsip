@@ -121,13 +121,13 @@ fn column(db: &Connection, table: &str, name: &str, definition: &str) -> Result<
     Ok(())
 }
 fn messages(db: &Connection) -> Result<()> {
-    db.execute_batch(sql::VISIBILITY)?;
+    db.execute_batch(include_str!("turns/agent-visibility.sql"))?;
     column(db, "turns", "origin", "TEXT")?;
-    db.execute_batch(sql::MESSAGES)?;
+    db.execute_batch(include_str!("turns/agent-messages.sql"))?;
     db.execute_batch(sql::REMOTE)?;
     column(db, "turns", "message_depth", "INTEGER NOT NULL DEFAULT 0")?;
-    db.execute_batch(sql::DELEGATION)?;
-    db.execute_batch(sql::ROOMS)?;
+    db.execute_batch(include_str!("turns/agent-delegation.sql"))?;
+    db.execute_batch(include_str!("turns/rooms.sql"))?;
     column(
         db,
         "room_discussions",

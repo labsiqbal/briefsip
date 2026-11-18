@@ -6,20 +6,6 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './test-bridge.ts';
-import { intentionalSilence, partialSilence, mentionedMembers, finishRoomTurn } from './room-chat.ts';
-
-// UI components are exercised in ui-smoke; native boundary tests keep the saved transcript shape exact.
-test('Hermes exact silence normalization preserves prose, blanks and malformed brackets', () => {
-  for (const text of ['NO_REPLY', ' no_reply ', '**NO_REPLY**', '.NO_REPLY!', '[silent]', 'no\n reply', '【静默】', '沉默。', '\u0085NO_REPLY\u0085']) assert(intentionalSilence(text), JSON.stringify(text));
-  for (const text of ['', ' ', '[SILENT', 'SILENT]', '[SILENT] nothing new', 'Use NO_REPLY here', 'x'.repeat(65), '\ufeffNO_REPLY']) assert(!intentionalSilence(text), JSON.stringify(text));
-  for (const text of ['NO', '[SIL', '*NO_REP*']) assert(partialSilence(text));
-  assert(!partialSilence('No useful answer yet'));
-});
-test('room mentions use full names, longest matches, Unicode and word boundaries', () => {
-  const members = [{ id: 'ann', name: 'Ann', role: '' }, { id: 'smith', name: 'Ann Smith', role: '' }, { id: 'hand', name: 'Right Hand', role: '' }, { id: 'lin', name: '林', role: '' }];
-  assert.deepEqual(mentionedMembers('@Ann Smith, @right hand! @林', members), ['smith','hand','lin']);
-  assert.deepEqual(mentionedMembers('mail@Ann.com @Annabelle @@Ann', members), []);
-});
 
 async function fixture(run: (f: any) => Promise<void>, concurrency = 4) {
   const dir = mkdtempSync(join(process.cwd(), 'node_modules/.room-test-'));
@@ -352,7 +338,7 @@ test('failure releases serialized lane without lead fallback or provider replay'
   await restart();assert.equal(calls.length,3);
 }));
 
-test('admission cutoff survives restart; failed publication rolls back reply and watermark together', async () => fixture(async ({room,request,wait,setRespond,calls,database,restart,stop}:any)=>{
+test('admission cutoff and unpublished watermarks survive restarts', async () => fixture(async ({room,request,wait,setRespond,calls,database,restart,stop}:any)=>{
   const held=gate();let gated=false;
   setRespond(async(body:any)=>{if(body.model==='Assistant')return 'Committed A';if(!gated){gated=true;await held.promise;}return 'Committed peer';});
   const path=await room(3),root=randomUUID();await request(path,{id:root,text:'Restart cutoff'},202);
@@ -361,12 +347,6 @@ test('admission cutoff survives restart; failed publication rolls back reply and
   try{
     snapshot=db.prepare('SELECT a.* FROM room_admissions a JOIN turns t ON t.id=a.turn WHERE t.status=\'interrupted\'').get()!;
     assert(snapshot.context.includes('Committed A'));assert(snapshot.cutoff>0);
-    db.exec('CREATE TEMP TRIGGER reject_watermark BEFORE INSERT ON room_watermarks BEGIN SELECT RAISE(ABORT, \'injected publication failure\'); END');
-    db.exec('BEGIN IMMEDIATE');
-    try {
-      db.prepare("UPDATE turns SET status='running' WHERE id=?").run(snapshot.turn);
-      assert.throws(()=>finishRoomTurn(db,snapshot.turn,'Must roll back'),/injected publication failure/);
-    } finally { db.exec('ROLLBACK'); }
     assert.equal(db.prepare('SELECT reply FROM turns WHERE id=?').get(snapshot.turn)!.reply,null);
     assert.equal(db.prepare('SELECT count(*) AS n FROM room_messages WHERE turn=?').get(snapshot.turn)!.n,0);
   }finally{db.close();}

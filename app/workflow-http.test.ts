@@ -80,14 +80,14 @@ test('model conditions choose one branch without tools and reject ambiguous answ
 
 test('workflow HTTP versions, model steps, approval receipts and cancellation survive restart', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-workflow-http-')), models: string[] = [], toolNames: string[][] = [];
-  let hold = false, forceTool = false;
+  let hold = false, forceTool = false, answer = 'RESULT';
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const data = JSON.parse(raw); models.push(data.model);
     toolNames.push((data.tools ?? []).map((tool: any) => tool.function.name));
     if (hold) return;
     if (forceTool) return res.end(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { content: null, tool_calls: [{ id: 'forced-file', type: 'function', function: { name: 'create_text_file', arguments: JSON.stringify({ name: 'forbidden.txt', text: 'Must not be saved' }) } }] } }] }));
-    res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'RESULT' } }] }));
+    res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: answer } }] }));
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
@@ -185,6 +185,37 @@ test('workflow HTTP versions, model steps, approval receipts and cancellation su
     rejected = await request(rejectedPath);
     assert.equal(rejected.status, 'failed'); assert.equal(rejected.steps.length, 2); assert.equal(models.length, callsBeforeReject);
     assert.equal((await request(`/api/agents/${agent.id}/turns`)).length, 0);
+
+    const draft = { id: 'draft', kind: 'agent', agent: agent.id, prompt: 'Draft', next: 'approve' };
+    const retryGraph = { entry: 'draft', maxSteps: 8, nodes: [draft, { id: 'approve', kind: 'approval', prompt: 'Accept?', yes: 'out', no: 'draft' }, { id: 'out', kind: 'output' }] };
+    const retryable = await request(list, { id: randomUUID(), revision: 0, name: 'Retry evidence', graph: retryGraph });
+    const retryWorkflow = `/api/workflows/${retryable.id}`;
+    answer = 'x'.repeat(256 * 1024 + 1);
+    const oversized = await request(retryWorkflow + '/run', { id: randomUUID(), revision: 1, input: 'INPUT' });
+    const failedPath = `/api/workflow-runs/${oversized.id}`;
+    const tooLarge = await until(failedPath, data => data.status === 'failed');
+    assert.match(tooLarge.error, /Step result exceeds 256 KiB/);
+    assert.equal(tooLarge.steps[0].status, 'failed');
+    await request(retryWorkflow + '/edit', { id: randomUUID(), revision: 1, name: 'Changed kind', graph: {
+      entry: 'draft', maxSteps: 2, nodes: [{ id: 'draft', kind: 'condition', operator: 'equals', value: 'INPUT', yes: 'out', no: 'out' }, { id: 'out', kind: 'output' }],
+    } });
+    await request(failedPath + '/retry', { id: randomUUID(), revision: tooLarge.revision });
+    const failedAgain = await until(failedPath, data => data.status === 'failed' && data.steps.length === 2);
+    assert.deepEqual(JSON.parse(failedAgain.steps[1].settings), draft);
+    await request(failedPath + '/retry', { id: randomUUID(), revision: tooLarge.revision }, 409);
+
+    await request(retryWorkflow + '/edit', { id: randomUUID(), revision: 2, name: 'Removed node', graph: { entry: 'out', maxSteps: 1, nodes: [{ id: 'out', kind: 'output' }] } });
+    answer = 'RECOVERED';
+    await request(failedPath + '/retry', { id: randomUUID(), revision: failedAgain.revision });
+    const recovered = await until(failedPath, data => data.status === 'approval');
+    assert.equal(recovered.version, 1);
+    assert.equal(recovered.last, 'RECOVERED');
+    assert.deepEqual(recovered.graph, retryGraph);
+    assert.deepEqual(JSON.parse(recovered.steps[2].settings), draft);
+    assert.deepEqual(recovered.steps.map((step: { status: string }) => step.status), ['failed', 'failed', 'done', 'approval']);
+    const current = await request(retryWorkflow + '/run', { id: randomUUID(), revision: 3, input: 'LATEST' });
+    assert.equal((await until(`/api/workflow-runs/${current.id}`, data => data.status === 'done')).last, 'LATEST');
+
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -221,6 +252,11 @@ test('provider-free workflows continue beyond one batch and configuration listin
       await new Promise(resolve => setTimeout(resolve, 20));
     }
     assert.equal(current.status, 'failed'); assert.equal(current.steps.length, 40);
+    const retry = await fetch(app.origin + `/api/workflow-runs/${run.id}/retry`, {
+      method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: randomUUID(), revision: current.revision }),
+    });
+    assert.equal(retry.status, 409);
     const schedulePath = `/api/workflows/${ids[1]}/schedule`;
     assert.equal((await request(schedulePath)).schedule, null);
     const scheduleCommand = { id: randomUUID(), revision: 0, nextAt: Date.now() - 1000, intervalSeconds: null, enabled: true, input: 'finish' };
@@ -538,7 +574,19 @@ test('workflow channel outputs deliver once and recheck channel availability at 
     const run = await request(`/api/workflows/${workflow.id}/run`, launch);
     const approval = await settled(run.id, 'approval');
     const accept = { id: randomUUID(), revision: approval.revision, accepted: true };
-    await request(`/api/workflow-runs/${run.id}/approve`, accept);
+    const db = new DatabaseSync(options.database);
+    try {
+      db.exec("CREATE TRIGGER fail_notice_fixture BEFORE INSERT ON workflow_notifications BEGIN SELECT RAISE(ABORT,'injected notification failure'); END");
+      await request(`/api/workflow-runs/${run.id}/approve`, accept);
+      const rolledBack = await request(`/api/workflow-runs/${run.id}`);
+      assert.equal(rolledBack.status, 'ready');
+      assert.equal(rolledBack.steps.length, 1);
+      assert.deepEqual((await request('/api/workflow-notifications')).notifications, []);
+      assert.deepEqual(await request(`/api/channels/${room.id}/turns`), []);
+    } finally {
+      db.exec('DROP TRIGGER IF EXISTS fail_notice_fixture');
+      db.close();
+    }
     await settled(run.id, 'done');
     await request(`/api/workflow-runs/${run.id}/approve`, accept);
     await request(`/api/workflows/${workflow.id}/run`, launch);

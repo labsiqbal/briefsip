@@ -8,17 +8,23 @@ import { randomUUID } from 'node:crypto';
 import { startRustServer } from './rust-test-server.ts';
 
 test('Rust forks preserve bounded persisted transcripts and restart receipts', { timeout: 20000 }, async () => {
-  const { boundedTranscript } = await import('./dispatch.ts');
   const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-fork-')), database = join(root, 'db.sqlite');
   let app: Awaited<ReturnType<typeof startRustServer>> | undefined;
   try {
     const initial = await startRustServer({ database }); await initial.close();
     const db = new DatabaseSync(database), agent = randomUUID(), cutoff = randomUUID();
     db.prepare("INSERT INTO agents(id,name,model,instructions) VALUES(?,'Fork fixture','fixture','Help')").run(agent);
-    for (let i = 0; i < 42; i++) db.prepare("INSERT INTO turns(id,agent,text,reply,status,created) VALUES(?,?,?,?,'done','2026-01-02T03:04:05.000Z')").run(i === 41 ? cutoff : randomUUID(), agent, 'Question ' + i + 'x'.repeat(17000), 'Answer ' + i + 'y'.repeat(25000));
-    const seq = Number(db.prepare('SELECT seq FROM turns WHERE id=?').get(cutoff)!.seq), scope = { agent, channel: null, thread: null };
-    db.prepare('INSERT INTO compactions VALUES(?,?,?,?)').run(`agents:${agent}`, randomUUID(), seq - 1, 'Prior summary');
-    const expected = JSON.parse(boundedTranscript(db, scope, seq)); db.close();
+    const createdAt = '2026-01-02T03:04:05.000Z';
+    const insert = db.prepare("INSERT INTO turns(id,agent,text,reply,status,created) VALUES(?,?,?,?,'done',?)");
+    const rows = Array.from({ length: 42 }, (_, index) => {
+      const id = index === 41 ? cutoff : randomUUID();
+      const text = `Question ${index}` + 'x'.repeat(17000), reply = `Answer ${index}` + 'y'.repeat(25000);
+      insert.run(id, agent, text, reply, createdAt);
+      return { id, agent, text: text.slice(0, 8505), reply: reply.slice(0, 12504), status: 'done', created: createdAt, guidance: '[]' };
+    });
+    db.prepare('INSERT INTO compactions VALUES(?,?,?,?)').run(`agents:${agent}`, randomUUID(), rows.length - 1, 'Prior summary');
+    db.close();
+    const expected = { summary: 'Prior summary', inherited: null, turns: rows.slice(-6), truncated: true };
     app = await startRustServer({ database });
     const path = `/api/agents/${agent}/turns/${cutoff}/fork`, command = { id: randomUUID() };
     const fork = async () => { const res = await fetch(app!.origin + path, { method: 'POST', headers: { Origin: app!.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(command) }); assert.equal(res.status, 200); return res.json(); };

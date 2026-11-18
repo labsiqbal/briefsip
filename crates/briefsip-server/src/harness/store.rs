@@ -16,6 +16,37 @@ use std::{
     path::{Path, PathBuf},
 };
 
+// Codex caps each additionalContext value at 4,000 UTF-8 bytes.
+fn additional_context(text: &str) -> Value {
+    const MAX_BYTES: usize = 4000;
+    let mut context = serde_json::Map::new();
+    let mut chunk = String::new();
+    let mut save = |chunk: &mut String| {
+        let key = format!("briefsip_{:03}", context.len() + 1);
+        context.insert(
+            key,
+            json!({"kind":"application","value":std::mem::take(chunk)}),
+        );
+    };
+    for block in text.split_inclusive("\n\n") {
+        if !chunk.is_empty() && chunk.len() + block.len() > MAX_BYTES {
+            save(&mut chunk);
+        }
+        let mut rest = block;
+        while rest.len() > MAX_BYTES {
+            let (head, tail) = rest.split_at(rest.floor_char_boundary(MAX_BYTES));
+            chunk.push_str(head);
+            save(&mut chunk);
+            rest = tail;
+        }
+        chunk.push_str(rest);
+    }
+    if !chunk.is_empty() {
+        save(&mut chunk);
+    }
+    Value::Object(context)
+}
+
 pub struct Home {
     pub path: PathBuf,
     pub environment: HashMap<String, String>,
@@ -648,7 +679,7 @@ async fn execute(
     for pass in 0..2 {
         let prompt_id;
         if runtime == "codex" {
-            let context = json!({"briefsip_001":{"kind":"application","value":instructions}});
+            let context = additional_context(&instructions);
             let result=rpc(&mut process,&mut seq,"turn/start",json!({"threadId":session,"additionalContext":context,"input":[{"type":"text","text":prompt}],"cwd":workspace,"approvalPolicy":"on-request","sandboxPolicy":if binding.write{json!({"type":"workspaceWrite","writableRoots":[workspace],"networkAccess":false,"excludeTmpdirEnvVar":true,"excludeSlashTmp":true})}else{json!({"type":"readOnly"})}})).await?;
             if !result["turn"]["id"].is_string() {
                 return Err(process::stopped());
@@ -1340,4 +1371,27 @@ pub async fn run(
         lease.external = false;
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_context_chunks_preserve_multibyte_text() -> Result<()> {
+        let text = format!("Header.\n\n{}\n\nFinal paragraph.", "🧪".repeat(3000));
+        let context = additional_context(&text);
+        let entries = context.as_object().ok_or_else(Failure::storage)?;
+        assert_eq!(entries["briefsip_001"]["value"], "Header.\n\n");
+        let mut joined = String::new();
+        for entry in entries.values() {
+            assert_eq!(entry["kind"], "application");
+            let chunk = entry["value"].as_str().ok_or_else(Failure::storage)?;
+            assert!(chunk.len() <= 4000);
+            joined.push_str(chunk);
+        }
+        assert_eq!(joined, text);
+        assert_eq!(additional_context(""), json!({}));
+        Ok(())
+    }
 }

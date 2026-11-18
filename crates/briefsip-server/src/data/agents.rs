@@ -734,3 +734,32 @@ pub fn scripts(state: &AppState, db: &Connection, id: &str, v: &Value, get: bool
     save_receipt(db, "script_commands", string(v, "id"), &request, &result)?;
     Ok(result)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dispatch_capabilities_only_advertise_steering_for_api() {
+        assert_eq!(
+            capabilities("api"),
+            json!({"queue": true, "restart": true, "steer": true})
+        );
+        for runtime in [
+            "codex",
+            "claude",
+            "hermes",
+            "antigravity",
+            "grok",
+            "pi",
+            "opencode",
+            "gemini",
+            "kiro",
+        ] {
+            assert_eq!(
+                capabilities(runtime),
+                json!({"queue": true, "restart": true, "steer": false})
+            );
+        }
+    }
+}

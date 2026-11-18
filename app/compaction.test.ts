@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { createServer } from 'node:http';
+import { createServer, type ServerResponse } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -82,33 +82,114 @@ test('incremental compaction keeps source scopes, originals, provenance and fail
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('compaction CAS rejects stale provider responses, changed sources and future snapshots', async () => {
-  const { initializeCompaction, compactHistory, readCompaction } = await import('./compaction.ts');
-  const db = new DatabaseSync(':memory:');
-  db.exec('CREATE TABLE turns(seq INTEGER PRIMARY KEY,id TEXT UNIQUE,agent TEXT,channel TEXT,thread TEXT,text TEXT,reply TEXT,error TEXT,status TEXT,revision INTEGER,attachments TEXT)');
-  initializeCompaction(db);
-  const { initializeQuestions } = await import('./questions.ts'); initializeQuestions(db);
-  for (let seq = 1; seq <= 70; seq++) db.prepare("INSERT INTO turns VALUES (?,?,?,NULL,NULL,?,'reply',NULL,'done',1,'[]')").run(seq, randomUUID(), 'a', `Message ${seq}`);
-  const turn = (seq: number) => { const id = randomUUID(); db.prepare("INSERT INTO turns VALUES (?,?,?,NULL,NULL,'now',NULL,NULL,'running',1,'[]')").run(seq, id, 'a'); return { id, seq, agent: 'a', channel: null, thread: null }; };
-  const signal = new AbortController().signal;
+test('Rust compaction fences stale responses, changed sources, cancelled turns and future watermarks', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'briefsip-compaction-fences-'));
+  const database = join(directory, 'state.sqlite');
+  let held: ServerResponse | undefined, summaryCalls = 0, deferSummary = false;
+  let lastPrompt = '';
+  const finish = (res: ServerResponse, content: string) => res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content } }] }));
+  const provider = createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    const { messages } = JSON.parse(raw);
+    if (messages[0].content.startsWith('Summarize conversation history')) {
+      summaryCalls++;
+      if (deferSummary) { held = res; return; }
+      return finish(res, 'Original summary');
+    }
+    lastPrompt = messages[0].content;
+    finish(res, 'Done');
+  });
+  await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+  const address = provider.address();
+  assert(address && typeof address !== 'string');
+  const options = { database, baseURL: `http://127.0.0.1:${address.port}/v1` };
+  let app = await startApp(options);
+  async function request(path: string, body?: unknown) {
+    const response = await fetch(app.origin + path, {
+      method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const value = await response.json();
+    assert(response.ok, JSON.stringify(value));
+    return value;
+  }
+  async function until(check: () => Promise<boolean> | boolean) {
+    for (let attempt = 0; attempt < 250; attempt++) {
+      if (await check()) return;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.fail('Compaction fence did not settle');
+  }
   try {
-    let release!: (value: string) => void;
-    const older = turn(80), newer = turn(81);
-    const late = compactHistory(db, older, signal, () => new Promise(resolve => { release = resolve; }));
-    await compactHistory(db, newer, signal, async () => 'Newer summary'); release('Stale summary'); await late;
-    assert.equal(readCompaction(db, 'agents:a')!.summary, 'Newer summary');
-    assert.equal(db.prepare('SELECT status FROM compaction_attempts WHERE turn=?').get(older.id)!.status, 'superseded');
-    assert.equal(readCompaction(db, 'agents:a', 10), null);
-    let called = false; await compactHistory(db, { ...older, seq: 10 }, signal, async () => { called = true; return 'Bad'; }); assert.equal(called, false);
-    const changed = turn(82), pending = compactHistory(db, changed, signal, () => new Promise(resolve => { release = resolve; }));
-    db.prepare('UPDATE turns SET revision=2 WHERE seq=21').run(); release('Invalid source'); await pending;
-    assert.equal(readCompaction(db, 'agents:a')!.summary, 'Newer summary');
-    assert.equal(db.prepare('SELECT status FROM compaction_attempts WHERE turn=?').get(changed.id)!.status, 'superseded');
-    const invalid = turn(83); await compactHistory(db, invalid, signal, async () => 'x'.repeat(6001));
-    assert.equal(db.prepare('SELECT status FROM compaction_attempts WHERE turn=?').get(invalid.id)!.status, 'failed');
-    const cancelled = turn(84), controller = new AbortController();
-    const stop = compactHistory(db, cancelled, controller.signal, () => new Promise(resolve => { release = resolve; }));
-    controller.abort(); release('Cancelled summary'); await stop; assert.equal(readCompaction(db, 'agents:a')!.summary, 'Newer summary');
-    db.prepare('UPDATE turns SET revision=2 WHERE seq=1').run(); assert.equal(readCompaction(db, 'agents:a'), null);
-  } finally { db.close(); }
+    const agent = await request('/api/agents', { id: randomUUID(), runtime: 'api', name: 'Compaction', model: 'fixture', instructions: 'Help.' });
+    const path = `/api/agents/${agent.id}`, scope = `agents:${agent.id}`;
+    const db = new DatabaseSync(database);
+    try {
+      const seed = db.prepare("INSERT INTO turns(id,agent,text,status,created) VALUES (?,?,?,?,'2026-01-01')");
+      db.exec('BEGIN IMMEDIATE');
+      for (let index = 1; index <= 70; index++) seed.run(randomUUID(), agent.id, `Message ${index}`, 'done');
+      db.exec('COMMIT');
+      const settled = async (id: string, state = 'done') => until(async () => (await request(path + '/turns')).some((turn: { id: string; status: string }) => turn.id === id && turn.status === state));
+      const submit = async () => {
+        const id = randomUUID();
+        await request(path + '/turns', { id, text: 'Continue' });
+        return id;
+      };
+      const waitForSummary = async () => {
+        deferSummary = true;
+        held = undefined;
+        const id = await submit();
+        await until(() => !!held);
+        assert(held);
+        return { id, response: held as ServerResponse };
+      };
+      const attempt = (id: string) => db.prepare('SELECT status FROM compaction_attempts WHERE turn=?').get(id)?.status;
+
+      await settled(await submit());
+      const first = await request(path + '/compaction');
+      assert.equal(first.summary, 'Original summary');
+      const stale = await waitForSummary();
+      db.prepare("UPDATE compactions SET version=?,summary='Newer summary' WHERE scope=?").run(randomUUID(), scope);
+      finish(stale.response, 'Stale summary');
+      await settled(stale.id);
+      assert.equal(attempt(stale.id), 'superseded');
+      assert.equal((await request(path + '/compaction')).summary, 'Newer summary');
+
+      const changed = await waitForSummary();
+      db.prepare('UPDATE turns SET revision=revision+1 WHERE seq=?').run(first.through + 1);
+      finish(changed.response, 'Invalid source summary');
+      await settled(changed.id);
+      assert.equal(attempt(changed.id), 'superseded');
+
+      const oversized = await waitForSummary();
+      finish(oversized.response, 'x'.repeat(6001));
+      await settled(oversized.id);
+      assert.equal(attempt(oversized.id), 'failed');
+
+      const cancelled = await waitForSummary();
+      await request(`${path}/turns/${cancelled.id}/cancel`, { id: randomUUID() });
+      finish(cancelled.response, 'Cancelled summary');
+      await settled(cancelled.id, 'cancelled');
+      assert.equal((await request(path + '/compaction')).summary, 'Newer summary');
+
+      await app.close();
+      const future = randomUUID();
+      seed.run(future, agent.id, 'Position before the snapshot', 'queued');
+      db.prepare('INSERT INTO queue_positions VALUES (?,10)').run(future);
+      const before = summaryCalls;
+      app = await startApp(options);
+      await settled(future);
+      assert.equal(summaryCalls, before);
+      assert.equal(attempt(future), undefined);
+      assert(!lastPrompt.includes('Newer summary'));
+
+      db.prepare('UPDATE turns SET revision=revision+1 WHERE seq=1').run();
+      assert.equal(await request(path + '/compaction'), null);
+    } finally { db.close(); }
+  } finally {
+    await app.close();
+    provider.closeAllConnections();
+    await new Promise<void>(resolve => provider.close(() => resolve()));
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

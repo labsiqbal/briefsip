@@ -89,26 +89,38 @@ test('memory CRUD, exact retry, isolated provider search and bounded context sur
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('memory capacity permits edits, deletion releases capacity, and failed context edit rolls back', async () => {
-  const { DatabaseSync } = await import('node:sqlite');
-  const { initializeMemory, saveMemory, listMemory } = await import('./memory.ts');
-  const db = new DatabaseSync(':memory:'); initializeMemory(db);
-  const write = (command: unknown) => {
-    db.exec('BEGIN');
-    try { const result = saveMemory(db, 'agents:test', command); db.exec('COMMIT'); return result; }
-    catch (error) { db.exec('ROLLBACK'); throw error; }
-  };
+test('Rust memory permits edits at capacity and rolls back edits over the context budget', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-memory-capacity-'));
+  const app = await startApp({ database: join(dir, 'state.sqlite') });
+  async function request(path: string, body?: unknown, status = 200) {
+    const response = await fetch(app.origin + path, {
+      method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await response.json();
+    assert.equal(response.status, status, JSON.stringify(data));
+    return data;
+  }
   const make = (text: string) => ({ id: randomUUID(), entry: randomUUID(), revision: 0, text, essential: false, remove: false });
   try {
-    const original = make('first'); write(original);
-    for (let n = 1; n < 128; n++) write(make(`note ${n}`));
-    assert.throws(() => write(make('overflow')), /128/);
-    write({ ...original, id: randomUUID(), revision: 1, text: 'edited' });
-    write({ ...original, id: randomUUID(), revision: 2, text: '', remove: true });
-    const essential = { ...make('界'.repeat(2000)), essential: true }; write(essential);
-    const second = db.prepare('SELECT * FROM memories WHERE text=?').get('note 1')!;
-    assert.throws(() => write({ ...make('文'.repeat(2000)), entry: second.id, revision: second.revision, essential: true }), /8 KiB/);
-    assert.equal(listMemory(db, 'agents:test', 'note 1').items[0].essential, 0);
-    assert.equal(db.prepare('SELECT text FROM memories WHERE id=?').get(second.id)!.text, 'note 1');
-  } finally { db.close(); }
+    const agent = await request('/api/agents', { id: randomUUID(), name: 'Memory capacity', runtime: 'api', model: 'fixture', instructions: 'Help' }, 201);
+    const path = `/api/agents/${agent.id}/memory`;
+    const original = make('first'), second = make('unique second note');
+    await request(path, original);
+    await request(path, second);
+    for (let index = 2; index < 128; index++) await request(path, make(`note ${index}`));
+    assert.match((await request(path, make('overflow'), 413)).error, /128/);
+    const revised = await request(path, { ...original, id: randomUUID(), revision: 1, text: 'edited' });
+    assert.equal(revised.text, 'edited');
+    await request(path, { ...original, id: randomUUID(), revision: 2, text: '', remove: true });
+    await request(path, { ...make('界'.repeat(2000)), essential: true });
+
+    const denied = await request(path, { ...second, id: randomUUID(), revision: 1, text: '文'.repeat(2000), essential: true }, 413);
+    assert.match(denied.error, /8 KiB/);
+    const page = await request(path + '?query=' + encodeURIComponent('unique second note'));
+    const saved = page.items.find((item: { id: string }) => item.id === second.entry);
+    assert.equal(saved?.essential, 0);
+    assert.equal(saved?.text, 'unique second note');
+    assert.equal(saved?.revision, 1);
+  } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });

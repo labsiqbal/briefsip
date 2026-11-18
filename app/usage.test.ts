@@ -6,29 +6,39 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { usageTokens, initializeUsage, readUsage } from './usage.ts';
 import { startApp } from './test-bridge.ts';
 
-test('usage preserves unknown counts, zero and exact sums beyond JS safe integers', () => {
-  assert.deepEqual(usageTokens(null), [null, null, null]);
-  assert.deepEqual(usageTokens({ prompt_tokens: 0, completion_tokens: 3, total_tokens: 3 }), [0, 3, 3]);
-  assert.deepEqual(usageTokens({ prompt_tokens: '1', completion_tokens: -1, total_tokens: 1.2 }), [null, null, null]);
-  assert.deepEqual(usageTokens({ prompt_tokens: 1e30 }), [null, null, null]);
-  const db = new DatabaseSync(':memory:');
+test('Rust usage returns exact decimal totals, unknown counts and stable pages', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-usage-totals-'));
+  const database = join(dir, 'state.sqlite');
+  const app = await startApp({ database });
   try {
-    db.exec("CREATE TABLE turns(id TEXT PRIMARY KEY); INSERT INTO turns VALUES ('t'); CREATE TABLE agents(id TEXT PRIMARY KEY,name TEXT); INSERT INTO agents VALUES ('a','A');");
-    initializeUsage(db);
-    const insert = db.prepare("INSERT INTO provider_calls(turn,agent,model,origin,purpose,status,created,input_tokens) VALUES ('t','a','m','http://localhost','completion','received','2026-01-01',?)");
-    insert.run(9007199254740991n); insert.run(2);
-    assert.equal(readUsage(db, Number.MAX_SAFE_INTEGER).summary!.input_tokens, '9007199254740993');
-    assert.equal(readUsage(db, Number.MAX_SAFE_INTEGER).summary!.total_tokens, null);
-    for (let i = 0; i < 50; i++) insert.run(null);
-    const first = readUsage(db, Number.MAX_SAFE_INTEGER);
+    const agent = randomUUID(), turn = randomUUID();
+    const response = await fetch(app.origin + '/api/agents', {
+      method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: agent, runtime: 'api', name: 'Usage', model: 'fixture', instructions: 'Test' }),
+    });
+    assert.equal(response.status, 201, await response.text());
+
+    const db = new DatabaseSync(database);
+    try {
+      db.prepare("INSERT INTO turns(id,agent,text,status,created) VALUES (?,?,'Usage fixture','done','2026-01-01')").run(turn, agent);
+      const insert = db.prepare(`INSERT INTO provider_calls(turn,agent,model,origin,purpose,status,created,input_tokens)
+        VALUES (?,?,'fixture','http://localhost','completion','received','2026-01-01',?)`);
+      for (const tokens of [9007199254740991n, 2, ...Array<null>(50).fill(null)]) insert.run(turn, agent, tokens);
+    } finally { db.close(); }
+
+    const first = await (await fetch(app.origin + '/api/usage')).json();
+    assert.equal(first.summary.input_tokens, '9007199254740993');
+    assert.equal(first.summary.total_tokens, null);
+    assert.equal(first.summary.unknown_input, 50);
+    assert.equal(first.summary.unknown_total, 52);
     assert.equal(first.calls.length, 50);
-    const second = readUsage(db, Number(first.next_before));
-    assert.equal(second.calls.length, 2); assert.equal(second.next_before, null);
+    const second = await (await fetch(app.origin + `/api/usage?before=${first.next_before}`)).json();
+    assert.equal(second.calls.length, 2);
+    assert.equal(second.next_before, null);
     assert.equal(new Set([...first.calls, ...second.calls].map(row => row.seq)).size, 52);
-  } finally { db.close(); }
+  } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('usage records each provider call including tool loops, missing counts and failure', async () => {

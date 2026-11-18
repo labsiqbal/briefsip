@@ -10,7 +10,6 @@ import { startRustServer } from './rust-test-server.ts';
 import { runRustConnector, runRustConnectorJournal } from './rust-connectors-runner.ts';
 import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
 import { encryptMail, serializeMailEnvelope } from './mail.ts';
-import { routineCalendar } from './calendar.ts';
 import { composioToolName } from './composio.ts';
 
 test('Rust Composio approval recovery, revocation, schema checks and uncertain writes remain fenced', async () => {
@@ -240,16 +239,16 @@ for (const platform of ['telegram', 'slack'] as const) for (const mode of ['repl
   });
 }
 
-test('Rust calendar matches Node bytes for folding, escaping, intervals and IANA gap/fold schedules', async () => {
+test('Rust calendar exports folded and escaped iCalendar with exact UTC intervals and IANA gap/fold times', async () => {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-calendar-')), database = join(root, 'db'), agent = randomUUID(), now = Date.UTC(2026, 0, 1);
   const app = await startRustServer({ database, fixedClock: now });
   const response = await fetch(app.origin + '/api/agents', { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ id: agent, runtime: 'api', name: 'Calendar', model: 'fixture', instructions: 'Help' }) });
   assert(response.ok); await response.json();
   const entries = [
-    { id: randomUUID(), name: 'Calendar; comma, \\ line\r\n' + 'é'.repeat(100), next_at: now, interval_ms: 3600000, revision: 1 },
-    ...[['America/New_York', '2026-03-08', '02:30'], ['America/New_York', '2026-11-01', '01:30'], ['Pacific/Apia', '2011-12-30', '12:00'], ['Invalid/Zone', '2026-01-01', '12:00']].map(([zone, date, time]) => ({ id: randomUUID(), name: zone, next_at: now + 1, interval_ms: null, revision: 2, schedule: { kind: 'once' as const, date, time }, zone })),
-    { id: randomUUID(), name: 'Cron', next_at: now + 2, interval_ms: null, revision: 3, schedule: { kind: 'cron' as const, expression: '0 0 * * *' } },
-    { id: randomUUID(), name: 'Long interval', next_at: now + 3, interval_ms: 2147483647001, revision: 4 },
+    { id: randomUUID(), name: 'Calendar; comma, \\ line\r\nBEGIN:VEVENT ' + 'é'.repeat(100), next_at: now, interval_ms: 3600000, revision: 1 },
+    ...[['America/New_York', '2026-03-08', '02:30'], ['America/New_York', '2026-11-01', '01:30'], ['Pacific/Apia', '2011-12-30', '12:00'], ['Invalid/Zone', '2026-01-01', '12:00']].map(([zone, date, time], index) => ({ id: randomUUID(), name: zone, next_at: now + 1 + index, interval_ms: null, revision: 2, schedule: { kind: 'once' as const, date, time }, zone })),
+    { id: randomUUID(), name: 'Cron', next_at: now + 5, interval_ms: null, revision: 3, schedule: { kind: 'cron' as const, expression: '0 0 * * *' } },
+    { id: randomUUID(), name: 'Long interval', next_at: now + 6, interval_ms: 2147483647001, revision: 4 },
   ];
   const db = new DatabaseSync(database);
   try {
@@ -258,7 +257,27 @@ test('Rust calendar matches Node bytes for folding, escaping, intervals and IANA
     for (const row of entries) db.prepare("INSERT INTO routines(id,agent,name,next_at,interval_ms,revision,schedule_json,schedule_zone,prompt,enabled,trigger) VALUES(?,?,?,?,?,?,?,?,'Fixture',1,'schedule')").run(row.id, agent, row.name, row.next_at, row.interval_ms, row.revision, 'schedule' in row ? JSON.stringify(row.schedule) : null, 'zone' in row ? row.zone : null);
     const calendar = await fetch(app.origin + `/api/agents/${agent}/routines/calendar.ics`);
     assert.equal(calendar.status, 200); assert.equal(calendar.headers.get('content-type'), 'text/calendar; charset=utf-8');
-    assert.equal(await calendar.text(), routineCalendar(entries, new Date(now)));
+    const raw = await calendar.text();
+    assert(raw.endsWith('END:VCALENDAR\r\n'));
+    assert(raw.split('\r\n').every(line => Buffer.byteLength(line) <= 75));
+    const lines = raw.replace(/\r\n /g, '').split('\r\n');
+    assert.deepEqual(lines.slice(0, 4), ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Briefsip//Routines//EN', 'CALSCALE:GREGORIAN']);
+    let at = 4;
+    const starts = ['20260101T000000Z', '20260308T070000Z', '20261101T053000Z', '20111230T100000Z'];
+    for (const [index, row] of entries.slice(0, 4).entries()) {
+      const summary = index === 0 ? 'Calendar\\; comma\\, \\\\ line\\nBEGIN:VEVENT ' + 'é'.repeat(100) : row.name;
+      const event = [
+        'BEGIN:VEVENT', `UID:${row.id}@briefsip.local`, 'DTSTAMP:20260101T000000Z',
+        `SEQUENCE:${row.revision}`, `DTSTART:${starts[index]}`, `SUMMARY:${summary}`,
+        ...(index === 0 ? ['RRULE:FREQ=SECONDLY;INTERVAL=3600'] : []), 'END:VEVENT',
+      ];
+      assert.deepEqual(lines.slice(at, at + event.length), event);
+      at += event.length;
+    }
+    assert.deepEqual(lines.slice(at), [
+      'X-WR-CALDESC:Omitted routine "Invalid/Zone": home device time zone cannot resolve its schedule. Omitted cron routine "Cron": cron recurrence cannot be represented safely. Omitted routine "Long interval": interval exceeds the calendar limit.',
+      'END:VCALENDAR', '',
+    ]);
     const denied = await fetch(app.origin + `/api/agents/${agent}/routines/calendar.ics`, { headers: { Authorization: 'Bearer fixture' } }); assert.equal(denied.status, 403);
   } finally { db.close(); await app.close(); rmSync(root, { recursive: true, force: true }); }
 });

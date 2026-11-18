@@ -9,7 +9,7 @@ import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
 import { descriptorBody, deviceLinkBody, deviceProofBody, parseLinkChallenge, type LinkChallengeResponse } from './test-support/device-protocol.ts';
 import { canonicalToolDigest, journalEntryBody, recoveryEnvelopeBody, stopEvidenceBody } from './test-support/task-protocol.ts';
 import { canonicalJson, digestCommand, sha256 } from './shared/protocol.ts';
-import { initializeMemory } from './memory.ts';
+import { initializeMemory } from './test-support/memory.ts';
 import { prepareRestoreBootstrap } from './backup.ts';
 import { startRustServer } from './rust-test-server.ts';
 

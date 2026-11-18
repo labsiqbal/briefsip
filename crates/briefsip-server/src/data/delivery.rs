@@ -79,7 +79,28 @@ mod tests {
             "Agent asked: \u{85}text\u{85}"
         );
         let db = Connection::open_in_memory()?;
-        db.execute_batch("CREATE TABLE agents(id TEXT,name TEXT); CREATE TABLE threads(id TEXT,name TEXT,revision INTEGER DEFAULT 1,archived INTEGER DEFAULT 0,deleted INTEGER DEFAULT 0); CREATE TABLE turns(seq INTEGER,id TEXT,thread TEXT,agent TEXT,parent TEXT,origin TEXT,text TEXT,status TEXT,paused INTEGER DEFAULT 0); CREATE TABLE agent_deliveries(turn TEXT,request TEXT); CREATE TABLE agent_requests(id TEXT,turn TEXT); CREATE TABLE delivery_conversations(thread TEXT,sender TEXT,machine TEXT,activity INTEGER,settled_at INTEGER); CREATE TABLE conversation_settings(id INTEGER,auto_archive INTEGER); INSERT INTO conversation_settings VALUES(1,1); INSERT INTO agents VALUES('helper','Helper'); INSERT INTO threads(id,name) VALUES('peer','Message from Briefsip: omarchy'),('renamed','Owner title'); INSERT INTO turns(seq,id,thread,agent,origin,text,status) VALUES(1,'remote','peer','helper','peer:Briefsip: omarchy','Inspect   release','done'),(2,'renamed','renamed','helper','session:helper','Check','done');")?;
+        db.execute_batch(
+            "CREATE TABLE agents(id TEXT,name TEXT);
+             CREATE TABLE threads(id TEXT,name TEXT,agent TEXT DEFAULT 'helper',revision INTEGER DEFAULT 1,archived INTEGER DEFAULT 0,deleted INTEGER DEFAULT 0);
+             CREATE TABLE turns(seq INTEGER,id TEXT,thread TEXT,agent TEXT,parent TEXT,origin TEXT,text TEXT,status TEXT,paused INTEGER DEFAULT 0);
+             CREATE TABLE agent_deliveries(turn TEXT,request TEXT);
+             CREATE TABLE agent_requests(id TEXT,turn TEXT);
+             CREATE TABLE local_project_threads(thread TEXT);
+             CREATE TABLE channels(id TEXT,name TEXT);
+             CREATE TABLE context_transfers(target_thread TEXT,source_kind TEXT,source_id TEXT,cutoff_turn TEXT,created TEXT,agent TEXT);
+             CREATE TABLE delivery_conversations(thread TEXT,sender TEXT,machine TEXT,activity INTEGER,settled_at INTEGER);
+             CREATE TABLE conversation_settings(id INTEGER,auto_archive INTEGER);
+             INSERT INTO conversation_settings VALUES(1,1);
+             INSERT INTO agents VALUES('helper','Helper'),('lead','Right Hand');
+             INSERT INTO threads(id,name) VALUES('peer','Message from Briefsip: omarchy'),('renamed','Owner title'),('legacy','Message from Right Hand'),('owner','Owner side');
+             INSERT INTO turns(seq,id,thread,agent,parent,origin,text,status) VALUES
+                 (1,'remote','peer','helper',NULL,'peer:Briefsip: omarchy','Inspect   release','done'),
+                 (2,'renamed','renamed','helper',NULL,'session:helper','Check','done'),
+                 (3,'parent',NULL,'lead',NULL,NULL,'Original request','done'),
+                 (4,'legacy','legacy','helper','parent',NULL,'Review the release notes','done');
+             INSERT INTO agent_requests VALUES('request','parent');
+             INSERT INTO agent_deliveries VALUES('legacy','request');",
+        )?;
         migrate(&db, 1)?;
         migrate(&db, 2)?;
         assert_eq!(
@@ -90,7 +111,28 @@ mod tests {
             one(&db, "SELECT name FROM threads WHERE id='renamed'", [])?,
             Some(json!({"name":"Owner title"}))
         );
+        assert_eq!(
+            one(
+                &db,
+                "SELECT name,revision FROM threads WHERE id='legacy'",
+                []
+            )?,
+            Some(json!({"name":"Right Hand asked: Review the release notes","revision":2}))
+        );
+        assert_eq!(name("Agent", &"x".repeat(100), None)?.len(), 80);
+        db.execute_batch("UPDATE delivery_conversations SET activity=10 WHERE thread='legacy'; UPDATE delivery_conversations SET activity=20 WHERE thread='peer';")?;
+        let threads = conversations::threads(&db, "helper", &Value::Null, true)?;
+        let order = threads
+            .as_array()
+            .ok_or_else(Failure::storage)?
+            .iter()
+            .filter(|row| row["delivery"] == true)
+            .map(|row| string(row, "id"))
+            .collect::<Vec<_>>();
+        assert_eq!(order, ["peer", "legacy", "renamed"]);
         maintain(&db, 100)?;
+        maintain(&db, 100 + 7 * 86_400_000 - 1)?;
+        assert!(!exists(&db, "SELECT 1 FROM threads WHERE archived=1", [])?);
         db.execute_batch(
             "INSERT INTO turns(id,parent,status,paused) VALUES('child','remote','queued',1)",
         )?;
@@ -99,6 +141,17 @@ mod tests {
             one(&db, "SELECT archived FROM threads WHERE id='peer'", [])?,
             Some(json!({"archived":0}))
         );
+        assert!(exists(
+            &db,
+            "SELECT 1 FROM threads WHERE id='legacy' AND archived=1",
+            []
+        )?);
+        assert!(exists(
+            &db,
+            "SELECT 1 FROM threads WHERE id='owner' AND archived=0",
+            []
+        )?);
+        assert!(!exists(&db, "SELECT 1 FROM threads WHERE deleted=1", [])?);
         db.execute_batch("UPDATE turns SET status='cancelled',paused=0 WHERE id='child'; UPDATE conversation_settings SET auto_archive=0")?;
         maintain(&db, 100 + 8 * 86_400_000)?;
         maintain(&db, 100 + 30 * 86_400_000)?;
@@ -112,6 +165,20 @@ mod tests {
             one(&db, "SELECT archived FROM threads WHERE id='peer'", [])?,
             Some(json!({"archived":1}))
         );
+        let archived = one(&db, "SELECT revision FROM threads WHERE id='peer'", [])?;
+        maintain(&db, 100 + 31 * 86_400_000)?;
+        assert_eq!(
+            one(&db, "SELECT revision FROM threads WHERE id='peer'", [])?,
+            archived
+        );
+        db.execute_batch("UPDATE threads SET archived=0 WHERE id='peer'; UPDATE delivery_conversations SET settled_at=NULL WHERE thread='peer';")?;
+        maintain(&db, 100 + 32 * 86_400_000)?;
+        maintain(&db, 100 + 38 * 86_400_000)?;
+        assert!(exists(
+            &db,
+            "SELECT 1 FROM threads WHERE id='peer' AND archived=0",
+            []
+        )?);
         Ok(())
     }
 }

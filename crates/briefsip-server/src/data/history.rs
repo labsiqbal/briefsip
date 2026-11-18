@@ -544,3 +544,17 @@ pub fn requested(db: &Connection, turn: &str) -> Result<Value> {
     }
     Ok(json!(files))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn room_stream_hides_partial_silence_markers_only() -> Result<()> {
+        for text in ["NO", "[SIL", "*NO_REP*"] {
+            assert!(silence(text)?, "{text}");
+        }
+        assert!(!silence("No useful answer yet")?);
+        Ok(())
+    }
+}
