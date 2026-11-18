@@ -305,8 +305,12 @@ mod tests {
         assert_eq!(files[0].4.as_deref(), Some("fixture://binary"));
         assert_eq!(files[1].2, "mcp-2.wav");
         assert_eq!(result["omitted"], 1);
-        let resource: Value = serde_json::from_str(result["content"][0]["text"].as_str().unwrap())
-            .map_err(|_| Failure::storage())?;
+        let resource: Value = serde_json::from_str(
+            result["content"][0]["text"]
+                .as_str()
+                .ok_or_else(Failure::storage)?,
+        )
+        .map_err(|_| Failure::storage())?;
         assert_eq!(resource["text"], "untrusted");
         for data in [
             "not base64".into(),

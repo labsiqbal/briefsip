@@ -231,13 +231,19 @@ mod tests {
                 "total":"102400","available":"10240","used":"81920","reserved":"10240","percent":88.8,"pressure":"normal"
             }))
         );
-        assert_eq!(space(100, 10, 9, 1024).unwrap()["pressure"], "warning");
-        assert_eq!(space(100, 10, 1, 1024).unwrap()["pressure"], "critical");
+        assert_eq!(
+            space(100, 10, 9, 1024).map(|v| v["pressure"].clone()),
+            Some(json!("warning"))
+        );
+        assert_eq!(
+            space(100, 10, 1, 1024).map(|v| v["pressure"].clone()),
+            Some(json!("critical"))
+        );
         assert!(space(0, 0, 0, 1).is_none());
         assert!(space(100, 1, 2, 1).is_none());
         assert_eq!(
-            space(9_007_199_254_740_993, 2, 1, 4096).unwrap()["total"],
-            "36893488147419107328"
+            space(9_007_199_254_740_993, 2, 1, 4096).map(|v| v["total"].clone()),
+            Some(json!("36893488147419107328"))
         );
     }
 }
