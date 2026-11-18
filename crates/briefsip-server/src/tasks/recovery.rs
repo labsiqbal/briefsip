@@ -518,7 +518,7 @@ fn envelope(e: &Value) -> Result<()> {
     }
     Ok(())
 }
-fn envelope_body(generation: &str, request: &str, e: &Value) -> Value {
+pub(super) fn envelope_body(generation: &str, request: &str, e: &Value) -> Value {
     let entries = e["entries"]
         .as_array()
         .into_iter()

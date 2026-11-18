@@ -2,6 +2,8 @@ import { canonicalJson, closedObject, digestCommand, existingRevision, id, Proto
 
 export type Ownership = { authorityGeneration: string; deviceGeneration: number; taskId: string; executorGeneration: number };
 
+export type ActionContext = { snapshotRef: { v: 1; taskId: string; snapshotId: string; revision: number; digest: string }; snapshot: Record<string,unknown> & { taskRevision: number } };
+
 export type ResultRef = { v: 1; taskId: string; actionId: string; digest: string; size: number; encoding: 'canonical-json-v1' };
 
 export function canonicalToolDigest(value: unknown) {

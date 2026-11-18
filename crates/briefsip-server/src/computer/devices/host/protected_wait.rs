@@ -124,19 +124,12 @@ fn provision_active(host: &Host, value: &Value) -> Result<bool> {
     }))
 }
 
-fn service(host: &Host) -> String {
-    format!(
-        "briefsip/{}/{}",
-        host.identity.installation_id, host.identity.device_id
-    )
-}
-
 fn store_secret(host: &Host, reference: &str, deadline: i64) -> Result<()> {
     let expired = || fail(409, "wait_expired", "Wait provision has expired.");
     if now() >= deadline {
         return Err(expired());
     }
-    let service = service(host);
+    let service = host.secret_service();
     let secret = match host.keys.read(&service, reference)? {
         Some(secret) if valid_secret(&secret) => secret,
         Some(_) => return Err(keys::unavailable()),
@@ -145,7 +138,7 @@ fn store_secret(host: &Host, reference: &str, deadline: i64) -> Result<()> {
                 .into_iter()
                 .map(|b| format!("{b:02x}"))
                 .collect();
-            host.keys.write(&service, reference, &secret)?;
+            keys::stage(&*host.keys, &service, reference, &secret)?;
             secret
         }
     };
@@ -234,7 +227,7 @@ fn stored_wait(host: &Host, request: &Value) -> Result<Value> {
 
 fn read_secret(host: &Host, row: &Value) -> Result<String> {
     host.keys
-        .read(&service(host), text(row, "key_reference"))?
+        .read(&host.secret_service(), text(row, "key_reference"))?
         .filter(|s| valid_secret(s))
         .ok_or_else(keys::unavailable)
 }
@@ -402,9 +395,9 @@ impl Stream {
                 params![closed,closed,db::canonical(ack),text(ack,"provisionId")])?;
         }
         for row in super::rows(&host.db, "SELECT provision_id,key_reference FROM device_wait_secrets WHERE closed=1 AND cleanup_pending=1 LIMIT 40", [])? {
-            let service = service(host);
+            let service = host.secret_service();
             let reference = text(&row,"key_reference");
-            if host.keys.remove(&service,reference).is_ok() && host.keys.read(&service,reference).is_ok_and(|value| value.is_none()) {
+            if keys::remove_verified(&*host.keys, &service, reference) {
                 host.db.execute("UPDATE device_wait_secrets SET cleanup_pending=0 WHERE provision_id=? AND closed=1", [text(&row,"provision_id")])?;
             }
         }

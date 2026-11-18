@@ -2,7 +2,7 @@ use super::*;
 
 const RECOVERY_TIMEOUT: Duration = Duration::from_secs(4);
 
-fn missing() -> Failure {
+pub(super) fn missing() -> Failure {
     fail(
         409,
         "executor_missing",
@@ -17,11 +17,11 @@ fn receipt_mismatch() -> Failure {
     )
 }
 
-fn intent(row: &Value) -> Result<Value> {
+pub(super) fn intent(row: &Value) -> Result<Value> {
     crate::web::parse_json(text(row, "intent_json").as_bytes())
 }
 
-fn latest_row(db: &Connection, action: &str) -> Result<Value> {
+pub(super) fn latest_row(db: &Connection, action: &str) -> Result<Value> {
     one(
         db,
         "SELECT * FROM device_journal WHERE action_id=?",
@@ -30,7 +30,7 @@ fn latest_row(db: &Connection, action: &str) -> Result<Value> {
     .ok_or_else(|| fail(404, "action_missing", "Action journal not found."))
 }
 
-fn watermark(db: &Connection) -> Result<i64> {
+pub(super) fn watermark(db: &Connection) -> Result<i64> {
     let sequence = db.query_row("UPDATE device_state SET journal_sequence=journal_sequence+1 WHERE id=1 RETURNING journal_sequence",[],|r|r.get(0))?;
     Ok(sequence)
 }
@@ -40,7 +40,7 @@ fn result_ref(row: &Value) -> Value {
         "size":text(row,"result_json").len(),"encoding":"canonical-json-v1"})
 }
 
-fn reported(row: &Value, saved: &Value) -> Result<Value> {
+pub(super) fn reported(row: &Value, saved: &Value) -> Result<Value> {
     let content = crate::web::parse_json(text(row, "result_json").as_bytes())?;
     Ok(
         json!({"requestId":saved["reportRequestId"],"actionId":row["action_id"],"ownership":saved["ownership"],"payloadDigest":row["payload_digest"],
@@ -82,17 +82,10 @@ fn save_report(db: &Connection, task: &str, action: &str, report: &Value) -> Res
 }
 
 impl Host {
-    fn executor_token(&self, task: &str, ownership: &Value) -> Result<String> {
-        let refs: String = self.db.query_row(
-            "SELECT executor_refs_json FROM device_state WHERE id=1",
-            [],
-            |r| r.get(0),
-        )?;
-        let refs = crate::web::parse_json(refs.as_bytes())?;
+    pub(super) fn executor_token(&self, task: &str, ownership: &Value) -> Result<String> {
+        let refs = self.executor_refs()?;
         let record = refs
-            .as_array()
-            .into_iter()
-            .flatten()
+            .iter()
             .find(|value| value["taskId"] == task && value["ownership"] == *ownership)
             .ok_or_else(missing)?;
         let request = id(&record["requestId"])?;
@@ -100,16 +93,15 @@ impl Host {
         if record["tokenReference"] != reference {
             return Err(missing());
         }
-        let service = format!(
-            "briefsip/{}/{}",
-            self.identity.installation_id, self.identity.device_id
-        );
-        let token = self.keys.read(&service, &reference)?.ok_or_else(missing)?;
+        let token = self
+            .keys
+            .read(&self.secret_service(), &reference)?
+            .ok_or_else(missing)?;
         decode(&json!(token), 32).map_err(|_| missing())?;
         Ok(token)
     }
 
-    fn prepare_body(&self, row: &Value, saved: &Value) -> Result<Value> {
+    pub(super) fn prepare_body(&self, row: &Value, saved: &Value) -> Result<Value> {
         let context = &saved["context"];
         let mut body = json!({"requestId":saved["prepareRequestId"],"sequence":row["sequence"],"ownership":saved["ownership"],
             "payloadDigest":row["payload_digest"],"actionKind":row["action_kind"],"contextSnapshotId":context["snapshotRef"]["snapshotId"],
@@ -125,13 +117,14 @@ impl Host {
         Ok(body)
     }
 
-    async fn replay_canonical(
+    pub(super) async fn replay_canonical(
         &mut self,
         token: &str,
         runner: &str,
         task: &str,
         row: &Value,
         saved: &Value,
+        timeout: Duration,
     ) -> Result<()> {
         let action = id(&row["action_id"])?;
         let mut body = saved["payload"].clone();
@@ -146,7 +139,7 @@ impl Host {
                 &body,
                 Some(runner),
                 RESULT_LIMIT,
-                RECOVERY_TIMEOUT,
+                timeout,
             )
             .await?;
         let result = &response["data"];
@@ -165,24 +158,51 @@ impl Host {
         {
             return Err(receipt_mismatch());
         }
+        self.checkpoint("tool-reply").await;
+        self.save_outcome(task, &action, saved, content)
+    }
+
+    pub(super) fn save_outcome(
+        &self,
+        task: &str,
+        action: &str,
+        saved: &Value,
+        content: &Value,
+    ) -> Result<()> {
+        let encoded = db::canonical(content);
+        let digest = db::digest(&encoded);
         let tx = self.db.unchecked_transaction()?;
-        tx.execute("UPDATE device_journal SET state='reported',result_digest=?,result_json=?,effect_status='known',journal_sequence=?
-            WHERE action_id=? AND send_marker=1 AND state IN ('in_flight','uncertain') AND result_json IS NULL",
-            params![content_digest,encoded,watermark(&tx)?,action])?;
-        let report = reported(&latest_row(&tx, &action)?, saved)?;
-        save_report(&tx, task, &action, &report)?;
+        let row = latest_row(&tx, action)?;
+        if row["result_json"].is_string() {
+            return if row["result_json"] == encoded && row["result_digest"] == digest {
+                Ok(())
+            } else {
+                Err(fail(
+                    409,
+                    "result_conflict",
+                    "Journal result cannot be changed.",
+                ))
+            };
+        }
+        if tx.execute("UPDATE device_journal SET state='reported',result_digest=?,result_json=?,effect_status='known',journal_sequence=?
+            WHERE action_id=? AND send_marker=1 AND (state='in_flight' OR (state='uncertain' AND action_kind='canonical'))",
+            params![digest,encoded,watermark(&tx)?,action])? != 1 {
+            return Err(fail(409, "result_forbidden", "Action does not have a send marker yet."));
+        }
+        let report = reported(&latest_row(&tx, action)?, saved)?;
+        save_report(&tx, task, action, &report)?;
         tx.commit()?;
         Ok(())
     }
 
-    fn own_receipt(&self, receipt: &Value) -> bool {
+    pub(super) fn own_receipt(&self, receipt: &Value) -> bool {
         self.identity
             .descriptor
             .as_ref()
             .is_some_and(|d| receipt["actorId"] == d["accountId"])
     }
 
-    fn recovery_report(&self, row: &Value, saved: &Value) -> Result<Value> {
+    pub(super) fn recovery_report(&self, row: &Value, saved: &Value) -> Result<Value> {
         let task = id(&row["task_id"])?;
         let action = id(&row["action_id"])?;
         if let Some(existing) = one(
@@ -224,7 +244,7 @@ impl Host {
                     &source["deviceGeneration"],
                     &entry,
                 );
-                let key = self.key(&self.identity.signing_ref, false, false)?;
+                let key = self.recovery_key(source)?;
                 let entry_signature = key.sign(&entry_body)?;
                 let runner = &saved["runner"];
                 let boot_id = &self.executor.as_ref().ok_or_else(missing)?.boot_id;
@@ -263,12 +283,13 @@ impl Host {
         Ok(report)
     }
 
-    async fn reconcile(
+    pub(super) async fn reconcile(
         &mut self,
         token: &str,
         row: &Value,
         saved: &Value,
         runner: &str,
+        timeout: Duration,
     ) -> Result<()> {
         let task = id(&row["task_id"])?;
         let action = id(&row["action_id"])?;
@@ -277,7 +298,7 @@ impl Host {
             && row["send_marker"] == 1
             && row["result_json"].is_null()
         {
-            self.replay_canonical(token, runner, &task, row, saved)
+            self.replay_canonical(token, runner, &task, row, saved, timeout)
                 .await?;
         }
         let current = latest_row(&self.db, &action)?;
@@ -291,7 +312,7 @@ impl Host {
         }
         let path = format!("/api/tasks/{task}/reconcile");
         let mut reply = self
-            .post_path(&path, token, &report, Some(runner), LIMIT, RECOVERY_TIMEOUT)
+            .post_path(&path, token, &report, Some(runner), LIMIT, timeout)
             .await;
         if reply
             .as_ref()
@@ -305,18 +326,31 @@ impl Host {
                 &prepare,
                 Some(runner),
                 LIMIT,
-                RECOVERY_TIMEOUT,
+                timeout,
             )
             .await?;
             reply = self
-                .post_path(&path, token, &report, Some(runner), LIMIT, RECOVERY_TIMEOUT)
+                .post_path(&path, token, &report, Some(runner), LIMIT, timeout)
                 .await;
         }
         let receipt = &reply?["receipt"];
+        if row["action_kind"] == "canonical" {
+            self.checkpoint("tool-report").await;
+        }
+        self.acknowledge(&action, saved, &report, receipt)
+    }
+
+    pub(super) fn acknowledge(
+        &self,
+        action: &str,
+        saved: &Value,
+        report: &Value,
+        receipt: &Value,
+    ) -> Result<()> {
         let outbox = one(
             &self.db,
             "SELECT report_digest,receipt_json FROM device_outbox WHERE action_id=?",
-            [&action],
+            [action],
         )?
         .ok_or_else(receipt_mismatch)?;
         if !self.own_receipt(receipt)
@@ -341,18 +375,19 @@ impl Host {
         )?;
         tx.execute(
             "UPDATE device_journal SET state='acknowledged' WHERE action_id=? AND state='reported'",
-            [&action],
+            [action],
         )?;
         tx.commit()?;
         Ok(())
     }
 
-    async fn complete_recovered(
+    pub(super) async fn complete_recovered(
         &mut self,
         token: &str,
         row: &Value,
         mut saved: Value,
         runner: &str,
+        recover: bool,
     ) -> Result<()> {
         let task = id(&row["task_id"])?;
         let action = id(&row["action_id"])?;
@@ -365,11 +400,12 @@ impl Host {
                 &command,
                 Some(runner),
                 LIMIT,
-                RECOVERY_TIMEOUT,
+                if recover { RECOVERY_TIMEOUT } else { TIMEOUT },
             )
             .await;
         match response {
             Ok(response) => {
+                self.checkpoint("completion-reply").await;
                 let data = &response["data"];
                 let receipt = &response["receipt"];
                 if !self.own_receipt(receipt)
@@ -392,9 +428,15 @@ impl Host {
                 {
                     return Err(receipt_mismatch());
                 }
+                if saved
+                    .get("completionReceipt")
+                    .is_some_and(|previous| previous != receipt)
+                {
+                    return Err(receipt_mismatch());
+                }
                 saved["completionReceipt"] = receipt.clone();
             }
-            Err(err) if !err.retryable && err.status != 401 => {
+            Err(err) if recover && !err.retryable && err.status != 401 => {
                 saved["completionError"] = err.code.into();
             }
             Err(err) => return Err(err),
@@ -435,9 +477,11 @@ impl Host {
                 }
                 let runner = self.executor_token(&id(&row["task_id"])?, &saved["ownership"])?;
                 if row["state"] == "acknowledged" {
-                    self.complete_recovered(token, &row, saved, &runner).await
+                    self.complete_recovered(token, &row, saved, &runner, true)
+                        .await
                 } else {
-                    self.reconcile(token, &row, &saved, &runner).await
+                    self.reconcile(token, &row, &saved, &runner, RECOVERY_TIMEOUT)
+                        .await
                 }
             })
             .await;

@@ -400,3 +400,217 @@ async fn signed_stream_handles_bounded_wait_event_and_reveal_without_sending_pla
     let _ = server.await;
     Ok(())
 }
+
+#[test]
+fn journal_locks_sole_runner_and_keeps_intent_result_and_ack_immutable() -> db::Result<()> {
+    let scratch = Scratch::create()?;
+    let store = Keyring::default();
+    let database = scratch.0.join("home.sqlite");
+    let mut home = Host::open(&database, "http://127.0.0.1:1", true, Box::new(store))?;
+    let authority_generation = request_id();
+    let account = request_id();
+    let key = home
+        .key(&home.identity.signing_ref, false, false)
+        .map_err(|error| error.message)?;
+    let descriptor = json!({"authorityGeneration":authority_generation,"deviceGeneration":1,
+        "signingPublicKey":B64.encode(key.public()),"accountId":account});
+    home.remember_descriptor(&descriptor)
+        .map_err(|error| error.message)?;
+    home.identity.descriptor = Some(descriptor.clone());
+    home.acquire_executor().map_err(|error| error.message)?;
+    let other = lock::Lock::acquire(&home.db, &home.directory.join("executor"));
+    assert_eq!(
+        other
+            .err()
+            .ok_or("Expected the second runner to be locked out")?
+            .code,
+        "executor_busy"
+    );
+    let task = request_id();
+    let action = request_id();
+    let project = request_id();
+    let authority = &descriptor["authorityGeneration"];
+    let ownership = json!({"authorityGeneration":authority,"deviceGeneration":1,"taskId":task,"executorGeneration":1});
+    let snapshot = json!({"taskId":task,"homeDeviceId":home.identity.device_id,"projectId":project,
+        "authorityGeneration":authority,"taskRevision":2});
+    let context = json!({"snapshotRef":{"v":1,"taskId":task,"snapshotId":request_id(),"revision":1,"digest":digest(&snapshot)},"snapshot":snapshot});
+    let input = json!({"taskId":task,"actionId":action,"sequence":0,"actionKind":"read","ownership":ownership,
+        "payload":{"operation":"read"},"context":context,"grantRevision":1});
+    let row = home.stage_action(&input).map_err(|error| error.message)?;
+    let saved = journal::intent(&row).map_err(|error| error.message)?;
+    assert_eq!(row["state"], "prepared");
+    assert_eq!(row["send_marker"], 0);
+    assert_eq!(
+        home.stage_action(&input).map_err(|error| error.message)?,
+        row
+    );
+    let mut changed = input;
+    changed["payload"]["operation"] = "other".into();
+    assert_eq!(
+        home.stage_action(&changed)
+            .err()
+            .ok_or("Expected a rejected operation")?
+            .code,
+        "action_conflict"
+    );
+    assert_eq!(
+        home.update_dispatch(&action, "in_flight", "unknown", true)
+            .err()
+            .ok_or("Expected a rejected operation")?
+            .code,
+        "dispatch_forbidden"
+    );
+    home.update_dispatch(&action, "committed", "unknown", false)
+        .map_err(|error| error.message)?;
+    home.update_dispatch(&action, "in_flight", "unknown", true)
+        .map_err(|error| error.message)?;
+    assert_eq!(
+        journal::latest_row(&home.db, &action).map_err(|error| error.message)?["send_marker"],
+        1
+    );
+    assert_eq!(
+        home.update_dispatch(&action, "in_flight", "unknown", true)
+            .err()
+            .ok_or("Expected a rejected operation")?
+            .code,
+        "dispatch_forbidden"
+    );
+    let content = json!({"text":"Once only"});
+    home.save_outcome(&task, &action, &saved, &content)
+        .map_err(|error| error.message)?;
+    let row = journal::latest_row(&home.db, &action).map_err(|error| error.message)?;
+    assert_eq!(row["state"], "reported");
+    let report = journal::reported(&row, &saved).map_err(|error| error.message)?;
+    assert_eq!(report["resultRef"]["digest"], digest(&content));
+    assert_eq!(
+        home.save_outcome(&task, &action, &saved, &json!({"text":"Changed"}))
+            .err()
+            .ok_or("Expected a rejected operation")?
+            .code,
+        "result_conflict"
+    );
+    let mut receipt = json!({"requestId":request_id(),"actorId":account,"recordId":action,"projectId":project,
+        "payloadDigest":home.db.query_row("SELECT report_digest FROM device_outbox WHERE action_id=?", [&action], |row| row.get::<_, String>(0))?,
+        "status":200,"recordRevision":1,"committedAt":now()});
+    assert_eq!(
+        home.acknowledge(&action, &saved, &report, &receipt)
+            .err()
+            .ok_or("Expected a rejected operation")?
+            .code,
+        "receipt_mismatch"
+    );
+    receipt["requestId"] = saved["reportRequestId"].clone();
+    for _ in 0..2 {
+        home.acknowledge(&action, &saved, &report, &receipt)
+            .map_err(|error| error.message)?;
+        assert_eq!(
+            journal::latest_row(&home.db, &action).map_err(|error| error.message)?["state"],
+            "acknowledged"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn keyring_stages_immutable_secrets_and_verifies_cleanup() -> db::Result<()> {
+    #[derive(Default)]
+    struct FaultFlags {
+        locked: AtomicBool,
+        discard_write: AtomicBool,
+        refuse_delete: AtomicBool,
+    }
+
+    #[derive(Clone, Default)]
+    struct FaultStore {
+        entries: Keyring,
+        flags: Arc<FaultFlags>,
+    }
+    impl keys::Store for FaultStore {
+        fn read(&self, service: &str, name: &str) -> Result<Option<String>> {
+            if self.flags.locked.load(Ordering::Relaxed) {
+                return Err(Failure::new(503, "locked", "secret-canary"));
+            }
+            self.entries.read(service, name)
+        }
+        fn write(&self, service: &str, name: &str, secret: &str) -> Result<()> {
+            if !self.flags.discard_write.load(Ordering::Relaxed) {
+                self.entries.write(service, name, secret)?;
+            }
+            Ok(())
+        }
+        fn remove(&self, service: &str, name: &str) -> Result<()> {
+            if self.flags.refuse_delete.load(Ordering::Relaxed) {
+                return Err(Failure::new(503, "locked", "secret-canary"));
+            }
+            self.entries.remove(service, name)
+        }
+    }
+    let scratch = Scratch::create()?;
+    let store = FaultStore::default();
+    let database = scratch.0.join("home.sqlite");
+    let open = || {
+        Host::open(
+            &database,
+            "http://127.0.0.1:1",
+            true,
+            Box::new(store.clone()),
+        )
+    };
+    let home = open()?;
+    let service = home.secret_service();
+    let reference = format!("openai-compatible/{}/1", request_id());
+    let read = || keys::Store::read(&store, &service, &reference).map_err(|error| error.message);
+    let stage = |secret: &str| keys::stage(&store, &service, &reference, secret);
+    let remove = || keys::remove_verified(&store, &service, &reference);
+    assert_eq!(read()?, None);
+    stage("fixture-secret").map_err(|error| error.message)?;
+    let reopened = open()?;
+    assert_eq!(
+        reopened.secret_service(),
+        format!(
+            "briefsip/{}/{}",
+            home.identity.installation_id, home.identity.device_id
+        )
+    );
+    assert_eq!(
+        reopened
+            .keys
+            .read(&reopened.secret_service(), &reference)
+            .map_err(|error| error.message)?
+            .as_deref(),
+        Some("fixture-secret")
+    );
+    stage("fixture-secret").map_err(|error| error.message)?;
+    assert_eq!(
+        stage("replacement")
+            .err()
+            .ok_or("Expected a secret conflict")?
+            .code,
+        "secret_conflict"
+    );
+    assert_eq!(read()?.as_deref(), Some("fixture-secret"));
+    store.flags.locked.store(true, Ordering::Relaxed);
+    let failure = stage("replacement")
+        .err()
+        .ok_or("Expected a locked keyring failure")?;
+    assert_eq!(failure.code, "device_key_unavailable");
+    assert!(!failure.message.contains("secret-canary"));
+    assert!(!remove());
+    store.flags.locked.store(false, Ordering::Relaxed);
+    store.flags.discard_write.store(true, Ordering::Relaxed);
+    assert_eq!(
+        keys::stage(&store, &service, "event-wait/example/1", "fixture-secret")
+            .err()
+            .ok_or("Expected readback failure")?
+            .code,
+        "device_key_unavailable"
+    );
+    store.flags.refuse_delete.store(true, Ordering::Relaxed);
+    assert!(!remove());
+    assert_eq!(read()?.as_deref(), Some("fixture-secret"));
+    store.flags.refuse_delete.store(false, Ordering::Relaxed);
+    assert!(remove());
+    assert!(remove());
+    assert_eq!(read()?, None);
+    Ok(())
+}

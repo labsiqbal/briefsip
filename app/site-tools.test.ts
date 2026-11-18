@@ -6,8 +6,6 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
-import { DatabaseSync } from 'node:sqlite';
-import { siteTool, SiteError } from './sites.ts';
 
 test('site tools bind sent files and owner, journal results and never replay old mutation on restart', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-site-tools-'));
@@ -50,11 +48,21 @@ test('site tools bind sent files and owner, journal results and never replay old
     assert.match(await(await fetch(app.origin+site.path)).text(),/<h1>Published<\/h1>/);
     args={file,name:'Side cannot use main file'};await run(sidePath);assert.equal(result.status,404);
     const otherFile=await upload(other,'<p>Foreign</p>');args={file:otherFile,name:'Foreign'};await run(path);assert.equal(result.status,404);
-    for (const [bytes,name] of [[Buffer.from([255]),'invalid.html'],['x'.repeat(262145),'large.html'],['plain','not-html.txt']] as const) {
-      const db = new DatabaseSync(':memory:');
-      try { assert.throws(()=>siteTool(db,a.id,'publish_site',{file:randomUUID(),name:'Invalid'},{name,bytes:Buffer.from(bytes)}),error=>error instanceof SiteError && error.status===400); }
-      finally { db.close(); }
+    for (const [bytes,name,status,message] of [
+      [Buffer.from([255]),'invalid.html',415,'Message attachment must be UTF-8 text.'],
+      ['x'.repeat(262145),'large.html',413,'Total text attachment limit is 32 KiB per message.'],
+    ] as const) {
+      const invalid = await upload(path, bytes, name);
+      const response = await fetch(app.origin+path+'/turns', {
+        method:'POST',headers:{Origin:app.origin,'Content-Type':'application/json'},
+        body:JSON.stringify({id:randomUUID(),text:'Manage local site',files:[invalid]}),
+      });
+      assert.equal(response.status,status,name);
+      assert.equal((await response.json()).error,message);
     }
+    const invalidType = await upload(path,'plain','not-html.txt');
+    args={file:invalidType,name:'Invalid'};await run(path,[invalidType]);assert.equal(result.status,400);
+    assert.equal((await request(path+'/sites')).sites.length,1);
     generate=true;await run(path);generate=false;assert.equal(result.name,'Generated site');assert.match(await(await fetch(app.origin+result.path)).text(),/Generated page/);
     args={file,name:'Changed',site:site.id,revision:1};await run(path);assert.equal(result.revision,2);
     await run(path);assert.equal(result.status,409);

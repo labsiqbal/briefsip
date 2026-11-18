@@ -1,10 +1,14 @@
+mod dispatch;
+mod export;
 mod fixture_keys;
 mod journal;
 mod keys;
 mod lock;
 mod protected_wait;
+mod provider;
 mod schema;
 mod stream;
+mod task_loop;
 #[cfg(test)]
 mod tests;
 
@@ -15,7 +19,7 @@ use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
-    io::Write,
+    io::{Read, Write},
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     sync::Arc,
@@ -140,9 +144,10 @@ struct Host {
     db: Connection,
     directory: PathBuf,
     identity: Identity,
-    keys: Box<dyn keys::Store>,
+    keys: Arc<dyn keys::Store>,
     client: Client,
-    executor: Option<lock::Lock>,
+    executor: Option<Arc<lock::Lock>>,
+    fixture_checkpoint: Option<String>,
 }
 
 impl Host {
@@ -174,7 +179,7 @@ impl Host {
         if !file.metadata()?.is_file() || file.metadata()?.nlink() != 1 {
             return Err("Device database must be a regular file".into());
         }
-        let mut db = Connection::open(database)?;
+        let mut db = Connection::open(&database)?;
         schema::initialize(&mut db)?;
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
         let path = directory.join("identity.json");
@@ -223,8 +228,9 @@ impl Host {
             db,
             directory,
             identity,
-            keys,
+            keys: Arc::from(keys),
             executor: None,
+            fixture_checkpoint: None,
             client: Client::builder()
                 .connect_timeout(TIMEOUT)
                 .redirect(reqwest::redirect::Policy::none())
@@ -258,12 +264,45 @@ impl Host {
 
     fn acquire_executor(&mut self) -> Result<()> {
         if self.executor.is_none() {
-            self.executor = Some(lock::Lock::acquire(
+            self.executor = Some(Arc::new(lock::Lock::acquire(
                 &self.db,
                 &self.directory.join("executor"),
-            )?);
+            )?));
         }
         Ok(())
+    }
+
+    fn stream_peer(&self, database: &Path) -> Result<Self> {
+        let db = Connection::open_with_flags(
+            database,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )?;
+        db.execute_batch(
+            "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000",
+        )?;
+        Ok(Self {
+            db,
+            directory: self.directory.clone(),
+            identity: self.identity.clone(),
+            keys: self.keys.clone(),
+            client: self.client.clone(),
+            executor: self.executor.clone(),
+            fixture_checkpoint: None,
+        })
+    }
+
+    async fn checkpoint(&self, name: &str) {
+        if self.fixture_checkpoint.as_deref() == Some(name) {
+            println!("{}", json!({"checkpoint":name}));
+            std::future::pending::<()>().await;
+        }
+    }
+
+    fn secret_service(&self) -> String {
+        format!(
+            "briefsip/{}/{}",
+            self.identity.installation_id, self.identity.device_id
+        )
     }
 
     fn key(&self, name: &str, encryption: bool, create: bool) -> Result<keys::Private> {
@@ -593,6 +632,16 @@ async fn response_value(mut response: reqwest::Response, limit: usize) -> Result
         let code = match text(&value["error"], "code") {
             "rate_limited" => "rate_limited",
             "device_session_invalid" => "device_session_invalid",
+            "device_offline" => "device_offline",
+            "device_revoked" => "device_revoked",
+            "stale_revision" => "stale_revision",
+            "context_stale" => "context_stale",
+            "action_conflict" => "action_conflict",
+            "outcome_unresolved" => "outcome_unresolved",
+            "result_invalid" => "result_invalid",
+            "setup_incomplete" => "setup_incomplete",
+            "task_terminal" => "task_terminal",
+            "storage_failed" => "storage_failed",
             "challenge_expired" => "challenge_expired",
             "challenge_used" => "challenge_used",
             "session_invalid" => "session_invalid",
@@ -724,6 +773,14 @@ async fn bootstrap(host: Host, mode: &'static str) -> db::Result<()> {
 pub async fn run() -> db::Result<()> {
     let mut args = std::env::args().skip(2).peekable();
     let enroll = args.next_if(|value| value == "enroll").is_some();
+    let export = !enroll && args.next_if(|value| value == "export-recovery").is_some();
+    let task = if !enroll && !export && args.next_if(|value| value == "run-task").is_some() {
+        Some(args.next().ok_or("Missing task ID")?)
+    } else {
+        None
+    };
+    let mut test_provider = None;
+    let mut checkpoint = None;
     let mut server = None;
     let mut mode = "new";
     let mut fixture_keys = None;
@@ -735,11 +792,17 @@ pub async fn run() -> db::Result<()> {
                     args.next().ok_or("Missing fixture keyring path")?,
                 ));
             }
+            "--test-checkpoint" if task.is_some() && checkpoint.is_none() => {
+                checkpoint = Some(args.next().ok_or("Missing fixture checkpoint")?);
+            }
+            "--test-provider" if task.is_some() && test_provider.is_none() => {
+                test_provider = Some(args.next().ok_or("Missing fixture provider URL")?);
+            }
             "--rotate" if enroll && mode == "new" => mode = "rotate",
             "--reenroll" if enroll && mode == "new" => mode = "reenroll",
             _ => {
                 return Err(
-                    "Use --device-host [enroll] --server <origin> [--rotate | --reenroll]".into(),
+                    "Use --device-host [enroll | export-recovery | run-task <id>] --server <origin> [--rotate | --reenroll]".into(),
                 )
             }
         }
@@ -747,15 +810,68 @@ pub async fn run() -> db::Result<()> {
     let server = server.ok_or("Missing --server <origin>")?;
     let database = std::env::var_os("BRIEFSIP_DEVICE_DB").ok_or("Missing BRIEFSIP_DEVICE_DB")?;
     let development = std::env::var("BRIEFSIP_DEVELOPMENT").as_deref() == Ok("1");
+    let testing = fixture_keys.is_some();
     let keys: Box<dyn keys::Store> = if let Some(path) = fixture_keys {
         Box::new(fixture_keys::FixtureKeys::open(path, &server)?)
     } else {
         Box::new(keys::System)
     };
-    let host = Host::open(Path::new(&database), &server, development, keys)?;
+    let mut host = Host::open(Path::new(&database), &server, development, keys)?;
     if enroll {
         bootstrap(host, mode).await
+    } else if export {
+        let mut bytes = Vec::new();
+        std::io::stdin()
+            .take((LIMIT + 1) as u64)
+            .read_to_end(&mut bytes)?;
+        let result = if bytes.len() > LIMIT {
+            Err(fail(413, "payload_too_large", "Payload is too large."))
+        } else {
+            crate::web::parse_json(&bytes).and_then(|value| host.export_recovery(&value))
+        };
+        command_output(result)
+    } else if let Some(task) = task {
+        if checkpoint.is_some() && (!testing || test_provider.is_none()) {
+            return Err("Fixture checkpoint requires a loopback fixture provider".into());
+        }
+        host.fixture_checkpoint = checkpoint;
+        let provider = provider::Provider::new(test_provider, testing)?;
+        let result = async {
+            id(&json!(task))?;
+            host.acquire_executor()?;
+            let (session, frames) = tokio::time::timeout(TIMEOUT, host.open_stream())
+                .await
+                .map_err(|_| transport())??;
+            let mut observer = host.stream_peer(Path::new(&database))?;
+            tokio::select! {
+                biased;
+                _ = crate::shutdown() => Err(transport()),
+                error = stream::observe_task(&mut observer, &session, frames) => Err(error),
+                result = async {
+                    host.recover_journal(&session.token).await?;
+                    host.run_task(&session.token, &task, &provider).await
+                } => result,
+            }
+        }
+        .await;
+        command_output(result)
     } else {
         stream::run(host).await
+    }
+}
+
+fn command_output(result: Result<Value>) -> db::Result<()> {
+    match result {
+        Ok(value) => {
+            println!("{}", value);
+            Ok(())
+        }
+        Err(error) => {
+            eprintln!(
+                "{}",
+                json!({"status":error.status,"code":error.code,"message":error.message})
+            );
+            Err("Device command failed".into())
+        }
     }
 }

@@ -7,12 +7,13 @@ import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer, request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
+import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
 import { startCanonicalApp } from './test-bridge.ts';
 import { openDeviceRuntime } from './device-runtime.ts';
-import { startRustDeviceEnrollment, startRustDeviceConnection, enrollRustDevice } from './test-support/rust-device-host.ts';
-import type { ActionContext } from './executor-journal.ts';
+import { startRustDeviceEnrollment, startRustDeviceConnection, enrollRustDevice, startRustDeviceTask, runRustDeviceTask, crashRustDeviceTask, exportRustDeviceRecovery, type RecoveryExport } from './test-support/rust-device-host.ts';
+import type { ActionContext } from './test-support/task-protocol.ts';
 import { rustBinary } from './rust-binary.ts';
 import { rustServerOutput } from './rust-test-server.ts';
 import { canonicalJson, ProtocolError, digestCommand, sha256 } from './shared/protocol.ts';
@@ -649,7 +650,7 @@ test('protected workflow wait discards delayed reveal and event replies after au
 });
 
 test('canonical workflow schedule coalesces offline intervals with one durable identity across restart', async () => {
-  const f = await workflowConfigurationFixture();
+  const f = await rustWorkflowConfigurationFixture();
   try {
     assert.equal((await f.send(f.list, { requestId: f.workflow, id: f.workflow, revision: 0, name: 'Scheduled', graph: f.graph })).status, 201);
     const requestId = randomUUID(), anchorAt = Date.now() - 960000;
@@ -683,7 +684,7 @@ test('canonical workflow schedule coalesces offline intervals with one durable i
 test('canonical workflow once uses its home zone and consumes one catch-up after offline restart', async () => {
   const previousZone=process.env.TZ;process.env.TZ='America/New_York';
   try{
-  const f=await workflowConfigurationFixture();
+  const f=await rustWorkflowConfigurationFixture();
   try{
     assert.equal((await f.send(f.list,{requestId:f.workflow,id:f.workflow,revision:0,name:'Wall clock',graph:f.graph})).status,201);
     const requestId=randomUUID(),command={requestId,id:requestId,revision:0,spec:{kind:'once',date:'2024-03-10',time:'02:30'},input:'Wall clock input',enabled:true};
@@ -707,7 +708,7 @@ test('canonical workflow once uses its home zone and consumes one catch-up after
 });
 
 test('canonical workflow cron validates HTTP input and admits one retained overdue occurrence after reconnect',async()=>{
-  const f=await workflowConfigurationFixture();
+  const f=await rustWorkflowConfigurationFixture();
   try{
     assert.equal((await f.send(f.list,{requestId:f.workflow,id:f.workflow,revision:0,name:'Cron',graph:f.graph})).status,201);
     const path=f.detail+'/schedule',requestId=randomUUID(),command={requestId,id:requestId,revision:0,spec:{kind:'cron',expression:'*/5 * * * *'},input:'Private cron input',enabled:true};
@@ -735,7 +736,7 @@ test('canonical workflow cron validates HTTP input and admits one retained overd
 });
 
 test('canonical workflow occurrence attaches its first recovery task atomically on the original home', async () => {
-  const f = await workflowConfigurationFixture();
+  const f = await rustWorkflowConfigurationFixture();
   try {
     const graph = {entry:'model',maxSteps:2,nodes:[{id:'model',kind:'model',model:'fixture',prompt:'Scheduled task',next:'out'},{id:'out',kind:'output'}]};
     assert.equal((await f.send(f.list,{requestId:f.workflow,id:f.workflow,revision:0,name:'Scheduled model',graph})).status,201);
@@ -757,7 +758,7 @@ test('canonical workflow occurrence attaches its first recovery task atomically 
 });
 
 test('workflow schedule sync retains scoped metadata and exact deltas across restart without replaying commands',async()=>{
-  const f=await workflowConfigurationFixture();
+  const f=await rustWorkflowConfigurationFixture();
   try{
     assert.equal((await f.send(f.list,{requestId:f.workflow,id:f.workflow,revision:0,name:'Schedule observations',graph:f.graph})).status,201);
     const syncPath='/api/sync?projectId='+f.project,before=(await f.send(syncPath)).body.data;
@@ -780,7 +781,7 @@ test('workflow schedule sync retains scoped metadata and exact deltas across res
 });
 
 test('workflow schedule sync rechecks current assignment private versions and root visibility for every human',async()=>{
-  const f=await workflowConfigurationFixture(),db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
+  const f=await rustWorkflowConfigurationFixture(),db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
   try{
     assert.equal((await f.send(f.list,{requestId:f.workflow,id:f.workflow,revision:0,name:'Private schedules',graph:f.graph})).status,201);
     const requestId=randomUUID(),command={requestId,id:requestId,revision:0,spec:{kind:'instant',at:Date.now()-1000},input:'PRIVATE_SCOPE_CANARY',enabled:true};
@@ -811,7 +812,7 @@ test('workflow schedule sync rechecks current assignment private versions and ro
 });
 
 test('canonical workflow schedule rejects foreign scope and rechecks current assignment before receipt replay', async()=>{
-  const f=await workflowConfigurationFixture();
+  const f=await rustWorkflowConfigurationFixture();
   try{
     assert.equal((await f.send(f.list,{requestId:f.workflow,id:f.workflow,revision:0,name:'Schedule authority',graph:f.graph})).status,201);
     const member=(await f.send('/api/session',undefined,'user_member')).body.data.accountId,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
@@ -836,7 +837,7 @@ test('canonical workflow schedule rejects foreign scope and rechecks current ass
 });
 
 test('canonical workflow executes conditions and approval once across restart', async () => {
-  const f = await workflowConfigurationFixture(), { workflow, project, list, detail } = f;
+  const f = await rustWorkflowConfigurationFixture(), { workflow, project, list, detail } = f;
   try {
     const graph = { entry: 'check', maxSteps: 3, nodes: [
       { id: 'check', kind: 'condition', operator: 'equals', value: 'Original input', yes: 'approve', no: 'out' },
@@ -1005,7 +1006,7 @@ test('canonical workflow retry changes agent per attempt and falls back to the o
 });
 
 test('canonical workflow retry checks capacity scopes and original authority with atomic receipts', async () => {
-  const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f;
+  const f = await rustWorkflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f;
   const db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
@@ -1171,7 +1172,7 @@ test('canonical workflow oversized handoff fails once without starving later run
 });
 
 test('canonical workflow capacity retries leave no empty threads before admission', async () => {
-  const f = await workflowConfigurationFixture(), { workflow, project, list, detail } = f, db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
+  const f = await rustWorkflowConfigurationFixture(), { workflow, project, list, detail } = f, db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     const expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 }, payload = { v: 1, kind: 'direct', message: { text: 'Fill queue', files: [] } };
     for (let index = 0; index < 100; index++) {
@@ -1223,7 +1224,7 @@ test('canonical workflow revoked assignment before host ACK closes the original 
 });
 
 test('canonical workflow wait reserves once offline and activates only after home keyring acknowledgement', async () => {
-  const f = await workflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f, db = fixtureDatabase(join(f.dir,'canonical.sqlite'));
+  const f = await rustWorkflowConfigurationFixture(), { workflow, project, list, detail, runtime } = f, db = fixtureDatabase(join(f.dir,'canonical.sqlite'));
   try {
     const graph={entry:'event',maxSteps:2,nodes:[{id:'event',kind:'wait',event:'ready',timeoutSeconds:60,next:'out'},{id:'out',kind:'output'}]};
     assert.equal((await f.send(list,{requestId:workflow,id:workflow,revision:0,name:'Protected wait',graph})).status,201);
@@ -1249,7 +1250,7 @@ test('canonical workflow wait reserves once offline and activates only after hom
 });
 
 test('canonical workflow timeout fails offline reservation without generating a second wait', async () => {
-  const f=await workflowConfigurationFixture(),{workflow,project,list,detail}=f,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
+  const f=await rustWorkflowConfigurationFixture(),{workflow,project,list,detail}=f,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
   try{
     const graph={entry:'event',maxSteps:2,nodes:[{id:'event',kind:'wait',event:'ready',timeoutSeconds:1,next:'out'},{id:'out',kind:'output'}]};
     assert.equal((await f.send(list,{requestId:workflow,id:workflow,revision:0,name:'Timeout',graph})).status,201);
@@ -1269,7 +1270,7 @@ test('canonical workflow timeout fails offline reservation without generating a 
 });
 
 test('canonical workflow channel output is atomic and does not duplicate after restart', async () => {
-  const f=await workflowConfigurationFixture(),{workflow,project,list,detail}=f,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
+  const f=await rustWorkflowConfigurationFixture(),{workflow,project,list,detail}=f,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
   try{
     const owner=(await f.send('/api/session')).body.data.accountId,channel=randomUUID();
     db.prepare("INSERT INTO channels(id,name,instructions,lead,revision,archived) VALUES (?,?,'',?,1,0)").run(channel,'Workflow output',f.agent);db.prepare('INSERT INTO channel_members VALUES (?,?)').run(channel,f.agent);
@@ -1290,7 +1291,7 @@ test('canonical workflow channel output is atomic and does not duplicate after r
 });
 
 test('canonical workflow run admission keeps its graph and receipt across restart and revision changes', async () => {
-  const f = await workflowConfigurationFixture(), { project, workflow, graph, list, detail } = f;
+  const f = await rustWorkflowConfigurationFixture(), { project, workflow, graph, list, detail } = f;
   try {
     assert.equal((await f.send(list, { requestId: workflow, id: workflow, revision: 0, name: 'Run', graph })).status, 201);
     const requestId = randomUUID(), command = { requestId, id: requestId, revision: 1, input: 'Original input' }, path = `/api/projects/${project}/workflow-runs/${requestId}`;
@@ -1315,7 +1316,7 @@ test('canonical workflow run admission keeps its graph and receipt across restar
 });
 
 test('canonical workflow runs deny revoked private and unmapped state and roll back controls with receipts', async () => {
-  const f = await workflowConfigurationFixture(), { project, workflow, detail, list, agent } = f, db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
+  const f = await rustWorkflowConfigurationFixture(), { project, workflow, detail, list, agent } = f, db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     const graph = { entry: 'approve', maxSteps: 2, nodes: [{ id: 'approve', kind: 'approval', prompt: 'Accept?', yes: 'out' }, { id: 'out', kind: 'output' }] };
     assert.equal((await f.send(list, { requestId: workflow, id: workflow, revision: 0, name: 'Approval', graph })).status, 201);
@@ -1361,7 +1362,7 @@ test('canonical workflow runs deny revoked private and unmapped state and roll b
 });
 
 test('canonical workflow run and step pages preserve old approvals and admission rolls back failed receipts', async () => {
-  const f = await workflowConfigurationFixture(), { project, workflow, graph, detail, list } = f, db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
+  const f = await rustWorkflowConfigurationFixture(), { project, workflow, graph, detail, list } = f, db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     assert.equal((await f.send(list, { requestId: workflow, id: workflow, revision: 0, name: 'Pages', graph })).status, 201);
     const runs: string[] = [];
@@ -1440,7 +1441,7 @@ test('canonical routine manual run waits for its home and recovers lost replies 
 });
 
 test('canonical routine manual admission enforces current authority private scopes closed requests and receipt conflicts',async()=>{
-  const f=await workflowConfigurationFixture(),routine=randomUUID(),otherRoutine=randomUUID(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,detail=`/api/projects/${f.project}/routines/${routine}`,otherDetail=`/api/projects/${f.project}/routines/${otherRoutine}`,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
+  const f=await rustWorkflowConfigurationFixture(),routine=randomUUID(),otherRoutine=randomUUID(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,detail=`/api/projects/${f.project}/routines/${routine}`,otherDetail=`/api/projects/${f.project}/routines/${otherRoutine}`,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
   try{
     for(const requestId of [routine,otherRoutine])assert.equal((await f.send(list,{requestId,id:requestId,revision:0,name:'Manual',prompt:'Private work',nextAt:Date.now()+600000,intervalSeconds:null,enabled:true})).status,201);
     const owner=(await f.send('/api/session')).body.data.accountId,member=(await f.send('/api/session',undefined,'user_collaborator')).body.data.accountId;
@@ -1472,7 +1473,7 @@ test('canonical routine manual admission enforces current authority private scop
 });
 
 test('canonical routine configuration and flow stay scoped across projects restart and lost replies', async () => {
-  const f=await workflowConfigurationFixture(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`;
+  const f=await rustWorkflowConfigurationFixture(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`;
   const command={requestId:routine,id:routine,revision:0,name:'Routine',prompt:'Private prompt\nCheck work',nextAt:Date.now()+600000,intervalSeconds:300,enabled:true};
   try{
     const created=await f.send(list,command);assert.equal(created.status,201,JSON.stringify(created.body));
@@ -1506,7 +1507,7 @@ test('canonical routine configuration and flow stay scoped across projects resta
 });
 
 test('canonical routine runtime coalesces offline intervals once and retains task receipts across restart',async()=>{
-  const f=await workflowConfigurationFixture(),routine=randomUUID(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,detail=`/api/projects/${f.project}/routines/${routine}`;
+  const f=await rustWorkflowConfigurationFixture(),routine=randomUUID(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,detail=`/api/projects/${f.project}/routines/${routine}`;
   const due=Date.now()-960000,command={requestId:routine,id:routine,revision:0,name:'Catch-up',prompt:'Scheduled isolated input',nextAt:due,intervalSeconds:300,enabled:true};
   try{
     const syncPath='/api/sync?projectId='+f.project,before=(await f.send(syncPath)).body.data;
@@ -1717,7 +1718,7 @@ test('canonical routine runtime rechecks grants and rolls back failed task admis
 });
 
 test('canonical routine edit cancels unstarted scheduled work and retains accepted evidence',async()=>{
-  const f=await workflowConfigurationFixture(),routine=randomUUID(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,detail=`/api/projects/${f.project}/routines/${routine}`;
+  const f=await rustWorkflowConfigurationFixture(),routine=randomUUID(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,detail=`/api/projects/${f.project}/routines/${routine}`;
   try{
     const connection=f.runtime.connect();await until(()=>connection.state().phase==='connected');
     const command={requestId:routine,id:routine,revision:0,name:'Disable queued',prompt:'Never start after disable',nextAt:Date.now()-1000,intervalSeconds:300,enabled:true};
@@ -1759,7 +1760,7 @@ test('canonical routine runtime preserves started snapshots through edits and re
 });
 
 test('canonical routine cancellation settles terminal occurrence after task cancel',async()=>{
-  const f=await workflowConfigurationFixture(),routine=randomUUID(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,detail=`/api/projects/${f.project}/routines/${routine}`;
+  const f=await rustWorkflowConfigurationFixture(),routine=randomUUID(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,detail=`/api/projects/${f.project}/routines/${routine}`;
   try{
     const connection=f.runtime.connect();await until(()=>connection.state().phase==='connected');
     const due=Date.now()-1000,command={requestId:routine,id:routine,revision:0,name:'Cancel',prompt:'Cancel me',nextAt:due,intervalSeconds:300,enabled:true};
@@ -1774,7 +1775,7 @@ test('canonical routine cancellation settles terminal occurrence after task canc
 });
 
 test('canonical routines recheck assignments private mappings flow agents and receipt rollback',async()=>{
-  const f=await workflowConfigurationFixture(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
+  const f=await rustWorkflowConfigurationFixture(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,routine=randomUUID(),detail=`/api/projects/${f.project}/routines/${routine}`,db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
   const command={requestId:routine,id:routine,revision:0,name:'Routine',prompt:'Check',nextAt:Date.now()+600000,intervalSeconds:null,enabled:false};
   try{
     for(const fields of [{trigger:['webhook']},{trigger:{}},{nextAt:-1},{intervalSeconds:1.5},{prompt:''}]){
@@ -1817,7 +1818,7 @@ test('canonical routines recheck assignments private mappings flow agents and re
 });
 
 test('canonical routine wall-clock HTTP keeps exact retries and pending identities across restart and catch-up admission', async () => {
-  const f = await workflowConfigurationFixture(), db = fixtureDatabase(join(f.dir, 'canonical.sqlite')), originalFetch = globalThis.fetch;
+  const f = await rustWorkflowConfigurationFixture(), db = fixtureDatabase(join(f.dir, 'canonical.sqlite')), originalFetch = globalThis.fetch;
   const list = `/api/projects/${f.project}/agents/${f.agent}/routines`, once = randomUUID(), cron = randomUUID();
   const oncePath = `/api/projects/${f.project}/routines/${once}`, cronPath = `/api/projects/${f.project}/routines/${cron}`;
   const schedule = { kind: 'once', date: '2024-03-10', time: '02:30' };
@@ -1878,7 +1879,7 @@ test('canonical routine wall-clock HTTP keeps exact retries and pending identiti
 });
 
 test('canonical routine calendar exports only current project and reader schedules without prompts',async()=>{
-  const f=await workflowConfigurationFixture(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,path=list+'/calendar.ics',db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
+  const f=await rustWorkflowConfigurationFixture(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,path=list+'/calendar.ics',db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
   const at=Date.parse('2027-01-01T09:00:00Z'),entries:Record<string,string>={};
   const calendar=async(subject='user_owner',suffix='',extra:Record<string,string>={})=>{
     const res=await fetch(f.origin()+path+suffix,{headers:{Authorization:`Bearer ${f.jwt(subject)}`,Origin:f.origin(),Connection:'close','Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':randomUUID(),...extra}});
@@ -1914,7 +1915,7 @@ test('canonical routine calendar exports only current project and reader schedul
 });
 
 test('canonical workflow configuration stays project scoped with immutable versions and retry receipts', async () => {
-  const f = await workflowConfigurationFixture(), { home, project, other, workflow, graph, list, detail } = f;
+  const f = await rustWorkflowConfigurationFixture(), { home, project, other, workflow, graph, list, detail } = f;
   try {
     const command = { requestId: workflow, id: workflow, revision: 0, name: 'Original', graph };
     const created = await f.send(list, command); assert.equal(created.status, 201, JSON.stringify(created.body));
@@ -1948,7 +1949,7 @@ test('canonical workflow configuration stays project scoped with immutable versi
 });
 
 test('canonical workflows enforce current assignments private mappings selectors and atomic receipt storage', async () => {
-  const f = await workflowConfigurationFixture(), { project, other, agent, workflow, graph, list, detail } = f;
+  const f = await rustWorkflowConfigurationFixture(), { project, other, agent, workflow, graph, list, detail } = f;
   const command = { requestId: workflow, id: workflow, revision: 0, name: 'Shared', graph };
   const db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
@@ -2018,7 +2019,7 @@ test('canonical workflows enforce current assignments private mappings selectors
 });
 
 test('canonical workflow pages bound graph bytes and preserve list and version cursors', async () => {
-  const f = await workflowConfigurationFixture(), { project, agent, workflow, graph, list, detail } = f;
+  const f = await rustWorkflowConfigurationFixture(), { project, agent, workflow, graph, list, detail } = f;
   try {
     for (const id of [workflow, ...Array.from({ length: 22 }, () => randomUUID())]) assert.equal((await f.send(list, { requestId: id, id, revision: 0, name: 'Paged', graph })).status, 201);
     const first = (await f.send(`/api/projects/${project}/workflows`)).body.data; assert.equal(first.items.length, 20); assert(first.nextCursor);
@@ -2039,7 +2040,7 @@ test('canonical workflow pages bound graph bytes and preserve list and version c
 });
 
 test('canonical workflow inbox keeps read state per authorized human across retry restart and deletion', async () => {
-  const f = await workflowConfigurationFixture(), db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
+  const f = await rustWorkflowConfigurationFixture(), db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     const inbox = `/api/projects/${f.project}/workflow-notifications`, collaborator = (await f.send('/api/session', undefined, 'user_collaborator')).body.data.accountId;
     db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project, collaborator);
@@ -2081,7 +2082,7 @@ test('canonical workflow inbox keeps read state per authorized human across retr
 });
 
 test('canonical workflow inbox hides foreign selectors and rechecks current reader scopes before receipt replay', async () => {
-  const f = await workflowConfigurationFixture(), db = fixtureDatabase(join(f.dir,'canonical.sqlite'));
+  const f = await rustWorkflowConfigurationFixture(), db = fixtureDatabase(join(f.dir,'canonical.sqlite'));
   try {
     const inbox = `/api/projects/${f.project}/workflow-notifications`, collaborator = (await f.send('/api/session',undefined,'user_collaborator')).body.data.accountId;
     db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project,collaborator);
@@ -2131,7 +2132,7 @@ test('canonical workflow inbox hides foreign selectors and rechecks current read
 });
 
 test('canonical workflow inbox pages twenty outputs without duplicate completion or recipient backfill', async () => {
-  const f = await workflowConfigurationFixture(), db = fixtureDatabase(join(f.dir,'canonical.sqlite'));
+  const f = await rustWorkflowConfigurationFixture(), db = fixtureDatabase(join(f.dir,'canonical.sqlite'));
   try {
     const inbox = `/api/projects/${f.project}/workflow-notifications`, collaborator = (await f.send('/api/session',undefined,'user_collaborator')).body.data.accountId;
     db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project,collaborator);
@@ -2162,7 +2163,7 @@ test('canonical workflow inbox pages twenty outputs without duplicate completion
 });
 
 test('workflow sync publishes metadata and revisioned run transitions once across retry and restart', async () => {
-  const f = await workflowConfigurationFixture();
+  const f = await rustWorkflowConfigurationFixture();
   try {
     const syncPath = '/api/sync?projectId=' + f.project, before = (await f.send(syncPath)).body.data;
     const graph = { entry: 'approval', maxSteps: 2, nodes: [{ id: 'approval', kind: 'approval', prompt: 'Private approval canary', yes: 'out' }, { id: 'out', kind: 'output' }] };
@@ -2228,7 +2229,7 @@ test('workflow sync includes protected wait activation delivery and expiry witho
 });
 
 test('workflow sync rolls back commands with event failures and retains deletion tombstones', async () => {
-  const f = await workflowConfigurationFixture(), db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
+  const f = await rustWorkflowConfigurationFixture(), db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     const syncPath = '/api/sync?projectId=' + f.project, before = (await f.send(syncPath)).body.data;
     const graph = { entry: 'approval', maxSteps: 2, nodes: [{ id: 'approval', kind: 'approval', prompt: 'Approve', yes: 'out' }, { id: 'out', kind: 'output' }] };
@@ -2267,7 +2268,7 @@ test('workflow sync rolls back commands with event failures and retains deletion
 });
 
 test('workflow sync rechecks assignment project and private root version and run scopes', async () => {
-  const f = await workflowConfigurationFixture(), db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
+  const f = await rustWorkflowConfigurationFixture(), db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     const collaborator = (await f.send('/api/session', undefined, 'user_collaborator')).body.data.accountId;
     db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(f.project, collaborator);
@@ -2326,7 +2327,7 @@ test('signed human sync preserves delta cursors through canonical restart and re
   } finally { await f.close(); }
 });
 
-async function loopTask(f: Awaited<ReturnType<typeof fixture>>, runtime: ReturnType<typeof openDeviceRuntime>, setup = false, existingBinding?: string | null) {
+async function loopTask(f: Awaited<ReturnType<typeof fixture>>, runtime: Pick<ReturnType<typeof openDeviceRuntime>, 'deviceId'>, setup = false, existingBinding?: string | null) {
   const home = (await f.send('/api/devices')).body.data.find((row: { id: string }) => row.id === runtime.deviceId()), project = randomUUID(), agent = randomUUID(), binding = existingBinding === undefined ? randomUUID() : existingBinding;
   assert.equal((await f.send('/api/projects', { requestId: randomUUID(), id: project, name: 'Execution loop' })).status, 201);
   if (existingBinding === undefined) {
@@ -2388,10 +2389,48 @@ test('signed task and device mutations publish atomic scoped observations across
   } finally { await runtime.close(); await f.close(); }
 });
 
+async function rustTaskFixture(f: Awaited<ReturnType<typeof fixture>>, filename: string) {
+  const database = join(f.dir, filename), keyring = database + '.keys.json';
+  const options = { database, keyring, server: f.origin() };
+  writeFileSync(keyring, '{}', { mode: 0o600 });
+  const { deviceId } = await enrollRustDevice(options, f.jwt());
+  async function withProvider<T>(provide: (context: ActionContext) => unknown, run: (origin: string) => Promise<T>) {
+    let providerFailure: unknown;
+    const server = createServer(async (req, res) => {
+      try {
+        let raw = '';
+        for await (const chunk of req) raw += chunk;
+        res.end(JSON.stringify(await provide(JSON.parse(raw))));
+      } catch (error) {
+        providerFailure = error;
+        res.writeHead(502).end();
+      }
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = server.address();
+      assert(address && typeof address !== 'string');
+      return await run(`http://127.0.0.1:${address.port}`);
+    } catch (error) {
+      throw providerFailure ?? error;
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  }
+  return {
+    deviceId: () => deviceId,
+    runTask: (taskId: string, provide: (context: ActionContext) => unknown) =>
+      withProvider(provide, origin => runRustDeviceTask(options, taskId, origin)),
+    crashTask: (taskId: string, provide: (context: ActionContext) => unknown, checkpoint: string) =>
+      withProvider(provide, origin => crashRustDeviceTask(options, taskId, origin, checkpoint)),
+  };
+}
+
 test('home execution loop publishes one provider answer through signed canonical HTTP', async () => {
-  const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'loop.sqlite'), server: f.origin(), development: true, entry: keys.entry });
+  const f = await fixture();
   try {
-    await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const runtime = await rustTaskFixture(f, 'loop.sqlite');
     const { taskId } = await loopTask(f, runtime); let calls = 0;
     const provider = (context: ActionContext) => {
       calls++;
@@ -2404,13 +2443,13 @@ test('home execution loop publishes one provider answer through signed canonical
     const detail = (await f.send(`/api/tasks/${taskId}`)).body.data;
     assert.equal(detail.state, 'completed'); assert.deepEqual(detail.results.map((row: { content: unknown }) => row.content), [{ text: 'Canonical loop answer' }]);
     assert.equal(calls, 1);
-  } finally { await runtime.close(); await f.close(); }
+  } finally { await f.close(); }
 });
 
 test('home execution loop saves setup tools, pauses for answers and continues without repeating saved provider output', async () => {
-  const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'setup-loop.sqlite'), server: f.origin(), development: true, entry: keys.entry });
+  const f = await fixture();
   try {
-    await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const runtime = await rustTaskFixture(f, 'setup-loop.sqlite');
     const { taskId } = await loopTask(f, runtime, true); let calls = 0;
     const provider = (context: { snapshot: Record<string, unknown> }) => {
       calls++;
@@ -2427,43 +2466,60 @@ test('home execution loop saves setup tools, pauses for answers and continues wi
     assert.equal((await runtime.runTask(taskId, provider)).state, 'completed'); assert.equal(calls, 3);
     const detail = (await f.send(`/api/tasks/${taskId}`)).body.data; assert.equal(detail.results.length, 5);
     assert.deepEqual(detail.results[3].content, { name: 'Researcher', role: 'Research agent', instructions: 'Research carefully', revision: 2 });
-  } finally { await runtime.close(); await f.close(); }
+  } finally { await f.close(); }
 });
 
 test('home execution loop rejects malformed or unadvertised provider outputs and never retries uncertain effects', async () => {
-  const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'invalid-loop.sqlite'), server: f.origin(), development: true, entry: keys.entry });
+  const f = await fixture();
   try {
-    await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const runtime = await rustTaskFixture(f, 'invalid-loop.sqlite');
     const call = { id: 'bad', function: { name: 'not_advertised', arguments: '{}' } };
-    for (const output of [{ text: '' }, { text: 'Mixed', toolCall: call }, { toolCall: call }, { toolCall: { ...call, function: { name: 'ask_user', arguments: 'not json' } } }, { unexpected: 'bad' }]) {
+    const outputs = [{ text: '' }, { text: 'Mixed', toolCall: call }, { toolCall: call }, { toolCall: { ...call, function: { name: 'ask_user', arguments: 'not json' } } }, { unexpected: 'bad' }];
+    for (const [index, output] of outputs.entries()) {
+      if (index !== 0 && index % 2 === 0) {
+        await until(async () => (await f.send('/api/devices')).body.data[0].status !== 'ready');
+        await f.restart();
+      }
       const { taskId } = await loopTask(f, runtime); let calls = 0;
       const provider = () => { calls++; return output; };
       await assert.rejects(runtime.runTask(taskId, provider), (error: unknown) => error instanceof ProtocolError && error.code === 'provider_result_invalid');
       assert.equal((await runtime.runTask(taskId, provider)).state, 'uncertain'); assert.equal(calls, 1);
       const detail = (await f.send(`/api/tasks/${taskId}`)).body.data; assert.equal(detail.state, 'uncertain'); assert.deepEqual(detail.results, []);
     }
-  } finally { await runtime.close(); await f.close(); }
+  } finally { await f.close(); }
 });
 
 test('home execution loop resumes saved provider output after completion reply loss without another provider call', async () => {
-  const f = await fixture(), keys = memoryKeys(), database = join(f.dir, 'loop-restart.sqlite');
-  let runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: keys.entry }), originalFetch = globalThis.fetch, calls = 0;
+  const f = await fixture(), filename = 'loop-restart.sqlite';
   try {
-    await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
-    const { taskId } = await loopTask(f, runtime); const provider = () => { calls++; return { text: 'Restart-safe answer' }; };
-    let lost = true;
-    globalThis.fetch = async (url, init) => { const response = await originalFetch(url, init); if (lost && String(url).endsWith('/complete')) { lost = false; await response.body?.cancel(); throw new Error('Lost completion reply'); } return response; };
-    await assert.rejects(runtime.runTask(taskId, provider), /Lost completion reply/); globalThis.fetch = originalFetch;
-    await runtime.close(); runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: keys.entry });
-    const resumed = runtime.connect(); await until(() => resumed.state().phase === 'connected');
+    const runtime = await rustTaskFixture(f, filename);
+    const { taskId } = await loopTask(f, runtime);
+    let calls = 0;
+    const provider = () => { calls++; return { text: 'Restart-safe answer' }; };
+    await runtime.crashTask(taskId, provider, 'completion-reply');
+    const pending = fixtureDatabase(join(f.dir, filename));
+    try {
+      const row = pending.prepare('SELECT intent_json FROM device_journal WHERE task_id=?').get(taskId)!;
+      const intent = JSON.parse(String(row.intent_json));
+      assert.equal(typeof intent.completeRequestId, 'string');
+      assert.equal(intent.completionReceipt, undefined);
+      assert.equal((await f.send(`/api/tasks/${taskId}`)).body.data.state, 'completed');
+    } finally { pending.close(); }
     assert.equal((await runtime.runTask(taskId, () => { calls++; return { text: 'WRONG' }; })).state, 'completed');
-    assert.equal(calls, 1); assert.deepEqual((await f.send(`/api/tasks/${taskId}`)).body.data.results.map((row: { content: unknown }) => row.content), [{ text: 'Restart-safe answer' }]);
-  } finally { globalThis.fetch = originalFetch; await runtime.close(); await f.close(); }
+    assert.equal(calls, 1);
+    assert.deepEqual((await f.send(`/api/tasks/${taskId}`)).body.data.results.map((row: { content: unknown }) => row.content), [{ text: 'Restart-safe answer' }]);
+    const recovered = fixtureDatabase(join(f.dir, filename));
+    try {
+      const row = recovered.prepare('SELECT intent_json FROM device_journal WHERE task_id=?').get(taskId)!;
+      const intent = JSON.parse(String(row.intent_json));
+      assert.equal(intent.completionReceipt.requestId, intent.completeRequestId);
+    } finally { recovered.close(); }
+  } finally { await f.close(); }
 });
 
 test('home execution loop survives SIGKILL across provider and tool results without replaying effects', async () => {
-  const f = await fixture(), store = memoryKeys(), database = join(f.dir, 'killed-loop.sqlite'), keys = join(f.dir, 'loop-keys.json');
-  const runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: store.entry }), calls = new Map<string, number>();
+  const f = await fixture(), database = join(f.dir, 'killed-loop.sqlite'), keyring = join(f.dir, 'loop-keys.json');
+  const options = { database, keyring, server: f.origin() }, calls = new Map<string, number>();
   const provider = createServer(async (req, res) => {
     let body = ''; for await (const chunk of req) body += chunk;
     const { snapshot } = JSON.parse(body); calls.set(snapshot.taskId, (calls.get(snapshot.taskId) ?? 0) + 1);
@@ -2472,15 +2528,22 @@ test('home execution loop survives SIGKILL across provider and tool results with
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve)); const address = provider.address(); if (!address || typeof address === 'string') throw new Error('Missing provider fixture address'); const providerOrigin = `http://127.0.0.1:${address.port}`;
   let child: ReturnType<typeof spawn> | undefined;
   try {
-    await runtime.enroll(f.jwt()); await runtime.close(); writeFileSync(keys, JSON.stringify(Object.fromEntries(store.values)), { mode: 0o600 });
+    writeFileSync(keyring, '{}', { mode: 0o600 }); const { deviceId } = await enrollRustDevice(options, f.jwt());
     async function launch(taskId: string, checkpoint?: string) {
-      child = spawn(process.execPath, ['--experimental-strip-types', 'test-support/recovery-fixture.mjs'], { cwd: new URL('.', import.meta.url), env: { ...process.env, BRIEFSIP_RECOVERY_FIXTURE: JSON.stringify({ mode: 'loop', database, keys, server: f.origin(), effect: providerOrigin, taskId, checkpoint }) }, timeout: 30000, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
-      let errors = ''; child.stderr!.on('data', chunk => { errors += chunk; }); const exited = once(child, 'exit');
-      const message = await Promise.race([once(child, 'message').then(([message]) => message), exited.then(() => { throw new Error(`Loop fixture exited: ${errors}`); })]);
+      child = startRustDeviceTask(options, taskId, providerOrigin, checkpoint);
+      let errors = '';
+      child.stderr!.on('data', chunk => { errors += chunk; });
+      const lines = createInterface({ input: child.stdout! });
+      const exited = once(child, 'close');
+      const message = await Promise.race([
+        once(lines, 'line').then(([line]) => JSON.parse(line)),
+        exited.then(() => { throw new Error(`Rust task host exited: ${errors}`); }),
+      ]);
+      lines.close();
       return { child, exited, message };
     }
     for (const checkpoint of ['provider-not-sent', 'canonical-not-sent', 'provider-saved', 'tool-reply', 'tool-report', 'provider-in-flight']) {
-      const { taskId } = await loopTask(f, runtime), running = await launch(taskId, checkpoint); assert.equal(running.message.checkpoint, checkpoint);
+      const { taskId } = await loopTask(f, { deviceId: () => deviceId }), running = await launch(taskId, checkpoint); assert.equal(running.message.checkpoint, checkpoint);
       running.child.kill('SIGKILL'); assert.equal((await running.exited)[1], 'SIGKILL'); await f.restart();
       for (let restart = 0; restart < 2; restart++) {
         const recovered = await launch(taskId); assert.equal(recovered.message.state, checkpoint === 'provider-in-flight' ? 'uncertain' : 'completed'); assert.equal((await recovered.exited)[0], 0);
@@ -2492,28 +2555,33 @@ test('home execution loop survives SIGKILL across provider and tool results with
     }
   } finally {
     if (child && child.exitCode === null && child.signalCode === null) { const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited; }
-    await runtime.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); await f.close();
+    provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); await f.close();
   }
 });
 
 test('home execution loop uses explicit uncertainty retry reservation and never retries before that decision', async () => {
-  const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'risk-loop.sqlite'), server: f.origin(), development: true, entry: keys.entry });
+  const f = await fixture(), filename = 'risk-loop.sqlite';
   try {
-    await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
+    const runtime = await rustTaskFixture(f, filename);
     const { taskId } = await loopTask(f, runtime); let calls = 0;
     await assert.rejects(runtime.runTask(taskId, () => { calls++; throw new Error('Provider reply lost'); }), /Provider reply lost/);
-    const recovered = await runtime.recoverPending(); assert.equal(recovered[0].state, 'uncertain');
     assert.equal((await runtime.runTask(taskId, () => { calls++; return { text: 'MUST NOT CALL' }; })).state, 'uncertain'); assert.equal(calls, 1);
+    const db = fixtureDatabase(join(f.dir, filename));
+    let actionId: string;
+    try {
+      const recovered = db.prepare("SELECT j.action_id,j.state,o.state AS ack FROM device_journal j JOIN device_outbox o USING(action_id) WHERE j.task_id=?").get(taskId)!;
+      assert.equal(recovered.state,'uncertain');assert.equal(recovered.ack,'acknowledged');actionId=String(recovered.action_id);
+    } finally { db.close(); }
     const detail = (await f.send(`/api/tasks/${taskId}`)).body.data, requestId = randomUUID();
-    const decision = await f.send(`/api/tasks/${taskId}/control`, { requestId, expectedRevision: detail.revision, operation: 'resolve_uncertain', decision: { kind: 'retry_with_risk', actionId: recovered[0].actionId, acknowledgement: 'effect_may_have_happened', reason: 'Synthetic provider output lost; retry explicitly approved' } });
+    const decision = await f.send(`/api/tasks/${taskId}/control`, { requestId, expectedRevision: detail.revision, operation: 'resolve_uncertain', decision: { kind: 'retry_with_risk', actionId, acknowledgement: 'effect_may_have_happened', reason: 'Synthetic provider output lost; retry explicitly approved' } });
     assert.equal(decision.status, 200); assert.equal(decision.body.data.replacementActionId, requestId);
     assert.equal((await runtime.runTask(taskId, () => { calls++; return { text: 'Approved replacement answer' }; })).state, 'completed'); assert.equal(calls, 2);
     const completed = (await f.send(`/api/tasks/${taskId}`)).body.data; assert.equal(completed.results[0].actionId, requestId); assert.deepEqual(completed.results[0].content, { text: 'Approved replacement answer' });
-  } finally { await runtime.close(); await f.close(); }
+  } finally { await f.close(); }
 });
 
 test('home execution loop consumes resolved late-known output without repeating its provider call', async () => {
-  const f = await fixture(), keys = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'known-loop.sqlite'), server: f.origin(), development: true, entry: keys.entry }), originalFetch = globalThis.fetch;
+  const f = await fixture(), keys = memoryKeys(), database = join(f.dir, 'known-loop.sqlite'), runtime = openDeviceRuntime({ database, server: f.origin(), development: true, entry: keys.entry }), originalFetch = globalThis.fetch;
   try {
     await runtime.enroll(f.jwt()); const connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
     const { taskId } = await loopTask(f, runtime); let calls = 0, prepared: Record<string, any> = {}, lastReport: Record<string, any> = {};
@@ -2528,10 +2596,12 @@ test('home execution loop consumes resolved late-known output without repeating 
     assert.equal((await f.send(`/api/tasks/${taskId}`)).body.data.results.length, 3);
     const home = (await f.send('/api/devices')).body.data.find((row: { id: string }) => row.id === runtime.deviceId());
     assert.equal((await f.send(`/api/devices/${home.id}/revoke`, { requestId: randomUUID(), expectedRevision: home.revision })).status, 200);
-    await connection.stop();
+    await connection.stop(); await runtime.close();
     const recovery = await f.send(`/api/tasks/${taskId}/recovery-session`, { requestId: randomUUID(), expectedAuthorityGeneration: prepared.ownership.authorityGeneration, sourceDeviceId: home.id, sourceDeviceGeneration: prepared.ownership.deviceGeneration });
     assert.equal(recovery.status, 201);
-    const exported = runtime.exportRecovery(taskId, [String(prepared.actionId)], randomUUID(), recovery.body.data.recoveryGeneration, true);
+    const keyring = database + '.keys.json';
+    writeFileSync(keyring, JSON.stringify(Object.fromEntries(keys.values)), { mode: 0o600 });
+    const exported = exportRustDeviceRecovery({ database, keyring, server: f.origin() }, taskId, [String(prepared.actionId)], randomUUID(), recovery.body.data.recoveryGeneration, true);
     const response = await fetch(f.origin() + `/api/tasks/${taskId}/recovery-results`, { method: 'POST', headers: { Authorization: `Bearer ${f.jwt()}`, Origin: f.origin(), 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': exported.requestId, 'X-Briefsip-Recovery': recovery.body.data.session }, body: JSON.stringify(exported) });
     assert.equal(response.status, 200, await response.text());
     assert.equal(exported.envelope.entries[0].effectStatus, 'known');
@@ -2891,9 +2961,10 @@ test('lost enrollment ACK resumes same request and explicit reenroll/rotation pr
 });
 
 test('canonical task HTTP survives lost acceptance response/restart without dispatch and hides private task', async () => {
-  const f = await fixture(), store = memoryKeys(), runtime = openDeviceRuntime({ database: join(f.dir, 'device.sqlite'), server: f.origin(), development: true, entry: store.entry });
+  const f = await fixture(), database = join(f.dir, 'device.sqlite'), keyring = join(f.dir, 'keys.json');
   try {
-    await runtime.enroll(f.jwt());
+    writeFileSync(keyring, '{}', { mode: 0o600 });
+    await enrollRustDevice({ database, keyring, server: f.origin() }, f.jwt());
     const home = (await f.send('/api/devices')).body.data[0], project = randomUUID(), agent = randomUUID();
     assert.equal((await f.send('/api/projects', { requestId: randomUUID(), id: project, name: 'Task project' })).status, 201);
     assert.equal((await f.send('/api/agents', { requestId: agent, id: agent, name: 'Agent', model: 'fixture', backupModel: '', instructions: 'Research', threadLimit: 2, projectId: project, homeDeviceId: home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: home.revision, providerBinding: null })).status, 201);
@@ -2907,7 +2978,7 @@ test('canonical task HTTP survives lost acceptance response/restart without disp
     const db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
     try { assert.equal(db.prepare('SELECT count(*) n FROM tasks').get()!.n, 1); assert.equal(db.prepare('SELECT count(*) n FROM task_actions').get()!.n, 0); }
     finally { db.close(); }
-  } finally { await runtime.close(); await f.close(); }
+  } finally { await f.close(); }
 });
 
 test('signed host HTTP admission commits once and result ACK survives canonical restart', async () => {
@@ -3144,7 +3215,11 @@ test('canonical transfer survives lost RPC reply and canonical restart without d
 
 test('owner recovers revoked-device journal through HTTP without device session or repeated effect',async()=>{
   const f=await fixture(),keys=memoryKeys(),database=join(f.dir,'recover-device.sqlite');
-  let runtime=openDeviceRuntime({database,server:f.origin(),development:true,entry:keys.entry});
+  const runtime=openDeviceRuntime({database,server:f.origin(),development:true,entry:keys.entry});
+  const keyring = database + '.keys.json';
+  const options = { database, keyring, server: f.origin() };
+  const exportRecovery = (...args: Parameters<typeof exportRustDeviceRecovery> extends [unknown, ...infer Rest] ? Rest : never) =>
+    exportRustDeviceRecovery(options, ...args);
   const originalFetch=globalThis.fetch;let calls=0;
   try{
     await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
@@ -3158,42 +3233,48 @@ test('owner recovers revoked-device journal through HTTP without device session 
     await assert.rejects(runtime.executeAction({taskId,actionId,sequence:0,actionKind:'read',ownership:owned.ownership,payload:{operation:'one effect'},context,grantRevision:1},()=>{calls++;return{text:'Original output'};}),/Report offline/);
     globalThis.fetch=originalFetch;
     const current=(await f.send('/api/devices')).body.data[0];assert.equal((await f.send(`/api/devices/${home.id}/revoke`,{requestId:randomUUID(),expectedRevision:current.revision})).status,200);
-    await connection.stop();
+    await connection.stop(); await runtime.close(); writeFileSync(keyring, JSON.stringify(Object.fromEntries(keys.values)), { mode: 0o600 });
     const start={requestId:randomUUID(),expectedAuthorityGeneration:owned.ownership.authorityGeneration,sourceDeviceId:home.id,sourceDeviceGeneration:owned.ownership.deviceGeneration};
     const session=await f.send(`/api/tasks/${taskId}/recovery-session`,start);assert.equal(session.status,201,JSON.stringify(session.body));
     assert.equal((await f.send(`/api/tasks/${taskId}/recovery-session`,start)).body.data.session,undefined);
     const generation=session.body.data.recoveryGeneration,proof=session.body.data.session;
-    const send=async(operation:string,body:ReturnType<typeof runtime.exportRecovery>,origin=f.origin(),subject='user_owner')=>{
+    const send=async(operation:string,body:RecoveryExport,origin=f.origin(),subject='user_owner')=>{
       const response=await fetch(f.origin()+`/api/tasks/${taskId}/recovery-${operation}`,{method:'POST',headers:{Authorization:`Bearer ${f.jwt(subject)}`,Origin:origin,'Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':body.requestId,'X-Briefsip-Recovery':proof,Connection:'close'},body:JSON.stringify(body)});
       return{status:response.status,body:await response.json()};
     };
-    const metadata=runtime.exportRecovery(taskId,[actionId],randomUUID(),generation);
+    const metadata=exportRecovery(taskId,[actionId],randomUUID(),generation);
     assert.equal((await send('import',metadata,'https://evil.example')).status,403);
     assert.equal((await send('import',metadata,f.origin(),'user_other')).status,404);
     const imported=await send('import',metadata);assert.equal(imported.status,200,JSON.stringify(imported.body));assert.equal(imported.body.data.state,'result_missing');
     await f.restart();
-    const result=runtime.exportRecovery(taskId,[actionId],randomUUID(),generation,true);
+    const result=exportRecovery(taskId,[actionId],randomUUID(),generation,true);
     assert.deepEqual(result.envelope.entries,metadata.envelope.entries);
     const published=await send('results',result);assert.equal(published.status,200,JSON.stringify(published.body));assert.equal((await send('results',result)).status,200);
     assert.deepEqual((await f.send(`/api/tasks/${taskId}`)).body.data.results[0].content,{text:'Original output'});
     assert.equal((await f.send('/api/devices')).body.data[0].status,'revoked');assert.equal(calls,1);
-    const rotated=await runtime.enroll(f.jwt(),'rotate');assert(rotated.generation>owned.ownership.deviceGeneration);
-    const historical=runtime.exportRecovery(taskId,[actionId],randomUUID(),generation,true);
+    const rotated=await enrollRustDevice(options,f.jwt(),'rotate');assert(rotated.generation>owned.ownership.deviceGeneration);
+    const historical=exportRecovery(taskId,[actionId],randomUUID(),generation,true);
     assert.deepEqual(historical.envelope.entries,metadata.envelope.entries);
     assert.equal((await send('results',historical)).status,200);
     const local=new DatabaseSync(database);let signingRef:string;
     try{signingRef=String(local.prepare('SELECT signing_ref FROM device_enrollment_keys WHERE device_generation=?').get(owned.ownership.deviceGeneration)!.signing_ref);}finally{local.close();}
     const keyName=[...keys.values.keys()].find(name=>name.endsWith('/'+signingRef))!,privateKey=keys.values.get(keyName)!;
-    keys.values.delete(keyName);
-    assert.throws(()=>runtime.exportRecovery(taskId,[actionId],randomUUID(),generation,true),error=>error instanceof ProtocolError&&error.code==='device_key_unavailable');
-    keys.values.set(keyName,privateKey);
+    const rotatedKeys = JSON.parse(readFileSync(keyring, 'utf8'));
+    assert.equal(rotatedKeys[keyName], privateKey);
+    delete rotatedKeys[keyName];
+    writeFileSync(keyring, JSON.stringify(rotatedKeys), { mode: 0o600 });
+    assert.throws(()=>exportRecovery(taskId,[actionId],randomUUID(),generation,true),error=>error instanceof ProtocolError&&error.code==='device_key_unavailable');
 
     const db=fixtureDatabase(join(f.dir,'canonical.sqlite'));try{assert.equal(db.prepare('SELECT count(*) n FROM task_results').get()!.n,1);assert.equal(db.prepare('SELECT count(*) n FROM recovery_imports').get()!.n,1);assert(!JSON.stringify(db.prepare('SELECT * FROM receipts').all()).includes(proof));}finally{db.close();}
   }finally{globalThis.fetch=originalFetch;await runtime.close();await f.close();}
 });
 
 test('disaster recovery imports original host result without original server and never enables dispatch',async()=>{
-  const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry});
+  const f=await fixture(),keys=memoryKeys(),database=join(f.dir,'home.sqlite'),runtime=openDeviceRuntime({database,server:f.origin(),development:true,entry:keys.entry});
+  const keyring = database + '.keys.json';
+  const options = { database, keyring, server: f.origin() };
+  const exportRecovery = (...args: Parameters<typeof exportRustDeviceRecovery> extends [unknown, ...infer Rest] ? Rest : never) =>
+    exportRustDeviceRecovery(options, ...args);
   const originalFetch=globalThis.fetch;let calls=0,backup:Awaited<ReturnType<typeof workspaceSnapshot>>|undefined;
   try{
     await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
@@ -3205,21 +3286,22 @@ test('disaster recovery imports original host result without original server and
     const owned=await runtime.startTask(taskId),context=await runtime.taskContext(taskId,owned.ownership,owned.revision),actionId=randomUUID();
     globalThis.fetch=async(url,init)=>{if(String(url).endsWith('/reconcile'))throw new Error('Original server lost');return originalFetch(url,init);};
     await assert.rejects(runtime.executeAction({taskId,actionId,sequence:0,actionKind:'read',ownership:owned.ownership,payload:{operation:'one call'},context,grantRevision:1},()=>{calls++;return{text:'Saved on original host'};}),/Original server lost/);
-    await connection.stop();globalThis.fetch=originalFetch;
+    await connection.stop();
+    await assert.rejects(runtime.startTask(taskId),error=>error instanceof ProtocolError&&error.code==='device_offline');
+    await runtime.close(); writeFileSync(keyring, JSON.stringify(Object.fromEntries(keys.values)), { mode: 0o600 });globalThis.fetch=originalFetch;
     const source=fixtureDatabase(join(f.dir,'canonical.sqlite'));try{backup=await workspaceSnapshot(source);}finally{source.close();}
     const proof=await f.restoreFrom(backup.file);
     assert.notEqual(proof.recoveryGeneration,owned.ownership.authorityGeneration);
-    const send=async(kind:string,body:ReturnType<typeof runtime.exportRecovery>,session=proof.session,subject='user_owner')=>{
+    const send=async(kind:string,body:RecoveryExport,session=proof.session,subject='user_owner')=>{
       const response=await fetch(f.origin()+`/api/tasks/${taskId}/recovery-${kind}`,{method:'POST',headers:{Authorization:`Bearer ${f.jwt(subject)}`,Origin:f.origin(),Connection:'close','Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':body.requestId,'X-Briefsip-Recovery':session},body:JSON.stringify(body)});
       return{status:response.status,body:await response.json()};
     };
-    const metadata=runtime.exportRecovery(taskId,[actionId],randomUUID(),proof.recoveryGeneration);
+    const metadata=exportRecovery(taskId,[actionId],randomUUID(),proof.recoveryGeneration);
     assert.equal((await send('import',metadata,Buffer.alloc(32).toString('base64url'))).status,403);
     assert.equal((await send('import',metadata,proof.session,'user_other')).status,403);
     const imported=await send('import',metadata);assert.equal(imported.status,200,JSON.stringify(imported.body));assert.equal(imported.body.data.state,'result_missing');
-    await f.restart();const content=runtime.exportRecovery(taskId,[actionId],randomUUID(),proof.recoveryGeneration,true);
+    await f.restart();const content=exportRecovery(taskId,[actionId],randomUUID(),proof.recoveryGeneration,true);
     const published=await send('results',content);assert.equal(published.status,200,JSON.stringify(published.body));assert.equal((await send('results',content)).status,200);
-    await assert.rejects(runtime.startTask(taskId),error=>error instanceof ProtocolError&&error.code==='device_offline');
     assert.equal((await f.send(`/api/tasks/${taskId}`)).status,503);
     const restored=fixtureDatabase(join(f.dir,'canonical.sqlite'));
     try{
@@ -3236,7 +3318,11 @@ test('disaster recovery imports original host result without original server and
 });
 
 test('disaster recovery quarantines signed post-backup actions and tasks without publishing or admitting them',async()=>{
-  const f=await fixture(),keys=memoryKeys(),runtime=openDeviceRuntime({database:join(f.dir,'home.sqlite'),server:f.origin(),development:true,entry:keys.entry});
+  const f=await fixture(),keys=memoryKeys(),database=join(f.dir,'home.sqlite'),runtime=openDeviceRuntime({database,server:f.origin(),development:true,entry:keys.entry});
+  const keyring = database + '.keys.json';
+  const options = { database, keyring, server: f.origin() };
+  const exportRecovery = (...args: Parameters<typeof exportRustDeviceRecovery> extends [unknown, ...infer Rest] ? Rest : never) =>
+    exportRustDeviceRecovery(options, ...args);
   const originalFetch=globalThis.fetch;let calls=0,backup:Awaited<ReturnType<typeof workspaceSnapshot>>|undefined;
   try{
     await runtime.enroll(f.jwt());const connection=runtime.connect();await until(()=>connection.state().phase==='connected');
@@ -3255,13 +3341,13 @@ test('disaster recovery quarantines signed post-backup actions and tasks without
       const owned=await runtime.startTask(taskId),context=await runtime.taskContext(taskId,owned.ownership,owned.revision),actionId=randomUUID();actions.push({taskId,actionId});
       await assert.rejects(runtime.executeAction({taskId,actionId,sequence:0,actionKind:'read',ownership:owned.ownership,payload:{operation:'one call'},context,grantRevision:1},()=>{calls++;return{text:'Keep result on original host'};}),/Original server lost/);
     }
-    await connection.stop();globalThis.fetch=originalFetch;const proof=await f.restoreFrom(backup.file);
-    const send=async(taskId:string,body:ReturnType<typeof runtime.exportRecovery>,session=proof.session,subject='user_owner')=>{
+    await connection.stop(); await runtime.close(); writeFileSync(keyring, JSON.stringify(Object.fromEntries(keys.values)), { mode: 0o600 });globalThis.fetch=originalFetch;const proof=await f.restoreFrom(backup.file);
+    const send=async(taskId:string,body:RecoveryExport,session=proof.session,subject='user_owner')=>{
       const response=await fetch(f.origin()+`/api/tasks/${taskId}/recovery-import`,{method:'POST',headers:{Authorization:`Bearer ${f.jwt(subject)}`,Origin:f.origin(),Connection:'close','Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':body.requestId,'X-Briefsip-Recovery':session},body:JSON.stringify(body)});
       return{status:response.status,body:await response.json()};
     };
     for(const {taskId,actionId} of actions){
-      const metadata=runtime.exportRecovery(taskId,[actionId],randomUUID(),proof.recoveryGeneration);
+      const metadata=exportRecovery(taskId,[actionId],randomUUID(),proof.recoveryGeneration);
       assert.equal((await send(taskId,metadata,Buffer.alloc(32).toString('base64url'))).status,403);
       assert.equal((await send(taskId,metadata,proof.session,'user_other')).status,403);
       const altered=structuredClone(metadata);altered.signature=Buffer.alloc(64).toString('base64url');assert.equal((await send(taskId,altered)).status,403);

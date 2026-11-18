@@ -13,6 +13,10 @@ mod sources;
 pub(crate) mod wait_routes;
 pub(crate) mod waits;
 
+pub(crate) fn validate_device_ownership(value: &Value) -> Result<()> {
+    authority::ownership(value)
+}
+
 pub(crate) fn device_journal_body(
     authority: &Value,
     device: &Value,
@@ -24,6 +28,10 @@ pub(crate) fn device_journal_body(
 
 pub(crate) fn device_stop_body(stop: &Value) -> Value {
     recovery::stop_body(stop)
+}
+
+pub(crate) fn device_recovery_body(generation: &str, request: &str, envelope: &Value) -> Value {
+    recovery::envelope_body(generation, request, envelope)
 }
 
 pub fn maintain(state: &AppState) -> Result<()> {
