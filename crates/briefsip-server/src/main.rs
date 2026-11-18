@@ -516,6 +516,9 @@ async fn canonical_request(
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> db::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("--device-host") {
+        return computer::devices::host::run().await;
+    }
     if std::env::args().nth(1).as_deref() == Some("--connector-journal-config") {
         return connectors::runner::journal();
     }

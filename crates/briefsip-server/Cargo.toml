@@ -10,6 +10,7 @@ flate2 = "1"
 ammonia = "4"
 regex = "1"
 ring = "0.17"
+curve25519-dalek = "4"
 axum = { version = "0.8", features = ["http1", "json", "tokio", "ws"] }
 axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
 async-stream = "0.3"

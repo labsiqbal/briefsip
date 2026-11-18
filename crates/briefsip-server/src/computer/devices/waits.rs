@@ -135,6 +135,9 @@ fn parse_request(v: &Value, event: bool) -> Result<()> {
     }
     Ok(())
 }
+pub(super) fn validate_host_request(value: &Value, event: bool) -> Result<()> {
+    parse_request(value, event)
+}
 fn connected<'a>(
     db: &Connection,
     rt: &'a Runtime,
