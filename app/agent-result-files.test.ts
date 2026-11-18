@@ -6,7 +6,7 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {startApp} from './test-bridge.ts';
-import {pdfFixture} from './pdf-fixture.ts';
+import {pdfFixture} from './test-support/pdf-fixture.ts';
 import childProcess from 'node:child_process';
 import {syncBuiltinESMExports} from 'node:module';
 

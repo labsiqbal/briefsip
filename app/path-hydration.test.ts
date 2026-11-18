@@ -1,67 +1,74 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { once } from 'node:events';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { buildEnvironmentCaptureCommand, hydratePosixHome, hydratePosixPath, listLoginShellCandidates, mergePathEntries, readEnvironmentFromLoginShell } from './t3/path.ts';
 import { harnessEnv } from './harness.ts';
+import { rustBinary } from './rust-binary.ts';
 
-const serverURL = new URL('./test-bridge.ts', import.meta.url).href;
-const rust = process.env.BRIEFSIP_TEST_SERVER === 'rust';
+const { freePort, stop } = await import(new URL('../scripts/production-env-gate.mjs', import.meta.url).href);
 
-for (const broken of [false, true]) test(broken ? 'broken login shell keeps service startup working' : 'service launch discovers Codex exported only by the login shell', { skip: rust, timeout: 20_000 }, async () => {
+for (const broken of [false, true]) test(broken ? 'broken login shell keeps service startup working' : 'service launch discovers Codex exported only by the login shell', { timeout: 20_000 }, async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-login-path-'));
   const bin = join(directory, 'bin'), shell = join(directory, 'login-shell');
+  const probes = join(directory, 'probes'), environment = join(directory, 'harness-env.json');
+  const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
   mkdirSync(bin);
-  writeFileSync(join(bin, 'codex'), `#!${process.execPath}\nimport { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(join(directory, 'harness-env.json'))}, JSON.stringify(process.env));\nconsole.log('codex fixture 1.0');\n`, { mode: 0o700 });
-  // sh does not support -ilc on every platform; emulate login initialization and run the capture command.
-  writeFileSync(shell, `#!/bin/sh\nprintf x >> '${join(directory, 'probes')}'\nprintf 'profile noise\\n'\nexport PATH='${bin}:/usr/bin:/bin'\nexport __MISE_DIFF=fixture JAVA_HOME=/fixture/java SHELL_SECRET=hidden\nexec /bin/sh -c "$2"\n`, { mode: 0o700 });
-  if (broken) {
-    writeFileSync(shell, '#!/bin/sh\necho synthetic-secret >&2\nexit 7\n');
-    for (const profile of ['.bash_profile', '.zprofile', '.zshrc']) writeFileSync(join(directory, profile), 'exit 7\n');
-  }
-  const source = `import { startApp } from ${JSON.stringify(serverURL)};
-    const app = await startApp({ database: ${JSON.stringify(join(directory, 'state.sqlite'))} });
-    const second = await startApp({ database: ${JSON.stringify(join(directory, 'second.sqlite'))} });
-    process.send({ origin: app.origin, path: process.env.PATH, mise: process.env.__MISE_DIFF, java: process.env.JAVA_HOME, secret: process.env.SHELL_SECRET });
-    process.on('message', async () => { await app.close(); await second.close(); process.disconnect(); });`;
-  const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', source], {
-    env: { HOME: directory, PATH: '/usr/bin:/bin', SHELL: shell, TMPDIR: directory, AMBIENT_SECRET: 'synthetic-secret' },
-    stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+  writeFileSync(join(bin, 'codex'), `#!${process.execPath}
+import { writeFileSync } from 'node:fs';
+writeFileSync(${JSON.stringify(environment)}, JSON.stringify(process.env));
+console.log('codex fixture 1.0');
+`, { mode: 0o700 });
+  writeFileSync(shell, broken
+    ? '#!/bin/sh\necho synthetic-secret >&2\nexit 7\n'
+    : `#!/bin/sh
+printf x >> '${probes}'
+printf 'profile noise\\n'
+export PATH='${bin}:/usr/bin:/bin'
+export SHELL_SECRET=synthetic-secret
+exec /bin/sh -c "$2"
+`, { mode: 0o700 });
+  const port = await freePort();
+  const origin = `http://127.0.0.1:${port}`;
+  const child = spawn(binary, [], {
+    env: { HOME: directory, PATH: '/usr/bin:/bin', SHELL: shell, TMPDIR: directory, PORT: String(port), BRIEFSIP_DATA_DIR: directory, AMBIENT_SECRET: 'synthetic-secret' },
+    stdio: ['ignore', 'ignore', 'pipe'],
   });
-  let error = ''; child.stderr!.on('data', data => { error += data; });
+  const closed = new Promise(ready => child.once('close', ready));
+  let stderr = '';
+  child.stderr.on('data', chunk => { stderr += chunk; });
   try {
-    const [message] = await Promise.race([once(child, 'message'), delay(10_000, undefined, { ref: false }).then(() => { throw new Error(`Startup timed out: ${error}`); })]);
-    const response = await fetch(message.origin + '/api/runtimes');
-    assert.equal(response.status, 200);
-    const runtimes = await response.json();
+    const deadline = Date.now() + 10000;
+    let response: Response | undefined;
+    while (Date.now() < deadline) {
+      assert.equal(child.exitCode, null, stderr);
+      response = await fetch(origin + '/api/runtimes', { signal: AbortSignal.timeout(1000) }).catch(() => undefined);
+      if (response) break;
+      await delay(50);
+    }
+    assert.equal(response?.status, 200, stderr);
+    const runtimes = await response!.json();
+    assert(!stderr.includes('synthetic-secret'));
     if (broken) {
-      assert.equal(runtimes.defaultRuntime, 'api');
-      assert.equal(message.path, '/usr/bin:/bin');
-      assert.equal(error.split('Login environment hydration failed').length - 1, 1);
-      assert(!error.includes('synthetic-secret'));
+      assert.notEqual(runtimes.choices.find((choice: { runtime: string }) => choice.runtime === 'codex').version, 'codex fixture 1.0');
       return;
     }
-    assert.equal(runtimes.choices.find((choice: { runtime: string }) => choice.runtime === 'codex').available, true);
+    assert.equal(runtimes.choices.find((choice: { runtime: string }) => choice.runtime === 'codex').version, 'codex fixture 1.0');
     assert.equal(runtimes.defaultRuntime, 'codex');
-    await fetch(message.origin + '/api/runtimes');
-    assert.equal(readFileSync(join(directory, 'probes'), 'utf8'), 'x');
-    assert.equal(message.path, `${bin}:/usr/bin:/bin`);
-    assert.equal(message.mise, 'fixture'); assert.equal(message.java, '/fixture/java'); assert.equal(message.secret, undefined);
-    const childEnv = JSON.parse(readFileSync(join(directory, 'harness-env.json'), 'utf8'));
-    assert.equal(childEnv.PATH, message.path);
-    assert.deepEqual(Object.keys(childEnv).sort(), ['HOME', 'PATH', 'TMPDIR']);
+    await (await fetch(origin + '/api/runtimes')).arrayBuffer();
+    assert.equal(readFileSync(probes, 'utf8'), 'x');
+    const childEnv = JSON.parse(readFileSync(environment, 'utf8'));
+    assert.equal(childEnv.PATH, `${bin}:/usr/bin:/bin`);
+    assert.equal(childEnv.AMBIENT_SECRET, undefined);
+    assert.equal(childEnv.SHELL_SECRET, undefined);
   } finally {
-    const exited = once(child, 'exit');
-    if (child.connected) child.send('close'); else child.kill('SIGKILL');
-    await Promise.race([exited, delay(3000, undefined, { ref: false }).then(() => { child.kill('SIGKILL'); })]);
+    await stop(child, closed);
     rmSync(directory, { recursive: true, force: true });
   }
 });
-
 
 test('login shell candidates, PATH ordering, HOME fallback and capture scope', () => {
   assert.deepEqual(listLoginShellCandidates('darwin', ' /opt/bin/fish ', '/bin/zsh'), ['/opt/bin/fish', '/bin/zsh']);

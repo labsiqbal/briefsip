@@ -33,7 +33,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const files = discoverTests(root);
   assertTestCoverage(root, files);
   if (!files.length) throw new Error('No tests discovered. Restore app test files before running npm test.');
-  const result = spawnSync(process.execPath, ['--experimental-strip-types', '--test', '--test-concurrency=2', ...files], { cwd: root, stdio: 'inherit', env: { ...process.env, BRIEFSIP_TEST_SERVER: 'rust', BRIEFSIP_TEST_LAUNCHER: 'rust' } });
+  const result = spawnSync(process.execPath, ['--experimental-strip-types', '--test', '--test-concurrency=2', ...files], { cwd: root, stdio: 'inherit' });
   if (result.error) throw result.error;
   process.exitCode = result.status ?? 1;
 }

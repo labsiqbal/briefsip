@@ -13,8 +13,7 @@ import { encryptMail, serializeMailEnvelope } from './mail.ts';
 import { routineCalendar } from './calendar.ts';
 import { composioToolName } from './composio.ts';
 
-const rust = process.env.BRIEFSIP_TEST_SERVER === 'rust';
-test('Rust Composio approval recovery, revocation, schema checks and uncertain writes remain fenced', { skip: !rust }, async () => {
+test('Rust Composio approval recovery, revocation, schema checks and uncertain writes remain fenced', async () => {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-composio-')), database = join(root, 'db');
   const key = 'FIXTURE_COMPOSIO_KEY_93', agent = randomUUID(), responses: string[] = [], effects: unknown[] = [];
   let mode = 'read', disconnected = false;
@@ -78,7 +77,7 @@ test('Rust Composio approval recovery, revocation, schema checks and uncertain w
     assert(!responses.join('').includes(key)); assert(!readFileSync(database).includes(Buffer.from(key)));
   } finally { await app.close(); await Promise.all([close(remote), close(provider)]); rmSync(root, { recursive: true, force: true }); }
 });
-for (const platform of ['slack', 'telegram']) test(`Rust ${platform} offline recovery preserves confirmed delivery and requires confirmation`, { skip: !rust }, async () => {
+for (const platform of ['slack', 'telegram']) test(`Rust ${platform} offline recovery preserves confirmed delivery and requires confirmation`, async () => {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-journal-')), directory = join(root, 'state'), id = randomUUID();
   const command = (command: string, extra = {}) => runRustConnectorJournal({ directory, platform, command, ...extra });
   try {
@@ -121,7 +120,7 @@ function frame(value: unknown) {
 
 for (const platform of ['telegram', 'slack'] as const) for (const mode of ['reply', 'question', 'file', 'workflow', 'media']) {
   const question = mode === 'question', file = mode === 'file', workflow = mode === 'workflow', media = mode === 'media';
-  test(`Rust ${platform} runner ${mode} through native turns`, { skip: !rust }, async () => {
+  test(`Rust ${platform} runner ${mode} through native turns`, async () => {
     const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-connector-')), agent = randomUUID(), controller = new AbortController();
     const sockets = new Set<import('node:stream').Duplex>();
     let calls = 0, deliveries = 0, answer: string | undefined, offset = 0, acknowledgements = 0, connections = 0;
@@ -241,7 +240,7 @@ for (const platform of ['telegram', 'slack'] as const) for (const mode of ['repl
   });
 }
 
-test('Rust calendar matches Node bytes for folding, escaping, intervals and IANA gap/fold schedules', { skip: !rust }, async () => {
+test('Rust calendar matches Node bytes for folding, escaping, intervals and IANA gap/fold schedules', async () => {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-calendar-')), database = join(root, 'db'), agent = randomUUID(), now = Date.UTC(2026, 0, 1);
   const app = await startRustServer({ database, fixedClock: now });
   const response = await fetch(app.origin + '/api/agents', { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ id: agent, runtime: 'api', name: 'Calendar', model: 'fixture', instructions: 'Help' }) });
@@ -264,7 +263,7 @@ test('Rust calendar matches Node bytes for folding, escaping, intervals and IANA
   } finally { db.close(); await app.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
-test('Rust mail retries exact envelope after lost response and fences expired, revoked, tampered and exhausted jobs', { skip: !rust }, async () => {
+test('Rust mail retries exact envelope after lost response and fences expired, revoked, tampered and exhausted jobs', async () => {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-mail-')), database = join(root, 'db');
   const db = new DatabaseSync(database); initializeCanonicalSchema(db);
   const account = randomUUID(), project = randomUUID(), keyId = randomUUID(), key = randomBytes(32), now = Date.now();

@@ -8,7 +8,7 @@ import { createServer, request as httpRequest, type Server } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './test-bridge.ts';
 import { machineOrigin } from './machines.ts';
-import { fakePeerTokenIssuer } from './machines.fixture.ts';
+import { fakePeerTokenIssuer } from './test-support/peer-token-issuer.ts';
 
 const appVersion = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
 type App = Awaited<ReturnType<typeof startApp>>;

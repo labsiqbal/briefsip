@@ -6,9 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
-const rust = process.env.BRIEFSIP_TEST_SERVER === 'rust';
 
-test('Rust workflow schedules retain offline work and coalesce provider-free occurrences', { skip: !rust }, async () => {
+test('Rust workflow schedules retain offline work and coalesce provider-free occurrences', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-rust-schedule-'));
   const now = Date.now();
   const options = { database: join(directory, 'state.sqlite'), fixedClock: now };
@@ -48,7 +47,7 @@ test('Rust workflow schedules retain offline work and coalesce provider-free occ
   } finally { await app.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
-test('Rust cron preview preserves UTC ordering through midnight folds and rejects dense schedules', { skip: !rust }, async () => {
+test('Rust cron preview preserves UTC ordering through midnight folds and rejects dense schedules', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-rust-cron-'));
   const now = Date.parse('2026-11-01T00:00:00Z');
   const options = { database: join(directory, 'state.sqlite'), fixedClock: now };

@@ -8,7 +8,6 @@ import { parseAgentRole, parseAgentTemplate, restoreTemplateImport, templateComm
 import { startApp } from './test-bridge.ts';
 import sharp from 'sharp';
 
-const rust = process.env.BRIEFSIP_TEST_SERVER === 'rust';
 const template = { format: 'briefsip-agent', version: 1, name: 'Template', role: 'Personal agent', model: 'fixture', instructions: '<script>Test text only</script>', threadLimit: 3 } as const;
 test('agent template validation rejects extra authority and preserves exact recovery identity', () => {
   assert.deepEqual(parseAgentTemplate(template), template);
@@ -33,8 +32,7 @@ test('template avatars import atomically and replay never replaces newer images'
     assert(image.length > 64000);
     const value = { ...template, avatar: image.toString('base64') };
     async function assertAvatar(avatar: string) {
-      if (!rust) return assert.equal(avatar, value.avatar);
-      const actual = Buffer.from(avatar, 'base64'), metadata = await sharp(actual).metadata();
+        const actual = Buffer.from(avatar, 'base64'), metadata = await sharp(actual).metadata();
       const reference = await sharp(image).metadata();
       for (const field of ['format', 'width', 'height', 'channels', 'space', 'depth'] as const) {
         assert.equal(metadata[field], reference[field], field);

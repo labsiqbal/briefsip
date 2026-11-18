@@ -664,7 +664,7 @@ test('human post rate leaves capacity for withdrawal controls', async t => {
     assert.equal(f.calls, 0);
 });
 
-if (process.env.BRIEFSIP_TEST_SERVER === 'rust') test('withdrawal drains its control frame before queued section delivery closes transport', async t => {
+test('withdrawal drains its control frame before queued section delivery closes transport', async t => {
     const f = await fixture(t), node = await f.node('Queued withdrawal', f.alice), p = await node.participate();
     const original = WebSocket.prototype.send;
     let delayed = false;

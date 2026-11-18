@@ -14,7 +14,7 @@ import { initializeMemory } from './memory.ts';
 import { prepareRestoreBootstrap, issueRestoreSession } from './backup.ts';
 import { startRustServer } from './rust-test-server.ts';
 
-test('Rust signed task admission, context fencing, one-use commits and durable results', { skip: process.env.BRIEFSIP_TEST_SERVER !== 'rust' }, async () => {
+test('Rust signed task admission, context fencing, one-use commits and durable results', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-rust-tasks-')), database = join(directory, 'db');
   const db = new DatabaseSync(database); initializeCanonicalSchema(db); initializeMemory(db);
   const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });

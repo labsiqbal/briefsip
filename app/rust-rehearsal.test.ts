@@ -43,11 +43,9 @@ console.log(JSON.stringify({jsonrpc:'2.0',id:call.id,result}));
     const agent = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Fixture', model: 'fixture', instructions: 'Help.' });
     const channel = await post('/api/channels', { id: randomUUID(), name: 'Fixture room', members: [agent.id], lead: agent.id, instructions: 'Help.' });
     assert.equal((await (await fetch(app.origin + `/api/channels/${channel.id}/panel`, { headers: { Origin: app.origin } })).json()).computer, null);
-    if (process.env.BRIEFSIP_TEST_SERVER === 'rust') {
-      const metrics = await (await fetch(app.origin + '/api/host-metrics', { headers: { Origin: app.origin } })).json();
-      assert.equal(metrics.process.memoryLimit, process.constrainedMemory() || null);
-      assert(metrics.process.availableMemory <= metrics.memory.available);
-    }
+    const metrics = await (await fetch(app.origin + '/api/host-metrics', { headers: { Origin: app.origin } })).json();
+    assert.equal(metrics.process.memoryLimit, process.constrainedMemory() || null);
+    assert(metrics.process.availableMemory <= metrics.memory.available);
   } finally {
     await app?.close();
     if (previous === undefined) delete process.env.HOME; else process.env.HOME = previous;

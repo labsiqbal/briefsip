@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import { nativeReleaseFixture } from './native-release-fixture.ts';
+import { nativeReleaseFixture } from './test-support/native-release-fixture.ts';
 import { rustBinary } from './rust-binary.ts';
 import { startApp } from './test-bridge.ts';
 import { launcherRequest } from './rust-launcher-test.ts';
@@ -115,7 +115,7 @@ test('peer fan-out needs both owners, grants no default update scope, streams ve
  await api(b,'/api/machines/updates',{id:randomUUID(),environmentId:back.id,allowed:true});command={...command,id:randomUUID()};result=await api(a,'/api/updates/fan-out',command,202);assert.equal(result.machines[0].status,'accepted',JSON.stringify(result));assert.equal(ctlB.commands.size,1);assert.equal(verifyRelease(join(dir,'b-releases'),release.id).version,release.version);assert.deepEqual(await api(a,'/api/updates/fan-out',command,202),result);assert.equal(ctlB.commands.size,1);await api(a,'/api/updates/fan-out',{...command,version:'1.0.2'},409);
  await a.refreshMachines();const peers=(await api(a,'/api/updates/machines')).machines;assert.equal(peers[0].machine,machine.id);assert.equal(peers[0].available,true);
  await api(b,'/api/machines/updates',{id:randomUUID(),environmentId:back.id,allowed:false});command={...command,id:randomUUID()};assert.equal((await api(a,'/api/updates/fan-out',command,202)).machines[0].status,'failed');assert.equal(ctlB.commands.size,1);
- if(process.env.BRIEFSIP_TEST_SERVER==='rust')for(const name of ['a.sqlite','b.sqlite']){
+ for(const name of ['a.sqlite','b.sqlite']){
   const path=join(dir,name),db=new DatabaseSync(path);const row=db.prepare('SELECT token,origin FROM paired_machines').get()!;db.close();
   const bytes=Buffer.from(String(row.token),'base64'),cipher=createDecipheriv('aes-256-gcm',readFileSync(path+'.peer-key'),bytes.subarray(0,12));
   cipher.setAAD(Buffer.from(String(row.origin)));cipher.setAuthTag(bytes.subarray(-16));const token=Buffer.concat([cipher.update(bytes.subarray(12,-16)),cipher.final()]).toString('utf8');if(!tokens.includes(token))tokens.push(token);
@@ -132,7 +132,7 @@ test('interrupted trial recovers immutable snapshot before restarting previous r
  }finally{if(restarted)await stop(restarted);await f?.close();rmSync(dir,{recursive:true,force:true});}
 });
 
-test('Rust trial gates owner work until matching private socket commit', {skip:process.env.BRIEFSIP_TEST_SERVER!=='rust',timeout:15000},async()=>{
+test('Rust trial gates owner work until matching private socket commit', {timeout:15000},async()=>{
  const dir=temp(),id=randomUUID(),socket=join(dir,'control.sock');let committed=false,child:ChildProcess|undefined;
  const control=netServer(client=>{let raw='';client.on('data',chunk=>{raw+=chunk;if(!raw.includes('\n'))return;const q=JSON.parse(raw);client.end(JSON.stringify(q.type==='trial'?{committed:committed&&q.id===id}:{protocol:1,current:'development'})+'\n');});});
  try{
@@ -144,7 +144,7 @@ test('Rust trial gates owner work until matching private socket commit', {skip:p
  }finally{if(child)await stop(child);await new Promise<void>(done=>control.close(()=>done()));rmSync(dir,{recursive:true,force:true});}
 });
 
-test('Rust launcher trials native Rust server, commits over socket, and rolls back failed health', {skip: process.env.BRIEFSIP_TEST_SERVER!=='rust'||process.env.BRIEFSIP_TEST_LAUNCHER!=='rust',timeout:30000},async()=>{
+test('Rust launcher trials native Rust server, commits over socket, and rolls back failed health', {timeout:30000},async()=>{
  const dir=temp();let f:Awaited<ReturnType<typeof launcher>>|undefined;
  try{
   function native(version:string){

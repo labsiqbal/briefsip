@@ -29,7 +29,7 @@ test('core serves exact static bytes, strict asset CSP, HTML 404 and local bound
   } finally { await app.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
-test('core SSE wire format replays persisted snapshots, isolates scopes and closes on shutdown', { timeout: 15000, skip: process.env.BRIEFSIP_TEST_SERVER !== 'rust' }, async () => {
+test('core SSE wire format replays persisted snapshots, isolates scopes and closes on shutdown', { timeout: 15000 }, async () => {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-core-events-')), database = join(root, 'db.sqlite');
   let app = await startApp({ database });
   await app.close();
@@ -81,7 +81,7 @@ test('core SSE wire format replays persisted snapshots, isolates scopes and clos
   } finally { controller.abort(); await app.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
-test('Rust test bridge rejects unported options before starting a process', { skip: process.env.BRIEFSIP_TEST_SERVER !== 'rust' }, async () => {
+test('Rust test bridge rejects unported options before starting a process', async () => {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-core-unported-'));
   try {
     await assert.rejects(startApp({ database: join(root, 'db.sqlite'), ...{ unported: true } }), /not ported: option unported.*PORTING/);
