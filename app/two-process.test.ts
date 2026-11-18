@@ -15,7 +15,7 @@ import type { ActionContext } from './executor-journal.ts';
 import { rustBinary } from './rust-binary.ts';
 import { rustServerOutput } from './rust-test-server.ts';
 import { canonicalJson, ProtocolError, digestCommand, sha256 } from './shared/protocol.ts';
-import { onceCandidate } from './schedule-time.ts';
+import { onceCandidate } from './test-support/schedule-time.ts';
 import sharp from 'sharp';
 
 function memoryKeys() {
