@@ -440,6 +440,7 @@ async fn execute(
     turn: &Value,
     profile: &Value,
     runtime: &str,
+    executable: Option<&Path>,
     model: &str,
     messages: &[Value],
     phase: &str,
@@ -451,7 +452,7 @@ async fn execute(
     secrets: Vec<String>,
     clock: Option<config::TurnClock>,
 ) -> Result<String> {
-    let executable = super::executable(state, runtime).ok_or_else(|| {
+    let executable = executable.ok_or_else(|| {
         error(
             503,
             "Coding runtime requires an installed executable on PATH.",
@@ -530,7 +531,7 @@ async fn execute(
         }
         args
     } else {
-        acp_args(runtime, &executable)
+        acp_args(runtime, executable)
     };
     let extension_home = if runtime == "pi" {
         Some(process::ProbeHome::new().map_err(|_| Failure::storage())?)
@@ -574,7 +575,7 @@ async fn execute(
             // Serialize the final state check and spawn with Stop.
             let db = state.database.lock().map_err(|_| Failure::storage())?;
             launch_turn(&db.connection, turn_id, || {
-                Process::launch(&executable, &args, workspace, &env)
+                Process::launch(executable, &args, workspace, &env)
             })?
         }),
         notification: None,
@@ -1384,6 +1385,9 @@ pub async fn run(
         (turn, profile, binding, account, login)
     };
     let runtime = string(&profile, "runtime");
+    let executable = super::executable(state, runtime);
+    let mise = executable.as_deref().is_some_and(process::mise_shim);
+    let isolated_home = mise || ["codex", "claude"].contains(&runtime);
     let conversation = turn["channel"]
         .as_str()
         .or(turn["thread"].as_str())
@@ -1439,7 +1443,7 @@ pub async fn run(
         same_home = homes
             .get(&key)
             .is_some_and(|h| h.fingerprint == fingerprint);
-        if ["codex", "claude"].contains(&runtime) {
+        if isolated_home {
             if !same_home {
                 let root =
                     config::homes_root(&state.config.database).map_err(|_| Failure::storage())?;
@@ -1484,7 +1488,7 @@ pub async fn run(
             [turn_id],
         )? {
             None
-        } else if !["codex", "claude"].contains(&runtime) || same_home {
+        } else if !isolated_home || same_home {
             one(&db.connection,"SELECT session FROM harness_sessions WHERE agent=? AND conversation=? AND runtime=? AND workspace=?",rusqlite::params![turn["agent"].as_str(),conversation,runtime,binding.directory.to_str()])?.map(|v|string(&v,"session").to_owned())
         } else {
             None
@@ -1531,6 +1535,9 @@ pub async fn run(
     if runtime == "hermes" {
         env.extend(process::HERMES_ENV.map(|(key, value)| (key.into(), value.into())));
     }
+    if mise {
+        process::configure_mise(&mut env);
+    }
     let model = if login.is_some() && model == "default" {
         ""
     } else {
@@ -1551,8 +1558,21 @@ pub async fn run(
     }
     let operation = |clock| {
         execute(
-            state, &turn, &profile, runtime, model, messages, phase, call, &token, env, saved,
-            &binding, secrets, clock,
+            state,
+            &turn,
+            &profile,
+            runtime,
+            executable.as_deref(),
+            model,
+            messages,
+            phase,
+            call,
+            &token,
+            env,
+            saved,
+            &binding,
+            secrets,
+            clock,
         )
     };
     // Dropping execute flushes partial output and schedules the ACP cancel. The turn worker

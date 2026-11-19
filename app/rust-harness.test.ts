@@ -2,13 +2,105 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { once } from 'node:events';
 import { startApp } from './test-bridge.ts';
 import { rustBinary } from './rust-binary.ts';
 import { mcpScopes } from './t3/mcp-session-registry.ts';
+
+test('mise shim probes and launches with trusted mise paths and an isolated home', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'briefsip-mise-'));
+  const home = join(dir, 'owner'), workspace = join(dir, 'workspace'), agent = randomUUID();
+  const config = join(home, '.config/mise'), state = join(home, '.local/state/mise');
+  const cache = join(home, '.cache/mise'), data = join(dir, 'xdg-data/mise');
+  let app: Awaited<ReturnType<typeof startApp>> | undefined;
+  try {
+    for (const path of [workspace, config, join(state, 'trusted-configs'), cache, data]) mkdirSync(path, { recursive: true });
+    writeFileSync(join(config, 'config.toml'), '[env]\nGEMINI_API_KEY = "synthetic-config-secret"\n');
+    writeFileSync(join(home, '.profile-canary'), 'synthetic-host-profile');
+    symlinkSync(home, join(state, 'trusted-configs/fixture'));
+    const script = (path: string, source: string) => writeFileSync(path, source, { mode: 0o700 });
+    const fake = join(dir, 'fake-acp');
+    script(fake, `#!${process.execPath}\n` + readFileSync(new URL('./fixtures/fake-acp.mjs', import.meta.url), 'utf8').split('\n').slice(1).join('\n'));
+    const shim = join(dir, 'gemini'), direct = join(dir, 'codex');
+    script(shim, '#!/bin/bash\nexport MISE_MINIMUM_RELEASE_AGE=0; mise use -g --quiet "gemini" || exit 1; exec mise x "gemini" -- "gemini" "$@"\n');
+    script(join(dir, 'mise'), `#!/bin/sh
+set -eu
+if [ ! -f "\${MISE_CONFIG_DIR:-}/config.toml" ] || [ ! -L "\${MISE_STATE_DIR:-}/trusted-configs/fixture" ]; then
+  echo 'mise fixture: config is not trusted' >&2
+  exit 1
+fi
+[ "$MISE_CONFIG_DIR" = '${config}' ]
+[ "$MISE_STATE_DIR" = '${state}' ]
+[ "$MISE_CACHE_DIR" = '${cache}' ]
+[ "$MISE_DATA_DIR" = '${data}' ]
+[ "$HOME" != '${home}' ]
+[ ! -e "$HOME/.profile-canary" ]
+[ -z "\${GEMINI_API_KEY:-}" ]
+[ "$MISE_NO_ENV" = 1 ]
+[ "$MISE_NO_HOOKS" = 1 ]
+[ -z "\${MISE_TRUSTED_CONFIG_PATHS:-}" ]
+case "$1" in
+  use) exit 0;;
+  x) shift 4; exec '${fake}' "$@";;
+esac
+exit 1
+`);
+    script(direct, '#!/bin/sh\n[ -z "$MISE_CONFIG_DIR" ] && [ -z "$MISE_STATE_DIR" ] && printf "direct 1.0.0\\n"\n');
+    const fixtureShell = join(dir, 'fixture-shell');
+    script(fixtureShell, '#!/bin/sh\nexec /bin/sh -c "$2"\n');
+    const environment = {
+      SHELL: fixtureShell,
+      HOME: home,
+      GEMINI_API_KEY: 'synthetic-host-secret',
+      MISE_CONFIG_DIR: '', MISE_STATE_DIR: '', MISE_CACHE_DIR: '', MISE_DATA_DIR: data,
+      XDG_CONFIG_HOME: join(home, '.config'), XDG_STATE_HOME: join(home, '.local/state'),
+      XDG_CACHE_HOME: join(home, '.cache'), XDG_DATA_HOME: join(dir, 'xdg-data'),
+    };
+    const prior = Object.keys(environment).map(key => [key, process.env[key]] as const);
+    Object.assign(process.env, environment);
+    try {
+      app = await startApp({ database: join(dir, 'db.sqlite'), testPathPrefix: dir,
+        baseURL: 'http://127.0.0.1:1/v1', workspaces: [{ agent, directory: workspace, write: true }],
+        harness: { executables: { gemini: shim, codex: direct } } });
+    } finally {
+      for (const [key, value] of prior) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+    const { origin } = app;
+    const request = async (path: string, body?: unknown) => {
+      const response = await fetch(origin + path, { method: body ? 'POST' : 'GET',
+        headers: { Origin: origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+      const value = await response.json(); assert(response.ok, JSON.stringify(value)); return value;
+    };
+    const { choices } = await request('/api/runtimes');
+    const gemini = choices.find((row: { runtime: string }) => row.runtime === 'gemini');
+    const codex = choices.find((row: { runtime: string }) => row.runtime === 'codex');
+    assert.equal(codex.version, 'direct 1.0.0');
+    const profile = { name: 'Fixture', instructions: 'Help.', model: 'fixture', runtime: 'api' };
+    const path = `/api/agents/${agent}`, turns = `${path}/turns`, id = randomUUID();
+    await request('/api/agents', { id: agent, ...profile });
+    await request(`${path}/edit`, { id: randomUUID(), revision: 1, ...profile, runtime: 'gemini', confirmRuntime: true, harnessModel: 'fixture-model' });
+    await request(turns, { id, text: 'hello' });
+    for (let attempt = 0; attempt < 300; attempt++) {
+      const turn = (await request(turns)).find((row: { id: string }) => row.id === id);
+      for (const card of turn.harnessApprovals.filter((card: { state: string }) => card.state === 'approval')) {
+        await request(`${turns}/${id}/harness-approvals/${card.id}`, { id: randomUUID(), revision: card.revision, decision: 'allow' });
+      }
+      if (['done', 'failed', 'cancelled'].includes(turn.status)) {
+        assert.deepEqual([gemini.version, gemini.available, turn.status, turn.reply],
+          ['fake-acp 1.0.0', true, 'done', 'Final answer.'], `${gemini.reason ?? ''} ${turn.error ?? ''}`);
+        return;
+      }
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.fail('Mise-managed Gemini turn did not finish');
+  } finally { await app?.close(); rmSync(dir, { recursive: true, force: true }); }
+});
 
 test('Rust ACP and Pi execute fake protocols with model selection and approvals', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-rust-acp-')), executable = join(dir, 'fake-acp');
