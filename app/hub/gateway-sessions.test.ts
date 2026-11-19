@@ -4,7 +4,7 @@ import { generateKeyPairSync, randomBytes, randomUUID, sign } from 'node:crypto'
 import { request as httpRequest, type IncomingMessage } from 'node:http';
 import { connect } from 'node:net';
 import { once } from 'node:events';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from '../test-support/database.ts';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -19,7 +19,7 @@ const origin = (host: string) => `https://${host}`;
 type Response = { status: number; headers: IncomingMessage['headers']; data: any; raw: string; cookies: string[] };
 async function fixture(t: TestContext, settings: { verifier?: SessionVerifier; trusted?: string[]; dbPath?: string } = {}) {
   let clock = Date.now();
-  const now = () => clock, db = new DatabaseSync(settings.dbPath ?? ':memory:'); initializeHubSchema(db);
+  const now = () => clock, db = testDatabase(settings.dbPath ?? ':memory:'); initializeHubSchema(db);
   const authority = createHubAuthority(db, { domain: 'briefsip.test', mailboxKey: Buffer.alloc(32, 8), now });
   const identities = Object.fromEntries(['alice', 'bob', 'eve', 'outside'].map(subject => [subject, { issuer, subject, sessionId: `${subject}-sid`, expiresAt: now() + 3600000, verifiedMailboxes: [`${subject}@example.test`] } satisfies SessionIdentity]));
   const ids = Object.fromEntries(Object.entries(identities).map(([name, identity]) => [name, authority.provisionAccount(identity, name !== 'outside')]));
@@ -291,7 +291,7 @@ test('session rotation and SQLite reopen preserve sessions/denials without repla
   assert.equal((await f.request(f.alpha.host, '/api/session', { cookies: first.cookies })).status, 401);
   assert(!f.authority.all('SELECT digest FROM hub_browser_sessions').some(row => rotated.cookies[0].endsWith(String(row.digest))));
   const address = f.hub.server.address(); assert(address && typeof address !== 'string'); await f.hub.close(); f.db.close();
-  let database = new DatabaseSync(file);
+  let database = testDatabase(file);
   let authority = createHubAuthority(database, { domain: 'briefsip.test', mailboxKey: Buffer.alloc(32, 8), now: f.now });
   let reopened = createHubServer({ authority, verifier: createStubVerifier(new Map(Object.entries(f.identities))), accountsHost: accounts, domain: 'briefsip.test' });
   t.after(async () => { await reopened.close(); database.close(); rmSync(dir, { recursive: true, force: true }); });
@@ -299,7 +299,7 @@ test('session rotation and SQLite reopen preserve sessions/denials without repla
   assert.equal((await f.request(f.alpha.host, '/api/session', { cookies: rotated.cookies })).status, 200);
   assert.equal((await f.redeem(f.alpha.host, started, code)).status, 401);
   assert.equal((await f.request(accounts, '/auth/logout', { body: { global: true }, cookies: parent.cookies, csrf: parent.data.csrf })).status, 200);
-  await reopened.close(); database.close(); database = new DatabaseSync(file);
+  await reopened.close(); database.close(); database = testDatabase(file);
   authority = createHubAuthority(database, { domain: 'briefsip.test', mailboxKey: Buffer.alloc(32, 8), now: f.now });
   reopened = createHubServer({ authority, verifier: createStubVerifier(new Map(Object.entries(f.identities))), accountsHost: accounts, domain: 'briefsip.test' });
   reopened.server.listen(address.port, '127.0.0.1'); await once(reopened.server, 'listening');

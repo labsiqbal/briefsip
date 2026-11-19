@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 
 test('provider account switch requires scoped browser consent and survives restart without replay', async () => {
   const directory=mkdtempSync(join(tmpdir(),'briefsip-account-consent-')),calls:{path:string;model:string}[]=[];
@@ -37,12 +37,12 @@ test('provider account switch requires scoped browser consent and survives resta
     await request(first.answerPath,{id:randomUUID(),text:'Approve account change'},409);assert.equal((await profile()).provider_account,'a');
     await request(`${busyPath}/turns/${busy}/cancel`,{id:randomUUID()});hold=false;
     await app.close();
-    let db=new DatabaseSync(options.database);db.exec("CREATE TRIGGER reject_consent_receipt BEFORE INSERT ON question_answers BEGIN SELECT RAISE(ABORT,'fixture receipt failure'); END");db.close();
+    let db=testDatabase(options.database);db.exec("CREATE TRIGGER reject_consent_receipt BEFORE INSERT ON question_answers BEGIN SELECT RAISE(ABORT,'fixture receipt failure'); END");db.close();
     app=await startApp(options);
     const answer={id:randomUUID(),text:'Approve account change',acknowledgeUncertain:true};
     await request(first.answerPath,answer,500);assert.equal((await profile()).provider_account,'a');assert.equal((await profile()).backup_model,'fallback');assert.equal((await profile()).revision,1);
     assert.equal((await request(path+'/turns')).find((row:any)=>row.id===first.id).questions[0].answer,null);assert(calls.every(call=>call.path.startsWith('/a/')));
-    await app.close();db=new DatabaseSync(options.database);db.exec('DROP TRIGGER reject_consent_receipt');db.close();app=await startApp(options);
+    await app.close();db=testDatabase(options.database);db.exec('DROP TRIGGER reject_consent_receipt');db.close();app=await startApp(options);
     await request(first.answerPath,answer);
     await until(path,first.id,row=>row.status==='done');assert.equal((await profile()).provider_account,'b');assert.equal((await profile()).model,'new');assert.equal((await profile()).backup_model,'');assert.deepEqual(calls.at(-1),{path:'/b/v1/chat/completions',model:'new'});
     const count=calls.length;await request(first.answerPath,answer);assert.equal(calls.length,count);assert.equal((await profile()).revision,2);

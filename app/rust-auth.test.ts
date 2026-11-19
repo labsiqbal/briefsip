@@ -7,7 +7,7 @@ import { request as httpsRequest } from 'node:https';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
 import { startRustServer } from './rust-test-server.ts';
 import { startApp } from './test-bridge.ts';
@@ -33,7 +33,7 @@ test('Rust opens every canonical schema version and rejects migration drift', as
     'provider_calls_turn_seq', 'queue_edit_active', 'routine_occurrences_active', 'routine_occurrences_schedule',
   ];
   const inspect = (database: string) => {
-    const db = new DatabaseSync(database, { readOnly: true });
+    const db = testDatabase(database, { readOnly: true });
     try {
       assert.equal(db.prepare('SELECT max(version) AS version FROM schema_migrations').get()?.version, 6);
       const schema = db.prepare("SELECT type,name,tbl_name FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
@@ -51,7 +51,7 @@ test('Rust opens every canonical schema version and rejects migration drift', as
     finally { await app.close(); }
     const expected = inspect(database);
     for (const version of [1, 2, 3, 4] as const) {
-      const upgrade = join(root, `v${version}`), db = new DatabaseSync(upgrade);
+      const upgrade = join(root, `v${version}`), db = testDatabase(upgrade);
       installFrozenNodeSchema(db, version);
       db.close();
       const server = await startRustServer({ database: upgrade, auth });
@@ -61,11 +61,11 @@ test('Rust opens every canonical schema version and rejects migration drift', as
     const reopened = await startRustServer({ database, auth });
     await reopened.close();
     assert.deepEqual(inspect(database), expected, 'Rust schema after restart');
-    const db = new DatabaseSync(database);
+    const db = testDatabase(database);
     db.prepare("INSERT INTO schema_migrations VALUES(7,'future','future',0)").run();
     db.close();
     await assert.rejects(startRustServer({ database, auth }), /Database schema is newer than this server/);
-    const drift = new DatabaseSync(database);
+    const drift = testDatabase(database);
     drift.exec("DELETE FROM schema_migrations WHERE version=7; UPDATE schema_migrations SET checksum='bad' WHERE version=6");
     drift.close();
     await assert.rejects(startRustServer({ database, auth }), /Schema migration checksum mismatch/);

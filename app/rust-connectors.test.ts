@@ -5,7 +5,7 @@ import { createHash, generateKeyPairSync, randomBytes, randomUUID } from 'node:c
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { startRustServer } from './rust-test-server.ts';
 import { startApp } from './test-bridge.ts';
 import { runRustConnector, runRustConnectorJournal } from './rust-connectors-runner.ts';
@@ -86,7 +86,7 @@ test('Rust Composio approval recovery, revocation, schema checks and uncertain w
         crashDeadline = setTimeout(() => reject(new Error('Composio fixture never accepted the pending write.')), 5000);
       })]);
     } finally { clearTimeout(crashDeadline); }
-    const dispatched = new DatabaseSync(database);
+    const dispatched = testDatabase(database);
     try { assert.equal(dispatched.prepare('SELECT state FROM composio_calls WHERE turn=?').get(killed)!.state, 'running'); }
     finally { dispatched.close(); }
     await app.crash();
@@ -105,7 +105,7 @@ for (const platform of ['slack', 'telegram']) test(`Rust ${platform} offline rec
   const command = (command: string, extra = {}) => runRustConnectorJournal({ directory, platform, command, ...extra });
   try {
     const initial = await command('status'); assert.deepEqual(initial.inbox, []); assert.deepEqual(initial.outbox, []);
-    const db = new DatabaseSync(join(directory, `${platform}.sqlite`));
+    const db = testDatabase(join(directory, `${platform}.sqlite`));
     try {
       if (platform === 'slack') db.prepare("INSERT INTO slack_outbox(id,channel,sender,root,text,status,part,timestamps) VALUES(?,'DCHAT','UUSER','1700000000.000001','Exact output','uncertain',1,'[\"1700000001.000001\"]')").run(id);
       else db.prepare("INSERT INTO telegram_outbox(id,chat,reply_to,text,status,part,message_ids,error) VALUES(?,4,1,'Exact output','uncertain',1,'[42]','Lost response')").run(id);
@@ -255,7 +255,7 @@ for (const platform of ['telegram', 'slack'] as const) for (const mode of ['repl
       if (media) { assert.equal(downloaded, 1); assert.equal(uploaded, 1); }
       if (workflow) assert.equal(workflowRun.status, 'done');
       assert(requests.some(path => path.includes(workflow ? '/workflows/' : '/turns'))); assert(!existsSync(join(root, 'state', 'owner.lock')));
-      const journal = new DatabaseSync(join(root, 'state', `${platform}.sqlite`));
+      const journal = testDatabase(join(root, 'state', `${platform}.sqlite`));
       try { assert(journal.prepare(`SELECT status FROM ${platform}_outbox`).all().every(row => row.status === 'sent')); } finally { journal.close(); }
       if (platform === 'slack') { assert(connections >= 2); assert(acknowledgements >= 2); } else assert(offset >= 8);
       assert.deepEqual(await ui(`/api/agents/${agent}/turns`), []);
@@ -274,7 +274,7 @@ test('Rust calendar exports folded and escaped iCalendar with exact UTC interval
     { id: randomUUID(), name: 'Cron', next_at: now + 5, interval_ms: null, revision: 3, schedule: { kind: 'cron' as const, expression: '0 0 * * *' } },
     { id: randomUUID(), name: 'Long interval', next_at: now + 6, interval_ms: 2147483647001, revision: 4 },
   ];
-  const db = new DatabaseSync(database);
+  const db = testDatabase(database);
   try {
     const columns = new Set(db.prepare('PRAGMA table_info(routines)').all().map(row => String(row.name)));
     for (const column of ['schedule_json', 'schedule_zone']) if (!columns.has(column)) db.exec(`ALTER TABLE routines ADD COLUMN ${column} TEXT`);
@@ -308,7 +308,7 @@ test('Rust calendar exports folded and escaped iCalendar with exact UTC interval
 
 test('Rust mail retries exact envelope after lost response and fences expired, revoked, tampered and exhausted jobs', async () => {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-mail-')), database = join(root, 'db');
-  const db = new DatabaseSync(database); installFrozenNodeSchema(db);
+  const db = testDatabase(database); installFrozenNodeSchema(db);
   const account = randomUUID(), project = randomUUID(), keyId = randomUUID(), key = randomBytes(32), now = Date.now();
   const generation = String(db.prepare('SELECT generation FROM authority_state').get()!.generation);
   db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,?,?,?)').run(account, 'fixture', 'owner', now);

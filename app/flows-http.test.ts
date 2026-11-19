@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -48,8 +48,7 @@ test('routine flow dispatch joins once, snapshots edits and recovers interrupted
     await request(settings, { id: randomUUID(), revision: 1, links: [...links, { from: d.id, to: b.id }] }, 400);
     failC = true;
     const runRequest = { id: randomUUID(), revision: routine.revision };
-    const db = new DatabaseSync(options.database);
-    db.exec('PRAGMA busy_timeout=5000');
+    const db = testDatabase(options.database);
     try {
       db.exec("CREATE TRIGGER fail_flow_handoff BEFORE UPDATE ON flow_steps WHEN OLD.status='waiting' AND NEW.status='queued' BEGIN SELECT RAISE(ABORT,'fixture handoff failure'); END");
       const blocked = await request(`/api/routines/${routine.id}/test`, runRequest);

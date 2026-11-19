@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 
 test('caller interruption cancels only owned deliveries, journals notice and preserves other work', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-interrupt-'));
@@ -42,7 +42,7 @@ test('caller interruption cancels only owned deliveries, journals notice and pre
   const options = { database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, concurrency: 4 };
   let app = await startApp(options, { directory: dir, servers: [provider] });
   await app.close();
-  const setup = new DatabaseSync(options.database);
+  const setup = testDatabase(options.database);
   setup.exec("CREATE TRIGGER reject_interrupt_notice BEFORE INSERT ON turns WHEN NEW.text LIKE 'The work I asked for%fixture failure check%' BEGIN SELECT RAISE(ABORT,'fixture notice failure'); END");
   setup.close(); app = await startApp(options, { directory: dir, servers: [provider] });
   const post = async (path: string, data: unknown, expected = 200) => {

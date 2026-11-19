@@ -4,7 +4,7 @@ import { createHmac, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { createClerkClient } from '@clerk/backend';
 import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
 import { startCanonicalApp } from './test-bridge.ts';
@@ -21,7 +21,7 @@ test('Rust project automation matches Node scopes, receipts, versions, calendars
   const input = `${Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'fixture', typ: 'JWT' })).toString('base64url')}.${Buffer.from(JSON.stringify({ iss: auth.issuer, sub: 'user_fixture', sid: 'sess_fixture', azp: auth.origin, exp: now + 600, nbf: now - 1, iat: now - 1 })).toString('base64url')}`;
   const token = `${input}.${sign('RSA-SHA256', Buffer.from(input), keys.privateKey).toString('base64url')}`;
   for (const name of ['node', 'rust']) {
-    const db = new DatabaseSync(join(directory, name));
+    const db = testDatabase(join(directory, name));
     try {
       installFrozenNodeSchema(db);
       db.prepare('UPDATE authority_state SET generation=?').run(generation);
@@ -170,7 +170,7 @@ test('Rust project automation matches Node scopes, receipts, versions, calendars
     await rust.close();
     rust = await startRustServer({ database: join(directory, 'rust'), auth: { ...auth, jwtKey }, testKeyring: {}, fixedClock: Date.now() });
     await compare(routinePath); await compare(workflowPath + '/versions');
-    const db = new DatabaseSync(join(directory, 'rust'));
+    const db = testDatabase(join(directory, 'rust'));
     try { assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []); } finally { db.close(); }
   } finally { await rust?.close(); await node.close(); rmSync(directory, { recursive: true, force: true }); }
 });

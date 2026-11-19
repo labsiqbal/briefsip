@@ -5,7 +5,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 import { composioToolName } from './test-support/composio-tool-name.ts';
 import { restoreConnectedAppCommand } from './src/connected-app-command.ts';
@@ -97,7 +98,7 @@ test('connected apps end to end: catalog, accounts, grants, tools, approvals, re
     const disconnect={id:randomUUID()};await request('/api/connected-apps/disconnect/foreign',{id:randomUUID()},404);await request('/api/connected-apps/disconnect/ca_1',disconnect);await request('/api/connected-apps/disconnect/ca_1',disconnect);assert.equal(calls.filter(row=>row.method==='DELETE').length,1);assert.equal((await request(`/api/agents/${agent.id}/connected-apps`)).items[0].enabled,false);assert.deepEqual((await request('/api/connected-apps/accounts')).items,[]);
     for(fail of [1,2,3,4]){const error=await request('/api/connected-apps',undefined,502);assert(!JSON.stringify(error).includes(canary));}fail=0;
     assert(!responses.join('').includes(canary));assert(!logs.join('').includes(canary));await app.close();closed=true;assert(!readFileSync(database).includes(Buffer.from(canary)));
-    const db=new DatabaseSync(database),installation=db.prepare('SELECT user_id FROM composio_installation').get()!.user_id;assert(String(installation).startsWith('briefsip-'));assert(!String(installation).includes('@'));db.close();
+    const db=testDatabase(database),installation=db.prepare('SELECT user_id FROM composio_installation').get()!.user_id;assert(String(installation).startsWith('briefsip-'));assert(!String(installation).includes('@'));db.close();
   }finally{console.error=originalError;console.log=originalLog;if(!closed)await app.close().catch(()=>{});await stop(provider);await stop(remote);if(priorKey===undefined)delete process.env.COMPOSIO_API_KEY;else process.env.COMPOSIO_API_KEY=priorKey;rmSync(dir,{recursive:true,force:true});}
 });
 
@@ -143,7 +144,7 @@ test('installation API key: validation, encrypted persistence, receipts, runtime
     await request('/api/connected-apps/key',{id:randomUUID(),revision:3,key:storedKey});
     await app.close();closed=true;
     for(const key of [storedKey,replacement,environment,'REJECTED_CANARY']) {assert(!responses.join('').includes(key));assert(!readFileSync(database).includes(Buffer.from(key)));}
-    const db=new DatabaseSync(database);assert(!JSON.stringify(db.prepare('SELECT * FROM composio_commands').all()).includes(storedKey));assert(!String(db.prepare('SELECT ciphertext FROM composio_settings').get()!.ciphertext).includes(storedKey));db.close();
+    const db=testDatabase(database);assert(!JSON.stringify(db.prepare('SELECT * FROM composio_commands').all()).includes(storedKey));assert(!String(db.prepare('SELECT ciphertext FROM composio_settings').get()!.ciphertext).includes(storedKey));db.close();
     assert.equal((await import('node:fs')).statSync(database+'.composio-key').mode & 0o777,0o600);
   } finally {if(!closed)await app.close();await stop(remote);rmSync(directory,{recursive:true,force:true});if(savedEnv===undefined)delete process.env.COMPOSIO_API_KEY;else process.env.COMPOSIO_API_KEY=savedEnv;}
 });
@@ -193,7 +194,7 @@ test('Rust key replacement and removal reset identity, grants, policies and pend
   const remoteOrigin = await listen(remote), providerOrigin = await listen(provider);
   app = await startApp({ database, baseURL: providerOrigin + '/v1', composio: { baseURL: remoteOrigin + '/api/v3.1' } });
   const origin = app.origin;
-  db = new DatabaseSync(database); db.exec('PRAGMA busy_timeout=5000');
+  db = testDatabase(database);
   const sql = db;
   const request = async (path: string, data?: unknown, status = 200) => {
     const res = await fetch(origin + path, data === undefined ? undefined : {

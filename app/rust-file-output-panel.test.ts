@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 
 // Exercise browser routes and real provider tool dispatch with synthetic files.
@@ -84,7 +84,7 @@ test('conversation output updates, panel requests and owner deletion preserve re
       removed.push(target);
     }
     await app.close();
-    const db = new DatabaseSync(database);
+    const db = testDatabase(database);
     for (const id of removed) {
       const tombstone = db.prepare('SELECT deleted,length(bytes) AS size,digest FROM files WHERE id=?').get(id)!;
       assert.deepEqual({ ...tombstone }, { deleted: 1, size: 0, digest: '' });

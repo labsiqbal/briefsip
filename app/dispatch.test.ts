@@ -5,7 +5,8 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 import { restoreChatCommand } from './src/conversation-command.ts';
 
@@ -70,7 +71,7 @@ async function fixture(stream = false) {
   const path = `/api/agents/${agent.id}/turns`;
   async function turn(id: string, predicate: (row: any) => boolean, at = path) { return until(async () => (await request(at)).find((row: any) => row.id === id), row => !!row && predicate(row)); }
   return { request, turn, agent, path, calls, held, options, directory,
-    offline: async (change: (db: DatabaseSync) => void) => { await app.close(); const db = new DatabaseSync(options.database); try { change(db); } finally { db.close(); } app = await startApp(options); },
+    offline: async (change: (db: DatabaseSync) => void) => { await app.close(); const db = testDatabase(options.database); try { change(db); } finally { db.close(); } app = await startApp(options); },
     restart: async () => { await app.close(); app = await startApp(options); },
     close };
 }
@@ -251,7 +252,7 @@ test('restart during uncertain MCP effect keeps its receipt and never replays ex
     await until(() => request(path), rows => rows.some((row: any) => row.id === command.id && row.status === 'done'));
     await app.close(); app = await startApp(options); await request(path, command); assert.equal(effects, 1);
     await app.close();
-    const db = new DatabaseSync(options.database);
+    const db = testDatabase(options.database);
     try { assert.equal(db.prepare('SELECT uncertain FROM mcp_calls WHERE turn=?').get(root)?.uncertain, 1); assert.match(String(db.prepare("SELECT context FROM dispatch_links WHERE target_turn=?").get(command.id)?.context), /uncertain/); } finally { db.close(); }
     app = await startApp(options);
   } finally {

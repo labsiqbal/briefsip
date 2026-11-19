@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -33,7 +33,7 @@ test('core SSE wire format replays persisted snapshots, isolates scopes and clos
   const root = mkdtempSync(join(tmpdir(), 'briefsip-core-events-')), database = join(root, 'db.sqlite');
   let app = await startApp({ database });
   await app.close();
-  const db = new DatabaseSync(database), agent = randomUUID(), other = randomUUID(), turn = randomUUID();
+  const db = testDatabase(database), agent = randomUUID(), other = randomUUID(), turn = randomUUID();
   db.prepare('INSERT INTO agents(id,name,model,instructions) VALUES(?,?,?,?)').run(agent, 'Fixture', 'fixture', 'Help');
   db.prepare('INSERT INTO agents(id,name,model,instructions) VALUES(?,?,?,?)').run(other, 'Other', 'fixture', 'Help');
   db.prepare("INSERT INTO turns(id,agent,text,status,created) VALUES(?,?,?,'interrupted',?)").run(turn, agent, 'Fixture', new Date().toISOString());
@@ -43,7 +43,7 @@ test('core SSE wire format replays persisted snapshots, isolates scopes and clos
   app = await startApp({ database });
   const controller = new AbortController();
   try {
-    const active = new DatabaseSync(database); active.prepare("UPDATE turns SET status='running' WHERE id=?").run(turn); active.close();
+    const active = testDatabase(database); active.prepare("UPDATE turns SET status='running' WHERE id=?").run(turn); active.close();
     const path = `/api/agents/${agent}/turns/stream`;
     for (const [suffix, headers, status] of [['?q=x', {}, 400], ['', { Origin: 'https://foreign.example' }, 403], ['', { Authorization: 'Bearer fixture' }, 403]] as const) {
       const response = await fetch(app.origin + path + suffix, { headers }); assert.equal(response.status, status); await response.text();
@@ -56,7 +56,7 @@ test('core SSE wire format replays persisted snapshots, isolates scopes and clos
     const isolated = await fetch(app.origin + `/api/agents/${other}/turns/stream`, { signal: controller.signal });
     const otherReader = isolated.body!.getReader(), pending = otherReader.read();
     assert.equal(await Promise.race([pending.then(() => 'unexpected snapshot'), new Promise(resolve => setTimeout(() => resolve('quiet'), 80))]), 'quiet');
-    const writer = new DatabaseSync(database); writer.prepare('UPDATE provider_streams SET text=? WHERE call=?').run('Latest answer', call); writer.prepare('UPDATE provider_stream_segments SET text=?,revision=4 WHERE call=?').run('Latest answer',call); writer.close();
+    const writer = testDatabase(database); writer.prepare('UPDATE provider_streams SET text=? WHERE call=?').run('Latest answer', call); writer.prepare('UPDATE provider_stream_segments SET text=?,revision=4 WHERE call=?').run('Latest answer',call); writer.close();
     const notify = await fetch(app.origin + `/api/agents/${agent}/visibility`, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ id: randomUUID(), revision: 0, hidden: false }) });
     assert.equal(notify.status, 200); await notify.text();
     const changed = await reader.read(); assert.equal(JSON.parse(Buffer.from(changed.value!).toString().slice(6)).partial.text, 'Latest answer');
@@ -65,7 +65,7 @@ test('core SSE wire format replays persisted snapshots, isolates scopes and clos
       { path: `/api/agents/${agent}/sites`, type: 'application/json', body: JSON.stringify({ id: randomUUID(), name: 'Fixture', source: '<p>Fixture</p>' }) },
       { path: '/api/skills', type: 'application/json', body: JSON.stringify({ id: randomUUID(), revision: 0, name: 'Fixture', description: 'Fixture', content: 'Fixture' }) },
     ].entries()) {
-      const revision = index + 5, text = `File lane commit ${revision}`, external = new DatabaseSync(database);
+      const revision = index + 5, text = `File lane commit ${revision}`, external = testDatabase(database);
       external.prepare('UPDATE provider_streams SET text=? WHERE call=?').run(text, call);
       external.prepare('UPDATE provider_stream_segments SET text=?,revision=? WHERE call=?').run(text, revision, call); external.close();
       const next = reader.read();

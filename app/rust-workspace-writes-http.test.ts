@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { createServer } from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -23,7 +23,7 @@ test('restored incomplete workspace intent resumes with uncertainty without repl
     for(let n=0;n<200;n++){if((await request(path))[0].status==='done')break;await new Promise(resolve=>setTimeout(resolve,10));}
     assert.equal((await request(path))[0].status,'done');await app.close();payloads.length=0;
     // Seed the crash boundary: durable intent exists, but its result was never saved.
-    const db=new DatabaseSync(options.database);
+    const db=testDatabase(options.database);
     try {
       db.prepare("UPDATE turns SET status='running',reply='',paused=0 WHERE id=?").run(turn);
       const call={id:'unfinished-write',type:'function',function:{name:'create_workspace_file',arguments:JSON.stringify({path:'result.txt',text:'Original bytes'})}};
@@ -46,7 +46,7 @@ test('restored incomplete workspace intent resumes with uncertainty without repl
     const results=payloads[0].messages.filter((message:any)=>message.role==='tool'&&message.tool_call_id==='unfinished-write');
     assert.equal(results.length,1);assert.equal(JSON.parse(results[0].content).uncertain,true);
     assert.deepEqual(readdirSync(fresh),[]);assert.equal(readFileSync(join(root,'result.txt'),'utf8'),'Original bytes');
-    await app.close();const saved=new DatabaseSync(restored.database);
+    await app.close();const saved=testDatabase(restored.database);
     try {assert.equal(saved.prepare("SELECT count(*) AS n FROM flow_tool_calls WHERE turn=? AND call_id='unfinished-write'").get(turn)!.n,1);} finally {saved.close();}
   } finally {await app.close().catch(()=>{});provider.closeAllConnections();await new Promise<void>(resolve=>provider.close(()=>resolve()));rmSync(dir,{recursive:true,force:true});}
 });

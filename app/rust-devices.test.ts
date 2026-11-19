@@ -4,7 +4,7 @@ import { generateKeyPairSync, randomUUID, randomBytes, sign } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
 import { descriptorBody, deviceLinkBody, deviceProofBody } from './test-support/device-protocol.ts';
 import { digestCommand, sha256 } from './shared/protocol.ts';
@@ -15,7 +15,7 @@ test('Rust signed device enrollment, stream fencing, sessions, receipts and sync
   const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const auth = { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://briefsip.example', development: true, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString() };
   const account = randomUUID(), project = randomUUID(), actor = { accountId: account, subject: 'user_fixture', issuer: auth.issuer, sessionId: 'sess_fixture', expiresAt: now + 60000 };
-  const db = new DatabaseSync(database); installFrozenNodeSchema(db);
+  const db = testDatabase(database); installFrozenNodeSchema(db);
   db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,?,?,?)').run(account, auth.issuer, actor.subject, now);
   db.prepare("INSERT INTO projects(id,account,name,private) VALUES(?,?,'Fixture',0)").run(project, account);
   db.prepare("INSERT INTO project_members VALUES(?,?,'owner',1,0)").run(project, account);

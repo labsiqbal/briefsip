@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
 import { startRustServer } from './rust-test-server.ts';
 import { startApp } from './test-bridge.ts';
@@ -23,7 +23,7 @@ async function fixture() {
   await new Promise<void>(ready => upstream.listen(0, '127.0.0.1', ready));
   const address = upstream.address(); assert(address && typeof address !== 'string');
   const auth = { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://briefsip.example', development: true, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), apiUrl: `http://127.0.0.1:${address.port}` };
-  const db = new DatabaseSync(database); installFrozenNodeSchema(db);
+  const db = testDatabase(database); installFrozenNodeSchema(db);
   const owner = randomUUID(), member = randomUUID();
   for (const [id, subject] of [[owner, 'owner'], [member, 'member']]) db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,?,?,?)').run(id, auth.issuer, subject, Date.now());
   db.close();
@@ -46,7 +46,7 @@ test('Rust invitation ciphertext opens in Node; verified mailbox, receipts, revo
     const created = await f.request(path, command, 201); assert.equal(created.data.state, 'pending_delivery');
     assert.deepEqual((await f.request(path, command)).receipt, created.receipt);
     await f.request(path, { ...command, requestId: randomUUID() }, 409);
-    const db = new DatabaseSync(f.database), invitation = db.prepare('SELECT * FROM invitations WHERE id=?').get(command.requestId)!, outbox = db.prepare('SELECT * FROM mail_outbox WHERE id=?').get(command.requestId)!; db.close();
+    const db = testDatabase(f.database), invitation = db.prepare('SELECT * FROM invitations WHERE id=?').get(command.requestId)!, outbox = db.prepare('SELECT * FROM mail_outbox WHERE id=?').get(command.requestId)!; db.close();
     const decrypted = decryptMail(command.requestId, 1, String(invitation.authority_generation), String(invitation.email_hash), outbox.ciphertext as Uint8Array, f.key);
     assert.equal(decrypted.payload.to, 'member@example.com'); assert.equal(decrypted.payloadDigest, outbox.payload_digest);
     const mailboxProof = decrypted.payload.text.match(/#([A-Za-z0-9_-]{43})/)![1], accept = { requestId: randomUUID(), mailboxProof, expectedRevision: 1 };
@@ -61,7 +61,7 @@ test('Rust invitation ciphertext opens in Node; verified mailbox, receipts, revo
     f.keyring(false); await f.restart();
     const second = { ...command, requestId: randomUUID(), email: 'second@example.com' }; await f.request(path, second, 201);
     const revoke = { requestId: randomUUID(), expectedRevision: 1 }; await f.request(`/api/invitations/${second.requestId}/revoke`, revoke); await f.request(`/api/invitations/${second.requestId}/revoke`, revoke);
-    const check = new DatabaseSync(f.database); assert(check.prepare('SELECT length(ciphertext) n FROM mail_outbox').all().every(row => row.n === 0)); check.close();
+    const check = testDatabase(f.database); assert(check.prepare('SELECT length(ciphertext) n FROM mail_outbox').all().every(row => row.n === 0)); check.close();
   } finally { await f.close(); }
 });
 
@@ -76,17 +76,17 @@ test('Rust sync snapshots page, hash and replay; delta cursors survive restart a
     assert.deepEqual((await f.request(`/api/sync?projectId=${project}&cursor=${delta.nextCursor}`)).data.page.events, []);
     await f.request(`/api/sync?projectId=${project}&cursor=broken`, undefined, 400); await f.request(`/api/sync?projectId=${project}&cursor=${snapshot.nextCursor}x`, undefined, 400);
     await f.request(`/api/sync?projectId=${project}&projectId=${project}`, undefined, 400);
-    const db = new DatabaseSync(f.database); db.exec('BEGIN');
+    const db = testDatabase(f.database); db.exec('BEGIN');
     for (let n = 0; n < 1002; n++) { const id = randomUUID(); db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,?,?,?)').run(id, 'fixture', id, Date.now()); db.prepare("INSERT INTO project_members VALUES(?,?,'member',1,0)").run(project, id); } db.exec('COMMIT'); db.close();
     const pages = [], events = []; let page = (await f.request(`/api/sync?projectId=${project}`)).data;
     for (;;) { pages.push(page); events.push(...page.page.events); if (!page.nextPage) break; const path = `/api/sync?projectId=${project}&page=${page.nextPage}`; page = (await f.request(path)).data; assert.deepEqual((await f.request(path)).data, page); }
     assert.equal(pages.length, 3); assert.equal(page.snapshotHash, digestCommand(events));
     await f.request(`/api/sync?projectId=${project}&page=${pages[0].nextPage}`, undefined, 409);
     const opened = (await f.request(`/api/sync?projectId=${project}`)).data;
-    const authority = new DatabaseSync(f.database); authority.prepare('UPDATE accounts SET revision=revision+1 WHERE id=?').run(f.owner); authority.close();
+    const authority = testDatabase(f.database); authority.prepare('UPDATE accounts SET revision=revision+1 WHERE id=?').run(f.owner); authority.close();
     await f.request(`/api/sync?projectId=${project}&page=${opened.nextPage}`, undefined, 410);
     await f.request(`/api/sync?projectId=${project}&cursor=${delta.nextCursor}`, undefined, 410);
-    const revoked = new DatabaseSync(f.database); revoked.prepare('UPDATE project_members SET deleted=1 WHERE project=? AND account=?').run(project, f.owner); revoked.close();
+    const revoked = testDatabase(f.database); revoked.prepare('UPDATE project_members SET deleted=1 WHERE project=? AND account=?').run(project, f.owner); revoked.close();
     await f.request(`/api/sync?projectId=${project}`, undefined, 403);
   } finally { await f.close(); }
 });
@@ -140,7 +140,7 @@ test('Rust workspace and sidebar preserve UTF-16 slices; script grants replay an
     const text = 'x'.repeat(7999) + '😀tail'; writeFileSync(join(directory, 'astral.txt'), text);
     const file = `/api/agents/${agent}/workspace/file?path=astral.txt`;
     assert.equal((await request(file)).text, text.slice(0, 8000)); assert.equal((await request(file + '&offset=8000')).text, text.slice(8000));
-    const db = new DatabaseSync(database), turn = randomUUID();
+    const db = testDatabase(database), turn = randomUUID();
     db.prepare("INSERT INTO turns(id,agent,text,status,reply,created) VALUES(?,?,?,'done',?,?)").run(turn, agent, '', 'x'.repeat(179) + '😀tail', new Date().toISOString());
     assert.equal((await request('/api/sidebar/summary')).summaries[0].preview, ('x'.repeat(179) + '😀tail').slice(0, 180));
     const child = randomUUID(), delivery = randomUUID(), thread = await request(`/api/agents/${agent}/threads`, { id: randomUUID(), name: 'Reply' });
@@ -190,7 +190,7 @@ test('Rust checkpoint project bindings use the turn agent grant and preserve pan
     const first = randomUUID(), agent = randomUUID();
     for (const id of [first, agent]) await request('/api/agents', { id, name: 'Fixture', model: 'fixture', instructions: 'Help' }, 201);
     const project = await request('/api/projects', { id: randomUUID(), name: 'Project', folders: [{ mode: 'existing', path: workspace }], members: [{ agent: first, write: false }, { agent, write: true }], confirmWrite: true });
-    const db = new DatabaseSync(database), turn = randomUUID();
+    const db = testDatabase(database), turn = randomUUID();
     db.prepare("INSERT INTO turns(id,agent,channel,text,status,created) VALUES(?,?,?,'Fixture','done',?)").run(turn, agent, project.channel, new Date().toISOString());
     const git = createWorkspaceGit(db, new Map([[agent, { directory: workspace, write: true }]]), directory);
     await git.capture(agent, turn); writeFileSync(join(workspace, 'note.txt'), 'Changed');

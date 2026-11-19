@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 import { restoreSkillCommand } from './shared/skill-command.ts';
 
@@ -53,7 +53,7 @@ test('skill revisions stay pinned, disable isolates agent context and receipts s
 
     assert.equal((await request(`/api/skills/${skill.id}?version=1`)).content, command.content);
     await app.close();
-    const legacy = new DatabaseSync(options.database); legacy.exec('ALTER TABLE agent_skills DROP COLUMN removed'); legacy.close();
+    const legacy = testDatabase(options.database); legacy.exec('ALTER TABLE agent_skills DROP COLUMN removed'); legacy.close();
     app = await startApp(options); assert.equal((await request(path)).removed, 0);
     await request(path, install); assert.equal((await request(`/api/agents/${a.id}/skills`)).items[0].enabled, 0);
     for (let i = 0; i < 5; i++) {

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { chmodSync, linkSync, mkdtempSync, readFileSync, writeFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -15,7 +15,7 @@ import { canonicalHttp } from './test-support/canonical-http.ts';
 
 test('canonical server guard fences aliases and processes, releases on SIGKILL and rejects unsafe files', async () => {
   const dir=mkdtempSync(join(tmpdir(),'briefsip-server-lock-')),database=join(dir,'canonical.sqlite'),guardPath=database+'.server-lock.sqlite';
-  const source = new DatabaseSync(database);
+  const source = testDatabase(database);
   initializeCanonicalSchema(source);
   source.exec("UPDATE authority_state SET serving_state='read_only_recovery'");
   source.close();
@@ -75,12 +75,12 @@ test('v4 backup retains sync floors, monotonic heads, tombstones and receipts wh
     const retained = Object.fromEntries(['sync_heads','retention_floors','sync_scope_revisions','receipts','projects'].map(table => [table, db.prepare('SELECT * FROM ' + table).all()]));
     backup = await workspaceSnapshot(db, owner.accountId);
     const destination = join(dir, 'restored.sqlite'); restoreWorkspace(backup.file, destination, { canonicalOnly: true });
-    const restored = new DatabaseSync(destination);
+    const restored = testDatabase(destination);
     try {
       for (const [table, rows] of Object.entries(retained)) assert.deepEqual(restored.prepare('SELECT * FROM ' + table).all(), rows);
       assert.equal(restored.prepare('SELECT serving_state FROM authority_state').get()!.serving_state, 'read_only_recovery');
     } finally { restored.close(); }
-    const live = randomUUID(), recovery = new DatabaseSync(destination);
+    const live = randomUUID(), recovery = testDatabase(destination);
     try {
       recovery.prepare("INSERT INTO projects VALUES(?,?,'Visible before restore',0,0,1)").run(live, owner.accountId);
       recovery.prepare("INSERT INTO project_members VALUES(?,?,'owner',1,0)").run(live, owner.accountId);
@@ -107,7 +107,7 @@ test('live backup restores history while holding pending work and disabling auto
   try {
     const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Backup', role: 'Personal agent', model: 'fixture', instructions: 'Help.' });
     await app.close();
-    const seed = new DatabaseSync(options.database);
+    const seed = testDatabase(options.database);
     seed.prepare('INSERT INTO routines(id,agent,name,prompt,next_at,enabled,revision) VALUES (?,?,?,?,?,1,1)').run(randomUUID(), agent.id, 'Future', 'Help', Date.now() + 3600000);
     seed.prepare('INSERT INTO script_permissions VALUES (?,1,1)').run(agent.id);
     seed.prepare('INSERT INTO files(id,scope,name,digest,bytes,created) VALUES (?,?,?,?,?,?)').run(randomUUID(), `agents:${agent.id}`, 'binary.bin', 'fixture', Buffer.from([0, 255, 1]), new Date().toISOString());
@@ -127,7 +127,7 @@ test('live backup restores history while holding pending work and disabling auto
     const destination = join(dir, 'restored.sqlite'); restoreWorkspace(file, destination);
     assert.equal(statSync(destination).mode & 0o777, 0o600);
     assert.deepEqual(readFileSync(file), bytes);
-    const db = new DatabaseSync(destination);
+    const db = testDatabase(destination);
     assert.equal(db.prepare('SELECT enabled FROM routines').get()!.enabled, 0);
     assert.equal(db.prepare('SELECT enabled FROM workflow_webhooks').get()!.enabled, 0);
     assert.equal(db.prepare('SELECT secret FROM workflow_webhooks').get()!.secret, hook.secret);
@@ -146,7 +146,7 @@ test('live backup restores history while holding pending work and disabling auto
     const symlink = join(dir, 'symlink.sqlite'); symlinkSync(destination, symlink); assert.throws(() => restoreWorkspace(file, symlink), /new database/);
     const dangling = join(dir, 'dangling.sqlite'); symlinkSync(join(dir, 'missing'), dangling + '-wal');
     assert.throws(() => restoreWorkspace(file, dangling), /new database/);
-    const unknown = join(dir, 'unknown.sqlite'), unknownDb = new DatabaseSync(unknown); unknownDb.exec("CREATE TABLE briefsip_backup(format TEXT,version INTEGER); INSERT INTO briefsip_backup VALUES ('briefsip-workspace',99)"); unknownDb.close();
+    const unknown = join(dir, 'unknown.sqlite'), unknownDb = testDatabase(unknown); unknownDb.exec("CREATE TABLE briefsip_backup(format TEXT,version INTEGER); INSERT INTO briefsip_backup VALUES ('briefsip-workspace',99)"); unknownDb.close();
     assert.throws(() => restoreWorkspace(unknown, join(dir, 'unknown-target.sqlite')), /backup format/);
     const corrupt = join(dir, 'corrupt'); writeFileSync(corrupt, 'not sqlite'); assert.throws(() => restoreWorkspace(corrupt, join(dir, 'invalid.sqlite')));
   } finally { await restored?.close(); await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }

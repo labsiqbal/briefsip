@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, linkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,7 +15,7 @@ async function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-files-')), database = join(root, 'app.sqlite'), workspace = join(root, 'workspace');
   mkdirSync(workspace);
   let app = await startRustServer({ database }); await app.close();
-  const db = new DatabaseSync(database), agent = randomUUID(), other = randomUUID(), thread = randomUUID(), channel = randomUUID();
+  const db = testDatabase(database), agent = randomUUID(), other = randomUUID(), thread = randomUUID(), channel = randomUUID();
   for (const id of [agent, other]) db.prepare("INSERT INTO agents(id,name,model,instructions) VALUES(?,?,'fixture','Help')").run(id, id);
   db.prepare("INSERT INTO threads(id,agent,name) VALUES(?,?,'Side')").run(thread, agent);
   db.prepare("INSERT INTO channels(id,name,instructions) VALUES(?,'Room','Help')").run(channel); db.close();
@@ -44,14 +44,14 @@ test('Rust files preserve bytes, retry scope, deletion tombstones and archive st
     await f.request(path + '?preview=text', undefined, 415);
     const meta = await f.request(path + '?metadata=1'); assert.equal(meta.id, id); assert.equal(meta.size, bytes.length); assert.match(meta.digest, /^[a-f0-9]{64}$/);
     assert.deepEqual((await f.request(scope)).map((v: any) => v.id), [id]); await f.request(scope + '?before=-1', undefined, 400);
-    const db = new DatabaseSync(f.database); db.prepare('UPDATE channels SET archived=1 WHERE id=?').run(f.channel); db.close();
+    const db = testDatabase(f.database); db.prepare('UPDATE channels SET archived=1 WHERE id=?').run(f.channel); db.close();
     assert.equal((await f.upload(`${scope}/${randomUUID()}`, bytes)).status, 409); assert.deepEqual(await (await f.upload(path, bytes, 'report é.bin')).json(), receipt);
     await f.restart(); assert.deepEqual(Buffer.from(await (await fetch(f.app.origin + path)).arrayBuffer()), bytes);
     const rejectedHeaders: Record<string, string>[] = [{}, { Origin: f.app.origin, Authorization: 'Bearer synthetic' }, { Origin: 'https://foreign.test' }];
     for (const headers of rejectedHeaders) assert.equal((await fetch(f.app.origin + path, { method: 'DELETE', headers })).status, 403);
     assert.equal((await fetch(f.app.origin + path, { method: 'DELETE', headers: { Origin: f.app.origin } })).status, 200);
     await f.request(path, undefined, 404); assert.equal((await f.upload(path, bytes, 'report é.bin')).status, 409);
-    const tombstone = new DatabaseSync(f.database); assert.deepEqual({ ...tombstone.prepare('SELECT deleted,length(bytes) AS size,digest FROM files WHERE id=?').get(id) }, { deleted: 1, size: 0, digest: '' }); tombstone.close();
+    const tombstone = testDatabase(f.database); assert.deepEqual({ ...tombstone.prepare('SELECT deleted,length(bytes) AS size,digest FROM files WHERE id=?').get(id) }, { deleted: 1, size: 0, digest: '' }); tombstone.close();
     assert.equal((await f.upload(`${scope}/${randomUUID()}`, bytes, '../escape')).status, 400);
     assert.equal((await f.upload(`${scope}/${randomUUID()}`, Buffer.alloc(10 * 1024 * 1024 + 1))).status, 413);
   } finally { await f.close(); }
@@ -145,11 +145,11 @@ test('Rust PDF and image previews preserve bytes, cache scope, deletion and bina
     const preview = await f.request(`${scope}/${id}?preview=text`); assert.equal(preview.text.trim(), 'Rust PDF'); assert.equal(preview.source, 'pdf-text');
     assert.deepEqual(await f.request(`${scope}/${id}?preview=text`), preview);
     assert.equal((await f.request(`/api/agents/${f.agent}/panel/files/${id}?preview=text`)).text.trim(), 'Rust PDF');
-    const db = new DatabaseSync(f.database); assert.equal(db.prepare('SELECT text FROM pdf_text WHERE file=?').get(id)?.text, preview.text); db.close();
+    const db = testDatabase(f.database); assert.equal(db.prepare('SELECT text FROM pdf_text WHERE file=?').get(id)?.text, preview.text); db.close();
     await f.restart(); assert.deepEqual(await f.request(`${scope}/${id}?preview=text`), preview);
     assert.equal((await fetch(f.app.origin + `${scope}/${id}`, { method: 'DELETE', headers: { Origin: f.app.origin } })).status, 200);
     await f.request(`${scope}/${id}?preview=text`, undefined, 404);
-    const check = new DatabaseSync(f.database); assert.equal(check.prepare('SELECT * FROM pdf_text WHERE file=?').get(id), undefined); check.close();
+    const check = testDatabase(f.database); assert.equal(check.prepare('SELECT * FROM pdf_text WHERE file=?').get(id), undefined); check.close();
     const png = Buffer.alloc(24); png.set([137,80,78,71,13,10,26,10]); png.write('IHDR', 12);
     for (const [bytes, mime] of [[png, 'image/png'], [Buffer.from([255,216,255,0]), 'image/jpeg'], [Buffer.from('RIFF0000WEBPVP8 '), 'image/webp']] as const) {
       const file = randomUUID(), response = await f.upload(`${scope}/${file}`, bytes); assert.equal((await response.json()).image, true);
@@ -162,17 +162,17 @@ test('Rust PDF and image previews preserve bytes, cache scope, deletion and bina
 test('Rust shared data reads stay isolated and backup preserves embedded data and private file bytes', async () => {
   const f = await fixture();
   try {
-    const dataPath = join(f.root, 'data.sqlite'), data = new DatabaseSync(dataPath);
+    const dataPath = join(f.root, 'data.sqlite'), data = testDatabase(dataPath);
     data.exec("CREATE TABLE briefsip_owners(name TEXT PRIMARY KEY COLLATE NOCASE,owner TEXT NOT NULL); CREATE TABLE things(id INTEGER PRIMARY KEY,text TEXT); INSERT INTO things VALUES(1,'saved once');");
     data.prepare('INSERT INTO briefsip_owners VALUES(?,?)').run('things', f.agent); data.close();
-    const db = new DatabaseSync(f.database); db.prepare('UPDATE shared_data SET image=?,revision=2 WHERE id=1').run(readFileSync(dataPath)); db.close();
+    const db = testDatabase(f.database); db.prepare('UPDATE shared_data SET image=?,revision=2 WHERE id=1').run(readFileSync(dataPath)); db.close();
     const listing = await f.request('/api/data'); assert.equal(listing.tables[0].name, 'things'); assert.equal(listing.tables[0].owner, f.agent); assert.equal(listing.revision, 2);
     const command = { id: randomUUID(), revision: 2, sql: 'SELECT * FROM things' }, result = await f.request('/api/data/query', command); assert.deepEqual(result.rows, [[1, 'saved once']]); assert.deepEqual(await f.request('/api/data/query', command), result);
     for (const sql of ['DELETE FROM things', 'SELECT * FROM agents', "ATTACH '/tmp/forbidden' AS other", 'PRAGMA database_list', 'SELECT * FROM briefsip_owners']) await f.request('/api/data/query', { ...command, id: randomUUID(), sql }, 400);
     const file = randomUUID(); await f.upload(`/api/agents/${f.agent}/files/${file}`, Buffer.from('backup bytes'), 'note.txt');
     const response = await fetch(f.app.origin + '/api/backup', { method: 'POST', headers: { Origin: f.app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ id: randomUUID(), confirmed: true }) });
     assert.equal(response.status, 200); assert.equal(response.headers.get('content-type'), 'application/vnd.sqlite3'); assert.equal(response.headers.get('content-disposition'), 'attachment; filename="briefsip-workspace.sqlite"');
-    const snapshotPath = join(f.root, 'snapshot.sqlite'); writeFileSync(snapshotPath, Buffer.from(await response.arrayBuffer())); const snapshot = new DatabaseSync(snapshotPath);
+    const snapshotPath = join(f.root, 'snapshot.sqlite'); writeFileSync(snapshotPath, Buffer.from(await response.arrayBuffer())); const snapshot = testDatabase(snapshotPath);
     assert.deepEqual({ ...snapshot.prepare('SELECT format,version FROM briefsip_backup').get() }, { format: 'briefsip-workspace', version: 1 });
     assert.equal(Buffer.from(snapshot.prepare('SELECT bytes FROM files WHERE id=?').get(file)!.bytes as Uint8Array).toString(), 'backup bytes'); snapshot.close();
     const drop = { id: randomUUID(), revision: 2, table: 'things' }; const deleted = await f.request('/api/data/drop', drop); assert.equal(deleted.revision, 3); assert.deepEqual(await f.request('/api/data/drop', drop), deleted);
@@ -190,7 +190,7 @@ test('Rust checkpoint HTTP restores Node checkpoints, rejects stale confirmation
     git('init', '-q', '--template=', '--initial-branch=main'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.invalid');
     writeFileSync(join(f.workspace, 'note'), 'original'); git('add', '--', 'note'); git('commit', '-q', '-m', 'Initial');
     await f.app.close();
-    const seed = new DatabaseSync(f.database), checkpoint = randomUUID();
+    const seed = testDatabase(f.database), checkpoint = randomUUID();
     try { await legacyCheckpointFixture(seed, new Map([[f.agent, { directory: f.workspace, write: true }]]), f.root).capture(f.agent, checkpoint); } finally { seed.close(); }
     await f.restart();
     writeFileSync(join(f.workspace, 'note'), 'changed'); writeFileSync(join(f.workspace, 'new'), 'keep in safety checkpoint');

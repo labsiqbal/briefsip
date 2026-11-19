@@ -4,7 +4,7 @@ import { generateKeyPairSync, randomBytes, randomUUID, sign } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
 import { descriptorBody, deviceLinkBody, deviceProofBody, parseLinkChallenge, type LinkChallengeResponse } from './test-support/device-protocol.ts';
 import { canonicalToolDigest, journalEntryBody, recoveryEnvelopeBody, stopEvidenceBody } from './test-support/task-protocol.ts';
@@ -15,7 +15,7 @@ import { startRustServer } from './rust-test-server.ts';
 
 test('Rust signed task admission, context fencing, one-use commits and durable results', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-rust-tasks-')), database = join(directory, 'db');
-  const db = new DatabaseSync(database); installFrozenNodeSchema(db); initializeMemory(db);
+  const db = testDatabase(database); installFrozenNodeSchema(db); initializeMemory(db);
   const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const authConfig = { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://briefsip.example', development: true, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString() };
   const owner = { accountId: randomUUID(), issuer: authConfig.issuer, subject: 'user_fixture', sessionId: 'sess_fixture', expiresAt: Date.now() + 600000 };

@@ -5,7 +5,7 @@ import { createServer, type ServerResponse } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 import { visibilityCommand } from './shared/agent-visibility.ts';
 
@@ -85,7 +85,7 @@ test('hidden agents finish active work, hold queue across restart, reject new wo
     assert(rosterIds.includes(c.id));
     assert(!rosterIds.includes(a.id));
     await app.close();
-    const db = new DatabaseSync(options.database);
+    const db = testDatabase(options.database);
     try { db.prepare('UPDATE routines SET next_at=? WHERE id=?').run(Date.now() - 180000, routine.id); }
     finally { db.close(); }
     app = await startApp(options);
@@ -97,7 +97,7 @@ test('hidden agents finish active work, hold queue across restart, reject new wo
     assert.equal(calls.filter(text => text === 'QUEUED').length, 1);
     assert.equal(calls.length, 6);
     await app.close();
-    const check = new DatabaseSync(options.database);
+    const check = testDatabase(options.database);
     try {
       assert(Number(check.prepare('SELECT next_at FROM routines WHERE id=?').get(routine.id)!.next_at) > Date.now());
       assert.equal(check.prepare('SELECT count(*) AS n FROM agent_visibility_skips').get()!.n, 2);

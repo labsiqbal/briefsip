@@ -4,7 +4,8 @@ import { randomUUID, generateKeyPairSync } from 'node:crypto';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 
 async function fixture(t: { after: (fn: () => Promise<void>) => void }, hub = false) {
@@ -17,7 +18,7 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, hub = fa
     const data = await res.json(); assert.equal(res.status, status, JSON.stringify(data)); return data;
   }
   const create = (name: string) => request('/api/agents', { runtime: 'api', id: randomUUID(), name, model:'fixture', instructions:'Help' }, 201);
-  return { dir, database, request, create, async seed(fn: (db: DatabaseSync) => void) { await app.close(); const db = new DatabaseSync(database); db.exec('PRAGMA foreign_keys=ON'); try { fn(db); } finally { db.close(); app = await startApp(options); } } };
+  return { dir, database, request, create, async seed(fn: (db: DatabaseSync) => void) { await app.close(); const db = testDatabase(database); db.exec('PRAGMA foreign_keys=ON'); try { fn(db); } finally { db.close(); app = await startApp(options); } } };
 }
 
 test('delete cascades every agent FK, scoped data, workflows, desktop and journals, preserving room history and shared resources', async t => {
@@ -150,9 +151,9 @@ test('running provider work must settle before delete; transactional failure pre
   for(let n=0;n<100;n++){const turns=await(await fetch(app.origin+`/api/agents/${agent}/turns`)).json();if(turns[0].status==='done')break;await new Promise(resolve=>setTimeout(resolve,20));}
   await app.close();
   const desktop=join(dir,'agent-desktops',agent);mkdirSync(desktop,{recursive:true});writeFileSync(join(desktop,'synthetic'),'saved');
-  const db=new DatabaseSync(database);db.exec("CREATE TRIGGER fail_delete BEFORE DELETE ON agents BEGIN SELECT RAISE(ABORT,'synthetic failure'); END;");db.close();
+  const db=testDatabase(database);db.exec("CREATE TRIGGER fail_delete BEFORE DELETE ON agents BEGIN SELECT RAISE(ABORT,'synthetic failure'); END;");db.close();
   app=await startApp({database});await post(path,command,500);assert(existsSync(desktop));await app.close();
-  const retry=new DatabaseSync(database);assert(retry.prepare('SELECT 1 FROM agents WHERE id=?').get(agent));assert(retry.prepare('SELECT 1 FROM turns WHERE id=?').get(turn));retry.exec('DROP TRIGGER fail_delete');retry.close();
+  const retry=testDatabase(database);assert(retry.prepare('SELECT 1 FROM agents WHERE id=?').get(agent));assert(retry.prepare('SELECT 1 FROM turns WHERE id=?').get(turn));retry.exec('DROP TRIGGER fail_delete');retry.close();
   app=await startApp({database});await post(path,command);assert(!existsSync(desktop));
 });
 

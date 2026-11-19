@@ -9,7 +9,8 @@ import { createServer, request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { createInterface } from 'node:readline';
 import { join } from 'node:path';
-import { backup, DatabaseSync } from 'node:sqlite';
+import { backup, type DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { startCanonicalApp } from './test-bridge.ts';
 import { startDeviceFetchProxy, rustDeviceFixture, withDeviceProvider, startDeviceFaultProxy, startRustDeviceEnrollment, startRustDeviceConnection, enrollRustDevice, startRustDeviceTask, runRustDeviceTask, crashRustDeviceTask, exportRustDeviceRecovery, type RecoveryExport } from './test-support/rust-device-host.ts';
 import type { ActionContext } from './test-support/task-protocol.ts';
@@ -25,9 +26,7 @@ function memoryKeys() {
 }
 
 function fixtureDatabase(path: string) {
-  const db = new DatabaseSync(path);
-  db.exec('PRAGMA busy_timeout=5000');
-  return db;
+  return testDatabase(path);
 }
 
 async function workspaceSnapshot(db: DatabaseSync, owner?: string) {
@@ -37,7 +36,7 @@ async function workspaceSnapshot(db: DatabaseSync, owner?: string) {
   try {
     await backup(db, file);
     chmodSync(file, 0o600);
-    const snapshot = new DatabaseSync(file);
+    const snapshot = testDatabase(file);
     try {
       snapshot.exec(`CREATE TABLE briefsip_backup(format TEXT NOT NULL,version INTEGER NOT NULL,created TEXT NOT NULL) STRICT;
         CREATE TABLE briefsip_backup_authority(generation TEXT NOT NULL,owner_account TEXT REFERENCES accounts(id)) STRICT;`);
@@ -187,7 +186,7 @@ test('protected turn wait uses outbound stream and recovers lost host ACK withou
     try {
       await until(() => probeConnection.state().phase === 'connected');
       assert.deepEqual(await probe.recoverPending(), []);
-      const host = new DatabaseSync(database);
+      const host = testDatabase(database);
       try {
         assert.deepEqual({ posts, state: host.prepare('SELECT state FROM device_wait_secrets').get()!.state },
           { posts: 0, state: 'ready' }, 'Second host must not ACK or change wait evidence while original runner holds lock');
@@ -198,7 +197,7 @@ test('protected turn wait uses outbound stream and recovers lost host ACK withou
     runtime = f.device(database);
     connection = runtime.connect(); await until(() => connection.state().phase === 'connected');
     await until(() => {
-      const host = new DatabaseSync(database);
+      const host = testDatabase(database);
       try { return host.prepare('SELECT state FROM device_wait_secrets').get()?.state === 'acknowledged'; } finally { host.close(); }
     });
     const canonical = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
@@ -2684,14 +2683,14 @@ for (const lostAt of ['request', 'reply', 'receipt', 'revoked', 'storage'] as co
     await until(async () => (await f.send('/api/devices')).body.data.every((device: { status: string }) => device.status !== 'ready'), 10_000);
     await f.restart();
     if (lostAt === 'storage') {
-      const db = new DatabaseSync(database);
+      const db = testDatabase(database);
       try { db.exec("CREATE TRIGGER fail_recovery_marker BEFORE UPDATE OF intent_json ON device_journal WHEN json_extract(NEW.intent_json,'$.completionError') IS NOT NULL BEGIN SELECT RAISE(ABORT,'completion marker write failed'); END"); } finally { db.close(); }
     }
     runtime = f.device(database);
     const reconnected = runtime.connect(); await until(() => reconnected.state().phase === 'connected');
     await until(() => runtime.recoveryStatus().results.some(row => row.actionId === actionId && (lostAt === 'storage' ? row.error === 'recovery_storage_unavailable' : lostAt === 'revoked' ? row.error === 'execution_denied' : row.state === 'completed')));
     if (lostAt === 'storage') {
-      const db = new DatabaseSync(database);
+      const db = testDatabase(database);
       try { db.exec('DROP TRIGGER fail_recovery_marker'); } finally { db.close(); }
       assert.deepEqual(await runtime.recoverPending(), [{ taskId, actionId, error: 'execution_denied' }]);
     }
@@ -2883,7 +2882,7 @@ test('local possession gate enrolls only configured server and retains identity 
     const current = (await f.send('/api/devices')).body.data[0];
     assert.equal((await f.send(`/api/devices/${deviceId}/revoke`, { requestId: randomUUID(), expectedRevision: current.revision })).status, 200);
     await until(() => resumed.state()?.phase === 'blocked'); await resumed.wait();
-    const canonical = fixtureDatabase(join(f.dir, 'canonical.sqlite')), device = new DatabaseSync(database);
+    const canonical = fixtureDatabase(join(f.dir, 'canonical.sqlite')), device = testDatabase(database);
     try {
       assert.equal(device.prepare("SELECT name FROM sqlite_schema WHERE name='accounts'").get(), undefined);
       assert.equal(canonical.prepare("SELECT name FROM sqlite_schema WHERE name='device_state'").get(), undefined);
@@ -3000,7 +2999,7 @@ test('signed host HTTP admission commits once and result ACK survives canonical 
     await f.restart(); await until(() => connection.state().phase === 'connected' && connection.state().generation > previousConnectionGeneration);
     assert.deepEqual(await runtime.reconcileTask(taskId, report), published);
     assert.deepEqual((await f.send(`/api/tasks/${taskId}`)).body.data.results[0].content, resultContent);
-    const db = new DatabaseSync(database), canonical = fixtureDatabase(join(f.dir,'canonical.sqlite'));
+    const db = testDatabase(database), canonical = fixtureDatabase(join(f.dir,'canonical.sqlite'));
     try {
       const refs = String(db.prepare('SELECT executor_refs_json FROM device_state WHERE id=1').get()!.executor_refs_json), receipts = JSON.stringify(canonical.prepare('SELECT result_json FROM receipts').all());
       for (const [name, token] of runtime.keys.values) if (name.includes('/executor/')) { assert(!refs.includes(token)); assert(!receipts.includes(token)); }
@@ -3044,7 +3043,7 @@ test('journal-backed host dispatches once, retries publication only and refuses 
     assert.equal((await runtime.executeAction(first, effect)).state, 'acknowledged');
     assert.equal((await runtime.executeAction(first, effect)).state, 'acknowledged');
     assert.equal(calls, 1);
-    const db = new DatabaseSync(database);
+    const db = testDatabase(database);
     try {
       assert.equal(db.prepare('SELECT state FROM device_outbox WHERE action_id=?').get(first.actionId)!.state, 'acknowledged');
       assert.equal(db.prepare('SELECT send_marker FROM device_journal WHERE action_id=?').get(first.actionId)!.send_marker, 1);
@@ -3147,7 +3146,7 @@ test('Rust exports prepared, in-flight and reported Node v3 journal evidence off
     const { identity, keyring: syntheticKeys, samples } = JSON.parse(readFileSync(new URL('synthetic.json', source), 'utf8'));
     const database = join(dir, 'home.sqlite'), keyring = join(dir, 'keys.json'), metadata = database + '.host';
     writeFileSync(database, '', { mode: 0o600 });
-    const db = new DatabaseSync(database);
+    const db = testDatabase(database);
     try { db.exec(readFileSync(new URL('device.sql', source), 'utf8')); } finally { db.close(); }
     mkdirSync(metadata, { mode: 0o700 });
     writeFileSync(join(metadata, 'identity.json'), JSON.stringify(identity), { mode: 0o600 });
@@ -3271,7 +3270,7 @@ test('owner recovers revoked-device journal through HTTP without device session 
     const historical=exportRecovery(taskId,[actionId],randomUUID(),generation,true);
     assert.deepEqual(historical.envelope.entries,metadata.envelope.entries);
     assert.equal((await send('results',historical)).status,200);
-    const local=new DatabaseSync(database);let signingRef:string;
+    const local=testDatabase(database);let signingRef:string;
     try{signingRef=String(local.prepare('SELECT signing_ref FROM device_enrollment_keys WHERE device_generation=?').get(owned.ownership.deviceGeneration)!.signing_ref);}finally{local.close();}
     const keyName=[...runtime.keys.values.keys()].find(name=>name.endsWith('/'+signingRef))!,privateKey=runtime.keys.values.get(keyName)!;
     const rotatedKeys = JSON.parse(readFileSync(keyring, 'utf8'));

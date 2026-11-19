@@ -4,7 +4,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync 
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 import type { HarnessRuntime } from './shared/runtime.ts';
 process.env.BRIEFSIP_HARNESS_CANARY = 'never-inherit-this-canary';
@@ -23,7 +24,7 @@ async function fixture(runtime: HarnessRuntime, write = true, room = false) {
   await request(path+'/edit',{id:randomUUID(),revision:1,...profile,runtime,confirmRuntime:true});
   const until = async (turn:string,predicate:(row:any)=>boolean) => { for(let i=0;i<600;i++){const row=(await request(path+'/turns')).find((row:any)=>row.id===turn);if(row&&predicate(row))return row;await delay(15);}assert.fail('Harness turn timed out'); };
   const send = async(text:string) => {const id=randomUUID();await request(path+'/turns',{id,text});return id;};
-  return {directory,workspace,agent,path,profile,request,until,send,minted,revoked,options,get app(){return app;}, async editDatabase(edit: (db: DatabaseSync) => void){await app.close();const db=new DatabaseSync(options.database);try{edit(db);}finally{db.close();app=await startApp(options);}},async restart(){await app.close();app=await startApp(options);},async close(){await app.close();rmSync(directory,{recursive:true,force:true});}};
+  return {directory,workspace,agent,path,profile,request,until,send,minted,revoked,options,get app(){return app;}, async editDatabase(edit: (db: DatabaseSync) => void){await app.close();const db=testDatabase(options.database);try{edit(db);}finally{db.close();app=await startApp(options);}},async restart(){await app.close();app=await startApp(options);},async close(){await app.close();rmSync(directory,{recursive:true,force:true});}};
 }
 for(const runtime of ['codex','claude'] as const) {
   test(`${runtime}: native check receipt prevents a second verification turn`, async () => {

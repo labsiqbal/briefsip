@@ -6,7 +6,7 @@ import { runRustConnector } from './rust-connectors-runner.ts';
 import { connectorJournalCommand, openConnectorJournalFixture } from './test-support/connector-journal-command.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 
@@ -127,7 +127,6 @@ test('Telegram bridge submits once through granted side-thread API and isolates 
   }});
   const {connector,ui}=f;
   const db=openConnectorJournalFixture('telegram',connector.directory);
-  db.exec('PRAGMA busy_timeout=5000');
   const update=telegramUpdate(1,'Hello');update.message.message_id=2;
   const sent=()=>connector.jsonPosts<{text:string}>('sendMessage').filter(post=>post.text==='Synthetic reply');
   const turns=()=>connector.requests.filter(req=>req.method==='POST'&&req.path.endsWith('/turns'));
@@ -185,6 +184,6 @@ for(const ask of [false,true])test(`Telegram runner ${ask?'answers a question':'
     for(const [path,body]of [['/api/agents',{runtime:'api', id:agent,name:'Runner',model:'fixture',instructions:'Help'}],[`/api/agents/${agent}/scripts`,{id:randomUUID(),revision:0,enabled:true}]]as const){const response=await fetch(app.origin+path,{method:'POST',headers:{Origin:app.origin,'Content-Type':'application/json'},body:JSON.stringify(body)});assert(response.ok);await response.json();}
     await runRustConnector('telegram', {directory:join(root,'state'),scriptDirectory:join(root,'scripts'),agent,token:'123:'+'x'.repeat(24),users:[4],origin:`http://127.0.0.1:${ta.port}`},controller.signal);
     assert.equal(modelCalls,ask?2:1);assert.equal(delivered,ask?3:1);assert(offsets.includes(8));assert(!existsSync(join(root,'state','owner.lock')));
-    const journal=new DatabaseSync(join(root,'state','telegram.sqlite'));try{assert.equal(journal.prepare('SELECT status FROM telegram_outbox').get()!.status,'sent');}finally{journal.close();}
+    const journal=testDatabase(join(root,'state','telegram.sqlite'));try{assert.equal(journal.prepare('SELECT status FROM telegram_outbox').get()!.status,'sent');}finally{journal.close();}
   }finally{clearTimeout(timeout);controller.abort();await app.close();provider.closeAllConnections();telegram.closeAllConnections();await Promise.all([new Promise<void>(resolve=>provider.close(()=>resolve())),new Promise<void>(resolve=>telegram.close(()=>resolve()))]);rmSync(root,{recursive:true,force:true});}
 });

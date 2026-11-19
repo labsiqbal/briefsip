@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {randomUUID} from 'node:crypto';
-import {DatabaseSync} from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -29,12 +30,12 @@ for(const platform of ['slack','telegram'] as const)for(const mode of ['reply','
  const journal=join(connector.directory,platform+'.sqlite');
  const outbox=()=>db!.prepare(`SELECT * FROM ${platform}_outbox ORDER BY rowid`).all();
  const deliver=()=>waitFor(()=>{connector.check();return outbox().every(row=>row.status==='sent');},'Artifacts and text were not delivered');
- const restart=async()=>{await connector.stop();db!.close();db=new DatabaseSync(journal);connector.start();};
+ const restart=async()=>{await connector.stop();db!.close();db=testDatabase(journal);connector.start();};
  async function ui(path:string,body?:unknown):Promise<any>{const res=await fetch(app.origin+path,{method:body?'POST':'GET',headers:{Origin:app.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const result=await res.json();assert(res.ok,JSON.stringify(result));return result;}
  async function incoming(text:string){
   const id=++sequence;
   await connector.send(platform==='slack'?slackEnvelope(id,text):telegramUpdate(id,text));
-  db??=new DatabaseSync(journal);
+  db??=testDatabase(journal);
   return db.prepare(`SELECT * FROM ${platform}_inbox ORDER BY rowid DESC LIMIT 1`).get()!;
  }
  try{

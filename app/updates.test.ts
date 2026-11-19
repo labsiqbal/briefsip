@@ -9,7 +9,7 @@ import { createServer as netServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { nativeReleaseFixture } from './test-support/native-release-fixture.ts';
 import { rustBinary } from './rust-binary.ts';
 import { startApp } from './test-bridge.ts';
@@ -92,8 +92,8 @@ test('launcher commits healthy trial, preserves data and request identity, and r
 for(const mode of ['wrong','exit'])test(`launcher ${mode} candidate rolls back release and original DB snapshot`,async()=>{
  const dir=temp();let f:Awaited<ReturnType<typeof launcher>>|undefined;try{const first=publishFixture(dir,'1.0.0');f=await launcher(dir,first.id);
  // Fixture holds only the side-file server lock, allowing a test-only inspection connection.
- const db=new DatabaseSync(join(f.data,'briefsip.sqlite'));db.exec("INSERT INTO data VALUES('owner data intact')");db.close();
- const bad=publishFixture(dir,'1.0.1',mode),id=randomUUID();await launcherRequest(f.options,{type:'apply',id,target:bad.id,version:bad.version});const state=await until(async()=>{const s=await launcherRequest(f!.options,{type:'status'});return (s.lastAttempt as {status?:string})?.status==='rolled-back'?s:undefined;});assert.equal(state.current,first.id);await until(async()=>{try{return (await (await fetch(`http://127.0.0.1:${f!.port}/api/environment`)).json()).version==='1.0.0';}catch{return false;}});const restored=new DatabaseSync(join(f.data,'briefsip.sqlite'));assert.deepEqual(restored.prepare('SELECT value FROM data').all().map(r=>r.value),['owner data intact']);restored.close();assert.equal(selectedRelease(join(dir,'releases')),first.id);assert.match(String((state.lastAttempt as {reason:string}).reason),/health|exited/i);
+ const db=testDatabase(join(f.data,'briefsip.sqlite'));db.exec("INSERT INTO data VALUES('owner data intact')");db.close();
+ const bad=publishFixture(dir,'1.0.1',mode),id=randomUUID();await launcherRequest(f.options,{type:'apply',id,target:bad.id,version:bad.version});const state=await until(async()=>{const s=await launcherRequest(f!.options,{type:'status'});return (s.lastAttempt as {status?:string})?.status==='rolled-back'?s:undefined;});assert.equal(state.current,first.id);await until(async()=>{try{return (await (await fetch(`http://127.0.0.1:${f!.port}/api/environment`)).json()).version==='1.0.0';}catch{return false;}});const restored=testDatabase(join(f.data,'briefsip.sqlite'));assert.deepEqual(restored.prepare('SELECT value FROM data').all().map(r=>r.value),['owner data intact']);restored.close();assert.equal(selectedRelease(join(dir,'releases')),first.id);assert.match(String((state.lastAttempt as {reason:string}).reason),/health|exited/i);
  }finally{await f?.close();rmSync(dir,{recursive:true,force:true});}
 });
 
@@ -119,7 +119,7 @@ test('peer fan-out needs both owners, grants no default update scope, streams ve
  await a.refreshMachines();const peers=(await api(a,'/api/updates/machines')).machines;assert.equal(peers[0].machine,machine.id);assert.equal(peers[0].available,true);
  await api(b,'/api/machines/updates',{id:randomUUID(),environmentId:back.id,allowed:false});command={...command,id:randomUUID()};assert.equal((await api(a,'/api/updates/fan-out',command,202)).machines[0].status,'failed');assert.equal(ctlB.commands.size,1);
  for(const name of ['a.sqlite','b.sqlite']){
-  const path=join(dir,name),db=new DatabaseSync(path);const row=db.prepare('SELECT token,origin FROM paired_machines').get()!;db.close();
+  const path=join(dir,name),db=testDatabase(path);const row=db.prepare('SELECT token,origin FROM paired_machines').get()!;db.close();
   const bytes=Buffer.from(String(row.token),'base64'),cipher=createDecipheriv('aes-256-gcm',readFileSync(path+'.peer-key'),bytes.subarray(0,12));
   cipher.setAAD(Buffer.from(String(row.origin)));cipher.setAuthTag(bytes.subarray(-16));const token=Buffer.concat([cipher.update(bytes.subarray(12,-16)),cipher.final()]).toString('utf8');if(!tokens.includes(token))tokens.push(token);
  }
@@ -130,8 +130,8 @@ test('peer fan-out needs both owners, grants no default update scope, streams ve
 test('peer SHA-256 mismatch rejects download before publication',async()=>{const dir=temp();try{const info=publishFixture(dir,'1.0.0'),archive=await releaseArchive(join(dir,'releases'),info.id);try{const bytes=readFileSync(archive.file);bytes[bytes.length-1]^=1;await assert.rejects(receiveRelease(new Response(bytes,{headers:{'Content-Type':'application/gzip','X-Briefsip-SHA256':archive.sha256}}),join(dir,'received'),info.id,archive.sha256),/SHA-256 mismatch/);assert(!existsSync(join(dir,'received',info.id)));}finally{archive.cleanup();}}finally{rmSync(dir,{recursive:true,force:true});}});
 
 test('interrupted trial recovers immutable snapshot before restarting previous release',async()=>{
- const dir=temp();let f:Awaited<ReturnType<typeof launcher>>|undefined, restarted:ChildProcess|undefined;try{const first=publishFixture(dir,'1.0.0');f=await launcher(dir,first.id);const db=new DatabaseSync(join(f.data,'briefsip.sqlite'));db.exec("INSERT INTO data VALUES('before crash')");db.close();const bad=publishFixture(dir,'1.0.1','wrong');await launcherRequest(f.options,{type:'apply',id:randomUUID(),target:bad.id,version:bad.version});await until(async()=>{const state=await launcherRequest(f!.options,{type:'status'});if((state.lastAttempt as {status?:string})?.status!=='verifying')return false;try{const check=new DatabaseSync(join(f!.data,'briefsip.sqlite'));const damaged=check.prepare('SELECT value FROM data').get()?.value==='trial damage';check.close();return damaged;}catch{return false;}});const died=once(f.child,'exit');f.child.kill('SIGKILL');await died;await delay(200);
- let log='';restarted=spawn(...launcherCommand(f.config),{stdio:['ignore','pipe','pipe']});restarted.stderr!.on('data',b=>{log+=b;});await until(async()=>{try{const s=await launcherRequest(f!.options,{type:'status'});return (s.lastAttempt as {status?:string})?.status==='rolled-back';}catch{return false;}},15000).catch(e=>{throw new Error(String(e)+'\n'+log);});await until(async()=>{try{return (await (await fetch(`http://127.0.0.1:${f!.port}/api/environment`)).json()).version==='1.0.0';}catch{return false;}});const restored=new DatabaseSync(join(f.data,'briefsip.sqlite'));assert.equal(restored.prepare('SELECT value FROM data').get()?.value,'before crash');restored.close();
+ const dir=temp();let f:Awaited<ReturnType<typeof launcher>>|undefined, restarted:ChildProcess|undefined;try{const first=publishFixture(dir,'1.0.0');f=await launcher(dir,first.id);const db=testDatabase(join(f.data,'briefsip.sqlite'));db.exec("INSERT INTO data VALUES('before crash')");db.close();const bad=publishFixture(dir,'1.0.1','wrong');await launcherRequest(f.options,{type:'apply',id:randomUUID(),target:bad.id,version:bad.version});await until(async()=>{const state=await launcherRequest(f!.options,{type:'status'});if((state.lastAttempt as {status?:string})?.status!=='verifying')return false;try{const check=testDatabase(join(f!.data,'briefsip.sqlite'));const damaged=check.prepare('SELECT value FROM data').get()?.value==='trial damage';check.close();return damaged;}catch{return false;}});const died=once(f.child,'exit');f.child.kill('SIGKILL');await died;await delay(200);
+ let log='';restarted=spawn(...launcherCommand(f.config),{stdio:['ignore','pipe','pipe']});restarted.stderr!.on('data',b=>{log+=b;});await until(async()=>{try{const s=await launcherRequest(f!.options,{type:'status'});return (s.lastAttempt as {status?:string})?.status==='rolled-back';}catch{return false;}},15000).catch(e=>{throw new Error(String(e)+'\n'+log);});await until(async()=>{try{return (await (await fetch(`http://127.0.0.1:${f!.port}/api/environment`)).json()).version==='1.0.0';}catch{return false;}});const restored=testDatabase(join(f.data,'briefsip.sqlite'));assert.equal(restored.prepare('SELECT value FROM data').get()?.value,'before crash');restored.close();
  }finally{if(restarted)await stop(restarted);await f?.close();rmSync(dir,{recursive:true,force:true});}
 });
 
@@ -160,7 +160,7 @@ test('Rust launcher trials native Rust server, commits over socket, and rolls ba
   }
   const first=native('1.0.0');f=await launcher(dir,first.id);const app={origin:`http://127.0.0.1:${f.port}`};
   assert.equal((await api(app,'/api/environment')).version,'1.0.0');
-  const db=new DatabaseSync(join(f.data,'briefsip.sqlite'));db.exec("CREATE TABLE native_fixture(value TEXT);INSERT INTO native_fixture VALUES('preserved')");db.close();
+  const db=testDatabase(join(f.data,'briefsip.sqlite'));db.exec("CREATE TABLE native_fixture(value TEXT);INSERT INTO native_fixture VALUES('preserved')");db.close();
   const second=native('1.0.1'),id=randomUUID();
   await api(app,'/api/updates/apply',{id,version:second.version},202);
   await until(async()=>{try{return (await launcherRequest(f!.options,{type:'trial',id})).committed===true;}catch{return false;}});
@@ -174,7 +174,7 @@ test('Rust launcher trials native Rust server, commits over socket, and rolls ba
   assert.equal((rollback.lastAttempt as {snapshotReady?:boolean}).snapshotReady,true);
   assert.match((rollback.lastAttempt as {reason:string}).reason,/health|exited/i);
   await until(async()=>{try{return (await api(app,'/api/environment')).version==='1.0.1';}catch{return false;}});
-  const restored=new DatabaseSync(join(f.data,'briefsip.sqlite'));assert.equal(restored.prepare('SELECT value FROM native_fixture').get()?.value,'preserved');restored.close();
+  const restored=testDatabase(join(f.data,'briefsip.sqlite'));assert.equal(restored.prepare('SELECT value FROM native_fixture').get()?.value,'preserved');restored.close();
  }finally{await f?.close();rmSync(dir,{recursive:true,force:true});}
 });
 

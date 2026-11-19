@@ -9,7 +9,7 @@ import { generateKeyPairSync, randomUUID, createPublicKey } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import WebSocket from 'ws';
 import { startApp } from './test-bridge.ts';
 import { signedNodeMessage, verifiedNodeMessage } from './hub/node-link.ts';
@@ -32,7 +32,7 @@ async function until(check: () => unknown | Promise<unknown>, label = 'condition
 async function api(app: App, path: string, body?: unknown, status = 200): Promise<any> { const response = await fetch(app.origin + path, { method: body === undefined ? 'GET' : 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json', Connection: 'close' }, body: body === undefined ? undefined : JSON.stringify(body) }); const result = await response.json(); assert.equal(response.status, status, JSON.stringify(result)); return result; }
 const who = (subject: string) => ({ issuer: 'https://identity.test', subject, verifiedMailboxes: [`${subject}@example.test`] });
 async function fixture(t: test.TestContext, providerScript?: (body: any) => unknown | Promise<unknown>, stream = false) {
-    const dir = mkdtempSync(join(tmpdir(), 'briefsip-hub-link-')), hubDb = new DatabaseSync(join(dir, 'hub.sqlite'));
+    const dir = mkdtempSync(join(tmpdir(), 'briefsip-hub-link-')), hubDb = testDatabase(join(dir, 'hub.sqlite'));
     initializeHubSchema(hubDb);
     let clock = Date.now();
     const a = createHubAuthority(hubDb, { domain: 'briefsip.test', mailboxKey: Buffer.alloc(32, 8), now: () => clock });
@@ -371,7 +371,7 @@ test('hub-side withdrawal waits offline beyond turn deadline and disables local 
     await node.restart();
     await until(() => f.a.one("SELECT acked FROM outbox WHERE participation_id=? AND kind='grant.revoked'", p.participationId)?.acked === 1, 'durable control ACK');
     await node.app.close();
-    const db = new DatabaseSync(node.database);
+    const db = testDatabase(node.database);
     try { assert.equal(db.prepare('SELECT enabled FROM hub_link_grants WHERE participation_id=?').get(p.participationId)!.enabled, 0); } finally { db.close(); }
     assert.equal(f.calls, 0);
 });
@@ -466,7 +466,7 @@ test('computer input requires local approval and action lease; revoke leaves unc
     await sleep(200);
     assert.equal(effects, 2);
     await node.app.close();
-    const db = new DatabaseSync(node.database);
+    const db = testDatabase(node.database);
     try { assert.equal(db.prepare('SELECT state FROM hub_link_actions WHERE action_id=?').get(pending.actionId)!.state, 'unknown'); } finally { db.close(); }
     assert.throws(() => f.post(f.alice, [p.participationId]), e => e instanceof ProtocolError);
 });
@@ -590,7 +590,7 @@ for (const runtime of ['codex', 'claude', 'hermes', 'antigravity', 'grok', 'pi',
     const workspace = join(f.dir, 'native-workspace'); mkdirSync(workspace);
     Object.assign(node.options, { workspaces: [{ agent: node.agent.id, directory: workspace, write: false }], harness: { executables: { [runtime]: process.execPath }, issuer: { mintAgentSession() { assert.fail('Unsupported native hub turn minted an execution session.'); }, revokeAgentSession() {} } } });
     await node.app.close();
-    const db = new DatabaseSync(node.database);
+    const db = testDatabase(node.database);
     try { db.prepare('UPDATE agents SET runtime=? WHERE id=?').run(runtime, node.agent.id); } finally { db.close(); }
     await node.restart();
     const status = await api(node.app, '/api/hub-link');
@@ -741,7 +741,7 @@ test('local owner deletes linked agent, withdraws hub participation and removes 
     assert(!(await api(node.app, '/api/agents')).agents.some((agent: any) => agent.id === node.agent.id));
     assert.deepEqual(await api(node.app, '/api/hub-link/history'), []);
     await node.app.close();
-    const db = new DatabaseSync(node.database);
+    const db = testDatabase(node.database);
     try {
         for (const table of ['hub_link_threads','hub_link_grants','hub_link_turns','hub_link_events','hub_link_results','hub_link_actions']) assert.equal(db.prepare(`SELECT count(*) AS n FROM ${table}`).get()!.n, 0, table);
         assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);

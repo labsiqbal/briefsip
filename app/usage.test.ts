@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 
 test('Rust usage returns exact decimal totals, unknown counts and stable pages', async () => {
@@ -20,7 +20,7 @@ test('Rust usage returns exact decimal totals, unknown counts and stable pages',
     });
     assert.equal(response.status, 201, await response.text());
 
-    const db = new DatabaseSync(database);
+    const db = testDatabase(database);
     try {
       db.prepare("INSERT INTO turns(id,agent,text,status,created) VALUES (?,?,'Usage fixture','done','2026-01-01')").run(turn, agent);
       const insert = db.prepare(`INSERT INTO provider_calls(turn,agent,model,origin,purpose,status,created,input_tokens)

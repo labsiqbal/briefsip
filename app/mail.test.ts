@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, randomBytes, randomUUID } from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -14,8 +14,7 @@ import { waitFor } from './test-support/rust-connector-fixture.ts';
 test('Rust mail retries an exact envelope once and fences missing keys, old authority and the idempotency horizon', async () => {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-mail-retry-'));
   const database = join(root, 'app.sqlite');
-  const db = new DatabaseSync(database);
-  db.exec('PRAGMA busy_timeout=5000');
+  const db = testDatabase(database);
   installFrozenNodeSchema(db);
   const account = randomUUID(), project = randomUUID(), keyId = randomUUID(), key = randomBytes(32);
   const now = Date.now();

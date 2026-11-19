@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 
 test('profile tool preserves authority, revision conflicts, execution snapshot and durable results', async () => {
@@ -63,7 +63,7 @@ test('profile tool preserves authority, revision conflicts, execution snapshot a
     args = { revision: 5, name: 'Cancelled' }; const cancelled = randomUUID(); before = () => request(`${path}/turns/${cancelled}/cancel`, { id: randomUUID() });
     await request(path + '/turns', { id: cancelled, text: 'Cancel' }); await until(path, cancelled, 'cancelled'); assert.equal((await profile()).revision, 5);
     assert.equal((await request('/api/agents')).agents.find((item: any) => item.id === other.id).revision, 1);
-    await app.close(); const db = new DatabaseSync(options.database); db.exec("CREATE TRIGGER reject_profile_journal BEFORE INSERT ON flow_tool_calls BEGIN SELECT RAISE(ABORT, 'synthetic journal failure'); END"); db.close();
+    await app.close(); const db = testDatabase(options.database); db.exec("CREATE TRIGGER reject_profile_journal BEFORE INSERT ON flow_tool_calls BEGIN SELECT RAISE(ABORT, 'synthetic journal failure'); END"); db.close();
     app = await startApp(options); await run(path, 'failed'); assert.equal((await profile()).revision, 5); assert.equal((await profile()).name, 'User choice');
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });

@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign, randomBytes, randomUUID } from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,7 +26,7 @@ function fenceEvidenceBody(evidence: Omit<FenceEvidence, 'signature'>) {
 }
 function holdRestoreGuard(database: string) {
   const path = database + '.server-lock.sqlite';
-  const guard = new DatabaseSync(path);
+  const guard = testDatabase(path, { timeout: 0 });
   chmodSync(path, 0o600);
   guard.exec('BEGIN EXCLUSIVE');
   return guard;
@@ -33,7 +34,7 @@ function holdRestoreGuard(database: string) {
 
 async function fixture(version: 1 | 2 | 3 = 3, seed?: (db: DatabaseSync, owner: HumanActor, project: string) => void) {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-fence-')), database = join(dir, 'restored.sqlite');
-  let db = new DatabaseSync(join(dir, 'source.sqlite')); initializeCanonicalSchema(db, Date.now(), version);
+  let db = testDatabase(join(dir, 'source.sqlite')); initializeCanonicalSchema(db, Date.now(), version);
   const owner: HumanActor = { accountId: '11111111-1111-4111-8111-111111111111', issuer: 'https://fixture.clerk.accounts.dev', subject: 'user_owner', sessionId: 'sess_owner', expiresAt: Date.now() + 300000 };
   const config = { origin: 'https://briefsip.example', issuer: owner.issuer, secretKey: 'sk_test_fixture', publishableKey: `pk_test_${Buffer.from('fixture.clerk.accounts.dev$').toString('base64')}` };
   const project = '22222222-2222-4222-8222-222222222222';
@@ -44,7 +45,7 @@ async function fixture(version: 1 | 2 | 3 = 3, seed?: (db: DatabaseSync, owner: 
   const snapshot = await workspaceSnapshot(db); db.close();
   let bootstrapFile: string;
   try { bootstrapFile = checkedRestore(['--read-only', snapshot.file, '--db', database]).bootstrapFile; } finally { snapshot.cleanup(); }
-  db = new DatabaseSync(database);
+  db = testDatabase(database);
   const identity = restoreIdentity(owner, config.origin);
   const session = (file: string) => checkedRestore(['reconcile', '--db', database, '--bootstrap', file], identity()).sessionFile as string;
   const sessionFile = session(bootstrapFile);
@@ -91,7 +92,7 @@ async function fixture(version: 1 | 2 | 3 = 3, seed?: (db: DatabaseSync, owner: 
     return command('activate', pin, actor, alternateSession, ['--evidence', evidenceFile, '--plan', planFile]);
   };
   return { dir, database, owner, proof, trust, trustFile, sessionFile, evidenceFile, prepare, signed, verify, plan, activate, replaceSession, run, db: () => db,
-    reopen() { db.close(); db = new DatabaseSync(database); }, close() { db.close(); rmSync(dir, { recursive: true, force: true }); } };
+    reopen() { db.close(); db = testDatabase(database); }, close() { db.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
 test('signed infrastructure fence preflight survives restart and exact retry without activating restore', async () => {

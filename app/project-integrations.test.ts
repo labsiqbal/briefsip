@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 import { composioToolName } from './test-support/composio-tool-name.ts';
 const secret='PROJECT_CANARY_j4W8sK3p';
@@ -87,7 +87,7 @@ for(const runtime of ['codex','claude'] as const)test(`${runtime}: project envir
     await f.restart();await f.run(path,'ENV_PRESENT');assert.equal((await f.request(base)).items.length,1);
     assert.equal((await f.request(base)).exposeComputer,false);await f.request(base+'/settings',{id:randomUUID(),revision:1,exposeComputer:true},400);await f.request(base+'/settings',{id:randomUUID(),revision:1,exposeComputer:true,confirmed:true});
     const replacement=await f.request(base,{id:randomUUID(),name:saved.name,value:'replacement-value',updated:saved.updated});await f.request(base+'/remove',{id:randomUUID(),name:saved.name,updated:replacement.updated,confirmed:true});assert.deepEqual((await f.request(base)).items,[]);await f.run(path,'ENV_ABSENT');
-    assert(!f.responses.join('').includes(secret));await f.shutdown();assert(!readFileSync(f.database).includes(Buffer.from(secret)));const db=new DatabaseSync(f.database);assert(!JSON.stringify(db.prepare('SELECT * FROM provider_streams').all()).includes(secret));assert(!JSON.stringify(db.prepare('SELECT * FROM provider_stream_segments').all()).includes(secret));db.close();
+    assert(!f.responses.join('').includes(secret));await f.shutdown();assert(!readFileSync(f.database).includes(Buffer.from(secret)));const db=testDatabase(f.database);assert(!JSON.stringify(db.prepare('SELECT * FROM provider_streams').all()).includes(secret));assert(!JSON.stringify(db.prepare('SELECT * FROM provider_stream_segments').all()).includes(secret));db.close();
   }finally{await f.close();rmSync(binaries,{recursive:true,force:true});}
 });
 
@@ -129,6 +129,6 @@ test('project apps and MCP: separate OAuth identities, offered tools, approvals,
     await f.restart();assert.equal((await f.request(`/api/projects/${p.id}/mcp`)).items[0].id,connection);assert.equal((await f.request(`/api/projects/${p.id}/connected-apps/accounts`)).items[0].id,'account_2');await f.run(xp,'MCP after restart');
     binary=true;const binaryTurn=randomUUID();await f.request(xp,{id:binaryTurn,text:'Refuse secret file'},202);assert.equal((await f.until(xp,binaryTurn)).status,'failed');binary=false;
     const current=await f.request(`/api/projects/${p.id}`);await f.request(`/api/projects/${p.id}/delete`,{id:randomUUID(),revision:current.revision,confirmed:true});assert(![...accounts.values()].includes('account_2'));assert(accounts.has(links[0]));
-    await f.shutdown();assert(!readFileSync(f.database).includes(Buffer.from(secret)), 'Project secrets must not remain in SQLite free pages');const db=new DatabaseSync(f.database);assert.equal(db.prepare('SELECT count(*) n FROM mcp_files WHERE turn=?').get(binaryTurn)!.n,0);assert.equal(db.prepare('SELECT count(*) n FROM project_environment WHERE project=?').get(p.id)!.n,0);assert.equal(db.prepare('SELECT count(*) n FROM mcp_projects WHERE project=?').get(p.id)!.n,0);db.close();assert(!f.responses.join('').includes(secret));
+    await f.shutdown();assert(!readFileSync(f.database).includes(Buffer.from(secret)), 'Project secrets must not remain in SQLite free pages');const db=testDatabase(f.database);assert.equal(db.prepare('SELECT count(*) n FROM mcp_files WHERE turn=?').get(binaryTurn)!.n,0);assert.equal(db.prepare('SELECT count(*) n FROM project_environment WHERE project=?').get(p.id)!.n,0);assert.equal(db.prepare('SELECT count(*) n FROM mcp_projects WHERE project=?').get(p.id)!.n,0);db.close();assert(!f.responses.join('').includes(secret));
   }finally{await f.close();await stop(provider);await stop(remote);await stop(mcpServer);}
 });

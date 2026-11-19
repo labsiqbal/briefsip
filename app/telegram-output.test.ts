@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {DatabaseSync} from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import {createServer} from 'node:http';
 import {randomUUID} from 'node:crypto';
 import {mkdtempSync,rmSync} from 'node:fs';
@@ -38,7 +39,7 @@ test('Telegram sends exact generated artifacts, retains uncertain delivery and r
  async function incoming(text='Create file'){
   const id=++sequence;
   await connector.send(telegramUpdate(id,text));
-  db??=new DatabaseSync(journal);
+  db??=testDatabase(journal);
   return db!.prepare('SELECT * FROM telegram_inbox ORDER BY rowid DESC LIMIT 1').get()!;
  }
  const until=(check:()=>boolean)=>waitFor(()=>{connector.check();return check();},'Connector did not settle');

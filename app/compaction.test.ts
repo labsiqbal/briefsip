@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createServer, type ServerResponse } from 'node:http';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -53,7 +53,7 @@ test('incremental compaction keeps source scopes, originals, provenance and fail
       { path: `/api/channels/${c.id}`, agent: a.id, channel: c.id, thread: null, marker: 'SHARED_C' },
       { path: `/api/threads/${thread.id}`, agent: a.id, channel: null, thread: thread.id, marker: 'SIDE_A' },
     ];
-    await app.close(); const db = new DatabaseSync(options.database);
+    await app.close(); const db = testDatabase(options.database);
     for (const scope of scopes) for (let n = 0; n < 65; n++) db.prepare("INSERT INTO turns(id,agent,channel,thread,text,reply,status,created) VALUES (?,?,?,?,?,?,'done',?)").run(randomUUID(), scope.agent, scope.channel, scope.thread, `${scope.marker}_${n}`, `Reply ${n}`, new Date().toISOString());
     const firstSource = db.prepare('SELECT id FROM turns ORDER BY seq LIMIT 1').get()!.id;
     db.prepare('INSERT INTO questions VALUES (?,?,?,?,?,?,?,0,0)').run(randomUUID(), firstSource, 'question', '{}', 'Decision?', '[]', 'IMPORTANT_DECISION');
@@ -76,7 +76,7 @@ test('incremental compaction keeps source scopes, originals, provenance and fail
     const stopped = (await request(path)).find((r: any) => r.id === id), calls = summaries.length;
     await request(`${path}/${id}/resume`, { id: randomUUID(), revision: stopped.revision, acknowledgeUncertain: true });
     await until(() => request(path), rows => rows.find((r: any) => r.id === id)?.status === 'done'); assert.equal(summaries.length, calls);
-    await app.close(); const changed = new DatabaseSync(options.database);
+    await app.close(); const changed = testDatabase(options.database);
     changed.prepare("UPDATE turns SET revision=revision+1 WHERE id=?").run(before.sources[0].id); changed.close(); app = await startApp(options);
     assert.equal(await request(scopes[0].path + '/compaction'), null); await run(scopes[0].path); assert.equal((await request(scopes[0].path + '/compaction')).source_count, 20);
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
@@ -123,7 +123,7 @@ test('Rust compaction fences stale responses, changed sources, cancelled turns a
   try {
     const agent = await request('/api/agents', { id: randomUUID(), runtime: 'api', name: 'Compaction', model: 'fixture', instructions: 'Help.' });
     const path = `/api/agents/${agent.id}`, scope = `agents:${agent.id}`;
-    const db = new DatabaseSync(database);
+    const db = testDatabase(database);
     try {
       const seed = db.prepare("INSERT INTO turns(id,agent,text,status,created) VALUES (?,?,?,?,'2026-01-01')");
       db.exec('BEGIN IMMEDIATE');

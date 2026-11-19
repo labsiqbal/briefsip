@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -89,7 +89,7 @@ test('Rust workflow schedules skip busy approvals once and leave offline work du
       await api(path, { ...settings, id: randomUUID(), nextAt: now - 240000, intervalSeconds: null });
       assert.deepEqual((await api(path)).occurrences, []);
     }
-    const db = new DatabaseSync(database);
+    const db = testDatabase(database);
     try {
       db.exec('BEGIN IMMEDIATE');
       for (let index = 0; index < 100; index++) {
@@ -121,7 +121,7 @@ test('Rust workflow schedules skip busy approvals once and leave offline work du
     await api(approvalPath, { ...settings, id: randomUUID(), revision: busy.schedule.revision, nextAt: now + 120000, intervalSeconds: null });
 
     await app.close();
-    const cleanup = new DatabaseSync(database);
+    const cleanup = testDatabase(database);
     try {
       cleanup.exec(`DELETE FROM workflow_schedules WHERE workflow IN (SELECT id FROM workflows WHERE name='Offline');
         DELETE FROM workflow_versions WHERE workflow IN (SELECT id FROM workflows WHERE name='Offline');
