@@ -1,0 +1,54 @@
+# SearXNG for Briefsip agents (web_search, issue #134). Loopback-only instance.
+# Engines were chosen by testing from NUC (Indonesia, 2026-11-19):
+# - Google engines stay off: server IPs get "unusual traffic" CAPTCHAs.
+# - DuckDuckGo is off: blocked by Indonesian ISPs (DNS answers with another certificate).
+# - Brave is off: result links come back as relative "/go/v1/..." redirects.
+# - Qwant and Yep refuse automated requests.
+# SearXNG suspends any engine that answers with a CAPTCHA and keeps the others.
+use_default_settings: true
+
+general:
+  instance_name: "Briefsip search"
+  enable_metrics: false
+  contact_url: false
+
+search:
+  safe_search: 0
+  formats:
+    - html
+    - json
+
+server:
+  # The secret comes from SEARXNG_SECRET in the runtime env file.
+  limiter: false
+  public_instance: false
+  image_proxy: false
+  method: "GET"
+
+outgoing:
+  request_timeout: 5.0
+  max_request_timeout: 10.0
+
+engines:
+  - name: bing
+    disabled: false
+  - name: yahoo
+    disabled: false
+  - name: yandex
+    disabled: false
+  - name: mwmbl
+    disabled: false
+  - name: wikipedia
+    disabled: false
+  - name: duckduckgo
+    disabled: true
+  - name: brave
+    disabled: true
+  - name: google
+    disabled: true
+  - name: google cse
+    disabled: true
+  - name: startpage
+    disabled: true
+  - name: qwant
+    disabled: true
