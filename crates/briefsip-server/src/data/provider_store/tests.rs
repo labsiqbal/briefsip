@@ -227,7 +227,7 @@ esac
     )?;
     fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))?;
     Arc::get_mut(&mut fixture.state.config)
-        .unwrap()
+        .ok_or("Fixture config is shared")?
         .harness
         .harness = Some(json!({"executables":{"codex":executable,"claude":executable}}));
 
@@ -254,13 +254,13 @@ esac
         assert_eq!(
             fixture
                 .request("/api/engine-logins", Some(add.clone()), "http://other.test")
-                .await
+                .await?
                 .0,
             403
         );
         let (status, created) = fixture
             .request("/api/engine-logins", Some(add.clone()), ORIGIN)
-            .await;
+            .await?;
         assert_eq!(status, 201);
         assert_eq!(
             created["command"],
@@ -271,11 +271,11 @@ esac
         assert_eq!(
             fixture
                 .request("/api/engine-logins", Some(add), ORIGIN)
-                .await
+                .await?
                 .0,
             200
         );
-        let (_, checked) = fixture.request(&check, action(), ORIGIN).await;
+        let (_, checked) = fixture.request(&check, action(), ORIGIN).await?;
         assert!(checked["checkedAt"].is_string());
         assert_eq!(checked["signedIn"], false);
 
@@ -287,7 +287,7 @@ esac
         assert_eq!(
             fixture
                 .request("/api/agents", Some(profile.clone()), ORIGIN)
-                .await
+                .await?
                 .0,
             400
         );
@@ -295,28 +295,26 @@ esac
         assert_eq!(
             fixture
                 .request("/api/agents", Some(profile.clone()), ORIGIN)
-                .await
+                .await?
                 .0,
             201
         );
-        let current = |directory: Value| {
+        let current = |directory: Value| -> crate::db::Result<Value> {
             directory["agents"]
                 .as_array()
-                .unwrap()
-                .iter()
-                .find(|row| row["id"] == agent)
-                .unwrap()
-                .clone()
+                .and_then(|rows| rows.iter().find(|row| row["id"] == agent))
+                .cloned()
+                .ok_or_else(|| "Agent missing from fixture directory".into())
         };
         assert_eq!(
-            current(fixture.request("/api/agents", None, ORIGIN).await.1)["runnable"],
+            current(fixture.request("/api/agents", None, ORIGIN).await?.1)?["runnable"],
             false
         );
         let turns = format!("/api/agents/{agent}/turns");
         assert_eq!(
             fixture
                 .request(&turns, Some(json!({"id":id(),"text":"Hello"})), ORIGIN)
-                .await
+                .await?
                 .0,
             503
         );
@@ -325,22 +323,22 @@ esac
         fs::write(&fake_host, b"outside-profile-sentinel")?;
         let credential = path.join(file);
         std::os::unix::fs::symlink(&fake_host, &credential)?;
-        assert_eq!(fixture.request(&check, action(), ORIGIN).await.0, 409);
+        assert_eq!(fixture.request(&check, action(), ORIGIN).await?.0, 409);
         fs::remove_file(&credential)?;
         fs::hard_link(&fake_host, &credential)?;
-        assert_eq!(fixture.request(&check, action(), ORIGIN).await.0, 409);
+        assert_eq!(fixture.request(&check, action(), ORIGIN).await?.0, 409);
         fs::remove_file(&credential)?;
         fs::write(&credential, b"fake-login-credential")?;
-        let (status, checked) = fixture.request(&check, action(), ORIGIN).await;
+        let (status, checked) = fixture.request(&check, action(), ORIGIN).await?;
         assert_eq!(status, 200);
         assert_eq!(checked["signedIn"], true);
         assert!(!checked.to_string().contains("fake-login-credential"));
         assert_eq!(
-            current(fixture.request("/api/agents", None, ORIGIN).await.1)["runnable"],
+            current(fixture.request("/api/agents", None, ORIGIN).await?.1)?["runnable"],
             true
         );
 
-        assert_eq!(fixture.request(&remove, action(), ORIGIN).await.0, 409);
+        assert_eq!(fixture.request(&remove, action(), ORIGIN).await?.0, 409);
         let edit = format!("/api/agents/{agent}/edit");
         profile["id"] = json!(id());
         profile["revision"] = json!(1);
@@ -349,17 +347,17 @@ esac
         assert_eq!(
             fixture
                 .request(&edit, Some(profile.clone()), ORIGIN)
-                .await
+                .await?
                 .0,
             400
         );
         profile["providerAccount"] = json!("");
-        assert_eq!(fixture.request(&edit, Some(profile), ORIGIN).await.0, 200);
-        assert_eq!(fixture.request(&remove, action(), ORIGIN).await.0, 200);
+        assert_eq!(fixture.request(&edit, Some(profile), ORIGIN).await?.0, 200);
+        assert_eq!(fixture.request(&remove, action(), ORIGIN).await?.0, 200);
         assert!(!path.exists());
-        assert_eq!(fixture.request(&check, action(), ORIGIN).await.0, 404);
+        assert_eq!(fixture.request(&check, action(), ORIGIN).await?.0, 404);
         assert_eq!(
-            fixture.request("/api/engine-logins", None, ORIGIN).await.1,
+            fixture.request("/api/engine-logins", None, ORIGIN).await?.1,
             json!([])
         );
         assert_eq!(fs::read(&fake_host)?, b"outside-profile-sentinel");
