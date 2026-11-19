@@ -400,7 +400,7 @@ mod tests {
             computer,
         };
         let route = format!("/api/turns/{id}/inspect");
-        let send = |method, header: Option<(&str, &str)>| {
+        let send = |method, header: Option<(&str, &str)>| -> axum::http::Result<_> {
             let mut request = Request::builder()
                 .method(method)
                 .uri(&route)
@@ -408,12 +408,12 @@ mod tests {
             if let Some((name, value)) = header {
                 request = request.header(name, value);
             }
-            crate::dispatch(
+            Ok(crate::dispatch(
                 State(state.clone()),
-                request.body(Body::empty()).expect("request fixture"),
-            )
+                request.body(Body::empty())?,
+            ))
         };
-        let failed = send(Method::GET, Some(("origin", &state.origin))).await;
+        let failed = send(Method::GET, Some(("origin", &state.origin)))?.await;
         assert_eq!(failed.status(), StatusCode::OK);
         assert_eq!(failed.headers()["cache-control"], "no-store");
         let bytes = axum::body::to_bytes(failed.into_body(), 64 * 1024).await?;
@@ -440,22 +440,25 @@ mod tests {
             ("authorization", "Bearer agent"),
         ] {
             assert_eq!(
-                send(Method::GET, Some(header)).await.status(),
+                send(Method::GET, Some(header))?.await.status(),
                 StatusCode::FORBIDDEN
             );
         }
         assert_eq!(
-            send(Method::POST, None).await.status(),
+            send(Method::POST, None)?.await.status(),
             StatusCode::METHOD_NOT_ALLOWED
         );
         {
-            let guard = state.database.lock().expect("fixture database");
+            let guard = state
+                .database
+                .lock()
+                .map_err(|_| "fixture database lock poisoned")?;
             guard
                 .connection
                 .execute("UPDATE threads SET deleted=1 WHERE id='thread'", [])?;
         }
         assert_eq!(
-            send(Method::GET, None).await.status(),
+            send(Method::GET, None)?.await.status(),
             StatusCode::NOT_FOUND
         );
         Ok(())
