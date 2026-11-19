@@ -10,9 +10,9 @@ use crate::{
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
-    fs::OpenOptions,
+    fs::{DirBuilder, OpenOptions},
     io::Write,
-    os::unix::fs::OpenOptionsExt,
+    os::unix::fs::{DirBuilderExt, OpenOptionsExt},
     path::{Path, PathBuf},
 };
 
@@ -51,6 +51,7 @@ pub struct Home {
     pub path: PathBuf,
     pub environment: HashMap<String, String>,
     pub fingerprint: String,
+    pub login_id: Option<String>,
 }
 impl Drop for Home {
     fn drop(&mut self) {
@@ -68,13 +69,15 @@ fn private(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 fn home(
     runtime: &str,
-    account: &data::providers::Account,
+    account: Option<&data::providers::Account>,
+    login: Option<(&str, &[u8])>,
     model: &str,
     fingerprint: String,
 ) -> Result<Home> {
     let path = std::env::temp_dir().join(format!("briefsip-session-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir(&path).map_err(|_| Failure::storage())?;
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
+    DirBuilder::new()
+        .mode(0o700)
+        .create(&path)
         .map_err(|_| Failure::storage())?;
     let mut h = Home {
         path: path.clone(),
@@ -94,29 +97,41 @@ fn home(
             ),
         ]),
         fingerprint,
+        login_id: login.map(|(id, _)| id.to_owned()),
     };
     if runtime == "codex" {
-        if account.family != "openai-compatible" || account.base.is_empty() {
-            return Err(error(
-                502,
-                "Codex requires an OpenAI-compatible provider in Settings.",
-            ));
-        }
-        data::providers::address(&account.base)
-            .map_err(|_| error(502, "Invalid Codex provider URL."))?;
         let codex = path.join(".codex");
-        std::fs::create_dir_all(codex.join("rules")).map_err(|_| Failure::storage())?;
+        DirBuilder::new()
+            .mode(0o700)
+            .recursive(true)
+            .create(codex.join("rules"))
+            .map_err(|_| Failure::storage())?;
         h.environment
             .insert("CODEX_HOME".into(), codex.to_string_lossy().into_owned());
-        h.environment.insert(
-            "BRIEFSIP_PROVIDER_KEY".into(),
-            account
-                .key
-                .clone()
-                .filter(|v| !v.is_empty())
-                .unwrap_or_else(|| "briefsip-no-key".into()),
-        );
-        private(&codex.join("config.toml"),format!("model = {}\nmodel_provider = \"briefsip\"\n[model_providers.briefsip]\nname = \"Briefsip provider\"\nbase_url = {}\nwire_api = \"responses\"\nenv_key = \"BRIEFSIP_PROVIDER_KEY\"\nrequires_openai_auth = false\nsupports_websockets = false\n",json!(model),json!(account.base.trim_end_matches('/'))).as_bytes())?;
+        if let Some((_, bytes)) = login {
+            private(&codex.join(data::logins::credential_name(runtime)), bytes)?;
+            private(&codex.join("config.toml"), data::logins::CODEX_CONFIG)?;
+        } else {
+            let account = account
+                .filter(|account| account.family == "openai-compatible" && !account.base.is_empty())
+                .ok_or_else(|| {
+                    error(
+                        502,
+                        "Codex requires an OpenAI-compatible provider in Settings.",
+                    )
+                })?;
+            data::providers::address(&account.base)
+                .map_err(|_| error(502, "Invalid Codex provider URL."))?;
+            h.environment.insert(
+                "BRIEFSIP_PROVIDER_KEY".into(),
+                account
+                    .key
+                    .clone()
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or_else(|| "briefsip-no-key".into()),
+            );
+            private(&codex.join("config.toml"),format!("model = {}\nmodel_provider = \"briefsip\"\n[model_providers.briefsip]\nname = \"Briefsip provider\"\nbase_url = {}\nwire_api = \"responses\"\nenv_key = \"BRIEFSIP_PROVIDER_KEY\"\nrequires_openai_auth = false\nsupports_websockets = false\n",json!(model),json!(account.base.trim_end_matches('/'))).as_bytes())?;
+        }
         let mut rules = [
             "rm", "rmdir", "shred", "dd", "mkfs", "sudo", "su", "mount", "umount", "chmod",
             "chown", "kill", "pkill", "killall",
@@ -141,27 +156,40 @@ fn home(
                 .join("\n")
                 .as_bytes(),
         )?;
-    } else if runtime == "claude" && !account.base.is_empty() {
-        h.environment.insert(
-            "ANTHROPIC_BASE_URL".into(),
-            account
-                .base
-                .trim_end_matches('/')
-                .trim_end_matches("/v1")
-                .into(),
-        );
-        h.environment.insert(
-            "ANTHROPIC_API_KEY".into(),
-            account
-                .key
-                .clone()
-                .filter(|v| !v.is_empty())
-                .unwrap_or_else(|| "briefsip-no-key".into()),
-        );
-        h.environment.insert(
-            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".into(),
-            "1".into(),
-        );
+    } else if runtime == "claude" {
+        if let Some((_, bytes)) = login {
+            let claude = path.join(".claude");
+            DirBuilder::new()
+                .mode(0o700)
+                .create(&claude)
+                .map_err(|_| Failure::storage())?;
+            private(&claude.join(data::logins::credential_name(runtime)), bytes)?;
+            h.environment.insert(
+                "CLAUDE_CONFIG_DIR".into(),
+                claude.to_string_lossy().into_owned(),
+            );
+        } else if let Some(account) = account.filter(|account| !account.base.is_empty()) {
+            h.environment.insert(
+                "ANTHROPIC_BASE_URL".into(),
+                account
+                    .base
+                    .trim_end_matches('/')
+                    .trim_end_matches("/v1")
+                    .into(),
+            );
+            h.environment.insert(
+                "ANTHROPIC_API_KEY".into(),
+                account
+                    .key
+                    .clone()
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or_else(|| "briefsip-no-key".into()),
+            );
+            h.environment.insert(
+                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".into(),
+                "1".into(),
+            );
+        }
     }
     Ok(h)
 }
@@ -1287,7 +1315,7 @@ pub async fn run(
     messages: &[Value],
     phase: &str,
 ) -> Result<String> {
-    let (turn, profile, binding, account) = {
+    let (turn, profile, binding, account, login) = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
         let turn = one(
@@ -1299,16 +1327,38 @@ pub async fn run(
         let profile = agents::read(db, string(&turn, "agent"))?;
         let binding = turns::harness::workspace(state, db, &turn)?
             .ok_or_else(|| error(403, "Coding harness requires a host workspace folder."))?;
-        let account = data::providers::accounts(state)?
-            .into_iter()
-            .find(|v| v.id == string(&profile, "provider_account"))
-            .ok_or_else(|| {
+        let provider = string(&profile, "provider_account");
+        let (account, login) = if provider.starts_with(data::logins::PREFIX) {
+            let selected = data::logins::bound(db, provider)?;
+            if let Some(reason) =
+                data::logins::blocked_reason(string(&profile, "runtime"), selected.as_ref())
+            {
+                return Err(error(503, reason));
+            }
+            let selected = selected.ok_or_else(Failure::storage)?;
+            let credentials = data::logins::credentials(state, &selected)?.ok_or_else(|| {
                 error(
                     503,
-                    "The selected provider account is not configured. Check Settings > Providers.",
+                    "Engine login credentials are missing. Check sign-in in Settings > Engines.",
                 )
             })?;
-        (turn, profile, binding, account)
+            (
+                None,
+                Some((string(&selected, "id").to_owned(), credentials)),
+            )
+        } else {
+            let account = data::providers::accounts(state)?
+                .into_iter()
+                .find(|account| account.id == provider)
+                .ok_or_else(|| {
+                    error(
+                        503,
+                        "The selected provider account is not configured. Check Settings > Providers.",
+                    )
+                })?;
+            (Some(account), None)
+        };
+        (turn, profile, binding, account, login)
     };
     let runtime = string(&profile, "runtime");
     let conversation = turn["channel"]
@@ -1316,15 +1366,26 @@ pub async fn run(
         .or(turn["thread"].as_str())
         .unwrap_or("direct");
     let key = json!([turn["agent"], conversation, runtime, binding.directory]).to_string();
-    let fingerprint = json!([
-        account.id,
-        account.base,
-        format!(
-            "{:x}",
-            Sha256::digest(account.key.as_deref().unwrap_or("").as_bytes())
-        ),
-        model
-    ])
+    let fingerprint = if let Some(account) = &account {
+        json!([
+            account.id,
+            account.base,
+            format!(
+                "{:x}",
+                Sha256::digest(account.key.as_deref().unwrap_or("").as_bytes())
+            ),
+            model
+        ])
+    } else if let Some((id, bytes)) = &login {
+        json!([
+            data::logins::PREFIX,
+            id,
+            format!("{:x}", Sha256::digest(bytes)),
+            model
+        ])
+    } else {
+        return Err(Failure::storage());
+    }
     .to_string();
     let project_environment = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
@@ -1332,6 +1393,23 @@ pub async fn run(
     };
     let mut env = state.config.harness.environment.clone();
     env.extend(project_environment.clone());
+    if login.is_some() {
+        for variable in [
+            "OPENAI_API_KEY",
+            "CODEX_API_KEY",
+            "CODEX_ACCESS_TOKEN",
+            "OPENAI_BASE_URL",
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_BASE_URL",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "CLAUDE_CODE_USE_BEDROCK",
+            "CLAUDE_CODE_USE_VERTEX",
+            "CLAUDE_CODE_USE_FOUNDRY",
+        ] {
+            env.remove(variable);
+        }
+    }
     let same_home;
     {
         let mut homes = state.config.harness.homes.lock().await;
@@ -1341,7 +1419,18 @@ pub async fn run(
         if ["codex", "claude"].contains(&runtime) {
             if !same_home {
                 homes.remove(&key);
-                homes.insert(key.clone(), home(runtime, &account, model, fingerprint)?);
+                homes.insert(
+                    key.clone(),
+                    home(
+                        runtime,
+                        account.as_ref(),
+                        login
+                            .as_ref()
+                            .map(|(id, bytes)| (id.as_str(), bytes.as_slice())),
+                        model,
+                        fingerprint,
+                    )?,
+                );
             }
             env.extend(
                 homes
@@ -1407,7 +1496,16 @@ pub async fn run(
     if runtime == "hermes" {
         env.extend(process::HERMES_ENV.map(|(key, value)| (key.into(), value.into())));
     }
-    let mut secrets = vec![token.clone(), account.key.unwrap_or_default()];
+    let model = if login.is_some() && model == "default" {
+        ""
+    } else {
+        model
+    };
+    let mut secrets = vec![token.clone()];
+    secrets.extend(account.and_then(|account| account.key));
+    if let Some((_, bytes)) = login {
+        secrets.extend(data::logins::secrets(runtime, &bytes));
+    }
     {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         secrets.extend(crate::mcp::secrets::project(
@@ -1480,7 +1578,7 @@ mod tests {
             max_tokens: 0,
             source: "environment",
         };
-        let session = home("codex", &account, &account.model, String::new())
+        let session = home("codex", Some(&account), None, &account.model, String::new())
             .map_err(|failure| failure.message)?;
         let codex = Path::new(&session.environment["CODEX_HOME"]);
         let config = codex.join("config.toml");
@@ -1507,10 +1605,51 @@ mod tests {
         drop(session);
         assert!(!path.exists());
         account.base = "https://user:password@example.test/v1".into();
-        assert!(home("codex", &account, "x", String::new()).is_err());
+        assert!(home("codex", Some(&account), None, "x", String::new()).is_err());
         account.base = "https://example.test/v1".into();
         account.family = "anthropic".into();
-        assert!(home("codex", &account, "x", String::new()).is_err());
+        assert!(home("codex", Some(&account), None, "x", String::new()).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn engine_login_home_has_only_profile_auth_and_generated_config() -> crate::db::Result<()> {
+        for (runtime, variable, file, expected) in [
+            (
+                "codex",
+                "CODEX_HOME",
+                "auth.json",
+                &["auth.json", "config.toml", "rules"][..],
+            ),
+            (
+                "claude",
+                "CLAUDE_CONFIG_DIR",
+                ".credentials.json",
+                &[".credentials.json"][..],
+            ),
+        ] {
+            let bytes = b"synthetic-profile-credential";
+            let session = home(runtime, None, Some(("login", bytes)), "", String::new())
+                .map_err(|failure| failure.message)?;
+            let directory = Path::new(&session.environment[variable]);
+            assert_eq!(directory.parent(), Some(session.path.as_path()));
+            assert_eq!(session.environment["HOME"], session.path.to_string_lossy());
+            let mut names = std::fs::read_dir(directory)?
+                .map(|entry| entry.map(|value| value.file_name()))
+                .collect::<std::io::Result<Vec<_>>>()?;
+            names.sort_unstable();
+            assert_eq!(names, expected);
+            assert_eq!(std::fs::read(directory.join(file))?, bytes);
+            assert_eq!(
+                std::fs::metadata(directory.join(file))?
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+            assert!(!session.environment.contains_key("BRIEFSIP_PROVIDER_KEY"));
+            assert!(!session.environment.contains_key("ANTHROPIC_API_KEY"));
+        }
         Ok(())
     }
 

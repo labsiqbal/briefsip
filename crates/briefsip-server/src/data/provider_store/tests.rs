@@ -211,6 +211,162 @@ async fn agent_directory_checks_each_runtime_and_bound_account() -> crate::db::R
 }
 
 #[tokio::test]
+async fn engine_login_profiles_check_and_guard_agent_bindings() -> crate::db::Result<()> {
+    let mut fixture = Fixture::with_environment_accounts(false).await?;
+    let executable = fixture.directory.join("fake-engine");
+    fs::write(
+        &executable,
+        r#"#!/bin/sh
+case "$*" in
+  "login status") test "$HOME" = "$CODEX_HOME" && test -f "$CODEX_HOME/auth.json" ;;
+  "auth status --json") test "$HOME" = "$CLAUDE_CONFIG_DIR" && test -f "$CLAUDE_CONFIG_DIR/.credentials.json" ;;
+  *) exit 2 ;;
+esac
+"#,
+    )?;
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))?;
+    Arc::get_mut(&mut fixture.state.config)
+        .unwrap()
+        .harness
+        .harness = Some(json!({"executables":{"codex":executable,"claude":executable}}));
+
+    for (runtime, other, file, variable, command) in [
+        ("codex", "claude", "auth.json", "CODEX_HOME", "codex login"),
+        (
+            "claude",
+            "codex",
+            ".credentials.json",
+            "CLAUDE_CONFIG_DIR",
+            "claude auth login",
+        ),
+    ] {
+        let login = id();
+        let path = fixture
+            .directory
+            .join("engine-logins")
+            .join(runtime)
+            .join(&login);
+        let add = json!({"id":login,"runtime":runtime,"name":"Personal"});
+        let check = format!("/api/engine-logins/{login}/check");
+        let remove = format!("/api/engine-logins/{login}/remove");
+        let action = || Some(json!({"id":id()}));
+        assert_eq!(
+            fixture
+                .request("/api/engine-logins", Some(add.clone()), "http://other.test")
+                .await
+                .0,
+            403
+        );
+        let (status, created) = fixture
+            .request("/api/engine-logins", Some(add.clone()), ORIGIN)
+            .await;
+        assert_eq!(status, 201);
+        assert_eq!(
+            created["command"],
+            format!("{variable}='{}' {command}", path.display())
+        );
+        assert_eq!(created["signedIn"], false);
+        assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o777, 0o700);
+        assert_eq!(
+            fixture
+                .request("/api/engine-logins", Some(add), ORIGIN)
+                .await
+                .0,
+            200
+        );
+        let (_, checked) = fixture.request(&check, action(), ORIGIN).await;
+        assert!(checked["checkedAt"].is_string());
+        assert_eq!(checked["signedIn"], false);
+
+        let agent = id();
+        let mut profile = json!({
+            "id":agent,"runtime":other,"providerAccount":format!("login:{login}"),
+            "name":"Coder","instructions":"Answer","model":"default"
+        });
+        assert_eq!(
+            fixture
+                .request("/api/agents", Some(profile.clone()), ORIGIN)
+                .await
+                .0,
+            400
+        );
+        profile["runtime"] = json!(runtime);
+        assert_eq!(
+            fixture
+                .request("/api/agents", Some(profile.clone()), ORIGIN)
+                .await
+                .0,
+            201
+        );
+        let current = |directory: Value| {
+            directory["agents"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["id"] == agent)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(
+            current(fixture.request("/api/agents", None, ORIGIN).await.1)["runnable"],
+            false
+        );
+        let turns = format!("/api/agents/{agent}/turns");
+        assert_eq!(
+            fixture
+                .request(&turns, Some(json!({"id":id(),"text":"Hello"})), ORIGIN)
+                .await
+                .0,
+            503
+        );
+
+        let fake_host = fixture.directory.join("fake-host-auth");
+        fs::write(&fake_host, b"outside-profile-sentinel")?;
+        let credential = path.join(file);
+        std::os::unix::fs::symlink(&fake_host, &credential)?;
+        assert_eq!(fixture.request(&check, action(), ORIGIN).await.0, 409);
+        fs::remove_file(&credential)?;
+        fs::hard_link(&fake_host, &credential)?;
+        assert_eq!(fixture.request(&check, action(), ORIGIN).await.0, 409);
+        fs::remove_file(&credential)?;
+        fs::write(&credential, b"fake-login-credential")?;
+        let (status, checked) = fixture.request(&check, action(), ORIGIN).await;
+        assert_eq!(status, 200);
+        assert_eq!(checked["signedIn"], true);
+        assert!(!checked.to_string().contains("fake-login-credential"));
+        assert_eq!(
+            current(fixture.request("/api/agents", None, ORIGIN).await.1)["runnable"],
+            true
+        );
+
+        assert_eq!(fixture.request(&remove, action(), ORIGIN).await.0, 409);
+        let edit = format!("/api/agents/{agent}/edit");
+        profile["id"] = json!(id());
+        profile["revision"] = json!(1);
+        profile["runtime"] = json!("api");
+        profile["confirmRuntime"] = json!(true);
+        assert_eq!(
+            fixture
+                .request(&edit, Some(profile.clone()), ORIGIN)
+                .await
+                .0,
+            400
+        );
+        profile["providerAccount"] = json!("");
+        assert_eq!(fixture.request(&edit, Some(profile), ORIGIN).await.0, 200);
+        assert_eq!(fixture.request(&remove, action(), ORIGIN).await.0, 200);
+        assert!(!path.exists());
+        assert_eq!(fixture.request(&check, action(), ORIGIN).await.0, 404);
+        assert_eq!(
+            fixture.request("/api/engine-logins", None, ORIGIN).await.1,
+            json!([])
+        );
+        assert_eq!(fs::read(&fake_host)?, b"outside-profile-sentinel");
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn settings_routes_verify_and_apply_accounts_live() -> crate::db::Result<()> {
     let fixture = Fixture::new().await?;
     let path = "/api/provider-accounts";

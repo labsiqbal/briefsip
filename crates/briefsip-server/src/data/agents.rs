@@ -41,6 +41,22 @@ pub fn provider_blocked_reason(
     }
 }
 
+pub fn binding_blocked_reason(
+    db: &Connection,
+    runtime: &str,
+    binding: &str,
+    accounts: &[providers::Account],
+) -> Result<Option<&'static str>> {
+    if binding.starts_with(super::logins::PREFIX) {
+        let profile = super::logins::bound(db, binding)?;
+        return Ok(super::logins::blocked_reason(runtime, profile.as_ref()));
+    }
+    Ok(provider_blocked_reason(
+        runtime,
+        accounts.iter().find(|account| account.id == binding),
+    ))
+}
+
 fn runtime_blocked_reason(
     state: &AppState,
     db: &Connection,
@@ -126,10 +142,8 @@ pub fn list(state: &AppState, db: &Connection) -> Result<Value> {
         } else {
             json!(0)
         };
-        let account = accounts
-            .iter()
-            .find(|account| account.id == string(a, "provider_account"));
-        let provider_reason = provider_blocked_reason(&runtime, account);
+        let provider_reason =
+            binding_blocked_reason(db, &runtime, string(a, "provider_account"), &accounts)?;
         let blocked_reason = provider_reason.or(runtime_blocked_reason(state, db, &id, &runtime)?);
         a["provider_available"] = json!(provider_reason.is_none());
         a["runnable"] = json!(blocked_reason.is_none());
@@ -188,6 +202,20 @@ fn account(v: &Value) -> Result<Option<&str>> {
                 .ok_or_else(|| error(400, "Invalid provider account."))
         })
         .transpose()
+}
+fn validate_account(state: &AppState, db: &Connection, runtime: &str, binding: &str) -> Result<()> {
+    if binding.starts_with(super::logins::PREFIX) {
+        let profile = super::logins::bound(db, binding)?
+            .ok_or_else(|| error(400, "Engine login profile not found."))?;
+        if profile["runtime"] != runtime {
+            return Err(error(400, "Choose an engine login for this runtime."));
+        }
+    } else if !providers::accounts(state)
+        .is_ok_and(|accounts| accounts.iter().any(|account| account.id == binding))
+    {
+        return Err(error(400, "Provider account not found."));
+    }
+    Ok(())
 }
 fn runtime(v: &Value) -> Result<Option<&str>> {
     v.get("runtime")
@@ -311,10 +339,8 @@ pub fn create(
         }
         return Ok((200, a));
     }
-    if account
-        .is_some_and(|id| !providers::accounts(state).is_ok_and(|a| a.iter().any(|a| a.id == id)))
-    {
-        return Err(error(400, "Provider account not found."));
+    if let Some(account) = account {
+        validate_account(state, db, &runtime, account)?;
     }
     let image = avatar.get(input)?;
     if runtime != "api" && workspace(state, id).is_none() && !exists(db,"SELECT 1 FROM local_project_members m JOIN local_projects p ON p.id=m.project WHERE m.agent=? AND p.deleted=0 AND p.archived=0",[id])? {
@@ -422,10 +448,13 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
     if backup.is_none() && current["backup_model"] == model {
         return Err(error(400,"Primary and fallback models must differ. Clear the fallback model or choose another model."));
     }
-    if account
-        .is_some_and(|id| !providers::accounts(state).is_ok_and(|a| a.iter().any(|a| a.id == id)))
-    {
-        return Err(error(400, "Provider account not found."));
+    let saved_binding = string(&current, "provider_account");
+    let selected_runtime = runtime.unwrap_or_else(|| string(&current, "runtime"));
+    if let Some(binding) = account.or_else(|| {
+        (runtime.is_some() && saved_binding.starts_with(super::logins::PREFIX))
+            .then_some(saved_binding)
+    }) {
+        validate_account(state, db, selected_runtime, binding)?;
     }
     if let Some(runtime) = runtime {
         if runtime != string(&current, "runtime") {

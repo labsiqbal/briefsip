@@ -8,6 +8,8 @@ pub(crate) mod environment;
 mod folders;
 pub(crate) mod history;
 pub(crate) mod limits;
+#[path = "harness/logins.rs"]
+pub(crate) mod logins;
 pub(crate) mod memory;
 pub mod options;
 mod panel;
@@ -269,6 +271,8 @@ pub fn handles(path: &str) -> bool {
                 | "provider-accounts"
                 | "models"
         ] | ["api", "provider-accounts", "test"]
+            | ["api", "engine-logins"]
+            | ["api", "engine-logins", _, "check" | "remove"]
             | ["api", "provider-accounts", _, "test" | "edit" | "delete"]
             | ["api", "sidebar", "summary"]
             | ["api", "conversations", "settings"]
@@ -382,6 +386,17 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
     }
     if path == "/api/models" && method == Method::GET {
         return Ok(json_response(200, providers::models(state, &q).await?));
+    }
+    if parts.get(1) == Some(&"engine-logins") {
+        if headers.contains_key("authorization")
+            || headers.contains_key("origin") && !origin(state, &headers)
+        {
+            return Err(error(
+                403,
+                "Engine logins require the local owner in Briefsip.",
+            ));
+        }
+        return logins::route(state, &parts, &method, &q, &body).await;
     }
     if parts.get(1) == Some(&"provider-accounts") {
         if headers.contains_key("authorization")
@@ -666,6 +681,9 @@ pub fn routes() -> Router<AppState> {
         .route("/api/sidebar/summary", any(crate::dispatch))
         .route("/api/usage", any(crate::dispatch))
         .route("/api/models", any(crate::dispatch))
+        .route("/api/engine-logins", any(crate::dispatch))
+        .route("/api/engine-logins/{id}/check", any(crate::dispatch))
+        .route("/api/engine-logins/{id}/remove", any(crate::dispatch))
         .route("/api/provider-accounts", any(crate::dispatch))
         .route("/api/provider-accounts/test", any(crate::dispatch))
         .route("/api/provider-accounts/{id}/test", any(crate::dispatch))

@@ -44,7 +44,7 @@ import { SpeechPlayback } from './SpeechPlayback';
 import { useConversationAttachments } from './ConversationAttachments';
 import { Attachments } from './Attachments';
 import { ProvidersPanel } from './ProvidersPanel';
-import { EnginesPanel } from './EnginesPanel';
+import { EnginesPanel, isLoginBinding } from './EnginesPanel';
 import { FirstRun } from './FirstRun';
 import { TurnActivity } from './ui/TurnActivity';
 import { AgentMessage, ChatComposer, ChatEmptyState, ChatHeader, ChatTranscript, ChatTurn, HumanMessage, TurnStatus } from './ui/ChatPrimitives';
@@ -241,6 +241,7 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
   const targets = channel ? members.filter(member => !dispatchTarget || member.id === dispatchTarget.agent) : [agent as Agent];
   const blockedAgent = targets.find(target => target.runnable === false);
   const canSend = !blockedAgent && (targets.length ? targets.every(target => target.runnable ?? configured) : false);
+  const needsEngineLogin = blockedAgent?.provider_available === false && isLoginBinding(blockedAgent.provider_account ?? '');
   const needsProvider = blockedAgent?.provider_available === false || !blockedAgent && targets.length > 0 && !canSend;
   const firstMessage = firstRun && !thread && !turns?.length;
   const draftKey = `briefsip:draft:${scope}`;
@@ -461,7 +462,7 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
       <footer className="composer-area">
         {!channel && (agent as Agent).hidden ? <HiddenAgentBanner agent={agent as Agent} request={api} onChanged={onRestored} /> : archived && <p className="composer__note">Archived</p>}
         {!canSend && !archived && <p className="composer__note composer__note--blocked">
-          {needsProvider && <a className="k-link" href={routePath({ ...parseRoute(window.location.pathname + window.location.search), settings: 'providers' })}>Connect a provider</a>}
+          {needsProvider && <a className="k-link" href={routePath({ ...parseRoute(window.location.pathname + window.location.search), settings: needsEngineLogin ? 'engines' : 'providers' })}>{needsEngineLogin ? 'Check engine login' : 'Connect a provider'}</a>}
           {blockedAgent?.blocked_reason && <span>{blockedAgent.blocked_reason}</span>}
           {!targets.length && 'No available members.'}
         </p>}
@@ -1314,7 +1315,7 @@ function App() {
   else if (projectThread && directory.agents.find(agent => agent.id === projectThread.agent)) { const owner = directory.agents.find(agent => agent.id === projectThread.agent)!; const thread = projectState.projects.find(project => project.id === projectThread.project)?.threads.find(thread => thread.id === projectThread.thread) ?? projectThread.conversation; content = thread ? <Chat onOpenAgent={openThread} key={thread.id} agent={owner} thread={{...thread,revision:1,archived:0,deleted:0}} configured={directory.configured} menuItems={[{label:'Back to project',onSelect:()=>openProject(projectThread.project)}]} /> : <PageView><EmptyState title="Project conversation unavailable" /></PageView>; }
   else if (channel) content = <Chat onOpenAgent={openThread} key={`channel:${channel.id}`} agent={channel} channel={{ ...channel, lead: directory.agents.find(agent => agent.id === channel.lead)?.hidden ? null : channel.lead }} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id) && !agent.hidden)} onEdit={channel.project ? undefined : () => setDialog('edit')} menuItems={channel.project ? [{label:'Back to project',onSelect:()=>openProject(channel.project!)}] : []} configured={directory.configured} />;
   else if (agent) content = <AgentConversations onRestored={() => load(true)} onExport={() => setAgentContent({ agent, kind: 'export' })} onManageRoutines={id => { setRoutineAgent(id); setView('routines'); }} onOpenChannel={openChannel} key={agent.id} agent={agent} firstRun={firstRunAgent === agent.id} workflowAgents={directory.agents} configured={directory.configured} initialThread={route.thread ?? ''} onSelectThread={(thread, replace) => { navigate(current => ({ ...current, agent: agent.id, thread: thread || undefined, result: current.thread === (thread || undefined) ? current.result : undefined }), replace); focusComposer(); }} onOpenAgent={openThread} onEdit={() => setDialog('edit')} />;
-  else content = <FirstRun request={api} isClientError={error => error instanceof HttpError && error.status < 500} settingsOpen={!!settings} onCreated={item => { setFirstRunAgent(item.id); created(item); focusComposer(); }} />;
+  else content = <FirstRun request={api} isClientError={error => error instanceof HttpError && error.status < 500} settingsOpen={!!settings} onOpenEngines={() => setSettings('engines')} onCreated={item => { setFirstRunAgent(item.id); created(item); focusComposer(); }} />;
   const navigation = <aside ref={sidebar.ref} className="sidebar bs-root" style={{ width: `${sidebar.width}px` }} aria-label="Workspace navigation" onClick={event => { if (narrowSidebar && (event.target as HTMLElement).closest('.bot-row, .project-navigation__name, .project-navigation__room')) setNarrowOpen(false); }}>
       <div className="sidebar__titlebar">
         <span className="sidebar__bots-label">Briefsip</span>
