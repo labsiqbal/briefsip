@@ -98,6 +98,15 @@ fn default_port() -> u16 {
 fn default_host() -> String {
     "127.0.0.1".to_owned()
 }
+pub fn local_database() -> PathBuf {
+    env::var_os("BRIEFSIP_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env::var_os("HOME").unwrap_or_default())
+                .join(".local/share/briefsip/new-app")
+        })
+        .join("briefsip.sqlite")
+}
 fn default_dist() -> PathBuf {
     if let Ok(executable) = env::current_exe() {
         if let Some(root) = executable.parent().and_then(|directory| directory.parent()) {
@@ -195,13 +204,7 @@ impl Config {
         let database = if canonical_mode {
             PathBuf::from(required("BRIEFSIP_CANONICAL_DB")?)
         } else {
-            env::var_os("BRIEFSIP_DATA_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| {
-                    PathBuf::from(env::var_os("HOME").unwrap_or_default())
-                        .join(".local/share/briefsip/new-app")
-                })
-                .join("briefsip.sqlite")
+            local_database()
         };
         let mut config = Self {
             database,

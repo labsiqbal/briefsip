@@ -17,3 +17,7 @@ CREATE TABLE IF NOT EXISTS mcp_server_messages (
     caller TEXT NOT NULL REFERENCES mcp_server_tokens(id), request_id TEXT NOT NULL, digest TEXT NOT NULL,
     turn TEXT NOT NULL UNIQUE REFERENCES turns(id), result TEXT NOT NULL, PRIMARY KEY(caller,request_id)
   ) STRICT;
+CREATE TABLE IF NOT EXISTS machine_provider_reports(
+    environment_id TEXT PRIMARY KEY REFERENCES paired_machines(environment_id) ON DELETE CASCADE,
+    report TEXT NOT NULL CHECK(json_valid(report))
+) STRICT;

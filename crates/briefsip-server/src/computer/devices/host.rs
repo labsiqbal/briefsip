@@ -151,6 +151,7 @@ struct Host {
     tasks: Arc<task_loop::TaskSlots>,
     recovery: Arc<AsyncMutex<()>>,
     fixture_checkpoint: Option<String>,
+    provider: Option<Arc<provider::Provider>>,
 }
 
 impl Host {
@@ -236,6 +237,7 @@ impl Host {
             tasks: Arc::default(),
             recovery: Arc::default(),
             fixture_checkpoint: None,
+            provider: None,
             client: Client::builder()
                 .connect_timeout(TIMEOUT)
                 .redirect(reqwest::redirect::Policy::none())
@@ -295,6 +297,7 @@ impl Host {
             tasks: self.tasks.clone(),
             recovery: self.recovery.clone(),
             fixture_checkpoint: None,
+            provider: self.provider.clone(),
         })
     }
 
@@ -851,7 +854,8 @@ pub async fn run() -> db::Result<()> {
             return Err("Fixture checkpoint requires a loopback fixture provider".into());
         }
         host.fixture_checkpoint = checkpoint;
-        let provider = provider::Provider::new(test_provider, testing)?;
+        let provider = Arc::new(provider::Provider::new(test_provider, testing)?);
+        host.provider = Some(provider.clone());
         let result = async {
             id(&json!(task))?;
             host.acquire_executor()?;
@@ -872,9 +876,15 @@ pub async fn run() -> db::Result<()> {
         .await;
         command_output(result)
     } else {
+        if !testing || std::env::var_os("BRIEFSIP_DATA_DIR").is_some() {
+            host.provider = Some(Arc::new(provider::Provider::new(None, testing)?));
+        }
         stream::run(host).await
     }
 }
+
+#[cfg(test)]
+pub(crate) use provider::check_settings_account;
 
 fn command_output(result: Result<Value>) -> db::Result<()> {
     match result {

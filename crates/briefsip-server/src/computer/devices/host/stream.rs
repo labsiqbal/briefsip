@@ -40,6 +40,7 @@ impl Frames {
 pub(super) struct Session {
     pub(super) token: String,
     pub(super) connection: i64,
+    reports_providers: bool,
 }
 
 impl Host {
@@ -104,6 +105,7 @@ impl Host {
         let session = Session {
             token,
             connection: revision(&first["connectionGeneration"], 1)?,
+            reports_providers: first["body"]["reportsProviders"] == true,
         };
         self.beat(&session).await?;
         Ok((session, frames))
@@ -117,8 +119,18 @@ impl Host {
             [],
             |r| r.get(0),
         )?;
-        let body = json!({"requestId":request_id(),"connectionGeneration":session.connection,
+        let mut body = json!({"requestId":request_id(),"connectionGeneration":session.connection,
             "zone":zone,"zoneRevision":zone_revision,"journalWatermark":watermark});
+        if session.reports_providers {
+            if let Some((accounts, complete)) = self
+                .provider
+                .as_ref()
+                .and_then(|provider| provider.metadata().ok().flatten())
+            {
+                body["providerAccounts"] = accounts;
+                body["providerAccountsComplete"] = json!(complete);
+            }
+        }
         self.post("heartbeat", &session.token, &body).await?;
         if self.identity.zone != zone {
             let mut identity = self.identity.clone();

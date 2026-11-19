@@ -337,6 +337,11 @@ pub async fn handle(
             return Ok(json!({"id":value["id"],"status":prior["status"]}));
         }
         let target=roster(db,true)?.into_iter().find(|v|v["id"]==format!("{}@{}",text(&value,"agent"),text(&value,"machine"))).ok_or_else(||error(409,"Remote agent is offline, unauthorized, or no longer paired. Refresh Machines before sending."))?;
+        if let Some(reason) =
+            machines::agent_provider_block(db, text(&value, "machine"), text(&value, "agent"))?
+        {
+            return Err(error(409, reason));
+        }
         let count:i64=db.query_row("SELECT count(*) FROM remote_agent_calls WHERE machine=? AND state IN('intent','sending','sent')",[text(&value,"machine")],|r|r.get(0))?;
         if count >= 100 {
             return Err(error(

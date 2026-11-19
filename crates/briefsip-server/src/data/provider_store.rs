@@ -17,8 +17,7 @@ fn random<const N: usize>() -> Result<[u8; N]> {
     Ok(bytes)
 }
 
-fn wrapping_key(state: &AppState, create: bool) -> Result<LessSafeKey> {
-    let database = &state.config.database;
+fn wrapping_key(database: &Path, create: bool) -> Result<LessSafeKey> {
     let parent = database
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
@@ -50,7 +49,7 @@ fn wrapping_key(state: &AppState, create: bool) -> Result<LessSafeKey> {
 }
 
 fn encrypt(state: &AppState, account: &Account) -> Result<String> {
-    let key = wrapping_key(state, true)?;
+    let key = wrapping_key(&state.config.database, true)?;
     let nonce = random::<12>()?;
     let mut bytes = account
         .key
@@ -80,15 +79,15 @@ fn decrypt(key: &LessSafeKey, row: &Value) -> Option<String> {
     String::from_utf8(plain.to_vec()).ok()
 }
 
-fn read_connection(state: &AppState) -> Result<Connection> {
+fn read_connection(database: &Path) -> Result<Connection> {
     // Callers include active transactions on the main connection.
     Ok(Connection::open_with_flags(
-        &state.config.database,
+        database,
         OpenFlags::SQLITE_OPEN_READ_ONLY,
     )?)
 }
 
-fn account(state: &AppState, row: &Value, key: Option<String>) -> Account {
+fn account(options: &providers::Options, row: &Value, key: Option<String>) -> Account {
     let family = string(row, "family").to_owned();
     Account {
         id: string(row, "id").into(),
@@ -97,9 +96,7 @@ fn account(state: &AppState, row: &Value, key: Option<String>) -> Account {
         model: string(row, "default_model").into(),
         key,
         termination: if family == "openai-compatible" {
-            state
-                .config
-                .data
+            options
                 .stream_termination
                 .as_deref()
                 .unwrap_or("marker")
@@ -107,10 +104,8 @@ fn account(state: &AppState, row: &Value, key: Option<String>) -> Account {
         } else {
             "marker".into()
         },
-        stream: state.config.data.stream.unwrap_or(false),
-        max_tokens: state
-            .config
-            .data
+        stream: options.stream.unwrap_or(false),
+        max_tokens: options
             .max_tokens
             .as_ref()
             .and_then(Value::as_u64)
@@ -120,39 +115,39 @@ fn account(state: &AppState, row: &Value, key: Option<String>) -> Account {
     }
 }
 
-fn rows(state: &AppState) -> Result<Vec<Value>> {
-    all(
-        &read_connection(state)?,
-        &format!("{SELECT} ORDER BY rowid"),
-        [],
-    )
+fn rows(db: &Connection) -> Result<Vec<Value>> {
+    all(db, &format!("{SELECT} ORDER BY rowid"), [])
 }
 
-pub(super) fn stored(state: &AppState) -> Result<Vec<Account>> {
-    let rows = rows(state)?;
+pub(super) fn stored(database: &Path, options: &providers::Options) -> Result<Vec<Account>> {
+    let connection = read_connection(database)?;
+    if !super::table(&connection, "provider_accounts")? {
+        return Ok(Vec::new());
+    }
+    let rows = rows(&connection)?;
     let wrapping_key = (!rows.is_empty())
-        .then(|| wrapping_key(state, false).ok())
+        .then(|| wrapping_key(database, false).ok())
         .flatten();
     Ok(rows
         .iter()
         .filter_map(|row| {
             let key = decrypt(wrapping_key.as_ref()?, row)?;
-            Some(account(state, row, Some(key)))
+            Some(account(options, row, Some(key)))
         })
         .collect())
 }
 
 pub(super) fn list(state: &AppState) -> Result<Vec<Value>> {
-    let rows = rows(state)?;
+    let rows = rows(&read_connection(&state.config.database)?)?;
     let wrapping_key = (!rows.is_empty())
-        .then(|| wrapping_key(state, false).ok())
+        .then(|| wrapping_key(&state.config.database, false).ok())
         .flatten();
     Ok(rows
         .iter()
         .map(|row| {
             let key = wrapping_key.as_ref().and_then(|key| decrypt(key, row));
             let configured = key.is_some();
-            let mut result = providers::public(&account(state, row, key));
+            let mut result = providers::public(&account(&state.config.data, row, key));
             result["configured"] = json!(configured);
             result["hasKey"] = json!(true);
             result["revision"] = row["revision"].clone();
@@ -163,7 +158,7 @@ pub(super) fn list(state: &AppState) -> Result<Vec<Value>> {
 
 fn read(state: &AppState, id: &str) -> Result<Option<Value>> {
     one(
-        &read_connection(state)?,
+        &read_connection(&state.config.database)?,
         &format!("{SELECT} WHERE id=?"),
         [id],
     )
@@ -240,7 +235,7 @@ fn candidate(
                     "Field apiKey is required when provider type or origin changes.",
                 ));
             }
-            wrapping_key(state, false)
+            wrapping_key(&state.config.database, false)
                 .ok()
                 .and_then(|key| decrypt(&key, previous))
                 .ok_or_else(|| error(409, "Stored API key is unavailable. Enter an API key."))?
@@ -250,7 +245,7 @@ fn candidate(
         return Err(error(400, "Field apiKey is invalid."));
     }
     Ok(account(
-        state,
+        &state.config.data,
         &json!({
             "id":id,"name":name,"family":family,"base_url":base,"default_model":model
         }),

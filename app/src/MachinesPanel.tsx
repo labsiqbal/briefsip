@@ -95,6 +95,11 @@ export function MachinesPanel({ request, onChanged }: { request: Request; onChan
       {peer && <div className="k-stack set4-detail">
         <Card><Row title="Address" trailing={<span className="machines-origin">{peer.origin}</span>} /><Row title="Status" trailing={<Badge tone={peer.status === 'online' ? 'success' : 'warn'}>{statusLabel[peer.status]}</Badge>} /><Row title="Version" trailing={peer.version} /><Row title="Agents" trailing={peer.agentCount} />{peer.pairingState === 'pending' && <Row title="Pairing" trailing={<Tooltip content={<span className="bs-root set4-tooltip">{"The other machine has not confirmed return access."}</span>}><span tabIndex={0}><Badge tone="warn">Pairing incomplete</Badge></span></Tooltip>} />}<Row title="Last seen" trailing={peer.lastSeen ? new Date(peer.lastSeen).toLocaleString() : 'Not seen yet'} /></Card>
         <Card><Row title={<Tooltip content={<span className="bs-root set4-tooltip">{`Allow ${peer.name} agents to message agents here.`}</span>}><span tabIndex={0}>Incoming messages</span></Tooltip>} trailing={<Switch label="Incoming messages" checked={peer.allowAgentMessaging} disabled={!!busy} onChange={allowed=>void act('policy',async()=>{await request('/api/machines/agent-messaging',{id:crypto.randomUUID(),environmentId:peer.id,allowed});await reload();})} />} /><Row title={<Tooltip content={<span className="bs-root set4-tooltip">{`Allow updates from ${peer.name}. Enable on both machines.`}</span>}><span tabIndex={0}>Remote updates</span></Tooltip>} trailing={<Switch label="Remote updates" checked={peer.allowUpdates} disabled={!!busy} onChange={allowed=>void act('updates',async()=>{await request('/api/machines/updates',{id:crypto.randomUUID(),environmentId:peer.id,allowed});await reload();})} />} /></Card>
+        <Section title="Provider accounts">
+          {peer.providerAccounts?.length
+            ? <Card>{peer.providerAccounts.map(account => <Row key={account.id} title={account.name} meta={<span className="machines-origin">{account.host}</span>} trailing={account.defaultModel ? <code>{account.defaultModel}</code> : 'No default model'} />)}</Card>
+            : <EmptyState title={peer.providerAccounts ? 'No provider accounts' : 'Provider accounts unavailable'} />}
+        </Section>
         {error && <Alert tone="error">{error}</Alert>}
       </div>}
     </Dialog>
@@ -155,7 +160,9 @@ export function RemoteAgentDetail({ machine, agent, request }: { machine?: Paire
   }
   async function discard(){if(!await confirm({title:'Discard saved message?',description:'Delivery may already have succeeded. Check this conversation and the receiving machine before sending a replacement.',confirm:'Discard message',danger:true}))return;try{sessionStorage.removeItem(storage);setPending(null);setInvalid(false);}catch{setError('Browser storage could not be updated.');}}
   const heading = useRef<HTMLDivElement>(null); useEffect(() => { heading.current?.focus(); }, [machine?.id, agent?.id]);
-  const disabledReason = invalid ? 'Saved message could not be read. Discard it after checking conversation history.' : machine?.status !== 'online' ? `${machine ? statusLabel[machine.status] : 'Remote machine unavailable'}. Reconnect the machine before sending.` : machine?.remoteAgentMessaging === false ? `Messaging is turned off on ${machine.name}. Enable it in Settings > Machines on that machine.` : undefined;
+  const binding = agent && machine?.agentProviders?.[agent.id];
+  const provider = machine?.providerAccounts?.find(account => account.id === binding?.provider_account);
+  const disabledReason = invalid ? 'Saved message could not be read. Discard it after checking conversation history.' : machine?.status !== 'online' ? `${machine ? statusLabel[machine.status] : 'Remote machine unavailable'}. Reconnect the machine before sending.` : machine?.remoteAgentMessaging === false ? `Messaging is turned off on ${machine.name}. Enable it in Settings > Machines on that machine.` : binding?.runnable === false ? binding.blocked_reason ?? undefined : undefined;
   return <><main className="chat bs-root remote-conversation" aria-label={machine && agent ? `Conversation ${agent.name} on ${machine.name}` : 'Remote agent unavailable'}>
     <ChatHeader agent={agent ?? { id: '', name: 'Remote agent' }} title={agent?.name ?? 'Remote agent unavailable'} pillRef={heading} tooltip={machine?.origin} right={<><span className="chat__remote-context">on {machine?.name ?? 'unknown machine'}</span><span className={`activity-chip${machine?.status === 'online' ? ' is-working' : ''}`} role="status">{machine ? statusLabel[machine.status] : 'Unavailable'}</span></>} />
     <ChatTranscript aria-busy={messages === null}>
@@ -168,6 +175,7 @@ export function RemoteAgentDetail({ machine, agent, request }: { machine?: Paire
     </ChatTranscript>
     <footer className="composer-area">
       {disabledReason && <p id="remote-send-reason" className="composer__note" role="status">{disabledReason}</p>}
+      {!disabledReason && provider && <p className="composer__note">{provider.name}{(agent?.model || provider.defaultModel) && <> · <code>{agent?.model || provider.defaultModel}</code></>}</p>}
       {error && <div className="composer__error" role="alert">{error}</div>}
       {(invalid || pending && !busy) && <div className="composer__error" role="status"><span><strong>{invalid ? 'Saved message could not be read' : 'Message submission is not confirmed'}</strong>. Check conversation history. Retry keeps the same request ID and text.</span><Button size="sm" variant="ghost" disabled={busy} onClick={() => void discard()}>Discard saved message</Button></div>}
       {machine && agent && <ChatComposer label={`Message ${agent.name} on ${machine.name}`} input={{ id: 'remote-message', value: text, required: true, disabled: busy || !!pending || !!disabledReason, 'aria-describedby': disabledReason ? 'remote-send-reason' : undefined, onChange: event => { setText(event.target.value); try { sessionStorage.setItem(storage + ':draft', event.target.value); } catch { setError('Draft could not be saved in browser storage.'); } } }}
