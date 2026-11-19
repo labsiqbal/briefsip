@@ -464,7 +464,7 @@ async function fixture() {
     const response = await fetch(app.origin + path, { method, headers: { Authorization: `Bearer ${jwt(subject)}`, Origin: auth.origin, Connection: 'close', 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': body?.requestId ?? randomUUID() }, ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
   };
-  return { dir, jwt, send, device, webhookKeys, webhookFault, stderr: () => rustServerOutput(app.origin).stderr, stdout: () => rustServerOutput(app.origin).stdout, origin: () => app.origin, startAgain: (database=options.database,port=0) => startCanonicalApp({...options,database,port}), async restart() { const ready = ((await send('/api/devices')).body.data ?? []).filter((device:any)=>device.status==='ready').map((device:any)=>device.id); const port = new URL(app.origin).port; await app.close(); app = await startCanonicalApp({ ...options, port: Number(port) }); if(ready.length)await until(async()=>{const devices=(await send('/api/devices')).body.data;return ready.every((id:string)=>devices.some((device:any)=>device.id===id&&device.status==='ready'));}); }, async restoreFrom(backup:string){
+  return { dir, jwt, send, device, webhookKeys, webhookFault, stderr: () => rustServerOutput(app.origin).stderr, stdout: () => rustServerOutput(app.origin).stdout, origin: () => app.origin, startAgain: (database=options.database,port=0) => startCanonicalApp({...options,database,port}), async restart() { const ready = ((await send('/api/devices')).body.data ?? []).filter((device:any)=>device.status==='ready').map((device:any)=>device.id); const port = new URL(app.origin).port; await app.close(); app = await startCanonicalApp({ ...options, port: Number(port) }); if(ready.length)await until(async()=>{const devices=(await send('/api/devices')).body.data;return ready.every((id:string)=>devices.some((device:any)=>device.id===id&&device.status==='ready'));},deviceReconnectTimeout); }, async restoreFrom(backup:string){
     const port=Number(new URL(app.origin).port);await app.close();renameSync(options.database,options.database+'.unavailable');
     const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
     const gate = JSON.parse(execFileSync(binary, ['--restore-read-only', backup, options.database], { encoding: 'utf8' }));
@@ -477,6 +477,8 @@ async function fixture() {
     finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
   } };
 }
+// Device hosts back off up to 60 s between reconnects, so a slow restart can leave one full step to wait.
+const deviceReconnectTimeout = 65_000;
 async function until(check: () => boolean | Promise<boolean>, timeout = 30000) {
   const deadline = performance.now() + timeout;
   while (performance.now() < deadline) { if (await check()) return; await new Promise(resolve => setTimeout(resolve, 20)); }
@@ -2388,7 +2390,8 @@ test('signed task and device mutations publish atomic scoped observations across
       await connection.stop(); assert.equal((await f.send('/api/session')).status,200);
       failure.exec('DROP TRIGGER fail_device_sync');
     } finally { failure.close(); }
-    await until(async () => (await f.send('/api/devices')).body.data[0].status === 'offline');
+    // A failed disconnect write is retried within seconds, not left to the 30 s maintenance sweep.
+    await until(async () => (await f.send('/api/devices')).body.data[0].status === 'offline', 10_000);
     await f.restart();
     await until(async () => { try { return (await f.send(deltaPath)).status === 200; } catch { return false; } });
     assert.deepEqual((await f.send(deltaPath)).body.data.page.events.filter((event: any) => event.recordKind === 'task'), delta.page.events);

@@ -1340,13 +1340,16 @@ async fn open_stream(state: &AppState, p: Principal) -> Result<Response> {
             {
                 rt.streams.remove(&self.device);
                 waits::disconnect(&self.device);
-                let _ = super::transaction(&guard.connection, |db| {
-                    let changed=db.execute("UPDATE devices SET status='offline',revision=revision+1 WHERE id=? AND connection_generation=? AND status IN('ready','connecting')",params![self.device,self.generation])?;
-                    if changed > 0 {
-                        data::append_device(db, &self.device, self.state.config.now())?;
-                    }
-                    Ok(())
-                });
+                if mark_offline(
+                    &guard.connection,
+                    &self.state,
+                    &self.device,
+                    self.generation,
+                )
+                .is_err()
+                {
+                    retry_offline(self.state.clone(), self.device.clone(), self.generation);
+                }
             }
         }
     }
@@ -1406,6 +1409,34 @@ pub fn maintain(state: &AppState) -> Result<()> {
         for row in rows(db,"SELECT id FROM devices WHERE status IN('ready','connecting') AND id NOT IN(SELECT value FROM json_each(?)) ORDER BY id LIMIT 128",[&active])?{db.execute("UPDATE devices SET status='offline',revision=revision+1 WHERE id=?",[text(&row,"id")])?;data::append_device(db,text(&row,"id"),now)?;}
         Ok(())
     })
+}
+
+fn mark_offline(db: &Connection, state: &AppState, device: &str, generation: i64) -> Result<()> {
+    super::transaction(db, |db| {
+        let changed=db.execute("UPDATE devices SET status='offline',revision=revision+1 WHERE id=? AND connection_generation=? AND status IN('ready','connecting')",params![device,generation])?;
+        if changed > 0 {
+            data::append_device(db, device, state.config.now())?;
+        }
+        Ok(())
+    })
+}
+
+/// Retries a failed disconnect write soon, so a device does not look ready until the next 30 s sweep.
+fn retry_offline(state: AppState, device: String, generation: i64) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    runtime.spawn(async move {
+        for seconds in [1, 2, 4, 8] {
+            tokio::time::sleep(std::time::Duration::from_secs(seconds)).await;
+            let Ok(guard) = state.database.lock() else {
+                return;
+            };
+            if mark_offline(&guard.connection, &state, &device, generation).is_ok() {
+                return;
+            }
+        }
+    });
 }
 
 pub fn close(state: &AppState) -> Result<()> {
