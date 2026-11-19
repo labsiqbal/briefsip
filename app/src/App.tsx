@@ -1297,9 +1297,9 @@ function App() {
     { id: 'new-project', label: 'New project', group: 'Create', onSelect: () => { setSettings(null); setDialog('project'); } },
   ];
   const created = (item: Agent) => {
-    directoryRequest.current++;
-    setDirectory(current => current && { ...current, configured: current.configured || item.runnable === true, agents: [...current.agents.filter(agent => agent.id !== item.id), item] });
+    setDirectory(current => current && { ...current, agents: [...current.agents.filter(agent => agent.id !== item.id), item] });
     openAgent(item.id);
+    void load();
   };
   let content: ReactNode;
   if (error) content = <PageView><div className="empty"><h1>Workspace is not open</h1><p role="alert">{error}</p><button onClick={() => void load()}>Try again</button></div></PageView>;

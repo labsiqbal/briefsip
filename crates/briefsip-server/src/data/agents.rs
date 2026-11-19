@@ -83,29 +83,6 @@ fn runtime_blocked_reason(
     Ok(None)
 }
 
-fn set_readiness(
-    state: &AppState,
-    db: &Connection,
-    agent: &mut Value,
-    accounts: &[providers::Account],
-) -> Result<()> {
-    let runtime = string(agent, "runtime");
-    let account = accounts
-        .iter()
-        .find(|account| account.id == string(agent, "provider_account"));
-    let provider_reason = provider_blocked_reason(runtime, account);
-    let blocked_reason = provider_reason.or(runtime_blocked_reason(
-        state,
-        db,
-        string(agent, "id"),
-        runtime,
-    )?);
-    agent["provider_available"] = json!(provider_reason.is_none());
-    agent["runnable"] = json!(blocked_reason.is_none());
-    agent["blocked_reason"] = json!(blocked_reason);
-    Ok(())
-}
-
 pub fn workspace(state: &AppState, id: &str) -> Option<Value> {
     state
         .config
@@ -149,7 +126,14 @@ pub fn list(state: &AppState, db: &Connection) -> Result<Value> {
         } else {
             json!(0)
         };
-        set_readiness(state, db, a, &accounts)?;
+        let account = accounts
+            .iter()
+            .find(|account| account.id == string(a, "provider_account"));
+        let provider_reason = provider_blocked_reason(&runtime, account);
+        let blocked_reason = provider_reason.or(runtime_blocked_reason(state, db, &id, &runtime)?);
+        a["provider_available"] = json!(provider_reason.is_none());
+        a["runnable"] = json!(blocked_reason.is_none());
+        a["blocked_reason"] = json!(blocked_reason);
         a["hidden"] = json!(hidden(db, &id)?);
         a["visibility_revision"] = one(
             db,
@@ -317,7 +301,6 @@ pub fn create(
             return Err(error(409, "ID was already used for a different agent."));
         }
         let mut a = read(db, id)?;
-        set_readiness(state, db, &mut a, &providers::accounts(state)?)?;
         if v.get("avatar").is_some() {
             let avatar = avatar_read(db, id)?;
             a["avatar_revision"] = if avatar["present"] == true {
@@ -328,8 +311,9 @@ pub fn create(
         }
         return Ok((200, a));
     }
-    let accounts = providers::accounts(state)?;
-    if account.is_some_and(|id| !accounts.iter().any(|a| a.id == id)) {
+    if account
+        .is_some_and(|id| !providers::accounts(state).is_ok_and(|a| a.iter().any(|a| a.id == id)))
+    {
         return Err(error(400, "Provider account not found."));
     }
     let image = avatar.get(input)?;
@@ -347,7 +331,9 @@ pub fn create(
     }
     db.execute("INSERT INTO agents(id,name,role,model,instructions,thread_limit,tool_budget,backup_model,provider_account,runtime) VALUES(?,?,?,?,?,?,?,?,?,?)",rusqlite::params![id,name,role,model,instructions,v["threadLimit"].as_i64().unwrap_or(2),v["toolBudget"].as_i64().unwrap_or(90),backup.as_deref().unwrap_or(""),account.unwrap_or(""),runtime])?;
     if setup {
-        let a = accounts.iter().find(|a| a.id == account.unwrap_or(""));
+        let a = providers::accounts(state)?
+            .into_iter()
+            .find(|a| a.id == account.unwrap_or(""));
         if runtime == "api" && a.as_ref().is_none_or(|a| a.base.is_empty()) {
             return Err(error(503,"The default provider account is not configured. Check server configuration before sending again."));
         }
@@ -368,7 +354,6 @@ pub fn create(
         rusqlite::params![id, request.to_string()],
     )?;
     let mut result = read(db, id)?;
-    set_readiness(state, db, &mut result, &accounts)?;
     if v.get("avatar").is_some() {
         result["avatar_revision"] = json!(1);
     }
