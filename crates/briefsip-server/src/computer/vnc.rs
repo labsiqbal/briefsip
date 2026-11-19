@@ -29,7 +29,7 @@ fn unavailable() -> Failure {
     error(503, "Desktop VNC socket is unavailable or unsafe.")
 }
 #[derive(Clone)]
-struct Ticket {
+pub(super) struct Ticket {
     agent: String,
     mode: String,
     revision: i64,
@@ -48,6 +48,25 @@ impl Viewers {
             .map_err(|_| Failure::storage())?
             .retain(|_, v| v.agent != agent);
         Ok(())
+    }
+    pub(super) fn consume(
+        &self,
+        token: &str,
+        agent: &str,
+        origin: &str,
+        now: i64,
+    ) -> Result<Ticket> {
+        let denied = || error(401, "Computer viewer ticket is invalid or expired.");
+        let ticket = self
+            .tickets
+            .lock()
+            .map_err(|_| Failure::storage())?
+            .remove(token)
+            .ok_or_else(denied)?;
+        if ticket.agent != agent || ticket.origin != origin || ticket.expires <= now {
+            return Err(denied());
+        }
+        Ok(ticket)
     }
     pub fn mint(&self, s: &AppState, agent: &str, origin: &str, v: &Value) -> Result<Value> {
         control::assert_enabled(s, agent)?;
@@ -152,14 +171,7 @@ pub async fn upgrade(s: AppState, request: Request, agent: String) -> Result<Res
     let ticket = s
         .computer
         .viewers
-        .tickets
-        .lock()
-        .map_err(|_| Failure::storage())?
-        .remove(token)
-        .ok_or_else(|| error(401, "Computer viewer ticket is invalid or expired."))?;
-    if ticket.agent != agent || ticket.origin != origin || ticket.expires <= s.config.now() {
-        return Err(error(401, "Computer viewer ticket is invalid or expired."));
-    }
+        .consume(token, &agent, &origin, s.config.now())?;
     let connection = async {
         let desktop = s.computer.get(&agent)?.ok_or_else(desktop_stopped)?;
         let revoked = desktop.disconnected.subscribe();

@@ -20,7 +20,7 @@ test('script messages and answers share grants, scope, receipts, redaction and r
   await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));
   const address=provider.address(); assert(address && typeof address!=='string');
   const options={ database:join(dir,'db.sqlite'),baseURL:`http://127.0.0.1:${address.port}/v1`,scriptToken:token };
-  let app=await startApp(options);
+  let app=await startApp(options, { directory: dir, servers: [provider] });
   const auth={ Authorization:`Bearer ${token}`,'Content-Type':'application/json' };
   async function request(path:string,body?:unknown,status?:number,headers?:Record<string,string>):Promise<any> {
     const res=await fetch(app.origin+path,{method:body?'POST':'GET',headers:headers??{Origin:app.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});

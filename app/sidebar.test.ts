@@ -37,7 +37,7 @@ test('sidebar HTTP edits retain agents/history through delete, conflicts, retry,
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(directory, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` };
-  let app = await startApp(options), restored: Awaited<ReturnType<typeof startApp>> | undefined;
+  let app = await startApp(options, { directory, servers: [provider] }), restored: Awaited<ReturnType<typeof startApp>> | undefined;
   async function request(path: string, body?: unknown, expected = 200) {
     const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const result = await response.json(); assert.equal(response.status, expected, JSON.stringify(result)); return result;

@@ -3,29 +3,39 @@ import { randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import * as sessions from './t3/mcp-session-registry.ts';
 import type { AgentSessionIssuer } from './test-support/harness-types.ts';
-import { extractPdf, PdfError } from './pdf-text.ts';
 type HarnessOptions = { issuer?: AgentSessionIssuer };
 
-export async function pdfTestBridge() {
-  const token = randomBytes(32).toString('hex'), active = new Set<AbortController>();
+export type PdfFault = (signal: AbortSignal) => Promise<{ status: number; error: string } | undefined>;
+
+export async function pdfTestBridge(fault?: PdfFault) {
+  if (!fault) return { config: undefined, close: async () => {} };
+  const token = randomBytes(32).toString('hex');
   const server = createServer(async (request, response) => {
     if (request.method !== 'POST' || request.headers.authorization !== `Bearer ${token}`) { response.writeHead(403).end(); return; }
-    const controller = new AbortController(); active.add(controller);
+    const controller = new AbortController();
     response.once('close', () => controller.abort());
     try {
-      let size = 0; const chunks: Buffer[] = [];
-      for await (const chunk of request) { size += chunk.length; if (size > 10 * 1024 * 1024) throw new PdfError(413, 'PDF input exceeds limit.'); chunks.push(chunk); }
-      const text = await extractPdf(Buffer.concat(chunks), controller.signal);
-      response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ text }));
-    } catch (error) {
-      response.writeHead(error instanceof PdfError ? error.status : 500, { 'Content-Type': 'application/json' });
-      response.end(JSON.stringify({ error: error instanceof PdfError ? error.message : 'PDF fixture failed.' }));
-    } finally { active.delete(controller); }
+      let size = 0;
+      for await (const chunk of request) {
+        size += chunk.length;
+        if (size > 10 * 1024 * 1024) {
+          response.writeHead(413, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'PDF input exceeds limit.' }));
+          return;
+        }
+      }
+      const failure = await fault(controller.signal);
+      if (failure) {
+        response.writeHead(failure.status, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: failure.error }));
+        return;
+      }
+      response.writeHead(204).end();
+    } catch {
+      response.writeHead(500, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'PDF fixture failed.' }));
+    }
   });
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   const address = server.address(); if (!address || typeof address === 'string') throw new Error('PDF test bridge did not bind.');
   return { config: { origin: `http://127.0.0.1:${address.port}`, token }, close: async () => {
-    for (const controller of active) controller.abort();
     server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
   } };
 }

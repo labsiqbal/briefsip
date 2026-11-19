@@ -24,11 +24,17 @@ import { startRustServer } from './rust-test-server.ts';
 async function fixture(tools = ['transfer_task'], testPathPrefix?: string) {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-recovery-rust-')), database = join(directory, 'canonical.sqlite');
   const db = new DatabaseSync(database); db.exec('PRAGMA busy_timeout=5000'); installFrozenNodeSchema(db);
-  const actor = (subject: string): HumanActor => ({ accountId: randomUUID(), issuer: 'https://fixture.example', subject, sessionId: `sess_${subject}`, expiresAt: Date.now() + 60000 });
+  // Keep human JWTs valid through host stalls while wait-expiry tests use the real clock.
+  const expiresAt = Date.now() + 60 * 60_000;
+  const actor = (subject: string): HumanActor => ({ accountId: randomUUID(), issuer: 'https://fixture.example', subject, sessionId: `sess_${subject}`, expiresAt });
   const owner = actor('owner'), member = actor('member'), foreign = actor('foreign');
   for (const a of [owner, member, foreign]) db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(a.accountId, a.issuer, a.subject, Date.now());
   const signing = generateKeyPairSync('ed25519'), installation = generateKeyPairSync('ed25519'), encryption = generateKeyPairSync('x25519');
-  const { tasks, access, devices, close } = await rustTaskTestBridge(database, signing, testPathPrefix);
+  const { tasks, access, devices, close } = await rustTaskTestBridge(database, signing, testPathPrefix).catch(error => {
+    db.close();
+    rmSync(directory, { recursive: true, force: true });
+    throw error;
+  });
   try {
     const encoded = (key: typeof signing.publicKey) => key.export({ type: 'spki', format: 'der' }).toString('base64url');
     const candidate = parseLinkChallenge({ requestId: randomUUID(), installationId: randomUUID(), deviceId: randomUUID(), mode: 'new', installationPublicKey: encoded(installation.publicKey), deviceSigningKey: encoded(signing.publicKey), deviceEncryptionKey: encoded(encryption.publicKey), deviceLabel: 'Home', requestedCapabilities: ['execution'], zone: 'Asia/Jakarta', zoneRevision: 1 });

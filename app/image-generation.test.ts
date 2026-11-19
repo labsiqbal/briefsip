@@ -39,7 +39,7 @@ test('image generation preserves scope, uncertain receipts and exact artifacts t
   for (const server of [chat, images]) await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const ca = chat.address(), ia = images.address(); assert(ca && typeof ca !== 'string' && ia && typeof ia !== 'string');
   const options = { database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${ca.port}/v1`, apiKey: 'chat-secret', imageProvider: { baseURL: `http://127.0.0.1:${ia.port}/v1`, model: 'fixture-image', apiKey: 'image-secret' } };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [chat, images] });
   async function request(path: string, body?: unknown) { const res = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); const data = await res.json(); assert(res.ok, JSON.stringify(data)); return data; }
   async function until(path: string, id: string, status: string) { for (let n = 0; n < 300; n++) { const row = (await request(path + '/turns')).find((row: any) => row.id === id); if (row?.status === status) return row; await new Promise(resolve => setTimeout(resolve, 10)); } assert.fail(`Missing ${status}`); }
   async function waitFor(check: () => boolean) { for (let n = 0; n < 300 && !check(); n++) await new Promise(resolve => setTimeout(resolve, 10)); assert(check()); }

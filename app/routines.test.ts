@@ -32,7 +32,7 @@ test('manual routine runs keep schedule, deduplicate across restart and enforce 
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, concurrency: 1 };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [provider] });
   async function post(path: string, body: unknown, expected = 200) {
     const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await response.json(); assert.equal(response.status, expected, JSON.stringify(data)); return data;
@@ -133,7 +133,7 @@ test('routine occurrences persist once and isolate each run from main history', 
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, concurrency: 1 };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [provider] });
   async function post(path: string, body: unknown, expected = 200) {
     const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await response.json(); assert.equal(response.status, expected, JSON.stringify(data)); return data;
@@ -258,7 +258,7 @@ test('routine hub delete is revisioned and recoverable, retains runs, revokes we
   await new Promise<void>(resolve => provider.listen(0,'127.0.0.1',resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(dir,'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [provider] });
   async function post(path: string, body: unknown, status = 200) {
     const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const value = await response.json(); assert.equal(response.status, status, JSON.stringify(value)); return value;

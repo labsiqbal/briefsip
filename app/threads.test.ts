@@ -21,7 +21,7 @@ test('side threads isolate queues, history, controls and archive recovery', asyn
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [provider] });
   async function post(path: string, data: unknown, status = 200) {
     const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     const body = await response.json(); assert.equal(response.status, status, JSON.stringify(body)); return body;
@@ -123,9 +123,9 @@ test('configured concurrency limits side threads and validates before opening st
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const database = join(dir, 'state.sqlite');
-  for (const concurrency of [0, -1, 1.5, 33, NaN, Infinity]) await assert.rejects(startApp({ database, concurrency }), /CONCURRENCY/);
+  for (const concurrency of [0, -1, 1.5, 33, NaN, Infinity]) await assert.rejects(startApp({ database, concurrency }, { directory: dir, servers: [provider] }), /CONCURRENCY/);
   assert.equal(existsSync(database), false);
-  let app = await startApp({ database, concurrency: 1, baseURL: `http://127.0.0.1:${address.port}/v1` });
+  let app = await startApp({ database, concurrency: 1, baseURL: `http://127.0.0.1:${address.port}/v1` }, { directory: dir, servers: [provider] });
   async function post(path: string, body: unknown) {
     const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     assert(response.ok); return response.json();
@@ -186,7 +186,7 @@ test('conversation commands protect Main chat, revisions, queued work and delete
   const dir = mkdtempSync(join(process.cwd(), 'node_modules/.conversation-controls-'));
   const provider = createServer(() => {}); await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve)); const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [provider] });
   async function post(path: string, body: unknown, status = 200) { const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const result = await response.json(); assert.equal(response.status, status, JSON.stringify(result)); return result; }
   const get = async (path: string) => (await fetch(app.origin + path)).json();
   try {

@@ -24,6 +24,9 @@ pub async fn extract(state: &AppState, bytes: &[u8]) -> Result<String> {
         .await
         .map_err(|_| error(503, "PDF fixture unavailable."))?;
     let status = response.status().as_u16();
+    if status == 204 {
+        return crate::files::preview::extract_pdf(bytes).await;
+    }
     if response
         .content_length()
         .is_some_and(|n| n > 2 * 1024 * 1024)

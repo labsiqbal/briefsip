@@ -20,7 +20,7 @@ for (const automatic of [true, false]) test(`channel context names lead for ${au
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
-  const app = await startApp({ database: join(directory, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` });
+  const app = await startApp({ database: join(directory, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` }, { directory, servers: [provider] });
   async function request(path: string, body?: unknown, status?: number) {
     const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const value = await response.json();

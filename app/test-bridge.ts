@@ -1,6 +1,24 @@
 import { startRustServer } from './rust-test-server.ts';
+import { rmSync } from 'node:fs';
+import type { Server } from 'node:http';
 
-export const startApp = startRustServer;
+export async function startApp(options: Parameters<typeof startRustServer>[0], fixtures?: { directory: string; servers?: Server[] }) {
+  try {
+    return await startRustServer(options);
+  } catch (error) {
+    if (!fixtures) throw error;
+    try {
+      await Promise.all((fixtures.servers ?? []).map(server => new Promise<void>(resolve => {
+        server.close(() => resolve());
+        server.closeAllConnections();
+      })));
+      rmSync(fixtures.directory, { recursive: true, force: true });
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Rust test server startup and fixture cleanup failed.');
+    }
+    throw error;
+  }
+}
 
 export const retainedToolNames = [
   'ask_user', 'call_mcp_tool', 'cancel_task', 'copy_skill_file', 'create_text_file', 'create_workspace_directory',

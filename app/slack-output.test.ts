@@ -17,7 +17,7 @@ test('Slack artifacts retain exact bytes and upload stages across uncertain comp
   if(!tools.length)call={name:'create_text_file',arguments:JSON.stringify({name:'result.html',text})};else if(question&&!tools.some((c:any)=>c.function.name==='ask_user'))call={name:'ask_user',arguments:JSON.stringify({question:'Continue?',choices:['Yes','No']})};res.end(JSON.stringify({choices:[{finish_reason:call?'tool_calls':'stop',message:call?{tool_calls:[{id:call.name,type:'function',function:call}]}:{content:'File ready'}}]}));});
  await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));const pa=provider.address();assert(pa&&typeof pa!=='string');
  const scriptToken='fixture-output-script-token-01234567890';
- const app=await startApp({database:join(root,'app.sqlite'),baseURL:`http://127.0.0.1:${pa.port}/v1`,scriptToken,scriptDirectory:join(root,'scripts')});
+ const app=await startApp({database:join(root,'app.sqlite'),baseURL:`http://127.0.0.1:${pa.port}/v1`,scriptToken,scriptDirectory:join(root,'scripts')}, { directory: root, servers: [provider] });
  let db:DatabaseSync|undefined;
  const connector=await rustConnectorFixture('slack',root,agent,app.origin,scriptToken,(method,raw,req,res)=>{
   if(req.url!.startsWith('/upload/')){assert.equal(req.headers.authorization,undefined);uploaded.push(raw);res.end('OK');return;}

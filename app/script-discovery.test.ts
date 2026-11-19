@@ -15,7 +15,7 @@ test('duplicate discovery startup cannot interrupt the owning server task', asyn
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(root, 'db.sqlite'), scriptDirectory: join(root, 'scripts'), baseURL: `http://127.0.0.1:${address.port}/v1` };
-  const app = await startApp(options);
+  const app = await startApp(options, { directory: root, servers: [provider] });
   async function request(path: string, body?: unknown) {
     const res = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const value = await res.json(); assert(res.ok, JSON.stringify(value)); return value;

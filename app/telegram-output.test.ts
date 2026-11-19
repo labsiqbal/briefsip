@@ -19,7 +19,7 @@ test('Telegram sends exact generated artifacts, retains uncertain delivery and r
   res.end(JSON.stringify({choices:[{finish_reason:call?'tool_calls':'stop',message:call?{tool_calls:[{id:call.name,type:'function',function:call}]}:{content:'File ready'}}]}));});
  await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));const pa=provider.address();assert(pa&&typeof pa!=='string');
  const scriptToken='fixture-output-script-token-01234567890';
- const app=await startApp({database:join(root,'app.sqlite'),baseURL:`http://127.0.0.1:${pa.port}/v1`,scriptToken,scriptDirectory:join(root,'scripts')});
+ const app=await startApp({database:join(root,'app.sqlite'),baseURL:`http://127.0.0.1:${pa.port}/v1`,scriptToken,scriptDirectory:join(root,'scripts')}, { directory: root, servers: [provider] });
  let db:DatabaseSync|undefined;
  const connector=await rustConnectorFixture('telegram',root,agent,app.origin,scriptToken,async(method,raw,req)=>{
   if(method==='sendDocument'){

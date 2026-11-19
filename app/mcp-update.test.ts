@@ -21,7 +21,7 @@ test('tested MCP updates bind origin/revision, rotate credentials and invalidate
   });
   await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve)); const address = remote.address(); assert(address && typeof address !== 'string');
   const options = { database: join(dir, 'state.sqlite') }, url = `http://127.0.0.1:${address.port}/mcp`;
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [remote] });
   async function post(path: string, data: unknown, expected = 200) {
     const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); const body = await response.json(); assert.equal(response.status, expected, JSON.stringify(body)); assert(!JSON.stringify(body).includes(oldToken)); assert(!JSON.stringify(body).includes(newToken)); return body;
   }

@@ -3,6 +3,7 @@ pub mod actions;
 #[allow(dead_code)]
 pub mod control;
 mod desktop;
+pub(crate) mod desktop_supervisor;
 pub mod devices;
 pub mod host_metrics;
 pub mod hub;
