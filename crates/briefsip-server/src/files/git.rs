@@ -153,7 +153,8 @@ struct Repo {
     common: PathBuf,
     index: PathBuf,
 }
-async fn detect(root: &Path) -> Result<Option<Repo>> {
+async fn detect(binding: &WorkspaceConfig) -> Result<Option<Repo>> {
+    let root = &binding.directory;
     workspace::open_directory(root).map_err(|_| {
         error(
             400,
@@ -172,6 +173,9 @@ async fn detect(root: &Path) -> Result<Option<Repo>> {
         return Ok(None);
     }
     let top = PathBuf::from(output(root, &["rev-parse", "--show-toplevel"], &[]).await?);
+    if binding.managed && top != *root {
+        return Ok(None);
+    }
     workspace::open_directory(&top).map_err(|_| {
         error(
             400,
@@ -326,7 +330,7 @@ pub async fn status(binding: Option<&WorkspaceConfig>) -> Result<Value> {
     let Some(binding) = binding else {
         return Ok(json!({"isRepo":false}));
     };
-    let Some(repo) = detect(&binding.directory).await? else {
+    let Some(repo) = detect(binding).await? else {
         return Ok(json!({"isRepo":false}));
     };
     let files = changed(&repo).await?;
@@ -380,7 +384,7 @@ pub async fn diff(binding: &WorkspaceConfig, selected: Option<&str>) -> Result<V
     if let Some(p) = selected {
         path(p)?;
     }
-    let repo = detect(&binding.directory)
+    let repo = detect(binding)
         .await?
         .ok_or_else(|| error(404, "Workspace is not a Git repository."))?;
     let files = if let Some(p) = selected {
@@ -524,7 +528,7 @@ pub async fn log(binding: &WorkspaceConfig, limit: i64) -> Result<Value> {
     if !(1..=50).contains(&limit) {
         return Err(error(400, "Log limit must be between 1 and 50."));
     }
-    let repo = detect(&binding.directory)
+    let repo = detect(binding)
         .await?
         .ok_or_else(|| error(404, "Workspace is not a Git repository."))?;
     if repo.head.is_none() {
@@ -628,12 +632,12 @@ pub async fn handle(state: &AppState, req: Request, parts: &[&str]) -> Result<Re
     let selected = if op == "checkpoints" {
         super::panel::binding_for_turn(state, agent, parts[5])?
     } else {
-        state
-            .config
-            .workspaces
-            .iter()
-            .find(|w| w.agent == agent)
-            .cloned()
+        let db = state.database.lock().map_err(|_| Failure::storage())?;
+        Some(crate::data::agent_folders::effective(
+            state,
+            &db.connection,
+            agent,
+        )?)
     };
     let binding = selected.as_ref();
     let result = if op == "status" {
@@ -692,6 +696,7 @@ pub async fn project(state: &AppState, req: Request, parts: &[&str]) -> Result<R
         agent: parts[2].into(),
         directory: PathBuf::from(folder.ok_or_else(|| error(400, "Choose a project folder."))?),
         write: false,
+        managed: false,
     };
     workspace::open_directory(&binding.directory).map_err(|_| {
         error(

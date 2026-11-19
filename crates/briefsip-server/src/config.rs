@@ -67,6 +67,8 @@ pub struct WorkspaceConfig {
     pub directory: PathBuf,
     #[serde(default)]
     pub write: bool,
+    #[serde(skip)]
+    pub managed: bool,
 }
 fn workspace_value(value: serde_json::Value) -> crate::db::Result<Vec<WorkspaceConfig>> {
     let rows = value

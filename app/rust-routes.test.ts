@@ -15,6 +15,8 @@ const matcher = (entry: Matcher) => {
 test('Rust route inventory stays within frozen Node matchers and reports ported coverage', t => {
   const rustOnly = new Map([
     ['/api/restore/reconcile', 'Exchanges a backup bootstrap token for a read-only recovery session.'],
+    ['/api/agents/{id}/folder', 'Reads or updates an agent working folder.'],
+    ['/api/agents/{id}/folder/reset', 'Restores the managed agent working folder.'],
     ['/api/sidebar/stream', 'Streams pending input and turn completion to the local owner.'],
     ['/api/provider-accounts/test', 'Tests a new local provider account.'],
     ['/api/provider-accounts/{id}/test', 'Tests a saved local provider account.'],

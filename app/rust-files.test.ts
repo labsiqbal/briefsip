@@ -117,7 +117,7 @@ test('Rust workspace pages and Git reads reject traversal, links, filters and in
   try {
     const agents = await f.request('/api/agents');
     assert.equal(agents.agents.find((agent: { id: string }) => agent.id === f.agent).workspace_connected, true);
-    assert.equal(agents.agents.find((agent: { id: string }) => agent.id === f.other).workspace_connected, false);
+    assert.equal(agents.agents.find((agent: { id: string }) => agent.id === f.other).workspace_connected, true);
     const panel = await f.request(`/api/agents/${f.agent}/panel`);
     assert.equal(panel.workspace.name, 'workspace');
     const path = `/api/agents/${f.agent}/workspace`; writeFileSync(join(f.workspace, 'text.txt'), 'x'.repeat(8000) + 'end');

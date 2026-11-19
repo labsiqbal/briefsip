@@ -2,7 +2,7 @@ use super::*;
 use axum::response::IntoResponse;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use rusqlite::OptionalExtension;
-use std::{os::unix::fs::PermissionsExt, path::PathBuf};
+use std::path::PathBuf;
 
 pub fn read(db: &Connection, id: &str) -> Result<Value> {
     one(db, "SELECT * FROM agents WHERE id=?", [id])?.ok_or_else(|| error(404, "Agent not found."))
@@ -21,6 +21,15 @@ pub fn capabilities(runtime: &str) -> Value {
 pub fn executable(state: &AppState, runtime: &str) -> Option<PathBuf> {
     crate::harness::executable(state, runtime)
 }
+pub(super) fn reset_harness(db: &Connection, id: &str) -> Result<()> {
+    for table in ["harness_sessions", "harness_policies"] {
+        if super::table(db, table)? {
+            db.execute(&format!("DELETE FROM {table} WHERE agent=?"), [id])?;
+        }
+    }
+    Ok(())
+}
+
 pub fn provider_blocked_reason(
     runtime: &str,
     account: Option<&providers::Account>,
@@ -46,6 +55,7 @@ fn runtime_blocked_reason(
     db: &Connection,
     id: &str,
     runtime: &str,
+    workspace_connected: bool,
 ) -> Result<Option<&'static str>> {
     if runtime == "api" {
         return Ok(None);
@@ -74,33 +84,15 @@ fn runtime_blocked_reason(
     {
         return Ok(Some("Check this engine in Settings > Engines."));
     }
-    if workspace(state, id).is_none() && !exists(db,
-        "SELECT 1 FROM local_project_members m JOIN local_projects p ON p.id=m.project WHERE m.agent=? AND p.deleted=0 AND p.archived=0",
-        [id],
-    )? {
+    if !workspace_connected
+        && !exists(db,
+            "SELECT 1 FROM local_project_members m JOIN local_projects p ON p.id=m.project WHERE m.agent=? AND p.deleted=0 AND p.archived=0",
+            [id],
+        )?
+    {
         return Ok(Some("This agent needs a workspace folder."));
     }
     Ok(None)
-}
-
-pub fn workspace(state: &AppState, id: &str) -> Option<Value> {
-    state
-        .config
-        .workspaces
-        .iter()
-        .find(|binding| binding.agent == id)
-        .map(|binding| json!({"agent":binding.agent,"directory":binding.directory,"write":binding.write}))
-        .or_else(|| {
-            let directory = state
-                .config
-                .database
-                .parent()?
-                .join("agent-workspaces")
-                .join(id);
-            directory
-                .is_dir()
-                .then(|| json!({"agent":id,"directory":directory,"write":true}))
-        })
 }
 pub fn list(state: &AppState, db: &Connection) -> Result<Value> {
     let accounts = providers::accounts(state)?;
@@ -109,7 +101,8 @@ pub fn list(state: &AppState, db: &Connection) -> Result<Value> {
         let id = string(a, "id").to_owned();
         let runtime = string(a, "runtime").to_owned();
         let avatar = avatar_read(db, &id)?;
-        a["workspace_connected"] = json!(workspace(state, &id).is_some());
+        let workspace_connected = super::agent_folders::effective(state, db, &id).is_ok();
+        a["workspace_connected"] = json!(workspace_connected);
         a["dispatchCapabilities"] = capabilities(&runtime);
         a["computer_waiting"] = json!(if table(db, "computer_waits")? {
             exists(
@@ -130,7 +123,13 @@ pub fn list(state: &AppState, db: &Connection) -> Result<Value> {
             .iter()
             .find(|account| account.id == string(a, "provider_account"));
         let provider_reason = provider_blocked_reason(&runtime, account);
-        let blocked_reason = provider_reason.or(runtime_blocked_reason(state, db, &id, &runtime)?);
+        let blocked_reason = provider_reason.or(runtime_blocked_reason(
+            state,
+            db,
+            &id,
+            &runtime,
+            workspace_connected,
+        )?);
         a["provider_available"] = json!(provider_reason.is_none());
         a["runnable"] = json!(blocked_reason.is_none());
         a["blocked_reason"] = json!(blocked_reason);
@@ -317,18 +316,7 @@ pub fn create(
         return Err(error(400, "Provider account not found."));
     }
     let image = avatar.get(input)?;
-    if runtime != "api" && workspace(state, id).is_none() && !exists(db,"SELECT 1 FROM local_project_members m JOIN local_projects p ON p.id=m.project WHERE m.agent=? AND p.deleted=0 AND p.archived=0",[id])? {
-        let dir = state
-            .config
-            .database
-            .parent()
-            .ok_or_else(Failure::storage)?
-            .join("agent-workspaces")
-            .join(id);
-        std::fs::create_dir_all(&dir).map_err(|_| Failure::storage())?;
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
-            .map_err(|_| Failure::storage())?;
-    }
+    super::agent_folders::ensure_managed(state, id)?;
     db.execute("INSERT INTO agents(id,name,role,model,instructions,thread_limit,tool_budget,backup_model,provider_account,runtime) VALUES(?,?,?,?,?,?,?,?,?,?)",rusqlite::params![id,name,role,model,instructions,v["threadLimit"].as_i64().unwrap_or(2),v["toolBudget"].as_i64().unwrap_or(90),backup.as_deref().unwrap_or(""),account.unwrap_or(""),runtime])?;
     if setup {
         let a = providers::accounts(state)?
@@ -445,24 +433,8 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
                     "Coding runtime requires an installed executable on PATH.",
                 ));
             }
-            if runtime != "api" && workspace(state, id).is_none() && !exists(db,"SELECT 1 FROM local_project_members m JOIN local_projects p ON p.id=m.project WHERE m.agent=? AND p.deleted=0 AND p.archived=0",[id])? {
-                std::fs::create_dir_all(
-                    state
-                        .config
-                        .database
-                        .parent()
-                        .ok_or_else(Failure::storage)?
-                        .join("agent-workspaces")
-                        .join(id),
-                )
-                .map_err(|_| Failure::storage())?;
-            }
             db.execute("UPDATE agents SET runtime=? WHERE id=?", [runtime, id])?;
-            for table in ["harness_sessions", "harness_policies"] {
-                if super::table(db, table)? {
-                    db.execute(&format!("DELETE FROM {table} WHERE agent=?"), [id])?;
-                }
-            }
+            reset_harness(db, id)?;
         }
     }
     if let Some(raw) = v.get("harnessModel") {

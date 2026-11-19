@@ -10,6 +10,7 @@ import { AgentAvatar, AvatarEditor } from './AgentAvatar';
 import { MascotAvatar } from './ui/avatar-shapes';
 import { CompactionPanel } from './CompactionPanel';
 import { AgentComputerSettings } from './AgentComputerSettings';
+import { AgentFolderSettings } from './AgentFolderSettings';
 import { AgentVisibility } from './AgentVisibility';
 import { ActionMenu, Alert, Button, Card, Collapsible, Combobox, Dialog, Field, IconButton, Input, RecoveryAlert, Row, Segmented, Select, Switch, Tabs, Textarea, Tooltip, useConfirm, type SelectOption } from './ui/kit';
 
@@ -242,6 +243,7 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
               <RadixTabs.Content tabIndex={-1} forceMount value="advanced" hidden={tab !== 'advanced'} className="k-tabs__panel">{advancedFields}
                 <Card><Row title="Web access" trailing={<Switch label="Web access" checked={webAccess} onChange={setWebAccess} disabled={locked || busy} />} /></Card>
                 <AgentComputerSettings agent={profile.id} request={api} autoFocus={focusComputer && tab === 'advanced'} />
+                <AgentFolderSettings agent={profile.id} request={api} isClientError={isClientError} />
                 <div className="details-list agent-profile__resources">
                   <button type="button" className="panel-row panel-row--link" onClick={() => openResource('memory')}><Brain size={16} aria-hidden /><span className="panel-row__title">Agent memory</span><ChevronRight size={14} aria-hidden /></button>
                   <CompactionPanel path={`/api/agents/${profile.id}/compaction`} request={api} />

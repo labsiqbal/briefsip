@@ -81,10 +81,11 @@ pub fn context(state: &AppState, db: &Connection, kind: &str, id: &str) -> Resul
     };
     if project.is_none() {
         if let Some(agent) = &agent {
-            if let Some(binding) = agents::workspace(state, agent) {
-                if let Some(directory) = binding["directory"].as_str() {
-                    workspace = Some((directory.to_owned(), binding["write"] == true));
-                }
+            if let Ok(binding) = agent_folders::effective(state, db, agent) {
+                workspace = Some((
+                    binding.directory.to_string_lossy().into_owned(),
+                    binding.write,
+                ));
             }
         }
     }
