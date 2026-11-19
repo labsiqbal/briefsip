@@ -142,6 +142,25 @@ fn id() -> String {
 }
 
 #[tokio::test]
+async fn device_host_resolves_settings_account_without_advertising_key() -> crate::db::Result<()> {
+    let fixture = Fixture::new().await?;
+    let account = id();
+    let body = json!({"id":account,"name":"Device account","provider":"openai-compatible",
+        "baseURL":fixture.base,"apiKey":KEY,"defaultModel":"model-a"});
+    let (status, _) = fixture
+        .request("/api/provider-accounts", Some(body), ORIGIN)
+        .await?;
+    assert_eq!(status, 201);
+    crate::computer::devices::host::check_settings_account(
+        fixture.state.config.data.clone(),
+        fixture.state.config.database.clone(),
+        &account,
+        &fixture.base,
+        KEY,
+    )
+}
+
+#[tokio::test]
 async fn agent_directory_checks_each_runtime_and_bound_account() -> crate::db::Result<()> {
     let fixture = Fixture::with_environment_accounts(false).await?;
     let agent = id();

@@ -66,6 +66,59 @@ pub fn binding_blocked_reason(
     ))
 }
 
+pub(crate) fn device_provider_status(device: &str, account: &Value) -> Value {
+    let runnable = account.is_string();
+    json!({
+        "provider_account": account,
+        "runnable": runnable,
+        "blocked_reason": (!runnable).then(|| format!("No provider on {device}"))
+    })
+}
+
+pub(crate) fn device_binding_account<'a>(
+    accounts: &'a Value,
+    binding: &Value,
+) -> Option<&'a Value> {
+    let account = binding["provider_account_id"].as_str()?;
+    let id = binding["id"].as_str()?;
+    let family = binding["provider_id"].as_str()?;
+    accounts
+        .as_array()?
+        .iter()
+        .filter(|a| a["provider"] == family && (a["id"] == account || a["id"] == id))
+        .min_by_key(|a| a["id"] != account)
+}
+
+pub(crate) fn device_bindings(
+    db: &Connection,
+    device: &str,
+    owner: &str,
+    name: &str,
+    accounts: &Value,
+    complete: bool,
+) -> Result<Value> {
+    let agents = all(db,"SELECT a.id AS agent,a.model,p.id,p.provider_account_id,p.provider_id FROM agents a JOIN agent_authority h ON h.agent=a.id LEFT JOIN provider_bindings p ON p.id=h.provider_binding AND p.device=h.home_device AND p.owner_account=h.owner_account AND p.readiness='ready' WHERE h.home_device=? AND h.owner_account=? ORDER BY a.id",[device,owner])?;
+    let bindings = agents
+        .iter()
+        .filter_map(|agent| {
+            let account = device_binding_account(accounts, agent);
+            if !complete && account.is_none() && !agent["id"].is_null() {
+                return None;
+            }
+            let id = account.map_or(&Value::Null, |account| &account["id"]);
+            let mut status = device_provider_status(name, id);
+            status["binding"] = agent["id"].clone();
+            status["model"] = if string(agent, "model").is_empty() {
+                account.map_or(Value::Null, |account| account["defaultModel"].clone())
+            } else {
+                agent["model"].clone()
+            };
+            Some((string(agent, "agent").to_owned(), status))
+        })
+        .collect::<serde_json::Map<_, _>>();
+    Ok(json!(bindings))
+}
+
 fn runtime_blocked_reason(
     state: &AppState,
     db: &Connection,
@@ -810,6 +863,26 @@ pub fn scripts(state: &AppState, db: &Connection, id: &str, v: &Value, get: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn device_binding_uses_only_the_reported_account() {
+        let report = json!([{"id":"device-account","provider":"openai-compatible","defaultModel":"fixture"}]);
+        let binding =
+            json!({"id":"grant","provider_account_id":"missing","provider_id":"openai-compatible"});
+        let account = device_binding_account(&report, &binding);
+        let status = device_provider_status(
+            "Laptop",
+            account.map_or(&Value::Null, |account| &account["id"]),
+        );
+        assert_eq!(status["runnable"], false);
+        assert_eq!(status["blocked_reason"], "No provider on Laptop");
+        let mut binding = binding;
+        binding["provider_account_id"] = json!("device-account");
+        assert_eq!(
+            device_binding_account(&report, &binding).map(|account| &account["id"]),
+            Some(&json!("device-account"))
+        );
+    }
 
     #[test]
     fn runtime_provider_requirements_match_execution() {

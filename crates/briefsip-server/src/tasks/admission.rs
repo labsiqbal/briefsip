@@ -255,6 +255,20 @@ pub fn admit(db: &Connection, account: &str, v: &Value, now: i64) -> Result<Valu
             .ok_or_else(|| fail(404, "resource_not_found", "Provider binding not found."))?,
         )
     };
+    if let Some((accounts, true)) =
+        crate::computer::devices::provider_accounts(&d, string(&m, "account"))?
+    {
+        if binding.as_ref().is_some_and(|binding| {
+            data::agents::device_binding_account(&accounts, binding).is_none()
+        }) {
+            let device = crate::computer::devices::device_label(db, &d, string(&m, "account"))?;
+            return Err(fail(
+                409,
+                "provider_unavailable",
+                &format!("No provider on {device}"),
+            ));
+        }
+    }
     data::limits::task_capacity(db, &project, &agent)?;
     let state = if d["status"] == "ready" {
         "queued"

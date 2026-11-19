@@ -1,6 +1,6 @@
 use super::*;
 use serde::Deserialize;
-use std::{collections::BTreeSet, time::Duration};
+use std::{collections::BTreeSet, path::Path, time::Duration};
 
 const DEFAULT_TURN_IDLE_TIMEOUT_MS: u64 = 10 * 60 * 1000;
 const DEFAULT_TURN_MAX_MS: u64 = 60 * 60 * 1000;
@@ -316,25 +316,127 @@ impl Options {
     }
 }
 pub fn accounts(state: &AppState) -> Result<Vec<Account>> {
-    let mut accounts = state
-        .config
-        .data
-        .environment_accounts()
-        .cloned()
-        .collect::<Vec<_>>();
-    accounts.extend(crate::data::provider_store::stored(state)?);
+    accounts_at(&state.config.data, Some(&state.config.database))
+}
+
+pub(crate) fn accounts_at(options: &Options, database: Option<&Path>) -> Result<Vec<Account>> {
+    let mut accounts = options.environment_accounts().cloned().collect::<Vec<_>>();
+    if let Some(database) = database {
+        accounts.extend(super::provider_store::stored(database, options)?);
+    }
     Ok(accounts)
 }
-pub(super) fn public(account: &Account) -> Value {
-    let host = url::Url::parse(&account.base)
-        .ok()
-        .and_then(|url| {
-            url.host_str().map(|host| match url.port() {
-                Some(port) => format!("{host}:{port}"),
-                None => host.to_owned(),
+
+fn host(base: &str) -> Option<String> {
+    let url = url::Url::parse(base).ok()?;
+    let host = url.host_str()?;
+    Some(match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_owned(),
+    })
+}
+
+const METADATA_ACCOUNTS: usize = 64;
+const METADATA_BYTES: usize = 32 * 1024;
+
+pub(crate) fn metadata(accounts: &[Account]) -> (Value, bool) {
+    let mut entries = Vec::new();
+    let mut ids = BTreeSet::new();
+    let mut bytes = 2;
+    for account in accounts {
+        let Some(host) = host(&account.base) else {
+            continue;
+        };
+        let fields = [
+            &account.id,
+            &account.name,
+            &account.family,
+            &host,
+            &account.model,
+        ];
+        let entry = json!({"id":account.id,"name":account.name,"provider":account.family,
+            "host":host,"defaultModel":account.model});
+        if accounts
+            .iter()
+            .filter_map(|a| a.key.as_deref())
+            .any(|key| !key.is_empty() && fields.iter().any(|value| value.contains(key)))
+            || !valid_metadata_entry(&entry)
+            || !ids.insert(&account.id)
+        {
+            continue;
+        }
+        bytes += entry.to_string().len() + 1;
+        if entries.len() == METADATA_ACCOUNTS || bytes > METADATA_BYTES {
+            break;
+        }
+        entries.push(entry);
+    }
+    let complete = entries.len()
+        == accounts
+            .iter()
+            .filter(|account| !account.base.is_empty())
+            .count();
+    (json!(entries), complete)
+}
+
+fn valid_metadata_entry(entry: &Value) -> bool {
+    if !closed(entry, &["id", "name", "provider", "host", "defaultModel"]) {
+        return false;
+    }
+    let Some(id) = entry["id"].as_str() else {
+        return false;
+    };
+    let Some(host) = entry["host"]
+        .as_str()
+        .filter(|host| (1..=259).contains(&host.len()))
+    else {
+        return false;
+    };
+    let valid_host = ["https", "http"].into_iter().any(|scheme| {
+        let origin = format!("{scheme}://{host}");
+        url::Url::parse(&origin).is_ok_and(|url| url.origin().ascii_serialization() == origin)
+    });
+    id.len() <= 64
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+        && id
+            .bytes()
+            .next()
+            .is_none_or(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        && supported_family(string(entry, "provider"))
+        && valid_host
+        && [("name", 80), ("defaultModel", 160)]
+            .iter()
+            .all(|&(field, limit)| {
+                entry[field].as_str().is_some_and(|value| {
+                    (field != "name" || !value.trim().is_empty())
+                        && value.encode_utf16().count() <= limit
+                        && !value.chars().any(char::is_control)
+                })
             })
-        })
-        .unwrap_or_default();
+}
+
+pub(crate) fn validate_metadata(value: &Value) -> Result<()> {
+    let mut ids = BTreeSet::new();
+    if value.as_array().is_some_and(|entries| {
+        entries.len() <= METADATA_ACCOUNTS
+            && entries
+                .iter()
+                .all(|entry| valid_metadata_entry(entry) && ids.insert(string(entry, "id")))
+            && value.to_string().len() <= METADATA_BYTES
+    }) {
+        return Ok(());
+    }
+    Err(Failure::new(
+        400,
+        "invalid_provider_accounts",
+        "Invalid device provider accounts.",
+    ))
+}
+
+pub(super) fn public(account: &Account) -> Value {
+    let host = host(&account.base).unwrap_or_default();
     let mut result = json!({
         "id":account.id,"name":account.name,"provider":account.family,"host":host,
         "configured":!account.base.is_empty(),"defaultModel":account.model,
@@ -619,6 +721,55 @@ mod tests {
         gemini["provider"] = json!("gemini");
         gemini["streamTermination"] = json!("finish-reason");
         assert!(parse(Some(json!([gemini]))).is_err());
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod device_metadata_tests {
+    use super::*;
+
+    #[test]
+    fn device_inventory_rejects_invalid_and_oversized_metadata() -> Result<()> {
+        let entry = json!({"id":"account","name":"Device","provider":"openai-compatible",
+            "host":"[::1]:4321","defaultModel":"fixture"});
+        validate_metadata(&json!([entry]))?;
+        for (field, value) in [
+            ("host", json!("fixture.example/private")),
+            ("host", json!("user:secret@fixture.example")),
+            ("host", json!("fixture.example?token=secret")),
+            ("apiKey", json!("secret")),
+            ("defaultModel", json!(42)),
+            ("provider", json!("other")),
+        ] {
+            let mut invalid = entry.clone();
+            invalid[field] = value;
+            assert!(validate_metadata(&json!([invalid])).is_err(), "{field}");
+        }
+        let too_many = (0..=METADATA_ACCOUNTS)
+            .map(|n| {
+                let mut account = entry.clone();
+                account["id"] = json!(n.to_string());
+                account
+            })
+            .collect::<Vec<_>>();
+        assert!(validate_metadata(&json!(too_many)).is_err());
+        let label = "h".repeat(60);
+        let host = [label.as_str(); 4].join(".");
+        let oversized = (0..METADATA_ACCOUNTS)
+            .map(|n| {
+                json!({
+                    "id": format!("account-{n}"),
+                    "name": "n".repeat(80),
+                    "provider": "openai-compatible",
+                    "host": format!("{host}:{}", 4000 + n),
+                    "defaultModel": "m".repeat(160)
+                })
+            })
+            .collect::<Vec<_>>();
+        assert!(oversized.iter().all(valid_metadata_entry));
+        assert!(validate_metadata(&json!(oversized)).is_err());
+        assert!(validate_metadata(&json!([entry, entry])).is_err());
         Ok(())
     }
 }

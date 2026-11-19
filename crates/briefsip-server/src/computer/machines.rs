@@ -1,5 +1,6 @@
 use super::{error, Result};
 use crate::{
+    data::{agents as local_agents, providers},
     files::{one, rows, text},
     updates::PeerError,
     web::Failure,
@@ -183,6 +184,25 @@ fn visible(s: &AppState, r: &Value) -> Result<Value> {
         )
     })? {
         v["remoteAgentMessaging"] = json!(policy["allowed"] == 1);
+    }
+    if let Some(report) = with_db(s, |db| {
+        one(
+            db,
+            "SELECT report FROM machine_provider_reports WHERE environment_id=?",
+            [text(r, "environment_id")],
+        )
+    })? {
+        let report = crate::web::parse_json(text(&report, "report").as_bytes())?;
+        v["providerAccounts"] = report["providerAccounts"].clone();
+        if let Some(bindings) = report["agentProviderAccounts"].as_object() {
+            v["agentProviders"] = json!(bindings
+                .iter()
+                .map(|(id, account)| (
+                    id.clone(),
+                    local_agents::device_provider_status(text(r, "name"), account)
+                ))
+                .collect::<serde_json::Map<String, Value>>());
+        }
     }
     Ok(v)
 }
@@ -489,7 +509,9 @@ async fn remote_request(
             req = req.bearer_auth(token);
         }
         if path == "/api/peer/agents" {
-            req = req.header("X-Briefsip-Messaging-Policy", "1");
+            req = req
+                .header("X-Briefsip-Messaging-Policy", "1")
+                .header("X-Briefsip-Provider-Accounts", "1");
         }
         let mut response = peer_http(s, req).await.map_err(|failure| {
             if track_transport {
@@ -557,7 +579,15 @@ async fn remote_request(
         })?
 }
 fn agents(value: &Value) -> Result<Value> {
-    fields(value, &["agents", "messagingAllowed"])?;
+    fields(
+        value,
+        &[
+            "agents",
+            "messagingAllowed",
+            "providerAccounts",
+            "agentProviderAccounts",
+        ],
+    )?;
     if value
         .get("messagingAllowed")
         .is_some_and(|v| !v.is_boolean())
@@ -580,6 +610,63 @@ fn agents(value: &Value) -> Result<Value> {
     }
     Ok(json!(result))
 }
+fn provider_report(roster: &Value, agents: &Value) -> Result<Option<Value>> {
+    let invalid = || error(502, "Invalid remote provider report.");
+    let (accounts, bindings) = match (
+        roster.get("providerAccounts"),
+        roster.get("agentProviderAccounts"),
+    ) {
+        (None, None) => return Ok(None),
+        (Some(accounts), Some(Value::Object(bindings))) => (accounts, bindings),
+        _ => return Err(invalid()),
+    };
+    providers::validate_metadata(accounts).map_err(|_| invalid())?;
+    let account_ids = accounts
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|a| a["id"].as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let agent_ids = agents
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|a| a["id"].as_str())
+        .collect::<std::collections::HashSet<_>>();
+    if bindings.len() > agent_ids.len()
+        || bindings.iter().any(|(agent, account)| {
+            !agent_ids.contains(agent.as_str())
+                || !account.is_null() && account.as_str().is_none_or(|id| !account_ids.contains(id))
+        })
+    {
+        return Err(invalid());
+    }
+    Ok(Some(
+        json!({"providerAccounts":accounts,"agentProviderAccounts":bindings}),
+    ))
+}
+
+pub(super) fn agent_provider_block(
+    db: &Connection,
+    machine: &str,
+    agent: &str,
+) -> Result<Option<String>> {
+    let row = one(db, "SELECT m.name FROM machine_provider_reports r JOIN paired_machines m USING(environment_id),json_each(r.report,'$.agentProviderAccounts') b WHERE m.environment_id=? AND b.key=? AND b.type='null'",[machine,agent])?;
+    Ok(row.map(|row| format!("No provider on {}", text(&row, "name"))))
+}
+
+fn cache_provider_report(db: &Connection, id: &str, report: Option<&Value>) -> Result<()> {
+    if let Some(report) = report {
+        db.execute("INSERT INTO machine_provider_reports VALUES(?,?) ON CONFLICT(environment_id) DO UPDATE SET report=excluded.report",params![id,report.to_string()])?;
+    } else {
+        db.execute(
+            "DELETE FROM machine_provider_reports WHERE environment_id=?",
+            [id],
+        )?;
+    }
+    Ok(())
+}
+
 fn prior(s: &AppState, id: &str, fingerprint: &str) -> Result<Option<Value>> {
     let v = with_db(s, |db| {
         one(db, "SELECT * FROM machine_commands WHERE id=?", [id])
@@ -809,9 +896,11 @@ async fn reciprocal(s: &AppState, v: &Value, header: Option<&str>) -> Result<Val
     if check["id"] != peer["id"] || check["origin"] != peer["origin"] {
         return Err(error(401, "Remote machine identity changed."));
     }
-    let cached = agents(&remote(s, origin, "/api/peer/agents", Some(&token), None).await?)?;
+    let roster = remote(s, origin, "/api/peer/agents", Some(&token), None).await?;
+    let cached = agents(&roster)?;
+    let providers = provider_report(&roster, &cached)?;
     no_secrets(
-        &json!({"peer":peer,"cached":cached}),
+        &json!({"peer":peer,"cached":cached,"providers":providers}),
         &[&token, text(&auth, "token")],
     )?;
     let enc = crypt(s, &token, origin, true)?;
@@ -840,6 +929,7 @@ async fn reciprocal(s: &AppState, v: &Value, header: Option<&str>) -> Result<Val
                 cached.to_string()
             ],
         )?;
+        cache_provider_report(db, text(&peer, "id"), providers.as_ref())?;
         db.execute(
             "DELETE FROM peer_pairing_pending WHERE token_id=?",
             [text(&auth, "id")],
@@ -847,13 +937,54 @@ async fn reciprocal(s: &AppState, v: &Value, header: Option<&str>) -> Result<Val
         Ok(json!({"ok":true}))
     })
 }
-async fn peer_agents(s: &AppState, header: Option<&str>, policy: bool) -> Result<Value> {
+async fn peer_agents(
+    s: &AppState,
+    header: Option<&str>,
+    policy: bool,
+    report_providers: bool,
+) -> Result<Value> {
     let auth = authorize(s, header).await?;
     if with_db(s,|db|one(db,"SELECT 1 FROM paired_machines WHERE local_token_id=? UNION ALL SELECT 1 FROM peer_pairing_pending WHERE token_id=? AND expires>?",params![text(&auth,"id"),text(&auth,"id"),s.config.now()]))?.is_none(){return Err(error(401,"Unauthorized peer request."));}
-    let roster = with_db(s, |db| {
-        rows(db,"SELECT id,name,role,model,CASE WHEN EXISTS(SELECT 1 FROM turns t WHERE t.agent=agents.id AND t.status IN('queued','running') AND t.paused=0) THEN 'working' ELSE 'idle' END AS status FROM agents ORDER BY rowid",[])
+    let mut result = with_db(s, |db| {
+        let mut roster = rows(db,"SELECT id,name,role,model,runtime,provider_account,CASE WHEN EXISTS(SELECT 1 FROM turns t WHERE t.agent=agents.id AND t.status IN('queued','running') AND t.paused=0) THEN 'working' ELSE 'idle' END AS status FROM agents ORDER BY rowid",[])?;
+        let mut result = json!({});
+        if report_providers {
+            let accounts = providers::accounts(s)?;
+            let (metadata, _) = providers::metadata(&accounts);
+            let mut bindings = serde_json::Map::new();
+            for agent in &roster {
+                let binding = text(agent, "provider_account");
+                if binding.starts_with(crate::data::logins::PREFIX) {
+                    continue;
+                }
+                if local_agents::binding_blocked_reason(
+                    db,
+                    text(agent, "runtime"),
+                    binding,
+                    &accounts,
+                )?
+                .is_some()
+                {
+                    bindings.insert(text(agent, "id").to_owned(), Value::Null);
+                } else if metadata
+                    .as_array()
+                    .is_some_and(|accounts| accounts.iter().any(|a| a["id"] == binding))
+                {
+                    bindings.insert(text(agent, "id").to_owned(), json!(binding));
+                }
+            }
+            result["providerAccounts"] = metadata;
+            result["agentProviderAccounts"] = json!(bindings);
+        }
+        for agent in &mut roster {
+            if let Some(fields) = agent.as_object_mut() {
+                fields.remove("runtime");
+                fields.remove("provider_account");
+            }
+        }
+        result["agents"] = json!(roster);
+        Ok(result)
     })?;
-    let mut result = json!({"agents":roster});
     if policy {
         let allowed = with_db(s, |db| {
             one(
@@ -1215,8 +1346,32 @@ pub async fn download_release(
     request.send().await.map_err(PeerError::network)
 }
 async fn check_machine(s: &AppState, r: &Value) -> Result<()> {
-    let result=async{let origin=text(r,"origin");let peer=descriptor(&remote(s, origin,"/api/environment",None,None).await?)?;if peer["id"]!=r["environment_id"] || peer["origin"]!=r["origin"]{return Err(error(401,"Remote machine identity changed."));}let token=crypt(s,text(r,"token"),origin,false)?;let roster=remote(s, origin,"/api/peer/agents",Some(&token),None).await?;let cached=agents(&roster)?;no_secrets(&json!({"peer":peer,"cached":cached}),&[&token,&crypt(s,text(r,"return_token"),&format!("{origin}:return"),false)?])?;
-        with_db(s,|db|{db.execute("UPDATE paired_machines SET name=?,version=?,last_seen=?,agents=? WHERE environment_id=? AND local_token_id=?",params![text(&peer,"name"),text(&peer,"version"),s.config.now(),cached.to_string(),text(r,"environment_id"),text(r,"local_token_id")])?;if let Some(allowed)=roster["messagingAllowed"].as_bool(){db.execute("INSERT INTO computer_peer_messaging VALUES(?,?) ON CONFLICT(token_id) DO UPDATE SET allowed=excluded.allowed",params![text(r,"local_token_id"),allowed as i64])?;}else{db.execute("DELETE FROM computer_peer_messaging WHERE token_id=?",[text(r,"local_token_id")])?;}Ok(())})?;Ok::<_,Failure>(())}.await;
+    let result = async {
+        let origin = text(r, "origin");
+        let peer = descriptor(&remote(s, origin, "/api/environment", None, None).await?)?;
+        if peer["id"] != r["environment_id"] || peer["origin"] != r["origin"] {
+            return Err(error(401, "Remote machine identity changed."));
+        }
+        let token = crypt(s, text(r, "token"), origin, false)?;
+        let roster = remote(s, origin, "/api/peer/agents", Some(&token), None).await?;
+        let cached = agents(&roster)?;
+        let providers = provider_report(&roster, &cached)?;
+        let back = crypt(s, text(r, "return_token"), &format!("{origin}:return"), false)?;
+        no_secrets(&json!({"peer":peer,"cached":cached,"providers":providers}), &[&token, &back])?;
+        tx(s, |db| {
+            let changed = db.execute("UPDATE paired_machines SET name=?,version=?,last_seen=?,agents=? WHERE environment_id=? AND local_token_id=?",params![text(&peer,"name"),text(&peer,"version"),s.config.now(),cached.to_string(),text(r,"environment_id"),text(r,"local_token_id")])?;
+            if changed == 0 {
+                return Ok(());
+            }
+            cache_provider_report(db, text(r,"environment_id"), providers.as_ref())?;
+            if let Some(allowed) = roster["messagingAllowed"].as_bool() {
+                db.execute("INSERT INTO computer_peer_messaging VALUES(?,?) ON CONFLICT(token_id) DO UPDATE SET allowed=excluded.allowed",params![text(r,"local_token_id"),allowed as i64])?;
+            } else {
+                db.execute("DELETE FROM computer_peer_messaging WHERE token_id=?",[text(r,"local_token_id")])?;
+            }
+            Ok(())
+        })
+    }.await;
     let status = match result {
         Ok(()) => "online",
         Err(e) if [401, 409].contains(&e.status) => "unauthorized",
@@ -1372,6 +1527,8 @@ pub async fn handle(
                         .headers()
                         .get("x-briefsip-messaging-policy")
                         .and_then(|v| v.to_str().ok())
+                        == Some("1"),
+                    crate::text_header(request.headers(), "x-briefsip-provider-accounts")
                         == Some("1"),
                 )
                 .await?

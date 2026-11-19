@@ -36,6 +36,7 @@ struct Stream {
     principal: Principal,
     generation: i64,
     sender: mpsc::Sender<String>,
+    provider_accounts: Option<(Value, bool)>,
 }
 #[derive(Default)]
 struct Runtime {
@@ -781,6 +782,10 @@ fn link(db: &Connection, actor: &Actor, v: &Value, now: i64) -> Result<Value> {
             201,
             now,
         )?;
+        db.execute(
+            "UPDATE receipts SET result_json=json_set(result_json,'$.deviceLabel',?) WHERE request_id=?",
+            params![text(&c, "deviceLabel"), request],
+        )?;
         let secret = session(
             db,
             text(&c, "deviceId"),
@@ -943,6 +948,26 @@ fn envelope(result: Value) -> Response {
         json!({"ok":true,"data":result["data"],"revision":result["receipt"]["recordRevision"],"receipt":result["receipt"]}),
     )
 }
+pub(crate) fn provider_accounts(device: &Value, account: &str) -> Result<Option<(Value, bool)>> {
+    Ok(runtime()?
+        .streams
+        .get(text(device, "id"))
+        .filter(|stream| {
+            device["status"] == "ready"
+                && account == stream.principal.account
+                && device["generation"] == stream.principal.generation
+                && device["connection_generation"] == stream.generation
+        })
+        .and_then(|stream| stream.provider_accounts.clone()))
+}
+
+pub(crate) fn device_label(db: &Connection, device: &Value, owner: &str) -> Result<String> {
+    let row = one(db,"SELECT json_extract(result_json,'$.deviceLabel') label FROM receipts WHERE scope='device_enrollment' AND actor=? AND json_extract(result_json,'$.data.deviceId')=? AND json_extract(result_json,'$.data.generation')=? LIMIT 1",params![owner,text(device,"id"),device["generation"].as_i64()])?;
+    Ok(row
+        .and_then(|row| row["label"].as_str().map(str::to_owned))
+        .unwrap_or_else(|| text(device, "id").to_owned()))
+}
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/devices", any(crate::dispatch))
@@ -998,9 +1023,22 @@ pub async fn human(
     let now = state.config.now();
     if path == "/api/devices" && *method == Method::GET {
         authority(db)?;
+        let mut devices = rows(db,"SELECT id,installation,generation,connection_generation,status,zone,zone_revision,last_seen,capabilities_json,revision,descriptor_json FROM devices WHERE account=? ORDER BY id",[&actor.account])?;
+        for device in &mut devices {
+            let Some((accounts, complete)) = provider_accounts(device, &actor.account)? else {
+                continue;
+            };
+            let id = text(device, "id");
+            let name = device_label(db, device, &actor.account)?;
+            let bindings =
+                data::agents::device_bindings(db, id, &actor.account, &name, &accounts, complete)?;
+            device["providerAccounts"] = accounts;
+            device["providerAccountsComplete"] = json!(complete);
+            device["agentProviders"] = bindings;
+        }
         return Ok(Some(crate::json_response(
             200,
-            json!({"ok":true,"data":rows(db,"SELECT id,installation,generation,connection_generation,status,zone,zone_revision,last_seen,capabilities_json,revision,descriptor_json FROM devices WHERE account=? ORDER BY id",[&actor.account])?}),
+            json!({"ok":true,"data":devices}),
         )));
     }
     if *method == Method::POST
@@ -1167,6 +1205,8 @@ pub async fn host(state: &AppState, request: Request, request_id: &str) -> Resul
                 "zone",
                 "zoneRevision",
                 "journalWatermark",
+                "providerAccounts",
+                "providerAccountsComplete",
             ],
         )?;
         let mut normalized = v.clone();
@@ -1175,8 +1215,23 @@ pub async fn host(state: &AppState, request: Request, request_id: &str) -> Resul
         let zone = zone(&v["zone"])?;
         let zr = revision(&v["zoneRevision"], 1)?;
         revision(&v["journalWatermark"], 0)?;
+        let accounts = match (v.get("providerAccounts"), v.get("providerAccountsComplete")) {
+            (None, None) => None,
+            (Some(accounts), Some(Value::Bool(complete))) => {
+                data::providers::validate_metadata(accounts)?;
+                Some((accounts.clone(), *complete))
+            }
+            _ => {
+                return Err(fail(
+                    400,
+                    "invalid_provider_accounts",
+                    "Invalid device provider accounts.",
+                ))
+            }
+        };
         let hash = digest(&json!(["briefsip-device-heartbeat-v1", device, normalized]));
         let scope = format!("device_heartbeat:{device}");
+        let mut fresh = false;
         let result = super::transaction(db, |db| {
             let row = current(db, &principal, now)?;
             if row["connection_generation"] != connection
@@ -1206,6 +1261,7 @@ pub async fn host(state: &AppState, request: Request, request_id: &str) -> Resul
             if changed {
                 data::append_device(db, &device, now)?;
             }
+            fresh = true;
             save(
                 db,
                 &principal.account,
@@ -1219,6 +1275,15 @@ pub async fn host(state: &AppState, request: Request, request_id: &str) -> Resul
                 now,
             )
         })?;
+        if fresh {
+            if let Some(stream) = runtime()?
+                .streams
+                .get_mut(&device)
+                .filter(|stream| stream.generation == connection)
+            {
+                stream.provider_accounts = accounts;
+            }
+        }
         return Ok(envelope(result));
     }
     Err(fail(
@@ -1251,11 +1316,12 @@ async fn open_stream(state: &AppState, p: Principal) -> Result<Response> {
                 principal: p.clone(),
                 generation: next,
                 sender: tx,
+                provider_accounts: None,
             },
         );
         next
     };
-    let frame=json!({"v":1,"connectionGeneration":generation,"kind":"connected","body":{"deviceId":p.device,"generation":p.generation,"authorityGeneration":p.authority}}).to_string()+"\n";
+    let frame=json!({"v":1,"connectionGeneration":generation,"kind":"connected","body":{"deviceId":p.device,"generation":p.generation,"authorityGeneration":p.authority,"reportsProviders":true}}).to_string()+"\n";
     struct Disconnect {
         state: AppState,
         device: String,
