@@ -101,7 +101,6 @@ fn publish(root: &Path, relative: &str, bytes: &[u8]) -> Result<Value> {
     }
 }
 pub fn publish_generated(
-    db: &Connection,
     binding: &crate::config::WorkspaceConfig,
     name: &str,
     text: &str,
@@ -126,9 +125,7 @@ pub fn publish_generated(
                 return Err(error(409, "File already exists. Read it before editing."));
             }
             let replaced = perform(
-                db,
                 root,
-                &binding.agent,
                 "replace_workspace_file",
                 &json!({"path":name,"text":text,"digest":digest}),
             )?;

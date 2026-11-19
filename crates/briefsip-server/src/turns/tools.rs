@@ -794,7 +794,7 @@ fn file_tool(
             .as_ref()
             .filter(|v| v["workspace"].as_str() == directory)
             .map(|v| string(v, "digest"));
-        crate::files::writes::publish_generated(db, binding, &name, text, previous)?;
+        crate::files::writes::publish_generated(binding, &name, text, previous)?;
         result["path"] = json!(name);
     }
     Ok(result)
