@@ -266,7 +266,10 @@ mod tests {
         std::fs::create_dir(&server)?;
         let headers = HeaderMap::new();
         {
-            let guard = state.database.lock().unwrap();
+            let guard = state
+                .database
+                .lock()
+                .map_err(|_| "Database lock poisoned")?;
             let db = &guard.connection;
             let managed = scratch.0.join("data/agent-workspaces").join(&agent);
             assert!(!managed.exists());
@@ -295,7 +298,7 @@ mod tests {
             ))?);
         }
         Arc::get_mut(&mut state.config)
-            .unwrap()
+            .ok_or("Config is shared")?
             .workspaces
             .push(WorkspaceConfig {
                 agent: agent.clone(),
@@ -304,7 +307,10 @@ mod tests {
                 managed: false,
             });
         {
-            let guard = state.database.lock().unwrap();
+            let guard = state
+                .database
+                .lock()
+                .map_err(|_| "Database lock poisoned")?;
             let db = &guard.connection;
             let binding = checked(effective(&state, db, &agent))?;
             assert_eq!(binding.directory, server);
@@ -328,8 +334,14 @@ mod tests {
                     .is_err_and(|err| err.status == 409)
             );
         }
-        Arc::get_mut(&mut state.config).unwrap().workspaces.clear();
-        let guard = state.database.lock().unwrap();
+        Arc::get_mut(&mut state.config)
+            .ok_or("Config is shared")?
+            .workspaces
+            .clear();
+        let guard = state
+            .database
+            .lock()
+            .map_err(|_| "Database lock poisoned")?;
         let db = &guard.connection;
         assert_eq!(checked(effective(&state, db, &agent))?.directory, custom);
         let reset = json!({"id":uuid::Uuid::new_v4().to_string(),"revision":1});
@@ -348,14 +360,21 @@ mod tests {
         let custom = scratch.0.join("custom");
         std::fs::create_dir(&custom)?;
         std::os::unix::fs::symlink(&custom, &symlink)?;
-        let guard = state.database.lock().unwrap();
+        let guard = state
+            .database
+            .lock()
+            .map_err(|_| "Database lock poisoned")?;
         let db = &guard.connection;
         let headers = HeaderMap::new();
         for path in [
             PathBuf::from("relative"),
             PathBuf::from("/tmp"),
             scratch.0.join("data"),
-            scratch.0.parent().unwrap().join(".ssh"),
+            scratch
+                .0
+                .parent()
+                .ok_or("Scratch has no parent")?
+                .join(".ssh"),
             scratch.0.join("missing"),
             scratch.0.join("custom/../custom"),
             symlink,
@@ -395,13 +414,17 @@ mod tests {
         let (scratch, state, agent) = fixture()?;
         let id = uuid::Uuid::new_v4().to_string();
         let turn = {
-            let guard = state.database.lock().unwrap();
+            let guard = state
+                .database
+                .lock()
+                .map_err(|_| "Database lock poisoned")?;
             let db = &guard.connection;
             db.execute(
                 "INSERT INTO turns(id,agent,text,status,created) VALUES(?,?,'','running','')",
                 [&id, &agent],
             )?;
-            let turn = checked(one(db, "SELECT * FROM turns WHERE id=?", [&id]))?.unwrap();
+            let turn =
+                checked(one(db, "SELECT * FROM turns WHERE id=?", [&id]))?.ok_or("Missing turn")?;
             let specs = checked(tools::offered(&state, db, &turn))?;
             for name in [
                 "create_text_file",
@@ -455,7 +478,7 @@ mod tests {
         let allow = async {
             loop {
                 {
-                    let guard = state.database.lock().unwrap();
+                    let guard = state.database.lock().map_err(|_| Failure::storage())?;
                     if guard.connection.execute(
                         "UPDATE harness_approvals SET decision='allow',state='decided' WHERE turn=? AND state='approval'",
                         [&id],
