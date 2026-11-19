@@ -1003,6 +1003,7 @@ mod tests {
         let database =
             crate::db::open(&config.database, false, 0).map_err(|_| Failure::storage())?;
         crate::files::init(&database.connection).map_err(|_| Failure::storage())?;
+        crate::data::initialize(&database).map_err(|_| Failure::storage())?;
         crate::computer::hub::initialize(&database.connection).map_err(|_| Failure::storage())?;
         let computer =
             Arc::new(crate::computer::Manager::new(&config).map_err(|_| Failure::storage())?);
