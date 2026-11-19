@@ -41,7 +41,7 @@ test('backup model is opt-in, bounded, durable and never replays after activity 
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(directory, 'db.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, timeout: 2000 };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory, servers: [provider] });
   async function request(path: string, body?: unknown, status?: number) {
     const response = await fetch(app.origin + path, { method: body === undefined ? 'GET' : 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
     const result = await response.json(); if (status) assert.equal(response.status, status, JSON.stringify(result)); else assert(response.ok, JSON.stringify(result)); return result;

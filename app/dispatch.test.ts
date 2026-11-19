@@ -237,7 +237,7 @@ test('restart during uncertain MCP effect keeps its receipt and never replays ex
   await Promise.all([new Promise<void>(resolve => external.listen(0, '127.0.0.1', resolve)), new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve))]);
   const ea = external.address(), pa = provider.address(); assert(ea && typeof ea !== 'string' && pa && typeof pa !== 'string');
   const options = { database: join(directory, 'state.sqlite'), baseURL: `http://127.0.0.1:${pa.port}/v1` };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory, servers: [external, provider] });
   async function request(path: string, body?: unknown): Promise<any> { const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); const result = await response.json(); assert(response.ok, JSON.stringify(result)); return result; }
   try {
     const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Uncertain restart', model: 'fake', instructions: 'Help.' });

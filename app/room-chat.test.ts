@@ -21,7 +21,7 @@ async function fixture(run: (f: any) => Promise<void>, concurrency = 4) {
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, concurrency };
-  let app = await startApp(options), closed = false;
+  let app = await startApp(options, { directory: dir, servers: [provider] }), closed = false;
   const stop = async () => { if (!closed) { closed = true; await app.close(); } };
   const request = async (path: string, body?: any, status?: number) => {
     const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });

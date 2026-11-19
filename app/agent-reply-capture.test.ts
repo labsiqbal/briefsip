@@ -39,7 +39,7 @@ test('new user turns capture only ready same-scope group replies once across ret
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(directory, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory, servers: [provider] });
   const post = async (path: string, data: unknown, status = 200) => {
     const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     const value = await response.json(); assert.equal(response.status, status, JSON.stringify(value)); return value;

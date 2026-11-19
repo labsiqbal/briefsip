@@ -21,7 +21,7 @@ test('provider account switch requires scoped browser consent and survives resta
   });
   await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));const address=provider.address();assert(address&&typeof address!=='string');
   const base=`http://127.0.0.1:${address.port}`,accounts=[{id:'a',name:'Account A',provider:'openai-compatible',baseURL:base+'/a/v1',apiKey:'secret-a'},{id:'b',name:'Account B',provider:'openai-compatible',baseURL:base+'/b/v1',apiKey:'secret-b'}];
-  const options={database:join(directory,'db.sqlite'),port:0,accounts,scriptToken:'script-secret-abcdefghijklmnopqrstuvwxyz'};let app=await startApp(options);
+  const options={database:join(directory,'db.sqlite'),port:0,accounts,scriptToken:'script-secret-abcdefghijklmnopqrstuvwxyz'};let app=await startApp(options, { directory, servers: [provider] });
   async function request(path:string,body?:unknown,status=200,script=false){const response=await fetch(app.origin+path,{method:body?'POST':'GET',headers:script?{Authorization:'Bearer script-secret-abcdefghijklmnopqrstuvwxyz','Content-Type':'application/json'}:{Origin:app.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const data=await response.json();assert(status===200 ? response.ok : response.status===status,JSON.stringify(data));return data;}
   async function until(path:string,id:string,predicate:(row:any)=>boolean){for(let n=0;n<300;n++){const row=(await request(path+'/turns')).find((item:any)=>item.id===id);if(row&&predicate(row))return row;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Timed out');}
   try {

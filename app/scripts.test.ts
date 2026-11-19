@@ -20,7 +20,7 @@ test('local scripts require token and current agent grant, keep payload and retr
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, scriptToken: token };
   await assert.rejects(startApp({ ...options, scriptToken: 'short' }), /BRIEFSIP_SCRIPT_TOKEN/);
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [provider] });
   async function request(path: string, body?: unknown, status = 200, headers?: Record<string, string>) {
     const response = await new Promise<{ status: number | undefined; text: string }>((resolve, reject) => {
       const req = httpRequest(app.origin + path, { method: body ? 'POST' : 'GET', headers: headers ?? { Origin: app.origin, 'Content-Type': 'application/json' } }, async res => {

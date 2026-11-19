@@ -83,7 +83,7 @@ test('project routine runs use project folders and post one system report per ou
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const agent = randomUUID(), options = { database: join(home, 'data/state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, workspaces: [{ agent, directory: host, write: true }] };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: home, servers: [provider] });
   const request = async (path: string, body?: unknown, status = 200) => {
     const response = await fetch(app.origin + path, body === undefined ? {} : { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const value = await response.json(); assert.equal(response.status, status, JSON.stringify(value)); return value;
@@ -158,7 +158,7 @@ test('scheduled cron catches up once and unavailable project folders do not star
   await new Promise<void>(resolve => provider.listen(0,'127.0.0.1',resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = {database:join(home,'data/state.sqlite'),baseURL:`http://127.0.0.1:${address.port}/v1`};
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: home, servers: [provider] });
   const request = async (path: string, body?: unknown) => {
     const response = await fetch(app.origin + path, body === undefined ? {} : {method:'POST',headers:{Origin:app.origin,'Content-Type':'application/json'},body:JSON.stringify(body)});
     const result = await response.json(); assert(response.ok,JSON.stringify(result)); return result;

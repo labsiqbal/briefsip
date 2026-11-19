@@ -46,7 +46,7 @@ test('synthetic scenarios record panel without duplicate writes, inline links, w
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
-  const app = await startApp({ database: join(directory, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, workspaces: [{ agent, directory: workspace, write: true }] });
+  const app = await startApp({ database: join(directory, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, workspaces: [{ agent, directory: workspace, write: true }] }, { directory, servers: [provider] });
   const request = async (path: string, body?: unknown) => {
     const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     assert(response.ok, await response.clone().text()); return response.json();

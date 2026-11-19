@@ -40,11 +40,11 @@ test('caller interruption cancels only owned deliveries, journals notice and pre
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, concurrency: 4 };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [provider] });
   await app.close();
   const setup = new DatabaseSync(options.database);
   setup.exec("CREATE TRIGGER reject_interrupt_notice BEFORE INSERT ON turns WHEN NEW.text LIKE 'The work I asked for%fixture failure check%' BEGIN SELECT RAISE(ABORT,'fixture notice failure'); END");
-  setup.close(); app = await startApp(options);
+  setup.close(); app = await startApp(options, { directory: dir, servers: [provider] });
   const post = async (path: string, data: unknown, expected = 200) => {
     const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     const value = await response.json(); assert.equal(response.status, expected, JSON.stringify(value)); return value;

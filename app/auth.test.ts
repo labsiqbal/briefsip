@@ -176,7 +176,12 @@ test('canonical invitation creates durable outbox and worker delivers through co
   let mail = { from: 'noreply@example.com', origin: config.origin, keyId: oldKeyId, key: mailKey, lookupKey, keyFor: (keyId: string) => { assert.equal(keyId, oldKeyId); return mailKey; } };
   const clerk = createClerkClient({ secretKey: config.secretKey, publishableKey: config.publishableKey, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), telemetry: { disabled: true } });
   const options = { mailFrom: 'noreply@example.com', mailOrigin: config.origin, mailApiKey: 'resend_fixture', installationId: randomUUID(), testKeyring: { 'mail-aead/active': oldKeyId, ['mail-aead/' + oldKeyId]: mailKey.toString('base64url'), 'mail-lookup/v1': lookupKey.toString('base64url') }, database: join(dir, 'db.sqlite'), auth: { ...config, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), development: true }, clerk, mail: () => mail, mailEndpoint: `http://127.0.0.1:${address.port}/emails` };
-  let app = await startCanonicalApp(options);
+  const cleanup = async () => {
+    provider.closeAllConnections();
+    await new Promise<void>(resolve => provider.close(() => resolve()));
+    rmSync(dir, { recursive: true, force: true });
+  };
+  let app = await startCanonicalApp(options).catch(async error => { await cleanup(); throw error; });
   const send = async (path: string, body: Record<string, unknown>) => fetch(app.origin + path, { method: 'POST', headers: { Authorization: `Bearer ${jwt()}`, Origin: config.origin, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': String(body.requestId) }, body: JSON.stringify(body) });
   try {
     const projectId = randomUUID(); const project = await send('/api/projects', { requestId: randomUUID(), id: projectId, name: 'Mail fixture' }); assert.equal(project.status, 201);
@@ -188,5 +193,5 @@ test('canonical invitation creates durable outbox and worker delivers through co
     app = await startCanonicalApp({ ...options, mailApiKey: 'resend_fixture' });
     for (let n = 0; n < 100 && !delivered; n++) await new Promise(resolve => setTimeout(resolve, 10));
     assert.equal(delivered, 1); assert.match(bodies[0], /member@example.com/); assert.match(bodies[0], /Briefsip/);
-  } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
+  } finally { try { await app.close(); } finally { await cleanup(); } }
 });
