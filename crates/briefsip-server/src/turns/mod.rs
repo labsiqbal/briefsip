@@ -27,6 +27,7 @@ pub(crate) mod tools;
 pub(crate) use crate::media::transcription;
 mod verification;
 pub(crate) mod waits;
+pub(crate) mod web;
 
 use crate::{data, web::Failure, AppState};
 use axum::{extract::Request, http::Method, response::Response, routing::any, Router};

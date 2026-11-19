@@ -38,11 +38,17 @@ pub struct Account {
     pub stream: bool,
     pub termination: String,
     pub max_tokens: u64,
+    pub source: &'static str,
 }
-fn family(v: Option<&str>) -> crate::db::Result<String> {
-    match v.unwrap_or("openai-compatible") {
-        s @ ("openai-compatible" | "anthropic" | "gemini") => Ok(s.to_owned()),
-        _ => Err("BRIEFSIP_PROVIDER must be openai-compatible, anthropic or gemini".into()),
+pub(super) fn supported_family(value: &str) -> bool {
+    matches!(value, "openai-compatible" | "anthropic" | "gemini")
+}
+fn family(value: Option<&str>) -> crate::db::Result<String> {
+    let value = value.unwrap_or("openai-compatible");
+    if supported_family(value) {
+        Ok(value.to_owned())
+    } else {
+        Err("BRIEFSIP_PROVIDER must be openai-compatible, anthropic or gemini".into())
     }
 }
 pub fn address(base: &str) -> crate::db::Result<url::Url> {
@@ -141,9 +147,12 @@ impl Options {
         }
         Ok(())
     }
+    fn environment_accounts(&self) -> impl Iterator<Item = &Account> {
+        self.validated_accounts.iter()
+    }
+
     pub(crate) fn account(&self, id: &str) -> Option<Account> {
-        self.validated_accounts
-            .iter()
+        self.environment_accounts()
             .find(|account| account.id == id)
             .cloned()
     }
@@ -166,6 +175,7 @@ impl Options {
                 .as_ref()
                 .and_then(Value::as_u64)
                 .unwrap_or(4096),
+            source: "environment",
         }];
         if let Some(base) = &self.base_url {
             address(base)?;
@@ -267,16 +277,51 @@ impl Options {
                 stream: v["stream"].as_bool().unwrap_or(false),
                 termination: termination.into(),
                 max_tokens: v["maxTokens"].as_u64().unwrap_or(4096),
+                source: "environment",
             });
         }
         Ok(out)
     }
 }
 pub fn accounts(state: &AppState) -> Result<Vec<Account>> {
-    Ok(state.config.data.validated_accounts.clone())
+    let mut accounts = state
+        .config
+        .data
+        .environment_accounts()
+        .cloned()
+        .collect::<Vec<_>>();
+    accounts.extend(crate::data::provider_store::stored(state)?);
+    Ok(accounts)
+}
+pub(super) fn public(account: &Account) -> Value {
+    let host = url::Url::parse(&account.base)
+        .ok()
+        .and_then(|url| {
+            url.host_str().map(|host| match url.port() {
+                Some(port) => format!("{host}:{port}"),
+                None => host.to_owned(),
+            })
+        })
+        .unwrap_or_default();
+    let mut result = json!({
+        "id":account.id,"name":account.name,"provider":account.family,"host":host,
+        "configured":!account.base.is_empty(),"defaultModel":account.model,
+        "source":account.source,"hasKey":account.key.as_ref().is_some_and(|key| !key.is_empty())
+    });
+    if account.source == "settings" {
+        result["baseURL"] = json!(account.base);
+    }
+    result
 }
 pub fn list(state: &AppState) -> Result<Value> {
-    Ok(json!(accounts(state)?.into_iter().map(|a| {let host=url::Url::parse(&a.base).ok().map(|u|match u.port(){Some(p)=>format!("{}:{p}",u.host_str().unwrap_or("")),None=>u.host_str().unwrap_or("").into()}).unwrap_or_default();json!({"id":a.id,"name":a.name,"provider":a.family,"host":host,"configured":!a.base.is_empty(),"defaultModel":a.model})}).collect::<Vec<_>>()))
+    let mut accounts = state
+        .config
+        .data
+        .environment_accounts()
+        .map(public)
+        .collect::<Vec<_>>();
+    accounts.extend(super::provider_store::list(state)?);
+    Ok(json!(accounts))
 }
 const INVALID: &str =
     "The provider returned an invalid model catalog. Check the /models endpoint response.";
@@ -294,16 +339,26 @@ pub async fn models(state: &AppState, q: &[(String, String)]) -> Result<Value> {
             },
         ));
     }
-    let operation = discover(account);
-    let result = tokio::time::timeout(
+    Ok(json!({"models":discover_with_timeout(state, &account, true).await?}))
+}
+
+pub(super) async fn test_models(state: &AppState, account: &Account) -> Result<Vec<String>> {
+    discover_with_timeout(state, account, false).await
+}
+
+async fn discover_with_timeout(
+    state: &AppState,
+    account: &Account,
+    paginate: bool,
+) -> Result<Vec<String>> {
+    tokio::time::timeout(
         Duration::from_millis(state.config.data.timeout.unwrap_or(15000).min(15000)),
-        operation,
+        discover(account, paginate),
     )
     .await
-    .map_err(|_| error(502, TIMEOUT))??;
-    Ok(json!({"models":result}))
+    .map_err(|_| error(502, TIMEOUT))?
 }
-async fn discover(a: Account) -> Result<Vec<String>> {
+async fn discover(a: &Account, paginate: bool) -> Result<Vec<String>> {
     let mut url = address(&a.base).map_err(|_| error(502, INVALID))?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -393,6 +448,9 @@ async fn discover(a: Account) -> Result<Vec<String>> {
         }
         if models.len() > 10000 {
             return Err(error(502, INVALID));
+        }
+        if !paginate {
+            return Ok(models.into_iter().collect());
         }
         let cursor = if a.family == "gemini" {
             if v.get("nextPageToken").is_none() {

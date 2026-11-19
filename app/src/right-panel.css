@@ -150,3 +150,12 @@
 .run-inspector__value pre { margin: 4px 0 0; padding: 8px; color: var(--color-text-primary); background: var(--color-bg-tertiary); border-radius: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .run-inspector__value code, .run-inspector__details dd code { font: 12px/1.55 var(--font-mono-stack); }
 .run-inspector__providers h3 { margin: 0 0 4px; font-size: 13px; font-weight: 600; }
+
+@media (max-width: 767px) {
+  .right-panel-sheet {
+    width: 100%; max-width: none; height: 100dvh;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  .right-panel-sheet .right-panel { min-width: 100%; }
+  .right-panel > .k-tabs > .k-tabs__list > .k-tabs__tab { min-height: 44px; }
+}

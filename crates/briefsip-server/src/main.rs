@@ -25,6 +25,7 @@ mod web;
 use axum::{
     extract::{Request, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
+    middleware,
     response::{IntoResponse, Response},
     routing::any,
     Router,
@@ -33,6 +34,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use config::Config;
 use serde_json::{json, Value};
 use std::{
+    net::SocketAddr,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -146,7 +148,8 @@ async fn local(state: &AppState, request: Request) -> Result<Response, Failure> 
     {
         return Ok(local_error(401, "Unauthorized request."));
     }
-    if let Some(scope) = events::scope(path) {
+    let scope = events::scope(path);
+    if scope.is_some() || path == "/api/sidebar/stream" {
         if request.headers().contains_key("authorization")
             || request.headers().contains_key("origin")
                 && !allowed(state, text_header(request.headers(), "origin"))
@@ -172,7 +175,10 @@ async fn local(state: &AppState, request: Request) -> Result<Response, Failure> 
                 "Streaming does not accept query parameters.",
             ));
         }
-        return state.events.response(scope, &state.database);
+        return match scope {
+            Some(scope) => state.events.response(scope, &state.database),
+            None => Ok(state.events.sidebar(&state.database)),
+        };
     }
     if updates::handles(path) {
         return updates::local(state, request).await;
@@ -222,8 +228,19 @@ fn gzip(bytes: &[u8]) -> std::io::Result<Vec<u8>> {
     encoder.write_all(bytes)?;
     encoder.finish()
 }
+pub(crate) fn public_ui_asset(path: &str) -> bool {
+    matches!(
+        path,
+        "/manifest.webmanifest"
+            | "/icons/icon-192.png"
+            | "/icons/icon-512.png"
+            | "/icons/icon-maskable-512.png"
+            | "/pair.css"
+    )
+}
 async fn static_ui(state: &AppState, path: &str, gzip_ok: bool) -> Result<Response, Failure> {
-    let spa = !path.starts_with("/assets/");
+    let hashed = path.starts_with("/assets/");
+    let spa = !hashed && !public_ui_asset(path);
     let file = state.config.dist.join(if spa {
         "index.html"
     } else {
@@ -263,6 +280,8 @@ async fn static_ui(state: &AppState, path: &str, gzip_ok: bool) -> Result<Respon
     }
     let mime = match file.extension().and_then(|value| value.to_str()) {
         Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("webmanifest") => "application/manifest+json",
         Some("html") => "text/html",
         Some("js") => "text/javascript",
         Some("css") => "text/css",
@@ -296,7 +315,7 @@ async fn static_ui(state: &AppState, path: &str, gzip_ok: bool) -> Result<Respon
             .headers_mut()
             .insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
     }
-    if !spa {
+    if hashed {
         // Vite names every built asset by its content hash.
         response.headers_mut().insert(
             header::CACHE_CONTROL,
@@ -329,11 +348,13 @@ fn navigation(path: &str) -> bool {
             "general",
             "appearance",
             "providers",
+            "engines",
             "skills",
             "connected-apps",
             "hub",
             "mcp",
             "machines",
+            "devices",
             "updates",
             "usage",
             "data",
@@ -645,6 +666,9 @@ async fn main() -> db::Result<()> {
             mcp::initialize(&guard.connection).map_err(|e| e.message)?;
             computer::initialize(&guard.connection)?;
             updates::initialize(&guard.connection)?;
+            guard
+                .connection
+                .execute_batch(include_str!("data/attention.sql"))?;
         } else {
             db::provider_tables(&guard.connection)?;
             data::initialize_canonical(&guard)?;
@@ -719,11 +743,16 @@ async fn main() -> db::Result<()> {
         .route("/api/session/logout", any(dispatch))
         .route("/api/restore/reconcile", any(dispatch))
         .route("/api/agents", any(dispatch))
+        .route("/api/sidebar/stream", any(dispatch))
         .route("/api/agents/{id}/turns/stream", any(dispatch))
         .route("/api/threads/{id}/turns/stream", any(dispatch))
         .route("/api/channels/{id}/turns/stream", any(dispatch))
         .merge(data::routes())
         .fallback(dispatch)
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::pairing::gate,
+        ))
         .with_state(state);
     println!("Briefsip: {origin}");
     let result = if let Some(tls) = tls {
@@ -749,25 +778,28 @@ async fn main() -> db::Result<()> {
         });
         let result = axum_server::from_tcp_rustls(listener.into_std()?, configuration)?
             .handle(handle)
-            .serve(router.into_make_service())
+            .serve(router.into_make_service_with_connect_info::<SocketAddr>())
             .await;
         task.abort();
         result
     } else {
-        axum::serve(listener, router)
-            .with_graceful_shutdown(async move {
-                shutdown().await;
-                let _ = computer::hub::stop(&shutdown_state).await;
-                if let Err(error) = turns::stop(&shutdown_state) {
-                    eprintln!("Turn shutdown failed: {}", error.message);
-                }
-                if let Err(error) = computer::devices::close(&shutdown_state) {
-                    eprintln!("Device shutdown failed: {}", error.message);
-                }
-                harness::stop(&shutdown_state).await;
-                shutdown_state.events.close();
-            })
-            .await
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move {
+            shutdown().await;
+            let _ = computer::hub::stop(&shutdown_state).await;
+            if let Err(error) = turns::stop(&shutdown_state) {
+                eprintln!("Turn shutdown failed: {}", error.message);
+            }
+            if let Err(error) = computer::devices::close(&shutdown_state) {
+                eprintln!("Device shutdown failed: {}", error.message);
+            }
+            harness::stop(&shutdown_state).await;
+            shutdown_state.events.close();
+        })
+        .await
     };
     turn_task.abort();
     automation_task.abort();
@@ -800,6 +832,7 @@ mod tests {
     use super::navigation;
     #[test]
     fn navigation_matches_node_paths() {
+        assert!(navigation("/settings/engines"));
         for path in ["/", "/routines", "/workflows", "/settings/appearance", "/agents/00000000-0000-4000-8000-000000000000", "/agents/00000000-0000-4000-8000-000000000000/conversations/00000000-0000-4000-8000-000000000001"] { assert!(navigation(path), "{path}"); }
         for path in [
             "/settings/nope",

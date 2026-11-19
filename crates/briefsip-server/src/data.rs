@@ -4,6 +4,7 @@ pub(crate) mod avatar;
 pub(crate) mod conversations;
 mod deletion;
 pub(crate) mod delivery;
+pub(crate) mod device_pairing;
 pub(crate) mod environment;
 mod folders;
 pub(crate) mod history;
@@ -12,9 +13,10 @@ pub(crate) mod memory;
 pub mod options;
 mod panel;
 pub(crate) mod projects;
+mod provider_store;
 pub(crate) mod providers;
 mod schema;
-mod sidebar;
+pub(crate) mod sidebar;
 pub(crate) mod sync;
 pub(crate) use sync::append_device;
 mod sync_projection;
@@ -267,7 +269,9 @@ pub fn handles(path: &str) -> bool {
                 | "usage"
                 | "provider-accounts"
                 | "models"
-        ] | ["api", "sidebar", "summary"]
+        ] | ["api", "provider-accounts", "test"]
+            | ["api", "provider-accounts", _, "test" | "edit" | "delete"]
+            | ["api", "sidebar", "summary"]
             | ["api", "conversations", "settings"]
             | ["api", "threads", _]
             | ["api", "projects", _]
@@ -367,7 +371,12 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
         let bytes = axum::body::to_bytes(request.into_body(), limit)
             .await
             .map_err(|_| error(413, "Request is too large."))?;
-        body = serde_json::from_slice(&bytes).map_err(|_| error(400, "Invalid JSON."))?;
+        body = if parts.get(1) == Some(&"provider-accounts") {
+            crate::web::parse_json(&bytes)
+                .map_err(|_| error(400, "Invalid provider account JSON."))?
+        } else {
+            serde_json::from_slice(&bytes).map_err(|_| error(400, "Invalid JSON."))?
+        };
         if !body.is_object() {
             return Err(error(400, "JSON object is required."));
         }
@@ -378,6 +387,17 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
     }
     if path == "/api/models" && method == Method::GET {
         return Ok(json_response(200, providers::models(state, &q).await?));
+    }
+    if parts.get(1) == Some(&"provider-accounts") {
+        if headers.contains_key("authorization")
+            || headers.contains_key("origin") && !origin(state, &headers)
+        {
+            return Err(error(
+                403,
+                "Provider accounts require the local owner in Briefsip.",
+            ));
+        }
+        return provider_store::route(state, &parts, &method, &q, &body).await;
     }
     let write = method == Method::POST;
     let project = parts
@@ -524,7 +544,6 @@ fn route(
         ["api", "sidebar"] if get => sidebar::read(db, q)?,
         ["api", "sidebar"] if post => sidebar::save(db, v, q)?,
         ["api", "sidebar", "summary"] if get => sidebar::summary(state, db, q, headers)?,
-        ["api", "provider-accounts"] if get => providers::list(state)?,
         ["api", "usage"] if get => providers::usage(db, q)?,
         ["api", "conversations", "settings"] if get || post => conversations::settings(db, v, get)?,
         ["api", "agents", id, "threads"] if get || post => conversations::threads(db, id, v, get)?,
@@ -654,6 +673,10 @@ pub fn routes() -> Router<AppState> {
         .route("/api/usage", any(crate::dispatch))
         .route("/api/models", any(crate::dispatch))
         .route("/api/provider-accounts", any(crate::dispatch))
+        .route("/api/provider-accounts/test", any(crate::dispatch))
+        .route("/api/provider-accounts/{id}/test", any(crate::dispatch))
+        .route("/api/provider-accounts/{id}/edit", any(crate::dispatch))
+        .route("/api/provider-accounts/{id}/delete", any(crate::dispatch))
         .route("/api/conversations/settings", any(crate::dispatch))
 }
 

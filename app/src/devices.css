@@ -1,0 +1,10 @@
+.devices-page .k-row__title { white-space: normal; overflow-wrap: anywhere; }
+.devices-page .k-row__meta { white-space: normal; }
+.devices-pairing { display: grid; justify-items: center; gap: 12px; text-align: center; min-width: 0; }
+.devices-pairing img { display: block; max-width: 100%; height: auto; border-radius: 8px; }
+.devices-pairing strong { font-size: 32px; line-height: 1.2; font-variant-numeric: tabular-nums; letter-spacing: .12em; }
+.devices-pairing a { overflow-wrap: anywhere; }
+@media (max-width: 767px) {
+  .devices-page .k-btn { min-height: 44px; }
+  .devices-page .k-switch::after { content: ''; position: absolute; inset: -12px 0; }
+}

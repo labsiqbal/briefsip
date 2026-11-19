@@ -20,7 +20,16 @@ pub fn unfinished(db: &Connection, id: &str) -> Result<bool> {
 pub fn threads(db: &Connection, agent: &str, v: &Value, get: bool) -> Result<Value> {
     agents::read(db, agent)?;
     if get {
-        let mut rows=all(db,"SELECT th.*,dc.sender AS delivery_sender,dc.machine AS delivery_machine,coalesce(dc.activity,(SELECT max(seq) FROM turns WHERE thread=th.id),0) AS activity FROM threads th LEFT JOIN delivery_conversations dc ON dc.thread=th.id WHERE th.agent=? AND th.deleted=0 AND NOT EXISTS(SELECT 1 FROM local_project_threads WHERE thread=th.id) ORDER BY activity DESC,th.rowid DESC",[agent])?;
+        let mut rows = all(
+            db,
+            r#"SELECT th.*,dc.sender AS delivery_sender,dc.machine AS delivery_machine,
+          coalesce(dc.activity,(SELECT max(seq) FROM turns WHERE thread=th.id),0) AS activity,
+          EXISTS(SELECT 1 FROM conversation_attention p WHERE p.thread=th.id) AS needs_you
+        FROM threads th LEFT JOIN delivery_conversations dc ON dc.thread=th.id
+        WHERE th.agent=? AND th.deleted=0 AND NOT EXISTS(SELECT 1 FROM local_project_threads WHERE thread=th.id)
+        ORDER BY activity DESC,th.rowid DESC"#,
+            [agent],
+        )?;
         for row in &mut rows {
             let id = string(row, "id").to_owned();
             row["delivery"] = json!(!row["delivery_sender"].is_null());
@@ -142,14 +151,15 @@ pub fn channel(db: &Connection, id: &str) -> Result<Value> {
     Ok(row)
 }
 pub fn channels(db: &Connection) -> Result<Value> {
-    Ok(json!(all(
-        db,
-        "SELECT id FROM channels ORDER BY rowid",
-        []
-    )?
-    .iter()
-    .map(|v| channel(db, string(v, "id")))
-    .collect::<Result<Vec<_>>>()?))
+    let rows = all(db, "SELECT c.id,EXISTS(SELECT 1 FROM conversation_attention a WHERE a.channel=c.id) AS needs_you FROM channels c ORDER BY c.rowid", [])?;
+    Ok(json!(rows
+        .iter()
+        .map(|row| {
+            let mut channel = channel(db, string(row, "id"))?;
+            channel["needs_you"] = row["needs_you"].clone();
+            Ok(channel)
+        })
+        .collect::<Result<Vec<_>>>()?))
 }
 pub fn save_channel(
     state: &AppState,

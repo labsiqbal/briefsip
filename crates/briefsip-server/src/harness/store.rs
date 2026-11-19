@@ -1490,6 +1490,7 @@ mod tests {
             stream: false,
             termination: String::new(),
             max_tokens: 0,
+            source: "environment",
         };
         let session = home("codex", &account, &account.model, String::new())
             .map_err(|failure| failure.message)?;

@@ -9,6 +9,7 @@ test('routes round-trip agents, conversations, rooms, projects and settings retu
   for (const route of routes) {
     assert.deepEqual(parseRoute(routePath(route)), route);
     assert.deepEqual(parseRoute(routePath({ ...route, settings: 'appearance' })), { ...route, settings: 'appearance' });
+    assert.deepEqual(parseRoute(routePath({ ...route, settings: 'devices' })), { ...route, settings: 'devices' });
   }
 });
 test('malformed and external deep links show not found without throwing or retaining untrusted paths', () => {

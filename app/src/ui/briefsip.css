@@ -75,6 +75,8 @@
 .machine-group__note { margin: 2px 10px 8px; color: var(--color-text-tertiary); font-size: 12px; line-height: 18px; }
 .machine-group__content .sidebar__label { padding-top: 8px; }
 .bot-row__time { flex-shrink: 0; align-self: flex-start; padding-top: 1px; color: var(--color-text-tertiary); font-size: 11px; font-variant-numeric: tabular-nums; }
+.needs-you-badge { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.sidebar-agent:is(:hover, :has(:focus-visible), :has(> .agent-actions[data-state="open"])) > .bot-row > .needs-you-badge { margin-right: 28px; }
 .bot-row__avatar .status-dot.is-online { background: var(--color-success); }
 .bot-row__avatar .status-dot.is-idle, .bot-row__avatar .status-dot.is-offline { background: var(--color-text-tertiary); }
 .sidebar__search .k-icon-btn[aria-pressed="true"] { color: var(--color-brand-text); background: var(--color-brand-soft); }
@@ -243,7 +245,7 @@
 .sidebar-agent > .bot-row { flex: 1; min-width: 0; }
 .sidebar-agent > .k-icon-btn { position: absolute; top: 50%; right: 6px; width: 28px; height: 28px; transform: translateY(-50%); flex-shrink: 0; }
 .sidebar-agent:is(:hover, :has(:focus-visible)) > .bot-row .bot-row__time, .sidebar-agent:has(> .agent-actions[data-state="open"]) > .bot-row .bot-row__time { visibility: hidden; }
-.sidebar-agent:is(:hover, :has(:focus-visible)) > .bot-row .bot-row__text, .sidebar-agent:has(> .agent-actions[data-state="open"]) > .bot-row .bot-row__text { padding-right: 24px; }
+.sidebar-agent:is(:hover, :has(:focus-visible), :has(> .agent-actions[data-state="open"])) > .bot-row:not(:has(> .needs-you-badge)) .bot-row__text { padding-right: 24px; }
 .sidebar-agent > .k-icon-btn:not(:focus-visible) { color: var(--color-text-tertiary); }
 .sidebar-agent:hover > .k-icon-btn { color: var(--color-text-secondary); }
 .sidebar-section { margin-bottom: 4px; }

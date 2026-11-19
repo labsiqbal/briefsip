@@ -21,6 +21,68 @@ pub fn capabilities(runtime: &str) -> Value {
 pub fn executable(state: &AppState, runtime: &str) -> Option<PathBuf> {
     crate::harness::executable(state, runtime)
 }
+pub fn provider_blocked_reason(
+    runtime: &str,
+    account: Option<&providers::Account>,
+) -> Option<&'static str> {
+    let family = account
+        .filter(|account| !account.base.is_empty())
+        .map(|account| account.family.as_str());
+    match runtime {
+        "api" if family.is_none() => Some("This agent needs a provider account."),
+        "codex" if family != Some("openai-compatible") => {
+            Some("Codex needs an OpenAI-compatible provider.")
+        }
+        // Claude's isolated home passes any configured base to its Anthropic client.
+        "claude" if family.is_none() => Some("Claude Code needs an Anthropic-compatible endpoint."),
+        "api" | "codex" | "claude" => None,
+        _ if account.is_none() => Some("This agent's provider account is unavailable."),
+        _ => None,
+    }
+}
+
+fn runtime_blocked_reason(
+    state: &AppState,
+    db: &Connection,
+    id: &str,
+    runtime: &str,
+) -> Result<Option<&'static str>> {
+    if runtime == "api" {
+        return Ok(None);
+    }
+    if executable(state, runtime).is_none() {
+        return Ok(Some("This engine is unavailable on this host."));
+    }
+    // ponytail: use the existing probe result when present, without probing on directory polls.
+    if state
+        .config
+        .harness
+        .cache
+        .try_lock()
+        .ok()
+        .is_some_and(|cache| {
+            cache.as_ref().is_some_and(|(at, catalog)| {
+                at.elapsed() < std::time::Duration::from_secs(30)
+                    && catalog["choices"].as_array().is_some_and(|choices| {
+                        choices.iter().any(|choice| {
+                            choice["runtime"] == runtime
+                                && (choice["available"] == false || choice["signedIn"] == false)
+                        })
+                    })
+            })
+        })
+    {
+        return Ok(Some("Check this engine in Settings > Engines."));
+    }
+    if workspace(state, id).is_none() && !exists(db,
+        "SELECT 1 FROM local_project_members m JOIN local_projects p ON p.id=m.project WHERE m.agent=? AND p.deleted=0 AND p.archived=0",
+        [id],
+    )? {
+        return Ok(Some("This agent needs a workspace folder."));
+    }
+    Ok(None)
+}
+
 pub fn workspace(state: &AppState, id: &str) -> Option<Value> {
     state
         .config
@@ -64,13 +126,14 @@ pub fn list(state: &AppState, db: &Connection) -> Result<Value> {
         } else {
             json!(0)
         };
-        a["provider_available"] = json!(if runtime == "api" {
-            accounts
-                .iter()
-                .any(|x| x.id == string(a, "provider_account") && !x.base.is_empty())
-        } else {
-            (workspace(state,&id).is_some()||exists(db,"SELECT 1 FROM local_project_members m JOIN local_projects p ON p.id=m.project WHERE m.agent=? AND p.deleted=0 AND p.archived=0",[&id])?)&&executable(state,&runtime).is_some()
-        });
+        let account = accounts
+            .iter()
+            .find(|account| account.id == string(a, "provider_account"));
+        let provider_reason = provider_blocked_reason(&runtime, account);
+        let blocked_reason = provider_reason.or(runtime_blocked_reason(state, db, &id, &runtime)?);
+        a["provider_available"] = json!(provider_reason.is_none());
+        a["runnable"] = json!(blocked_reason.is_none());
+        a["blocked_reason"] = json!(blocked_reason);
         a["hidden"] = json!(hidden(db, &id)?);
         a["visibility_revision"] = one(
             db,
@@ -80,9 +143,13 @@ pub fn list(state: &AppState, db: &Connection) -> Result<Value> {
         .map(|v| v["revision"].clone())
         .unwrap_or(json!(0));
     }
-    Ok(
-        json!({"agents":rows,"hubAvailable":false,"configured":accounts.iter().any(|a|!a.base.is_empty())||exists(db,"SELECT 1 FROM agents WHERE runtime<>'api' LIMIT 1",[])?,"defaultModel":state.config.data.default_model.as_deref().unwrap_or("")}),
-    )
+    let configured = rows.iter().any(|agent| agent["runnable"] == true);
+    Ok(json!({
+        "agents": rows,
+        "hubAvailable": false,
+        "configured": configured,
+        "defaultModel": state.config.data.default_model.as_deref().unwrap_or("")
+    }))
 }
 pub(super) fn role(v: Option<&Value>) -> Result<String> {
     let s = match v {
@@ -301,6 +368,9 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
     let account = account(v)?;
     let runtime = runtime(v)?;
     bounds(v)?;
+    if v.get("webAccess").is_some_and(|value| !value.is_boolean()) {
+        return Err(error(400, "Web access must be a boolean."));
+    }
     if !integer(&v["revision"], 1, 9_007_199_254_740_991) {
         return Err(error(400, "Invalid agent revision."));
     }
@@ -318,6 +388,7 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
         "toolBudget",
         "backupModel",
         "providerAccount",
+        "webAccess",
     ] {
         if let Some(value) = v.get(key) {
             request[key] = value.clone();
@@ -420,7 +491,7 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
         }
         db.execute("INSERT INTO harness_models(agent,runtime,model) VALUES(?,?,?) ON CONFLICT(agent,runtime) DO UPDATE SET model=excluded.model",[id,selected,harness_model])?;
     }
-    db.execute("UPDATE agents SET name=?,role=coalesce(?,role),model=?,instructions=?,thread_limit=coalesce(?,thread_limit),tool_budget=coalesce(?,tool_budget),backup_model=coalesce(?,backup_model),provider_account=coalesce(?,provider_account),revision=revision+1 WHERE id=?",rusqlite::params![name,role,model,instructions,v["threadLimit"].as_i64(),v["toolBudget"].as_i64(),backup,account,id])?;
+    db.execute("UPDATE agents SET name=?,role=coalesce(?,role),model=?,instructions=?,thread_limit=coalesce(?,thread_limit),tool_budget=coalesce(?,tool_budget),backup_model=coalesce(?,backup_model),provider_account=coalesce(?,provider_account),web_access=coalesce(?,web_access),revision=revision+1 WHERE id=?",rusqlite::params![name,role,model,instructions,v["threadLimit"].as_i64(),v["toolBudget"].as_i64(),backup,account,v["webAccess"].as_bool(),id])?;
     if account.is_some_and(|a| a != string(&current, "provider_account"))
         && table(db, "model_fallbacks")?
     {
@@ -738,6 +809,50 @@ pub fn scripts(state: &AppState, db: &Connection, id: &str, v: &Value, get: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_provider_requirements_match_execution() {
+        let account = |family: &str, base: &str| providers::Account {
+            id: String::new(),
+            name: "Fixture".into(),
+            family: family.into(),
+            base: base.into(),
+            key: None,
+            model: String::new(),
+            stream: false,
+            termination: "marker".into(),
+            max_tokens: 4096,
+            source: "environment",
+        };
+        let base = "http://127.0.0.1:1/v1";
+        let unconfigured = account("openai-compatible", "");
+        let openai = account("openai-compatible", base);
+        let anthropic = account("anthropic", base);
+        let gemini = account("gemini", base);
+        for (runtime, account, runnable) in [
+            ("api", None, false),
+            ("api", Some(&unconfigured), false),
+            ("api", Some(&openai), true),
+            ("api", Some(&anthropic), true),
+            ("api", Some(&gemini), true),
+            ("codex", None, false),
+            ("codex", Some(&unconfigured), false),
+            ("codex", Some(&openai), true),
+            ("codex", Some(&anthropic), false),
+            ("claude", None, false),
+            ("claude", Some(&unconfigured), false),
+            ("claude", Some(&anthropic), true),
+            ("claude", Some(&openai), true),
+            ("pi", Some(&unconfigured), true),
+            ("pi", None, false),
+        ] {
+            assert_eq!(
+                provider_blocked_reason(runtime, account).is_none(),
+                runnable,
+                "{runtime}"
+            );
+        }
+    }
 
     #[test]
     fn dispatch_capabilities_only_advertise_steering_for_api() {
