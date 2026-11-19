@@ -25,6 +25,7 @@ mod web;
 use axum::{
     extract::{Request, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
+    middleware,
     response::{IntoResponse, Response},
     routing::any,
     Router,
@@ -33,6 +34,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use config::Config;
 use serde_json::{json, Value};
 use std::{
+    net::SocketAddr,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -226,8 +228,19 @@ fn gzip(bytes: &[u8]) -> std::io::Result<Vec<u8>> {
     encoder.write_all(bytes)?;
     encoder.finish()
 }
+pub(crate) fn public_ui_asset(path: &str) -> bool {
+    matches!(
+        path,
+        "/manifest.webmanifest"
+            | "/icons/icon-192.png"
+            | "/icons/icon-512.png"
+            | "/icons/icon-maskable-512.png"
+            | "/pair.css"
+    )
+}
 async fn static_ui(state: &AppState, path: &str, gzip_ok: bool) -> Result<Response, Failure> {
-    let spa = !path.starts_with("/assets/");
+    let hashed = path.starts_with("/assets/");
+    let spa = !hashed && !public_ui_asset(path);
     let file = state.config.dist.join(if spa {
         "index.html"
     } else {
@@ -267,6 +280,8 @@ async fn static_ui(state: &AppState, path: &str, gzip_ok: bool) -> Result<Respon
     }
     let mime = match file.extension().and_then(|value| value.to_str()) {
         Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("webmanifest") => "application/manifest+json",
         Some("html") => "text/html",
         Some("js") => "text/javascript",
         Some("css") => "text/css",
@@ -300,7 +315,7 @@ async fn static_ui(state: &AppState, path: &str, gzip_ok: bool) -> Result<Respon
             .headers_mut()
             .insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
     }
-    if !spa {
+    if hashed {
         // Vite names every built asset by its content hash.
         response.headers_mut().insert(
             header::CACHE_CONTROL,
@@ -339,6 +354,7 @@ fn navigation(path: &str) -> bool {
             "hub",
             "mcp",
             "machines",
+            "devices",
             "updates",
             "usage",
             "data",
@@ -733,6 +749,10 @@ async fn main() -> db::Result<()> {
         .route("/api/channels/{id}/turns/stream", any(dispatch))
         .merge(data::routes())
         .fallback(dispatch)
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::pairing::gate,
+        ))
         .with_state(state);
     println!("Briefsip: {origin}");
     let result = if let Some(tls) = tls {
@@ -758,25 +778,28 @@ async fn main() -> db::Result<()> {
         });
         let result = axum_server::from_tcp_rustls(listener.into_std()?, configuration)?
             .handle(handle)
-            .serve(router.into_make_service())
+            .serve(router.into_make_service_with_connect_info::<SocketAddr>())
             .await;
         task.abort();
         result
     } else {
-        axum::serve(listener, router)
-            .with_graceful_shutdown(async move {
-                shutdown().await;
-                let _ = computer::hub::stop(&shutdown_state).await;
-                if let Err(error) = turns::stop(&shutdown_state) {
-                    eprintln!("Turn shutdown failed: {}", error.message);
-                }
-                if let Err(error) = computer::devices::close(&shutdown_state) {
-                    eprintln!("Device shutdown failed: {}", error.message);
-                }
-                harness::stop(&shutdown_state).await;
-                shutdown_state.events.close();
-            })
-            .await
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move {
+            shutdown().await;
+            let _ = computer::hub::stop(&shutdown_state).await;
+            if let Err(error) = turns::stop(&shutdown_state) {
+                eprintln!("Turn shutdown failed: {}", error.message);
+            }
+            if let Err(error) = computer::devices::close(&shutdown_state) {
+                eprintln!("Device shutdown failed: {}", error.message);
+            }
+            harness::stop(&shutdown_state).await;
+            shutdown_state.events.close();
+        })
+        .await
     };
     turn_task.abort();
     automation_task.abort();

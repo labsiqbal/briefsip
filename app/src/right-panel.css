@@ -122,3 +122,13 @@
 .right-panel__thumbnail img { width: 32px; height: 32px; object-fit: cover; border-radius: 5px; outline: 1px solid light-dark(rgb(0 0 0 / .1), rgb(255 255 255 / .1)); outline-offset: -1px; }
 
 .right-panel__files:focus:not(:focus-visible) { outline: none; }
+
+
+@media (max-width: 767px) {
+  .right-panel-sheet {
+    width: 100%; max-width: none; height: 100dvh;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  .right-panel-sheet .right-panel { min-width: 100%; }
+  .right-panel > .k-tabs > .k-tabs__list > .k-tabs__tab { min-height: 44px; }
+}

@@ -34,6 +34,8 @@ pub struct Config {
     pub allowed_origins: Vec<String>,
     pub auth: Option<AuthConfig>,
     pub fixed_clock: Option<i64>,
+    #[serde(default)]
+    pub test_remote_pairing: bool,
     pub tls: Option<Tls>,
     #[serde(default, deserialize_with = "workspace_bindings")]
     pub workspaces: Vec<WorkspaceConfig>,
@@ -213,6 +215,7 @@ impl Config {
                 .map(str::to_owned)
                 .collect(),
             fixed_clock: None,
+            test_remote_pairing: false,
             tls,
             workspaces: match env::var("BRIEFSIP_WORKSPACES") {
                 Ok(raw) if raw.len() > 65536 => {

@@ -65,6 +65,7 @@ fn initialize_mode(database: &Database, canonical: bool) -> crate::db::Result<()
         db.execute_batch(include_str!("schema.sql"))?;
         if !canonical {
             db.execute_batch(include_str!("local.sql"))?;
+            device_pairing::initialize(db)?;
         }
         environment::initialize(db)?;
         for (table, name, definition) in [
