@@ -260,7 +260,8 @@ mod tests {
     use super::*;
 
     #[tokio::test(start_paused = true)]
-    async fn harness_events_every_30_seconds_complete_after_three_minutes() {
+    async fn harness_events_every_30_seconds_complete_after_three_minutes(
+    ) -> crate::harness::Result<()> {
         let clock = TurnClock::new(Duration::from_secs(40), Duration::from_secs(3600), None);
         let start = ClockInstant::now();
         let runtime = async {
@@ -270,41 +271,46 @@ mod tests {
             }
         };
         tokio::select! {
-            failure = clock.expired() => panic!("{}", failure.message),
+            failure = clock.expired() => return Err(failure),
             () = runtime => {}
         }
         assert_eq!(start.elapsed(), Duration::from_secs(180));
+        Ok(())
     }
 
     #[tokio::test(start_paused = true)]
-    async fn silent_harness_hits_idle_deadline() {
+    async fn silent_harness_hits_idle_deadline() -> crate::harness::Result<()> {
         let clock = TurnClock::new(Duration::from_secs(600), Duration::from_secs(3600), None);
         let start = ClockInstant::now();
         let failure = clock.expired().await;
         assert_eq!(start.elapsed(), Duration::from_secs(600));
         assert!(failure.message.starts_with("No activity for 10 min."));
+        Ok(())
     }
 
     #[tokio::test(start_paused = true)]
-    async fn approval_wait_preserves_idle_and_wall_time() {
+    async fn approval_wait_preserves_idle_and_wall_time() -> crate::harness::Result<()> {
         let clock = TurnClock::new(Duration::from_secs(40), Duration::from_secs(60), None);
         let start = ClockInstant::now();
         let runtime = async {
             tokio::time::sleep(Duration::from_secs(20)).await;
             clock.activity();
-            let approval = clock.pause().map_err(|failure| failure.message)?;
+            let approval = clock.pause()?;
             tokio::time::sleep(Duration::from_secs(120)).await;
             drop(approval);
             tokio::time::sleep(Duration::from_secs(30)).await;
             clock.activity();
-            std::future::pending::<()>().await;
-            Ok::<_, String>(())
+            std::future::pending::<crate::harness::Result<()>>().await
         };
         let failure = tokio::select! {
             failure = clock.expired() => failure,
-            result = runtime => panic!("runtime should hit its wall limit: {result:?}"),
+            result = runtime => {
+                result?;
+                panic!("runtime should hit its wall limit");
+            }
         };
         assert_eq!(start.elapsed(), Duration::from_secs(180));
         assert!(failure.message.starts_with("Reached the 1 min limit."));
+        Ok(())
     }
 }
