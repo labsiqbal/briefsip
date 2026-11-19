@@ -10,7 +10,7 @@ export function TimelineMinimap({ items, viewport, onNavigate }: {
 }) {
   const strips = useRef(new Map<string, HTMLSpanElement>());
   const [active, setActive] = useState<number | null>(null);
-  const [metrics, setMetrics] = useState({ width: 0, persistent: false, current: 0, atEnd: true });
+  const [metrics, setMetrics] = useState({ width: 0, persistent: false, current: 0, atEnd: true, scrollable: false });
   const pressed = useRef(false), release = useRef<(() => void) | null>(null);
   const [passThrough, setPassThrough] = useState(false);
   useLayoutEffect(() => () => release.current?.(), []);
@@ -31,8 +31,9 @@ export function TimelineMinimap({ items, viewport, onNavigate }: {
         if (!found && visible) { current = index; found = true; }
         else if (!found && rect && rect.top < bounds.top) current = index;
       }
-      const next = { width: Math.max(8, Math.min(40, Math.floor(gutter) - 12)), persistent: gutter >= 64, current, atEnd: timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight <= 1 };
-      setMetrics(old => old.width === next.width && old.persistent === next.persistent && old.current === next.current && old.atEnd === next.atEnd ? old : next);
+      const scrollRange = timeline.scrollHeight - timeline.clientHeight;
+      const next = { width: Math.max(8, Math.min(40, Math.floor(gutter) - 12)), persistent: gutter >= 64, current, atEnd: scrollRange - timeline.scrollTop <= 1, scrollable: scrollRange > 1 };
+      setMetrics(old => old.width === next.width && old.persistent === next.persistent && old.current === next.current && old.atEnd === next.atEnd && old.scrollable === next.scrollable ? old : next);
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(refresh); };
     const observer = new ResizeObserver(schedule);
@@ -64,7 +65,7 @@ export function TimelineMinimap({ items, viewport, onNavigate }: {
     window.addEventListener('mousemove', check, { signal: controller.signal });
     release.current = () => controller.abort();
   };
-  if (items.length < TIMELINE_MINIMAP_MIN_ITEMS || !metrics.persistent) return null;
+  if (items.length < TIMELINE_MINIMAP_MIN_ITEMS || !metrics.persistent || !metrics.scrollable) return null;
   return <div className="timeline-minimap" data-persistent-gutter={metrics.persistent} data-testid="timeline-minimap" ref={node => {
     if (!node) return;
     const wheel = (event: WheelEvent) => {

@@ -287,7 +287,8 @@
 .timeline-minimap__preview strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .timeline-minimap__preview > span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; margin-top: 4px; color: var(--color-text-secondary); }
 .timeline-minimap__rail > .k-icon-btn { position: absolute; left: -8px; width: 24px; height: 24px; min-width: 24px; min-height: 24px; opacity: 0; }
-.timeline-minimap__rail > .k-icon-btn:hover, .timeline-minimap__rail > .k-icon-btn:focus-visible { opacity: 1; }
+.timeline-minimap__rail > .k-icon-btn:disabled { opacity: 0; }
+.timeline-minimap__rail:hover > .k-icon-btn:not(:disabled), .timeline-minimap__rail > .k-icon-btn:focus-visible { opacity: 1; }
 .timeline-minimap__previous { bottom: calc(100% + 6px); }
 .timeline-minimap__next { top: calc(100% + 6px); }
 @media (max-width: 767px), (pointer: coarse) { .timeline-minimap { display: none; } }
