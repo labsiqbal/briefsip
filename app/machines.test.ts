@@ -5,7 +5,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, chmodSync } f
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer, request as httpRequest, type Server } from 'node:http';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 import { fakePeerTokenIssuer } from './test-support/peer-token-issuer.ts';
 
@@ -170,7 +170,7 @@ test('lost reciprocal acknowledgement retries encrypted pending credentials afte
     const port = Number(new URL(app.origin).port); await app.close(); app = await startApp({ ...options, port });
     assert.equal((await call(app, '/api/machines', request)).pairingState, 'paired'); assert.equal(attempts, 2); assert.equal(issuer.issued.length, 1);
     const mismatch = { ...request, code: '23456789ABCE' }; await call(app, '/api/machines', mismatch, 409);
-    await app.close(); const db = new DatabaseSync(options.database); try { const row = db.prepare('SELECT token,return_token FROM paired_machines').get()!; assert(!String(row.token).includes(token)); assert(!String(row.return_token).includes(saved)); } finally { db.close(); }
+    await app.close(); const db = testDatabase(options.database); try { const row = db.prepare('SELECT token,return_token FROM paired_machines').get()!; assert(!String(row.token).includes(token)); assert(!String(row.return_token).includes(saved)); } finally { db.close(); }
   } finally { await app.close().catch(() => {}); await close(server); rmSync(dir, { recursive: true, force: true }); }
 });
 

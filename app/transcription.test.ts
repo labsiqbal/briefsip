@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 
 function mp4Header(brand: string) {
   const bytes = Buffer.alloc(24); bytes.writeUInt32BE(24); bytes.write('ftyp', 4); bytes.write(brand, 8); bytes.write('isom', 16); bytes.write('mp42', 20); return bytes;
@@ -211,7 +211,7 @@ test('Rust upgrades legacy transcription operations and reports unknown and dura
       body: 'RIFF0000WAVEfixture',
     })).status, 200);
     await app.close();
-    const seed = new DatabaseSync(database);
+    const seed = testDatabase(database);
     try {
       seed.exec('ALTER TABLE transcriptions DROP COLUMN usage');
       seed.prepare("INSERT INTO transcriptions VALUES (?,?,'{}','fixture','http://localhost','pending',NULL,'2026-01-01')").run(operation, file);
@@ -223,7 +223,7 @@ test('Rust upgrades legacy transcription operations and reports unknown and dura
     assert.equal(info.operation.usage, null);
     const usage = async () => (await (await fetch(app.origin + '/api/usage')).json()).transcription;
     assert.equal((await usage()).unknown, 1);
-    const migrated = new DatabaseSync(database);
+    const migrated = testDatabase(database);
     try {
       migrated.prepare('UPDATE transcriptions SET usage=? WHERE id=?').run(JSON.stringify({ type: 'duration', seconds: 1.25 }), operation);
     } finally { migrated.close(); }

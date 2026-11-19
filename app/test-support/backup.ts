@@ -1,4 +1,5 @@
-import { DatabaseSync, backup } from 'node:sqlite';
+import { type DatabaseSync, backup } from 'node:sqlite';
+import { testDatabase } from './database.ts';
 import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
@@ -70,7 +71,7 @@ export async function workspaceSnapshot(db: DatabaseSync, ownerAccountId?:string
   try {
     await backup(db, file);
     chmodSync(file, 0o600);
-    const snapshot = new DatabaseSync(file);
+    const snapshot = testDatabase(file);
     try {
       snapshot.exec(`CREATE TABLE IF NOT EXISTS briefsip_backup (format TEXT NOT NULL,version INTEGER NOT NULL,created TEXT NOT NULL) STRICT;
         DELETE FROM briefsip_backup;`);

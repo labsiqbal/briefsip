@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID, randomBytes, generateKeyPairSync, sign } from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,7 +23,7 @@ import { startRustServer } from './rust-test-server.ts';
 
 async function fixture(tools = ['transfer_task'], testPathPrefix?: string) {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-recovery-rust-')), database = join(directory, 'canonical.sqlite');
-  const db = new DatabaseSync(database); db.exec('PRAGMA busy_timeout=5000'); installFrozenNodeSchema(db);
+  const db = testDatabase(database); installFrozenNodeSchema(db);
   // Keep human JWTs valid through host stalls while wait-expiry tests use the real clock.
   const expiresAt = Date.now() + 60 * 60_000;
   const actor = (subject: string): HumanActor => ({ accountId: randomUUID(), issuer: 'https://fixture.example', subject, sessionId: `sess_${subject}`, expiresAt });
@@ -365,7 +365,7 @@ test('canonical wait maintenance survives SQLite failure and retries after stora
     const provision = storedTurnProvision(f.db.prepare('SELECT request_json FROM wait_provisions').get()!.request_json);
     f.tasks.waitSecretResult(f.principal, { requestId: randomUUID(), provisionId: provision.provisionId, payloadDigest: provision.payloadDigest, waitKey: provision.waitKey, secretGeneration: 1, sourceDeviceGeneration: 1, state: 'ready', secretRef: JSON.stringify([provision.waitKey, 1]) });
     snapshot = await workspaceSnapshot(f.db, f.owner.accountId);
-    const saved = new DatabaseSync(snapshot.file);
+    const saved = testDatabase(snapshot.file);
     saved.exec("UPDATE turn_waits SET deadline=0; CREATE TRIGGER fail_wait_maintenance BEFORE UPDATE ON turn_waits BEGIN SELECT RAISE(ABORT,'fixture wait maintenance failure'); END"); saved.close();
     restarted = await startRustServer({
       database: snapshot.file,
@@ -383,9 +383,8 @@ test('canonical wait maintenance survives SQLite failure and retries after stora
       signal: AbortSignal.timeout(5000),
     });
     assert(response.status >= 400 && response.status < 500);
-    const probe = new DatabaseSync(snapshot.file);
+    const probe = testDatabase(snapshot.file);
     try {
-      probe.exec('PRAGMA busy_timeout=5000');
       assert.equal(probe.prepare('SELECT status FROM turn_waits').get()!.status, 'waiting');
       probe.exec('DROP TRIGGER fail_wait_maintenance');
       const deadline = Date.now() + 5000;
@@ -416,7 +415,7 @@ test('disaster restore closes pending provisions and activated wait references w
     const path = join(directory, 'restored.sqlite');
     const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
     execFileSync(binary, ['--restore-read-only', snapshot.file, path]);
-    const restored = new DatabaseSync(path);
+    const restored = testDatabase(path);
     try {
       assert.deepEqual(restored.prepare('SELECT * FROM receipts ORDER BY request_id').all(), receipts);
       assert.equal(restored.prepare('SELECT count(*) n FROM wait_provisions').get()!.n, 2);

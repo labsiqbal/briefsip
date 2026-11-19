@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 
 test('new user turns capture only ready same-scope group replies once across retries and restart', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-reply-capture-'));
@@ -117,14 +117,14 @@ test('new user turns capture only ready same-scope group replies once across ret
     assert.equal(forwarded[0].recovery_result.reply, 'READY_BETA');
     assert.equal((await get(path)).find((row: any) => row.id === withdrawn).receivedAgentReplies[0].reply, 'READY_BETA');
     await app.close();
-    const beforeDelete=new DatabaseSync(options.database,{readOnly:true});const snapshot=beforeDelete.prepare('SELECT snapshot FROM agent_reply_claims WHERE consumer=?').get(consumer.id)!.snapshot;beforeDelete.close();app=await startApp(options);
+    const beforeDelete=testDatabase(options.database,{readOnly:true});const snapshot=beforeDelete.prepare('SELECT snapshot FROM agent_reply_claims WHERE consumer=?').get(consumer.id)!.snapshot;beforeDelete.close();app=await startApp(options);
     const sourceThread=(await get(`/api/agents/${beta.id}/threads`)).find((row:any)=>row.id===artifact.thread);
     const archived=await post(`/api/threads/${artifact.thread}/edit`,{id:randomUUID(),revision:sourceThread.revision,name:sourceThread.name,archived:true});
     await post(`/api/threads/${artifact.thread}/delete`,{id:randomUUID(),revision:archived.revision});
     assert.deepEqual((await get(path)).find((row:any)=>row.id===consumer.id).receivedAgentReplies[0].generatedFiles,[]);
     assert.equal((await fetch(`${app.origin}/api/threads/${artifact.thread}/files/${artifact.id}`)).status,404);
     await app.close();
-    const afterDelete=new DatabaseSync(options.database,{readOnly:true});assert.equal(afterDelete.prepare('SELECT snapshot FROM agent_reply_claims WHERE consumer=?').get(consumer.id)!.snapshot,snapshot);afterDelete.close();app=await startApp(options);
+    const afterDelete=testDatabase(options.database,{readOnly:true});assert.equal(afterDelete.prepare('SELECT snapshot FROM agent_reply_claims WHERE consumer=?').get(consumer.id)!.snapshot,snapshot);afterDelete.close();app=await startApp(options);
 
   } finally {
     await app.close(); holdGamma = false; release.splice(0).forEach(resolve => resolve()); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(directory, { recursive: true, force: true });

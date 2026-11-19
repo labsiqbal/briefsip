@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 import { validateWorkflow } from './src/workflows.ts';
 
@@ -84,7 +84,7 @@ test('parallel workflow joins once in branch order, retains failures and cancels
   await request(`/api/workflows/${retryable.id}/edit`,{id:randomUUID(),revision:1,name:'Changed',graph:{...graph,maxSteps:12,nodes:[{...graph.nodes[0],branches:[{kind:'model',model:'changed',prompt:'Changed A'},{kind:'model',model:'changed',prompt:'Changed B'}]},graph.nodes[1]]}});
   // Exercise the old-schema backfill with both members, then reopen it twice.
   await app.close();
-  const db=new DatabaseSync(options.database);db.exec('DROP TABLE workflow_parallel_members; UPDATE workflow_steps SET parallel_branch=NULL');db.close();
+  const db=testDatabase(options.database);db.exec('DROP TABLE workflow_parallel_members; UPDATE workflow_steps SET parallel_branch=NULL');db.close();
   app=await startApp(options);await app.close();app=await startApp(options);
   const legacy=await request(`/api/workflow-runs/${retryRun.id}`);
   await request(`/api/agents/${a.id}/edit`,{id:randomUUID(),revision:1,name:'A updated',model:'a-new',instructions:'Updated profile.',threadLimit:1});

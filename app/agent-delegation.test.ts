@@ -54,7 +54,7 @@ test('delegation isolates child context and durably wakes idle parent exactly on
 });
 
 
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import type { AgentLimits } from './test-support/agent-delegation.ts';
 
 type Script = (body: any) => Promise<{ name: string; args: unknown } | string> | { name: string; args: unknown } | string;
@@ -227,7 +227,7 @@ for (const messageTool of ['delegate_task', 'send_message']) test(`${messageTool
       const result = JSON.parse(row.reply); if (index < rate) assert.equal(result.status, messageTool === 'delegate_task' ? 'queued' : 'sent'); else assert.match(result.error, index === rate ? /rate limit reached/ : /cooling down/);
       if (index === rate) await f.restart();
     }
-    await f.stop(); const db = new DatabaseSync(f.database); db.exec('UPDATE agent_message_events SET created=0; UPDATE agent_message_cooldowns SET until=0'); db.close(); await f.restart();
+    await f.stop(); const db = testDatabase(f.database); db.exec('UPDATE agent_message_events SET created=0; UPDATE agent_message_cooldowns SET until=0'); db.close(); await f.restart();
     const id = randomUUID(); await f.api(path, { id, text: 'After cooldown' }); const row = (await f.until(path, rows => rows.some(row => row.id === id && row.status === 'done'))).find(row => row.id === id); assert.equal(JSON.parse(row.reply).status, messageTool === 'delegate_task' ? 'queued' : 'sent');
   } finally { await f.close(); }
 });
@@ -347,7 +347,7 @@ test('Rust counts active children of an owner completion turn against its inheri
     spareId = spare.id;
     const root = randomUUID(), active = randomUUID(), continuation = randomUUID();
     await f.stop();
-    const db = new DatabaseSync(f.database);
+    const db = testDatabase(f.database);
     try {
       const insert = db.prepare('INSERT INTO turns(id,agent,parent,text,status,created) VALUES (?,?,?,?,?,?)');
       const created = new Date().toISOString();
@@ -360,7 +360,7 @@ test('Rust counts active children of an owner completion turn against its inheri
     const rows = await f.until(`/api/agents/${parent.id}/turns`, turns => turns.some(turn => turn.id === continuation && turn.status === 'failed'));
     const done = rows.find(turn => turn.id === continuation);
     assert.match(done.error, /Concurrent child limit.*1 children/);
-    const inspection = new DatabaseSync(f.database, { readOnly: true });
+    const inspection = testDatabase(f.database, { readOnly: true });
     try { assert.equal(inspection.prepare('SELECT count(*) AS n FROM turns').get()?.n, 3); }
     finally { inspection.close(); }
   } finally { held.release(); await f.close(); }

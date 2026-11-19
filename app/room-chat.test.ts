@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 
 async function fixture(run: (f: any) => Promise<void>, concurrency = 4) {
@@ -124,7 +124,7 @@ test('room limit preserves the original delegation call and bounded receipt acro
   await request(path, command, 202); const rows = await wait(path, id);
   assert.match(rows[0].room.note, /3 agent rounds/);
   assert.equal(rows[0].room.messages.at(-1).text, 'Bounded safely.');
-  await stop(); const db = new DatabaseSync(database, { readOnly: true });
+  await stop(); const db = testDatabase(database, { readOnly: true });
   try {
     const saved = db.prepare('SELECT call,result FROM flow_tool_calls ORDER BY seq DESC LIMIT 1').get()!;
     assert.equal(JSON.parse(String(saved.call)).function.name, 'delegate_task');
@@ -290,7 +290,7 @@ for (const name of ['send_message','delegate_task']) test(`serialized broadcast 
   const rows=await wait(path,root);assert.equal(rows.find((row:any)=>row.id===root).reply,'Parent final once.');
   assert.equal(calls.filter((body:any)=>body.model==='Assistant').length,2);
   assert.equal(rows.find((row:any)=>row.id===root).room.messages.filter((item:any)=>item.text==='Parent final once.').length,1);
-  await stop();const db=new DatabaseSync(database,{readOnly:true});try{assert.equal(db.prepare('SELECT count(*) AS n FROM flow_tool_calls WHERE turn=?').get(root)!.n,1);}finally{db.close();}
+  await stop();const db=testDatabase(database,{readOnly:true});try{assert.equal(db.prepare('SELECT count(*) AS n FROM flow_tool_calls WHERE turn=?').get(root)!.n,1);}finally{db.close();}
   const count=calls.length;await restart();assert.equal(calls.length,count);
 }));
 
@@ -312,7 +312,7 @@ test('mention storms deduplicate sources, settle pass obligations and never invi
   const path=await room(3,null),root=randomUUID();await request(path,{id:root,text:'@Assistant @Reviewer discuss'},202);const rows=await wait(path,root);
   assert.equal(calls.filter((body:any)=>body.model==='Right Hand').length,1);
   assert(rows.find((row:any)=>row.id===root).room.messages.length<=10);
-  await stop();const db=new DatabaseSync(database,{readOnly:true});try{
+  await stop();const db=testDatabase(database,{readOnly:true});try{
     assert.equal(db.prepare('SELECT count(*) AS n FROM room_invitations i JOIN turns t ON t.id=i.source WHERE i.target=t.agent').get()!.n,0);
     assert.equal(db.prepare('SELECT count(*) AS n FROM room_invitations WHERE target=(SELECT id FROM agents WHERE name=?) AND resolved IS NULL').get('Right Hand')!.n,0);
     assert.equal(db.prepare('SELECT count(*) AS n FROM room_invitations WHERE target=(SELECT id FROM agents WHERE name=?)').get('Right Hand')!.n,2);
@@ -343,7 +343,7 @@ test('admission cutoff and unpublished watermarks survive restarts', async () =>
   setRespond(async(body:any)=>{if(body.model==='Assistant')return 'Committed A';if(!gated){gated=true;await held.promise;}return 'Committed peer';});
   const path=await room(3),root=randomUUID();await request(path,{id:root,text:'Restart cutoff'},202);
   await wait(path,root,(rows:any[])=>rows.find(row=>row.id===root)?.status==='done'&&rows.some(row=>row.id!==root&&row.status==='running'));
-  await stop();const db=new DatabaseSync(database);let snapshot:any;
+  await stop();const db=testDatabase(database);let snapshot:any;
   try{
     snapshot=db.prepare('SELECT a.* FROM room_admissions a JOIN turns t ON t.id=a.turn WHERE t.status=\'interrupted\'').get()!;
     assert(snapshot.context.includes('Committed A'));assert(snapshot.cutoff>0);
@@ -352,7 +352,7 @@ test('admission cutoff and unpublished watermarks survive restarts', async () =>
   }finally{db.close();}
   await restart();held.release();const rows=await wait(path,root);
   assert.equal(calls.length,3);assert.equal(rows.find((row:any)=>row.id===snapshot.turn).status,'interrupted');
-  await stop();const saved=new DatabaseSync(database);try{
+  await stop();const saved=testDatabase(database);try{
     assert.deepEqual(saved.prepare('SELECT * FROM room_admissions WHERE turn=?').get(snapshot.turn),snapshot);
     assert(!saved.prepare('SELECT 1 FROM room_watermarks w JOIN turns t ON t.agent=w.agent WHERE t.id=? AND w.root=?').get(snapshot.turn,root));
   }finally{saved.close();}

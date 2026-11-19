@@ -3,7 +3,7 @@ import { createClerkClient } from '@clerk/backend';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -53,7 +53,7 @@ test('canonical backup restores private evidence with fresh authority and no rev
     await f.request(`/api/invitations/${invitation}/revoke`, 'POST', {requestId:randomUUID(),expectedRevision:1});
     restoreWorkspace(backup.file,destination);
     assert.deepEqual(readFileSync(backup.file),bytes);assert.equal(statSync(destination).mode&0o777,0o600);
-    const restored=new DatabaseSync(destination);
+    const restored=testDatabase(destination);
     try{
       const current=restored.prepare('SELECT * FROM authority_state').get()!;
       assert.notEqual(current.generation,authority);assert.equal(current.serving_state,'read_only_recovery');
@@ -102,7 +102,7 @@ test('canonical backup restores private evidence with fresh authority and no rev
         await new Promise<void>(resolve => provider.close(() => resolve()));
       }
       const second=join(dir,'second.sqlite'),again=await workspaceSnapshot(restored);
-      try{restoreWorkspace(again.file,second);const reloaded=new DatabaseSync(second);try{assert.notEqual(reloaded.prepare('SELECT generation FROM authority_state').get()!.generation,current.generation);}finally{reloaded.close();}}finally{again.cleanup();}
+      try{restoreWorkspace(again.file,second);const reloaded=testDatabase(second);try{assert.notEqual(reloaded.prepare('SELECT generation FROM authority_state').get()!.generation,current.generation);}finally{reloaded.close();}}finally{again.cleanup();}
     }finally{restored.close();}
     await assert.rejects(startApp({database:destination}),/canonical/i);
   }finally{backup?.cleanup();await f.close();}
@@ -112,21 +112,21 @@ test('pre-v3 canonical restore disables retained automation and rejects downgrad
   const dir=mkdtempSync(join(tmpdir(),'briefsip-restore-versions-'));
   try{
     for(const version of [1,2] as const){
-      const db=new DatabaseSync(join(dir,`source-${version}.sqlite`));initializeCanonicalSchema(db,Date.now(),version);
+      const db=testDatabase(join(dir,`source-${version}.sqlite`));initializeCanonicalSchema(db,Date.now(),version);
       db.exec("CREATE TABLE routines(enabled INTEGER,revision INTEGER); INSERT INTO routines VALUES (1,1); CREATE TABLE turn_waits(status TEXT); INSERT INTO turn_waits VALUES ('waiting'); CREATE TABLE workflow_schedules(enabled INTEGER,revision INTEGER); INSERT INTO workflow_schedules VALUES (1,1)");
       const backup=await workspaceSnapshot(db);db.close();
       try{
         const target=join(dir,`target-${version}.sqlite`);restoreWorkspace(backup.file,target);
-        const restored=new DatabaseSync(target);try{
+        const restored=testDatabase(target);try{
           assert.equal(restored.prepare('SELECT serving_state FROM authority_state').get()!.serving_state,'read_only_recovery');
           assert.equal(restored.prepare('SELECT enabled FROM routines').get()!.enabled,0);
           assert.equal(restored.prepare('SELECT enabled FROM workflow_schedules').get()!.enabled,0);
           assert.equal(restored.prepare('SELECT status FROM turn_waits').get()!.status,'closed');
         }finally{restored.close();}
-        const tampered=new DatabaseSync(backup.file);
+        const tampered=testDatabase(backup.file);
         tampered.exec("UPDATE briefsip_backup_authority SET generation='wrong'");tampered.close();
         const invalid=join(dir,`invalid-${version}.sqlite`);assert.throws(()=>restoreWorkspace(backup.file,invalid),/authority mismatch/);assert(!existsSync(invalid));
-        const downgraded=new DatabaseSync(backup.file);downgraded.exec("UPDATE briefsip_backup SET format='briefsip-workspace',version=1");downgraded.close();
+        const downgraded=testDatabase(backup.file);downgraded.exec("UPDATE briefsip_backup SET format='briefsip-workspace',version=1");downgraded.close();
         assert.throws(()=>restoreWorkspace(backup.file,invalid),/backup format/);assert(!existsSync(invalid));
       }finally{backup.cleanup();}
     }
@@ -134,7 +134,7 @@ test('pre-v3 canonical restore disables retained automation and rejects downgrad
 });
 
 test('read-only restore upgrades legacy canonical owner marker before reconcile',async()=>{
-  const dir=mkdtempSync(join(tmpdir(),'briefsip-restore-legacy-marker-')),db=new DatabaseSync(join(dir,'source.sqlite'));
+  const dir=mkdtempSync(join(tmpdir(),'briefsip-restore-legacy-marker-')),db=testDatabase(join(dir,'source.sqlite'));
   initializeCanonicalSchema(db);
   const owner={accountId:randomUUID(),issuer:'https://fixture.example',subject:'owner',sessionId:'owner-session',expiresAt:Date.now()+60000};
   db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(owner.accountId,owner.issuer,owner.subject,Date.now());
@@ -142,12 +142,12 @@ test('read-only restore upgrades legacy canonical owner marker before reconcile'
   db.prepare("INSERT INTO project_members(project,account,role,grant_revision,deleted) VALUES (?,?, 'owner',1,0)").run(project,owner.accountId);
   const backup=await workspaceSnapshot(db);db.close();
   try{
-    const legacy=new DatabaseSync(backup.file);const generation=legacy.prepare('SELECT generation FROM briefsip_backup_authority').get()!.generation;
+    const legacy=testDatabase(backup.file);const generation=legacy.prepare('SELECT generation FROM briefsip_backup_authority').get()!.generation;
     legacy.exec('ALTER TABLE briefsip_backup_authority RENAME TO briefsip_backup_authority_new; CREATE TABLE briefsip_backup_authority(generation TEXT NOT NULL) STRICT;');
     legacy.prepare('INSERT INTO briefsip_backup_authority VALUES (?)').run(generation);legacy.exec('DROP TABLE briefsip_backup_authority_new');legacy.close();
     const restoredPath=join(dir,'restored.sqlite');
     const { bootstrapFile } = checkedRestore(['--read-only', backup.file, '--db', restoredPath]);
-    const restored=new DatabaseSync(restoredPath);try{
+    const restored=testDatabase(restoredPath);try{
       assert.equal(restored.prepare('SELECT owner_account FROM briefsip_backup_authority').get()!.owner_account,owner.accountId);
       const { sessionFile } = checkedRestore(['reconcile','--db',restoredPath,'--bootstrap',bootstrapFile], restoreIdentity(owner, 'https://briefsip.example')());
       assert.equal(JSON.parse(readFileSync(sessionFile,'utf8')).recoveryGeneration,JSON.parse(readFileSync(bootstrapFile,'utf8')).recoveryGeneration);
@@ -156,21 +156,21 @@ test('read-only restore upgrades legacy canonical owner marker before reconcile'
 });
 
 test('operator CLI restores a canonical backup read-only without script credentials',async()=>{
-  const dir=mkdtempSync(join(tmpdir(),'briefsip-restore-cli-')),db=new DatabaseSync(join(dir,'source.sqlite'));initializeCanonicalSchema(db);
+  const dir=mkdtempSync(join(tmpdir(),'briefsip-restore-cli-')),db=testDatabase(join(dir,'source.sqlite'));initializeCanonicalSchema(db);
   const backup=await workspaceSnapshot(db);db.close();
   try{
     const target=join(dir,'restored.sqlite'),result=checkedRestore(['--read-only',backup.file,'--db',target]);
     assert.equal(result.exitCode,0);assert.equal(result.database,target);assert.equal(result.state,'read_only_recovery');
-    const restored=new DatabaseSync(target);try{assert.equal(restored.prepare('SELECT serving_state FROM authority_state').get()!.serving_state,'read_only_recovery');}finally{restored.close();}
+    const restored=testDatabase(target);try{assert.equal(restored.prepare('SELECT serving_state FROM authority_state').get()!.serving_state,'read_only_recovery');}finally{restored.close();}
     assert.equal(restoreCommand(['--read-only',backup.file,'--db',target,'--activate']).exitCode, 2);
-    const legacy=join(dir,'legacy.sqlite'),old=new DatabaseSync(legacy);old.exec("CREATE TABLE briefsip_backup(format TEXT,version INTEGER); INSERT INTO briefsip_backup VALUES ('briefsip-workspace',1)");old.close();
+    const legacy=join(dir,'legacy.sqlite'),old=testDatabase(legacy);old.exec("CREATE TABLE briefsip_backup(format TEXT,version INTEGER); INSERT INTO briefsip_backup VALUES ('briefsip-workspace',1)");old.close();
     const invalid=join(dir,'invalid.sqlite');assert.throws(()=>checkedRestore(['--read-only',legacy,'--db',invalid]),/canonical backup/);assert(!existsSync(invalid));
   }finally{backup.cleanup();rmSync(dir,{recursive:true,force:true});}
 });
 
 test('local restore bootstrap requires recorded owner identity and issues expiring ingest-only proof',()=>{
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-restore-proof-')), database = join(dir, 'recovery.sqlite');
-  const db = new DatabaseSync(database); chmodSync(database, 0o600); initializeCanonicalSchema(db);
+  const db = testDatabase(database); chmodSync(database, 0o600); initializeCanonicalSchema(db);
   const owner: HumanActor = { accountId: randomUUID(), issuer: 'https://fixture.example', subject: 'owner', sessionId: 'owner-session', expiresAt: Date.now() + 60_000 };
   const stranger = { ...owner, accountId: randomUUID(), subject: 'stranger' };
   for (const actor of [owner, stranger]) db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(actor.accountId, actor.issuer, actor.subject, Date.now());

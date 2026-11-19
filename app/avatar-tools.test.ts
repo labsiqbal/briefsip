@@ -5,7 +5,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import sharp from 'sharp';
 import { startApp } from './test-bridge.ts';
 
@@ -62,7 +62,7 @@ test('avatar tool scopes files, journals atomic changes and preserves user chang
     const sideImage = await upload(sidePath); args = { image: sideImage, revision: 1 }; await run(sidePath, [sideImage]); assert.equal(result.revision, 2);
     args = { image: null, revision: 2 }; before = () => request(avatar, { id: randomUUID(), revision: 2, image: png.toString('base64') });
     const conflict = await run(path); assert.equal(result.status, 409); assert.equal((await request(avatar)).revision, 3);
-    const journal = new DatabaseSync(options.database, { readOnly: true });
+    const journal = testDatabase(options.database, { readOnly: true });
     try {
       const rows = journal.prepare('SELECT result FROM flow_tool_calls WHERE turn=?').all(conflict);
       assert.deepEqual(rows.map(row => JSON.parse(String(row.result))), [result]);
@@ -79,7 +79,7 @@ test('avatar tool scopes files, journals atomic changes and preserves user chang
     await request(path + '/turns', { id: cancelled, text: 'Cancel' }); await until(path, cancelled, 'cancelled'); assert.equal((await request(avatar)).revision, 5);
     generate = true; await run(path); generate = false; assert.equal(imageCalls, 1); assert.equal(result.revision, 6);
     args = { image: null, revision: 6 };
-    await app.close(); const db = new DatabaseSync(options.database); db.exec("CREATE TRIGGER reject_avatar_journal BEFORE INSERT ON flow_tool_calls BEGIN SELECT RAISE(ABORT, 'synthetic journal failure'); END"); db.close();
+    await app.close(); const db = testDatabase(options.database); db.exec("CREATE TRIGGER reject_avatar_journal BEFORE INSERT ON flow_tool_calls BEGIN SELECT RAISE(ABORT, 'synthetic journal failure'); END"); db.close();
     app = await startApp(options); await run(path, [], 'failed'); assert.deepEqual(await request(avatar), { revision: 6, present: true });
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });

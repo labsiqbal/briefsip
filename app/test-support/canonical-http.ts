@@ -3,7 +3,7 @@ import { generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './database.ts';
 import { ProtocolError } from '../shared/protocol.ts';
 import { startCanonicalApp } from '../test-bridge.ts';
 import { installFrozenNodeSchema } from './canonical-schema.ts';
@@ -15,8 +15,7 @@ const issuer = 'https://fixture.clerk.accounts.dev';
 export function canonicalHttp(prefix: string) {
   const dir = mkdtempSync(join(tmpdir(), prefix));
   const database = join(dir, 'canonical.sqlite');
-  const db = new DatabaseSync(database);
-  db.exec('PRAGMA busy_timeout=5000');
+  const db = testDatabase(database);
   installFrozenNodeSchema(db);
   const addAccount = (subject: string, accountId = randomUUID()) => {
     db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(accountId, issuer, subject, Date.now());

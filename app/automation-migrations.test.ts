@@ -4,7 +4,7 @@ import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { startCanonicalApp } from './test-bridge.ts';
 import { digestCommand } from './shared/protocol.ts';
 import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
@@ -18,7 +18,7 @@ const graph = JSON.stringify({ entry: 'out', maxSteps: 1, nodes: [{ id: 'out', k
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-old-automation-'));
-  const database = join(dir, 'state.sqlite'), db = new DatabaseSync(database);
+  const database = join(dir, 'state.sqlite'), db = testDatabase(database);
   const owner = randomUUID(), project = randomUUID(), agent = randomUUID(), home = randomUUID(), installation = randomUUID();
   installFrozenNodeSchema(db);
   db.prepare("INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,'user_owner',?)").run(owner, issuer, now);

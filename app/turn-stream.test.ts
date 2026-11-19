@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { startApp } from './test-bridge.ts';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { newestPartial, parseTurnSnapshot, type StreamPartial } from './shared/turn-stream.ts';
 import { streamWork } from './src/ui/transcript.ts';
 
@@ -119,9 +119,9 @@ test('room polling retains active members beyond full history and orders prose/t
     assert.equal(rows.length, 3); assert.equal(rows.filter(row => row.partial?.text === 'Before tool.').length, 1);
     assert.equal(calls, 1); assert.equal(rows.filter(row => row.status === 'running').length, 1); assert.equal(rows.filter(row => row.status === 'queued' && !row.partial).length, 2);
     // Fill history without admitting 35 unrelated discussions while the real room is running.
-    const db = new DatabaseSync(database);
+    const db = testDatabase(database);
     try {
-      db.exec('PRAGMA busy_timeout=5000; BEGIN IMMEDIATE');
+      db.exec('BEGIN IMMEDIATE');
       const insert = db.prepare("INSERT INTO turns(id,agent,channel,recipient,text,status,paused,created) VALUES (?,?,?,?,?,'queued',1,?)");
       for (let i = 0; i < 105; i++) {
         const agent = agents[i % agents.length];

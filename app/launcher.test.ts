@@ -8,7 +8,7 @@ import { createServer, createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { nativeReleaseFixture } from './test-support/native-release-fixture.ts';
 import { launcherCommand } from './rust-test-launcher.ts';
 import { rustBinary } from './rust-binary.ts';
@@ -36,7 +36,7 @@ async function fixture() {
   writeFileSync(settings.envFile, '', { mode: 0o600 });
   const save = () => writeFileSync(config, JSON.stringify(settings), { mode: 0o600 }); save();
   const options = { launcherSocket: join(data, 'launcher.sock'), releasesDir: releases };
-  const db = new DatabaseSync(join(data, 'briefsip.sqlite')); db.exec("CREATE TABLE data(value TEXT); INSERT INTO data VALUES('preserved')"); db.close();
+  const db = testDatabase(join(data, 'briefsip.sqlite')); db.exec("CREATE TABLE data(value TEXT); INSERT INTO data VALUES('preserved')"); db.close();
   const processes: ChildProcess[] = [];
   const publish = (version: string) => {
     const id = version + '-12345678', release = join(releases, id); mkdirSync(release);

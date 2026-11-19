@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {DatabaseSync} from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import {createServer} from 'node:http';
 import {randomUUID} from 'node:crypto';
 import {mkdtempSync,rmSync} from 'node:fs';
@@ -34,7 +35,7 @@ test('Slack artifacts retain exact bytes and upload stages across uncertain comp
  async function incoming(text='Create file'){
   const id=++sequence;
   await connector.send(slackEnvelope(id,text));
-  db??=new DatabaseSync(journal);
+  db??=testDatabase(journal);
   return db!.prepare('SELECT * FROM slack_inbox ORDER BY rowid DESC LIMIT 1').get()!;
  }
  const until=(check:()=>boolean)=>waitFor(()=>{connector.check();return check();},'Connector did not settle');

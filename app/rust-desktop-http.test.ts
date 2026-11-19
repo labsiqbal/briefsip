@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import sharp from 'sharp';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -137,7 +137,7 @@ test('server advertises gated tools, sends model image pixels, protects viewer r
     const other = randomUUID(); await request('/api/agents', { runtime: 'api', id: other, name: 'Other', model: 'fixture', instructions: 'Help.' }); assert.equal((await fetch(`${app.origin}/api/agents/${other}/computer/screenshot`)).status, 403);
     mode = 'click'; f.fail(); const failed = await send(id, 'failed'); const count = f.commands.length;
     await app.close(); closed = true;
-    const db = new DatabaseSync(options.database);
+    const db = testDatabase(options.database);
     try {
       const saved = db.prepare('SELECT state, length(image) AS size FROM computer_actions WHERE turn=?').get(checked.id)!;
       assert.equal(saved.state, 'done'); assert(Number(saved.size) > 0);
@@ -232,7 +232,7 @@ test('HTTP control and user input enforce Origin, revision, validation and rate 
     await request(`/api/agents/${agent}/turns`, { id: blocked, text: 'Click while owner controls' });
     await wait(blocked, 'queued');
     assert.equal(f.commands.length, beforeAction + 1);
-    const saved = new DatabaseSync(options.database);
+    const saved = testDatabase(options.database);
     try {
       assert.equal(saved.prepare('SELECT count(*) AS n FROM computer_actions WHERE turn=?').get(blocked)!.n, 0);
       assert.match(String(saved.prepare('SELECT result FROM flow_tool_calls WHERE turn=?').get(blocked)!.result), /waiting_for_user/);

@@ -6,7 +6,7 @@ import { linkSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, sym
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from '../test-support/database.ts';
 import ts from 'typescript';
 import { canonicalJson, ProtocolError, sha256 } from '../shared/protocol.ts';
 import { activateRestoredHub, backupHub, fenceRestoredHub, initializeHubSchema, openHubDatabase, transaction } from './schema.ts';
@@ -19,7 +19,7 @@ const signingPublicKey = generateKeyPairSync('ed25519').publicKey.export({ type:
 const encryptionPublicKey = generateKeyPairSync('x25519').publicKey.export({ type: 'spki', format: 'der' }).toString('base64url');
 function code(work: () => unknown, expected: string) { assert.throws(work, e => e instanceof ProtocolError && e.code === expected); }
 function fixture(t: test.TestContext) {
-  const db = new DatabaseSync(':memory:'); initializeHubSchema(db); t.after(() => db.close());
+  const db = testDatabase(':memory:'); initializeHubSchema(db); t.after(() => db.close());
   let clock = 1_800_000_000_000;
   const a = createHubAuthority(db, { domain: 'briefsip.test', mailboxKey: key, now: () => clock });
   const r = createHubRouting(a);
@@ -353,14 +353,14 @@ test('oversized outbound frame rolls back message and turn rather than omitting 
 });
 
 test('migration v0 fixture initializes atomically, checksum/future/foreign database rejection preserves data', () => {
-  const db=new DatabaseSync(':memory:');
+  const db=testDatabase(':memory:');
   db.exec('CREATE TABLE hub_migrations(version INTEGER PRIMARY KEY,checksum TEXT NOT NULL) STRICT'); initializeHubSchema(db);
   const rows=db.prepare('SELECT * FROM hub_migrations').all(); initializeHubSchema(db); assert.deepEqual(db.prepare('SELECT * FROM hub_migrations').all(),rows);
   db.prepare("UPDATE hub_migrations SET checksum='tampered'").run(); assert.throws(()=>initializeHubSchema(db),/checksum/);
   assert.equal(db.prepare('SELECT count(*) AS n FROM hub_state').get()!.n,1); db.close();
-  const future=new DatabaseSync(':memory:'); future.exec("CREATE TABLE hub_migrations(version INTEGER PRIMARY KEY,checksum TEXT NOT NULL) STRICT; INSERT INTO hub_migrations VALUES(99,'future')"); assert.throws(()=>initializeHubSchema(future),/version/); assert(!future.prepare("SELECT 1 FROM sqlite_schema WHERE name='projects'").get()); future.close();
-  const foreign=new DatabaseSync(':memory:'); foreign.exec('CREATE TABLE agents(id TEXT)'); assert.throws(()=>initializeHubSchema(foreign),/non-hub/); foreign.close();
-  const broken=new DatabaseSync(':memory:'); broken.exec('CREATE TABLE hub_migrations(version INTEGER PRIMARY KEY,checksum TEXT NOT NULL) STRICT; CREATE TABLE sections(id TEXT)'); assert.throws(()=>initializeHubSchema(broken)); assert(!broken.prepare("SELECT 1 FROM sqlite_schema WHERE name='accounts'").get()); assert.equal(broken.prepare('SELECT count(*) AS n FROM hub_migrations').get()!.n,0); broken.close();
+  const future=testDatabase(':memory:'); future.exec("CREATE TABLE hub_migrations(version INTEGER PRIMARY KEY,checksum TEXT NOT NULL) STRICT; INSERT INTO hub_migrations VALUES(99,'future')"); assert.throws(()=>initializeHubSchema(future),/version/); assert(!future.prepare("SELECT 1 FROM sqlite_schema WHERE name='projects'").get()); future.close();
+  const foreign=testDatabase(':memory:'); foreign.exec('CREATE TABLE agents(id TEXT)'); assert.throws(()=>initializeHubSchema(foreign),/non-hub/); foreign.close();
+  const broken=testDatabase(':memory:'); broken.exec('CREATE TABLE hub_migrations(version INTEGER PRIMARY KEY,checksum TEXT NOT NULL) STRICT; CREATE TABLE sections(id TEXT)'); assert.throws(()=>initializeHubSchema(broken)); assert(!broken.prepare("SELECT 1 FROM sqlite_schema WHERE name='accounts'").get()); assert.equal(broken.prepare('SELECT count(*) AS n FROM hub_migrations').get()!.n,0); broken.close();
 });
 
 test('exclusive writer/WAL, consistent backup/reopen and restore generation fence invitations and unfinished work', async t => {

@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { startApp } from './test-bridge.ts';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 
 test('manual routine runs keep schedule, deduplicate across restart and enforce revision and overlap', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-routine-test-'));
@@ -103,7 +103,7 @@ test('manual routine runs keep schedule, deduplicate across restart and enforce 
     await post(path, { id: randomUUID(), revision: routine.revision }, 503);
     // Exercise migration with an old scheduled receipt; manual rows cannot exist in that schema.
     await app.close();
-    const db = new DatabaseSync(options.database);
+    const db = testDatabase(options.database);
     db.exec(`DELETE FROM routine_runs;
       DROP TABLE routine_runs;
       CREATE TABLE routine_runs(routine TEXT NOT NULL REFERENCES routines(id), scheduled_at INTEGER NOT NULL,

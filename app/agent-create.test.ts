@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 import { restoreAgentCreation } from './shared/agent-create.ts';
 
@@ -63,7 +63,7 @@ test('prompt creation atomically queues one restricted setup and recovers withou
     await app.close(); app = await startApp({ database: options.database });
     const offline = command(); await request('/api/agents', { ...offline, runtime: 'api' }, 503); assert(!(await request('/api/agents')).agents.some((a: any) => a.id === offline.id));
     await request('/api/agents', { ...input, runtime: 'api' }); // Historical receipt survives provider removal.
-    await app.close(); const db = new DatabaseSync(options.database); db.exec("CREATE TRIGGER reject_setup BEFORE INSERT ON turns BEGIN SELECT RAISE(ABORT, 'synthetic setup fault'); END"); db.close();
+    await app.close(); const db = testDatabase(options.database); db.exec("CREATE TRIGGER reject_setup BEFORE INSERT ON turns BEGIN SELECT RAISE(ABORT, 'synthetic setup fault'); END"); db.close();
     app = await startApp(options); const rollback = command(); await request('/api/agents', { ...rollback, runtime: 'api' }, 500); assert(!(await request('/api/agents')).agents.some((a: any) => a.id === rollback.id));
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from '../test-support/database.ts';
 import { randomUUID, generateKeyPairSync } from 'node:crypto';
 import { initializeHubSchema } from './schema.ts';
 import { createHubAuthority } from './project-authority.ts';
@@ -8,7 +8,7 @@ import { createHubWebApi } from './web.ts';
 import { parseDraft, parseJoin, parseGrant } from '../src/hub/client.ts';
 
 test('pilot web adapters: no outsider reads, exact mailbox acceptance, owner node/agent binding, role and participation policies', () => {
-  const db = new DatabaseSync(':memory:'); initializeHubSchema(db);
+  const db = testDatabase(':memory:'); initializeHubSchema(db);
   try {
     const authority = createHubAuthority(db, { domain: 'briefsip.test', mailboxKey: Buffer.alloc(32, 9) }), web = createHubWebApi(authority);
     const identity = (subject: string) => ({ issuer: 'https://identity.test', subject, verifiedMailboxes: [`${subject}@example.test`] });

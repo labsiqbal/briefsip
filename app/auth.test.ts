@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { createClerkClient } from '@clerk/backend';
 import type { AuthConfig } from './test-support/auth.ts';
 import { startRustServer } from './rust-test-server.ts';
@@ -54,7 +55,7 @@ test('Rust verifies signed human sessions before internal account mapping', asyn
     rmSync(dir, { recursive: true, force: true });
   });
   app = await startRustServer({ database, auth: rustAuth });
-  db = new DatabaseSync(database);
+  db = testDatabase(database);
 
   const first = await session(app.origin, jwt());
   assert.equal(first.status, 200);
@@ -88,7 +89,7 @@ test('Rust logout denial survives disk reopen, old JWT expiry and upstream recov
       res.writeHead(404).end();
       return;
     }
-    const db = new DatabaseSync(database, { readOnly: true });
+    const db = testDatabase(database, { readOnly: true });
     try { observedDenial = String(db.prepare('SELECT reason FROM session_denials').get()?.reason); }
     finally { db.close(); }
     res.writeHead(upstream ? 200 : 503).end('{}');
@@ -106,7 +107,7 @@ test('Rust logout denial survives disk reopen, old JWT expiry and upstream recov
     assert.deepEqual(logout.body.data, { state: 'upstream_pending' });
     assert.equal(observedDenial, 'logout_pending');
     await app.close();
-    const db = new DatabaseSync(database);
+    const db = testDatabase(database);
     try { db.prepare('UPDATE session_denials SET expires_at=?').run(Date.now() - 60000); }
     finally { db.close(); }
     app = await startRustServer({ database, auth });
@@ -114,7 +115,7 @@ test('Rust logout denial survives disk reopen, old JWT expiry and upstream recov
     await app.close();
     upstream = true;
     app = await startRustServer({ database, auth });
-    const reopened = new DatabaseSync(database, { readOnly: true });
+    const reopened = testDatabase(database, { readOnly: true });
     try {
       for (let n = 0; n < 100 && reopened.prepare('SELECT reason FROM session_denials').get()?.reason !== 'logout_complete'; n++) {
         await new Promise(resolve => setTimeout(resolve, 25));
@@ -187,7 +188,7 @@ test('canonical invitation creates durable outbox and worker delivers through co
     const projectId = randomUUID(); const project = await send('/api/projects', { requestId: randomUUID(), id: projectId, name: 'Mail fixture' }); assert.equal(project.status, 201);
     const invitationId = randomUUID(); const response = await send(`/api/projects/${projectId}/invitations`, { requestId: invitationId, email: 'member@example.com', agentAssignments: [], expiresAt: Date.now() + 60000, expectedProjectRevision: 1 }); assert.equal(response.status, 201, await response.clone().text());
     await app.close();
-    const db = new DatabaseSync(options.database);
+    const db = testDatabase(options.database);
     db.prepare("UPDATE mail_outbox SET state='sending',next_attempt=? WHERE id=?").run(Date.now() - 1, invitationId); db.close();
     mail = { ...mail, keyId: randomUUID(), key: Buffer.alloc(32, 11) };
     app = await startCanonicalApp({ ...options, mailApiKey: 'resend_fixture' });

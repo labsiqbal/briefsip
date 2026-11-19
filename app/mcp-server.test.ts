@@ -5,7 +5,7 @@ import { createServer, request as httpRequest } from 'node:http';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { startApp } from './test-bridge.ts';
@@ -159,7 +159,7 @@ test('agent session binds agent/turn, reuses conversation history rules, and rev
 });
 
 test('session registry uses exact hash lookup, bounded expiry and explicit revocation', () => {
-  const db = new DatabaseSync(':memory:');
+  const db = testDatabase(':memory:');
   try {
     db.exec('CREATE TABLE agents(id TEXT PRIMARY KEY); CREATE TABLE turns(id TEXT PRIMARY KEY,agent TEXT,status TEXT)'); initializeMcpSessions(db);
     const agent = randomUUID(), turn = randomUUID(); db.prepare('INSERT INTO agents VALUES (?)').run(agent); db.prepare("INSERT INTO turns VALUES (?,?,'running')").run(turn,agent);

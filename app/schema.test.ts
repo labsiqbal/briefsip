@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { readFileSync } from 'node:fs';
 import { initializeCanonicalSchema, schemaVersion, SCHEMA_VERSION, migration, migrationV2, migrationV3, migrationV4 } from './test-support/legacy-schema.ts';
 
@@ -12,7 +12,7 @@ test('legacy schema fixture stays byte-identical to Rust migrations', () => {
 });
 
 test('canonical v1 schema initializes empty and current SQLite stores idempotently', () => {
-  const db = new DatabaseSync(':memory:');
+  const db = testDatabase(':memory:');
   initializeCanonicalSchema(db, 1000);
   assert.equal(schemaVersion(db), SCHEMA_VERSION);
   assert.equal(db.prepare('SELECT serving_state FROM authority_state').get()!.serving_state, 'active');
@@ -28,7 +28,7 @@ test('canonical v1 schema initializes empty and current SQLite stores idempotent
 });
 
 test('schema rollback leaves no partial v1 tables', () => {
-  const db = new DatabaseSync(':memory:');
+  const db = testDatabase(':memory:');
   db.exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,name TEXT UNIQUE,checksum TEXT,applied_at INTEGER)");
   db.prepare('INSERT INTO schema_migrations VALUES (99,?,?,?)').run('future', 'x', 1);
   assert.throws(() => initializeCanonicalSchema(db));
@@ -37,7 +37,7 @@ test('schema rollback leaves no partial v1 tables', () => {
 });
 
 test('routine outcome schema upgrade retains old turns and saved flags across restart', () => {
-  const db = new DatabaseSync(':memory:');
+  const db = testDatabase(':memory:');
   try {
     initializeCanonicalSchema(db);
     const migrations = db.prepare('SELECT * FROM schema_migrations ORDER BY version').all();

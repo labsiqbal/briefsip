@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { startApp } from './test-bridge.ts';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 
 test('local routines require project membership and a report section belonging to that project', async () => {
   const home = mkdtempSync(resolve('node_modules/.routine-project-'));
@@ -34,7 +34,7 @@ test('Rust upgrades legacy routine timing without publishing earlier runs', asyn
   let app = await startApp({ database });
   try {
     await app.close();
-    const db = new DatabaseSync(database);
+    const db = testDatabase(database);
     try {
       db.exec(`INSERT INTO agents(id,name,model,instructions) VALUES ('legacy-agent','Legacy','fixture','Help');
         ALTER TABLE routines DROP COLUMN project;
@@ -51,7 +51,7 @@ test('Rust upgrades legacy routine timing without publishing earlier runs', asyn
 
     for (let restart = 0; restart < 2; restart++) {
       app = await startApp({ database });
-      const migrated = new DatabaseSync(database);
+      const migrated = testDatabase(database);
       try {
         assert.deepEqual({ ...migrated.prepare('SELECT next_at,interval_ms,project,report_to,schedule_json,schedule_zone FROM routines').get() },
           { next_at: 1794758400123, interval_ms: 65000, project: null, report_to: 'run', schedule_json: null, schedule_zone: null });
@@ -101,7 +101,7 @@ test('project routine runs use project folders and post one system report per ou
     for (const [prompt, destination, expected] of [['READ',section,'done'],['QUIET',section,'no_update'],['FAIL','direct','failed'],['READ','run','done']]) {
       if (prompt === 'READ' && destination === section) {
         await app.close();
-        const db = new DatabaseSync(options.database);
+        const db = testDatabase(options.database);
         db.exec("CREATE TRIGGER report_failure_fixture BEFORE UPDATE OF posted ON local_routine_reports WHEN NEW.posted=1 BEGIN SELECT RAISE(ABORT,'Synthetic delivery failure'); END"); db.close();
         app = await startApp(options);
       }
@@ -116,7 +116,7 @@ test('project routine runs use project folders and post one system report per ou
         assert.equal((await request(`/api/channels/${section}/turns`)).length, 0, 'Delivery receipt failure must roll back the message too');
         const before = calls;
         await app.close();
-        const db = new DatabaseSync(options.database);
+        const db = testDatabase(options.database);
         assert.equal(db.prepare('SELECT posted FROM local_routine_reports WHERE run=?').get(run.turn)?.posted, 0);
         db.exec('DROP TRIGGER report_failure_fixture'); db.close();
         app = await startApp(options);
@@ -171,7 +171,7 @@ test('scheduled cron catches up once and unavailable project folders do not star
     for (let i=0;i<11;i++) await request(`/api/agents/${agent.id}/routines`,{...input,id:randomUUID(),project:project.id,reportTo:'run'});
     const healthy = await request(`/api/agents/${agent.id}/routines`,{...input,id:randomUUID()});
     await app.close();
-    const db = new DatabaseSync(options.database), now = Date.now();
+    const db = testDatabase(options.database), now = Date.now();
     db.prepare('UPDATE routines SET next_at=? WHERE project IS NOT NULL').run(now-3*86400000);
     db.prepare('UPDATE routines SET next_at=? WHERE id=?').run(now-2*86400000,healthy.id); db.close();
     rmSync(folder,{recursive:true});

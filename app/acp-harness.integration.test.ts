@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 import { startApp } from './test-bridge.ts';
 import { findHostHarness } from './test-support/find-host-harness.ts';
@@ -107,7 +107,7 @@ for (const runtime of ['hermes', 'antigravity', 'grok', 'pi'] as const) test(`${
       return turn;
     };
     const session = () => {
-      const db = new DatabaseSync(database, { readOnly: true });
+      const db = testDatabase(database, { readOnly: true });
       try { return db.prepare('SELECT session FROM harness_sessions WHERE agent=? AND runtime=?').get(agent, runtime)?.session; }
       finally { db.close(); }
     };
@@ -125,7 +125,7 @@ for (const runtime of ['hermes', 'antigravity', 'grok', 'pi'] as const) test(`${
     );
     assert(tool.activity.harness.length > 0 || tool.activity.stream.some(entry => entry.kind === 'tool'), 'Protocol tool event was not observed');
     assert.equal(readFileSync(join(workspace, 'marker.txt'), 'utf8'), 'marker');
-    const db = new DatabaseSync(database, { readOnly: true });
+    const db = testDatabase(database, { readOnly: true });
     try {
       assert.equal(db.prepare("SELECT count(*) AS n FROM flow_tool_calls WHERE turn=? AND json_extract(call,'$.function.name')='create_workspace_file'").get(tool.id)?.n, 1);
     } finally { db.close(); }

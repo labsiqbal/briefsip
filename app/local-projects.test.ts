@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { createServer, get } from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { startApp } from './test-bridge.ts';
@@ -67,7 +67,7 @@ test('Rust project CRUD preserves folder ownership, revision fences, exact repla
     assert.equal(readFileSync(join(p.folders[0], 'keep.txt'), 'utf8'), 'keep');
     assert(!(await f.request('/api/projects')).projects.some((project: { id: string }) => project.id === p.id));
     await f.request(path, undefined, 404);
-    const db = new DatabaseSync(f.options.database, { readOnly: true });
+    const db = testDatabase(f.options.database, { readOnly: true });
     try {
       assert.equal(db.prepare('SELECT archived FROM channels WHERE id=?').get(p.channel)?.archived, 1);
       assert.equal(db.prepare('SELECT count(*) n FROM channel_members WHERE channel=?').get(p.channel)?.n, 0);
@@ -236,7 +236,7 @@ test('project harness cwd and read-only native escalation denial; direct chat us
 });
 test('Rust managed folder retry recovers durable intent after transaction failure without deleting files', async () => {
   const f = await fixture();
-  const db = new DatabaseSync(f.options.database);
+  const db = testDatabase(f.options.database);
   try {
     const body = { id: randomUUID(), name: 'Retry folder', folders: [{ mode: 'new' }] };
     db.exec("CREATE TRIGGER reject_project BEFORE INSERT ON local_projects BEGIN SELECT RAISE(ABORT,'fixture failure'); END;");
@@ -264,7 +264,7 @@ test('standalone and P2 migration preserves channel IDs, history, read state, me
     const layout = await f.request('/api/sidebar');
     const legacy = await f.request('/api/sidebar', { id: randomUUID(), revision: layout.revision, sections: [{id: randomUUID(), name: 'Legacy labels', agents: [f.agent]}] });
     await f.stop();
-    const db = new DatabaseSync(f.options.database);
+    const db = testDatabase(f.options.database);
     // Recreate pre-migration standalone and P2 data in their historical schema.
     db.exec('DROP TABLE local_project_sections');
     db.prepare('INSERT INTO channels(id,name,instructions,lead,activity,read_position) VALUES (?,?,?,?,12,9)').run(room, 'Acme', 'Plan Acme', f.agent);
@@ -290,7 +290,7 @@ test('standalone and P2 migration preserves channel IDs, history, read state, me
     assert.deepEqual(await f.request('/api/sidebar'),legacy);
     await f.restart(); assert.deepEqual((await f.request('/api/projects')).projects,projects);
     await f.stop();
-    const source = new DatabaseSync(f.options.database);
+    const source = testDatabase(f.options.database);
     try {
       assert.deepEqual(source.prepare('SELECT * FROM turns WHERE id=?').get(turn),retainedTurn);
       assert.deepEqual(source.prepare('SELECT * FROM files WHERE id=?').get(file),retainedFile);
@@ -388,7 +388,7 @@ test('folderless project and side threads isolate host grants, accept folders la
 test('Rust project migration rolls back ownership and retries without touching standalone data', async () => {
   const f = await fixture();
   await f.stop();
-  const db = new DatabaseSync(f.options.database);
+  const db = testDatabase(f.options.database);
   try {
     const room = randomUUID();
     db.prepare('INSERT INTO channels(id,name,instructions,lead) VALUES (?,?,?,?)').run(room, 'Retain', 'History', f.agent);
@@ -416,7 +416,7 @@ test('Rust migrates a standalone channel with a colliding ID into its own projec
   const f = await fixture();
   try {
     await f.stop();
-    const db = new DatabaseSync(f.options.database);
+    const db = testDatabase(f.options.database);
     try {
       db.prepare('INSERT INTO channels(id,name,instructions,lead) VALUES (?,?,?,?)').run(f.project.id, 'Standalone collision', 'Separate work', f.agent);
       db.prepare('INSERT INTO channel_members VALUES (?,?)').run(f.project.id, f.agent);

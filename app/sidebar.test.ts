@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 import { restoreWorkspace } from './test-support/backup.ts';
 
@@ -72,14 +72,14 @@ test('sidebar HTTP edits retain agents/history through delete, conflicts, retry,
     const foreign = await fetch(app.origin + '/api/sidebar', { method: 'POST', headers: { Origin: 'https://foreign.test', 'Content-Type': 'application/json' }, body: JSON.stringify({ id: randomUUID(), revision: 2, sections: [] }) });
     assert.equal(foreign.status, 403);
     await app.close();
-    const seed = new DatabaseSync(options.database, { timeout: 5000 });
+    const seed = testDatabase(options.database);
     seed.exec("CREATE TRIGGER reject_sidebar_receipt BEFORE INSERT ON sidebar_commands BEGIN SELECT RAISE(ABORT,'fixture'); END");
     seed.close(); app = await startApp(options);
     const remove = { id: randomUUID(), revision: 2, sections: [] };
     await request('/api/sidebar', remove, 500);
     assert.deepEqual(await request('/api/sidebar'), edited);
     await app.close();
-    const cleanup = new DatabaseSync(options.database, { timeout: 5000 }); cleanup.exec('DROP TRIGGER reject_sidebar_receipt'); cleanup.close(); app = await startApp(options);
+    const cleanup = testDatabase(options.database); cleanup.exec('DROP TRIGGER reject_sidebar_receipt'); cleanup.close(); app = await startApp(options);
     const empty = await request('/api/sidebar', remove); assert.equal(empty.revision, 3);
     assert.deepEqual(await request('/api/sidebar', create), initial);
     assert.deepEqual(await request('/api/sidebar'), empty);
@@ -105,8 +105,7 @@ test('sidebar HTTP edits retain agents/history through delete, conflicts, retry,
 test('sidebar summary bounds entries and text, redacts credentials, and selects latest explicit remote messages', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-sidebar-summary-')), database = join(directory, 'state.sqlite');
   const app = await startApp({ database, baseURL: 'http://127.0.0.1:1/v1', apiKey: 'saved-provider-credential' });
-  // The running server holds write locks too; wait for them instead of failing with SQLITE_BUSY.
-  const db = new DatabaseSync(database, { timeout: 5000 });
+  const db = testDatabase(database);
   try {
     const add = db.prepare("INSERT INTO agents(id,name,model,instructions) VALUES(?,?,'fixture','PRIVATE_INSTRUCTIONS')");
     const [first, second, room, third] = Array.from({ length: 4 }, () => randomUUID());

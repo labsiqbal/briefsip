@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -15,7 +15,7 @@ test('Rust forks preserve bounded persisted transcripts and restart receipts', {
   let app: Awaited<ReturnType<typeof startRustServer>> | undefined;
   try {
     const initial = await startRustServer({ database }); await initial.close();
-    const db = new DatabaseSync(database), agent = randomUUID(), cutoff = randomUUID();
+    const db = testDatabase(database), agent = randomUUID(), cutoff = randomUUID();
     db.prepare("INSERT INTO agents(id,name,model,instructions) VALUES(?,'Fork fixture','fixture','Help')").run(agent);
     const createdAt = '2026-01-02T03:04:05.000Z';
     const insert = db.prepare("INSERT INTO turns(id,agent,text,reply,status,created) VALUES(?,?,?,?,'done',?)");
@@ -47,7 +47,7 @@ test('Rust data reads preserve seeded history and local CRUD receipts across res
     initial = await startRustServer({ database });
     const agent = randomUUID(), turn = randomUUID();
     await initial.close(); initial = undefined;
-    const db = new DatabaseSync(database);
+    const db = testDatabase(database);
     db.prepare('INSERT INTO agents(id,name,model,instructions) VALUES(?,?,?,?)').run(agent, 'Saved agent', 'fixture', 'Help');
     db.prepare("INSERT INTO turns(id,agent,text,status,reply,created) VALUES(?,?,?,'done',?,?)").run(turn, agent, 'Saved question', 'Saved answer', '2026-01-02T03:04:05.000Z');
     const call = db.prepare("INSERT INTO provider_calls(turn,agent,model,origin,purpose,status,created) VALUES(?,?,?,'test','completion','received',?)").run(turn, agent, 'fixture', '2026-01-02T03:04:05.000Z').lastInsertRowid;
@@ -95,7 +95,7 @@ test('Rust deletion rolls back FK closure, preserves room history and retries ex
   let app: Awaited<ReturnType<typeof startRustServer>> | undefined;
   try {
     const initial = await startRustServer({ database }); await initial.close();
-    const db = new DatabaseSync(database), agent = randomUUID(), other = randomUUID(), direct = randomUUID(), room = randomUUID(), channel = randomUUID();
+    const db = testDatabase(database), agent = randomUUID(), other = randomUUID(), direct = randomUUID(), room = randomUUID(), channel = randomUUID();
     const desktop = join(root, 'agent-desktops', agent), workspace = join(root, 'workspace');
     mkdirSync(desktop, { recursive: true }); writeFileSync(join(desktop, 'saved'), 'saved'); mkdirSync(workspace);
     execFileSync('git', ['init', '-q', workspace]);
@@ -116,7 +116,7 @@ test('Rust deletion rolls back FK closure, preserves room history and retries ex
     const command = { id: randomUUID() }, path = `/api/agents/${agent}/delete`;
     const remove = () => fetch(app!.origin + path, { method: 'POST', headers: { Origin: app!.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(command) });
     assert.equal((await remove()).status, 500); assert(existsSync(desktop));
-    const retry = new DatabaseSync(database);
+    const retry = testDatabase(database);
     assert(retry.prepare('SELECT 1 FROM agents WHERE id=?').get(agent)); assert(retry.prepare('SELECT 1 FROM turns WHERE id=?').get(direct));
     assert.equal(retry.prepare('SELECT agent FROM turns WHERE id=?').get(room)!.agent, agent);
     retry.exec('DROP TRIGGER fail_delete'); retry.close();
@@ -125,7 +125,7 @@ test('Rust deletion rolls back FK closure, preserves room history and retries ex
     assert.equal(execFileSync('git', ['-C', workspace, 'for-each-ref', ref], { encoding: 'utf8' }), '');
     const history = await (await fetch(app.origin + `/api/channels/${channel}/turns`)).json();
     assert.equal(history[0].agent, null); assert.equal(history[0].reply, 'Saved reply'); assert.equal(history[0].agent_name, 'Deleted agent');
-    const saved = new DatabaseSync(database); assert.deepEqual(saved.prepare('PRAGMA foreign_key_check').all(), []);
+    const saved = testDatabase(database); assert.deepEqual(saved.prepare('PRAGMA foreign_key_check').all(), []);
     assert.equal(saved.prepare('SELECT count(*) AS n FROM agent_delete_checkpoints').get()!.n, 0); saved.close();
   } finally { await app?.close(); rmSync(root, { recursive: true, force: true }); }
 });

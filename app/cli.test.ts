@@ -6,6 +6,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { testDatabase } from './test-support/database.ts';
 import { rustBinary } from './rust-binary.ts';
 
 const binary = () => rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
@@ -461,8 +462,7 @@ test('CLI answers retain receipt identity across lost replies and restart', asyn
     assert.equal(dropStatus, false); assert.equal(posts.length, postCount + 1);
     const uncertain = await terminal(['run',a.id,'ASK','--wait','--timeout','5']); assert.equal(uncertain.exitCode, 3);
     await app.close();
-    const { DatabaseSync } = await import('node:sqlite');
-    const db = new DatabaseSync(options.database); db.prepare("UPDATE turns SET status='interrupted',revision=revision+1 WHERE id=?").run(uncertain.id); db.close();
+    const db = testDatabase(options.database); db.prepare("UPDATE turns SET status='interrupted',revision=revision+1 WHERE id=?").run(uncertain.id); db.close();
     app = await startApp(options); useProxy();
     const uncertainArgs = ['answer',a.id,uncertain.id,uncertain.turn.questions[0].id,'Yes','--id',randomUUID()], before = calls;
     assert.equal((await terminal(uncertainArgs)).exitCode, 1); assert.equal(calls, before);

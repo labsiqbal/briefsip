@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 
 test('provider settings read stays private and excludes endpoint and credentials', async () => {
@@ -97,7 +97,7 @@ test('model changes preserve execution snapshot, scope and journal across restar
     assert.equal(models.at(-1), 'backup'); assert.equal(result.model, 'fresh'); assert.equal(result.revision, 2);
     answerOnly = true; await run(fallbackPath); answerOnly = false; assert.equal(models.at(-1), 'fresh');
     await app.close();
-    const db = new DatabaseSync(options.database); db.exec("CREATE TRIGGER reject_model_journal BEFORE INSERT ON flow_tool_calls BEGIN SELECT RAISE(ABORT, 'synthetic journal failure'); END"); db.close();
+    const db = testDatabase(options.database); db.exec("CREATE TRIGGER reject_model_journal BEFORE INSERT ON flow_tool_calls BEGIN SELECT RAISE(ABORT, 'synthetic journal failure'); END"); db.close();
     app = await startApp(options); args = { revision: 5, model: 'rollback' }; await run(path, 'failed');
     assert.equal((await profile()).revision, 5); assert.equal((await profile()).model, 'user-choice');
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(directory, { recursive: true, force: true }); }

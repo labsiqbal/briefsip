@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 
 test('Rust host metrics cache samples, classify storage files and reject path overrides', async () => {
   const httpDir = mkdtempSync(join(tmpdir(), 'briefsip-metrics-http-')), database = join(httpDir, 'state.sqlite');
   const app = await startApp({ database });
   try {
-    const db = new DatabaseSync(database);
+    const db = testDatabase(database);
     try {
       db.exec('CREATE TABLE fixture(bytes BLOB); INSERT INTO fixture VALUES (zeroblob(32768)); DELETE FROM fixture;');
     } finally { db.close(); }

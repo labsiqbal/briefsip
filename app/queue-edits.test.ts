@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -112,7 +112,6 @@ test('queue edit holds survive restart, preserve order and original receipt, rej
 });
 
 test('abandoned edit lease expires and drains its message and following queue in order', async () => {
-  const { DatabaseSync } = await import('node:sqlite');
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-abandoned-edit-'));
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
@@ -143,7 +142,7 @@ test('abandoned edit lease expires and drains its message and following queue in
     release();
     for (let n = 0; n < 100 && (await request(path))[0]?.status !== 'done'; n++) await new Promise(resolve => setTimeout(resolve, 10));
     await app.close();
-    const db = new DatabaseSync(database);
+    const db = testDatabase(database);
     db.prepare('UPDATE queue_edits SET expires_at=0 WHERE editor=?').run(hold.editor);
     db.close(); app = await startApp(options);
     let rows: any[] = [];
@@ -167,7 +166,7 @@ test('Rust expires migrated permanent queue holds and fences the prior revision 
   const legacy = randomUUID(), current = randomUUID();
   try {
     await app.close();
-    const seed = new DatabaseSync(database);
+    const seed = testDatabase(database);
     try {
       seed.exec(`INSERT INTO agents(id,name,model,instructions) VALUES ('fixture','Fixture','fixture','Help');
         ALTER TABLE queue_edits DROP COLUMN expires_at;`);
@@ -176,7 +175,7 @@ test('Rust expires migrated permanent queue holds and fences the prior revision 
     } finally { seed.close(); }
 
     app = await startApp({ database });
-    const db = new DatabaseSync(database);
+    const db = testDatabase(database);
     try {
       const edit = db.prepare('SELECT state,expires_at FROM queue_edits WHERE turn=?');
       const revision = db.prepare('SELECT revision FROM turns WHERE id=?');

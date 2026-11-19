@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -64,15 +64,15 @@ test('question cards persist, answer once in scope, and resume without repeating
     free = true; const textTurn = await ask(direct); assert(prompts.at(-1)!.includes('User question cards (reference data)')); assert(prompts.at(-1)!.includes('Yes')); await request(answerPath(direct, textTurn), { id: randomUUID(), text: 'Custom answer' }); await until(direct, textTurn.id, row => row.status === 'done'); assert.equal(replies.at(-1), 'Custom answer');
     const cancelled = await ask(direct); await request(`${direct}/${cancelled.id}/cancel`, { id: randomUUID() }); await request(answerPath(direct, cancelled), { id: randomUUID(), text: 'Too late' }, 409);
     const archived = await ask(channel); await request(`/api/channels/${c.id}/edit`, { id: randomUUID(), revision: 1, name: 'C', instructions: 'Help', members: [a.id, b.id], lead: a.id, archived: true }); await request(answerPath(channel, archived), { id: randomUUID(), text: 'Late' }, 409);
-    const restored = await ask(direct); await app.close(); const db = new DatabaseSync(options.database); db.prepare("UPDATE turns SET status='interrupted',revision=revision+1 WHERE id=?").run(restored.id); db.close(); app = await startApp(options);
+    const restored = await ask(direct); await app.close(); const db = testDatabase(options.database); db.prepare("UPDATE turns SET status='interrupted',revision=revision+1 WHERE id=?").run(restored.id); db.close(); app = await startApp(options);
     await request(answerPath(direct, restored), { id: randomUUID(), text: 'Restored answer' }, 409);
     await request(answerPath(direct, restored), { id: randomUUID(), text: 'Restored answer', acknowledgeUncertain: true }); await until(direct, restored.id, row => row.status === 'done');
     const atomic = await ask(direct);
-    await app.close(); const fault = new DatabaseSync(options.database); fault.exec("CREATE TRIGGER reject_answer BEFORE INSERT ON question_answers BEGIN SELECT RAISE(ABORT, 'synthetic answer receipt failure'); END"); fault.close(); app = await startApp(options);
+    await app.close(); const fault = testDatabase(options.database); fault.exec("CREATE TRIGGER reject_answer BEFORE INSERT ON question_answers BEGIN SELECT RAISE(ABORT, 'synthetic answer receipt failure'); END"); fault.close(); app = await startApp(options);
     const retry = { id: randomUUID(), text: 'Atomic answer' };
     await request(answerPath(direct, atomic), retry, 500);
     const untouched = (await request(direct)).find((r: any) => r.id === atomic.id); assert.equal(untouched.paused, 1); assert.equal(untouched.questions[0].answer, null);
-    await app.close(); const recovered = new DatabaseSync(options.database); recovered.exec('DROP TRIGGER reject_answer'); recovered.close(); app = await startApp(options);
+    await app.close(); const recovered = testDatabase(options.database); recovered.exec('DROP TRIGGER reject_answer'); recovered.close(); app = await startApp(options);
     await request(answerPath(direct, atomic), retry); await until(direct, atomic.id, row => row.status === 'done'); assert.equal(replies.at(-1), 'Atomic answer');
     invalid = true; const bad = randomUUID(); await request(direct, { id: bad, text: bad }); const failed = await until(direct, bad, row => row.status === 'failed'); assert.match(failed.error, /question/); assert.equal(failed.questions.length, 0);
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }

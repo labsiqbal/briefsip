@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {randomUUID} from 'node:crypto';
-import {DatabaseSync} from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -37,14 +38,14 @@ test('Slack files snapshot bytes and retry uploads and turns without duplicate w
   {method:'POST',path:/\/turns$/,after:true},
  );
  const lost=()=>connector.expectedFailure(/Local agent request failed/);
- const start=()=>{db?.close();db=new DatabaseSync(journal);connector.start();};
+ const start=()=>{db?.close();db=testDatabase(journal);connector.start();};
  const uploads=()=>connector.requests.filter(request=>request.method==='POST'&&/\/files\/[^/]+$/.test(request.path));
  const sent=()=>connector.jsonPosts<any>('chat.postMessage');
  async function ui(path:string,body?:unknown):Promise<any>{const res=await fetch(app.origin+path,{method:body?'POST':'GET',headers:{Origin:app.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const value=await res.json();assert(res.ok,JSON.stringify(value));return value;}
  async function incoming(files:string[],text='Read files',sender='UUSER'){
   const id=++sequence;const envelope=slackEnvelope(id,text,sender);
   Object.assign(envelope.payload.event,{subtype:'file_share',bot_id:null,files:files.map(id=>({id}))});
-  await connector.send(envelope);db??=new DatabaseSync(journal);
+  await connector.send(envelope);db??=testDatabase(journal);
   return db!.prepare('SELECT * FROM slack_inbox WHERE event=?').get(`Ev${id}`)!;
  }
  async function settle(turn:unknown){

@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 
 test('agent memory writes preserve scope, user selection, atomic errors and resume receipts', async () => {
@@ -53,7 +53,7 @@ test('agent memory writes preserve scope, user selection, atomic errors and resu
     const first = (await request(memory)).items[0]; assert.equal(first.text, 'First memory'); assert.equal(first.essential, 0);
     assert.equal((await request(foreign)).items.length, 0); assert.equal((await request(shared)).items.length, 0);
     await app.close();
-    const legacy = new DatabaseSync(options.database); legacy.exec('ALTER TABLE flow_tool_calls DROP COLUMN after_action'); legacy.close();
+    const legacy = testDatabase(options.database); legacy.exec('ALTER TABLE flow_tool_calls DROP COLUMN after_action'); legacy.close();
     app = await startApp(options); hold = false;
     await request(memory, userEdit(first.id, 1, 'User corrected', true));
     const interrupted = (await request(path)).find((r: any) => r.id === task); assert.equal(interrupted.status, 'interrupted');
@@ -83,7 +83,7 @@ test('agent memory writes preserve scope, user selection, atomic errors and resu
     args = { id: second, revision: 2, text: 'Deleted note must stay deleted' }; await run(path); assert.equal(lastResult.status, 404);
     assert.equal((await request(memory + '?query=Deleted')).items.length, 0);
     await app.close();
-    const fault = new DatabaseSync(options.database); fault.exec("CREATE TRIGGER reject_tool BEFORE INSERT ON flow_tool_calls BEGIN SELECT RAISE(ABORT, 'synthetic journal fault'); END"); fault.close();
+    const fault = testDatabase(options.database); fault.exec("CREATE TRIGGER reject_tool BEFORE INSERT ON flow_tool_calls BEGIN SELECT RAISE(ABORT, 'synthetic journal fault'); END"); fault.close();
     app = await startApp(options); args = { text: 'Atomic failure must roll back' };
     const failed = randomUUID(); await request(path, { id: failed, text: 'Inject journal failure' });
     await until(() => request(path), rows => rows.find((r: any) => r.id === failed)?.status === 'failed');

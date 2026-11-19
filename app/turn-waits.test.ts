@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { restoreWorkspace } from './test-support/backup.ts';
 import { startApp } from './test-bridge.ts';
 
@@ -86,12 +86,12 @@ test('agent event waits release workers, survive restart, honor pause and accept
 
     await app.close(); app = await startApp(options);
     const expiring = await waiting(direct); await app.close();
-    const db = new DatabaseSync(options.database); db.prepare('UPDATE turn_waits SET deadline=0 WHERE turn=?').run(expiring.id); db.close();
+    const db = testDatabase(options.database); db.prepare('UPDATE turn_waits SET deadline=0 WHERE turn=?').run(expiring.id); db.close();
     app = await startApp(options); const expired = await until(direct, expiring.id, row => row.status === 'failed'); assert.equal(expired.events[0].status, 'expired');
-    await app.close(); const legacy = new DatabaseSync(options.database);
+    await app.close(); const legacy = testDatabase(options.database);
     legacy.prepare('DELETE FROM flow_tool_calls WHERE turn=?').run(expired.id); legacy.close();
     app = await startApp(options); await app.close(); app = await startApp(options); await app.close();
-    const repaired = new DatabaseSync(options.database);
+    const repaired = testDatabase(options.database);
     try { assert.equal(repaired.prepare('SELECT count(*) AS n FROM flow_tool_calls WHERE turn=?').get(expired.id)!.n, 1); } finally { repaired.close(); }
     app = await startApp(options);
     await request(`${direct}/${expired.id}/resume`, { id: randomUUID(), revision: expired.revision, acknowledgeUncertain: true });
@@ -179,7 +179,7 @@ test('routine waits preserve artifacts and reject events cancelled before upload
     const scheduledRuns = `/api/routines/${scheduled.id}/runs`, [scheduledRun] = await until(scheduledRuns, rows => rows.length === 1);
     const scheduledTurns = `/api/threads/${scheduledRun.thread}/turns`;
     const [scheduledWait] = await until(scheduledTurns, rows => rows[0]?.events?.length === 1);
-    await app.close(); const db = new DatabaseSync(options.database); db.prepare('UPDATE turn_waits SET deadline=0 WHERE turn=?').run(scheduledWait.id); db.close();
+    await app.close(); const db = testDatabase(options.database); db.prepare('UPDATE turn_waits SET deadline=0 WHERE turn=?').run(scheduledWait.id); db.close();
     app = await startApp(options);
     const [expiredRun] = await until(scheduledRuns, rows => rows[0]?.status === 'failed');
     assert.match(expiredRun.error, /Event wait timed out/); assert.equal(completed, 2);

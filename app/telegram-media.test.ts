@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer,request as httpRequest} from 'node:http';
 import {randomUUID} from 'node:crypto';
-import {DatabaseSync} from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -32,14 +33,14 @@ test('Telegram media uploads once in requester thread and retries lost uploads/m
   {method:'POST',path:/\/turns$/,after:true},
  );
  const lost=()=>connector.expectedFailure(/Local agent request failed/);
- const start=()=>{db?.close();db=new DatabaseSync(journal);connector.start();};
+ const start=()=>{db?.close();db=testDatabase(journal);connector.start();};
  const uploads=()=>connector.requests.filter(request=>request.method==='POST'&&/\/files\/[^/]+$/.test(request.path));
  const sent=()=>connector.jsonPosts<any>('sendMessage');
  async function ui(path:string,body?:unknown):Promise<any>{const res=await fetch(app.origin+path,{method:body?'POST':'GET',headers:{Origin:app.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const value=await res.json();assert(res.ok,JSON.stringify(value));return value;}
  async function incoming(file:string,user=4,caption='Read attached',size?:number){
   const id=++sequence;const update=telegramUpdate(id,'',user);
   Object.assign(update.message,{caption,document:{file_id:file,file_name:`${file}.dat`,...(size===undefined?{}:{file_size:size})}});
-  await connector.send(update);db??=new DatabaseSync(journal);
+  await connector.send(update);db??=testDatabase(journal);
   return db!.prepare('SELECT * FROM telegram_inbox WHERE update_id=?').get(id)!;
  }
  async function settle(turn:unknown){

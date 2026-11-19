@@ -4,7 +4,7 @@ import { generateKeyPairSync, randomBytes, randomUUID, sign, type KeyObject } fr
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { sha256, digestCommand } from './shared/protocol.ts';
 import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
 import { descriptorBody, deviceLinkBody, deviceProofBody } from './test-support/device-protocol.ts';
@@ -22,7 +22,7 @@ test('signed device enrollment and heartbeat preserve challenge, key and session
   const accountId = randomUUID(), sub = 'user_device_evidence', sid = 'sess_device_evidence';
   const stream = new AbortController();
   let clock = now, app: Awaited<ReturnType<typeof startApp>>;
-  const db = new DatabaseSync(database);
+  const db = testDatabase(database);
   t.after(async () => {
     stream.abort();
     await app?.close();

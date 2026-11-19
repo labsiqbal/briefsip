@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -87,7 +87,7 @@ test('agent history tools retrieve old originals and reject foreign conversation
     const unsent = await fetch(app.origin + scopes[0].path.replace('/turns', `/files/${unsentId}`), { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/octet-stream', 'X-File-Name': 'unsent.txt' }, body: 'UNSENT_PRIVATE' });
     assert.equal(unsent.status, 200);
     await app.close();
-    const db = new DatabaseSync(options.database);
+    const db = testDatabase(options.database);
     const insert = db.prepare("INSERT INTO turns(id,agent,channel,thread,text,reply,status,created) VALUES (?,?,?,?,?,?,'done',?)");
     const originals: { id: string; seq: number }[] = [];
     for (const scope of scopes) {

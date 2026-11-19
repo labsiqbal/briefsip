@@ -41,7 +41,7 @@ test('nine distinct tools complete before per-task budget requests a final answe
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
 
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 import sharp from 'sharp';
@@ -103,7 +103,7 @@ test('budget setting rejects malformed values, migrates legacy profiles, survive
     assert.equal((await f.request('/api/agents')).agents.find((row: any) => row.id === agent.id).tool_budget, 15);
   } finally { await f.close(); }
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-budget-migration-')), database = join(dir, 'old.sqlite');
-  const db = new DatabaseSync(database), id = randomUUID();
+  const db = testDatabase(database), id = randomUUID();
   db.exec('CREATE TABLE agents(id TEXT PRIMARY KEY,name TEXT NOT NULL,model TEXT NOT NULL,instructions TEXT NOT NULL) STRICT');
   db.prepare('INSERT INTO agents VALUES (?,?,?,?)').run(id,'Old','fixture','Help.'); db.close();
   const app = await startApp({ database });

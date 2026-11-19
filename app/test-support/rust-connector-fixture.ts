@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './database.ts';
 import { setTimeout as pause } from 'node:timers/promises';
 import { WebSocket, WebSocketServer } from 'ws';
 import { runRustConnector } from '../rust-connectors-runner.ts';
@@ -189,7 +190,7 @@ export async function rustConnectorFixture(platform: Platform, root: string, age
         try {
           await waitFor(() => {
             try {
-              db ??= new DatabaseSync(join(directory,'telegram.sqlite'), { readOnly: true, timeout: 5000 });
+              db ??= testDatabase(join(directory,'telegram.sqlite'), { readOnly: true });
               const row = db.prepare('SELECT offset FROM telegram_binding WHERE id=1').get();
               if (Number(row?.offset) > message.update_id) return true;
             } catch (error) {

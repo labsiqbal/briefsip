@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { DatabaseSync } from 'node:sqlite';
+import { testDatabase } from './test-support/database.ts';
 import { workflowAutosaveDraft } from './src/workflow-editor-state.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -332,7 +332,7 @@ test('workflow webhooks authenticate, deduplicate, ignore busy runs and recover 
     await deliver(hook.route, hook.secret, 'old', {}, 401);
     assert.equal((await deliver(hook.route, rotated.secret, 'disabled')).reason, 'disabled');
     await app.close();
-    const db = new DatabaseSync(options.database);
+    const db = testDatabase(options.database);
     db.prepare('UPDATE workflow_webhook_receipts SET received=? WHERE delivery=?').run(Date.now() - 8 * 86400000, 'disabled'); db.close();
     app = await startApp(options);
     assert.equal((await request(path, rotation)).secret, rotated.secret);
@@ -585,7 +585,7 @@ test('workflow channel outputs deliver once and recheck channel availability at 
     const run = await request(`/api/workflows/${workflow.id}/run`, launch);
     const approval = await settled(run.id, 'approval');
     const accept = { id: randomUUID(), revision: approval.revision, accepted: true };
-    const db = new DatabaseSync(options.database);
+    const db = testDatabase(options.database);
     try {
       db.exec("CREATE TRIGGER fail_notice_fixture BEFORE INSERT ON workflow_notifications BEGIN SELECT RAISE(ABORT,'injected notification failure'); END");
       await request(`/api/workflow-runs/${run.id}/approve`, accept);
