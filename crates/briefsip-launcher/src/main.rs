@@ -125,7 +125,7 @@ impl Launcher {
         if !binary.is_file() {
             return Err("Release is missing bin/briefsip-server.".into());
         }
-        let mut command = Command::new(std::env::current_exe()?);
+        let mut command = Command::new(own_executable()?);
         command
             .arg("--run-server")
             .arg(binary)
@@ -206,7 +206,7 @@ impl Launcher {
             .join(".updates")
             .join(&attempt.id)
             .join("briefsip.sqlite");
-        let mut worker = Command::new(std::env::current_exe()?)
+        let mut worker = Command::new(own_executable()?)
             .arg("--backup")
             .arg(operation)
             .arg(self.config.data.join("briefsip.sqlite"))
@@ -454,6 +454,19 @@ async fn control(launcher: Rc<Launcher>, mut socket: UnixStream) {
     .await;
     let _ = result;
 }
+/// Path that re-executes this launcher even after its release folder was deleted.
+/// A long-running launcher keeps the binary it started from, which release cleanup may remove.
+fn own_executable() -> std::io::Result<std::path::PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        Ok(std::path::PathBuf::from("/proc/self/exe"))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        std::env::current_exe()
+    }
+}
+
 async fn launch(config: Config) -> Result<()> {
     mkdir(&config.data)?;
     mkdir(&config.releases)?;

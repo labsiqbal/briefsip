@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createServer, createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { nativeReleaseFixture } from './test-support/native-release-fixture.ts';
 import { launcherCommand } from './rust-test-launcher.ts';
+import { rustBinary } from './rust-binary.ts';
 import { fileManifest, selectRelease } from '../scripts/release-lib.mjs';
 import { launcherRequest } from './rust-launcher-test.ts';
 
@@ -127,4 +128,28 @@ test('Rust launcher selects native release, checks chunked health, snapshots, an
     const died = once(process.child, 'exit'); process.child.kill('SIGKILL'); await died;
     await until(async () => { try { await f.read(); return false; } catch { return true; } });
   } finally { await f.close(); }
+});
+
+test('launcher updates and snapshots after its own release binary was deleted', async () => {
+  const f = await fixture();
+  // A long-running launcher keeps the binary it started from; release cleanup can delete that file.
+  const copy = join(f.dir, 'launcher-copy');
+  copyFileSync(rustBinary('briefsip-launcher', process.env.BRIEFSIP_RUST_LAUNCHER_BINARY), copy); chmodSync(copy, 0o700);
+  const first = f.publish('1.0.0'); selectRelease(f.releases, 'current', first.id);
+  const child = spawn(copy, ['--config', f.config], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let log = ''; child.stdout!.on('data', b => { log += b; }); child.stderr!.on('data', b => { log += b; });
+  try {
+    await until(async () => await f.read());
+    rmSync(copy);
+    const next = f.publish('1.0.1');
+    execFileSync('rustc', [fileURLToPath(new URL('../crates/briefsip-launcher/tests/fixtures/server.rs', import.meta.url)), '-o', join(next.release, 'bin/briefsip-server')]);
+    writeFileSync(join(next.release, 'version.txt'), next.version); next.seal();
+    await launcherRequest(f.options, { type: 'apply', id: randomUUID(), target: next.id, version: next.version });
+    const attempt = await until(async () => {
+      const value = (await launcherRequest(f.options, { type: 'status' })).lastAttempt as { status?: string; reason?: string } | undefined;
+      return value && ['done', 'rolled-back', 'failed'].includes(value.status ?? '') ? value : false;
+    });
+    assert.equal(attempt.status, 'done', `${attempt.reason ?? ''}\n${log}`);
+    assert.equal((await f.read()).native, true);
+  } finally { await stop(child); await f.close(); }
 });
