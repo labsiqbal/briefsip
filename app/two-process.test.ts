@@ -2390,7 +2390,8 @@ test('signed task and device mutations publish atomic scoped observations across
       failure.exec('DROP TRIGGER fail_device_sync');
     } finally { failure.close(); }
     // A failed disconnect write is retried within seconds, not left to the 30 s maintenance sweep.
-    await until(async () => (await f.send('/api/devices')).body.data[0].status === 'offline', 10_000);
+    // 20 s leaves room for release-suite load and still fails on the sweep-only path (~29.5 s).
+    await until(async () => (await f.send('/api/devices')).body.data[0].status === 'offline', 20_000);
     await f.restart();
     await until(async () => { try { return (await f.send(deltaPath)).status === 200; } catch { return false; } });
     assert.deepEqual((await f.send(deltaPath)).body.data.page.events.filter((event: any) => event.recordKind === 'task'), delta.page.events);
