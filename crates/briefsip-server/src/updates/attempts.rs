@@ -1,4 +1,4 @@
-use super::{error, string, AppState, Failure, Result};
+use super::{error, string, AppState, Failure, PeerError, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 
@@ -125,10 +125,10 @@ pub(super) fn finish(
         "UPDATE update_fan_out_attempts SET state=?, finished=?, error_code=?, error_message=?
          WHERE id=? AND machine=?",
         params![
-            if failure.is_some() {
-                "failed"
-            } else {
-                "accepted"
+            match failure {
+                Some(f) if f.code == PeerError::Unconfirmed.code() => "interrupted",
+                Some(_) => "failed",
+                None => "accepted",
             },
             state.config.now(),
             failure.map(|f| f.code),

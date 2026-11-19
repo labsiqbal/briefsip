@@ -12,7 +12,7 @@ export function UpdateEverythingDialog({ updates }: { updates: UpdateEverythingS
   const result = describeUpdateCapsule(run, reconnecting);
   const release = [state?.available, state?.feed].find(item => item?.version === version);
   const title = storageError && !run ? 'Update recovery' : run
-    ? active ? `Updating ${count} ${count === 1 ? 'machine' : 'machines'}` : result.failed ? 'Update results' : 'Update complete'
+    ? active ? `Updating ${count} ${count === 1 ? 'machine' : 'machines'}` : result.attention ? 'Update results' : 'Update complete'
     : updates.planning || !count ? 'Update machines' : `Update ${count} ${count === 1 ? 'machine' : 'machines'}?`;
   return <Dialog open={updates.open} onOpenChange={open => { if (!open) updates.dismiss(); }}
     title={title} description={version ? `Briefsip ${version}` : undefined} size="lg"

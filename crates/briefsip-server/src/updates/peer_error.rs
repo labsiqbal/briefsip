@@ -8,6 +8,7 @@ pub(crate) enum PeerError {
     SizeLimit,
     PermissionRevoked,
     LauncherUnavailable,
+    Unconfirmed,
 }
 
 impl PeerError {
@@ -37,6 +38,11 @@ impl PeerError {
                 403,
                 "peer_permission_revoked",
                 "Machine updates require permission from both owners in Settings > Machines.",
+            ),
+            Self::Unconfirmed => (
+                503,
+                "peer_update_unconfirmed",
+                "Could not confirm the peer update. Check the receiving machine for its result.",
             ),
             Self::LauncherUnavailable => (
                 409,
@@ -68,6 +74,7 @@ impl PeerError {
             Self::SizeLimit,
             Self::PermissionRevoked,
             Self::LauncherUnavailable,
+            Self::Unconfirmed,
         ]
         .into_iter()
         .find(|error| error.code() == code)

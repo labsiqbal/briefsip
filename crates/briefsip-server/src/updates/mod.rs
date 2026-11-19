@@ -172,6 +172,11 @@ pub fn watch_trial(state: AppState) -> tokio::task::JoinHandle<()> {
 pub fn initialize(db: &rusqlite::Connection) -> crate::db::Result<()> {
     install::initialize(db)?;
     db.execute_batch("CREATE TABLE IF NOT EXISTS update_commands(id TEXT PRIMARY KEY,request TEXT NOT NULL,result TEXT NOT NULL) STRICT;")?;
+    db.execute(
+        "UPDATE update_commands SET result='{\"interrupted\":true}'
+         WHERE id LIKE 'peer-apply:%' AND json_extract(result,'$.pending')=1",
+        [],
+    )?;
     attempts::initialize(db)?;
     Ok(())
 }

@@ -82,14 +82,16 @@ export function describeUpdateEverything(rows: readonly UpdateMachine[]) {
 }
 
 export function describeUpdateCapsule(run: UpdateRun | null, reconnecting: boolean) {
-  if (!run) return { label: 'Update available', failed: false };
-  if (reconnecting && runActive(run)) return { label: 'Reconnecting…', failed: false };
+  if (!run) return { label: 'Update available', attention: false };
+  if (reconnecting && runActive(run)) return { label: 'Reconnecting…', attention: false };
   const machines = run.rows.filter(row => !row.skipped);
   const done = machines.filter(row => row.status === 'done').length;
-  const failed = machines.length - done;
-  if (runActive(run)) return { label: `${done} of ${machines.length} updated`, failed: false };
-  if (failed) return { label: `${failed} update${failed === 1 ? '' : 's'} failed`, failed: true };
-  return { label: `${done} of ${machines.length} updated`, failed: false };
+  if (runActive(run)) return { label: `${done} of ${machines.length} updated`, attention: false };
+  const failed = machines.filter(row => row.status === 'failed' || row.status === 'rolled-back').length;
+  if (failed) return { label: `${failed} update${failed === 1 ? '' : 's'} failed`, attention: true };
+  const unconfirmed = machines.length - done;
+  if (unconfirmed) return { label: `${unconfirmed} update${unconfirmed === 1 ? '' : 's'} unconfirmed`, attention: true };
+  return { label: `${done} of ${machines.length} updated`, attention: false };
 }
 
 export function planUpdateRun(rows: UpdateMachine[], createId: () => string): UpdateRun {
