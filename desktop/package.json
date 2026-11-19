@@ -25,7 +25,6 @@
       "src/**/*",
       "!src/**/*.test.mjs",
       "assets/**/*",
-      "update-feed.json",
       "NOTICE",
       "provenance.json"
     ],
@@ -38,7 +37,12 @@
       "executableName": "briefsip",
       "syncDesktopName": true
     },
-    "publish": null,
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://github.com/labsiqbal/briefsip/releases/latest/download/"
+      }
+    ],
     "artifactName": "Briefsip-${version}-${arch}.${ext}",
     "toolsets": {
       "appimage": "1.0.3"

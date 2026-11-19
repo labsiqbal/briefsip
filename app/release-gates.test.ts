@@ -1,9 +1,11 @@
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash, generateKeyPairSync, verify } from 'node:crypto';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import { parseRelease } from '../scripts/release-lib.mjs';
 const { buildRelease, assertNativeDependencies } = await import(new URL('../scripts/release.mjs', import.meta.url).href);
 
@@ -167,7 +169,7 @@ assert.deepEqual(args, ['issue', 'view', args[2], '-R', 'labsiqbal/briefsip', '-
 assert(['30', '31'].includes(args[2]));
 console.log(JSON.stringify({comments: [{body: 'Claimed by Fixture, branch ' + (args[2] === '30' ? 't3/shipped' : 't3/unmerged')}]}));
 `, { mode: 0o700 });
-    const run = (issues: string) => spawnSync(process.execPath, [join(f.dir, 'scripts/release.mjs'), '--issues', issues, '--releases', f.options.releases], { cwd: f.dir, encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, npm_config_update_notifier: 'false' } });
+    const run = (issues: string) => spawnSync(process.execPath, [join(f.dir, 'scripts/release.mjs'), '--no-github', '--issues', issues, '--releases', f.options.releases], { cwd: f.dir, encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, npm_config_update_notifier: 'false' } });
     const failed = run('30,31');
     assert.equal(failed.status, 1);
     assert.match(failed.stderr, /#31.*t3\/unmerged.*Merge the branch tip/);
@@ -180,6 +182,189 @@ console.log(JSON.stringify({comments: [{body: 'Claimed by Fixture, branch ' + (a
     assert.deepEqual(info.issues, [30]);
     t.diagnostic(`PASS DEMO --issues 30 (exit ${passed.status}): ${passed.stdout.trim().split('\n').at(-1)}; metadata issues=${JSON.stringify(info.issues)}`);
   } finally { rmSync(f.dir, { recursive: true, force: true }); rmSync(bin, { recursive: true, force: true }); }
+});
+
+function githubFixture(t: TestContext) {
+  const f = fixture();
+  const sandbox = mkdtempSync(join(tmpdir(), 'release-github-'));
+  t.after(() => { rmSync(f.dir, { recursive: true, force: true }); rmSync(sandbox, { recursive: true, force: true }); });
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const key = join(sandbox, 'signing.pem');
+  writeFileSync(key, pem, { mode: 0o600 });
+  mkdirSync(join(f.dir, 'scripts'));
+  for (const name of ['release-lib.mjs', 'install-machine.sh', 'uninstall-machine.sh']) {
+    cpSync(new URL(`../scripts/${name}`, import.meta.url), join(f.dir, 'scripts', name));
+  }
+  const script = readFileSync(new URL('../scripts/release.mjs', import.meta.url), 'utf8');
+  const rawPublicKey = publicKey.export({ type: 'spki', format: 'der' }).subarray(-32).toString('base64');
+  writeFileSync(join(f.dir, 'scripts/release.mjs'), script.replace('kSIv+agT4RsABust/LmvPVjfWDxZxM0YKL03gts/UEM=', rawPublicKey));
+  writeFileSync(join(f.dir, 'app/package.json'), JSON.stringify({ version: '1.0.0', scripts: {
+    lint: 'node -e "process.exit(Number(process.env.FIXTURE_GATE_FAIL ?? 0))"', test: 'node -e "0"', build: 'node -e "0"',
+  } }));
+  mkdirSync(join(f.dir, 'desktop/scripts'), { recursive: true });
+  writeFileSync(join(f.dir, 'desktop/scripts/build.mjs'), `
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+const [version, out] = process.argv.slice(2);
+const name = 'Briefsip-' + version + '-x86_64.AppImage';
+writeFileSync(join(out, name), 'AppImage fixture ' + version);
+writeFileSync(join(out, 'latest-linux.yml'), 'version: ' + version + '\\npath: ' + name + '\\n');
+`);
+  f.git('add', '.');
+  f.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'Internal notes never go public');
+  const output = join(sandbox, 'uploaded');
+  const commit = f.git('rev-parse', 'HEAD');
+  mkdirSync(output);
+  writeFileSync(join(sandbox, 'gh'), `#!${process.execPath}
+import assert from 'node:assert/strict';
+import { hash } from 'node:crypto';
+import { appendFileSync, copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
+const args = process.argv.slice(2);
+const [command, action, tag] = args;
+const out = ${JSON.stringify(output)};
+const commit = ${JSON.stringify(commit)};
+appendFileSync(join(out, 'calls'), JSON.stringify(args) + '\\n');
+const state = join(out, 'state');
+let release = existsSync(state) ? JSON.parse(readFileSync(state, 'utf8')) : undefined;
+if (command === 'api') {
+  assert.deepEqual(args, ['api', 'repos/labsiqbal/briefsip/git/matching-refs/tags/v1.0.0']);
+  const sha = process.env.FIXTURE_WRONG_TAG ? '0'.repeat(40) : commit;
+  console.log(JSON.stringify(release && !release.isDraft ? [{ ref: 'refs/tags/v1.0.0', object: { type: 'commit', sha } }] : []));
+  process.exit(0);
+}
+assert.equal(command, 'release');
+assert.equal(tag, 'v1.0.0');
+assert.deepEqual(args.slice(3, 5), ['-R', 'labsiqbal/briefsip']);
+if (action === 'view') {
+  if (!release) { console.error('release not found'); process.exit(1); }
+  console.log(JSON.stringify(release));
+  process.exit(0);
+}
+if (action === 'create' || action === 'upload') {
+  if (action === 'create') {
+    assert.equal(release, undefined);
+    assert.deepEqual(args.slice(5, 11), ['--target', commit, '--title', 'Briefsip 1.0.0', '--notes', 'Public notes']);
+    release = { isDraft: true, targetCommitish: commit, name: 'Briefsip 1.0.0', body: 'Public notes', assets: [] };
+  }
+  assert.equal(release.isDraft, true);
+  for (const [i, path] of args.slice(action === 'create' ? 11 : 5).entries()) {
+    const name = basename(path);
+    assert(!release.assets.some(asset => asset.name === name), 'duplicate upload');
+    if (i === 1 && process.env.FIXTURE_UPLOAD_FAIL) {
+      release.assets.push({ name, state: 'starter' });
+      writeFileSync(state, JSON.stringify(release));
+      console.error('fixture upload offline');
+      process.exit(1);
+    }
+    copyFileSync(path, join(out, name));
+    release.assets.push({ name, state: 'uploaded', digest: 'sha256:' + hash('sha256', readFileSync(path)) });
+    writeFileSync(state, JSON.stringify(release));
+  }
+  if (action === 'create') writeFileSync(state, JSON.stringify({ ...release, isDraft: false }));
+} else if (action === 'delete-asset') {
+  const name = args[5];
+  assert.equal(release.isDraft, true);
+  assert.equal(release.assets.find(asset => asset.name === name).state, 'starter');
+  release.assets = release.assets.filter(asset => asset.name !== name);
+  writeFileSync(state, JSON.stringify(release));
+} else {
+  assert.equal(action, 'edit');
+  assert.deepEqual(args.slice(5), ['--draft=false']);
+  assert.equal(release.isDraft, true);
+  assert(release.assets.length >= 3);
+  writeFileSync(state, JSON.stringify({ ...release, isDraft: false }));
+}
+`, { mode: 0o700 });
+  const run = (args: string[], env: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [
+    join(f.dir, 'scripts/release.mjs'), '--releases', f.options.releases, ...args,
+  ], { cwd: f.dir, encoding: 'utf8', env: { ...process.env, PATH: `${sandbox}:${process.env.PATH}`, HOME: sandbox, BRIEFSIP_RELEASE_SIGNING_KEY: key, ...env } });
+  const calls = () => existsSync(join(output, 'calls')) ? readFileSync(join(output, 'calls'), 'utf8').trim().split('\n').map(line => JSON.parse(line) as string[]) : [];
+  return { ...f, run, calls, output, key, publicKey, commit, id: `1.0.0-${commit.slice(0, 8)}` };
+}
+
+test('release CLI uploads exact signed ustar assets and the version-matched desktop build', t => {
+  const f = githubFixture(t);
+  const result = f.run(['--desktop', '--notes', 'Public notes', '--signing-key', f.key], { BRIEFSIP_RELEASE_SIGNING_KEY: '/wrong/path' });
+  assert.equal(result.status, 0, result.stderr);
+  const uploaded = (name: string) => readFileSync(join(f.output, name));
+  const archive = 'briefsip-1.0.0-linux-x86_64.tar.gz';
+  assert.deepEqual(f.calls().find(args => args[1] === 'create')?.slice(11).map(path => path.split('/').at(-1)).sort(), [
+    archive, 'latest.json', 'latest.json.sig', 'Briefsip-1.0.0-x86_64.AppImage', 'latest-linux.yml',
+  ].sort());
+  const tar = gunzipSync(uploaded(archive));
+  assert.equal(tar.subarray(257, 265).toString(), 'ustar\0' + '00');
+  assert.equal(execFileSync('tar', ['-xOzf', join(f.output, archive), './dist/index.html'], { encoding: 'utf8' }), 'Fixture UI\n');
+  const manifest = uploaded('latest.json');
+  const signature = uploaded('latest.json.sig').toString();
+  assert.match(signature, /^[A-Za-z0-9+/]{86}==$/);
+  assert(verify(null, manifest, f.publicKey, Buffer.from(signature, 'base64')));
+  assert.deepEqual(JSON.parse(manifest.toString()), {
+    version: '1.0.0', id: f.id, commit: f.commit, archive, sha256: createHash('sha256').update(uploaded(archive)).digest('hex'),
+    size: uploaded(archive).length, notes: 'Public notes', created: JSON.parse(readFileSync(join(f.options.releases, 'feed/latest.json'), 'utf8')).created,
+  });
+  assert.match(uploaded('latest-linux.yml').toString(), /path: Briefsip-1\.0\.0-x86_64\.AppImage/);
+});
+
+test('release CLI keeps a failed upload local and resumes the draft idempotently without rebuilding', t => {
+  const f = githubFixture(t);
+  const failed = f.run(['--desktop', '--notes', 'Public notes'], { FIXTURE_UPLOAD_FAIL: '1' });
+  assert.equal(failed.status, 1);
+  assert.match(failed.stderr, /fixture upload offline/);
+  assert.match(failed.stderr, new RegExp(`Local release ${f.id}[\\s\\S]*--github-only ${f.id}`));
+  const feed = join(f.options.releases, 'feed/latest.json');
+  const local = readFileSync(feed, 'utf8');
+  assert.equal(JSON.parse(local).id, f.id);
+  utimesSync(join(f.options.releases, f.id, 'dist/index.html'), 1, 1);
+  const retry = () => f.run(['--github-only', f.id], { FIXTURE_GATE_FAIL: '1' });
+  for (const _ of [1, 2]) {
+    const result = retry();
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(readFileSync(feed, 'utf8'), local);
+  }
+  const conflict = f.run(['--github-only', f.id], { FIXTURE_WRONG_TAG: '1' });
+  assert.equal(conflict.status, 1);
+  assert.match(conflict.stderr, /GitHub tag v1\.0\.0 does not point to release commit/);
+  const calls = f.calls();
+  assert.equal(calls.filter(args => args[1] === 'create').length, 1);
+  assert.equal(calls.filter(args => args[1] === 'edit').length, 1);
+  assert.deepEqual(calls.filter(args => args[1] === 'delete-asset').map(args => args[5]), ['latest.json']);
+  assert.equal(calls.filter(args => args[1] === 'upload').length, 1);
+  assert(calls.findLast(args => args[1] === 'upload')?.some(arg => arg.endsWith('Briefsip-1.0.0-x86_64.AppImage')));
+});
+
+test('release CLI skips GitHub for local-only releases and blocks dirty trees, failed gates, and implicit notes', t => {
+  const f = githubFixture(t);
+  const release = ['--notes', 'Public notes'];
+  writeFileSync(join(f.dir, 'dirty'), 'dirty');
+  assert.match(f.run(release).stderr, /dirty worktree/);
+  rmSync(join(f.dir, 'dirty'));
+  assert.match(f.run([]).stderr, /--notes/);
+  assert.equal(f.run(release, { FIXTURE_GATE_FAIL: '7' }).status, 1);
+  assert.equal(existsSync(f.options.releases), false);
+  const result = f.run(['--no-github'], { BRIEFSIP_RELEASE_SIGNING_KEY: '/wrong/path' });
+  assert.equal(result.status, 0, result.stderr);
+  assert(existsSync(join(f.options.releases, f.id, 'release.json')));
+  assert.equal(f.run(['--github-only', f.id]).status, 1);
+  assert.deepEqual(f.calls(), []);
+});
+
+test('release CLI refuses wrong-mode, non-Ed25519 and mismatched signing keys before GitHub access', t => {
+  const f = githubFixture(t);
+  chmodSync(f.key, 0o640);
+  const first = f.run(['--notes', 'Public notes']);
+  assert.equal(first.status, 1);
+  assert.match(first.stderr, /mode 0600/);
+  chmodSync(f.key, 0o600);
+  for (const [algorithm, message] of [['x25519', /Ed25519 private key/], ['ed25519', /does not match.*public key/]] as const) {
+    const { privateKey } = algorithm === 'x25519' ? generateKeyPairSync('x25519') : generateKeyPairSync('ed25519');
+    writeFileSync(f.key, privateKey.export({ type: 'pkcs8', format: 'pem' }));
+    const result = f.run(['--github-only', f.id]);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, message);
+  }
+  assert.deepEqual(f.calls(), []);
 });
 
 const releaseRoot = new URL('../target/release/', import.meta.url);
