@@ -3885,7 +3885,8 @@ test('canonical routine webhook rejects invalid deliveries and records ignored r
     const secret = f.hook.data.secret, body = '{"event":"ready","payload":{"count":4}}', time = String(Math.floor(Date.now() / 1000));
     for (const header of ['X-Briefsip-Time','X-Briefsip-Id','X-Briefsip-Signature']) assert.equal((await f.event(secret, 'bad', body, time, { [header]: '' })).status, 401);
     assert.equal((await f.event(secret, 'bad', body, time, { 'X-Briefsip-Signature': '0'.repeat(64) })).status, 401);
-    for (const offset of [-301,301]) assert.equal((await f.event(secret, 'expired', body, String(Number(time) + offset))).status, 401);
+    // Fresh whole seconds per request; ±302 keeps a margin over the server's fractional 300 s window.
+    for (const offset of [-302,302]) assert.equal((await f.event(secret, 'expired', body, String(Math.floor(Date.now() / 1000) + offset))).status, 401);
     assert.equal((await f.event(secret, 'large', ' '.repeat(65537))).status, 413);
     assert.equal((await f.event(secret, 'json', '{')).status, 400); assert.equal((await f.event(secret, 'utf8', Buffer.from([0xff]))).status, 400);
     assert.equal((await f.event(secret, 'content', body, time, { 'Content-Type': 'text/plain' })).status, 415);

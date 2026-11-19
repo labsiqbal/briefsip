@@ -123,7 +123,8 @@ test('configured concurrency limits side threads and validates before opening st
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const database = join(dir, 'state.sqlite');
-  for (const concurrency of [0, -1, 1.5, 33, NaN, Infinity]) await assert.rejects(startApp({ database, concurrency }, { directory: dir, servers: [provider] }), /CONCURRENCY/);
+  // Expected startup failures must not trigger fixture cleanup; the provider is used below.
+  for (const concurrency of [0, -1, 1.5, 33, NaN, Infinity]) await assert.rejects(startApp({ database, concurrency }), /CONCURRENCY/);
   assert.equal(existsSync(database), false);
   let app = await startApp({ database, concurrency: 1, baseURL: `http://127.0.0.1:${address.port}/v1` }, { directory: dir, servers: [provider] });
   async function post(path: string, body: unknown) {
