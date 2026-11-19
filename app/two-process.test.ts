@@ -3169,13 +3169,15 @@ test('Rust exports prepared, in-flight and reported Node v3 journal evidence off
 });
 
 test('stalled normal requests cannot starve control reads and disconnected requests release capacity', async () => {
-  const f=await fixture(), held: ReturnType<typeof httpRequest>[]=[];
+  const f=await fixture(), held: ReturnType<typeof httpRequest>[]=[], answered: (number|undefined)[]=[];let holding=true;
+  // Probes can take a slot before a held request arrives; replace any held request the server answers.
+  const hold=()=>{
+    const request=httpRequest(f.origin()+'/api/projects',{method:'POST',headers:{Authorization:`Bearer ${f.jwt()}`,Origin:f.origin(),'Content-Type':'application/json','Content-Length':'8','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':randomUUID()}});
+    request.on('error',()=>{});request.on('response',response=>{answered.push(response.statusCode);response.resume();if(holding)hold();});request.write('{');held.push(request);
+  };
   try {
-    for(let i=0;i<64;i++) {
-      const request=httpRequest(f.origin()+'/api/projects',{method:'POST',headers:{Authorization:`Bearer ${f.jwt()}`,Origin:f.origin(),'Content-Type':'application/json','Content-Length':'8','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':randomUUID()}});
-      request.on('error',()=>{});request.write('{');held.push(request);
-    }
-    await until(async()=> (await f.send('/api/projects')).status===429);
+    for(let i=0;i<64;i++) hold();
+    await until(async()=> (await f.send('/api/projects')).status===429).catch(error=>{throw new Error(`${error}; held requests answered: ${JSON.stringify(answered)}`);});
     const control=await f.send('/api/session');assert.equal(control.status,200,JSON.stringify(control.body));
     for (const path of [`/api/tasks/${randomUUID()}`, `/api/tasks/${randomUUID()}/results/${randomUUID()}`]) {
       const receipt = await f.send(path); assert.equal(receipt.status,404,JSON.stringify(receipt.body));
@@ -3184,9 +3186,9 @@ test('stalled normal requests cannot starve control reads and disconnected reque
     assert([200,202,503].includes(logout.status),JSON.stringify(logout));
     const taskControl=await f.send(`/api/tasks/${randomUUID()}/control`,{requestId:randomUUID(),expectedRevision:1,operation:'cancel'});
     assert.equal(taskControl.status,404,JSON.stringify(taskControl.body));
-    for(const request of held)request.destroy();
+    holding=false;for(const request of held)request.destroy();
     await until(async()=> (await f.send('/api/projects')).status===200);
-  } finally { for(const request of held)request.destroy();await f.close(); }
+  } finally { holding=false;for(const request of held)request.destroy();await f.close(); }
 });
 
 test('canonical transfer survives lost RPC reply and canonical restart without duplicate successor or caller effects', async () => {

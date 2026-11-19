@@ -38,11 +38,14 @@ function publishFixture(dir:string, version:string, mode='healthy') {
 }
 async function launcher(dir:string, current:string) {
   const releases=join(dir,'releases'),data=join(dir,'data');mkdirSync(data,{recursive:true});selectRelease(releases,'current',current);
-  const port=await freePort(),config=join(dir,'launcher.json');writeFileSync(config,JSON.stringify({dataDir:data,releasesDir:releases,port,trialTimeoutMs:5000}),{mode:0o600});
-  let processLog=''; const child=spawn(...launcherCommand(config),{stdio:['ignore','pipe','pipe']});child.stdout!.on('data',b=>{processLog+=b;});child.stderr!.on('data',b=>{processLog+=b;});
-  const options={launcherSocket:join(data,'launcher.sock'),releasesDir:releases};
-  try {await until(async()=>{try{return (await fetch(`http://127.0.0.1:${port}/api/environment`)).ok;}catch{return false;}});}catch(e){await stop(child);throw new Error(String(e)+'\n'+processLog);}
-  return {child,options,data,port,config,get log(){return processLog;},async close(){await stop(child);}};
+  const options={launcherSocket:join(data,'launcher.sock'),releasesDir:releases},config=join(dir,'launcher.json');
+  // freePort releases the port before the launcher binds it, so a parallel test file can take it first.
+  for(let attempt=1;;attempt++){
+    const port=await freePort();writeFileSync(config,JSON.stringify({dataDir:data,releasesDir:releases,port,trialTimeoutMs:5000}),{mode:0o600});
+    let processLog=''; const child=spawn(...launcherCommand(config),{stdio:['ignore','pipe','pipe']});child.stdout!.on('data',b=>{processLog+=b;});child.stderr!.on('data',b=>{processLog+=b;});
+    try {await until(async()=>{if(child.exitCode!==null||processLog.includes('AddrInUse'))throw new Error('Launcher could not start.');try{return (await fetch(`http://127.0.0.1:${port}/api/environment`,{signal:AbortSignal.timeout(2000)})).ok;}catch{return false;}});}catch(e){await stop(child);if(attempt<3&&processLog.includes('AddrInUse'))continue;throw new Error(String(e)+'\n'+processLog);}
+    return {child,options,data,port,config,get log(){return processLog;},async close(){await stop(child);}};
+  }
 }
 async function stop(child:ChildProcess) { if(child.exitCode!==null||child.signalCode!==null)return;const exited=once(child,'exit');child.kill('SIGTERM');const timer=setTimeout(()=>child.kill('SIGKILL'),7000);try{await exited;}finally{clearTimeout(timer);} }
 async function api(app:{origin:string},path:string,body?:unknown,status=200,headers:Record<string,string>={}){const res=await fetch(app.origin+path,{...(body===undefined?{}:{method:'POST',body:JSON.stringify(body),headers:{Origin:app.origin,'Content-Type':'application/json',Connection:'close',...headers}}),...(body===undefined?{headers:{Connection:'close',...headers}}: {})});const value=await res.json();assert.equal(res.status,status,JSON.stringify(value));return value;}
