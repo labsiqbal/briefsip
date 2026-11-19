@@ -2,6 +2,7 @@ import { readJson } from './http';
 import { useEffect, useRef, useState } from 'react';
 import { Info } from 'lucide-react';
 import { VoiceSettings } from './SpeechPlayback';
+import { WebSearchSettings } from './WebSearchSettings';
 import { Alert, Card, IconButton, PageHeader, Row, Section, Switch } from './ui/kit';
 
 export function GeneralSettings({ notificationsMuted, notificationError, onNotificationsChange }: { notificationsMuted: boolean; notificationError: string; onNotificationsChange: (enabled: boolean) => void }) {
@@ -31,5 +32,6 @@ export function GeneralSettings({ notificationsMuted, notificationError, onNotif
     <Section title="Notifications"><Card><Row title="Agent and workflow notifications" trailing={<Switch label="Agent and workflow notifications" checked={permission === 'granted' && !notificationsMuted} disabled={permission === 'unsupported' || permission === 'denied'} onChange={enabled => void changeNotifications(enabled)} />} /></Card>{(notificationError || permissionError) && <Alert tone="error">{notificationError || permissionError}</Alert>}{permission === 'denied' && <Alert>Notifications are blocked. Change site permissions in browser settings.</Alert>}</Section>
     <VoiceSettings />
     <Section title="Conversations"><Card><Row title="Auto-archive agent deliveries" trailing={<><span className="settings-fact">7 days</span><IconButton label="After work settles; history stays saved." aria-label="About auto-archive"><Info size={14} aria-hidden /></IconButton><Switch label="Auto-archive agent deliveries" checked={autoArchive ?? true} disabled={autoArchive === null || chatBusy} onChange={value => void changeArchive(value)} /></>} /></Card>{chatError && <Alert tone="error">{chatError}</Alert>}</Section>
+    <WebSearchSettings />
   </div>;
 }

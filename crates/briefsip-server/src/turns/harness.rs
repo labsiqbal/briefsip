@@ -58,11 +58,11 @@ pub fn instructions(
     if !super::profile::setup(db, turn)? {
         let features: Vec<Value> = serde_json::from_str(include_str!("../mcp/feature-tools.json"))
             .map_err(|_| Failure::storage())?;
-        let web_access = super::web::enabled(db, string(turn, "agent"))?;
+        let web_access = super::web::access(state, db, string(turn, "agent"))?;
         specs.extend(
             features
                 .iter()
-                .filter(|f| super::web::offered(string(f, "name"), web_access))
+                .filter(|f| web_access.offered(string(f, "name")))
                 .map(|f| json!({"function":{"name":f["name"]}})),
         );
     }

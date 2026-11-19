@@ -86,15 +86,13 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
     let binding = workspace(state, db, turn)?;
     let bound = binding.is_some();
     let writable = bound && binding.as_ref().is_some_and(|b| b.write);
-    let web_access = super::web::enabled(db, string(turn, "agent"))?;
+    let web_access = super::web::access(state, db, string(turn, "agent"))?;
     specs.retain(|t| match string(&t["function"], "name") {
         "read_history" | "read_message" | "read_attachment" | "create_text_file"
         | "open_file_in_panel" | "ask_user" | "select_memory" | "remember_memory"
         | "search_memory" | "verify_result" | "wait_for_event" | "list_data_tables"
         | "query_data" => true,
-        "web_fetch" | "web_search" => {
-            super::web::offered(string(&t["function"], "name"), web_access)
-        }
+        "web_fetch" | "web_search" => web_access.offered(string(&t["function"], "name")),
         "read_provider_settings" => private,
         "generate_image" => state.config.media.image_provider.is_some(),
         "list_agents" | "send_message" | "delegate_task" | "task_status" | "wait_task"

@@ -5,10 +5,15 @@ use serde_json::Value;
 #[serde(rename_all = "camelCase")]
 pub struct Options {
     pub agent_limits: Option<Value>,
+    #[serde(skip)]
+    pub(crate) web_search: Option<super::web::SearchBackend>,
 }
 impl Options {
     pub fn environment() -> crate::db::Result<Self> {
-        Ok(Self::default())
+        Ok(Self {
+            web_search: super::web::SearchBackend::environment(),
+            ..Self::default()
+        })
     }
     pub fn limit(&self, name: &str, default: i64) -> i64 {
         self.agent_limits
