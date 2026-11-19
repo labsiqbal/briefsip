@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { rustBinary } from './rust-binary.ts';
+import { testDatabase } from './test-support/database.ts';
 
 async function api<T>(origin: string, path: string, body?: unknown): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -178,6 +179,10 @@ async function fixture(t: TestContext, testPeerUpdateTimeoutMs?: number, relayAp
     setLauncher(available: boolean) { launcherAvailable = available; },
     setTransfer(handle: Transfer) { transfer = handle; },
     setReceiverPermission(allowed: boolean) { return setPermission(receiver.origin, back.id, allowed); },
+    markSenderOfflineOnReceiver() {
+      const db = testDatabase(to.database);
+      try { db.prepare("UPDATE paired_machines SET status='offline'").run(); } finally { db.close(); }
+    },
     async restartReceiver() {
       const port = Number(new URL(receiver.origin).port);
       await receiver.close();
@@ -267,6 +272,14 @@ test('peer fan-out follows receiver progress beyond the apply request deadline',
   assert.equal(done.bytesTransferred, done.totalBytes);
   assert.equal(peers.applied, 1);
   t.diagnostic(`accepted after ${((performance.now() - started) / 1000).toFixed(2)} s`);
+});
+
+test('peer fan-out succeeds while the receiver still lists the restarted sender as offline', { timeout: 30000 }, async t => {
+  const peers = await fixture(t);
+  const release = await peers.release(1, randomBytes(65536));
+  peers.markSenderOfflineOnReceiver();
+  assert.equal((await peers.fanOut(release.version)).status, 'accepted');
+  assert.equal(peers.applied, 1);
 });
 
 test('peer fan-out resumes dropped downloads, including after receiver restart', { timeout: 30000 }, async t => {

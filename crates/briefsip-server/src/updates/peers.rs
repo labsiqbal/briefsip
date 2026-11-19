@@ -154,7 +154,7 @@ async fn check_permission(state: &AppState, machine: &str, bearer: Option<&str>)
     if authorize(state, bearer).await? != machine {
         return Err(PeerError::PermissionRevoked.failure());
     }
-    machines::ensure_updates_allowed(state, machine)
+    machines::ensure_updates_allowed(state, machine).await
 }
 
 fn receipt_id(value: &Value, machine: &str) -> Result<String> {

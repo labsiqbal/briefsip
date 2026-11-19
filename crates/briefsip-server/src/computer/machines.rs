@@ -1102,7 +1102,7 @@ pub async fn authorize_update(s: &AppState, header: Option<&str>) -> Result<Stri
         "Machine updates require permission from both owners in Settings > Machines.",
     ))
 }
-fn update_peer(s: &AppState, machine: &str) -> Result<Value> {
+fn permitted_peer(s: &AppState, machine: &str) -> Result<Value> {
     let r = row(s, machine).map_err(|failure| {
         if failure.status == 404 {
             PeerError::PermissionRevoked.failure()
@@ -1113,7 +1113,20 @@ fn update_peer(s: &AppState, machine: &str) -> Result<Value> {
     if r["state"] != "paired" || visible(s, &r)?["allowUpdates"] != true {
         return Err(PeerError::PermissionRevoked.failure());
     }
-    if !matches!(text(&r, "status"), "online" | "version-mismatch") {
+    Ok(r)
+}
+fn reachable(r: &Value) -> bool {
+    matches!(text(r, "status"), "online" | "version-mismatch")
+}
+async fn update_peer(s: &AppState, machine: &str) -> Result<Value> {
+    let r = permitted_peer(s, machine)?;
+    if reachable(&r) {
+        return Ok(r);
+    }
+    // The cached status lags a peer restart; check live before refusing an update.
+    check_machine(s, &r).await?;
+    let r = permitted_peer(s, machine)?;
+    if !reachable(&r) {
         return Err(PeerError::ConnectionLost.detail("Paired machine is offline."));
     }
     Ok(r)
@@ -1125,7 +1138,7 @@ pub async fn update_remote(
     bytes: u64,
     progress: impl Fn(u64) -> Result<()>,
 ) -> Result<Value> {
-    let r = update_peer(s, machine)?;
+    let r = update_peer(s, machine).await?;
     let origin = text(&r, "origin");
     let peer = descriptor(
         &remote_request(
@@ -1419,7 +1432,7 @@ pub async fn download_release(
     offset: u64,
     polling: bool,
 ) -> Result<reqwest::Response> {
-    let r = update_peer(s, machine)?;
+    let r = update_peer(s, machine).await?;
     if !briefsip_launcher::files::release_id(release) {
         return Err(error(400, "Invalid release path."));
     }
@@ -1757,8 +1770,8 @@ pub async fn handle(
     Ok(crate::json_response(200, result))
 }
 
-pub fn ensure_updates_allowed(state: &AppState, machine: &str) -> Result<()> {
-    update_peer(state, machine).map(|_| ())
+pub async fn ensure_updates_allowed(state: &AppState, machine: &str) -> Result<()> {
+    update_peer(state, machine).await.map(|_| ())
 }
 
 pub(crate) fn pairing_code(
