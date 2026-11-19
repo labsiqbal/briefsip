@@ -4,7 +4,7 @@ import { deflateRawSync } from 'node:zlib';
 import { parseSkillFiles, skillFileBytes, skillFileFromBytes, skillBinaryLimit } from './shared/skill-files.ts';
 import { readSkillZip, writeSkillZip } from './shared/skill-zip.ts';
 
-const files = [{ path: 'SKILL.md', content: '---\nname: portable\ndescription: Portable fixture\n---\nUse included files.\n' }, { path: 'included/note.txt', content: 'Exact bytes\r\n' }];
+const files = [{ path: 'SKILL.md', content: '---\nname: portable\ndescription: Portable fixture\n---\nUse reference files.\n' }, { path: 'references/note.txt', content: 'Exact bytes\r\n' }];
 const view = (bytes: Uint8Array) => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 function compressed() {
   const bytes = writeSkillZip(files.slice(0, 1)), old = view(bytes), start = 30 + old.getUint16(26, true), size = old.getUint32(22, true), central = start + size;
@@ -40,7 +40,7 @@ test('portable skill ZIP round trips exact text and validates deflate before pre
     v.setUint32(valid.length - 6, mc + descriptorSize, true);
     assert.deepEqual(await readSkillZip(valid), files.slice(0, 1)); valid[offset] ^= 1; await assert.rejects(readSkillZip(valid));
   }
-  for (const nested of [[{ path: 'included', content: 'file' }, files[1]], [files[1], { path: 'INCLUDED', content: 'file' }]]) assert.throws(() => writeSkillZip([files[0], ...nested]));
+  for (const nested of [[{ path: 'references', content: 'file' }, files[1]], [files[1], { path: 'REFERENCES', content: 'file' }]]) assert.throws(() => writeSkillZip([files[0], ...nested]));
 });
 
 

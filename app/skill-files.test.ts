@@ -10,8 +10,8 @@ import { restoreSkillCommand } from './shared/skill-command.ts';
 import { startApp } from './test-bridge.ts';
 
 const files = [
-  { path: 'SKILL.md', content: '\uFEFF---\r\nname: example-skill\r\ndescription: >-\r\n  Use for\r\n  examples.\r\nlicense: Apache-2.0\r\nmetadata:\r\n  version: "1.2.3"\r\n---\r\nRead included/detail.md before answering.\r\n' },
-  { path: 'included/detail.md', content: 'Original details.\n' + 'x'.repeat(9000) },
+  { path: 'SKILL.md', content: '\uFEFF---\r\nname: example-skill\r\ndescription: >-\r\n  Use for\r\n  examples.\r\nlicense: Apache-2.0\r\nmetadata:\r\n  version: "1.2.3"\r\n---\r\nRead references/detail.md before answering.\r\n' },
+  { path: 'references/detail.md', content: 'Original details.\n' + 'x'.repeat(9000) },
   { path: 'scripts/check.py', content: 'raise SystemExit("never execute")\n' },
   { path: 'assets/sample.bin', content: Buffer.from([0,255,128,1]).toString('base64'), encoding: 'base64' },
 ];
@@ -30,7 +30,7 @@ test('skill folders preserve exact files and reject invalid or unsupported input
 
 test('folder revisions, receipts and pinned file tools survive reload without foreign or revoked access', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-skill-files-'));
-  let target = '', offset = 0, filePath = 'included/detail.md', mode = 'file', results: any[] = [];
+  let target = '', offset = 0, filePath = 'references/detail.md', mode = 'file', results: any[] = [];
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const data = JSON.parse(raw), reads = data.messages.filter((message: any) => message.role === 'tool');
@@ -69,7 +69,7 @@ test('folder revisions, receipts and pinned file tools survive reload without fo
     assert.deepEqual((await request(`/api/skills/${target}`)).files, files);
     const binding = `/api/agents/${a.id}/skills/${target}`, turnPath = `/api/agents/${a.id}/turns`;
     await request(binding, { id: randomUUID(), revision: 0, version: 1, enabled: true });
-    const changed = files.map(file => file.path === 'included/detail.md' ? { ...file, content: 'New details' } : file);
+    const changed = files.map(file => file.path === 'references/detail.md' ? { ...file, content: 'New details' } : file);
     const edit = { id: randomUUID(), revision: 1, files: changed };
     await request(`/api/skills/${target}`, edit);
     await request(`/api/skills/${target}`, { ...edit, id: randomUUID() }, 409);
@@ -78,7 +78,7 @@ test('folder revisions, receipts and pinned file tools survive reload without fo
     offset = 8000; await run(turnPath); assert.equal(results[0].content, files[1].content.slice(8000)); assert.equal(results[0].next_offset, null); offset = 0;
     mode = 'manifest'; await run(turnPath); assert.deepEqual(results[0].files.map((file: any) => file.path), files.map(file => file.path)); mode = 'file';
     filePath = 'assets/sample.bin'; await run(turnPath); assert.equal(results[0].binary, true); assert.equal(results[0].content, undefined);
-    for (filePath of ['../secret', '/etc/passwd', 'absent.txt']) { await run(turnPath); assert.match(results[0].error, /not found/); } filePath = 'included/detail.md';
+    for (filePath of ['../secret', '/etc/passwd', 'absent.txt']) { await run(turnPath); assert.match(results[0].error, /not found/); } filePath = 'references/detail.md';
     await run(`/api/agents/${b.id}/turns`); assert.match(results[0].error, /not found/);
     await app.close(); app = await startApp(options);
     assert.deepEqual(await request(`/api/skills/${target}`, edit), { ...skill, revision: 2 });
