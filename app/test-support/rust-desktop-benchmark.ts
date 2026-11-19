@@ -22,7 +22,7 @@ async function sample(send: () => void | Promise<unknown>, state: { frames: numb
   return { samples: latency.map(value => Math.round(value * 10) / 10), medianMs: Math.round(sorted[5] * 10) / 10, p95Ms: Math.round(sorted[9] * 10) / 10, inputRoundTripMs: Math.round(input.reduce((sum, value) => sum + value, 0) / input.length * 10) / 10, fps: Math.round((state.frames - before) * 10000 / (performance.now() - started)) / 10 };
 }
 export async function benchmarkDesktop() {
-  const baseline = JSON.parse(readFileSync(new URL('../../work/rebuild/agent-computer/performance.json', import.meta.url), 'utf8'));
+  const baseline = JSON.parse(readFileSync(new URL('./rust-desktop-performance.json', import.meta.url), 'utf8'));
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-bench-'));
   let loaded = false;
   const fixture = createServer((req, res) => {

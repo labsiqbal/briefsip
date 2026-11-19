@@ -1827,8 +1827,8 @@ mod tests {
     #[test]
     fn peer_origins_require_https_or_loopback_without_url_extras() -> Result<()> {
         for origin in [
-            "http://example.ts.net",
-            "https://user:pass@machine.ts.net",
+            "http://example.test",
+            "https://user:pass@machine.example.test",
             "https://host/path",
             "https://host?x=1",
             "https://host#x",
@@ -1839,7 +1839,7 @@ mod tests {
         ] {
             assert!(machine_origin(origin).is_err(), "{origin}");
         }
-        for origin in ["https://machine.ts.net:4317", "http://[::1]:1234"] {
+        for origin in ["https://machine.example.test:4317", "http://[::1]:1234"] {
             assert_eq!(machine_origin(origin)?, origin);
         }
         Ok(())

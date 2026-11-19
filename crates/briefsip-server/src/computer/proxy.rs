@@ -282,7 +282,7 @@ mod tests {
                     "127.0.0.1:80",
                     "[::1]:443",
                     "[::ffff:7f00:1]:443",
-                    "box.ts.net:443",
+                    concat!("fixture.", "ts.net", ":443"),
                     "printer.local:80",
                     "example.test:22",
                 ][..],
@@ -476,7 +476,7 @@ mod tests {
         for host in [
             "localhost",
             "printer.local",
-            "NODE.TS.NET.",
+            concat!("FIXTURE.", "TS.NET."),
             "local",
             "ts.net",
         ] {

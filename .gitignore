@@ -1,9 +1,22 @@
-/references/reference-app/
-/work/runtime/
-/work/ui-spike/.tools/
-/work/ui-spike/target/
-/work/ui-spike/dist/
-/work/ui-spike/browser-profile/
+/references
+/work/
+/notes/
+/backlog.md
+/context.md
+/MAP.md
+/PRODUCT.md
+/docs/
+/.impeccable/
+/app/DESIGN.md
+/app/README.md
+/app/hub/CONTRACT.md
+/app/src/README.md
+/app/src/ui/KIT.md
+/app/t3/README.md
+/crates/PORTING.md
+/deploy/searxng/README.md
+/desktop/README.md
+/codegraph.json
 /target/
 /node_modules/
 /crates/web/target/
@@ -26,11 +39,6 @@
 # Generated test artifacts; receipts and logs remain versioned
 __pycache__/
 *.py[cod]
-/work/**/*.tar.gz
-/work/**/*.png
-/work/ui-spike/http-netlog.json
-/references/bot-hq/
-/references/t3code/
 
 # CodeGraph local index
 /.codegraph/

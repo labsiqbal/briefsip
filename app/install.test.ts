@@ -110,7 +110,7 @@ test('install pairing admission rolls back without consuming token when pairing 
 test('installer dry-run snapshot is side-effect-free and redacts token',async()=>{
  const dir=temp(),home=join(dir,'home'),token='bsi_'+ 'X'.repeat(43);mkdirSync(home);
  try {
-   const {stdout,stderr}=await exec('sh',[join(root,'scripts/install-machine.sh'),'--source','https://nuc.example.ts.net:4317','--token',token,'--name','Studio','--dry-run','--serve'],{env:{...process.env,HOME:home}});
+   const {stdout,stderr}=await exec('sh',[join(root,'scripts/install-machine.sh'),'--source','https://nuc.example.test:4317','--token',token,'--name','Studio','--dry-run','--serve'],{env:{...process.env,HOME:home}});
    assert.equal(stderr,'');assert(!stdout.includes(token));assert.deepEqual(readdirSync(home),[]);
    assert.equal(stdout,readFileSync(new URL('./install-dry-run.txt',import.meta.url),'utf8'));
  } finally {rmSync(dir,{recursive:true,force:true});}

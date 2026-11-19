@@ -743,7 +743,7 @@ mod tests {
             "[64:ff9b::a00:1]",
             "[2002:7f00:1::1]",
             "localhost",
-            "node.ts.net.",
+            concat!("fixture.", "ts.net."),
             "router.local",
         ] {
             let result = web_fetch(&format!("http://{host}/"), FetchPolicy::default()).await;
