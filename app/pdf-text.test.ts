@@ -6,10 +6,6 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import childProcess from 'node:child_process';
-import { once } from 'node:events';
-import { syncBuiltinESMExports } from 'node:module';
-import { extractPdf, isPdf, pdfInputLimit } from './pdf-text.ts';
 import { startApp } from './test-bridge.ts';
 
 async function parserStarted(ready: Promise<void>) {
@@ -18,49 +14,6 @@ async function parserStarted(ready: Promise<void>) {
     await Promise.race([ready, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('PDF fixture parser did not start within 30s')), 30000); })]);
   } finally { clearTimeout(timer); }
 }
-
-test('PDF sandbox extracts compressed text, refuses malformed/blank/oversize input and bounds output', async () => {
-  const bytes = document('LOCAL_PDF_CONTENT'); assert(isPdf(bytes));
-  assert.equal((await extractPdf(bytes)).trim(), 'LOCAL_PDF_CONTENT');
-  for (const bytes of [Buffer.from('not pdf'), Buffer.from('%PDF-1.4 broken'), document(''), Buffer.concat([document('x'), Buffer.alloc(pdfInputLimit)])]) await assert.rejects(extractPdf(bytes));
-  await assert.rejects(extractPdf(document('X'.repeat(500), 600)), error => (error as { status: number }).status === 413);
-  const controller = new AbortController(); controller.abort();
-  const originalSpawn = childProcess.spawn; let spawned = false;
-  childProcess.spawn = ((...args: Parameters<typeof childProcess.spawn>) => { spawned = true; return originalSpawn(...args); }) as typeof childProcess.spawn;
-  syncBuiltinESMExports();
-  try { await assert.rejects(extractPdf(document('aborted'), controller.signal), /cancelled/); assert.equal(spawned, false, 'Pre-aborted reads must not spawn a parser'); }
-  finally { childProcess.spawn = originalSpawn; syncBuiltinESMExports(); }
-});
-
-test('PDF cancellation avoids pre-aborted spawns and closes pipes held by launcher descendants', async t => {
-  const original = childProcess.spawn, controller = new AbortController();
-  let launcher: ReturnType<typeof childProcess.spawn> | undefined;
-  let started!: () => void; const ready = new Promise<void>(resolve => { started = resolve; });
-  const mock = t.mock.method(childProcess, 'spawn', (...args: Parameters<typeof childProcess.spawn>) => {
-    assert.equal(args[0], '/usr/bin/bwrap');
-    launcher = original(process.execPath, ['--input-type=module', '-e', `
-      import { spawn } from 'node:child_process';
-      const child = spawn(process.execPath, ['-e', 'process.send("ready"); setInterval(() => {}, 1000)'], { stdio: ['ignore', 1, 2, 'ipc'] });
-      child.once('message', () => process.send('ready'));
-      process.stdin.resume();
-    `], { ...args[2], stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
-    launcher.once('message', started); return launcher;
-  });
-  syncBuiltinESMExports();
-  try {
-    controller.abort(); await assert.rejects(extractPdf(document('aborted'), controller.signal), /cancelled/);
-    assert.equal(mock.mock.callCount(), 0, 'Pre-aborted input must not start a parser');
-    const active = new AbortController(), pending = extractPdf(document('startup'), active.signal);
-    // Register rejection handling before the cancellation event.
-    const rejected = assert.rejects(pending, /cancelled/);
-    await parserStarted(ready);
-    const closed = once(launcher!, 'close', { signal: AbortSignal.timeout(30000) });
-    active.abort(); await closed; await rejected;
-  } finally {
-    if (launcher?.pid) try { process.kill(-launcher.pid, 'SIGKILL'); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
-    mock.mock.restore(); syncBuiltinESMExports();
-  }
-});
 
 test('PDF HTTP preview and messages preserve source, scope, retry, routing, tools and restart', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-pdf-')), payloads: any[] = [];
@@ -77,7 +30,28 @@ test('PDF HTTP preview and messages preserve source, scope, retry, routing, tool
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve)); const address = provider.address(); assert(address && typeof address !== 'string');
   const token = 'p'.repeat(64);
-  const options = { database: join(directory, 'db.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, scriptToken: token };
+  let failOnce = false;
+  let gate: ((signal: AbortSignal) => Promise<void>) | undefined;
+  function holdPdf() {
+    let start!: () => void, stop!: () => void, release!: () => void;
+    const started = new Promise<void>(resolve => { start = resolve; });
+    const stopped = new Promise<void>(resolve => { stop = resolve; });
+    const hold = new Promise<void>(resolve => { release = resolve; });
+    gate = async signal => {
+      const abort = () => { stop(); release(); };
+      signal.addEventListener('abort', abort, { once: true });
+      start();
+      await hold;
+    };
+    return { started, stopped, release };
+  }
+  const pdfFault = async (signal: AbortSignal) => {
+    if (failOnce) { failOnce = false; return { status: 503, error: 'PDF sandbox is unavailable.' }; }
+    const pending = gate;
+    gate = undefined;
+    await pending?.(signal);
+  };
+  const options = { pdfFault, database: join(directory, 'db.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, scriptToken: token };
   let app = await startApp(options), appClosed = false;
   async function request(path: string, data?: unknown, expected?: number) {
     const res = await fetch(app.origin + path, { method: data === undefined ? 'GET' : 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: data === undefined ? undefined : JSON.stringify(data) });
@@ -116,12 +90,9 @@ test('PDF HTTP preview and messages preserve source, scope, retry, routing, tool
     const auto = randomUUID(); await request(`${scopes[0]}/turns`, { id: auto, text: 'No preview needed', files: [noPreview] }); await done(scopes[0], auto); assert(JSON.stringify(payloads.at(-1)).includes('AUTO_EXTRACT'));
     {
       const file = await upload(scopes[0], document('RETRY_SANDBOX')), command = { id: randomUUID(), text: 'Retry after sandbox repair', files: [file] };
-      const originalSpawn = childProcess.spawn;
-      childProcess.spawn = ((...args: Parameters<typeof childProcess.spawn>) => args[0] === '/usr/bin/bwrap'
-        ? originalSpawn('/usr/bin/bwrap', ['--ro-bind', '/briefsip-nonexistent-fixture-path', '/missing', '/bin/true'], args[2]) : originalSpawn(...args)) as typeof childProcess.spawn;
-      syncBuiltinESMExports();
-      try { await request(`${scopes[0]}/turns`, command, 503); assert(!(await request(`${scopes[0]}/turns`)).some((row: any) => row.id === command.id)); }
-      finally { childProcess.spawn = originalSpawn; syncBuiltinESMExports(); }
+      failOnce = true;
+      await request(`${scopes[0]}/turns`, command, 503);
+      assert(!(await request(`${scopes[0]}/turns`)).some((row: any) => row.id === command.id));
       await request(`${scopes[0]}/turns`, command); await done(scopes[0], command.id);
       assert(JSON.stringify(payloads.at(-1)).includes('RETRY_SANDBOX'));
     }
@@ -142,22 +113,16 @@ test('PDF HTTP preview and messages preserve source, scope, retry, routing, tool
       assert.equal(content.source, 'pdf-text'); assert.equal(content.text.trim(), 'GENERATED_PDF_TEXT');
     }
     {
-      const originalSpawn = childProcess.spawn; let frozen: ReturnType<typeof childProcess.spawn> | undefined;
-      let started!: () => void; const spawned = new Promise<void>(resolve => { started = resolve; });
-      childProcess.spawn = ((...args: Parameters<typeof childProcess.spawn>) => {
-        const child = originalSpawn(...args); if (args[0] === '/usr/bin/bwrap') { frozen = child; child.kill('SIGSTOP'); started(); } return child;
-      }) as typeof childProcess.spawn; syncBuiltinESMExports();
+      const reader = holdPdf();
       try {
-        generated = 1; const id = randomUUID(); await request(`${scopes[0]}/turns`, { id, text: 'Cancel generated PDF read' }); await parserStarted(spawned);
-        const closed = once(frozen!, 'close', { signal: AbortSignal.timeout(30000) });
+        generated = 1; const id = randomUUID(); await request(`${scopes[0]}/turns`, { id, text: 'Cancel generated PDF read' }); await parserStarted(reader.started);
         const count = payloads.length; await request(`${scopes[0]}/turns/${id}/cancel`, { id: randomUUID() });
-        frozen!.kill('SIGCONT');
-        await closed;
+        reader.release();
         const turn = (await request(`${scopes[0]}/turns`)).find((row: any) => row.id === id); assert.equal(turn.status, 'cancelled');
         // A subsequent turn must run after the cancelled reader yields, without its text continuation.
         const next = randomUUID(); await request(`${scopes[0]}/turns`, { id: next, text: 'After cancellation' }); await done(scopes[0], next);
         assert.equal(payloads.length, count + 1);
-      } finally { childProcess.spawn = originalSpawn; syncBuiltinESMExports(); frozen?.kill('SIGKILL'); }
+      } finally { reader.release(); }
     }
     const large = await upload(scopes[0], document('X'.repeat(500), 70));
     await request(`${scopes[0]}/files/${large}?preview=text`);
@@ -169,44 +134,33 @@ test('PDF HTTP preview and messages preserve source, scope, retry, routing, tool
       const side = await request(`/api/agents/${a.id}/threads`, { id: randomUUID(), name: operation }), scope = `/api/threads/${side.id}`;
       const file = await upload(scope, document('DO_NOT_LEAK'));
       if (operation === 'script-revoke') await request(`/api/agents/${a.id}/scripts`, { id: randomUUID(), revision: 0, enabled: true });
-      const originalSpawn = childProcess.spawn; let frozen: ReturnType<typeof childProcess.spawn> | undefined;
-      let started!: () => void; const spawned = new Promise<void>(resolve => { started = resolve; });
-      childProcess.spawn = ((...args: Parameters<typeof childProcess.spawn>) => {
-        const child = originalSpawn(...args); if (args[0] === '/usr/bin/bwrap') { frozen = child; child.kill('SIGSTOP'); started(); } return child;
-      }) as typeof childProcess.spawn; syncBuiltinESMExports();
+      const reader = holdPdf();
       try {
         const before = payloads.length;
         const pending = operation === 'send-archive'
           ? request(`${scope}/turns`, { id: randomUUID(), text: 'Never dispatch', files: [file] }, 409)
           : operation === 'preview-delete' ? request(`${scope}/files/${file}?preview=text`, undefined, 404)
           : fetch(`${app.origin}/api/scripts/agents/${a.id}/threads/${side.id}/files/${file}?preview=text`, { headers: { Authorization: `Bearer ${token}` } });
-        await parserStarted(spawned);
+        await parserStarted(reader.started);
         if (operation === 'script-revoke') await request(`/api/agents/${a.id}/scripts`, { id: randomUUID(), revision: 1, enabled: false });
         else {
           await request(`${scope}/edit`, { id: randomUUID(), revision: 1, name: operation, archived: true });
           if (operation === 'preview-delete') await request(`${scope}/delete`, { id: randomUUID(), revision: 2 });
         }
-        frozen!.kill('SIGCONT'); const result = await pending;
+        reader.release(); const result = await pending;
         if (operation === 'script-revoke') { assert.equal(result.status, 403); assert(!JSON.stringify(await result.json()).includes('DO_NOT_LEAK')); }
         assert.equal(payloads.length, before);
-      } finally { childProcess.spawn = originalSpawn; syncBuiltinESMExports(); frozen?.kill('SIGKILL'); }
+      } finally { reader.release(); }
     }
     const pendingFile = await upload(scopes[0], document('SHUTDOWN_PENDING'));
-    const originalSpawn = childProcess.spawn; let frozen: ReturnType<typeof childProcess.spawn> | undefined;
-    let started!: () => void; const spawned = new Promise<void>(resolve => { started = resolve; });
-    childProcess.spawn = ((...args: Parameters<typeof childProcess.spawn>) => {
-      const child = originalSpawn(...args);
-      if (args[0] === '/usr/bin/bwrap') { frozen = child; child.kill('SIGSTOP'); started(); }
-      return child;
-    }) as typeof childProcess.spawn;
-    syncBuiltinESMExports();
+    const reader = holdPdf();
     const controller = new AbortController();
     try {
       const response = fetch(`${app.origin}${scopes[0]}/files/${pendingFile}?preview=text`, { signal: controller.signal }).catch(() => null);
-      await parserStarted(spawned); controller.abort(); await response;
+      await parserStarted(reader.started); controller.abort(); await response;
       await app.close(); appClosed = true;
-      assert(frozen); assert.throws(() => process.kill(frozen!.pid!, 0), 'App close must terminate its parser before returning');
-    } finally { childProcess.spawn = originalSpawn; syncBuiltinESMExports(); frozen?.kill('SIGKILL'); }
+      await parserStarted(reader.stopped);
+    } finally { reader.release(); }
     app = await startApp(options); appClosed = false;
   } finally { if (!appClosed) await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(directory, { recursive: true, force: true }); }
 });

@@ -48,7 +48,8 @@ fn birth(pid: u32) -> Option<String> {
     let s = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     s.rsplit_once(") ")?.1.split(' ').nth(19).map(str::to_owned)
 }
-pub fn sandbox(profile: &Path, proxy: &Path) -> Vec<String> {
+pub fn sandbox(profile: &Path, proxy: &Path, executable: &Path) -> Vec<String> {
+    use super::desktop_supervisor::{BINARY, PROXY};
     let dir = profile.parent().unwrap_or(profile);
     let mut a = [
         "--die-with-parent",
@@ -100,8 +101,8 @@ pub fn sandbox(profile: &Path, proxy: &Path) -> Vec<String> {
     for (flag, from, to) in [
         ("--bind", dir.join("x11"), "/run/briefsip"),
         ("--bind", dir.join("x11"), "/tmp/.X11-unix"),
-        ("--ro-bind", proxy.to_owned(), "/run/briefsip/proxy.sock"),
-        ("--ro-bind", dir.join("supervisor.mjs"), "/desktop-host.mjs"),
+        ("--ro-bind", proxy.to_owned(), PROXY),
+        ("--ro-bind", executable.to_owned(), BINARY),
     ] {
         a.extend([flag.into(), from.to_string_lossy().into(), to.into()]);
     }
@@ -110,9 +111,9 @@ pub fn sandbox(profile: &Path, proxy: &Path) -> Vec<String> {
             "--chdir",
             "/home/desktop",
             "--",
-            "/usr/bin/node",
-            "/desktop-host.mjs",
-            "/run/briefsip/proxy.sock",
+            BINARY,
+            "--desktop-supervisor",
+            PROXY,
         ]
         .map(str::to_owned),
     );
@@ -175,6 +176,8 @@ pub struct Manager {
     input_rates: Mutex<HashMap<String, (i64, u32)>>,
     input_slots: Mutex<HashMap<String, Arc<Semaphore>>>,
     starts: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
+    #[cfg(test)]
+    launcher: Option<PathBuf>,
 }
 impl Manager {
     pub fn new(config: &Config) -> crate::db::Result<Self> {
@@ -219,6 +222,8 @@ impl Manager {
             input_rates: Mutex::new(HashMap::new()),
             input_slots: Mutex::new(HashMap::new()),
             starts: Mutex::new(HashMap::new()),
+            #[cfg(test)]
+            launcher: None,
         };
         if enabled {
             let uid =
@@ -389,17 +394,6 @@ impl Manager {
         ] {
             directory(p)?;
         }
-        let host = dir.join("supervisor.mjs");
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .custom_flags(0o400000)
-            .open(host)
-            .map_err(|_| error(503, "Desktop file is unavailable or unsafe."))?;
-        file.write_all(include_bytes!("../../../../app/agent-desktop-host.mjs"))
-            .map_err(|_| Failure::storage())?;
         let preferences = profile.join("Default/Preferences");
         let mut v: Value = if fs::symlink_metadata(&preferences).is_ok() {
             serde_json::from_slice(&safe_read(&preferences)?)
@@ -443,6 +437,15 @@ impl Manager {
         Ok(profile)
     }
     pub async fn start(&self, agent: &str, now: i64) -> Result<Arc<Desktop>> {
+        self.start_with_environment(agent, now, &HashMap::new())
+            .await
+    }
+    async fn start_with_environment(
+        &self,
+        agent: &str,
+        now: i64,
+        environment: &HashMap<String, String>,
+    ) -> Result<Arc<Desktop>> {
         if !self.enabled || self.closing.load(Ordering::SeqCst) {
             return Err(error(403, "Agent computer is disabled."));
         }
@@ -466,6 +469,8 @@ impl Manager {
             }
             return Ok(d);
         }
+        let executable = std::env::current_exe()
+            .map_err(|_| error(503, "Desktop supervisor is unavailable."))?;
         let display = self.reserve(agent)?;
         let profile = match self.prepare(agent, display) {
             Ok(v) => v,
@@ -474,10 +479,14 @@ impl Manager {
                 return Err(e);
             }
         };
-        let mut command = Command::new("/usr/bin/bwrap");
+        let launcher = Path::new("/usr/bin/bwrap");
+        #[cfg(test)]
+        let launcher = self.launcher.as_deref().unwrap_or(launcher);
+        let mut command = Command::new(launcher);
         command
-            .args(sandbox(&profile, &self.proxy_path))
+            .args(sandbox(&profile, &self.proxy_path, &executable))
             .env_clear()
+            .envs(environment)
             .envs([
                 ("PATH", "/usr/bin:/bin"),
                 ("HOME", "/home/desktop"),
@@ -692,14 +701,18 @@ impl Manager {
                 }
             }
         };
-        tokio::time::timeout(Duration::from_secs(12), work)
+        let result = tokio::time::timeout(Duration::from_secs(12), work)
             .await
             .unwrap_or_else(|_| {
                 Err(error(
                     503,
                     "Desktop helper timed out. Input outcome may be uncertain.",
                 ))
-            })
+            });
+        if d.stopped.load(Ordering::SeqCst) {
+            return Err(error(409, "Computer was stopped."));
+        }
+        result
     }
     pub async fn screenshot(&self, agent: &str, jpeg: bool) -> Result<Vec<u8>> {
         let d = self
@@ -765,7 +778,37 @@ impl Manager {
         now: i64,
     ) -> Result<(Option<Vec<u8>>, Option<String>)> {
         let command = super::actions::validate(name, args, self.width, self.height)?;
-        let d = self.start(agent, now).await?;
+        self.run_action(agent, name, command, now, &HashMap::new())
+            .await
+    }
+    pub async fn action_with_environment(
+        &self,
+        agent: &str,
+        name: &str,
+        args: &Value,
+        now: i64,
+        environment: &HashMap<String, String>,
+        mut cancelled: tokio::sync::oneshot::Receiver<()>,
+    ) -> Result<(Option<Vec<u8>>, Option<String>)> {
+        let command = super::actions::validate(name, args, self.width, self.height)?;
+        self.stop(agent).await?;
+        let result = tokio::select! {
+            biased;
+            _ = &mut cancelled => Err(error(409, "Computer action was cancelled.")),
+            result = self.run_action(agent, name, command, now, environment) => result,
+        };
+        self.stop(agent).await?;
+        result
+    }
+    async fn run_action(
+        &self,
+        agent: &str,
+        name: &str,
+        command: Vec<String>,
+        now: i64,
+        environment: &HashMap<String, String>,
+    ) -> Result<(Option<Vec<u8>>, Option<String>)> {
+        let d = self.start_with_environment(agent, now, environment).await?;
         d.activity.store(now, Ordering::SeqCst);
         if name == "computer_screenshot" {
             return Ok((Some(self.screenshot(agent, false).await?), None));
@@ -886,3 +929,7 @@ impl Manager {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "desktop_tests.rs"]
+mod tests;

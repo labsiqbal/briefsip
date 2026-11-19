@@ -89,7 +89,10 @@ async fn target(host: &str, port: u16, fixture: Option<&TestTarget>) -> Option<S
     .ok()?
     .ok()?
     .collect::<Vec<_>>();
-    if addresses.is_empty() || addresses.iter().any(|a| denied(a.ip())) {
+    checked_address(&addresses)
+}
+fn checked_address(addresses: &[SocketAddr]) -> Option<SocketAddr> {
+    if addresses.iter().any(|a| denied(a.ip())) {
         return None;
     }
     addresses.first().copied()
@@ -266,6 +269,63 @@ async fn handle(
 mod tests {
     use super::*;
     #[tokio::test]
+    async fn proxy_denies_unsafe_http_and_connect_targets() -> crate::db::Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let socket =
+            std::env::temp_dir().join(format!("bs-proxy-{}.sock", uuid::Uuid::new_v4().simple()));
+        let (stop, stopped) = watch::channel(false);
+        let proxy = serve(UnixListener::bind(&socket)?, None, stopped);
+        for (method, entries) in [
+            (
+                "CONNECT",
+                &[
+                    "127.0.0.1:80",
+                    "[::1]:443",
+                    "[::ffff:7f00:1]:443",
+                    "box.ts.net:443",
+                    "printer.local:80",
+                    "example.test:22",
+                ][..],
+            ),
+            (
+                "GET",
+                &[
+                    "http://127.0.0.1/",
+                    "http://[::1]/",
+                    "http://192.168.1.1/",
+                    "http://example.test:8080/",
+                    "ftp://example.test/",
+                    "http://u:p@example.test/",
+                ][..],
+            ),
+        ] {
+            for target in entries {
+                let mut client = tokio::net::UnixStream::connect(&socket).await?;
+                client.write_all(format!("{method} {target} HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n").as_bytes()).await?;
+                let mut response = Vec::new();
+                tokio::time::timeout(Duration::from_secs(3), client.read_to_end(&mut response))
+                    .await??;
+                assert!(
+                    response.starts_with(b"HTTP/1.1 403"),
+                    "{target}: {}",
+                    String::from_utf8_lossy(&response)
+                );
+            }
+        }
+        let public = "93.184.216.34:443".parse()?;
+        let other_public = "1.1.1.1:443".parse()?;
+        let private = "10.0.0.1:443".parse()?;
+        assert_eq!(checked_address(&[public, other_public]), Some(public));
+        assert_eq!(checked_address(&[public, private]), None);
+        assert_eq!(checked_address(&[private, public]), None);
+        assert_eq!(checked_address(&[]), None);
+        let _ = stop.send(true);
+        proxy.await?;
+        std::fs::remove_file(socket)?;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn framing_and_checked_connect() -> crate::db::Result<()> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let directory =
@@ -273,12 +333,21 @@ mod tests {
         std::fs::create_dir(&directory)?;
         let upstream = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let port = upstream.local_addr()?.port();
-        let service = axum::Router::new().fallback(|request: axum::extract::Request| async move {
-            let body = axum::body::to_bytes(request.into_body(), 1024)
-                .await
-                .unwrap_or_default();
-            axum::body::Body::from(body)
-        });
+        let service =
+            axum::Router::new().fallback(move |request: axum::extract::Request| async move {
+                if request.uri().path() == "/path" {
+                    assert_eq!(
+                        request.uri().path_and_query().map(|v| v.as_str()),
+                        Some("/path?q=1")
+                    );
+                    assert_eq!(request.headers()["host"], format!("public.test:{port}"));
+                    assert!(!request.headers().contains_key("proxy-authorization"));
+                }
+                let body = axum::body::to_bytes(request.into_body(), 1024)
+                    .await
+                    .unwrap_or_default();
+                axum::body::Body::from(body)
+            });
         let upstream_task = tokio::spawn(async move { axum::serve(upstream, service).await });
         let path = directory.join("proxy.sock");
         let (stop, stopped) = watch::channel(false);
@@ -292,7 +361,7 @@ mod tests {
             stopped,
         );
         let mut client = tokio::net::UnixStream::connect(&path).await?;
-        client.write_all(format!("POST http://public.test:{port}/ HTTP/1.1\r\nHost: attacker.invalid\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\nabc\r\n0\r\n\r\n").as_bytes()).await?;
+        client.write_all(format!("POST http://public.test:{port}/path?q=1 HTTP/1.1\r\nHost: attacker.invalid\r\nProxy-Authorization: secret\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\nabc\r\n0\r\n\r\n").as_bytes()).await?;
         let mut response = Vec::new();
         tokio::time::timeout(Duration::from_secs(3), client.read_to_end(&mut response)).await??;
         assert!(response.starts_with(b"HTTP/1.1 200"));
@@ -300,7 +369,7 @@ mod tests {
         let mut tunnel = tokio::net::UnixStream::connect(&path).await?;
         tunnel
             .write_all(
-                format!("CONNECT public.test:{port} HTTP/1.1\r\nHost: public.test\r\n\r\n")
+                format!("CONNECT public.test:{port} HTTP/1.1\r\nHost: public.test\r\n\r\nPOST / HTTP/1.1\r\nHost: public.test\r\nContent-Length: 3\r\nConnection: close\r\n\r\nxyz")
                     .as_bytes(),
             )
             .await?;
@@ -309,12 +378,31 @@ mod tests {
             head.push(tunnel.read_u8().await?);
         }
         assert!(head.starts_with(b"HTTP/1.1 200"));
-        tunnel.write_all(b"POST / HTTP/1.1\r\nHost: public.test\r\nContent-Length: 3\r\nConnection: close\r\n\r\nxyz").await?;
         response.clear();
         tokio::time::timeout(Duration::from_secs(3), tunnel.read_to_end(&mut response)).await??;
         assert!(response.ends_with(b"xyz"));
+        let mut active = tokio::net::UnixStream::connect(&path).await?;
+        active
+            .write_all(
+                format!("CONNECT public.test:{port} HTTP/1.1\r\nHost: public.test\r\n\r\n")
+                    .as_bytes(),
+            )
+            .await?;
+        head.clear();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !head.ends_with(b"\r\n\r\n") {
+                head.push(active.read_u8().await?);
+            }
+            Ok::<_, std::io::Error>(())
+        })
+        .await??;
+        assert!(head.starts_with(b"HTTP/1.1 200"));
         let _ = stop.send(true);
         proxy.await?;
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(3), active.read(&mut [0u8; 1])).await??,
+            0
+        );
         upstream_task.abort();
         std::fs::remove_dir_all(directory)?;
         Ok(())
