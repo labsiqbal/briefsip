@@ -25,7 +25,7 @@ fn allowed(row: &Value, scope: &str) -> bool {
 }
 fn declarations(state: &AppState, caller: &Value) -> Result<Vec<Value>> {
     let mut setup = false;
-    let mut web_access = false;
+    let mut web_access = crate::turns::web::Access::default();
     let mut specs = tools().as_array().cloned().unwrap_or_default();
     for t in &mut specs {
         t["scope"] = json!(match string(t, "name") {
@@ -44,7 +44,7 @@ fn declarations(state: &AppState, caller: &Value) -> Result<Vec<Value>> {
         )?
         .ok_or_else(|| error(403, "MCP authorization failed."))?;
         setup = harness::setup(db, &turn)?;
-        web_access = crate::turns::web::enabled(db, string(caller, "agent"))?;
+        web_access = crate::turns::web::access(state, db, string(caller, "agent"))?;
         for spec in harness::specs(state, db, &turn)? {
             let f = &spec["function"];
             let name = string(f, "name");
@@ -77,7 +77,7 @@ fn declarations(state: &AppState, caller: &Value) -> Result<Vec<Value>> {
     specs.retain(|t| {
         allowed(caller, string(t, "scope"))
             && (!setup || ["edit_profile", "ask_user"].contains(&string(t, "name")))
-            && crate::turns::web::offered(string(t, "name"), web_access)
+            && web_access.offered(string(t, "name"))
     });
     Ok(specs)
 }

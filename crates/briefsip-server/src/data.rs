@@ -278,6 +278,8 @@ pub fn handles(path: &str) -> bool {
             | ["api", "provider-accounts", _, "test" | "edit" | "delete"]
             | ["api", "sidebar", "summary"]
             | ["api", "conversations", "settings"]
+            | ["api", "settings", "web-search"]
+            | ["api", "settings", "web-search", "test"]
             | ["api", "threads", _]
             | ["api", "projects", _]
             | [
@@ -416,6 +418,29 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
             ));
         }
         return provider_store::route(state, &parts, &method, &q, &body).await;
+    }
+    if matches!(
+        parts.as_slice(),
+        ["api", "settings", "web-search"] | ["api", "settings", "web-search", "test"]
+    ) {
+        if headers.contains_key("authorization")
+            || headers.contains_key("origin") && !origin(state, &headers)
+        {
+            return Err(error(
+                403,
+                "Web search settings require the local owner in Briefsip.",
+            ));
+        }
+        if !q.is_empty() {
+            return Err(error(
+                400,
+                "Web search settings do not accept query parameters.",
+            ));
+        }
+        let test = parts.last() == Some(&"test");
+        return crate::turns::web::settings(state, method, test, &body)
+            .await
+            .map(|value| json_response(200, value));
     }
     let write = method == Method::POST;
     let project = parts
@@ -707,6 +732,8 @@ pub fn routes() -> Router<AppState> {
         .route("/api/provider-accounts/{id}/edit", any(crate::dispatch))
         .route("/api/provider-accounts/{id}/delete", any(crate::dispatch))
         .route("/api/conversations/settings", any(crate::dispatch))
+        .route("/api/settings/web-search", any(crate::dispatch))
+        .route("/api/settings/web-search/test", any(crate::dispatch))
 }
 
 #[cfg(test)]
