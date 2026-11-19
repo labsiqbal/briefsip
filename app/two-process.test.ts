@@ -2679,7 +2679,10 @@ for (const lostAt of ['request', 'reply', 'receipt', 'revoked', 'storage'] as co
       const db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
       try { db.prepare('UPDATE agent_projects SET deleted=1 WHERE project=? AND agent=?').run(project, agent); } finally { db.close(); }
     }
-    await runtime.close(); await f.restart();
+    await runtime.close();
+    // restart() waits for devices the server still lists as ready; let the closed host's disconnect land first.
+    await until(async () => (await f.send('/api/devices')).body.data.every((device: { status: string }) => device.status !== 'ready'), 10_000);
+    await f.restart();
     if (lostAt === 'storage') {
       const db = new DatabaseSync(database);
       try { db.exec("CREATE TRIGGER fail_recovery_marker BEFORE UPDATE OF intent_json ON device_journal WHEN json_extract(NEW.intent_json,'$.completionError') IS NOT NULL BEGIN SELECT RAISE(ABORT,'completion marker write failed'); END"); } finally { db.close(); }
