@@ -90,6 +90,7 @@ mod tests {
              CREATE TABLE context_transfers(target_thread TEXT,source_kind TEXT,source_id TEXT,cutoff_turn TEXT,created TEXT,agent TEXT);
              CREATE TABLE delivery_conversations(thread TEXT,sender TEXT,machine TEXT,activity INTEGER,settled_at INTEGER);
              CREATE TABLE conversation_settings(id INTEGER,auto_archive INTEGER);
+             CREATE VIEW conversation_attention AS SELECT id AS thread FROM threads WHERE 0;
              INSERT INTO conversation_settings VALUES(1,1);
              INSERT INTO agents VALUES('helper','Helper'),('lead','Right Hand');
              INSERT INTO threads(id,name) VALUES('peer','Message from Briefsip: omarchy'),('renamed','Owner title'),('legacy','Message from Right Hand'),('owner','Owner side');

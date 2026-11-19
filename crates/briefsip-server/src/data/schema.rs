@@ -98,6 +98,7 @@ fn initialize_mode(database: &Database, canonical: bool) -> crate::db::Result<()
         if canonical {
             return Ok(());
         }
+        column(db, "turns", "attention_finished_at", "INTEGER")?;
         db.execute_batch("UPDATE turns SET status='interrupted',error='The process stopped before the result was saved. Check the provider before sending again.' WHERE status='running'; UPDATE provider_calls SET status='interrupted' WHERE status='pending';")?;
         for a in all(
             db,

@@ -146,7 +146,8 @@ async fn local(state: &AppState, request: Request) -> Result<Response, Failure> 
     {
         return Ok(local_error(401, "Unauthorized request."));
     }
-    if let Some(scope) = events::scope(path) {
+    let scope = events::scope(path);
+    if scope.is_some() || path == "/api/sidebar/stream" {
         if request.headers().contains_key("authorization")
             || request.headers().contains_key("origin")
                 && !allowed(state, text_header(request.headers(), "origin"))
@@ -172,7 +173,10 @@ async fn local(state: &AppState, request: Request) -> Result<Response, Failure> 
                 "Streaming does not accept query parameters.",
             ));
         }
-        return state.events.response(scope, &state.database);
+        return match scope {
+            Some(scope) => state.events.response(scope, &state.database),
+            None => Ok(state.events.sidebar(&state.database)),
+        };
     }
     if updates::handles(path) {
         return updates::local(state, request).await;
@@ -645,6 +649,9 @@ async fn main() -> db::Result<()> {
             mcp::initialize(&guard.connection).map_err(|e| e.message)?;
             computer::initialize(&guard.connection)?;
             updates::initialize(&guard.connection)?;
+            guard
+                .connection
+                .execute_batch(include_str!("data/attention.sql"))?;
         } else {
             db::provider_tables(&guard.connection)?;
             data::initialize_canonical(&guard)?;
@@ -719,6 +726,7 @@ async fn main() -> db::Result<()> {
         .route("/api/session/logout", any(dispatch))
         .route("/api/restore/reconcile", any(dispatch))
         .route("/api/agents", any(dispatch))
+        .route("/api/sidebar/stream", any(dispatch))
         .route("/api/agents/{id}/turns/stream", any(dispatch))
         .route("/api/threads/{id}/turns/stream", any(dispatch))
         .route("/api/channels/{id}/turns/stream", any(dispatch))
