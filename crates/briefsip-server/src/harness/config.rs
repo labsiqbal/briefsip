@@ -44,15 +44,24 @@ pub struct Bridge {
     pub token: String,
 }
 
-const HOMES_DIRECTORY: &str = "harness-homes";
+const HOMES_SUFFIX: &str = ".harness-homes";
 pub(super) const SESSION_PREFIX: &str = "briefsip-session-";
+
+/// One homes directory per database, beside it, so servers sharing DATA never contend.
+fn homes_name(database: &Path) -> std::io::Result<String> {
+    let name = database
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| std::io::Error::other("Database path has no file name"))?;
+    Ok(format!("{name}{HOMES_SUFFIX}"))
+}
 
 pub(super) fn homes_root(database: &Path) -> std::io::Result<PathBuf> {
     let data = database
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    Ok(data.canonicalize()?.join(HOMES_DIRECTORY))
+    Ok(data.canonicalize()?.join(homes_name(database)?))
 }
 
 fn session_name(name: &str) -> bool {
@@ -62,16 +71,17 @@ fn session_name(name: &str) -> bool {
 
 pub(crate) fn prepare_homes(database: &Path) -> crate::db::Result<File> {
     let root = homes_root(database)?;
+    let name = homes_name(database)?;
     let data = operator_file::open_directory(root.parent().ok_or("Invalid harness homes path")?)?;
-    match mkdirat(&data, HOMES_DIRECTORY, Mode::RWXU) {
+    match mkdirat(&data, name.as_str(), Mode::RWXU) {
         Ok(()) | Err(rustix::io::Errno::EXIST) => {}
         Err(error) => return Err(error.into()),
     }
-    let directory = operator_file::directory_at(&data, HOMES_DIRECTORY)?;
+    let directory = operator_file::directory_at(&data, &name)?;
     if !operator_file::private(&directory) {
         return Err("Harness homes directory must be private and owned by the server user".into());
     }
-    // Hold through shutdown so a server using the same DATA cannot sweep live homes.
+    // Hold through shutdown so a second server on this database cannot sweep live homes.
     directory
         .try_lock()
         .map_err(|error| format!("Cannot lock harness homes directory: {error}"))?;
@@ -308,7 +318,7 @@ mod tests {
     fn startup_sweeps_only_session_directories() -> crate::db::Result<()> {
         let scratch = super::super::process::ProbeHome::new()?;
         let database = scratch.0.join("state.sqlite");
-        let root = scratch.0.join(HOMES_DIRECTORY);
+        let root = scratch.0.join("state.sqlite.harness-homes");
         let guard = prepare_homes(&database)?;
         assert_eq!(fs::metadata(&root)?.permissions().mode() & 0o777, 0o700);
         let stale = root.join(format!("{SESSION_PREFIX}{}", uuid::Uuid::new_v4()));
@@ -339,10 +349,23 @@ mod tests {
     }
 
     #[test]
+    fn databases_sharing_data_keep_separate_homes() -> crate::db::Result<()> {
+        let scratch = super::super::process::ProbeHome::new()?;
+        let owner = prepare_homes(&scratch.0.join("owner.sqlite"))?;
+        let peer = prepare_homes(&scratch.0.join("peer.sqlite"))?;
+        assert_ne!(
+            homes_root(&scratch.0.join("owner.sqlite"))?,
+            homes_root(&scratch.0.join("peer.sqlite"))?
+        );
+        drop((owner, peer));
+        Ok(())
+    }
+
+    #[test]
     fn startup_rejects_symlink_or_public_homes_root() -> crate::db::Result<()> {
         let scratch = super::super::process::ProbeHome::new()?;
         let database = scratch.0.join("state.sqlite");
-        let root = scratch.0.join(HOMES_DIRECTORY);
+        let root = scratch.0.join("state.sqlite.harness-homes");
         let outside = scratch.0.join("outside");
         let stale = outside.join(format!("{SESSION_PREFIX}{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&stale)?;
