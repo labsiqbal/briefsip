@@ -5,7 +5,7 @@ use serde::{
 use serde_json::{Map, Value};
 use std::fmt;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Failure {
     pub status: u16,
     pub code: &'static str,

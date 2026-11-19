@@ -256,6 +256,7 @@ impl Config {
         self.turns.validate()?;
         self.media.validate()?;
         self.connectors.validate()?;
+        self.update.validate(self.harness.test_mode)?;
         if self.tls.is_none() && !matches!(self.host.as_str(), "127.0.0.1" | "::1") {
             return Err("HTTP development listener must use loopback".into());
         }

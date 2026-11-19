@@ -7,7 +7,7 @@ import { describe, it } from 'node:test';
 import type { PairedMachine } from './shared/machines.ts';
 import type { UpdateAttempt, UpdateState } from './shared/updates.ts';
 import {
-  collectServerUpdateTargets, describeUpdateCapsule, describeUpdateEverything, nextUpdateCommand,
+  availableUpdates, collectServerUpdateTargets, describeUpdateCapsule, describeUpdateEverything, downloadLabel, nextUpdateCommand,
   planUpdateRun, resolveUpdateRunMachineStatus, type UpdateMachine,
 } from './src/updateEverything.logic.ts';
 import { readSavedUpdateRun, submitUpdateCommand, updateRunKey, withUpdateReceipts } from './src/updateEverythingRun.ts';
@@ -38,6 +38,18 @@ describe('collectServerUpdateTargets', () => {
       ['disabled', 'Remote updates off'], ['current', 'Up to date'], ['ahead', 'Up to date'], ['busy', 'Already updating'],
     ]);
   });
+});
+
+it('offers both update sources and keeps the preferred GitHub source on peer and local commands', () => {
+  const github = { ...release('0.13.0'), source: 'GitHub' as const };
+  const feed = { ...release('0.12.9'), source: 'Local feed' as const };
+  const snapshot = { ...state, available: github, github, feed };
+  assert.deepEqual(availableUpdates(snapshot), [github, feed]);
+  const rows = collectServerUpdateTargets(snapshot, [peer('peer')], [{ machine: 'peer', available: true, launcherAvailable: true }], 'Studio');
+  const run = planUpdateRun(rows, () => crypto.randomUUID());
+  assert.deepEqual(run.commands.map(({ version, source }) => [version, source]), [['0.13.0', 'GitHub'], ['0.13.0', 'GitHub']]);
+  assert.deepEqual(readSavedUpdateRun({ getItem: () => JSON.stringify(run) }), run);
+  assert.equal(downloadLabel({ bytesTransferred: 512, totalBytes: 2048 }), 'Downloading 25%');
 });
 
 describe('describeUpdateEverything', () => {

@@ -432,7 +432,10 @@ fn update_deadline(bytes: u64) -> Duration {
 }
 fn rejection(status: u16, update: bool, value: Option<&Value>) -> Failure {
     if update {
-        if let Some(failure) = value.and_then(|v| PeerError::from_code(text(v, "code"))) {
+        if let Some(failure) = value.and_then(|v| {
+            PeerError::from_code(text(v, "code"))
+                .or_else(|| crate::updates::github_remote_error(text(v, "code"), text(v, "error")))
+        }) {
             return failure;
         }
         if [401, 403].contains(&status) {
@@ -1157,6 +1160,12 @@ pub async fn update_remote(
     let token = crypt(s, text(&r, "token"), origin, false)?;
     let status = remote(s, origin, UPDATE_STATUS, Some(&token), None).await?;
     let value = match body {
+        Some(body)
+            if body["source"] == "GitHub"
+                && !(status["peerGitHubUpdates"] == true && status["peerApplyPolling"] == true) =>
+        {
+            return Err(PeerError::GitHubUnsupported.failure());
+        }
         Some(body) if status["peerApplyPolling"] == true => {
             let mut body = body.clone();
             body["poll"] = json!(true);

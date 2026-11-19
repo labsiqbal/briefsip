@@ -12,6 +12,7 @@ pub(super) fn initialize(db: &Connection) -> crate::db::Result<()> {
             state TEXT NOT NULL,
             bytes INTEGER NOT NULL DEFAULT 0,
             total INTEGER,
+            source TEXT,
             started INTEGER NOT NULL,
             finished INTEGER,
             error_code TEXT,
@@ -21,6 +22,17 @@ pub(super) fn initialize(db: &Connection) -> crate::db::Result<()> {
         CREATE INDEX IF NOT EXISTS update_fan_out_by_machine
             ON update_fan_out_attempts(machine, started DESC);",
     )?;
+    if db.query_row(
+        "SELECT count(*) FROM pragma_table_info('update_fan_out_attempts') WHERE name='source'",
+        [],
+        |row| row.get::<_, u32>(0),
+    )? == 0
+    {
+        db.execute(
+            "ALTER TABLE update_fan_out_attempts ADD COLUMN source TEXT",
+            [],
+        )?;
+    }
     db.execute(
         "UPDATE update_fan_out_attempts
          SET state='interrupted', finished=?, error_code='peer_connection_lost',
@@ -66,11 +78,17 @@ pub(super) fn record(
     Ok(true)
 }
 
-pub(super) fn set_total(state: &AppState, id: &str, total: u64) -> Result<()> {
+pub(super) fn transfer(
+    state: &AppState,
+    id: &str,
+    machine: &str,
+    total: u64,
+    source: &str,
+) -> Result<()> {
     let db = state.database.lock().map_err(|_| Failure::storage())?;
     db.connection.execute(
-        "UPDATE update_fan_out_attempts SET total=? WHERE id=?",
-        params![total, id],
+        "UPDATE update_fan_out_attempts SET total=?,source=?,bytes=0 WHERE id=? AND machine=?",
+        params![total, source, id, machine],
     )?;
     Ok(())
 }
@@ -143,7 +161,7 @@ pub(super) fn finish(
 pub(super) fn latest(state: &AppState, machine: &str) -> Result<Option<Value>> {
     let db = state.database.lock().map_err(|_| Failure::storage())?;
     Ok(db.connection.query_row(
-        "SELECT id,release,version,state,bytes,total,started,finished,error_code,error_message
+        "SELECT id,release,version,state,bytes,total,started,finished,error_code,error_message,source
          FROM update_fan_out_attempts WHERE machine=? ORDER BY started DESC,rowid DESC LIMIT 1",
         [machine],
         |r| {
@@ -154,6 +172,7 @@ pub(super) fn latest(state: &AppState, machine: &str) -> Result<Option<Value>> {
                 "version":r.get::<_, String>(2)?, "state":r.get::<_, String>(3)?,
                 "bytesTransferred":r.get::<_, u64>(4)?, "totalBytes":r.get::<_, Option<u64>>(5)?,
                 "startedAt":r.get::<_, i64>(6)?, "finishedAt":r.get::<_, Option<i64>>(7)?,
+                "source":r.get::<_, Option<String>>(10)?,
                 "error":code.map(|code| json!({"code":code,"message":message.unwrap_or_default()})),
             }))
         },

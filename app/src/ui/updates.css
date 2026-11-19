@@ -4,7 +4,10 @@
 .updates-page .k-badge { font-variant-numeric: tabular-nums; }
 
 .sidebar-update { flex-shrink: 0; padding: 4px 16px 0; }
-.sidebar-update .sidebar-update__capsule { min-height: 40px; border-radius: var(--radius-full); max-width: 100%; }
+.sidebar-update .sidebar-update__capsule { min-height: 40px; height: auto; padding-block: 4px; max-width: 100%; white-space: normal; }
+.sidebar-update__text { display: grid; text-align: start; font-variant-numeric: tabular-nums; }
+.sidebar-update__text small { color: var(--color-text-secondary); line-height: 14px; }
+.updates-download { display: block; width: min(100%, 160px); accent-color: var(--color-brand); }
 .sidebar-update + .sidebar__footer .sidebar__fade { display: none; }
 .updates-table tbody th { color: var(--color-ink); white-space: normal; min-width: 9rem; overflow-wrap: anywhere; }
 .updates-table tbody tr:last-child th { border-bottom: 0; }

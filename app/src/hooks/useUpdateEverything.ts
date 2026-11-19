@@ -1,10 +1,10 @@
 // Adapted from T3 useUpdateEverything.ts (MIT). See app/t3/provenance.json.
 import { useRef, useState } from 'react';
 import type { PairedMachine } from '../../shared/machines';
-import type { UpdateState } from '../../shared/updates';
+import type { ReleaseInfo, UpdateDownload, UpdateState } from '../../shared/updates';
 import { isReconnecting } from '../http.ts';
 import {
-  collectServerUpdateTargets, nextUpdateCommand, planUpdateRun, resolveUpdateRunMachineStatus, runActive, terminalUpdate,
+  availableUpdates, collectServerUpdateTargets, nextUpdateCommand, planUpdateRun, resolveUpdateRunMachineStatus, runActive, terminalUpdate,
   type PeerState, type UpdateCommand, type UpdateMachine, type UpdateRun,
 } from '../updateEverything.logic.ts';
 import { localUpdateKey, readLocalUpdate, readSavedUpdateRun, submitUpdateCommand, updateRunCommand, updateRunKey, withUpdateReceipts, type UpdateRequest } from '../updateEverythingRun.ts';
@@ -32,6 +32,7 @@ export function useUpdateEverything(request: UpdateRequest, directory: Directory
   const legacy = useRef(recovery.run ? null : recovery.local);
   const [state, setState] = useState<UpdateState | null>(null), [peers, setPeers] = useState<PeerState[] | null>(null);
   const [selection, setSelection] = useState<string[] | null>(null);
+  const [selectedRelease, setSelectedRelease] = useState<ReleaseInfo>();
   const [open, setOpen] = useState(!!recovery.run), [localIssue, setLocalIssue] = useState<PollIssue | null>(null);
   const [peerIssue, setPeerIssue] = useState<PollIssue | null>(null), [commandIssue, setCommandIssue] = useState<PollIssue | null>(null);
   const [storageError, setStorageError] = useState(recovery.error);
@@ -39,6 +40,12 @@ export function useUpdateEverything(request: UpdateRequest, directory: Directory
   const rows = state ? collectServerUpdateTargets(state, machines, peers ?? [], localName) : [];
   const reconnecting = machinesReconnecting || !!(localIssue?.reconnecting || peerIssue?.reconnecting || commandIssue?.reconnecting);
   const error = [localIssue, peerIssue, commandIssue].find(issue => issue && !issue.reconnecting)?.message || (!machinesReconnecting ? machineError : '');
+  const downloads: Record<string, UpdateDownload> = {};
+  if (state?.lastAttempt?.status === 'downloading') downloads.local = state.lastAttempt;
+  for (const peer of peers ?? []) {
+    const attempt = peer.fanOutAttempt;
+    if (attempt?.state === 'transferring') downloads[peer.machine] = attempt;
+  }
   const ready = rows.some(row => !row.skipped);
   const planning = selection === null && (!loaded || machines.length > 0 && peers === null);
 
@@ -61,7 +68,7 @@ export function useUpdateEverything(request: UpdateRequest, directory: Directory
     const next = planUpdateRun(plan, () => crypto.randomUUID());
     if (pending) {
       const local = next.commands.find(command => command.machines.includes('local'));
-      if (!local || local.version !== pending.version) return;
+      if (!local || local.version !== pending.version || local.source !== pending.source) return;
       local.id = pending.id;
     }
     if (save(next)) {
@@ -93,8 +100,9 @@ export function useUpdateEverything(request: UpdateRequest, directory: Directory
     } catch { setStorageError('Saved update could not be discarded. Check browser storage.'); }
   }
 
-  function show(machineIds: string[] | null = null) {
+  function show(machineIds: string[] | null = null, release?: ReleaseInfo) {
     setSelection(machineIds);
+    setSelectedRelease(release);
     setOpen(true);
   }
 
@@ -130,7 +138,7 @@ export function useUpdateEverything(request: UpdateRequest, directory: Directory
     }
     try {
       if (local) {
-        sessionStorage.setItem(localUpdateKey, JSON.stringify({ id: sending.id, version: sending.version }));
+        sessionStorage.setItem(localUpdateKey, JSON.stringify({ id: sending.id, version: sending.version, source: sending.source }));
       }
     } catch {
       setStorageError('Update request could not be saved. Check browser storage.');
@@ -161,7 +169,7 @@ export function useUpdateEverything(request: UpdateRequest, directory: Directory
         catch { setStorageError('Saved update could not be cleared. Check browser storage.'); }
       } else if (!current.current && !storageError) {
         const [machine] = collectServerUpdateTargets(value, [], [], localName);
-        const next = planUpdateRun([{ ...machine, skipped: null, target: pending.version }], () => pending.id);
+        const next = planUpdateRun([{ ...machine, skipped: null, target: pending.version, source: pending.source }], () => pending.id);
         if (save(updateRunCommand(next, { ...next.commands[0], startedAt: Date.now(), submitted: true }))) {
           legacy.current = null;
           setOpen(true);
@@ -180,15 +188,21 @@ export function useUpdateEverything(request: UpdateRequest, directory: Directory
         setPeerIssue(null);
       }
     } catch (error) { if (!signal.aborted) setPeerIssue(pollIssue(error)); }
-  }, { interval: 5000, enabled: machines.length > 0 || settingsOpen || !!run }, [request]);
+  }, { interval: active || settingsOpen || open ? 1000 : 5000, enabled: machines.length > 0 || settingsOpen || !!run }, [request]);
 
-  const plan = selection === null ? rows : rows.filter(row => selection.includes(row.id));
+  const offer = state && selectedRelease && availableUpdates(state).find(release =>
+    release.id === selectedRelease.id && release.source === selectedRelease.source);
+  const plan = selection === null ? rows : rows.filter(row => selection.includes(row.id)).map(row =>
+    row.local && selectedRelease && !row.skipped
+      ? { ...row, target: offer?.version ?? null, source: offer?.source, skipped: offer ? null : 'Update unavailable' }
+      : row);
+
   const previous = legacy.current;
   const recoveryPlan = previous && state && state.launcherAvailable && (!state.lastAttempt || terminalUpdate(state.lastAttempt.status)) ? rows.filter(row => row.local).map(row => ({
-    ...row, target: previous.version, skipped: null,
+    ...row, target: previous.version, source: previous.source, skipped: null,
   })) : null;
   return {
-    state, rows, plan: recoveryPlan ?? plan, ready: ready || !!recoveryPlan || !!storageError,
+    state, rows, downloads, plan: recoveryPlan ?? plan, ready: ready || !!recoveryPlan || !!storageError,
     run, active, open, show, dismiss, start, error, reconnecting, planning: planning && !recoveryPlan, storageError, discardRecovery,
     localPending: !!previous, lastAttempt: state?.lastAttempt,
   };

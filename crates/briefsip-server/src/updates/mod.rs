@@ -1,10 +1,12 @@
 mod archive;
 mod attempts;
 pub mod config;
+mod github;
 pub mod install;
 mod peer_error;
 mod peers;
 mod release;
+pub(crate) use github::remote_error as github_remote_error;
 pub(crate) use peer_error::PeerError;
 use peers::*;
 
@@ -32,6 +34,15 @@ fn error(status: u16, message: impl Into<String>) -> Failure {
 fn string<'a>(value: &'a Value, key: &str) -> &'a str {
     value[key].as_str().unwrap_or("")
 }
+const LOCAL_SOURCE: &str = "Local feed";
+static RECEIVING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn receive_lock() -> Result<tokio::sync::MutexGuard<'static, ()>> {
+    RECEIVING
+        .try_lock()
+        .map_err(|_| error(409, "Another update is already running."))
+}
+
 const UNMANAGED: &str = "Server is not running under the Briefsip launcher. Install the launcher before applying updates.";
 
 pub fn routes() -> Router<AppState> {
@@ -177,6 +188,12 @@ pub fn initialize(db: &rusqlite::Connection) -> crate::db::Result<()> {
          WHERE id LIKE 'peer-apply:%' AND json_extract(result,'$.pending')=1",
         [],
     )?;
+    db.execute(
+        "UPDATE update_commands SET result=json_set(result,'$.githubAttempt.status','failed',
+             '$.githubAttempt.reason','Server restarted during the GitHub download.')
+         WHERE json_extract(result,'$.githubAttempt.status')='downloading'",
+        [],
+    )?;
     attempts::initialize(db)?;
     Ok(())
 }
@@ -221,7 +238,8 @@ pub async fn status(state: &AppState) -> Result<Value> {
         .transpose()?
         .flatten()
     {
-        let public = release::public(&feed);
+        let mut public = release::public(&feed);
+        public["source"] = json!(LOCAL_SOURCE);
         result["feed"] = public.clone();
         if release::newer(string(&feed, "version"), string(&current, "version")) {
             result["available"] = public;
@@ -229,6 +247,9 @@ pub async fn status(state: &AppState) -> Result<Value> {
     }
     if let Some(attempt) = control.as_ref().and_then(|c| c.get("lastAttempt")) {
         result["lastAttempt"] = attempt.clone();
+    }
+    if let Some(attempt) = local_download_status(state, &result["lastAttempt"])? {
+        result["lastAttempt"] = attempt;
     }
     result["launcherAvailable"] = json!(control.is_some_and(|c| c["protocol"] == 1));
     result["runningTurns"] = json!(state
@@ -243,6 +264,24 @@ pub async fn status(state: &AppState) -> Result<Value> {
         )?);
     Ok(result)
 }
+async fn check(state: &AppState) -> Result<Value> {
+    let mut result = status(state).await?;
+    if let Some(feed) = &state.config.update.options().github {
+        match feed.check().await {
+            Ok(manifest) => {
+                result["github"] = manifest.public();
+                if release::newer(&manifest.version, string(&result["current"], "version"))
+                    && !release::newer(string(&result["available"], "version"), &manifest.version)
+                {
+                    result["available"] = manifest.public();
+                }
+            }
+            Err(failure) => result["githubError"] = json!(failure.message),
+        }
+    }
+    Ok(result)
+}
+
 fn command(value: &Value, keys: &[&str]) -> Result<()> {
     if !value
         .as_object()
@@ -310,26 +349,187 @@ fn target(state: &AppState, version: &str) -> Result<Value> {
     release::verify(releases, string(&feed, "id"))?;
     Ok(feed)
 }
+enum Target {
+    Local(Value),
+    GitHub(github::Manifest),
+}
+impl Target {
+    fn public(&self) -> Value {
+        match self {
+            Self::Local(value) => release::public(value),
+            Self::GitHub(manifest) => manifest.public(),
+        }
+    }
+}
+
+fn source(value: &Value) -> Result<Option<&str>> {
+    match value.get("source") {
+        None => Ok(None),
+        Some(value) => value
+            .as_str()
+            .filter(|source| [github::SOURCE, LOCAL_SOURCE].contains(source))
+            .map(Some)
+            .ok_or_else(|| error(400, "Invalid update source.")),
+    }
+}
+
+async fn selected_target(state: &AppState, version: &str, source: Option<&str>) -> Result<Target> {
+    if source != Some(LOCAL_SOURCE) {
+        let result = match &state.config.update.options().github {
+            Some(feed) => feed.check().await,
+            None => Err(github::unreachable()),
+        };
+        match result {
+            Ok(manifest) if manifest.version == version => return Ok(Target::GitHub(manifest)),
+            Err(failure) if source == Some(github::SOURCE) => return Err(failure),
+            Ok(_) if source == Some(github::SOURCE) => {
+                return Err(error(409, "Requested version is not available on GitHub."));
+            }
+            _ => {}
+        }
+    }
+    target(state, version).map(Target::Local)
+}
+
+fn local_download_status(state: &AppState, launcher_attempt: &Value) -> Result<Option<Value>> {
+    let saved: Option<String> = state
+        .database
+        .lock()
+        .map_err(|_| Failure::storage())?
+        .connection
+        .query_row(
+            "SELECT json_extract(result,'$.githubAttempt') FROM update_commands
+             WHERE json_type(result,'$.githubAttempt')='object' ORDER BY rowid DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(saved) = saved else { return Ok(None) };
+    let mut attempt: Value = serde_json::from_str(&saved).map_err(|_| Failure::storage())?;
+    if launcher_attempt["id"] == attempt["id"] {
+        let mut launcher_attempt = launcher_attempt.clone();
+        launcher_attempt["source"] = json!(github::SOURCE);
+        return Ok(Some(launcher_attempt));
+    }
+    if string(launcher_attempt, "started") > string(&attempt, "started") {
+        return Ok(None);
+    }
+    if attempt["status"] == "downloading" {
+        attempt["bytesTransferred"] = json!(downloaded(
+            state,
+            string(&attempt, "target"),
+            string(&attempt, "sha256")
+        ));
+    }
+    if let Some(fields) = attempt.as_object_mut() {
+        fields.remove("sha256");
+    }
+    Ok(Some(attempt))
+}
+
+fn downloaded(state: &AppState, target: &str, sha256: &str) -> u64 {
+    state
+        .config
+        .update
+        .options()
+        .releases_dir
+        .as_ref()
+        .and_then(|root| {
+            std::fs::symlink_metadata(archive::partial_file(root, target, sha256)).ok()
+        })
+        .filter(std::fs::Metadata::is_file)
+        .map_or(0, |metadata| metadata.len())
+}
+
 async fn apply(state: &AppState, value: &Value) -> Result<Value> {
-    command(value, &["id", "version"])?;
-    if status(state).await?["launcherAvailable"] != true {
+    command(value, &["id", "version", "source"])?;
+    let source = source(value)?;
+    let id = string(value, "id");
+    let version = string(value, "version");
+    let mut digest = json!({"apply":version});
+    if let Some(source) = source {
+        digest["source"] = json!(source);
+    }
+    let digest = digest.to_string();
+    let options = state.config.update.options();
+    let apply = |release: Value| json!({"type":"apply","id":id,"version":release["version"],"target":release["id"]});
+    if let Some(saved) = prior(state, id, &digest)? {
+        if saved.get("githubAttempt").is_some() {
+            return Ok(json!({"accepted":true,"id":id}));
+        }
+        return launcher(options, apply(saved)).await;
+    }
+    let _receiving = receive_lock()?;
+    let current = status(state).await?;
+    if current["launcherAvailable"] != true {
         return Err(error(409, UNMANAGED));
     }
-    let digest = json!({"apply":value["version"]}).to_string();
-    let release = match prior(state, string(value, "id"), &digest)? {
-        Some(saved) => saved,
-        None => {
-            let release = target(state, string(value, "version"))?;
+    match selected_target(state, version, source).await? {
+        Target::Local(release) => {
             save(
                 state,
-                string(value, "id"),
+                id,
                 &digest,
-                &json!({"id":release["id"],"version":release["version"]}),
+                &json!({"id":release["id"],"version":version}),
             )?;
-            release
+            launcher(options, apply(release)).await
         }
-    };
-    launcher(state.config.update.options(),json!({"type":"apply","id":value["id"],"version":release["version"],"target":release["id"]})).await
+        Target::GitHub(manifest) => {
+            if !release::newer(version, string(&current["current"], "version")) {
+                return Err(error(409, "Release version is not an update."));
+            }
+            let attempt = json!({"id":id,"version":version,"target":manifest.id,
+                "status":"downloading","source":github::SOURCE,"totalBytes":manifest.size,
+                "sha256":manifest.sha256,"started":chrono::DateTime::from_timestamp_millis(crate::config::now())
+                    .ok_or_else(Failure::storage)?.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)});
+            save(state, id, &digest, &json!({"githubAttempt":attempt}))?;
+            let (state, id) = (state.clone(), id.to_owned());
+            tokio::spawn(apply_github(state, id, manifest, attempt, _receiving));
+            Ok(json!({"accepted":true,"id":value["id"]}))
+        }
+    }
+}
+
+async fn apply_github(
+    state: AppState,
+    id: String,
+    manifest: github::Manifest,
+    mut attempt: Value,
+    _receiving: tokio::sync::MutexGuard<'static, ()>,
+) {
+    let options = state.config.update.options();
+    let outcome = async {
+        let feed = options.github.as_ref().ok_or_else(github::unreachable)?;
+        let root = options.releases_dir.as_ref().ok_or_else(Failure::storage)?;
+        feed.stage(root, &manifest, || async { Ok(()) }).await?;
+        launcher(
+            options,
+            json!({"type":"apply","id":id,"target":manifest.id,"version":manifest.version}),
+        )
+        .await?;
+        Ok::<_, Failure>(())
+    }
+    .await;
+    if let Err(failure) = outcome {
+        attempt["status"] = json!("failed");
+        attempt["reason"] = json!(failure.message);
+        if let Err(error) = save_update_result(&state, &id, &json!({"githubAttempt":attempt})) {
+            eprintln!("GitHub release apply receipt {id}: {}", error.code);
+        }
+    }
+}
+
+fn save_update_result(state: &AppState, key: &str, result: &Value) -> Result<()> {
+    state
+        .database
+        .lock()
+        .map_err(|_| Failure::storage())?
+        .connection
+        .execute(
+            "UPDATE update_commands SET result=? WHERE id=?",
+            rusqlite::params![result.to_string(), key],
+        )?;
+    Ok(())
 }
 pub async fn local(state: &AppState, request: Request) -> Result<Response> {
     let path = request.uri().path().to_owned();
@@ -346,7 +546,7 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
     }
     if method == Method::GET {
         if path == "/api/updates" {
-            return Ok(json_response(200, status(state).await?));
+            return Ok(json_response(200, check(state).await?));
         }
         if path == "/api/updates/machines" {
             return Ok(json_response(200, peer_statuses(state).await?));
