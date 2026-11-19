@@ -1,5 +1,7 @@
 use super::*;
+use crate::data::providers::format_timeout;
 use reqwest::Response;
+use std::{future::Future, time::Duration};
 
 pub const MALFORMED: &str =
     "The provider returned a malformed response. Check provider compatibility before retrying.";
@@ -123,6 +125,15 @@ pub async fn call(
     }
     let effect = crate::computer::hub::before_effect(state, turn, "provider", json!({"model":model,"purpose":if phase=="routing"{"routing"}else{"completion"},"phase":phase})).await?;
     let mut tokens = [None; 3];
+    let limit = state.config.data.turn_idle_timeout();
+    let explicit_timeout = state.config.data.timeout.map(|ms| {
+        Duration::from_millis(if phase == "compaction" {
+            ms.min(15000)
+        } else {
+            ms
+        })
+    });
+    let stream_idle = (streamed && explicit_timeout.is_none()).then_some(limit);
     let operation = async {
         {
             let guard = state.database.lock().map_err(|_| Failure::storage())?;
@@ -132,11 +143,14 @@ pub async fn call(
             state.events.turn(&guard.connection, turn)?;
             state.turns.mark_started(turn);
         }
-        let response=request.send().await.map_err(|_|error(502,"The provider could not be reached. Check the provider URL and network before retrying; completion may be uncertain."))?;
+        let response = wait_for_stream_data(stream_idle, request.send()).await?
+        .map_err(|_| error(502, "The provider could not be reached. Check the provider URL and network before retrying; completion may be uncertain."))?;
         let status = response.status().as_u16();
         if !(200..300).contains(&status) {
             let unsupported = if matches!(status, 400 | 422) && !tools.is_empty() {
-                let bytes = bounded(response, 8192).await.unwrap_or_default();
+                let bytes = wait_for_stream_data(stream_idle, bounded(response, 8192))
+                    .await?
+                    .unwrap_or_default();
                 let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
                 v["error"]["param"] == "tools"
                     || matches!(
@@ -171,20 +185,26 @@ pub async fn call(
             return Err(error(502,"The provider did not send the requested SSE stream. Check provider streaming support."));
         }
         let v = if streamed {
-            stream::read(response, &account.family, &account.termination, |text| {
-                if account
-                    .key
-                    .as_ref()
-                    .is_some_and(|k| !k.is_empty() && text.contains(k))
-                {
-                    return Err(error(502, MALFORMED));
-                }
-                if phase == "compaction" {
-                    Ok(())
-                } else {
-                    stream::text(state, seq, text, false)
-                }
-            })
+            stream::read(
+                response,
+                &account.family,
+                &account.termination,
+                stream_idle,
+                |text| {
+                    if account
+                        .key
+                        .as_ref()
+                        .is_some_and(|k| !k.is_empty() && text.contains(k))
+                    {
+                        return Err(error(502, MALFORMED));
+                    }
+                    if phase == "compaction" {
+                        Ok(())
+                    } else {
+                        stream::text(state, seq, text, false)
+                    }
+                },
+            )
             .await?
         } else {
             let bytes = bounded(response, 2 * 1024 * 1024).await?;
@@ -246,7 +266,18 @@ pub async fn call(
         }
         Ok(Answer::Text(text.to_owned()))
     };
-    let result=tokio::time::timeout(std::time::Duration::from_millis(if phase=="compaction" {state.config.data.timeout.unwrap_or(120000).min(15000)}else{state.config.data.timeout.unwrap_or(120000)}),crate::computer::hub::run_effect(&effect, operation)).await.unwrap_or_else(|_|Err(error(502,"The provider request timed out. Check the provider before retrying because completion may be uncertain.")));
+    let operation = crate::computer::hub::run_effect(&effect, operation);
+    let result = if let Some(timeout) = explicit_timeout {
+        tokio::time::timeout(timeout, operation)
+            .await
+            .unwrap_or_else(|_| Err(error(502, provider_error(408, false))))
+    } else if streamed {
+        operation.await
+    } else {
+        tokio::time::timeout(limit, operation)
+            .await
+            .unwrap_or_else(|_| Err(timeout_failure(limit, false)))
+    };
     crate::computer::hub::finish_effect(
         state,
         effect,
@@ -262,6 +293,32 @@ pub async fn call(
     db.execute("UPDATE provider_calls SET status=?,finished=?,input_tokens=?,output_tokens=?,total_tokens=? WHERE seq=? AND status='pending'",params![if result.is_ok(){"received"}else{"failed"},iso(db,state.config.now())?,tokens[0],tokens[1],tokens[2],seq])?;
     result
 }
+pub(super) async fn wait_for_stream_data<T>(
+    idle: Option<Duration>,
+    operation: impl Future<Output = T>,
+) -> Result<T> {
+    if let Some(limit) = idle {
+        tokio::time::timeout(limit, operation)
+            .await
+            .map_err(|_| timeout_failure(limit, true))
+    } else {
+        Ok(operation.await)
+    }
+}
+
+fn timeout_failure(limit: Duration, streamed: bool) -> Failure {
+    let duration = format_timeout(limit);
+    let reason = if streamed {
+        format!("No activity for {duration}.")
+    } else {
+        format!("Reached the {duration} provider request limit.")
+    };
+    error(
+        502,
+        format!("{reason} Check the provider before retrying. Completion may be uncertain."),
+    )
+}
+
 async fn bounded(mut r: Response, limit: usize) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     while let Some(chunk) = r.chunk().await.map_err(|_| error(502, MALFORMED))? {

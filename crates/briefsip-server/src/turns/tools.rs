@@ -427,7 +427,18 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
         {
             journal(db, turn, call, &result)?;
         }
-        Ok(result)
+        let wait = if name == "ask_user" && result.is_null() {
+            crate::harness::config::CardWait::checkpoint(state, db, string(turn, "id"))?
+        } else {
+            None
+        };
+        Ok((result, wait))
+    }).map(|(result, wait)| {
+        if let Some(wait) = wait {
+            wait.keep_paused();
+            state.turns.cancel(string(turn, "id"));
+        }
+        result
     });
     if result
         .as_ref()

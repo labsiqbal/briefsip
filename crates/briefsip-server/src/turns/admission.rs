@@ -220,10 +220,12 @@ pub fn ready(state: &AppState, db: &Connection, agent: &str) -> Result<()> {
         ));
     }
     let accounts = data::providers::accounts(state)?;
-    let account = accounts
-        .iter()
-        .find(|account| account.id == string(&profile, "provider_account"));
-    if let Some(reason) = data::agents::provider_blocked_reason(runtime, account) {
+    if let Some(reason) = data::agents::binding_blocked_reason(
+        db,
+        runtime,
+        string(&profile, "provider_account"),
+        &accounts,
+    )? {
         return Err(error(503, reason));
     }
     Ok(())

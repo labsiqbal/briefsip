@@ -26,3 +26,27 @@ pub fn reflected(bytes: &[u8], secret: &str) -> bool {
         .iter()
         .any(|s| !s.is_empty() && bytes.windows(s.len()).any(|w| w == s))
 }
+
+pub(crate) fn redact(text: &str, secrets: &[String], streaming: bool) -> String {
+    let mut value = text.to_owned();
+    let mut sorted = secrets.iter().filter(|s| !s.is_empty()).collect::<Vec<_>>();
+    sorted.sort_by_key(|v| std::cmp::Reverse(v.len()));
+    for secret in &sorted {
+        value = value.replace(secret.as_str(), "[REDACTED]");
+        let encoded = json!(secret).to_string();
+        if let Some(escaped) = encoded.get(1..encoded.len().saturating_sub(1)) {
+            value = value.replace(escaped, "[REDACTED]");
+        }
+    }
+    if streaming {
+        for secret in sorted {
+            for size in (1..secret.len().min(value.len() + 1)).rev() {
+                if secret.is_char_boundary(size) && value.ends_with(&secret[..size]) {
+                    value.truncate(value.len() - size);
+                    break;
+                }
+            }
+        }
+    }
+    value
+}

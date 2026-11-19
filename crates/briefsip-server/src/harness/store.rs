@@ -3,16 +3,17 @@ use crate::{
     data::{agents, exists},
     harness::{
         process::{self, Process},
-        snapshot::{redact, Snapshot},
+        snapshot::Snapshot,
     },
+    mcp::secrets::redact,
     turns,
 };
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
-    fs::OpenOptions,
+    fs::{DirBuilder, OpenOptions},
     io::Write,
-    os::unix::fs::OpenOptionsExt,
+    os::unix::fs::{DirBuilderExt, OpenOptionsExt},
     path::{Path, PathBuf},
 };
 
@@ -51,6 +52,7 @@ pub struct Home {
     pub path: PathBuf,
     pub environment: HashMap<String, String>,
     pub fingerprint: String,
+    pub login_id: Option<String>,
 }
 impl Drop for Home {
     fn drop(&mut self) {
@@ -68,13 +70,15 @@ fn private(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 fn home(
     runtime: &str,
-    account: &data::providers::Account,
+    account: Option<&data::providers::Account>,
+    login: Option<(&str, &[u8])>,
     model: &str,
     fingerprint: String,
 ) -> Result<Home> {
     let path = std::env::temp_dir().join(format!("briefsip-session-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir(&path).map_err(|_| Failure::storage())?;
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
+    DirBuilder::new()
+        .mode(0o700)
+        .create(&path)
         .map_err(|_| Failure::storage())?;
     let mut h = Home {
         path: path.clone(),
@@ -94,29 +98,41 @@ fn home(
             ),
         ]),
         fingerprint,
+        login_id: login.map(|(id, _)| id.to_owned()),
     };
     if runtime == "codex" {
-        if account.family != "openai-compatible" || account.base.is_empty() {
-            return Err(error(
-                502,
-                "Codex requires an OpenAI-compatible provider in Settings.",
-            ));
-        }
-        data::providers::address(&account.base)
-            .map_err(|_| error(502, "Invalid Codex provider URL."))?;
         let codex = path.join(".codex");
-        std::fs::create_dir_all(codex.join("rules")).map_err(|_| Failure::storage())?;
+        DirBuilder::new()
+            .mode(0o700)
+            .recursive(true)
+            .create(codex.join("rules"))
+            .map_err(|_| Failure::storage())?;
         h.environment
             .insert("CODEX_HOME".into(), codex.to_string_lossy().into_owned());
-        h.environment.insert(
-            "BRIEFSIP_PROVIDER_KEY".into(),
-            account
-                .key
-                .clone()
-                .filter(|v| !v.is_empty())
-                .unwrap_or_else(|| "briefsip-no-key".into()),
-        );
-        private(&codex.join("config.toml"),format!("model = {}\nmodel_provider = \"briefsip\"\n[model_providers.briefsip]\nname = \"Briefsip provider\"\nbase_url = {}\nwire_api = \"responses\"\nenv_key = \"BRIEFSIP_PROVIDER_KEY\"\nrequires_openai_auth = false\nsupports_websockets = false\n",json!(model),json!(account.base.trim_end_matches('/'))).as_bytes())?;
+        if let Some((_, bytes)) = login {
+            private(&codex.join(data::logins::credential_name(runtime)), bytes)?;
+            private(&codex.join("config.toml"), data::logins::CODEX_CONFIG)?;
+        } else {
+            let account = account
+                .filter(|account| account.family == "openai-compatible" && !account.base.is_empty())
+                .ok_or_else(|| {
+                    error(
+                        502,
+                        "Codex requires an OpenAI-compatible provider in Settings.",
+                    )
+                })?;
+            data::providers::address(&account.base)
+                .map_err(|_| error(502, "Invalid Codex provider URL."))?;
+            h.environment.insert(
+                "BRIEFSIP_PROVIDER_KEY".into(),
+                account
+                    .key
+                    .clone()
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or_else(|| "briefsip-no-key".into()),
+            );
+            private(&codex.join("config.toml"),format!("model = {}\nmodel_provider = \"briefsip\"\n[model_providers.briefsip]\nname = \"Briefsip provider\"\nbase_url = {}\nwire_api = \"responses\"\nenv_key = \"BRIEFSIP_PROVIDER_KEY\"\nrequires_openai_auth = false\nsupports_websockets = false\n",json!(model),json!(account.base.trim_end_matches('/'))).as_bytes())?;
+        }
         let mut rules = [
             "rm", "rmdir", "shred", "dd", "mkfs", "sudo", "su", "mount", "umount", "chmod",
             "chown", "kill", "pkill", "killall",
@@ -141,27 +157,40 @@ fn home(
                 .join("\n")
                 .as_bytes(),
         )?;
-    } else if runtime == "claude" && !account.base.is_empty() {
-        h.environment.insert(
-            "ANTHROPIC_BASE_URL".into(),
-            account
-                .base
-                .trim_end_matches('/')
-                .trim_end_matches("/v1")
-                .into(),
-        );
-        h.environment.insert(
-            "ANTHROPIC_API_KEY".into(),
-            account
-                .key
-                .clone()
-                .filter(|v| !v.is_empty())
-                .unwrap_or_else(|| "briefsip-no-key".into()),
-        );
-        h.environment.insert(
-            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".into(),
-            "1".into(),
-        );
+    } else if runtime == "claude" {
+        if let Some((_, bytes)) = login {
+            let claude = path.join(".claude");
+            DirBuilder::new()
+                .mode(0o700)
+                .create(&claude)
+                .map_err(|_| Failure::storage())?;
+            private(&claude.join(data::logins::credential_name(runtime)), bytes)?;
+            h.environment.insert(
+                "CLAUDE_CONFIG_DIR".into(),
+                claude.to_string_lossy().into_owned(),
+            );
+        } else if let Some(account) = account.filter(|account| !account.base.is_empty()) {
+            h.environment.insert(
+                "ANTHROPIC_BASE_URL".into(),
+                account
+                    .base
+                    .trim_end_matches('/')
+                    .trim_end_matches("/v1")
+                    .into(),
+            );
+            h.environment.insert(
+                "ANTHROPIC_API_KEY".into(),
+                account
+                    .key
+                    .clone()
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or_else(|| "briefsip-no-key".into()),
+            );
+            h.environment.insert(
+                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".into(),
+                "1".into(),
+            );
+        }
     }
     Ok(h)
 }
@@ -185,7 +214,7 @@ pub async fn approve(
 ) -> Result<bool> {
     let id = uuid::Uuid::new_v4().to_string();
     let mut changes = state.events.subscribe();
-    {
+    let _wait = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
         let turn = one(
@@ -230,8 +259,10 @@ pub async fn approve(
         if serialized.len() > 32000 {
             return Err(error(502, "Harness approval arguments exceed 32 KiB."));
         }
+        let wait = config::CardWait::start(state, turn_id)?;
         db.execute("INSERT INTO harness_approvals(id,turn,agent,runtime,workspace,kind,description,command,prefix,input,state) VALUES(?,?,?,?,?,?,?,?,?,?,'approval')",rusqlite::params![id,turn_id,turn["agent"].as_str(),profile["runtime"].as_str(),binding.directory.to_str(),kind,clean(description),command.map(clean),prefix,serialized])?;
-    }
+        wait
+    };
     loop {
         {
             let guard = state.database.lock().map_err(|_| Failure::storage())?;
@@ -336,19 +367,6 @@ fn reminder(
     let db = state.database.lock().map_err(|_| Failure::storage())?;
     turns::harness::reminder(&db.connection, turn, profile)
 }
-fn tool(
-    state: &AppState,
-    turn: &str,
-    snapshot: &mut Snapshot,
-    id: &str,
-    name: &str,
-    status: &str,
-) -> Result<()> {
-    let db = state.database.lock().map_err(|_| Failure::storage())?;
-    db.connection.execute("INSERT INTO harness_steps VALUES(?,?,?,?) ON CONFLICT(turn,id) DO UPDATE SET name=excluded.name,state=excluded.state",rusqlite::params![turn,id,name,status])?;
-    drop(db);
-    snapshot.tool(id, name, status)
-}
 async fn rpc(process: &mut Process, seq: &mut i64, method: &str, params: Value) -> Result<Value> {
     *seq += 1;
     let id = *seq;
@@ -426,6 +444,7 @@ async fn execute(
     saved: Option<String>,
     binding: &crate::config::WorkspaceConfig,
     secrets: Vec<String>,
+    clock: Option<config::TurnClock>,
 ) -> Result<String> {
     let executable = super::executable(state, runtime).ok_or_else(|| {
         error(
@@ -558,6 +577,8 @@ async fn execute(
         turn: turn_id,
     };
     let process = child.process.as_mut().ok_or_else(Failure::storage)?;
+    process.record_stderr(state, call, &secrets);
+    process.clock = clock;
     let mut seq = 0;
     if runtime == "codex" {
         rpc(process,&mut seq,"initialize",json!({"clientInfo":{"name":"briefsip","title":"Briefsip","version":"0.1.0"},"capabilities":{"experimentalApi":true}})).await?;
@@ -829,25 +850,61 @@ async fn execute(
                     snapshot.text(string(&p["item"], "text"), p["item"]["id"].as_str(), true)?;
                 }
                 if ["item/started", "item/completed"].contains(&method)
-                    && p["item"]["type"]
-                        .as_str()
-                        .is_some_and(|v| !["agentMessage", "reasoning", "plan"].contains(&v))
+                    && p["item"]["type"].as_str().is_some_and(|v| {
+                        matches!(
+                            v,
+                            "commandExecution"
+                                | "fileChange"
+                                | "mcpToolCall"
+                                | "dynamicToolCall"
+                                | "webSearch"
+                                | "imageView"
+                                | "imageGeneration"
+                                | "collabAgentToolCall"
+                        )
+                    })
                 {
                     let item = &p["item"];
-                    tool(
-                        state,
-                        string(turn, "id"),
-                        &mut snapshot,
+                    let kind = string(item, "type");
+                    let completed = method == "item/completed";
+                    let arguments = match kind {
+                        "commandExecution" => {
+                            json!({"command": item["command"], "cwd": item["cwd"]})
+                        }
+                        "fileChange" => item["changes"].clone(),
+                        "webSearch" => json!({"query": item["query"]}),
+                        _ => item["arguments"].clone(),
+                    };
+                    let result = match kind {
+                        "commandExecution" if completed => {
+                            json!({"output": item["aggregatedOutput"], "exitCode": item["exitCode"]})
+                        }
+                        "mcpToolCall" => item
+                            .get("error")
+                            .filter(|value| !value.is_null())
+                            .cloned()
+                            .map(|error| json!({"error": error}))
+                            .unwrap_or_else(|| {
+                                item["result"]["structuredContent"]
+                                    .as_object()
+                                    .map_or_else(|| item["result"].clone(), |value| json!(value))
+                            }),
+                        "dynamicToolCall" if completed => {
+                            json!({"content": item["contentItems"], "isError": item["success"] == false})
+                        }
+                        _ => Value::Null,
+                    };
+                    let status = item["status"].as_str().unwrap_or(if completed {
+                        "completed"
+                    } else {
+                        "running"
+                    });
+                    snapshot.tool(
                         string(item, "id"),
-                        item["command"]
-                            .as_str()
-                            .or(item["tool"].as_str())
-                            .unwrap_or(string(item, "type")),
-                        if method == "item/started" {
-                            "running"
-                        } else {
-                            item["status"].as_str().unwrap_or("completed")
-                        },
+                        item["tool"].as_str().unwrap_or(kind),
+                        status,
+                        &arguments,
+                        &result,
                     )?;
                 }
                 if method == "item/completed" && p["item"]["type"] == "commandExecution" {
@@ -859,7 +916,6 @@ async fn execute(
                             string(turn, "id"),
                             string(item, "id"),
                             &redact(string(item, "command"), &native_secrets, false),
-                            &redact(string(item, "aggregatedOutput"), &native_secrets, false),
                             item["exitCode"].as_i64(),
                             false,
                         )?;
@@ -982,13 +1038,12 @@ async fn execute(
                                             }),
                                         ),
                                     );
-                                    tool(
-                                        state,
-                                        string(turn, "id"),
-                                        &mut snapshot,
+                                    snapshot.tool(
                                         string(block, "id"),
                                         string(block, "name"),
                                         "running",
+                                        &block["input"],
+                                        &Value::Null,
                                     )?;
                                 }
                             }
@@ -1004,10 +1059,7 @@ async fn execute(
                                     else {
                                         continue;
                                     };
-                                    tool(
-                                        state,
-                                        string(turn, "id"),
-                                        &mut snapshot,
+                                    snapshot.tool(
                                         string(block, "tool_use_id"),
                                         &name,
                                         if block["is_error"] == true {
@@ -1015,6 +1067,8 @@ async fn execute(
                                         } else {
                                             "completed"
                                         },
+                                        &Value::Null,
+                                        &block["content"],
                                     )?;
                                     if let Some(command) = command
                                         .or_else(|| (name == "Read").then(|| "cat file".into()))
@@ -1023,16 +1077,11 @@ async fn execute(
                                             .database
                                             .lock()
                                             .map_err(|_| Failure::storage())?;
-                                        let output = block["content"]
-                                            .as_str()
-                                            .map(str::to_owned)
-                                            .unwrap_or_else(|| block["content"].to_string());
                                         turns::harness::command(
                                             &guard.connection,
                                             string(turn, "id"),
                                             string(block, "tool_use_id"),
                                             &redact(&command, &native_secrets, false),
-                                            &redact(&output, &native_secrets, false),
                                             Some(if block["is_error"] == true { 1 } else { 0 }),
                                             false,
                                         )?;
@@ -1112,10 +1161,7 @@ async fn execute(
                     value["type"].as_str(),
                     Some("tool_execution_start" | "tool_execution_update" | "tool_execution_end")
                 ) {
-                    tool(
-                        state,
-                        string(turn, "id"),
-                        &mut snapshot,
+                    snapshot.tool(
                         string(&value, "toolCallId"),
                         string(&value, "toolName"),
                         if value["type"] == "tool_execution_end" {
@@ -1127,6 +1173,8 @@ async fn execute(
                         } else {
                             "running"
                         },
+                        &value["args"],
+                        &value["result"],
                     )?;
                 }
                 if value["type"] == "agent_end" {
@@ -1219,13 +1267,12 @@ async fn execute(
                     if update["sessionUpdate"] == "tool_call" {
                         acp_segment += 1;
                     }
-                    tool(
-                        state,
-                        string(turn, "id"),
-                        &mut snapshot,
+                    snapshot.tool(
                         string(update, "toolCallId"),
-                        update["title"].as_str().unwrap_or("Tool"),
-                        update["status"].as_str().unwrap_or("pending"),
+                        string(update, "title"),
+                        string(update, "status"),
+                        &update["rawInput"],
+                        &update["rawOutput"],
                     )?;
                 }
             }
@@ -1240,7 +1287,6 @@ async fn execute(
         };
         if pass == 0 {
             if let Some(reason) = reminder(state, turn, profile, phase)? {
-                snapshot.tool("verification-reminder", "Verify result", "requested")?;
                 prompt = reason;
                 continue;
             }
@@ -1287,7 +1333,7 @@ pub async fn run(
     messages: &[Value],
     phase: &str,
 ) -> Result<String> {
-    let (turn, profile, binding, account) = {
+    let (turn, profile, binding, account, login) = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
         let turn = one(
@@ -1299,16 +1345,38 @@ pub async fn run(
         let profile = agents::read(db, string(&turn, "agent"))?;
         let binding = turns::harness::workspace(state, db, &turn)?
             .ok_or_else(|| error(403, "Coding harness requires a host workspace folder."))?;
-        let account = data::providers::accounts(state)?
-            .into_iter()
-            .find(|v| v.id == string(&profile, "provider_account"))
-            .ok_or_else(|| {
+        let provider = string(&profile, "provider_account");
+        let (account, login) = if provider.starts_with(data::logins::PREFIX) {
+            let selected = data::logins::bound(db, provider)?;
+            if let Some(reason) =
+                data::logins::blocked_reason(string(&profile, "runtime"), selected.as_ref())
+            {
+                return Err(error(503, reason));
+            }
+            let selected = selected.ok_or_else(Failure::storage)?;
+            let credentials = data::logins::credentials(state, &selected)?.ok_or_else(|| {
                 error(
                     503,
-                    "The selected provider account is not configured. Check Settings > Providers.",
+                    "Engine login credentials are missing. Check sign-in in Settings > Engines.",
                 )
             })?;
-        (turn, profile, binding, account)
+            (
+                None,
+                Some((string(&selected, "id").to_owned(), credentials)),
+            )
+        } else {
+            let account = data::providers::accounts(state)?
+                .into_iter()
+                .find(|account| account.id == provider)
+                .ok_or_else(|| {
+                    error(
+                        503,
+                        "The selected provider account is not configured. Check Settings > Providers.",
+                    )
+                })?;
+            (Some(account), None)
+        };
+        (turn, profile, binding, account, login)
     };
     let runtime = string(&profile, "runtime");
     let conversation = turn["channel"]
@@ -1316,15 +1384,26 @@ pub async fn run(
         .or(turn["thread"].as_str())
         .unwrap_or("direct");
     let key = json!([turn["agent"], conversation, runtime, binding.directory]).to_string();
-    let fingerprint = json!([
-        account.id,
-        account.base,
-        format!(
-            "{:x}",
-            Sha256::digest(account.key.as_deref().unwrap_or("").as_bytes())
-        ),
-        model
-    ])
+    let fingerprint = if let Some(account) = &account {
+        json!([
+            account.id,
+            account.base,
+            format!(
+                "{:x}",
+                Sha256::digest(account.key.as_deref().unwrap_or("").as_bytes())
+            ),
+            model
+        ])
+    } else if let Some((id, bytes)) = &login {
+        json!([
+            data::logins::PREFIX,
+            id,
+            format!("{:x}", Sha256::digest(bytes)),
+            model
+        ])
+    } else {
+        return Err(Failure::storage());
+    }
     .to_string();
     let project_environment = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
@@ -1332,6 +1411,23 @@ pub async fn run(
     };
     let mut env = state.config.harness.environment.clone();
     env.extend(project_environment.clone());
+    if login.is_some() {
+        for variable in [
+            "OPENAI_API_KEY",
+            "CODEX_API_KEY",
+            "CODEX_ACCESS_TOKEN",
+            "OPENAI_BASE_URL",
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_BASE_URL",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "CLAUDE_CODE_USE_BEDROCK",
+            "CLAUDE_CODE_USE_VERTEX",
+            "CLAUDE_CODE_USE_FOUNDRY",
+        ] {
+            env.remove(variable);
+        }
+    }
     let same_home;
     {
         let mut homes = state.config.harness.homes.lock().await;
@@ -1341,7 +1437,18 @@ pub async fn run(
         if ["codex", "claude"].contains(&runtime) {
             if !same_home {
                 homes.remove(&key);
-                homes.insert(key.clone(), home(runtime, &account, model, fingerprint)?);
+                homes.insert(
+                    key.clone(),
+                    home(
+                        runtime,
+                        account.as_ref(),
+                        login
+                            .as_ref()
+                            .map(|(id, bytes)| (id.as_str(), bytes.as_slice())),
+                        model,
+                        fingerprint,
+                    )?,
+                );
             }
             env.extend(
                 homes
@@ -1369,7 +1476,7 @@ pub async fn run(
     let call = {
         let db = state.database.lock().map_err(|_| Failure::storage())?;
         db.connection.execute("UPDATE turns SET status='running',started_at=coalesce(started_at,?) WHERE id=? AND status IN('queued','running') AND paused=0",rusqlite::params![data::iso(&db.connection,state.config.now())?,turn_id])?;
-        db.connection.execute("INSERT INTO provider_calls(turn,agent,model,origin,purpose,phase,family,account,status,created) VALUES(?,?,?,'local-harness',?,? ,?,'','pending',?)",rusqlite::params![turn_id,turn["agent"].as_str(),label(runtime),if phase=="routing"{"routing"}else{"completion"},phase,runtime,data::iso(&db.connection,state.config.now())?])?;
+        db.connection.execute("INSERT INTO provider_calls(turn,agent,model,origin,purpose,phase,family,account,status,created) VALUES(?,?,?,'local-harness',?,? ,?,'','pending',?)",rusqlite::params![turn_id,turn["agent"].as_str(),if model.is_empty(){label(runtime)}else{model},if phase=="routing"{"routing"}else{"completion"},phase,runtime,data::iso(&db.connection,state.config.now())?])?;
         state.events.turn(&db.connection, turn_id)?;
         db.connection.last_insert_rowid()
     };
@@ -1407,7 +1514,16 @@ pub async fn run(
     if runtime == "hermes" {
         env.extend(process::HERMES_ENV.map(|(key, value)| (key.into(), value.into())));
     }
-    let mut secrets = vec![token.clone(), account.key.unwrap_or_default()];
+    let model = if login.is_some() && model == "default" {
+        ""
+    } else {
+        model
+    };
+    let mut secrets = vec![token.clone()];
+    secrets.extend(account.and_then(|account| account.key));
+    if let Some((_, bytes)) = login {
+        secrets.extend(data::logins::secrets(runtime, &bytes));
+    }
     {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         secrets.extend(crate::mcp::secrets::project(
@@ -1416,10 +1532,24 @@ pub async fn run(
             None,
         )?);
     }
-    let result = tokio::time::timeout(Duration::from_millis(state.config.data.timeout.unwrap_or(120000)), execute(
-        state, &turn, &profile, runtime, model, messages, phase, call, &token, env, saved,
-        &binding, secrets,
-    )).await.map_err(|_|error(502,"Coding harness timed out. Check workspace changes before retrying; this turn was not replayed."))?;
+    let operation = |clock| {
+        execute(
+            state, &turn, &profile, runtime, model, messages, phase, call, &token, env, saved,
+            &binding, secrets, clock,
+        )
+    };
+    // Dropping execute flushes partial output and schedules the ACP cancel. The turn worker
+    // awaits that cleanup before releasing its slot.
+    let result = if let Some(ms) = state.config.data.timeout {
+        tokio::time::timeout(Duration::from_millis(ms), operation(None)).await.map_err(|_|error(502,"Coding harness timed out. Check workspace changes before retrying; this turn was not replayed."))?
+    } else {
+        let active = config::ActiveClock::new(state, turn_id)?;
+        tokio::select! {
+            biased;
+            failure = active.clock.expired() => return Err(failure),
+            result = operation(Some(active.clock.clone())) => result,
+        }
+    };
     if lease.external {
         bridge(state, "revoke", json!({"id":lease.id})).await?;
         lease.external = false;
@@ -1430,6 +1560,84 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn idle_timeout_flushes_partial_reply_and_cancels_acp() -> crate::db::Result<()> {
+        use std::sync::{Arc, Mutex};
+
+        let scratch = process::ProbeHome::new()?;
+        let executable = scratch.0.join("fake-acp");
+        std::fs::write(
+            &executable,
+            r#"#!/bin/sh
+read -r request
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}'
+read -r request
+printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"fixture","modes":{"availableModes":[{"id":"default"}]}}}'
+read -r request
+printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{}}'
+read -r request
+printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Still working."}}}}'
+read -r cancel
+printf '%s\n' "$cancel" > cancel.json
+while read -r request; do :; done
+"#,
+        )?;
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))?;
+        let mut config: crate::config::Config = serde_json::from_value(json!({
+            "database":scratch.0.join("state.sqlite"),
+            "harness":{"executables":{"hermes":executable}},
+            "workspaces":[{"agent":"agent","directory":scratch.0,"write":true}]
+        }))?;
+        config.data.turn_idle_timeout_ms = Some(1000);
+        config.data.validate()?;
+        let database = crate::db::open(&config.database, false, 0)?;
+        crate::files::init(&database.connection)?;
+        data::initialize(&database)?;
+        turns::initialize(&database.connection).map_err(|failure| failure.message)?;
+        crate::connectors::initialize(&database.connection).map_err(|failure| failure.message)?;
+        crate::automation::initialize(&database.connection).map_err(|failure| failure.message)?;
+        crate::harness::initialize(&database.connection).map_err(|failure| failure.message)?;
+        crate::mcp::initialize(&database.connection).map_err(|failure| failure.message)?;
+        crate::computer::initialize(&database.connection)?;
+        database.connection.execute_batch(
+            "INSERT INTO agents(id,name,model,instructions,runtime) VALUES('agent','Test','','','hermes');
+             INSERT INTO turns(id,agent,text,status,created) VALUES('turn','agent','Wait','queued','');",
+        )?;
+        let state = AppState {
+            computer: Arc::new(crate::computer::Manager::new(&config)?),
+            config: Arc::new(config),
+            database: Arc::new(Mutex::new(database)),
+            origin: "http://127.0.0.1".into(),
+            auth: None,
+            events: crate::events::Hub::new(),
+            turns: turns::Runtime::default(),
+            trial_pending: Arc::default(),
+        };
+        let Err(failure) = run(&state, "turn", "", &[], "answer").await else {
+            panic!("silent harness completed");
+        };
+        crate::harness::settle_process(&state, "turn").await;
+        assert!(
+            failure.message.starts_with("No activity for 1 s."),
+            "{}",
+            failure.message
+        );
+        let cancel: Value = serde_json::from_slice(&std::fs::read(scratch.0.join("cancel.json"))?)?;
+        assert_eq!(
+            cancel,
+            json!({"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"fixture"}})
+        );
+        let db = state
+            .database
+            .lock()
+            .map_err(|_| "Database lock poisoned")?;
+        let partial: String =
+            db.connection
+                .query_row("SELECT text FROM provider_streams", [], |row| row.get(0))?;
+        assert_eq!(partial, "Still working.");
+        Ok(())
+    }
 
     #[tokio::test]
     async fn acp_abort_before_launch_spawns_nothing() -> crate::db::Result<()> {
@@ -1480,7 +1688,7 @@ mod tests {
             max_tokens: 0,
             source: "environment",
         };
-        let session = home("codex", &account, &account.model, String::new())
+        let session = home("codex", Some(&account), None, &account.model, String::new())
             .map_err(|failure| failure.message)?;
         let codex = Path::new(&session.environment["CODEX_HOME"]);
         let config = codex.join("config.toml");
@@ -1507,10 +1715,51 @@ mod tests {
         drop(session);
         assert!(!path.exists());
         account.base = "https://user:password@example.test/v1".into();
-        assert!(home("codex", &account, "x", String::new()).is_err());
+        assert!(home("codex", Some(&account), None, "x", String::new()).is_err());
         account.base = "https://example.test/v1".into();
         account.family = "anthropic".into();
-        assert!(home("codex", &account, "x", String::new()).is_err());
+        assert!(home("codex", Some(&account), None, "x", String::new()).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn engine_login_home_has_only_profile_auth_and_generated_config() -> crate::db::Result<()> {
+        for (runtime, variable, file, expected) in [
+            (
+                "codex",
+                "CODEX_HOME",
+                "auth.json",
+                &["auth.json", "config.toml", "rules"][..],
+            ),
+            (
+                "claude",
+                "CLAUDE_CONFIG_DIR",
+                ".credentials.json",
+                &[".credentials.json"][..],
+            ),
+        ] {
+            let bytes = b"synthetic-profile-credential";
+            let session = home(runtime, None, Some(("login", bytes)), "", String::new())
+                .map_err(|failure| failure.message)?;
+            let directory = Path::new(&session.environment[variable]);
+            assert_eq!(directory.parent(), Some(session.path.as_path()));
+            assert_eq!(session.environment["HOME"], session.path.to_string_lossy());
+            let mut names = std::fs::read_dir(directory)?
+                .map(|entry| entry.map(|value| value.file_name()))
+                .collect::<std::io::Result<Vec<_>>>()?;
+            names.sort_unstable();
+            assert_eq!(names, expected);
+            assert_eq!(std::fs::read(directory.join(file))?, bytes);
+            assert_eq!(
+                std::fs::metadata(directory.join(file))?
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+            assert!(!session.environment.contains_key("BRIEFSIP_PROVIDER_KEY"));
+            assert!(!session.environment.contains_key("ANTHROPIC_API_KEY"));
+        }
         Ok(())
     }
 

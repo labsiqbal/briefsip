@@ -104,10 +104,12 @@ async fn approval(
     }
     let id = uuid::Uuid::new_v4().to_string();
     let mut changes = state.events.subscribe();
-    {
+    let _wait = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        let wait = crate::harness::config::CardWait::start(state, string(turn, "id"))?;
         guard.connection.execute("INSERT INTO harness_approvals(id,turn,agent,runtime,workspace,kind,description,command,prefix,input,state) VALUES (?,?,?,'api',?,'command','Run workspace shell command?',?,NULL,?,'approval')",params![id,turn["id"].as_str(),turn["agent"].as_str(),binding.directory.to_str(),command,args.to_string()])?;
-    }
+        wait
+    };
     loop {
         {
             let guard = state.database.lock().map_err(|_| Failure::storage())?;

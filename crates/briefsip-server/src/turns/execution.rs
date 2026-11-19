@@ -506,7 +506,9 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                         tools::run(state, &turn, &call).await
                     }
                 };
+                let clock = super::diagnostics::Clock::start(state, id, call_id);
                 let outcome = crate::computer::hub::run_effect(&effect, operation).await;
+                drop(clock);
                 crate::computer::hub::finish_effect(
                     state,
                     effect,

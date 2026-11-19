@@ -42,7 +42,13 @@ for await (const line of createInterface({ input: process.stdin })) {
   if (value.method === 'session/set_mode') { mode = value.params.modeId; reply(value.id, {}); continue; }
   if (value.method === 'authenticate') { reply(value.id, {}); continue; }
   if (value.method === 'session/set_model') { reply(value.id, {}); continue; }
-  if (value.method === 'session/cancel') { await new Promise(resolve => setTimeout(resolve, 50)); writeFileSync('cancel-received', 'yes'); if (prompt) reply(prompt, { stopReason: 'cancelled' }); continue; }
+  if (value.method === 'session/cancel') {
+    await new Promise(resolve => setTimeout(resolve, 50));
+    process.stderr.write(`ACP cancelled ${process.env.BRIEFSIP_MCP_TOKEN}\n`);
+    writeFileSync('cancel-received', 'yes');
+    if (prompt) reply(prompt, { stopReason: 'cancelled' });
+    continue;
+  }
   if (value.method !== 'session/prompt') { if (value.id) send({ id: value.id, error: { code: -32601, message: 'unsupported' } }); continue; }
   prompt = value.id;
   const content = value.params.prompt.map(block => block.text ?? '').join('\n');
@@ -50,7 +56,12 @@ for await (const line of createInterface({ input: process.stdin })) {
   void (async () => {
     if (content.includes('CRASH')) { update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Partial before crash.' } }); setTimeout(() => process.exit(3), 100); return; }
     if (content.includes('INVALID')) { process.stdout.write('bad json\n'); return; }
-    if (content.includes('TREE')) { child = spawn(process.execPath, ['-e', 'process.on("SIGTERM",()=>{});setInterval(()=>{},1000)'], { detached: true, stdio: 'ignore' }); writeFileSync('child-pid', String(child.pid)); }
+    if (content.includes('TREE')) {
+      child = spawn(process.execPath, ['-e', 'process.on("SIGTERM",()=>{});setInterval(()=>{},1000)'], { detached: true, stdio: 'ignore' });
+      writeFileSync('child-pid', String(child.pid));
+      update({ sessionUpdate: 'tool_call', toolCallId: 'worker', title: 'Start worker', status: 'in_progress', rawInput: { pid: child.pid } });
+      update({ sessionUpdate: 'tool_call_update', toolCallId: 'worker', rawOutput: 'Worker started' });
+    }
     if (content.includes('WAIT') || content.includes('TREE')) { update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Waiting.' } }); return; }
     update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Before tool. ' } });
     update({ sessionUpdate: 'tool_call', toolCallId: 'tool-1', title: 'echo fixture', kind: 'execute', status: 'pending' });
