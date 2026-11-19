@@ -44,7 +44,7 @@ test('MCP resources and prompts require exact grants and remain untrusted journa
   await new Promise<void>(resolve => external.listen(0, '127.0.0.1', resolve)); await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const ea = external.address(), pa = provider.address(); assert(ea && typeof ea !== 'string' && pa && typeof pa !== 'string');
   const options = { database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${pa.port}/v1` };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [external, provider] });
   async function request(path: string, body?: unknown, expected?: number) {
     const res = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const value = await res.json(); assert(!JSON.stringify(value).includes(token)); if (expected) assert.equal(res.status, expected, JSON.stringify(value)); else assert(res.ok, JSON.stringify(value)); return value;

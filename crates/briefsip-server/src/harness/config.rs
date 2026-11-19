@@ -18,6 +18,8 @@ pub struct Config {
     #[serde(skip)]
     pub revocations: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     #[serde(skip)]
+    pub stopping_processes: Arc<std::sync::Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
+    #[serde(skip)]
     pub homes: Arc<Mutex<HashMap<String, super::store::Home>>>,
 }
 #[derive(Clone, Deserialize)]

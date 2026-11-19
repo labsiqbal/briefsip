@@ -36,6 +36,7 @@ impl Frames {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct Session {
     pub(super) token: String,
     pub(super) connection: i64,
@@ -187,14 +188,17 @@ async fn connected(
     session: &Session,
     mut frames: Frames,
     recover: bool,
+    on_recovery: &impl Fn(Vec<Value>),
 ) -> Result<()> {
     let mut waits = protected_wait::Stream::new();
     let period = Duration::from_secs(10);
     let mut heartbeat = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let _ = waits.resume(host, &session.token).await;
+    resume_waits(&mut waits, host, session).await;
     if recover {
-        let _ = host.recover_journal(&session.token).await;
+        if let Ok(results) = host.recover_journal(&session.token).await {
+            on_recovery(results);
+        }
     }
     loop {
         tokio::select! {
@@ -207,23 +211,44 @@ async fn connected(
             }
             _ = heartbeat.tick() => {
                 host.beat(session).await?;
-                let _ = waits.resume(host, &session.token).await;
+                resume_waits(&mut waits, host, session).await;
                 if recover {
-                    let _ = host.recover_journal(&session.token).await;
+                    if let Ok(results) = host.recover_journal(&session.token).await {
+                        on_recovery(results);
+                    }
                 }
             }
         }
     }
 }
 
+async fn resume_waits(waits: &mut protected_wait::Stream, host: &mut Host, session: &Session) {
+    if let Err(error) = waits.resume(host, &session.token).await {
+        eprintln!("Device wait recovery deferred: {}", error.code);
+    }
+}
+
 pub(super) async fn observe_task(host: &mut Host, session: &Session, frames: Frames) -> Failure {
-    connected(host, session, frames, false)
+    connected(host, session, frames, false, &|_| {})
         .await
         .err()
         .unwrap_or_else(transport)
 }
 
-pub(super) async fn run(mut host: Host) -> db::Result<()> {
+pub(super) async fn run(host: Host) -> db::Result<()> {
+    supervise(
+        host,
+        |phase, generation, _| println!("{}", json!({"phase":phase,"generation":generation})),
+        |_| {},
+    )
+    .await
+}
+
+pub(super) async fn supervise(
+    mut host: Host,
+    on_state: impl Fn(&str, i64, Option<&Session>),
+    on_recovery: impl Fn(Vec<Value>),
+) -> db::Result<()> {
     if host.identity.descriptor.is_none() || host.identity.pending.is_some() {
         return Err("Device is not ready to connect".into());
     }
@@ -233,7 +258,7 @@ pub(super) async fn run(mut host: Host) -> db::Result<()> {
     tokio::pin!(stopped);
     loop {
         generation += 1;
-        println!("{}", json!({"phase":"connecting","generation":generation}));
+        on_state("connecting", generation, None);
         let opened = tokio::select! {
             _ = &mut stopped => break,
             opened = tokio::time::timeout(TIMEOUT, host.open_stream()) => opened.unwrap_or_else(|_| Err(transport())),
@@ -242,26 +267,26 @@ pub(super) async fn run(mut host: Host) -> db::Result<()> {
             Err(error) => (error, false),
             Ok((session, frames)) => {
                 failures = 0;
-                println!("{}", json!({"phase":"connected","generation":generation}));
+                on_state("connected", generation, Some(&session));
                 let error = tokio::select! {
                     _ = &mut stopped => break,
-                    error = connected(&mut host, &session, frames, true) => error.err().unwrap_or_else(transport),
+                    error = connected(&mut host, &session, frames, true, &on_recovery) => error.err().unwrap_or_else(transport),
                 };
                 (error, true)
             }
         };
         if !(error.retryable || session_opened && error.status == 401) {
-            println!("{}", json!({"phase":"blocked","generation":generation}));
+            on_state("blocked", generation, None);
             return Ok(());
         }
         failures += 1;
         let fallback = 1000u64 << failures.saturating_sub(1).min(6);
-        println!("{}", json!({"phase":"backoff","generation":generation}));
+        on_state("backoff", generation, None);
         tokio::select! {
             _ = &mut stopped => break,
             _ = tokio::time::sleep(retry_delay(&error, fallback)) => {}
         }
     }
-    println!("{}", json!({"phase":"offline","generation":generation}));
+    on_state("offline", generation, None);
     Ok(())
 }

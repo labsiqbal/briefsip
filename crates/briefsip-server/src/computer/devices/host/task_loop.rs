@@ -1,4 +1,82 @@
 use super::*;
+use std::{collections::HashMap, sync::Mutex};
+
+#[derive(Default)]
+pub(super) struct TaskSlots(Mutex<HashMap<String, Option<ProviderSlot>>>);
+
+struct ProviderSlot {
+    binding: String,
+    agent: String,
+    project: String,
+}
+
+struct TaskRun {
+    slots: Arc<TaskSlots>,
+    task: String,
+}
+
+impl TaskSlots {
+    pub(super) fn is_active(&self, task: &str) -> Result<bool> {
+        Ok(self
+            .0
+            .lock()
+            .map_err(|_| Failure::storage())?
+            .contains_key(task))
+    }
+
+    fn begin(self: &Arc<Self>, task: &str) -> Result<TaskRun> {
+        let mut slots = self.0.lock().map_err(|_| Failure::storage())?;
+        if slots.contains_key(task) {
+            return Err(fail(409, "executor_busy", "Task is being processed."));
+        }
+        slots.insert(task.into(), None);
+        Ok(TaskRun {
+            slots: self.clone(),
+            task: task.into(),
+        })
+    }
+}
+
+impl TaskRun {
+    fn reserve_provider(&self, binding: &str, snapshot: &Value) -> Result<bool> {
+        let agent = id(&snapshot["agentId"])?;
+        let project = id(&snapshot["projectId"])?;
+        let mut entries = self.slots.0.lock().map_err(|_| Failure::storage())?;
+        let slots = || entries.values().flatten();
+        if slots().count() >= 4
+            || slots().filter(|slot| slot.binding == binding).count() >= 2
+            || slots().any(|slot| slot.agent == agent && slot.project == project)
+        {
+            return Ok(false);
+        }
+        entries.insert(
+            self.task.clone(),
+            Some(ProviderSlot {
+                binding: binding.into(),
+                agent,
+                project,
+            }),
+        );
+        Ok(true)
+    }
+
+    fn release_provider(&self) -> Result<()> {
+        self.slots
+            .0
+            .lock()
+            .map_err(|_| Failure::storage())?
+            .insert(self.task.clone(), None);
+        Ok(())
+    }
+}
+
+impl Drop for TaskRun {
+    fn drop(&mut self) {
+        if let Ok(mut slots) = self.slots.0.lock() {
+            slots.remove(&self.task);
+        }
+    }
+}
 
 impl Host {
     pub(super) async fn run_task(
@@ -7,7 +85,8 @@ impl Host {
         task: &str,
         provider: &super::provider::Provider,
     ) -> Result<Value> {
-        let result = self.run_task_steps(token, task, provider).await;
+        let active = self.tasks.begin(task)?;
+        let result = self.run_task_steps(token, task, provider, &active).await;
         match result {
             Ok(state) => Ok(json!({"taskId":task,"state":state})),
             Err(error)
@@ -27,15 +106,14 @@ impl Host {
         token: &str,
         task: &str,
         provider: &super::provider::Provider,
+        active: &TaskRun,
     ) -> Result<String> {
         let task = id(&json!(task))?;
         self.acquire_executor()?;
         for row in rows(&self.db, "SELECT j.* FROM device_journal j LEFT JOIN device_outbox o ON o.action_id=j.action_id
             WHERE j.task_id=? AND j.state<>'acknowledged' AND (o.state IS NULL OR o.state<>'acknowledged') ORDER BY j.sequence", [&task])?
         {
-            let saved = journal::intent(&row)?;
-            let runner = self.executor_token(&task, &saved["ownership"])?;
-            self.reconcile(token, &row, &saved, &runner, TIMEOUT).await?;
+            self.recover_action(token, &row).await?;
         }
         let mut owned = None;
         for _ in 0..40 {
@@ -154,18 +232,24 @@ impl Host {
             }
             let binding = id(&admission["providerBindingId"])?;
             let revision = revision(&admission["providerBindingRevision"], 1)?;
+            if !active.reserve_provider(&binding, snapshot)? {
+                return Ok("waiting_capacity".into());
+            }
             let call = provider.prepare(&binding, &context)?;
             let client = self.client.clone();
             input["actionKind"] = "provider".into();
             input["bindingId"] = binding.into();
             input["bindingRevision"] = revision.into();
             input["payload"] = json!({"purpose":"answer"});
-            self.execute_action(token, &input, || async {
-                let result = call.send(client).await?;
-                provider_result(snapshot, &result)?;
-                Ok(result)
-            })
-            .await?;
+            let result = self
+                .execute_action(token, &input, || async {
+                    let result = call.send(client).await?;
+                    provider_result(snapshot, &result)?;
+                    Ok(result)
+                })
+                .await;
+            active.release_provider()?;
+            result?;
         }
         Ok("yielded".into())
     }
@@ -214,7 +298,19 @@ impl Host {
         Ok(())
     }
 
-    async fn complete_task(&mut self, token: &str, task: &str, row: &Value) -> Result<()> {
+    pub(super) async fn complete_task(
+        &mut self,
+        token: &str,
+        task: &str,
+        row: &Value,
+    ) -> Result<Value> {
+        if row["task_id"] != task {
+            return Err(fail(
+                409,
+                "action_conflict",
+                "Action does not belong to the task.",
+            ));
+        }
         let action = id(&row["action_id"])?;
         if one(
             &self.db,
@@ -317,4 +413,40 @@ fn provider_result(snapshot: &Value, result: &Value) -> Result<()> {
         return Err(invalid());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_slots_fence_duplicate_tasks_and_each_capacity_boundary() -> Result<()> {
+        let slots = Arc::new(TaskSlots::default());
+        let agent = request_id();
+        let project = request_id();
+        let scope = json!({"agentId":agent,"projectId":project});
+        let other = || json!({"agentId":request_id(),"projectId":project});
+        let task = request_id();
+        let first = slots.begin(&task)?;
+        assert_eq!(
+            slots.begin(&task).err().map(|error| error.code),
+            Some("executor_busy")
+        );
+        assert!(first.reserve_provider("binding-a", &scope)?);
+        let second = slots.begin(&request_id())?;
+        assert!(!second.reserve_provider("binding-b", &scope)?);
+        assert!(second.reserve_provider("binding-a", &other())?);
+        let third = slots.begin(&request_id())?;
+        assert!(!third.reserve_provider("binding-a", &other())?);
+        assert!(third.reserve_provider("binding-b", &other())?);
+        let fourth = slots.begin(&request_id())?;
+        assert!(fourth.reserve_provider("binding-c", &other())?);
+        let fifth = slots.begin(&request_id())?;
+        assert!(!fifth.reserve_provider("binding-d", &other())?);
+        first.release_provider()?;
+        assert!(fifth.reserve_provider("binding-a", &scope)?);
+        drop(first);
+        slots.begin(&task)?;
+        Ok(())
+    }
 }

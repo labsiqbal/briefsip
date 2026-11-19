@@ -83,6 +83,13 @@ const foundation = [
     plugins: { briefsip: { rules: { 'client-server-boundary': clientServerBoundary, comments } } },
     rules: { 'no-debugger': 'error', 'no-unreachable': 'error' },
   },
+  {
+    files: ['src/**/*.{ts,tsx,mjs,js}'],
+    rules: { 'no-restricted-syntax': ['error', {
+      selector: 'CallExpression[callee.type="MemberExpression"]:matches([callee.property.name="json"][callee.computed=false], [callee.property.value="json"][callee.computed=true])',
+      message: 'Use readJson from src/http.ts to handle proxy and API errors.',
+    }] },
+  },
   // #39: product comments; test bodies and lint fixtures remain outside product scope.
   {
     files: ['**/*.{ts,tsx,mjs,js}'],

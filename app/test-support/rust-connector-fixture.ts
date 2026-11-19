@@ -189,7 +189,7 @@ export async function rustConnectorFixture(platform: Platform, root: string, age
         try {
           await waitFor(() => {
             try {
-              db ??= new DatabaseSync(join(directory,'telegram.sqlite'), { readOnly: true });
+              db ??= new DatabaseSync(join(directory,'telegram.sqlite'), { readOnly: true, timeout: 5000 });
               const row = db.prepare('SELECT offset FROM telegram_binding WHERE id=1').get();
               if (Number(row?.offset) > message.update_id) return true;
             } catch (error) {

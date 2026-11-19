@@ -2,6 +2,7 @@
 import { useId, useRef, useState, type ReactNode } from 'react';
 import { Search, MessageSquare, Plus, Folder, Hash } from 'lucide-react';
 import { Dialog, Input } from './kit';
+import { readJson } from '../http';
 import { usePolling } from '../hooks/usePolling';
 import './quick-switcher.css';
 
@@ -17,8 +18,7 @@ export function QuickSwitcher({ items, agents, onClose, onChoose, onThread }: Pr
   usePolling(async signal => {
     const results = await Promise.allSettled(agents.map(async agent => {
       const response = await fetch(`/api/agents/${agent.id}/threads`, { signal });
-      if (!response.ok) throw new Error('Conversations could not load. Reopen to retry.');
-      return response.json() as Promise<Conversation[]>;
+      return readJson<Conversation[]>(response, 'Conversations could not load. Reopen to retry.');
     }));
     if (signal.aborted) return;
     setThreads(results.flatMap(result => result.status === 'fulfilled' ? result.value : []));

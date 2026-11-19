@@ -31,7 +31,7 @@ test('synthetic done without verification gets one nudge, checks precede final, 
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const agent = randomUUID();
-  let app = await startApp({ database, baseURL: `http://127.0.0.1:${address.port}/v1` });
+  let app = await startApp({ database, baseURL: `http://127.0.0.1:${address.port}/v1` }, { directory: dir, servers: [provider] });
   const request = async (path: string, body?: unknown) => { const r = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); assert(r.ok, await r.clone().text()); return r.json(); };
   try {
     await request('/api/agents', { id: agent, runtime: 'api', name: 'Verify', model: 'fixture', instructions: 'Work.' });

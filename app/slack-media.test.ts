@@ -8,8 +8,6 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {startApp} from './test-bridge.ts';
 import {pdfFixture} from './test-support/pdf-fixture.ts';
-import childProcess from 'node:child_process';
-import {syncBuiltinESMExports} from 'node:module';
 import { localScript } from './test-support/script-client.ts';
 import { rustConnectorFixture, slackEnvelope, telegramUpdate, waitFor } from './test-support/rust-connector-fixture.ts';
 
@@ -20,7 +18,9 @@ test('Slack files snapshot bytes and retry uploads and turns without duplicate w
  const provider=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;captures.push(JSON.parse(raw));res.end(JSON.stringify({choices:[{message:{content:'Read'},finish_reason:'stop'}]}));});
  await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));const pa=provider.address();assert(pa&&typeof pa!=='string');
  const scriptToken='fixture-media-script-token-01234567890';
- const app=await startApp({database:join(root,'app.sqlite'),baseURL:`http://127.0.0.1:${pa.port}/v1`,scriptToken,scriptDirectory:join(root,'scripts')});
+ let pdfUnavailable=false;
+ const pdfFault=async()=>pdfUnavailable?{status:503,error:'PDF sandbox is unavailable.'}:undefined;
+ const app=await startApp({database:join(root,'app.sqlite'),baseURL:`http://127.0.0.1:${pa.port}/v1`,scriptToken,scriptDirectory:join(root,'scripts'),pdfFault}, { directory: root, servers: [provider] });
  const actual=localScript(join(root,'scripts'));
  let db:DatabaseSync|undefined;
  const connector=await rustConnectorFixture('slack',root,agent,app.origin,scriptToken,(method,raw,req,res)=>{
@@ -74,11 +74,11 @@ test('Slack files snapshot bytes and retry uploads and turns without duplicate w
   for(const file of ['FBADPDF','FBIGPDF','FHUGE','FLARGEIMAGE']){const row=await incoming([file])!;await settle(row.turn);}assert.equal(captures.length,count);
   bytes.FHALF1=pdfFixture('X'.repeat(500),34);bytes.FHALF2=pdfFixture('Y'.repeat(500),34);await settle((await incoming(['FHALF1','FHALF2'])).turn);assert.equal(captures.length,count);
   const afterFailure=await incoming(['FPDF'])!;await settle(afterFailure.turn);assert.equal(captures.length,count+1);assert(JSON.stringify(captures.at(-1)).includes('CHANGED_PDF'));
-  const originalSpawn=childProcess.spawn,retryCount=captures.length,downloadCount=downloads.length;
-  childProcess.spawn=((...args:Parameters<typeof childProcess.spawn>)=>args[0]==='/usr/bin/bwrap'?originalSpawn('/usr/bin/bwrap',['--ro-bind','/briefsip-nonexistent-fixture-path','/missing','/bin/true'],args[2]):originalSpawn(...args)) as typeof childProcess.spawn;syncBuiltinESMExports();
+  const retryCount=captures.length,downloadCount=downloads.length;
+  pdfUnavailable=true;
   let retry;
   try{retry=await incoming(['FPDF']);await connector.expectedFailure(/503/);assert.equal(db!.prepare('SELECT status FROM slack_inbox WHERE turn=?').get(retry.turn)!.status,'submitting');assert.equal(captures.length,retryCount);}
-  finally{childProcess.spawn=originalSpawn;syncBuiltinESMExports();}
+  finally{pdfUnavailable=false;}
   start();assert(retry);await settle(retry.turn);assert.equal(captures.length,retryCount+1);assert.equal(downloads.length,downloadCount+1);
 
  }finally{await connector.close();db?.close();await app.close();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));rmSync(root,{recursive:true,force:true});}

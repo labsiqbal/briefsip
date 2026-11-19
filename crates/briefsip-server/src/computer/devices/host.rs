@@ -1,5 +1,6 @@
 mod dispatch;
 mod export;
+mod fixture_control;
 mod fixture_keys;
 mod journal;
 mod keys;
@@ -147,6 +148,8 @@ struct Host {
     keys: Arc<dyn keys::Store>,
     client: Client,
     executor: Option<Arc<lock::Lock>>,
+    tasks: Arc<task_loop::TaskSlots>,
+    recovery: Arc<AsyncMutex<()>>,
     fixture_checkpoint: Option<String>,
 }
 
@@ -230,6 +233,8 @@ impl Host {
             identity,
             keys: Arc::from(keys),
             executor: None,
+            tasks: Arc::default(),
+            recovery: Arc::default(),
             fixture_checkpoint: None,
             client: Client::builder()
                 .connect_timeout(TIMEOUT)
@@ -278,7 +283,7 @@ impl Host {
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
         )?;
         db.execute_batch(
-            "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000",
+            "PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL",
         )?;
         Ok(Self {
             db,
@@ -287,6 +292,8 @@ impl Host {
             keys: self.keys.clone(),
             client: self.client.clone(),
             executor: self.executor.clone(),
+            tasks: self.tasks.clone(),
+            recovery: self.recovery.clone(),
             fixture_checkpoint: None,
         })
     }
@@ -655,6 +662,7 @@ async fn response_value(mut response: reqwest::Response, limit: usize) -> Result
             "question_pending" => "question_pending",
             "waiting_agents" => "waiting_agents",
             "connection_stale" => "connection_stale",
+            "record_scope_missing" => "record_scope_missing",
             "resource_not_found" => "resource_not_found",
             _ => "request_denied",
         };
@@ -772,6 +780,7 @@ async fn bootstrap(host: Host, mode: &'static str) -> db::Result<()> {
 
 pub async fn run() -> db::Result<()> {
     let mut args = std::env::args().skip(2).peekable();
+    let control = args.next_if(|value| value == "--test-control").is_some();
     let enroll = args.next_if(|value| value == "enroll").is_some();
     let export = !enroll && args.next_if(|value| value == "export-recovery").is_some();
     let task = if !enroll && !export && args.next_if(|value| value == "run-task").is_some() {
@@ -811,13 +820,20 @@ pub async fn run() -> db::Result<()> {
     let database = std::env::var_os("BRIEFSIP_DEVICE_DB").ok_or("Missing BRIEFSIP_DEVICE_DB")?;
     let development = std::env::var("BRIEFSIP_DEVELOPMENT").as_deref() == Ok("1");
     let testing = fixture_keys.is_some();
+    if control && (!testing || !development || enroll || export || task.is_some()) {
+        return Err(
+            "Fixture control requires a loopback Rust test server and fixture keyring".into(),
+        );
+    }
     let keys: Box<dyn keys::Store> = if let Some(path) = fixture_keys {
         Box::new(fixture_keys::FixtureKeys::open(path, &server)?)
     } else {
         Box::new(keys::System)
     };
     let mut host = Host::open(Path::new(&database), &server, development, keys)?;
-    if enroll {
+    if control {
+        fixture_control::run(host, Path::new(&database)).await
+    } else if enroll {
         bootstrap(host, mode).await
     } else if export {
         let mut bytes = Vec::new();

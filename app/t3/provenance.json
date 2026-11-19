@@ -212,7 +212,6 @@
     "app/t3/mcp-session-registry.ts": "6a16d9d250b10dd01556180e31dc2efb38f3580aad47cbfaa8eefb7ad3357967",
     "app/t3/mcp-tool-access.ts": "b9b209f536312658cd9c962a99a874945ac7915a95f959fa092a671cf55c3c50",
     "app/mcp-server.ts": "3c1155a6f508891353a9cc95f68a0a12243e83ef5249ec49686e360685b51585",
-    "app/workspace-git.ts": "1a1f70315f5fb397981e0c3ceb61b3adc89281329dcae252179754eaab2aa4ff",
     "app/src/SourceControl.tsx": "e57ee243489ac4811838ee2a9ca8e85fa0aed73b34346d20fd49d7323b00f4b8",
     "app/src/ui/source-control.css": "8b85c9f079aec8cb46ec8136a154baeb43dfe89efe08735bb476bc1553936053",
     "app/machines.ts": "85f9b1584f8fa641c3e9d8c079e3c9b23097722e49e61179a3bcc9c8cc1d5cc9",
@@ -225,7 +224,6 @@
     "app/src/ConversationAttachments.tsx": "5a6ad328876edf98c3b9182464c53ba03d1cbbdfd230d020026ed53c939af1d1",
     "app/src/ui/chat.css": "bc21abfc6b27a7538937300db7fcb71587442b42d130fe47c6e6ed7a2b142d8e",
     "app/harness.ts": "dc104f72a04e5dd6e29db98c01189150d23adbca1516b4a3e763b0cf2f869edb",
-    "app/t3/acp-harness.ts": "4a0817f8050a355602adb44b325135077adb89cee7b9bc47fea09fc63d6ce9a8",
     "app/t3/pi-harness-extension.mjs": "824ccffde84859f769048761599feee6de2b3b4fe0665342b124232d499246eb",
     "app/t3/harness-mcp-bridge.mjs": "4075660689e41894b7d3a3198f77df0f7d081faad9271b52439e465963081ee3",
     "app/t3/path.ts": "d4d073dfa6643312958fe9882927f27dba8c5e8f690aa67dba0efc00d72a4ea9"
@@ -583,11 +581,11 @@
       "adaptation": "Temporary-index, stash-free working-tree capture and private checkpoint refs, translated from Effect into plain TypeScript. Raw blob capture includes untracked regular files; Briefsip adds binding boundaries, SQLite intent receipts, restore confirmation digests and conservative uncertain recovery.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "f44227ab093c129d26d1a3898c583d74b3522bddc117af788cff9b8094323e88",
-      "localPath": "app/workspace-git.ts",
+      "localPath": "crates/briefsip-server/src/files/git_writes.rs",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "compatibilityCheck": "app/workspace-git.test.ts"
+      "compatibilityCheck": "app/rust-workspace-git-http.test.ts"
     },
     {
       "sourcePath": "apps/server/src/vcs/GitVcsDriverCore.ts",
@@ -599,11 +597,11 @@
       "adaptation": "Local Git status, temporary-index commit and branch/worktree command patterns. Uses execFile argument arrays and local identity; Briefsip excludes remotes, disables hooks/filters/signing, bounds storage/output and records durable tool-call receipts.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "2f14761316e748cf3e1059fe3969d57d899708b9edbba4f6aba7d648fd3d1b40",
-      "localPath": "app/workspace-git.ts",
+      "localPath": "crates/briefsip-server/src/files/git_writes.rs",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "compatibilityCheck": "app/workspace-git.test.ts"
+      "compatibilityCheck": "app/rust-workspace-git-http.test.ts"
     },
     {
       "sourcePath": "apps/server/src/checkpointing/CheckpointStore.ts",
@@ -615,11 +613,11 @@
       "adaptation": "Checkpoint lifecycle and before-turn restoration semantics adapted to node:sqlite and private refs, with 50-ref retention. No Effect services or T3 runtime dependency.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "a1b1a7f354011b329472d01b3b0d03c877a010e5eb7a27acb4e0f0eff406cf4a",
-      "localPath": "app/workspace-git.ts",
+      "localPath": "crates/briefsip-server/src/files/git_writes.rs",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "compatibilityCheck": "app/workspace-git.test.ts"
+      "compatibilityCheck": "app/rust-workspace-git-http.test.ts"
     },
     {
       "sourcePath": "packages/source-control-core/src/server/diffFileRevisions.ts",
@@ -788,13 +786,12 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "a040202b8828016c94416da76ab587009512376ba9e4e55ea54b70a71e1a10ca",
       "localPaths": [
-        "app/t3/acp-harness.ts",
-        "app/harness.ts"
+        "crates/briefsip-server/src/harness/store.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "ACP initialization, new/load/resume, model selection, cancel, one-use permissions and process ownership translated to bounded Node JSONL, promises and AbortSignal. Briefsip workspace descriptor APIs replace client filesystem services.",
+      "adaptation": "ACP session setup, JSONL prompt streaming, model selection, one-use permission and cancellation through the Rust driver.",
       "compatibilityCheck": "app/acp-harness.test.ts"
     },
     {
@@ -802,12 +799,12 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "7d84a02ce0fd10cd6881f1ebd95d96d6981bf3d61a680a252222916a35401425",
       "localPaths": [
-        "app/t3/acp-harness.ts"
+        "crates/briefsip-server/src/harness/protocol.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "ACP text/tool update fields and initialize _meta.modelState discovery translated to structural guards; UI aggregation remains Briefsip-owned.",
+      "adaptation": "ACP model state and config options feed the Rust runtime probe.",
       "compatibilityCheck": "app/acp-harness.test.ts"
     },
     {
@@ -841,12 +838,12 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "7134f392df696b0857982fd6587d528532a80d03c7d32369128d8524ef1f5731",
       "localPaths": [
-        "app/t3/acp-harness.ts"
+        "crates/briefsip-server/src/harness/store.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Standalone agy acp launch and supervised default mode. No managed downloads, client impersonation or auth UI. Unsupported desktop launcher rejected.",
+      "adaptation": "Rust runs the standalone Antigravity ACP CLI in supervised default mode.",
       "compatibilityCheck": "app/acp-harness.test.ts"
     },
     {
@@ -867,12 +864,12 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "e244293785ee9d973bfb01832df94a19ef647e8ab27044926a9ac9ef6ae2ee4e",
       "localPaths": [
-        "app/t3/acp-harness.ts"
+        "crates/briefsip-server/src/harness/store.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Grok supervised argv, extension initialize metadata and ctrl_c cancellation metadata. Persistent native grants never selected.",
+      "adaptation": "Grok supervised ACP arguments and ctrl_c cancellation metadata in the Rust driver.",
       "compatibilityCheck": "app/acp-harness.test.ts"
     },
     {
@@ -880,12 +877,12 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "60c08bad085be5f578365221d491904c19aa9e2c53bcdb0a85f1abfe063f2c8d",
       "localPaths": [
-        "app/t3/acp-harness.ts"
+        "crates/briefsip-server/src/harness/mod.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Installed local registry command resolves without a shell; Hermes acp command uses generic protocol. Registry installation excluded.",
+      "adaptation": "Resolve installed ACP executables without a shell or installation.",
       "compatibilityCheck": "app/acp-harness.test.ts"
     },
     {
@@ -893,12 +890,12 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "b024441f22f1e97e2a2f8baaa7dbb488c44c539d18cf57609aa564b61a28077a",
       "localPaths": [
-        "app/t3/acp-harness.ts"
+        "crates/briefsip-server/src/harness/store.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Native Pi JSONL request correlation, failure and process lifecycle translated without Effect.",
+      "adaptation": "Pi JSONL RPC requests and responses through the Rust driver.",
       "compatibilityCheck": "app/acp-harness.test.ts"
     },
     {
@@ -906,12 +903,12 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "7e0bdf7d706b47507b7aced7aa6e55f507f5fcef9e3ff4f49be142c70172e0ba",
       "localPaths": [
-        "app/t3/acp-harness.ts"
+        "crates/briefsip-server/src/harness/store.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Pi text and tool events, model selection and extension confirm requests map to Briefsip harness events and approvals. Sessions ephemeral with Briefsip transcript; resume capability false.",
+      "adaptation": "Pi text, tool events, model selection and scoped approvals with ephemeral sessions.",
       "compatibilityCheck": "app/acp-harness.test.ts"
     },
     {
@@ -919,12 +916,12 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "8c1fa982ce717bc320139bf2eedc50d398c727211a9521342d03181fa1eaee05",
       "localPaths": [
-        "app/t3/acp-harness.ts"
+        "crates/briefsip-server/src/harness/store.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Explicit extension and restrictive discovery flags, offline startup and environment-only session credentials.",
+      "adaptation": "Launch Pi offline with an explicit extension and scoped MCP credentials in the child environment.",
       "compatibilityCheck": "app/acp-harness.test.ts"
     },
     {
@@ -2434,7 +2431,7 @@
       ],
       "localPaths": [
         "crates/briefsip-server/src/turns/instructions.json",
-        "app/t3/acp-harness.ts"
+        "crates/briefsip-server/src/harness/store.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
@@ -2572,6 +2569,129 @@
       "dependencies": [],
       "adaptation": "Rust translation of the existing Briefsip Codex form-elicitation policy and protocol checks; one-time forms remain session-bound.",
       "compatibilityCheck": "app/rust-harness.test.ts"
+    }
+  ],
+  "updateEverythingSourceEntries": [
+    {
+      "sourcePath": "apps/web/src/components/sidebar/SidebarUpdateCapsule.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "1352a18a18fd2b897bd2f89e28ce00a0b6c7b2bc2190566e3a19ae20fe72287e",
+      "symbols": [
+        "SidebarUpdateCapsule"
+      ],
+      "localPaths": [
+        "app/src/SidebarUpdateCapsule.tsx",
+        "app/src/ui/updates.css"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Render availability and run outcomes in the Briefsip sidebar using kit controls.",
+      "compatibilityCheck": "app/updateEverything.logic.test.ts"
+    },
+    {
+      "sourcePath": "apps/web/src/components/sidebar/UpdateEverythingDialog.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "f5248da6ebc68ed769981f67355099511422deeefd926e8cb3a1b423cf560fcc",
+      "symbols": [
+        "UpdateEverythingDialog",
+        "UpdateEverythingDialogContent"
+      ],
+      "localPaths": [
+        "app/src/UpdateEverythingDialog.tsx"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Keep one machine row, running-work warning, release version and explicit confirmation with Briefsip Radix Dialog.",
+      "compatibilityCheck": "app/updateEverything.logic.test.ts"
+    },
+    {
+      "sourcePath": "apps/web/src/components/sidebar/useUpdateEverything.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "7075140c043fe6d8581832fd8ffd9b1a182775fc2cc120c4b8722ab58a9ff3af",
+      "symbols": [
+        "useUpdateEverything"
+      ],
+      "localPaths": [
+        "app/src/hooks/useUpdateEverything.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt update orchestration to Briefsip HTTP polling, submitting paired machines before restarting the connected server.",
+      "compatibilityCheck": "app/updateEverything.logic.test.ts"
+    },
+    {
+      "sourcePath": "apps/web/src/components/sidebar/updateEverything.logic.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "f320db5f913d33a614fcca11a20244501c7b68aca23802d29759b01996fe74c8",
+      "symbols": [
+        "collectServerUpdateTargets",
+        "describeUpdateEverything",
+        "describeUpdateCapsule",
+        "resolveUpdateRunMachineStatus"
+      ],
+      "localPaths": [
+        "app/src/updateEverything.logic.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Retain target eligibility and skip reasons, one row per machine, progress counts and outcome resolution against launcher receipts.",
+      "compatibilityCheck": "app/updateEverything.logic.test.ts"
+    },
+    {
+      "sourcePath": "apps/web/src/components/sidebar/updateEverything.logic.test.ts",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "ecdec631758ae2b29119734c3f91fed886aba0823b20101c8ab31a223eff2497",
+      "symbols": [
+        "collectServerUpdateTargets",
+        "describeUpdateEverything",
+        "describeUpdateCapsule",
+        "runUpdateEverything"
+      ],
+      "localPaths": [
+        "app/updateEverything.logic.test.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Port eligible and skipped machine assertions, restarting-work counts, ordering and capsule outcome checks to Node test and Briefsip models.",
+      "compatibilityCheck": "app/updateEverything.logic.test.ts"
+    },
+    {
+      "sourcePath": "apps/web/src/components/sidebar/updateEverythingRun.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "a6d8a1088be9f0e74fd6a288f5aee967da66571298db63145ad79dbd6f5b5891",
+      "symbols": [
+        "saveUpdateEverythingResult",
+        "startDesktopUpdateLaunchNotice"
+      ],
+      "localPaths": [
+        "app/src/updateEverythingRun.ts"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Adapt saved run and receipt recovery to same-tab reloads and Briefsip idempotent command bodies.",
+      "compatibilityCheck": "app/updateEverything.logic.test.ts"
+    },
+    {
+      "sourcePath": "apps/web/src/components/sidebar/SidebarUpdateReleaseNotes.tsx",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "b6f30d85176945edba0c95e3666e8988f1b843d0311e3c55d34677344612f043",
+      "symbols": [
+        "SidebarUpdateReleaseNotes"
+      ],
+      "localPaths": [
+        "app/src/SidebarUpdateReleaseNotes.tsx"
+      ],
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "adaptation": "Show target release notes in an optional disclosure using the Briefsip feed and kit.",
+      "compatibilityCheck": "app/updateEverything.logic.test.ts"
     }
   ]
 }

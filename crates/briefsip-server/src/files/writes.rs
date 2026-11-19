@@ -80,7 +80,12 @@ fn publish(root: &Path, relative: &str, bytes: &[u8]) -> Result<Value> {
     let result = (|| {
         io(output.write_all(bytes))?;
         io(output.sync_all())?;
-        io(fs::hard_link(&staged, location(&fd, &name)))?;
+        let destination = location(&fd, &name);
+        #[cfg(test)]
+        tests::fault("before-link", &staged, &destination);
+        io(fs::hard_link(&staged, &destination))?;
+        #[cfg(test)]
+        tests::fault("after-link", &staged, &destination);
         Ok(
             json!({"path":relative,"digest":format!("{:x}",Sha256::digest(bytes)),"size":bytes.len()}),
         )
@@ -174,7 +179,11 @@ fn remove(root: &Path, args: &Value) -> Result<Value> {
         .open(&directory))?;
     io(fd.sync_all())?;
     let moved = (|| {
-        io(fs::rename(location(&fd, &name), location(&saved, "file")))?;
+        let original = location(&fd, &name);
+        let destination = location(&saved, "file");
+        #[cfg(test)]
+        tests::fault("before-rename", &original, &destination);
+        io(fs::rename(original, destination))?;
         io(saved.sync_all())?;
         io(fd.sync_all())?;
         let bytes = workspace::read_bytes(&saved, "file", 10 * 1024 * 1024)?;
@@ -209,13 +218,7 @@ fn restore(root: &Path, args: &Value) -> Result<Value> {
     result["recoveryPath"] = json!(source);
     Ok(result)
 }
-pub fn perform(
-    db: &Connection,
-    root: &Path,
-    agent: &str,
-    name: &str,
-    args: &Value,
-) -> Result<Value> {
+fn perform(root: &Path, name: &str, args: &Value) -> Result<Value> {
     match name {
         "create_workspace_file" => {
             if !keys(args, &["path", "text"]) {
@@ -261,39 +264,39 @@ pub fn perform(
                 },
             )
         }
-        "copy_skill_file" => {
-            if !keys(args, &["id", "source", "path"])
-                || args["id"].as_str().is_none_or(|v| v.len() > 36)
-                || args["source"]
-                    .as_str()
-                    .is_none_or(|v| v.encode_utf16().count() > 240)
-            {
-                return Err(error(400, "Invalid skill file copy"));
-            }
-            path(text(args, "path"), 2048)?;
-            let row=one(db,"SELECT f.files FROM agent_skills a JOIN skill_files f ON f.skill=a.skill AND f.revision=a.version WHERE a.agent=? AND a.skill=? AND a.enabled=1 AND a.removed=0",[agent,text(args,"id")])?.ok_or_else(||error(404,"Enabled installed skill file not found"))?;
-            let files: Value =
-                serde_json::from_str(text(&row, "files")).map_err(|_| Failure::storage())?;
-            let parsed = skills::parse_files(&files)?;
-            let file = parsed["files"]
-                .as_array()
-                .and_then(|files| files.iter().find(|f| f["path"] == args["source"]))
-                .ok_or_else(|| error(404, "Enabled installed skill file not found"))?;
-            let bytes = if file["encoding"] == "base64" {
-                use base64::Engine;
-                base64::engine::general_purpose::STANDARD
-                    .decode(text(file, "content"))
-                    .map_err(|_| Failure::storage())?
-            } else {
-                text(file, "content").as_bytes().to_vec()
-            };
-            if bytes.len() > 2 * 1024 * 1024 {
-                return Err(error(400, "Invalid workspace asset"));
-            }
-            publish(root, text(args, "path"), &bytes)
-        }
         _ => Err(error(400, "Workspace tool is unavailable.")),
     }
+}
+
+fn skill_copy(db: &Connection, root: &Path, agent: &str, args: &Value) -> Result<Vec<u8>> {
+    if !keys(args, &["id", "source", "path"])
+        || args["id"].as_str().is_none_or(|v| v.len() > 36)
+        || args["source"]
+            .as_str()
+            .is_none_or(|v| v.encode_utf16().count() > 240)
+    {
+        return Err(error(400, "Invalid skill file copy"));
+    }
+    parent(root, text(args, "path"), 2048)?;
+    let row=one(db,"SELECT f.files FROM agent_skills a JOIN skill_files f ON f.skill=a.skill AND f.revision=a.version WHERE a.agent=? AND a.skill=? AND a.enabled=1 AND a.removed=0",[agent,text(args,"id")])?.ok_or_else(||error(404,"Enabled installed skill file not found"))?;
+    let files: Value = serde_json::from_str(text(&row, "files")).map_err(|_| Failure::storage())?;
+    let parsed = skills::parse_files(&files)?;
+    let file = parsed["files"]
+        .as_array()
+        .and_then(|files| files.iter().find(|f| f["path"] == args["source"]))
+        .ok_or_else(|| error(404, "Enabled installed skill file not found"))?;
+    let bytes = if file["encoding"] == "base64" {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD
+            .decode(text(file, "content"))
+            .map_err(|_| Failure::storage())?
+    } else {
+        text(file, "content").as_bytes().to_vec()
+    };
+    if bytes.len() > 2 * 1024 * 1024 {
+        return Err(error(400, "Invalid workspace asset"));
+    }
+    Ok(bytes)
 }
 
 pub fn initialize(db: &Connection) -> crate::db::Result<()> {
@@ -346,6 +349,11 @@ pub fn execute(
     if !args.is_object() {
         return Err(error(400, "Invalid workspace arguments."));
     }
+    let asset = if name == "copy_skill_file" {
+        Some(skill_copy(db, &binding.directory, &binding.agent, &args)?)
+    } else {
+        None
+    };
     let count: i64 = db.query_row(
         "SELECT count(*) FROM generated_files WHERE turn=?",
         [turn],
@@ -355,7 +363,15 @@ pub fn execute(
         "INSERT INTO workspace_writes VALUES(?,?,?,?,?)",
         rusqlite::params![turn, call_id, call.to_string(), count, after_action],
     )?;
-    let result=perform(db,&binding.directory,&binding.agent,name,&args).unwrap_or_else(|_|json!({"uncertain":true,"error":if name=="delete_workspace_file" {"Removal did not confirm success. Inspect the original path and sibling .briefsip-removed-* recovery directories before retrying."}else{"Workspace operation did not confirm success. Existing files are never replaced. Ask the host owner to inspect the requested path and orphan .briefsip-*.tmp staging links before trying again."}}));
+    #[cfg(test)]
+    tests::fault("after-intent", &binding.directory, &binding.directory);
+    let effect = match asset {
+        Some(bytes) => publish(&binding.directory, text(&args, "path"), &bytes),
+        None => perform(&binding.directory, name, &args),
+    };
+    #[cfg(test)]
+    tests::fault("after-effect", &binding.directory, &binding.directory);
+    let result=effect.unwrap_or_else(|_|json!({"uncertain":true,"error":if name=="delete_workspace_file" {"Removal did not confirm success. Inspect the original path and sibling .briefsip-removed-* recovery directories before retrying."}else{"Workspace operation did not confirm success. Existing files are never replaced. Ask the host owner to inspect the requested path and orphan .briefsip-*.tmp staging links before trying again."}}));
     db.execute("INSERT INTO flow_tool_calls(turn,call_id,call,result,after_output,after_action) VALUES(?,?,?,?,?,?)",rusqlite::params![turn,call_id,call.to_string(),result.to_string(),count,after_action])?;
     Ok(result)
 }
@@ -363,6 +379,349 @@ pub fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::{fs::MetadataExt, process::ExitStatusExt};
+
+    thread_local! {
+        static FAULT: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+    }
+
+    pub(super) fn fault(phase: &str, source: &Path, destination: &Path) {
+        FAULT.with(|fault| match (fault.borrow().as_str(), phase) {
+            ("race-file", "before-rename") => {
+                fs::write(source, b"REPLACEMENT").unwrap_or_else(|e| panic!("{e}"))
+            }
+            ("race-directory", "before-rename") => {
+                fs::remove_file(source).unwrap_or_else(|e| panic!("{e}"));
+                fs::create_dir(source).unwrap_or_else(|e| panic!("{e}"));
+                fs::write(source.join("kept"), b"KEPT").unwrap_or_else(|e| panic!("{e}"));
+            }
+            ("race-link", "before-rename") => {
+                fs::remove_file(source).unwrap_or_else(|e| panic!("{e}"));
+                std::os::unix::fs::symlink("../outside", source).unwrap_or_else(|e| panic!("{e}"));
+            }
+            ("race-publication", "before-link") => {
+                fs::write(destination, b"COMPETING").unwrap_or_else(|e| panic!("{e}"))
+            }
+            (point, stage) if point == stage => rustix::process::kill_process(
+                rustix::process::getpid(),
+                rustix::process::Signal::KILL,
+            )
+            .unwrap_or_else(|e| panic!("{e}")),
+            _ => {}
+        });
+    }
+
+    fn set_fault(value: &str) {
+        FAULT.with(|fault| *fault.borrow_mut() = value.into());
+    }
+
+    fn call(id: &str, name: &str, args: Value) -> Value {
+        json!({"id":id,"type":"function","function":{"name":name,"arguments":args.to_string()}})
+    }
+
+    struct Scratch(PathBuf);
+    impl Scratch {
+        fn new() -> crate::db::Result<Self> {
+            let root = std::env::temp_dir().join(format!("bs-writes-{}", uuid::Uuid::new_v4()));
+            fs::create_dir(&root)?;
+            fs::create_dir(root.join("workspace"))?;
+            Ok(Self(root))
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn binding(root: &Path, agent: &str) -> crate::config::WorkspaceConfig {
+        crate::config::WorkspaceConfig {
+            agent: agent.into(),
+            directory: root.join("workspace"),
+            write: true,
+        }
+    }
+
+    #[test]
+    fn killed_workspace_writes_keep_publication_state_and_never_replay() -> crate::db::Result<()> {
+        if let Some(root) = std::env::var_os("BRIEFSIP_TEST_WRITES_CRASH") {
+            let root = PathBuf::from(root);
+            let command = serde_json::from_str(&std::env::var("BRIEFSIP_TEST_WRITES_CALL")?)?;
+            set_fault(&std::env::var("BRIEFSIP_TEST_WRITES_PHASE")?);
+            let db = Connection::open(root.join("state.sqlite"))?;
+            let result = execute(&db, &binding(&root, "agent"), "turn", &command, 0);
+            panic!("crash hook not reached: {result:?}");
+        }
+        let scratch = Scratch::new()?;
+        let binding = binding(&scratch.0, "agent");
+        let db = Connection::open(scratch.0.join("state.sqlite"))?;
+        db.execute_batch("CREATE TABLE turns(id TEXT PRIMARY KEY,agent TEXT,status TEXT);
+            INSERT INTO turns VALUES ('turn','agent','running'); CREATE TABLE generated_files(turn TEXT);")?;
+        initialize(&db)?;
+        for (id, tool, phase, present) in [
+            (
+                "mkdir-before",
+                "create_workspace_directory",
+                "after-intent",
+                false,
+            ),
+            (
+                "mkdir-after",
+                "create_workspace_directory",
+                "after-effect",
+                true,
+            ),
+            (
+                "file-before",
+                "create_workspace_file",
+                "after-intent",
+                false,
+            ),
+            ("file-after", "create_workspace_file", "after-effect", true),
+            ("linked", "create_workspace_file", "after-link", true),
+            ("replace", "replace_workspace_file", "before-link", false),
+        ] {
+            let path = binding.directory.join(id);
+            let args = if tool == "create_workspace_directory" {
+                json!({"path":id})
+            } else if id == "replace" {
+                fs::write(&path, b"OLD")?;
+                json!({"path":id,"text":"pending","digest":format!("{:x}",Sha256::digest(b"OLD"))})
+            } else {
+                json!({"path":id,"text":"pending"})
+            };
+            let command = call(id, tool, args.clone());
+            let child = std::process::Command::new(std::env::current_exe()?)
+                .args(["--exact", "files::writes::tests::killed_workspace_writes_keep_publication_state_and_never_replay"])
+                .env("BRIEFSIP_TEST_WRITES_CRASH", &scratch.0)
+                .env("BRIEFSIP_TEST_WRITES_CALL", command.to_string())
+                .env("BRIEFSIP_TEST_WRITES_PHASE", phase)
+                .output()?;
+            assert_eq!(child.status.signal(), Some(9), "{child:?}");
+            initialize(&db)?;
+            initialize(&db)?;
+            assert_eq!(path.exists(), present);
+            let (count, receipt): (i64, String) = db.query_row(
+                "SELECT count(*),result FROM flow_tool_calls WHERE call_id=?",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            assert_eq!(count, 1);
+            assert_eq!(serde_json::from_str::<Value>(&receipt)?["uncertain"], true);
+            assert!(receipt.contains("host owner"));
+            assert!(execute(&db, &binding, "turn", &command, 0)
+                .is_err_and(|e| e.message.contains("already attempted")));
+            if id == "linked" {
+                let target = fs::metadata(&path)?;
+                assert_eq!(target.nlink(), 2);
+                assert!(workspace::download(&binding.directory, id).is_err());
+                let stage = fs::read_dir(&binding.directory)?
+                    .filter_map(std::result::Result::ok)
+                    .find(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+                    .ok_or("Staged hard link missing")?;
+                assert_eq!(fs::metadata(stage.path())?.ino(), target.ino());
+                fs::remove_file(stage.path())?;
+                assert_eq!(
+                    workspace::download(&binding.directory, id)
+                        .map_err(|e| e.message)?
+                        .1,
+                    b"pending"
+                );
+            }
+            if id == "replace" {
+                assert!(!path.exists());
+                let recovery = fs::read_dir(&binding.directory)?
+                    .filter_map(std::result::Result::ok)
+                    .find(|entry| {
+                        entry
+                            .file_name()
+                            .to_string_lossy()
+                            .starts_with(".briefsip-removed-")
+                    })
+                    .ok_or("Recovery directory missing")?;
+                let recovery_path = format!("{}/file", recovery.file_name().to_string_lossy());
+                assert_eq!(fs::read(binding.directory.join(&recovery_path))?, b"OLD");
+                restore(
+                    &binding.directory,
+                    &json!({"path":id,"digest":args["digest"],"recoveryPath":recovery_path}),
+                )
+                .map_err(|e| e.message)?;
+                assert_eq!(fs::read(&path)?, b"OLD");
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn concurrent_workspace_changes_preserve_both_publication_and_recovery_bytes(
+    ) -> crate::db::Result<()> {
+        let scratch = Scratch::new()?;
+        let root = scratch.0.join("workspace");
+        fs::write(root.join("outside"), b"OUTSIDE")?;
+        let digest = format!("{:x}", Sha256::digest(b"ORIGINAL"));
+        let args = json!({"path":"file","digest":digest});
+        for (kind, path) in [
+            ("race-file", "file"),
+            ("race-directory", "file"),
+            ("race-link", "file"),
+        ] {
+            fs::write(root.join(path), b"ORIGINAL")?;
+            set_fault(kind);
+            let saved = remove(&root, &args);
+            set_fault("");
+            let saved = saved.map_err(|e| e.message)?;
+            assert_eq!(saved["uncertain"], true);
+            assert!(saved.get("removed").is_none());
+            let recovery = root.join(text(&saved, "recoveryPath"));
+            match kind {
+                "race-file" => assert_eq!(fs::read(&recovery)?, b"REPLACEMENT"),
+                "race-directory" => assert_eq!(fs::read(recovery.join("kept"))?, b"KEPT"),
+                _ => assert!(fs::symlink_metadata(&recovery)?.is_symlink()),
+            }
+            assert_eq!(
+                fs::metadata(recovery.parent().ok_or("Missing recovery parent")?)?.mode() & 0o777,
+                0o700
+            );
+            assert_eq!(fs::read(root.join("outside"))?, b"OUTSIDE");
+        }
+
+        fs::create_dir(root.join("nested"))?;
+        let bytes = vec![255; 10 * 1024 * 1024];
+        fs::write(root.join("nested/original"), &bytes)?;
+        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let removed = remove(&root, &json!({"path":"nested/original","digest":digest}))
+            .map_err(|e| e.message)?;
+        let source = text(&removed, "recoveryPath");
+        let args = json!({"path":"nested/restored","digest":digest,"recoveryPath":source});
+        let restored = restore(&root, &args).map_err(|e| e.message)?;
+        assert_eq!(restored["size"], bytes.len());
+        let path = root.join("nested/restored");
+        assert_eq!(fs::read(&path)?, bytes);
+        assert_eq!(fs::metadata(&path)?.mode() & 0o777, 0o600);
+        assert!(restore(&root, &args).is_err());
+        for (key, value) in [
+            ("path", json!("../outside")),
+            ("recoveryPath", json!("nested/restored")),
+            ("digest", json!("0".repeat(64))),
+            ("extra", json!(true)),
+        ] {
+            let mut invalid = args.clone();
+            invalid[key] = value;
+            assert!(restore(&root, &invalid).is_err());
+        }
+        std::os::unix::fs::symlink(&path, root.join("nested/link"))?;
+        let mut linked = args.clone();
+        linked["path"] = json!("nested/link");
+        assert!(restore(&root, &linked).is_err());
+        let mut raced = args.clone();
+        raced["path"] = json!("raced");
+        set_fault("race-publication");
+        let error = restore(&root, &raced);
+        set_fault("");
+        assert!(error.is_err());
+        assert_eq!(fs::read(root.join("raced"))?, b"COMPETING");
+        assert_eq!(fs::read(root.join(source))?, bytes);
+
+        fs::write(root.join("original"), b"OLD")?;
+        let digest = format!("{:x}", Sha256::digest(b"OLD"));
+        let mut args = json!({"path":"original","digest":digest,"text":"NEW"});
+        for bad in [json!("\u{0}"), json!("x".repeat(32769))] {
+            args["text"] = bad;
+            assert!(perform(&root, "replace_workspace_file", &args).is_err());
+            assert_eq!(fs::read(root.join("original"))?, b"OLD");
+        }
+        args["text"] = json!("NEW");
+        set_fault("race-publication");
+        let replaced = perform(&root, "replace_workspace_file", &args);
+        set_fault("");
+        let replaced = replaced.map_err(|e| e.message)?;
+        assert_eq!(replaced["uncertain"], true);
+        assert!(replaced.get("replaced").is_none());
+        assert_eq!(fs::read(root.join("original"))?, b"COMPETING");
+        assert_eq!(
+            fs::read(root.join(text(&replaced, "recoveryPath")))?,
+            b"OLD"
+        );
+        fs::remove_file(root.join(source))?;
+        std::os::unix::fs::symlink(&path, root.join(source))?;
+        assert!(restore(
+            &root,
+            &json!({"path":"link-copy","digest":args["digest"],"recoveryPath":source})
+        )
+        .is_err());
+        assert!(!root.join("link-copy").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn skill_copy_checks_scope_and_source_before_intent_and_recovers_result_loss(
+    ) -> crate::db::Result<()> {
+        let scratch = Scratch::new()?;
+        let binding = binding(&scratch.0, "owner");
+        let db = Connection::open_in_memory()?;
+        db.execute_batch("CREATE TABLE turns(id TEXT PRIMARY KEY,agent TEXT,status TEXT);
+            INSERT INTO turns VALUES ('turn','owner','running'),('foreign','other','running');
+            CREATE TABLE generated_files(turn TEXT);
+            CREATE TABLE agent_skills(agent TEXT,skill TEXT,version INTEGER,enabled INTEGER,removed INTEGER);
+            CREATE TABLE skill_files(skill TEXT,revision INTEGER,files TEXT);
+            INSERT INTO agent_skills VALUES ('owner','skill',1,1,0);")?;
+        let files = json!([
+            {"path":"SKILL.md","content":"---\nname: copy\ndescription: Fixture\n---\nUse assets."},
+            {"path":"raw.bin","content":"AP+A","encoding":"base64"}
+        ]);
+        db.execute(
+            "INSERT INTO skill_files VALUES ('skill',1,?)",
+            [files.to_string()],
+        )?;
+        initialize(&db)?;
+        let args = json!({"id":"skill","source":"raw.bin","path":"copy.bin"});
+        let command = call("copy", "copy_skill_file", args.clone());
+        let foreign = crate::config::WorkspaceConfig {
+            agent: "other".into(),
+            ..binding.clone()
+        };
+        assert!(execute(&db, &foreign, "foreign", &command, 0).is_err());
+        for (key, value) in [
+            ("source", json!("missing")),
+            ("path", json!("../escape")),
+            ("extra", json!(true)),
+            ("id", json!(4)),
+        ] {
+            let mut bad = args.clone();
+            bad[key] = value;
+            assert!(execute(
+                &db,
+                &binding,
+                "turn",
+                &call("copy", "copy_skill_file", bad),
+                0
+            )
+            .is_err());
+        }
+        db.execute("UPDATE agent_skills SET removed=1", [])?;
+        assert!(execute(&db, &binding, "turn", &command, 0).is_err());
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM workspace_writes", [], |r| r
+                .get::<_, i64>(0))?,
+            0
+        );
+        assert!(fs::read_dir(&binding.directory)?.next().is_none());
+        db.execute("UPDATE agent_skills SET removed=0", [])?;
+        db.execute_batch("CREATE TRIGGER lost_result BEFORE INSERT ON flow_tool_calls BEGIN SELECT RAISE(ABORT,'lost result'); END")?;
+        assert!(execute(&db, &binding, "turn", &command, 0).is_err());
+        let copy = binding.directory.join("copy.bin");
+        assert_eq!(fs::read(&copy)?, [0, 255, 128]);
+        db.execute_batch("DROP TRIGGER lost_result")?;
+        initialize(&db)?;
+        let result: String =
+            db.query_row("SELECT result FROM flow_tool_calls", [], |r| r.get(0))?;
+        assert_eq!(serde_json::from_str::<Value>(&result)?["uncertain"], true);
+        fs::write(&copy, b"OWNER EDIT")?;
+        assert!(execute(&db, &binding, "turn", &command, 0)
+            .is_err_and(|e| e.message.contains("already attempted")));
+        assert_eq!(fs::read(copy)?, b"OWNER EDIT");
+        Ok(())
+    }
 
     #[test]
     fn removal_and_restore_result_loss_preserve_recovery_and_never_replay() -> crate::db::Result<()>
@@ -456,9 +815,28 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("briefsip-rust-writes-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&root)?;
-        let db = Connection::open_in_memory()?;
-        let run = |name, args| perform(&db, &root, "", name, &args).map_err(|e| e.message);
+        let run = |name, args| perform(&root, name, &args).map_err(|e| e.message);
         let result = (|| -> crate::db::Result<()> {
+            assert_eq!(
+                run("create_workspace_directory", json!({"path":"new"}))?,
+                json!({"path":"new","kind":"directory"})
+            );
+            assert_eq!(fs::metadata(root.join("new"))?.mode() & 0o777, 0o700);
+            run("create_workspace_directory", json!({"path":"new/nested"}))?;
+            run(
+                "create_workspace_file",
+                json!({"path":"new/nested/kept","text":"KEEP"}),
+            )?;
+            run(
+                "create_workspace_file",
+                json!({"path":"limit","text":"x".repeat(32768)}),
+            )?;
+            assert_eq!(fs::metadata(root.join("limit"))?.len(), 32768);
+            assert!(run(
+                "create_workspace_file",
+                json!({"path":"over-limit","text":"x".repeat(32769)})
+            )
+            .is_err());
             let created = run(
                 "create_workspace_file",
                 json!({"path":"note","text":"original"}),
@@ -492,6 +870,29 @@ mod tests {
                 assert!(run("create_workspace_file", json!({"path":p,"text":"bad"})).is_err());
             }
             std::os::unix::fs::symlink("copy", root.join("link"))?;
+            for path in [
+                "new",
+                "note",
+                "link",
+                "link/escape",
+                "../escape",
+                "/tmp/escape",
+                "missing/child",
+                "new/../escape",
+                "new//child",
+                "",
+            ] {
+                assert!(
+                    run("create_workspace_directory", json!({"path":path})).is_err(),
+                    "{path}"
+                );
+            }
+            assert!(run(
+                "create_workspace_directory",
+                json!({"path":"extra","text":"no"})
+            )
+            .is_err());
+            assert_eq!(fs::read(root.join("new/nested/kept"))?, b"KEEP");
             assert!(run(
                 "delete_workspace_file",
                 json!({"path":"link","digest":created["digest"]})

@@ -131,7 +131,7 @@ for (const metadata of [false,true]) test(`workspace tools metadata=${metadata} 
     res.end(JSON.stringify({choices:[{finish_reason:result?'stop':'tool_calls',message:result?{content:JSON.parse(result.content).error?"Workspace file unavailable.":metadata?result.content:JSON.parse(result.content).text}:{tool_calls:[{id:'read',type:'function',function:{name:toolName,arguments:JSON.stringify({path:'note.txt'})}}]}}]}));
   });
   await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));const address=provider.address();assert(address&&typeof address!=='string');
-  const options={database:join(dir,'db.sqlite'),baseURL:`http://127.0.0.1:${address.port}/v1`,workspaces:[{agent,directory:root}]};let app=await startApp(options);
+  const options={database:join(dir,'db.sqlite'),baseURL:`http://127.0.0.1:${address.port}/v1`,workspaces:[{agent,directory:root}]};let app=await startApp(options, { directory: dir, servers: [provider] });
   async function request(path:string,body?:unknown):Promise<any>{const res=await fetch(app.origin+path,{method:body?'POST':'GET',headers:{Origin:app.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const value=await res.json();assert(res.ok,JSON.stringify(value));return value;}
   async function send(path:string){const id=randomUUID();await request(path,{id,text:'Read workspace'});for(let n=0;n<200;n++){const turn=(await request(path)).find((row:any)=>row.id===id);if(['done','failed'].includes(turn.status))return turn;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Timed out');}
   try {

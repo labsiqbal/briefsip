@@ -288,7 +288,7 @@ pub async fn action(
     after_action: i64,
 ) -> Result<Outcome> {
     let gate = s.computer.control_gate(agent)?;
-    let _guard = gate.lock().await;
+    let guard = gate.lock_owned().await;
     assert_enabled(s, agent)?;
     db(s, |c| assert_recoverable(c, turn))?;
     let name = text(&call["function"], "name");
@@ -308,6 +308,9 @@ pub async fn action(
             paused: true,
         });
     }
+    let environment = db(s, |c| {
+        crate::data::environment::computer_values(s, c, turn, agent)
+    })?;
     tx(s, |c| {
         c.execute(
             "INSERT INTO computer_actions VALUES(?,?,'uncertain',NULL)",
@@ -316,7 +319,23 @@ pub async fn action(
         c.execute("INSERT INTO flow_tool_calls(turn,call_id,call,result,after_output,after_action) VALUES(?,?,?,?,?,?)",params![turn,text(call,"id"),call.to_string(),json!({"error":"Computer action outcome is uncertain. Do not repeat this input."}).to_string(),after_output,after_action])?;
         Ok(())
     })?;
-    let (image, title) = s.computer.action(agent, name, args, s.config.now()).await?;
+    let now = s.config.now();
+    let ((image, title), _guard) = if environment.is_empty() {
+        let result = s.computer.action(agent, name, args, now).await?;
+        (result, guard)
+    } else {
+        let computer = s.computer.clone();
+        let (agent, name, args) = (agent.to_owned(), name.to_owned(), args.clone());
+        let (_in_progress, cancelled) = tokio::sync::oneshot::channel::<()>();
+        tokio::spawn(async move {
+            let result = computer
+                .action_with_environment(&agent, &name, &args, now, &environment, cancelled)
+                .await?;
+            Ok::<_, Failure>((result, guard))
+        })
+        .await
+        .map_err(|_| Failure::storage())??
+    };
     let mut result = json!({"status":"done"});
     if let Some(title) = title {
         result["pageTitle"] = title.into();

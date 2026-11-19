@@ -20,7 +20,7 @@ test('provider settings read stays private and excludes endpoint and credentials
     res.end(JSON.stringify({choices:[{finish_reason:last?'stop':'tool_calls',message:last?{content:'Configuration read.'}:{tool_calls:[{id:'settings',type:'function',function:{name:'read_provider_settings',arguments:JSON.stringify(args)}}]}}]}));
   });
   await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));const address=provider.address();assert(address&&typeof address!=='string');
-  const baseURL=`http://127.0.0.1:${address.port}/v1`,app=await startApp({database:join(directory,'db.sqlite'),port:0,baseURL,apiKey:secret});
+  const baseURL=`http://127.0.0.1:${address.port}/v1`,app=await startApp({database:join(directory,'db.sqlite'),port:0,baseURL,apiKey:secret}, { directory, servers: [provider] });
   async function request(path:string,body?:unknown){const response=await fetch(app.origin+path,{method:body?'POST':'GET',headers:{Origin:app.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const data=await response.json();assert(response.ok,JSON.stringify(data));return data;}
   async function run(path:string,status='done'){const id=randomUUID();await request(path+'/turns',{id,text:'Read settings'});for(let n=0;n<200;n++){const row=(await request(path+'/turns')).find((entry:any)=>entry.id===id);if(row?.status===status)return;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Timed out');}
   try {
@@ -51,7 +51,7 @@ test('model changes preserve execution snapshot, scope and journal across restar
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(directory, 'db.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory, servers: [provider] });
   async function request(path: string, body?: unknown) {
     const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const value = await response.json(); assert(response.ok, JSON.stringify(value)); return value;

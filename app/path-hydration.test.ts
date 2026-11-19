@@ -6,7 +6,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { buildEnvironmentCaptureCommand, hydratePosixHome, hydratePosixPath, listLoginShellCandidates, mergePathEntries, readEnvironmentFromLoginShell } from './t3/path.ts';
-import { harnessEnv } from './harness.ts';
 import { rustBinary } from './rust-binary.ts';
 
 const { freePort, stop } = await import(new URL('../scripts/production-env-gate.mjs', import.meta.url).href);
@@ -39,7 +38,7 @@ exec /bin/sh -c "$2"
   const port = await freePort();
   const origin = `http://127.0.0.1:${port}`;
   const child = spawn(binary, [], {
-    env: { HOME: directory, PATH: inherited, SHELL: shell, TMPDIR: directory, PORT: String(port), BRIEFSIP_DATA_DIR: directory, AMBIENT_SECRET: 'synthetic-secret' },
+    env: { HOME: directory, PATH: inherited, SHELL: shell, TMPDIR: directory, PORT: String(port), BRIEFSIP_DATA_DIR: directory, AMBIENT_SECRET: 'synthetic-secret', LANG: 'C', OPENAI_API_KEY: 'canary', COMPOSIO_API_KEY: 'canary', NODE_OPTIONS: '--trace-warnings', __MISE_DIFF: 'canary', JAVA_HOME: 'canary' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const closed = new Promise(ready => child.once('close', ready));
@@ -74,8 +73,10 @@ exec /bin/sh -c "$2"
     assert.equal(readFileSync(probes, 'utf8'), 'x');
     const childEnv = JSON.parse(readFileSync(environment, 'utf8'));
     assert.equal(childEnv.PATH, `${bin}:${inherited}`);
-    assert.equal(childEnv.AMBIENT_SECRET, undefined);
-    assert.equal(childEnv.SHELL_SECRET, undefined);
+    assert.deepEqual(Object.keys(childEnv).sort(), ['HOME', 'LANG', 'PATH', 'TMPDIR']);
+    assert(childEnv.HOME.startsWith(join(directory, 'briefsip-probe-')));
+    assert.equal(childEnv.LANG, 'C');
+    assert.equal(childEnv.TMPDIR, directory);
   } finally {
     await stop(child, closed);
     rmSync(directory, { recursive: true, force: true });
@@ -92,7 +93,6 @@ test('login shell candidates, PATH ordering, HOME fallback and capture scope', (
   assert(capture.startsWith('(trap - DEBUG)'));
   assert.deepEqual([...capture.matchAll(/printenv ([A-Z_]+)/g)].map(match => match[1]), ['PATH', '__MISE_DIFF', 'JAVA_HOME']);
   assert.match(buildEnvironmentCaptureCommand('/bin/nu'), /ENV_CONVERSIONS/);
-  assert.deepEqual(harnessEnv({ PATH: '/custom', __MISE_DIFF: 'hidden', JAVA_HOME: 'hidden', SECRET: 'hidden' }), { PATH: '/custom' });
 });
 
 test('failed and hanging login probes preserve PATH with bounded process-tree cleanup', async () => {

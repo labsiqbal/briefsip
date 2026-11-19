@@ -74,7 +74,7 @@ test('local provider discovery and execution matrix preserves errors, bounded di
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(directory, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: key, timeout: 2000 };
-  let app = await startApp({ ...options, accounts: [{ id: 'work', name: 'Work', baseURL: options.baseURL, apiKey: key }] });
+  let app = await startApp({ ...options, accounts: [{ id: 'work', name: 'Work', baseURL: options.baseURL, apiKey: key }] }, { directory, servers: [provider] });
   async function request(path: string, body?: unknown, status = 200) {
     const res = await fetch(app.origin + path, { method: body === undefined ? 'GET' : 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
     const raw = await res.text(); responses.push(raw); assert(!raw.includes(key), 'API response leaked key');

@@ -27,7 +27,7 @@ test('Gemini HTTP streaming, signed tool recovery, models and cancellation', asy
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve)); const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(dir, 'state.sqlite'), provider: 'gemini' as const, baseURL: `http://127.0.0.1:${address.port}/v1beta`, apiKey: 'synthetic', stream: true };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [provider] });
   async function request(path: string, body?: unknown) { const res = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); const data = await res.json(); assert(res.ok, JSON.stringify(data)); return data; }
   async function until(path: string, id: string, status: string) { for (let n = 0; n < 400; n++) { const row = (await request(path)).find((row: any) => row.id === id); if (row?.status === status) return row; await new Promise(resolve => setTimeout(resolve, 10)); } assert.fail(`Missing ${status}`); }
   try {

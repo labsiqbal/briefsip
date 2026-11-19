@@ -1,4 +1,5 @@
 import { downloadBlob } from './hooks/downloadBlob';
+import { readJson } from './http';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Badge, Button, Card, CodeBlock, Dialog, PageHeader, Row, Section, useConfirm } from './ui/kit';
 
@@ -15,7 +16,7 @@ export function BackupPanel({}: { onClose: () => void }) {
     const pending = new AbortController(); controller.current = pending; setBusy(true); setError(''); setDownloaded(false);
     try {
       const response = await fetch('/api/backup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: crypto.randomUUID(), confirmed: true }), signal: pending.signal });
-      if (!response.ok) throw new Error((await response.json()).error ?? 'Backup could not be created. Try again.');
+      if (!response.ok) await readJson(response, 'Backup could not be created. Try again.');
       const blob = await response.blob();
       if (pending.signal.aborted) return;
       downloadBlob(blob, 'briefsip-workspace.sqlite'); setDownloaded(true);

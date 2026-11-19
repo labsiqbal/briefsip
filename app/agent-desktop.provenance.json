@@ -40,7 +40,7 @@
   ],
   "desktop_session": {
     "source": "tools/bot_desktop/launcher.sh",
-    "localPath": "app/agent-desktop-host.mjs",
-    "adaptation": "TigerVNC Unix socket, component-wise Xfce, terminal launcher, simple color and private D-Bus concepts translated into Node; Briefsip-owned bwrap mounts, network namespace, Unix proxy forwarder and persistent helper."
+    "localPath": "crates/briefsip-server/src/computer/desktop_supervisor.rs",
+    "adaptation": "Rust supervisor for TigerVNC Unix socket, component-wise Xfce, terminal launcher and private D-Bus. Briefsip owns the bwrap mounts, network namespace and Unix proxy relay."
   }
 }

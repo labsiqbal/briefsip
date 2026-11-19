@@ -1,3 +1,4 @@
+import { ConnectionError, HttpError, readJson } from './http';
 import { HiddenAgents } from './AgentSidebar';
 import { useConversationRequests } from './hooks/useConversationRequests';
 import { useRouteThread } from './hooks/useRouteThread';
@@ -17,7 +18,10 @@ import { RightPanel, useRightPanel } from './RightPanel';
 import { restoreThreadCommand, type ThreadCommand } from './thread-command';
 import './Conversations.css';
 import { AgentConversation, RoomMessages, type RoomView, type Exchange } from './ui/AgentConversation';
-import { UpdatesPanel, useUpdateBadge } from './UpdatesPanel';
+import { UpdatesPanel } from './UpdatesPanel';
+import { SidebarUpdateCapsule } from './SidebarUpdateCapsule';
+import { UpdateEverythingDialog } from './UpdateEverythingDialog';
+import { useUpdateEverything } from './hooks/useUpdateEverything';
 import { HarnessApprovalCard, type HarnessApproval } from './HarnessApprovalCard';
 import './ui/csp-nonce';
 import { RestoreCheckpoint } from './SourceControl';
@@ -114,17 +118,10 @@ function plainPreview(text?: string) {
 type SidebarSummary = { agent: string; preview: string; time: string | null; status: string };
 type Pending = ChatCommand;
 const statusNames: Record<string, string> = { queued: 'Queued', running: 'Replying', done: 'Done', failed: 'Failed', interrupted: 'Interrupted', cancelled: 'Cancelled' };
-class HttpError extends Error {
-  status: number;
-  code?: string;
-  constructor(status: number, text: string, code?: string) { super(text); this.status = status; this.code = code; }
-}
 async function api<T>(path: string, data?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(path, { ...(data ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) } : {}), signal })
-    .catch(() => { throw new Error('Briefsip connection lost. Check your connection, then try again.'); });
-  const body = await response.json();
-  if (!response.ok) throw new HttpError(response.status, body.error ?? `HTTP ${response.status}`, body.code);
-  return body;
+    .catch(() => { throw new ConnectionError('Briefsip connection lost. Check your connection, then try again.'); });
+  return readJson<T>(response);
 }
 const message = (error: unknown) => error instanceof Error ? error.message : 'Connection failed. Try again.';
 
@@ -330,7 +327,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
       sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); setPending(null); setDraft(''); setAttached([]); setFocusedTask(''); setHistoryPages([]); setQuery(''); setFinding(false);
     } catch (error) {
       if (!mounted.current) return;
-      if (error instanceof HttpError && (error.status < 500 || error.status === 503)) {
+      if (error instanceof HttpError && (error.status < 500 || error.status === 503 && !error.restarting)) {
         try { sessionStorage.removeItem(storageKey); sessionStorage.setItem(draftKey, request.text); } catch { /* Keep the draft in memory if storage fails. */ }
         optimistic.remove(request.id); setTurns(rows => rows?.filter(turn => turn.id !== request.id) ?? null); setQueueTurns(rows => rows.filter(turn => turn.id !== request.id));
         setPending(null); setDraft(request.text);
@@ -1139,11 +1136,11 @@ function App() {
   const view = route.view ?? (route.machine ? 'remote' : 'chat');
   const setView = (view: 'routines' | 'workflows') => navigate({ view });
   const remoteMachinesState = useMachines(api);
-  const updateAvailable = useUpdateBadge(api);
   const remoteSelection = route.machine && route.remoteAgent ? { machine: route.machine, agent: route.remoteAgent } : null;
   const [workspaceDialog, setWorkspaceDialog] = useState<'import' | 'help' | null>(null);
   const [agentContent, setAgentContent] = useState<{ agent: Agent; kind: 'export' } | null>(null);
   const settings = route.settings ?? null;
+  const updates = useUpdateEverything(api, remoteMachinesState, environment?.name ?? 'This device', settings === 'updates');
   const setSettings = (next: SettingsSection | null | ((current: SettingsSection | null) => SettingsSection | null)) => navigate(current => ({ ...current, settings: (typeof next === 'function' ? next(current.settings ?? null) : next) ?? undefined }));
   const [settingsQuery, setSettingsQuery] = useState('');
   const settingsSearch = useRef<HTMLInputElement>(null);
@@ -1368,12 +1365,13 @@ function App() {
       </div>
       </Tabs>
       </div>
+      <SidebarUpdateCapsule updates={updates} />
       <div className="sidebar__footer">
         <div className="sidebar__fade" />
         <Tooltip content={activityError ? 'Status not updated. Trying again.' : directory?.configured ? 'Provider configured' : 'Provider not configured'}><button type="button" className="provider-status" aria-label={activityError ? 'Status not updated. Trying again.' : directory?.configured ? 'Provider configured' : 'Provider not configured'} onClick={() => setSettings('providers')}><i className={directory?.configured && !activityError ? 'is-on' : ''} aria-hidden /></button></Tooltip>
         <IconButton label="Quick switcher (Ctrl/Cmd+K)" onClick={() => switcher.setOpen(true)}><Search size={16} aria-hidden /></IconButton>
         <IconButton label="Help" onClick={() => setWorkspaceDialog('help')}><BookOpen size={16} aria-hidden /></IconButton>
-        <RadixDialog.Trigger asChild><IconButton label={updateAvailable ? 'Settings - Update available' : 'Settings'} className="sidebar-settings" onClick={() => { setSettings('general'); setNarrowOpen(false); }}><Settings size={16} aria-hidden />{updateAvailable && <span className="sidebar-settings__update" />}</IconButton></RadixDialog.Trigger>
+        <RadixDialog.Trigger asChild><IconButton label="Settings" className="sidebar-settings" onClick={() => { setSettings('general'); setNarrowOpen(false); }}><Settings size={16} aria-hidden /></IconButton></RadixDialog.Trigger>
       </div>
       <PanelResizeHandle panel={sidebar} />
     </aside>;
@@ -1424,7 +1422,7 @@ function App() {
           {!directory ? <p className="empty" role="status">Loading workspace...</p>
             : settings === 'skills' ? <Suspense fallback={<p className="empty" role="status">Loading skill library...</p>}><SkillsPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'providers' ? <ProvidersPanel request={api} />
-            : settings === 'updates' ? <UpdatesPanel request={api} />
+            : settings === 'updates' ? <UpdatesPanel updates={updates} />
             : settings === 'machines' ? <MachinesPanel request={api} onChanged={() => { void remoteMachinesState.reload(); void api<Environment>('/api/environment').then(setEnvironment).catch(() => setActivityError(true)); }} />
             : settings === 'hub' ? <Suspense fallback={<p className="empty" role="status">Loading hub connection...</p>}><HubConnection agents={directory.agents} request={api} /></Suspense>
             : settings === 'connected-apps' ? <Suspense fallback={<p className="empty" role="status">Loading connected apps...</p>}><ConnectedAppsPanel agents={directory.agents} request={api} /></Suspense>
@@ -1438,6 +1436,7 @@ function App() {
         </div>
       </div>
     </RadixDialog.Content></RadixDialog.Portal>
+    <UpdateEverythingDialog updates={updates} />
   </div></RadixDialog.Root>;
 }
 

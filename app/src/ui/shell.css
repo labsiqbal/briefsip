@@ -88,5 +88,3 @@
 .sidebar__footer .provider-status { flex: 1; min-width: 40px; min-height: 40px; padding: 0 12px; }
 .sidebar__footer .provider-status i { flex-shrink: 0; }
 .sidebar__footer .k-icon-btn { flex-shrink: 0; width: 40px; height: 40px; }
-.sidebar-settings { position: relative; }
-.sidebar-settings__update { position: absolute; top: 6px; right: 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--color-brand); }

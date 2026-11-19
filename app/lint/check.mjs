@@ -28,6 +28,12 @@ for (const [file, prefix] of [['src/lint-probe.ts', '../'], ['src/hub/lint-probe
     await check(code, file);
 }
 await check("import { Button } from '../ui/kit';", 'src/hub/probe.ts');
+const safeJson = 'no-restricted-syntax';
+await check('response.json();', 'src/lint-probe.ts', safeJson);
+await check("response['json']();", 'src/hub/lint-probe.ts', safeJson);
+await check('readJson(response);', 'src/lint-probe.ts');
+await check('response.json();', 'server.ts');
+
 await check("import 'node:fs';", 'server.ts');
 await check("import '../server.ts';", 'hub/probe.ts');
 for (const module of browserSafeModules) {
@@ -135,3 +141,14 @@ async function countRules(directory) {
 }
 await countRules(root);
 console.log(`Lint: ${checks} assertions passed; ${browserSafeModules.length} shared modules guarded; yaml browser graph ${packageFiles.size} files; ${rules.size} enforced rules: ${[...rules].sort().join(', ')}.`);
+
+// #107: the Node server is gone; server code lives in Rust and app/ root keeps only test entry points.
+{
+  const rootModules = readdirSync(root, { withFileTypes: true })
+    .filter(entry => !entry.isDirectory() && entry.name.endsWith('.ts'))
+    .map(entry => entry.name)
+    .filter(name => !name.endsWith('.test.ts') && !/^rust-.*\.ts$|^vite.*\.config\.ts$/.test(name)
+      && name !== 'test-bridge.ts' && name !== 'test.ts');
+  assert.deepEqual(rootModules.sort(), [],
+    'Server code belongs in Rust. Put browser code under src/ or shared/, hub code under hub/, and test helpers under test-support/.');
+}
