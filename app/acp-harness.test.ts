@@ -168,7 +168,7 @@ for (const mode of ['CRASH', 'INVALID', 'WAIT']) test(`ACP ${mode}: fail bounded
     assert.equal(f.log().filter(row => row.method === 'session/prompt').length, 1);
   } finally { await f.close(); }
 });
-test('ACP cancel notification reaches child and cleanup kills detached tool process', async () => {
+test('ACP cancel reaches child, kills detached tool process and preserves inspect diagnostics', async () => {
   const f = await rustFixture('hermes');
   try {
     const id = await f.send('TREE');
@@ -192,6 +192,15 @@ test('ACP cancel notification reaches child and cleanup kills detached tool proc
     assert(received(), 'Child had no time to handle session/cancel');
     const notices = f.log().filter(row => row.method === 'session/cancel');
     assert.deepEqual(notices, [{ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId: 'fixture-session' } }]);
+    const inspection = await f.request(`/api/turns/${id}/inspect`);
+    const [step] = inspection.harness;
+    assert.equal(inspection.status, 'cancelled');
+    assert.equal(step.id, 'worker');
+    assert.equal(step.state, 'in_progress');
+    assert(step.started);
+    assert.deepEqual(JSON.parse(step.arguments), { pid });
+    assert.equal(step.result, 'Worker started');
+    assert.equal(inspection.engineStderr, 'ACP cancelled [REDACTED]');
   } finally { await f.close(); }
 });
 test('ACP runtimes work through server: approvals, segments and runtime picker', async () => {

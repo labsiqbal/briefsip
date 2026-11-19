@@ -267,7 +267,7 @@ mod tests {
         writer.text("x", None, false).map_err(|e| e.message)?;
         assert_eq!(read(1)?, (2, format!("A{}", "x".repeat(200))));
         writer
-            .tool("tool", "Read", "running")
+            .tool("tool", "Read", "running", &Value::Null, &Value::Null)
             .map_err(|e| e.message)?;
         writer.last = Instant::now() + Duration::from_secs(60);
         writer.text("Draft", None, false).map_err(|e| e.message)?;
