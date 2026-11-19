@@ -1108,15 +1108,13 @@ pub async fn update_remote(
     }
     let token = crypt(s, text(&r, "token"), origin, false)?;
     let value = if body.is_some() {
-        remote_request(
-            s,
-            origin,
-            path,
-            Some(&token),
-            body,
-            Some(update_deadline(bytes)),
-        )
-        .await?
+        let deadline = s
+            .config
+            .update
+            .options()
+            .test_peer_update_timeout_ms
+            .map_or_else(|| update_deadline(bytes), Duration::from_millis);
+        remote_request(s, origin, path, Some(&token), body, Some(deadline)).await?
     } else {
         remote(s, origin, path, Some(&token), body).await?
     };

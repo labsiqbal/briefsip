@@ -59,7 +59,7 @@ async function start(cleanup: Cleanup, dir: string, config: object) {
 }
 
 type Transfer = (upstream: IncomingMessage, downstream: ServerResponse) => Promise<void>;
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, testPeerUpdateTimeoutMs?: number) {
   const dir = await mkdtemp(join(tmpdir(), 'briefsip-peer-transfer-'));
   const cleanup: Cleanup = [];
   t.after(async () => {
@@ -67,7 +67,7 @@ async function fixture(t: TestContext) {
     await rm(dir, { recursive: true, force: true });
   });
   const releases = join(dir, 'releases'), received = join(dir, 'received');
-  const from = { database: join(dir, 'from.sqlite'), port: 0, updates: { releasesDir: releases } };
+  const from = { database: join(dir, 'from.sqlite'), port: 0, updates: { releasesDir: releases, testPeerUpdateTimeoutMs } };
   const to = { database: join(dir, 'to.sqlite'), port: 0, updates: { releasesDir: received, launcherSocket: join(dir, 'control.sock') } };
   let applied = 0, launcherAvailable = true;
   const control = controlServer(socket => socket.once('data', bytes => {
@@ -191,7 +191,11 @@ async function drop(reply: IncomingMessage, res: ServerResponse) {
 test('peer fan-out resumes dropped downloads, including after receiver restart', { timeout: 30000 }, async t => {
   const peers = await fixture(t), bytes = randomBytes(524288);
   const first = await peers.release(1, bytes);
-  peers.setTransfer((reply, res) => peers.ranges.length === 1 ? drop(reply, res) : forward(reply, res));
+  const progress: number[] = [];
+  peers.setTransfer(async (reply, res) => {
+    progress.push((await peers.attempt()).bytesTransferred);
+    await (peers.ranges.length === 1 ? drop : forward)(reply, res);
+  });
   assert.equal((await peers.fanOut(first.version)).status, 'accepted');
   assert.equal(peers.ranges.length, 2);
   assert.equal(peers.ranges[1].status, 206);
@@ -201,13 +205,17 @@ test('peer fan-out resumes dropped downloads, including after receiver restart',
   assert.equal(done.state, 'accepted');
   assert.equal(done.error, null);
   assert.equal(done.bytesTransferred, done.totalBytes);
+  assert(progress[0] <= progress[1] && progress[1] <= done.bytesTransferred);
   assert(done.finishedAt! >= done.startedAt);
 
   const second = await peers.release(2, bytes);
   peers.ranges.length = 0;
-  peers.setTransfer(drop);
+  peers.setTransfer(async (reply, res) => {
+    if (peers.ranges.length === 1) return drop(reply, res);
+    res.writeHead(502).end();
+  });
   assert.equal((await peers.fanOut(second.version)).status, 'failed');
-  assert.equal(peers.ranges.length, 3);
+  assert.equal(peers.ranges.length, 4);
   assert.equal((await peers.attempt()).error?.code, 'peer_connection_lost');
   assert.match(peers.stderr, /code=peer_connection_lost/);
   assert.equal(peers.applied, 1);
@@ -219,6 +227,37 @@ test('peer fan-out resumes dropped downloads, including after receiver restart',
   assert.match(peers.ranges[0].range ?? '', /^bytes=[1-9]\d*-$/);
   assert.equal(peers.ranges[0].status, 206);
   assert.equal(peers.applied, 2);
+  assert(!(await readdir(peers.received)).some(name => name.startsWith('.peer-release-partial-')));
+});
+
+test('peer fan-out resumes a retained partial after the sender deadline', { timeout: 30000 }, async t => {
+  const peers = await fixture(t, 2500);
+  const release = await peers.release(9, randomBytes(524288));
+  let transferClosed: Promise<unknown> | undefined;
+  let retained = 0;
+  peers.setTransfer(async (reply, res) => {
+    res.writeHead(reply.statusCode!, reply.headers);
+    for await (const bytes of reply) {
+      const part = bytes.subarray(0, 16384);
+      retained = part.length;
+      res.write(part);
+      transferClosed = once(res, 'close');
+      await transferClosed;
+      return;
+    }
+  });
+  assert.equal((await peers.fanOut(release.version)).status, 'failed');
+  assert.equal((await peers.attempt()).error?.code, 'peer_transfer_timeout');
+  assert.equal(peers.applied, 0);
+  assert(transferClosed);
+  await transferClosed;
+  assert(retained > 0);
+
+  peers.ranges.length = 0;
+  peers.setTransfer(forward);
+  assert.equal((await peers.fanOut(release.version)).status, 'accepted');
+  assert.deepEqual(peers.ranges.map(entry => [entry.range, entry.status]), [[`bytes=${retained}-`, 206]]);
+  assert.equal(peers.applied, 1);
   assert(!(await readdir(peers.received)).some(name => name.startsWith('.peer-release-partial-')));
 });
 

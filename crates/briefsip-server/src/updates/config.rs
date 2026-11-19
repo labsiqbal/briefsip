@@ -6,6 +6,7 @@ use std::{env, path::PathBuf};
 pub struct Options {
     pub releases_dir: Option<PathBuf>,
     pub launcher_socket: Option<PathBuf>,
+    pub test_peer_update_timeout_ms: Option<u64>,
     #[serde(skip)]
     pub trial: Option<String>,
 }
@@ -21,6 +22,7 @@ impl Options {
         Ok(Self {
             releases_dir: env::var_os("BRIEFSIP_RELEASES_DIR").map(PathBuf::from),
             launcher_socket: env::var_os("BRIEFSIP_LAUNCHER_SOCKET").map(PathBuf::from),
+            test_peer_update_timeout_ms: None,
             trial,
         })
     }
