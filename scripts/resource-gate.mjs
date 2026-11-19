@@ -62,18 +62,19 @@ export async function measureRustLauncher(binary, server, budgets) {
     writeFileSync(config, JSON.stringify({ dataDir: join(directory, 'data'), releasesDir: releases, port }), { mode: 0o600 });
     child = spawn(resolve(binary), ['--config', config], { stdio: ['ignore', 'ignore', 'pipe'] });
     closed = new Promise(ready => child.once('close', ready));
-    let failure = '';
-    child.stderr.setEncoding('utf8'); child.stderr.on('data', value => { failure = (failure + value).slice(-4096); });
+    // Warnings on stderr are kept for the error message; only exit or spawn failure ends the gate.
+    let stderr = '', failure = '';
+    child.stderr.setEncoding('utf8'); child.stderr.on('data', value => { stderr = (stderr + value).slice(-4096); });
     child.once('error', error => { failure = error.message; });
     const deadline = performance.now() + 10000;
     let ready = false;
     while (performance.now() < deadline) {
-      if (child.exitCode !== null || child.signalCode !== null || failure) throw new Error(`Rust launcher gate exited: ${failure}`);
+      if (child.exitCode !== null || child.signalCode !== null || failure) throw new Error(`Rust launcher gate exited: ${failure || stderr}`);
       try { const response = await fetch(`http://127.0.0.1:${port}/api/environment`, { signal: AbortSignal.timeout(500) }); ready = response.ok && (await response.json()).version === '1.0.0'; } catch {}
       if (ready) break;
       await new Promise(done => setTimeout(done, 50));
     }
-    if (!ready) throw new Error('Rust launcher gate readiness timed out');
+    if (!ready) throw new Error(`Rust launcher gate readiness timed out${stderr ? `: ${stderr}` : ''}`);
     await new Promise(done => setTimeout(done, 200));
     const idleRssMiB = Number(/^VmRSS:\s+(\d+)\s+kB$/m.exec(readFileSync(`/proc/${child.pid}/status`, 'utf8'))?.[1]) / 1024;
     if (!Number.isFinite(idleRssMiB)) throw new Error('Cannot read Rust launcher RSS from /proc');
