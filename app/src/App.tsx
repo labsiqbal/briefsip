@@ -47,6 +47,7 @@ import { useConversationAttachments } from './ConversationAttachments';
 import { Attachments } from './Attachments';
 import { ProvidersPanel } from './ProvidersPanel';
 import { EnginesPanel, isLoginBinding } from './EnginesPanel';
+import { DevicesPanel } from './DevicesPanel';
 import { FirstRun } from './FirstRun';
 import { TurnActivity } from './ui/TurnActivity';
 import { AgentMessage, ChatComposer, ChatEmptyState, ChatHeader, ChatTranscript, ChatTurn, HumanMessage, TurnStatus } from './ui/ChatPrimitives';
@@ -62,7 +63,7 @@ import { QuestionCard, type Question } from './QuestionCard';
 import { ApprovalCard, type AppApproval } from './ApprovalCard';
 import { CompactionPanel } from './CompactionPanel';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, useId, type FormEvent, type ReactNode } from 'react';
-import { Link as LinkIcon, Archive, BarChart3, BookOpen, Cpu, Database, Download, KeyRound, Palette, Plug, SlidersHorizontal, Bell, BellOff, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, GitFork, ListRestart, Square, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Cable, Trash2, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
+import { Link as LinkIcon, Smartphone, Archive, BarChart3, BookOpen, Cpu, Database, Download, KeyRound, Palette, Plug, SlidersHorizontal, Bell, BellOff, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, GitFork, ListRestart, Square, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Cable, Trash2, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
 import { PanelResizeHandle, sidebarPanel, useResizablePanel } from './ui/resizable';
@@ -1128,7 +1129,7 @@ const settingsGroups: { label: string; items: { id: SettingsSection; label: stri
   { label: 'Preferences', items: [{ id: 'general', icon: SlidersHorizontal, label: 'General' }, { id: 'appearance', icon: Palette, label: 'Appearance' }] },
   { label: 'Agents', items: [{ id: 'skills', icon: BookOpen, label: 'Skills' }] },
   { label: 'Connections', items: [{ id: 'providers', icon: Server, label: 'Providers' }, { id: 'engines', icon: Cpu, label: 'Engines' }, { id: 'hub', icon: LinkIcon, label: 'briefsip.com' }, { id: 'connected-apps', icon: Plug, label: 'Connected apps' }, { id: 'mcp', icon: Cable, label: 'MCP connections' }] },
-  { label: 'System', items: [{ id: 'machines', icon: Monitor, label: 'Machines' }, { id: 'updates', icon: Download, label: 'Updates' }] },
+  { label: 'System', items: [{ id: 'machines', icon: Monitor, label: 'Machines' }, { id: 'devices', icon: Smartphone, label: 'Devices' }, { id: 'updates', icon: Download, label: 'Updates' }] },
   { label: 'Data', items: [{ id: 'usage', icon: BarChart3, label: 'Usage' }, { id: 'data', icon: Database, label: 'Shared data' }, { id: 'backup', icon: Archive, label: 'Backup & restore' }] },
   { label: 'Advanced', items: [{ id: 'mcp-server', icon: KeyRound, label: 'External access' }] },
 ];
@@ -1360,7 +1361,7 @@ function App() {
   else if (route.thread && !routeThread?.thread) content = <PageView>{routeThread?.error ? <Alert tone="error">{routeThread.error} Retrying…</Alert> : <p role="status">Loading conversation...</p>}</PageView>;
   else if (projectThread && directory.agents.find(agent => agent.id === projectThread.agent)) { const owner = directory.agents.find(agent => agent.id === projectThread.agent)!; const thread = projectState.projects.find(project => project.id === projectThread.project)?.threads.find(thread => thread.id === projectThread.thread) ?? projectThread.conversation; content = thread ? <Chat onOpenAgent={openThread} key={thread.id} agent={owner} thread={{...thread,revision:1,archived:0,deleted:0}} configured={directory.configured} menuItems={[{label:'Back to project',onSelect:()=>openProject(projectThread.project)}]} /> : <PageView><EmptyState title="Project conversation unavailable" /></PageView>; }
   else if (channel) content = <Chat onOpenAgent={openThread} key={`channel:${channel.id}`} agent={channel} channel={{ ...channel, lead: directory.agents.find(agent => agent.id === channel.lead)?.hidden ? null : channel.lead }} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id) && !agent.hidden)} onEdit={channel.project ? undefined : () => setDialog('edit')} menuItems={channel.project ? [{label:'Back to project',onSelect:()=>openProject(channel.project!)}] : []} configured={directory.configured} />;
-else if (agent) content = <AgentConversations attention={attention ? new Set(attentionByAgent.get(agent.id)?.keys()) : undefined} onRestored={() => load(true)} onExport={() => setAgentContent({ agent, kind: 'export' })} onManageRoutines={id => { setRoutineAgent(id); setView('routines'); }} onOpenChannel={openChannel} key={agent.id} agent={agent} firstRun={firstRunAgent === agent.id} workflowAgents={directory.agents} configured={directory.configured} initialThread={route.thread ?? ''} onSelectThread={(thread, replace) => { navigate(current => ({ ...current, agent: agent.id, thread: thread || undefined, result: current.thread === (thread || undefined) ? current.result : undefined }), replace); focusComposer(); }} onOpenAgent={openThread} onEdit={() => setDialog('edit')} />;
+  else if (agent) content = <AgentConversations attention={attention ? new Set(attentionByAgent.get(agent.id)?.keys()) : undefined} onRestored={() => load(true)} onExport={() => setAgentContent({ agent, kind: 'export' })} onManageRoutines={id => { setRoutineAgent(id); setView('routines'); }} onOpenChannel={openChannel} key={agent.id} agent={agent} firstRun={firstRunAgent === agent.id} workflowAgents={directory.agents} configured={directory.configured} initialThread={route.thread ?? ''} onSelectThread={(thread, replace) => { navigate(current => ({ ...current, agent: agent.id, thread: thread || undefined, result: current.thread === (thread || undefined) ? current.result : undefined }), replace); focusComposer(); }} onOpenAgent={openThread} onEdit={() => setDialog('edit')} />;
   else content = <FirstRun request={api} isClientError={error => error instanceof HttpError && error.status < 500} settingsOpen={!!settings} onOpenEngines={() => setSettings('engines')} onCreated={item => { setFirstRunAgent(item.id); created(item); focusComposer(); }} />;
   const navigation = <aside ref={sidebar.ref} className="sidebar bs-root" style={{ width: `${sidebar.width}px` }} aria-label="Workspace navigation" onClick={event => { if (narrowSidebar && (event.target as HTMLElement).closest('.bot-row, .project-navigation__name, .project-navigation__room')) setNarrowOpen(false); }}>
       <div className="sidebar__titlebar">
@@ -1490,6 +1491,7 @@ else if (agent) content = <AgentConversations attention={attention ? new Set(att
             : settings === 'skills' ? <Suspense fallback={<p className="empty" role="status">Loading skill library...</p>}><SkillsPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'providers' ? <ProvidersPanel request={api} />
             : settings === 'engines' ? <EnginesPanel request={api} />
+            : settings === 'devices' ? <DevicesPanel request={api} />
             : settings === 'updates' ? <UpdatesPanel updates={updates} />
             : settings === 'machines' ? <MachinesPanel request={api} onChanged={() => { void remoteMachinesState.reload(); void api<Environment>('/api/environment').then(setEnvironment).catch(() => setActivityError(true)); }} />
             : settings === 'hub' ? <Suspense fallback={<p className="empty" role="status">Loading hub connection...</p>}><HubConnection agents={directory.agents} request={api} /></Suspense>
