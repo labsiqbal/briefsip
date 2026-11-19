@@ -12,9 +12,6 @@
     "hub": "node --experimental-strip-types hub/server.ts",
     "test": "node scripts/test.mjs",
     "test:phase-0": "node ../work/rebuild/collaboration-check/t3-provenance.mjs --phase --receipt ../work/rebuild/collaboration-check/phase-0.json",
-    "test:phase-1": "node ../work/rebuild/collaboration-check/phase.mjs 1",
-    "test:phase-2": "node --experimental-strip-types ../work/rebuild/collaboration-check/two-process.mjs --phase --receipt ../work/rebuild/collaboration-check/phase-2.json",
-    "test:phase-3": "node ../work/rebuild/collaboration-check/phase.mjs 3",
     "cli": "sh scripts/briefsip-command.sh script",
     "skills": "sh scripts/briefsip-command.sh skills",
     "lint": "eslint . --max-warnings 0 && node lint/check.mjs && node lint/markdown-paths.mjs"
