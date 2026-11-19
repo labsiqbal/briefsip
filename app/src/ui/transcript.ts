@@ -22,6 +22,29 @@ export const liveTurn = (turn: ActivityTurn) => ['queued', 'running'].includes(t
 export const livePartial = (turn: { status: string; paused: number; partial?: { status: string; text: string } | null }) => turn.status === 'running' && !turn.paused && !!turn.partial && ['pending', 'received'].includes(turn.partial.status) && !!turn.partial.text;
 export const turnPollDelay = (turns: { status: string }[]) => turns.some(turn => ['queued', 'running'].includes(turn.status)) ? 400 : 1200;
 
+type PendingInputTurn = {
+  computerWait?: unknown;
+  questions?: { answer: string | null }[];
+  approvals?: { state: string }[];
+  harnessApprovals?: { kind: string; state: string }[];
+};
+
+export function isTurnWaitingForInput(turn: PendingInputTurn) {
+  return !!turn.computerWait || !!turn.questions?.some(question => question.answer === null) || pendingApprovalSubject(turn) !== null;
+}
+
+export function pendingApprovalSubject(turn: PendingInputTurn) {
+  if (turn.approvals?.some(approval => approval.state === 'approval')) return 'connected app action';
+  const approval = turn.harnessApprovals?.find(approval => approval.state === 'approval');
+  if (!approval) return null;
+  switch (approval.kind) {
+    case 'command': return 'shell command';
+    case 'file': return 'file change';
+    case 'network': return 'network access request';
+    default: return 'tool request';
+  }
+}
+
 export function activityLabel(turn: ActivityTurn, now: number) {
   if (!['done', 'cancelled'].includes(turn.status) && turn.questions?.some(question => question.answer === null)) return 'Waiting for your answer';
   if (!['done', 'cancelled'].includes(turn.status) && turn.paused) return 'Paused';

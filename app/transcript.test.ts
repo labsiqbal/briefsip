@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { startApp } from './test-bridge.ts';
-import { activityLabel, livePartial, turnPollDelay } from './src/ui/transcript.ts';
+import { activityLabel, isTurnWaitingForInput, livePartial, pendingApprovalSubject, turnPollDelay } from './src/ui/transcript.ts';
 
 const created = '2026-11-14T00:00:00.000Z';
 const activity = { calls: [{ seq: 1, model: 'primary', purpose: 'completion', phase: 'answer', status: 'received', created, finished: '2026-11-14T00:01:54.000Z' }], tools: [], fallback_model: null };
@@ -35,6 +35,19 @@ test('activity duration stops at recorded provider finish; live text and polling
   assert.equal(turnPollDelay([{ status: 'queued' }]), 400);
   assert.equal(turnPollDelay([{ status: 'done' }, { status: 'failed' }]), 1200);
   assert.equal(turnPollDelay([]), 1200);
+});
+
+test('transcript distinguishes pending input and names each approval kind', () => {
+  assert.equal(isTurnWaitingForInput({ questions: [{ answer: null }] }), true);
+  assert.equal(isTurnWaitingForInput({ harnessApprovals: [{ kind: 'command', state: 'approval' }] }), true);
+  assert.equal(isTurnWaitingForInput({ approvals: [{ state: 'approval' }] }), true);
+  assert.equal(isTurnWaitingForInput({ computerWait: {} }), true);
+  assert.equal(isTurnWaitingForInput({ questions: [{ answer: 'yes' }] }), false);
+  assert.equal(isTurnWaitingForInput({ harnessApprovals: [{ kind: 'file', state: 'expired' }] }), false);
+  for (const [kind, noun] of [['command', 'shell command'], ['file', 'file change'], ['network', 'network access request'], ['tool', 'tool request'], ['unknown', 'tool request']] as const) {
+    assert.equal(pendingApprovalSubject({ harnessApprovals: [{ kind, state: 'approval' }] }), noun);
+  }
+  assert.equal(pendingApprovalSubject({ approvals: [{ state: 'approval' }] }), 'connected app action');
 });
 
 test('turn list exposes scoped read-only activity metadata in direct, thread and channel views', async () => {
