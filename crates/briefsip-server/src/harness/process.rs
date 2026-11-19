@@ -122,7 +122,7 @@ const STDERR_BYTES: usize = 16 * 1024;
 
 pub struct Process {
     child: Child,
-    stdin: ChildStdin,
+    stdin: Option<ChildStdin>,
     stdout: BufReader<ChildStdout>,
     root: u32,
     birth: String,
@@ -194,7 +194,7 @@ impl Process {
         });
         Ok(Self {
             child,
-            stdin,
+            stdin: Some(stdin),
             stdout,
             root,
             birth,
@@ -221,7 +221,8 @@ impl Process {
             ));
         }
         bytes.push(b'\n');
-        tokio::time::timeout(Duration::from_secs(15), self.stdin.write_all(&bytes))
+        let stdin = self.stdin.as_mut().ok_or_else(stopped)?;
+        tokio::time::timeout(Duration::from_secs(15), stdin.write_all(&bytes))
             .await
             .map_err(|_| error(502, "Coding harness input timed out."))?
             .map_err(|_| stopped())
@@ -432,6 +433,8 @@ pub async fn probe(
         runtime,
         hydrated_path,
     )?;
+    // Some CLIs (Gemini) read stdin before handling --version, so give them EOF.
+    process.stdin = None;
     let budget = if runtime == "hermes" {
         HERMES_STARTUP
     } else {

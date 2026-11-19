@@ -25,7 +25,8 @@ test('mise shim probes and launches with trusted mise paths and an isolated home
     const fake = join(dir, 'fake-acp');
     script(fake, `#!${process.execPath}\n` + readFileSync(new URL('./fixtures/fake-acp.mjs', import.meta.url), 'utf8').split('\n').slice(1).join('\n'));
     const shim = join(dir, 'gemini'), direct = join(dir, 'codex');
-    script(shim, '#!/bin/bash\nexport MISE_MINIMUM_RELEASE_AGE=0; mise use -g --quiet "gemini" || exit 1; exec mise x "gemini" -- "gemini" "$@"\n');
+    // Like Gemini CLI, the shim waits for stdin EOF before answering --version.
+    script(shim, '#!/bin/bash\n[ "\${1:-}" = --version ] && cat >/dev/null\nexport MISE_MINIMUM_RELEASE_AGE=0; mise use -g --quiet "gemini" || exit 1; exec mise x "gemini" -- "gemini" "$@"\n');
     script(join(dir, 'mise'), `#!/bin/sh
 set -eu
 if [ ! -f "\${MISE_CONFIG_DIR:-}/config.toml" ] || [ ! -L "\${MISE_STATE_DIR:-}/trusted-configs/fixture" ]; then
