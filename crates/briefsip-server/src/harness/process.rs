@@ -63,6 +63,18 @@ pub(super) fn configure_mise(env: &mut HashMap<String, String>) {
             env.insert(key.into(), path);
         }
     }
+    // A login PATH can list mise's own install and shim dirs after the shim's dir; then `mise x`
+    // resolves the tool back to the shim and loops. Let `mise x` supply tool paths instead.
+    if let (Some(data), Some(path)) = (env.get("MISE_DATA_DIR").cloned(), env.get("PATH").cloned())
+    {
+        let data = Path::new(&data);
+        let kept = path
+            .split(':')
+            .filter(|entry| !Path::new(entry).starts_with(data))
+            .collect::<Vec<_>>()
+            .join(":");
+        env.insert("PATH".into(), kept);
+    }
     // mise records trust for every new HOME in its state dir, so keep state in the isolated home
     // and trust only the owner's mise config.
     if let Some(home) = env.get("HOME").cloned() {

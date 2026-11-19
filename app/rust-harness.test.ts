@@ -34,6 +34,8 @@ if [ ! -f "\${MISE_CONFIG_DIR:-}/config.toml" ] || [ "\${MISE_TRUSTED_CONFIG_PAT
   exit 1
 fi
 [ "$MISE_CONFIG_DIR" = '${config}' ]
+# mise's own dirs on PATH make the real \`mise x\` resolve the tool back to the shim.
+case ":$PATH:" in *':${data}/'*) echo 'mise fixture: PATH lists mise data dirs' >&2; exit 1;; esac
 [ "$MISE_STATE_DIR" = "$HOME/.local/state/mise" ]
 # Like mise, record trust for this HOME in the state dir.
 mkdir -p "$MISE_STATE_DIR/trusted-configs" && ln -sfn "$HOME" "$MISE_STATE_DIR/trusted-configs/home-$$"
@@ -64,7 +66,7 @@ exit 1
     const prior = Object.keys(environment).map(key => [key, process.env[key]] as const);
     Object.assign(process.env, environment);
     try {
-      app = await startApp({ database: join(dir, 'db.sqlite'), testPathPrefix: dir,
+      app = await startApp({ database: join(dir, 'db.sqlite'), testPathPrefix: `${dir}:${join(data, 'shims')}`,
         baseURL: 'http://127.0.0.1:1/v1', workspaces: [{ agent, directory: workspace, write: true }],
         harness: { executables: { gemini: shim, codex: direct } } });
     } finally {
