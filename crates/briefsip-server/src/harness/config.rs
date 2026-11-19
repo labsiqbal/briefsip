@@ -1,9 +1,13 @@
-use crate::{data::providers::format_timeout, web::Failure, AppState};
+use crate::{data::providers::format_timeout, operator_file, web::Failure, AppState};
 use rusqlite::OptionalExtension;
+use rustix::fs::{mkdirat, Mode};
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
     collections::HashMap,
+    fs::{self, File},
+    os::{fd::AsRawFd, unix::fs::PermissionsExt},
+    path::{Path, PathBuf},
     sync::{Arc, Mutex as SyncMutex},
     time::{Duration, Instant},
 };
@@ -38,6 +42,47 @@ pub struct Config {
 pub struct Bridge {
     pub origin: String,
     pub token: String,
+}
+
+const HOMES_DIRECTORY: &str = "harness-homes";
+pub(super) const SESSION_PREFIX: &str = "briefsip-session-";
+
+pub(super) fn homes_root(database: &Path) -> std::io::Result<PathBuf> {
+    let data = database
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    Ok(data.canonicalize()?.join(HOMES_DIRECTORY))
+}
+
+fn session_name(name: &str) -> bool {
+    name.strip_prefix(SESSION_PREFIX)
+        .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok_and(|uuid| uuid.to_string() == id))
+}
+
+pub(crate) fn prepare_homes(database: &Path) -> crate::db::Result<File> {
+    let root = homes_root(database)?;
+    let data = operator_file::open_directory(root.parent().ok_or("Invalid harness homes path")?)?;
+    match mkdirat(&data, HOMES_DIRECTORY, Mode::RWXU) {
+        Ok(()) | Err(rustix::io::Errno::EXIST) => {}
+        Err(error) => return Err(error.into()),
+    }
+    let directory = operator_file::directory_at(&data, HOMES_DIRECTORY)?;
+    if !operator_file::private(&directory) {
+        return Err("Harness homes directory must be private and owned by the server user".into());
+    }
+    // Hold through shutdown so a server using the same DATA cannot sweep live homes.
+    directory
+        .try_lock()
+        .map_err(|error| format!("Cannot lock harness homes directory: {error}"))?;
+    directory.set_permissions(fs::Permissions::from_mode(0o700))?;
+    for entry in fs::read_dir(format!("/proc/self/fd/{}", directory.as_raw_fd()))? {
+        let entry = entry?;
+        if entry.file_name().to_str().is_some_and(session_name) && entry.file_type()?.is_dir() {
+            fs::remove_dir_all(entry.path())?;
+        }
+    }
+    Ok(directory)
 }
 
 #[derive(Clone)]
@@ -258,6 +303,62 @@ impl Drop for CardWait {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_sweeps_only_session_directories() -> crate::db::Result<()> {
+        let scratch = super::super::process::ProbeHome::new()?;
+        let database = scratch.0.join("state.sqlite");
+        let root = scratch.0.join(HOMES_DIRECTORY);
+        let guard = prepare_homes(&database)?;
+        assert_eq!(fs::metadata(&root)?.permissions().mode() & 0o777, 0o700);
+        let stale = root.join(format!("{SESSION_PREFIX}{}", uuid::Uuid::new_v4()));
+        let file = root.join(format!("{SESSION_PREFIX}{}", uuid::Uuid::new_v4()));
+        let link = root.join(format!("{SESSION_PREFIX}{}", uuid::Uuid::new_v4()));
+        let unrelated = root.join("briefsip-session-not-a-uuid");
+        let outside = scratch
+            .0
+            .join(format!("{SESSION_PREFIX}{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&stale)?;
+        fs::create_dir(&unrelated)?;
+        fs::create_dir(&outside)?;
+        fs::write(stale.join("credential"), "synthetic")?;
+        fs::write(&file, "keep")?;
+        std::os::unix::fs::symlink(&outside, &link)?;
+        std::os::unix::fs::symlink(&outside, stale.join("outside"))?;
+
+        assert!(prepare_homes(&database).is_err());
+        assert!(stale.is_dir());
+        guard.unlock()?;
+        let _guard = prepare_homes(&database)?;
+        assert!(!stale.exists());
+        assert!(unrelated.is_dir());
+        assert!(outside.is_dir());
+        assert!(fs::symlink_metadata(link)?.is_symlink());
+        assert_eq!(fs::read_to_string(file)?, "keep");
+        Ok(())
+    }
+
+    #[test]
+    fn startup_rejects_symlink_or_public_homes_root() -> crate::db::Result<()> {
+        let scratch = super::super::process::ProbeHome::new()?;
+        let database = scratch.0.join("state.sqlite");
+        let root = scratch.0.join(HOMES_DIRECTORY);
+        let outside = scratch.0.join("outside");
+        let stale = outside.join(format!("{SESSION_PREFIX}{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&stale)?;
+        std::os::unix::fs::symlink(&outside, &root)?;
+        assert!(prepare_homes(&database).is_err());
+        assert!(stale.is_dir());
+
+        fs::remove_file(&root)?;
+        fs::rename(outside, &root)?;
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o755))?;
+        assert!(prepare_homes(&database).is_err());
+        assert!(root
+            .join(stale.file_name().ok_or("Missing session name")?)
+            .is_dir());
+        Ok(())
+    }
 
     #[tokio::test(start_paused = true)]
     async fn harness_events_every_30_seconds_complete_after_three_minutes(
