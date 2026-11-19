@@ -274,7 +274,14 @@ mod tests {
             )?;
             Ok(())
         };
-        command(&db, "turn", "native-check", "node result.test.mjs", Some(0), false)?;
+        command(
+            &db,
+            "turn",
+            "native-check",
+            "node result.test.mjs",
+            Some(0),
+            false,
+        )?;
         let recorded = Some(json!({"recorded":true,"evidenceInWorkLog":true}));
         assert_eq!(receipt(&db, "turn", "native-check")?, recorded);
         assert!(!nudge(&db, "turn", &turn, &profile)?);
