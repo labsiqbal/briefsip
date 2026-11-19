@@ -157,79 +157,75 @@ pub fn redeem(db: &Connection, origin: &str, code: &str, name: &str, now: i64) -
 mod tests {
     use super::*;
 
-    fn setup() -> Connection {
-        let db = Connection::open_in_memory().unwrap();
-        initialize(&db).unwrap();
-        db
+    fn setup() -> Result<Connection> {
+        let db = Connection::open_in_memory()?;
+        initialize(&db)?;
+        Ok(db)
     }
 
     const ORIGIN: &str = "https://briefsip.example";
 
-    #[test]
-    fn off_by_default_and_migration_preserves_setting() {
-        let db = setup();
-        assert!(!required(&db).unwrap());
-        set_required(&db, true).unwrap();
-        initialize(&db).unwrap();
-        assert!(required(&db).unwrap());
+    fn status<T>(result: Result<T>) -> Option<u16> {
+        result.err().map(|failure| failure.status)
     }
 
     #[test]
-    fn code_expires_at_two_minutes_and_is_bound_to_origin() {
-        let db = setup();
-        let (code, expires) = issue(&db, ORIGIN, 10).unwrap();
+    fn off_by_default_and_migration_preserves_setting() -> Result<()> {
+        let db = setup()?;
+        assert!(!required(&db)?);
+        set_required(&db, true)?;
+        initialize(&db)?;
+        assert!(required(&db)?);
+        Ok(())
+    }
+
+    #[test]
+    fn code_expires_at_two_minutes_and_is_bound_to_origin() -> Result<()> {
+        let db = setup()?;
+        let (code, expires) = issue(&db, ORIGIN, 10)?;
         assert_eq!(expires, 120_010);
         assert_eq!(
-            redeem(&db, "https://other.example", &code, "Phone", 11)
-                .unwrap_err()
-                .status,
-            401
+            status(redeem(&db, "https://other.example", &code, "Phone", 11)),
+            Some(401)
         );
         assert_eq!(
-            redeem(&db, ORIGIN, &code, "Phone", expires)
-                .unwrap_err()
-                .status,
-            401
+            status(redeem(&db, ORIGIN, &code, "Phone", expires)),
+            Some(401)
         );
+        Ok(())
     }
 
     #[test]
-    fn code_is_single_use_and_device_can_be_revoked() {
-        let db = setup();
-        let (code, _) = issue(&db, ORIGIN, 0).unwrap();
-        let token = redeem(&db, ORIGIN, &code, "Phone", 1).unwrap();
+    fn code_is_single_use_and_device_can_be_revoked() -> Result<()> {
+        let db = setup()?;
+        let (code, _) = issue(&db, ORIGIN, 0)?;
+        let token = redeem(&db, ORIGIN, &code, "Phone", 1)?;
         assert_eq!(
-            redeem(&db, ORIGIN, &code, "Other phone", 2)
-                .unwrap_err()
-                .status,
-            401
+            status(redeem(&db, ORIGIN, &code, "Other phone", 2)),
+            Some(401)
         );
-        assert!(device(&db, &token, 2, false).unwrap().is_none());
+        assert!(device(&db, &token, 2, false)?.is_none());
         let hash = db::digest(&token);
-        let id = device(&db, &hash, 70_000, true).unwrap().unwrap();
-        let list = devices(&db, 70_000).unwrap();
+        let id = device(&db, &hash, 70_000, true)?.ok_or_else(Failure::storage)?;
+        let list = devices(&db, 70_000)?;
         assert_eq!(list[0].name, "Phone");
         assert_eq!(list[0].last_seen, 70_000);
-        revoke(&db, &id).unwrap();
-        assert!(device(&db, &hash, 70_001, false).unwrap().is_none());
+        revoke(&db, &id)?;
+        assert!(device(&db, &hash, 70_001, false)?.is_none());
+        Ok(())
     }
 
     #[test]
-    fn five_failed_attempts_lock_code() {
-        let db = setup();
-        let (code, _) = issue(&db, ORIGIN, 0).unwrap();
+    fn five_failed_attempts_lock_code() -> Result<()> {
+        let db = setup()?;
+        let (code, _) = issue(&db, ORIGIN, 0)?;
         let wrong = if code == "000000" { "000001" } else { "000000" };
         for _ in 0..5 {
-            assert_eq!(
-                redeem(&db, ORIGIN, wrong, "Phone", 1).unwrap_err().status,
-                401
-            );
+            assert_eq!(status(redeem(&db, ORIGIN, wrong, "Phone", 1)), Some(401));
         }
-        assert_eq!(
-            redeem(&db, ORIGIN, &code, "Phone", 1).unwrap_err().status,
-            429
-        );
-        let (replacement, _) = issue(&db, ORIGIN, 2).unwrap();
+        assert_eq!(status(redeem(&db, ORIGIN, &code, "Phone", 1)), Some(429));
+        let (replacement, _) = issue(&db, ORIGIN, 2)?;
         assert!(redeem(&db, ORIGIN, &replacement, "Phone", 3).is_ok());
+        Ok(())
     }
 }
