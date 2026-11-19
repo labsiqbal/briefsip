@@ -1,7 +1,9 @@
 use super::*;
 use std::{
     collections::HashMap,
-    path::Path,
+    fs::File,
+    io::Read,
+    path::{Path, PathBuf},
     process::Stdio,
     sync::{Arc, Mutex},
 };
@@ -9,6 +11,64 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
 };
+
+pub(super) fn mise_shim(path: &Path) -> bool {
+    if std::fs::canonicalize(path)
+        .ok()
+        .is_some_and(|target| target.file_name().is_some_and(|name| name == "mise"))
+    {
+        return true;
+    }
+    // ponytail: Match shell wrappers' direct mise calls. Add explicit config for indirect wrappers if needed.
+    let mut prefix = Vec::new();
+    path.is_file()
+        && File::open(path)
+            .and_then(|file| file.take(8192).read_to_end(&mut prefix))
+            .is_ok()
+        && prefix.starts_with(b"#!")
+        && String::from_utf8_lossy(&prefix)
+            .lines()
+            .filter(|line| !line.trim_start().starts_with('#'))
+            .flat_map(|line| line.split(';'))
+            .any(|command| {
+                let mut words = command.split_ascii_whitespace();
+                matches!(
+                    (words.next(), words.next(), words.next()),
+                    (Some("mise"), Some("x" | "exec"), _)
+                        | (Some("exec"), Some("mise"), Some("x" | "exec"))
+                )
+            })
+}
+
+const MISE_DIRS: [(&str, &str, &str); 4] = [
+    ("MISE_CONFIG_DIR", "XDG_CONFIG_HOME", ".config"),
+    ("MISE_DATA_DIR", "XDG_DATA_HOME", ".local/share"),
+    ("MISE_STATE_DIR", "XDG_STATE_HOME", ".local/state"),
+    ("MISE_CACHE_DIR", "XDG_CACHE_HOME", ".cache"),
+];
+
+pub(super) fn configure_mise(env: &mut HashMap<String, String>) {
+    let home = std::env::home_dir().filter(|path| path.is_absolute());
+    let absolute = |key| {
+        std::env::var_os(key)
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+    };
+    for (key, xdg, default) in MISE_DIRS {
+        let path = absolute(key).or_else(|| {
+            absolute(xdg)
+                .or_else(|| home.as_ref().map(|home| home.join(default)))
+                .map(|base| base.join("mise"))
+        });
+        if let Some(path) = path.and_then(|path| path.into_os_string().into_string().ok()) {
+            env.insert(key.into(), path);
+        }
+    }
+    // Keep config-sourced env and hooks out of harness launches.
+    for key in ["MISE_NO_ENV", "MISE_NO_HOOKS"] {
+        env.insert(key.into(), "1".into());
+    }
+}
 
 fn identity(pid: u32) -> Option<(u32, u32, String)> {
     let raw = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
@@ -287,11 +347,13 @@ impl ProbeHome {
             ("HOME".into(), scratch.to_owned()),
             ("PATH".into(), hydrated_path.to_owned()),
         ]);
+        let mise = mise_shim(path);
+        if mise {
+            configure_mise(&mut env);
+        }
         if runtime != "hermes" {
             return Process::launch(path, args, &self.0, &env).ok();
         }
-        let home = std::env::home_dir().filter(|home| home.is_absolute())?;
-        env.insert("HOME".into(), home.to_str()?.to_owned());
         env.insert("TMPDIR".into(), scratch.to_owned());
         env.extend(HERMES_ENV.map(|(key, value)| (key.into(), value.into())));
 
@@ -313,22 +375,26 @@ impl ProbeHome {
         ]
         .map(str::to_owned)
         .into();
-        let installs = home.join(".hermes/installs");
-        for (index, install) in directories(&installs).enumerate() {
-            let lock = install.join(".install.lock");
-            if lock.is_file() {
-                let copy = self.0.join(format!("hermes-lock-{index}"));
-                std::fs::File::create(&copy).ok()?;
-                sandbox.extend([
-                    "--bind".into(),
-                    copy.to_str()?.into(),
-                    lock.to_str()?.into(),
-                ]);
-            }
-            for generation in directories(&install.join("environments")) {
-                let leases = generation.join(".leases");
-                if generation.join(".lease-managed").is_file() && leases.is_dir() {
-                    sandbox.extend(["--tmpfs".into(), leases.to_str()?.into()]);
+        if !mise {
+            let home = std::env::home_dir().filter(|home| home.is_absolute())?;
+            env.insert("HOME".into(), home.to_str()?.to_owned());
+            let installs = home.join(".hermes/installs");
+            for (index, install) in directories(&installs).enumerate() {
+                let lock = install.join(".install.lock");
+                if lock.is_file() {
+                    let copy = self.0.join(format!("hermes-lock-{index}"));
+                    File::create(&copy).ok()?;
+                    sandbox.extend([
+                        "--bind".into(),
+                        copy.to_str()?.into(),
+                        lock.to_str()?.into(),
+                    ]);
+                }
+                for generation in directories(&install.join("environments")) {
+                    let leases = generation.join(".leases");
+                    if generation.join(".lease-managed").is_file() && leases.is_dir() {
+                        sandbox.extend(["--tmpfs".into(), leases.to_str()?.into()]);
+                    }
                 }
             }
         }
