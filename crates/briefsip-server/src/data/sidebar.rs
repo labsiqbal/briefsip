@@ -192,7 +192,7 @@ mod tests {
         let snapshot = || attention(db).map_err(|e| e.message);
         assert_eq!(counts()?, [json!(2), json!(0)]);
         assert_eq!(threads()?[0]["needs_you"], 1);
-        assert_eq!(snapshot()?["pending"].as_array().unwrap().len(), 4);
+        assert_eq!(snapshot()?["pending"].as_array().map(Vec::len), Some(4));
         db.execute_batch(
             "UPDATE questions SET answer='Blue'; UPDATE computer_waits SET state='returned';",
         )?;
