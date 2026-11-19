@@ -439,6 +439,7 @@ mod tests {
             agent: agent.into(),
             directory: root.join("workspace"),
             write: true,
+            managed: false,
         }
     }
 

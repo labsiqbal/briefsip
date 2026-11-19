@@ -1046,6 +1046,7 @@ mod tests {
             agent: agent.into(),
             directory,
             write: true,
+            managed: false,
         };
         if let Some(workspace) = std::env::var_os("BRIEFSIP_TEST_GIT_REPO") {
             let workspace = PathBuf::from(workspace);
@@ -1131,6 +1132,7 @@ mod tests {
             agent: agent.clone(),
             directory: workspace.clone(),
             write: true,
+            managed: false,
         };
         assert_eq!(status(None).await?, json!({"isRepo":false}));
         io(fs::write(workspace.join("note"), b"staged\n"))?;
@@ -1559,6 +1561,7 @@ mod tests {
             agent: agent.clone(),
             directory: scoped.clone(),
             write: true,
+            managed: false,
         };
         let state = state_at(&dir.0)?;
         io(fs::write(scoped.join("ignored"), b"keep ignored"))?;
