@@ -323,7 +323,7 @@
     "type": "function",
     "function": {
       "name": "create_text_file",
-      "description": "Save a UTF-8 conversation file. The same filename updates the existing file in place. Filename is not a workspace path. Maximum 32 KiB, eight files per task. Use open_file_in_panel to show an existing file without rewriting it; include the returned file URL as an ordinary inline Markdown link.",
+      "description": "Save a UTF-8 file using a plain filename (no folders). The result includes a conversation link and, in a writable workspace, a relative path you can read with shell or read_workspace_file. If no path is returned, verify the conversation copy with read_attachment using the file ID. Maximum 32 KiB, eight files per task. Use the exact returned URL as an inline Markdown link.",
       "parameters": {
         "type": "object",
         "properties": {

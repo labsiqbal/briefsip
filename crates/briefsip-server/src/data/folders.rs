@@ -50,7 +50,7 @@ pub fn validate(state: &AppState, value: &Value, browse: bool, existing: bool) -
         .parent()
         .ok_or_else(Failure::storage)?;
     let protected = [
-        data.to_path_buf(),
+        std::fs::canonicalize(data).unwrap_or_else(|_| data.to_path_buf()),
         home.join(".ssh"),
         home.join(".claude"),
         home.join(".hermes"),

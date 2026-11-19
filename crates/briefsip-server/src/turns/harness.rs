@@ -33,7 +33,7 @@ pub fn reminder(db: &Connection, turn: &Value, profile: &Value) -> Result<Option
     if super::profile::setup(db, turn)? {
         return Ok(None);
     }
-    Ok(verification::nudge(db,string(turn,"id"),turn,profile)?.then(||"One verification reminder: no current check is recorded. Run one relevant check, compare it with the request, then finish. Reuse existing output; verify_result is optional. State checks blocked by budget or tools.".into()))
+    Ok(verification::nudge(db,string(turn,"id"),turn,profile)?.then(||"One verification reminder: no current check is recorded. Run one relevant check, compare it with the request, then finish. Reuse existing output; verify_result is optional. Keep tool mechanics out of the reply.".into()))
 }
 pub fn peer(db: &Connection, turn: &str) -> Result<bool> {
     exists(db,"WITH RECURSIVE a(id,parent,origin) AS(SELECT id,parent,origin FROM turns WHERE id=? UNION SELECT t.id,t.parent,t.origin FROM turns t JOIN a ON a.parent=t.id) SELECT 1 FROM a WHERE origin LIKE 'peer:%'",[turn])
@@ -82,6 +82,8 @@ pub fn specs(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Valu
         [
             "verify_result",
             "create_text_file",
+            "read_attachment",
+            "read_workspace_file",
             "open_file_in_panel",
             "ask_user",
             "edit_profile",

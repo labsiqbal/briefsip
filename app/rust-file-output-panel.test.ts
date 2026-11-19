@@ -11,11 +11,11 @@ import { startApp } from './test-bridge.ts';
 // Exercise browser routes and real provider tool dispatch with synthetic files.
 test('conversation output updates, panel requests and owner deletion preserve reference identity', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'briefsip-file-panel-'));
-  let target = '', invalid = false;
+  let target = '', invalid = false, filename = '';
   const removed: string[] = [];
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
-    const body = JSON.parse(raw), text = body.messages.findLast((message: { role: string }) => message.role === 'user').content;
+    const body = JSON.parse(raw), text = body.messages.findLast((message: { role: string }) => message.role === 'user').content.split('\n', 1)[0];
     assert(body.tools.some((tool: { function: { name: string } }) => tool.function.name === 'open_file_in_panel'));
     const results = body.messages.filter((message: { role: string }) => message.role === 'tool');
     const opening = text === 'open';
@@ -24,7 +24,7 @@ test('conversation output updates, panel requests and owner deletion preserve re
       res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Ready.' } }] })); return;
     }
     const name = opening ? 'open_file_in_panel' : 'create_text_file';
-    const args = opening ? { id: target } : { name: 'hello.html', text: `<h1>${text}-${results.length}</h1>` };
+    const args = opening ? { id: target } : { name: filename, text: `<h1>${text}-${results.length}</h1>` };
     res.end(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ id: randomUUID(), type: 'function', function: { name, arguments: JSON.stringify(args) } }] } }] }));
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
@@ -52,6 +52,7 @@ test('conversation output updates, panel requests and owner deletion preserve re
     const thread = await post(`/api/agents/${agent.id}/threads`, { id: randomUUID(), name: 'Panel side' });
     const scopes = [`/api/agents/${agent.id}`, `/api/channels/${channel.id}`, `/api/threads/${thread.id}`];
     for (const path of scopes) {
+      filename = `${path.split('/')[2]}.html`;
       const first = await run(path, 'first'); target = first.generatedFiles[0].id;
       const second = await run(path, 'twice');
       assert.equal(second.generatedFiles.length, 1); assert.equal(second.generatedFiles[0].id, target);
@@ -59,7 +60,7 @@ test('conversation output updates, panel requests and owner deletion preserve re
       assert.equal(await (await fetch(`${app.origin}${path}/files/${target}`)).text(), '<h1>twice-1</h1>');
       assert.equal((await get(`${path}/panel/files`)).length, 1);
       const opened = await run(path, 'open'); assert.equal(opened.panelFile.id, target);
-      assert.equal(opened.panelFile.name, 'hello.html'); assert(opened.panelFile.seq > 0);
+      assert.equal(opened.panelFile.name, filename); assert(opened.panelFile.seq > 0);
       assert.equal((await get(`${path}/files`)).length, 1);
       const foreign = scopes.find(scope => scope !== path)!;
       invalid = true; const denied = await run(foreign, 'open'); assert.equal(denied.panelFile, null); invalid = false;
@@ -78,6 +79,7 @@ test('conversation output updates, panel requests and owner deletion preserve re
       assert(history.some((turn: { files: { deleted?: boolean }[] }) => turn.files.some(file => file.deleted)));
       assert(history.find((turn: { id: string }) => turn.id === first.id).generatedFiles[0].deleted);
       invalid = true; assert.equal((await run(path, 'open')).panelFile, null); invalid = false;
+      filename = `${path.split('/')[2]}-replacement.html`;
       const replacement = await run(path, 'replacement'); assert.notEqual(replacement.generatedFiles[0].id, target);
       removed.push(target);
     }

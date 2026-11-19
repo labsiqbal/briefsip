@@ -88,7 +88,10 @@ test('local provider discovery and execution matrix preserves errors, bounded di
   function scan() {
     assert(!responses.join('\n').includes(key), 'Response history leaked key');
     assert(!logs.join('\n').includes(key), 'Captured console leaked key');
-    for (const name of readdirSync(directory)) assert(!readFileSync(join(directory, name)).includes(Buffer.from(key)), `Database or journal ${name} leaked key`);
+    for (const file of readdirSync(directory, { recursive: true, withFileTypes: true })) {
+      if (!file.isFile()) continue;
+      assert(!readFileSync(join(file.parentPath, file.name)).includes(Buffer.from(key)), `File ${file.name} leaked key`);
+    }
   }
   try {
     await t.test('loading remains pending; empty catalog succeeds without inventing models', async () => {

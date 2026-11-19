@@ -26,7 +26,7 @@ test('synthetic scenarios record panel without duplicate writes, inline links, w
       const tools = body.tools.map((tool: { function: { name: string } }) => tool.function.name);
       const result = body.messages.filter((message: { role: string }) => message.role === 'tool').at(-1);
       if (user === 'plain') {
-        assert(!tools.includes('run_shell')); assert.doesNotMatch(system, /run_shell|Project convention/);
+        assert(tools.includes('run_shell')); assert.doesNotMatch(system, /Project convention/);
         res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Ready.' } }] })); return;
       }
       assert.match(system, /Project convention: check native tests/);
@@ -83,6 +83,6 @@ test('synthetic scenarios record panel without duplicate writes, inline links, w
     const plain = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Plain', model: 'fixture', instructions: 'Help.' });
     const turn = randomUUID(); await request(`/api/agents/${plain.id}/turns`, { id: turn, text: 'plain' });
     for (let i = 0; i < 300; i++) { const rows = await request(`/api/agents/${plain.id}/turns`); if (rows[0]?.status === 'done') break; assert.notEqual(rows[0]?.status, 'failed'); await new Promise(resolve => setTimeout(resolve, 10)); }
-    assert(prompts.some(prompt => !prompt.includes('run_shell'))); assert.deepEqual(failures, []);
+    assert(prompts.some(prompt => !prompt.includes('Project convention'))); assert.deepEqual(failures, []);
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(directory, { recursive: true, force: true }); }
 });

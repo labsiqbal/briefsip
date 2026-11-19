@@ -297,7 +297,7 @@ async fn repository(binding: &WorkspaceConfig, write: bool) -> Result<Repo> {
     if write && !binding.write {
         return Err(error(403, "Workspace does not have write permission."));
     }
-    detect(&binding.directory)
+    detect(binding)
         .await?
         .ok_or_else(|| error(404, "Workspace is not a Git repository."))
 }
@@ -370,13 +370,23 @@ pub async fn capture(
     if !binding.write {
         return Err(error(403, "Workspace does not have write permission."));
     }
-    let _lock = WRITES.lock().await;
-    let Some(repo) = detect(&binding.directory).await? else {
+    let Some(repo) = detect(binding).await? else {
         return Ok(None);
     };
-    Ok(Some(
-        capture_repo(state, &repo, &binding.agent, turn, &[]).await?,
-    ))
+    let effect = crate::computer::hub::before_effect(
+        state,
+        turn,
+        "tool",
+        json!({"kind":"workspace.checkpoint"}),
+    )
+    .await?;
+    let result = crate::computer::hub::run_effect(&effect, async {
+        let _lock = WRITES.lock().await;
+        capture_repo(state, &repo, &binding.agent, turn, &[]).await
+    })
+    .await;
+    crate::computer::hub::finish_effect(state, effect, "unknown").await?;
+    result.map(Some)
 }
 struct Plan {
     before: Vec<Entry>,
@@ -993,6 +1003,8 @@ mod tests {
         let database =
             crate::db::open(&config.database, false, 0).map_err(|_| Failure::storage())?;
         crate::files::init(&database.connection).map_err(|_| Failure::storage())?;
+        crate::data::initialize(&database).map_err(|_| Failure::storage())?;
+        crate::computer::hub::initialize(&database.connection).map_err(|_| Failure::storage())?;
         let computer =
             Arc::new(crate::computer::Manager::new(&config).map_err(|_| Failure::storage())?);
         Ok(AppState {
@@ -1035,6 +1047,7 @@ mod tests {
             agent: agent.into(),
             directory,
             write: true,
+            managed: false,
         };
         if let Some(workspace) = std::env::var_os("BRIEFSIP_TEST_GIT_REPO") {
             let workspace = PathBuf::from(workspace);
@@ -1120,6 +1133,7 @@ mod tests {
             agent: agent.clone(),
             directory: workspace.clone(),
             write: true,
+            managed: false,
         };
         assert_eq!(status(None).await?, json!({"isRepo":false}));
         io(fs::write(workspace.join("note"), b"staged\n"))?;
@@ -1286,6 +1300,7 @@ mod tests {
             agent: agent.clone(),
             directory: workspace.clone(),
             write: true,
+            managed: false,
         };
         let readonly = WorkspaceConfig {
             write: false,
@@ -1547,6 +1562,7 @@ mod tests {
             agent: agent.clone(),
             directory: scoped.clone(),
             write: true,
+            managed: false,
         };
         let state = state_at(&dir.0)?;
         io(fs::write(scoped.join("ignored"), b"keep ignored"))?;

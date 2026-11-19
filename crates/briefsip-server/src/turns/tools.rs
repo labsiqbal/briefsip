@@ -59,6 +59,7 @@ pub fn workspace(
             agent: string(turn, "agent").to_owned(),
             directory: std::path::PathBuf::from(directory),
             write: member["write"] == 1,
+            managed: false,
         };
         crate::files::workspace::validate_bindings(std::slice::from_ref(&binding)).map_err(
             |_| {
@@ -73,24 +74,7 @@ pub fn workspace(
     if super::messaging::channel(db, string(turn, "id"))?.is_some() {
         return Ok(None);
     }
-    Ok(state
-        .config
-        .workspaces
-        .iter()
-        .find(|w| w.agent == string(turn, "agent"))
-        .cloned()
-        .or_else(|| {
-            data::agents::workspace(state, string(turn, "agent"))
-                .filter(|_| {
-                    data::agents::read(db, string(turn, "agent"))
-                        .is_ok_and(|a| a["runtime"] != "api")
-                })
-                .map(|v| crate::config::WorkspaceConfig {
-                    agent: string(turn, "agent").into(),
-                    directory: std::path::PathBuf::from(string(&v, "directory")),
-                    write: v["write"] == true,
-                })
-        }))
+    data::agent_folders::effective(state, db, string(turn, "agent")).map(Some)
 }
 pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Value>> {
     if crate::automation::model(db, string(turn, "id"))?.is_some() {
@@ -757,10 +741,11 @@ fn file_tool(
     if text.len() > 32768 {
         return Err(error(413, "Text file limit is 32 KiB."));
     }
+    let binding = workspace(state, db, turn)?.filter(|w| w.write);
     let scope = execution::scope(turn);
     let existing = one(
         db,
-        "SELECT id FROM files WHERE scope=? AND name=? AND deleted=0 ORDER BY seq DESC LIMIT 1",
+        "SELECT f.id,f.digest,g.workspace FROM files f JOIN generated_files g ON g.file=f.id WHERE f.scope=? AND f.name=? AND f.deleted=0 ORDER BY g.seq DESC LIMIT 1",
         params![scope, name],
     )?;
     let id = existing
@@ -801,8 +786,16 @@ fn file_tool(
             ],
         )?;
     }
-    db.execute("INSERT INTO generated_files(turn,file,call_id,call,after_action) VALUES(?,?,?,?,(SELECT count(*) FROM coordination WHERE turn=?))",params![turn["id"].as_str(),id,call["id"].as_str(),call.to_string(),turn["id"].as_str()])?;
-    Ok(
-        json!({"id":id,"name":name,"size":text.len(),"url":format!("/api/{}/files/{id}",scope.replace(':',"/"))}),
-    )
+    let directory = binding.as_ref().and_then(|w| w.directory.to_str());
+    db.execute("INSERT INTO generated_files(turn,file,call_id,call,after_action,workspace) VALUES(?,?,?,?,(SELECT count(*) FROM coordination WHERE turn=?),?)",params![turn["id"].as_str(),id,call["id"].as_str(),call.to_string(),turn["id"].as_str(),directory])?;
+    let mut result = json!({"id":id,"name":name,"size":text.len(),"url":format!("/api/{}/files/{id}",scope.replace(':',"/"))});
+    if let Some(binding) = &binding {
+        let previous = existing
+            .as_ref()
+            .filter(|v| v["workspace"].as_str() == directory)
+            .map(|v| string(v, "digest"));
+        crate::files::writes::publish_generated(binding, &name, text, previous)?;
+        result["path"] = json!(name);
+    }
+    Ok(result)
 }

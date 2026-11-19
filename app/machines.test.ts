@@ -66,7 +66,11 @@ test('two real instances pair mutually, expose scoped cached agents, survive res
     const codeRequest = command(), once = await call(a, '/api/pairing-codes', codeRequest); await call(a, '/api/pairing-codes', codeRequest, 409);
     for (const app of [a, b]) for (const path of ['/api/environment', '/api/machines', '/api/agents']) { const response = JSON.stringify(await call(app, path)); for (const token of [...issuerA.issued, ...issuerB.issued]) assert(!response.includes(token)); }
     await a.close(); await b.close();
-    for (const file of readdirSync(dir).filter(file => !file.endsWith('-key'))) { const bytes = readFileSync(join(dir, file)); for (const token of [...issuerA.issued, ...issuerB.issued, code.code, once.code]) assert(!bytes.includes(Buffer.from(token)), `Secret in ${file}`); }
+    for (const file of readdirSync(dir, { recursive: true, withFileTypes: true })) {
+      if (!file.isFile() || file.name.endsWith('-key')) continue;
+      const path = join(file.parentPath, file.name), bytes = readFileSync(path);
+      for (const token of [...issuerA.issued, ...issuerB.issued, code.code, once.code]) assert(!bytes.includes(Buffer.from(token)), `Secret in ${path}`);
+    }
     for (const file of ['a.sqlite.peer-key', 'b.sqlite.peer-key']) assert.equal(statSync(join(dir, file)).mode & 0o777, 0o600);
     assert(!logs.join('\n').includes('peer-canary-'));
     a = await startApp({ ...aOptions, port: aPort }); b = await startApp({ ...bOptions, port: bPort });

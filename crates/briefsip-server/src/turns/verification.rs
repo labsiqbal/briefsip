@@ -4,7 +4,12 @@ use sha2::{Digest, Sha256};
 fn stamp(db: &Connection, turn: &str) -> Result<String> {
     let changes:i64=db.query_row("SELECT count(*) FROM flow_tool_calls WHERE turn=? AND json_extract(call,'$.function.name') IN ('replace_workspace_file','create_workspace_file','delete_workspace_file','create_routine','update_routine','computer_open_url','computer_click','computer_type','computer_key','computer_scroll')",[turn],|r|r.get(0))?;
     let writes:i64=db.query_row("SELECT count(*) FROM harness_steps WHERE turn=? AND (name IN ('Write','Edit','MultiEdit','fileChange') OR name LIKE '%apply_patch%')",[turn],|r|r.get(0))?;
-    Ok(json!([changes, writes]).to_string())
+    let files: i64 = db.query_row(
+        "SELECT count(*) FROM generated_files WHERE turn=?",
+        [turn],
+        |r| r.get(0),
+    )?;
+    Ok(json!([changes, writes, files]).to_string())
 }
 fn artifact(
     db: &Connection,
@@ -74,7 +79,7 @@ pub fn command(
     let read = regex::Regex::new(r"(?:^|[;&|]\s*)(?:cat|head|tail|sed|wc|stat)\s")
         .map_err(|_| Failure::storage())?
         .is_match(&shell_command(command)?);
-    if check || read {
+    if check || read && exit_code == Some(0) {
         let report = format!(
             "# Check report\n\nCommand: {}\n\nExit code: {}\n\n```text\n{}\n```\n",
             super::history::slice(command, 0, 2000),
@@ -138,11 +143,10 @@ pub fn capture(db: &Connection, turn: &str) -> Result<()> {
     Ok(())
 }
 fn evidence(db: &Connection, turn: &str, kind: &str) -> Result<bool> {
-    capture(db, turn)?;
     match kind {
         "code"|"ui"=>exists(db,"SELECT 1 FROM verification_artifacts WHERE turn=? AND kind=? AND stamp=?",[turn,if kind=="code" {"check"}else{"screenshot"},&stamp(db,turn)?]),
         "routine"=>exists(db,"SELECT 1 FROM flow_tool_calls WHERE turn=? AND json_extract(call,'$.function.name')='read_routine' AND json_type(result,'$.error') IS NULL AND coalesce(json_extract(result,'$.routine.id'),json_extract(result,'$.id')) IS NOT NULL",[turn]),
-        _=>Ok(exists(db,"SELECT 1 FROM verification_artifacts WHERE turn=? AND kind='file-check'",[turn])? || exists(db,"SELECT 1 FROM flow_tool_calls WHERE turn=? AND json_extract(call,'$.function.name') IN ('read_attachment','read_workspace_file','open_file_in_panel') AND json_type(result,'$.error') IS NULL",[turn])?),
+        _=>Ok(exists(db,"SELECT 1 FROM verification_artifacts WHERE turn=? AND kind='file-check' AND stamp=?",[turn,&stamp(db,turn)?])? || exists(db,"SELECT 1 FROM flow_tool_calls WHERE turn=? AND json_extract(call,'$.function.name') IN ('read_attachment','read_workspace_file') AND json_type(result,'$.text')='text' AND after_output=(SELECT count(*) FROM generated_files WHERE turn=?)",[turn,turn])?),
     }
 }
 pub fn review(db: &Connection, turn: &Value, args: &Value) -> Result<Value> {
@@ -154,6 +158,7 @@ pub fn review(db: &Connection, turn: &Value, args: &Value) -> Result<Value> {
         return Ok(json!({"verified":false,"error":"Invalid verification review."}));
     }
     let id = string(turn, "id");
+    capture(db, id)?;
     if !evidence(db, id, string(args, "kind"))? {
         return Ok(
             json!({"verified":false,"missing":format!("Run the relevant {} check before recording the review.",string(args,"kind"))}),
@@ -169,7 +174,11 @@ pub fn nudge(db: &Connection, id: &str, turn: &Value, profile: &Value) -> Result
         .ok_or_else(Failure::storage)?;
     let budget = profile["tool_budget"].as_i64().unwrap_or(90);
     if exists(db,"SELECT 1 FROM turn_verification WHERE turn=? AND (nudged=1 OR (review IS NOT NULL AND stamp=?))",[id,&stamp])? || exists(db,"SELECT 1 FROM verification_artifacts WHERE turn=? AND stamp=?",[id,&stamp])? || evidence(db,id,"routine")? || used["tool_budget_used"].as_i64().unwrap_or(0)>=budget || db.query_row("SELECT count(*) FROM harness_steps WHERE turn=?",[id],|r|r.get::<_,i64>(0))?>=budget {return Ok(false);}
-    let deliverable=exists(db,"SELECT 1 FROM generated_files WHERE turn=?",[id])? || exists(db,"SELECT 1 FROM harness_steps WHERE turn=? AND name IN ('Write','Edit','MultiEdit','fileChange')",[id])? || regex::Regex::new(r"(?i)\b(build|implement|fix|create|save|set up|deliver|write|edit|update|change|make)\s").map_err(|_|Failure::storage())?.is_match(string(turn,"text"));
+    let generated = exists(db, "SELECT 1 FROM generated_files WHERE turn=?", [id])?;
+    if generated && evidence(db, id, "file")? {
+        return Ok(false);
+    }
+    let deliverable=generated || exists(db,"SELECT 1 FROM harness_steps WHERE turn=? AND name IN ('Write','Edit','MultiEdit','fileChange')",[id])? || regex::Regex::new(r"(?i)\b(build|implement|fix|create|save|set up|deliver|write|edit|update|change|make)\s").map_err(|_|Failure::storage())?.is_match(string(turn,"text"));
     if !deliverable {
         return Ok(false);
     }
@@ -228,7 +237,7 @@ mod tests {
             "CREATE TABLE turns(id TEXT, agent TEXT, channel TEXT, thread TEXT, tool_budget_used INTEGER);
              INSERT INTO turns VALUES('turn','agent',NULL,NULL,0);
              CREATE TABLE files(id TEXT, scope TEXT, name TEXT, digest TEXT, bytes BLOB, created TEXT);
-             CREATE TABLE flow_tool_calls(turn TEXT, call_id TEXT, call TEXT, result TEXT);
+             CREATE TABLE flow_tool_calls(turn TEXT, call_id TEXT, call TEXT, result TEXT, after_output INTEGER DEFAULT 0);
              CREATE TABLE harness_steps(turn TEXT, name TEXT);
              CREATE TABLE generated_files(turn TEXT);
              CREATE TABLE computer_actions(turn TEXT, call_id TEXT, image BLOB);
@@ -247,7 +256,7 @@ mod tests {
         let tool = |id: &str, name: &str, args: Value, result: Value| -> Result<()> {
             let call = json!({"function":{"name":name,"arguments":args.to_string()}});
             db.execute(
-                "INSERT INTO flow_tool_calls VALUES('turn',?,?,?)",
+                "INSERT INTO flow_tool_calls(turn,call_id,call,result) VALUES('turn',?,?,?)",
                 params![id, call.to_string(), result.to_string()],
             )?;
             Ok(())
