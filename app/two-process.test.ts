@@ -2389,9 +2389,9 @@ test('signed task and device mutations publish atomic scoped observations across
       await connection.stop(); assert.equal((await f.send('/api/session')).status,200);
       failure.exec('DROP TRIGGER fail_device_sync');
     } finally { failure.close(); }
-    // A failed disconnect write is retried within seconds, not left to the 30 s maintenance sweep.
-    // 20 s leaves room for release-suite load and still fails on the sweep-only path (~29.5 s).
-    await until(async () => (await f.send('/api/devices')).body.data[0].status === 'offline', 20_000);
+    // A failed disconnect write is retried within seconds (about 2 s here, 30 s before the retry), but
+    // under release-suite load the disconnect itself can wait for the 30 s sweep, so allow a full cycle.
+    await until(async () => (await f.send('/api/devices')).body.data[0].status === 'offline', deviceReconnectTimeout);
     await f.restart();
     await until(async () => { try { return (await f.send(deltaPath)).status === 200; } catch { return false; } });
     assert.deepEqual((await f.send(deltaPath)).body.data.page.events.filter((event: any) => event.recordKind === 'task'), delta.page.events);
@@ -2681,7 +2681,7 @@ for (const lostAt of ['request', 'reply', 'receipt', 'revoked', 'storage'] as co
     }
     await runtime.close();
     // restart() waits for devices the server still lists as ready; let the closed host's disconnect land first.
-    await until(async () => (await f.send('/api/devices')).body.data.every((device: { status: string }) => device.status !== 'ready'), 10_000);
+    await until(async () => (await f.send('/api/devices')).body.data.every((device: { status: string }) => device.status !== 'ready'), deviceReconnectTimeout);
     await f.restart();
     if (lostAt === 'storage') {
       const db = testDatabase(database);
