@@ -8,6 +8,7 @@ license.workspace = true
 briefsip-launcher = { path = "../briefsip-launcher" }
 flate2 = "1"
 ammonia = "4"
+html5ever = "0.40"
 regex = "1"
 ring = "0.17"
 curve25519-dalek = "4"

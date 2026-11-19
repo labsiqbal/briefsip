@@ -178,6 +178,15 @@ pub fn authorize(
         }
     }
     match name {
+        "web_fetch" | "web_search"
+            if c["kind"] != "session"
+                || !crate::turns::web::offered(
+                    name,
+                    crate::turns::web::enabled(db, string(c, "agent"))?,
+                ) =>
+        {
+            return Err(deny());
+        }
         "create_agent" | "create_project" => owner(c)?,
         "hide_agent" => {
             owner(c)?;
@@ -719,6 +728,7 @@ pub async fn run(state: &AppState, c: &Value, name: &str, a: &Value) -> Result<V
 }
 async fn read(state: &AppState, c: &Value, name: &str, a: &Value) -> Result<Value> {
     match name {
+        "web_fetch" | "web_search" => crate::turns::web::call(name, a).await,
         "list_routines" | "read_routine" | "list_workflows" | "read_workflow"
         | "read_workflow_run" => automation(state, c, name, a).await,
         "read_usage" | "list_skills" => usage_skills(state, c, name, a),

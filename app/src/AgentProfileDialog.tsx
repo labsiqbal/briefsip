@@ -11,7 +11,7 @@ import { MascotAvatar } from './ui/avatar-shapes';
 import { CompactionPanel } from './CompactionPanel';
 import { AgentComputerSettings } from './AgentComputerSettings';
 import { AgentVisibility } from './AgentVisibility';
-import { ActionMenu, Alert, Button, Collapsible, Combobox, Dialog, Field, IconButton, Input, RecoveryAlert, Segmented, Select, Tabs, Textarea, Tooltip, useConfirm, type SelectOption } from './ui/kit';
+import { ActionMenu, Alert, Button, Card, Collapsible, Combobox, Dialog, Field, IconButton, Input, RecoveryAlert, Row, Segmented, Select, Switch, Tabs, Textarea, Tooltip, useConfirm, type SelectOption } from './ui/kit';
 
 import './agent-profile.css';
 
@@ -20,7 +20,7 @@ const MemoryPanel = lazy(() => import('./MemoryPanel').then(module => ({ default
 const SitesPanel = lazy(() => import('./SitesPanel').then(module => ({ default: module.SitesPanel })));
 const message = (error: unknown) => error instanceof Error ? error.message : 'Connection failed. Try again.';
 
-export type Agent = { workspace_connected?: boolean; runtime?: Runtime; runnable?: boolean; blocked_reason?: string | null; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; thread_limit: number; tool_budget?: number; revision: number; id: string; name: string; role: string; model: string; instructions: string };
+export type Agent = { workspace_connected?: boolean; runtime?: Runtime; runnable?: boolean; blocked_reason?: string | null; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; thread_limit: number; tool_budget?: number; web_access?: 0 | 1; revision: number; id: string; name: string; role: string; model: string; instructions: string };
 
 export type FirstAgentDefaults = { runtime: Runtime; account: string; model: string };
 const harnessLabels = { codex: 'Codex', claude: 'Claude Code', hermes: 'Hermes', antigravity: 'Antigravity', grok: 'Grok', pi: 'Pi', opencode: 'OpenCode', gemini: 'Gemini', kiro: 'Kiro' };
@@ -93,12 +93,13 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   const [modelValue, setModelValue] = useState(profile?.model ?? recovery.command?.model ?? model);
   const [backupValue, setBackupValue] = useState(profile?.backup_model ?? recovery.command?.backupModel ?? '');
-  const pending = useRef<(AgentCreation & { revision?: number }) | null>(recovery.command);
+  const [webAccess, setWebAccess] = useState(profile?.web_access !== 0);
+  const pending = useRef<(AgentCreation & { revision?: number; webAccess?: boolean }) | null>(recovery.command);
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (busy || invalid) return;
     const form = new FormData(event.currentTarget);
-    const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision } : setup ? { setup: true } : {}), providerAccount: account, name: String(form.get('name')).trim() || (setup ? 'New agent' : ''), role: String(form.get('role') ?? '').trim(), model: String(form.get('model')).trim(), backupModel: String(form.get('backupModel') ?? '').trim(), instructions: String(form.get('instructions') ?? '').trim() || 'Help the user complete their tasks.', threadLimit: Number(form.get('threadLimit') ?? 2), toolBudget: Number(form.get('toolBudget') ?? 90) };
+    const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision, webAccess } : setup ? { setup: true } : {}), providerAccount: account, name: String(form.get('name')).trim() || (setup ? 'New agent' : ''), role: String(form.get('role') ?? '').trim(), model: String(form.get('model')).trim(), backupModel: String(form.get('backupModel') ?? '').trim(), instructions: String(form.get('instructions') ?? '').trim() || 'Help the user complete their tasks.', threadLimit: Number(form.get('threadLimit') ?? 2), toolBudget: Number(form.get('toolBudget') ?? 90) };
     if (profile && runtime !== (profile.runtime ?? 'api') && !pending.current) {
       Object.assign(data, { runtime, confirmRuntime: true });
     }
@@ -239,6 +240,7 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
               <RadixTabs.Content tabIndex={-1} forceMount value="profile" hidden={tab !== 'profile'} className="k-tabs__panel">{profileFields}</RadixTabs.Content>
               <RadixTabs.Content tabIndex={-1} forceMount value="model" hidden={tab !== 'model'} className="k-tabs__panel">{modelFields}</RadixTabs.Content>
               <RadixTabs.Content tabIndex={-1} forceMount value="advanced" hidden={tab !== 'advanced'} className="k-tabs__panel">{advancedFields}
+                <Card><Row title="Web access" trailing={<Switch label="Web access" checked={webAccess} onChange={setWebAccess} disabled={locked || busy} />} /></Card>
                 <AgentComputerSettings agent={profile.id} request={api} autoFocus={focusComputer && tab === 'advanced'} />
                 <div className="details-list agent-profile__resources">
                   <button type="button" className="panel-row panel-row--link" onClick={() => openResource('memory')}><Brain size={16} aria-hidden /><span className="panel-row__title">Agent memory</span><ChevronRight size={14} aria-hidden /></button>
