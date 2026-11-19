@@ -69,13 +69,18 @@ fn private(path: &Path, bytes: &[u8]) -> Result<()> {
     file.write_all(bytes).map_err(|_| Failure::storage())
 }
 fn home(
+    root: &Path,
     runtime: &str,
     account: Option<&data::providers::Account>,
     login: Option<(&str, &[u8])>,
     model: &str,
     fingerprint: String,
 ) -> Result<Home> {
-    let path = std::env::temp_dir().join(format!("briefsip-session-{}", uuid::Uuid::new_v4()));
+    let path = root.join(format!(
+        "{}{}",
+        config::SESSION_PREFIX,
+        uuid::Uuid::new_v4()
+    ));
     DirBuilder::new()
         .mode(0o700)
         .create(&path)
@@ -1436,10 +1441,22 @@ pub async fn run(
             .is_some_and(|h| h.fingerprint == fingerprint);
         if ["codex", "claude"].contains(&runtime) {
             if !same_home {
+                let root =
+                    config::homes_root(&state.config.database).map_err(|_| Failure::storage())?;
+                if std::iter::once(&binding)
+                    .chain(&state.config.workspaces)
+                    .any(|workspace| {
+                        root.starts_with(&workspace.directory)
+                            || workspace.directory.starts_with(&root)
+                    })
+                {
+                    return Err(error(409, "Harness homes must be outside working folders."));
+                }
                 homes.remove(&key);
                 homes.insert(
                     key.clone(),
                     home(
+                        &root,
                         runtime,
                         account.as_ref(),
                         login
@@ -1676,6 +1693,10 @@ while read -r request; do :; done
 
     #[test]
     fn codex_home_keeps_credentials_out_of_private_config() -> crate::db::Result<()> {
+        let scratch = process::ProbeHome::new()?;
+        let database = scratch.0.join("state.sqlite");
+        let _lease = config::prepare_homes(&database)?;
+        let root = config::homes_root(&database)?;
         let mut account = data::providers::Account {
             id: "router".into(),
             name: "Router".into(),
@@ -1688,8 +1709,16 @@ while read -r request; do :; done
             max_tokens: 0,
             source: "environment",
         };
-        let session = home("codex", Some(&account), None, &account.model, String::new())
-            .map_err(|failure| failure.message)?;
+        let session = home(
+            &root,
+            "codex",
+            Some(&account),
+            None,
+            &account.model,
+            String::new(),
+        )
+        .map_err(|failure| failure.message)?;
+        assert_eq!(session.path.parent(), Some(root.as_path()));
         let codex = Path::new(&session.environment["CODEX_HOME"]);
         let config = codex.join("config.toml");
         let text = std::fs::read_to_string(&config)?;
@@ -1715,15 +1744,20 @@ while read -r request; do :; done
         drop(session);
         assert!(!path.exists());
         account.base = "https://user:password@example.test/v1".into();
-        assert!(home("codex", Some(&account), None, "x", String::new()).is_err());
+        assert!(home(&root, "codex", Some(&account), None, "x", String::new()).is_err());
         account.base = "https://example.test/v1".into();
         account.family = "anthropic".into();
-        assert!(home("codex", Some(&account), None, "x", String::new()).is_err());
+        assert!(home(&root, "codex", Some(&account), None, "x", String::new()).is_err());
+        assert!(std::fs::read_dir(root)?.next().is_none());
         Ok(())
     }
 
     #[test]
     fn engine_login_home_has_only_profile_auth_and_generated_config() -> crate::db::Result<()> {
+        let scratch = process::ProbeHome::new()?;
+        let database = scratch.0.join("state.sqlite");
+        let _lease = config::prepare_homes(&database)?;
+        let root = config::homes_root(&database)?;
         for (runtime, variable, file, expected) in [
             (
                 "codex",
@@ -1739,8 +1773,15 @@ while read -r request; do :; done
             ),
         ] {
             let bytes = b"synthetic-profile-credential";
-            let session = home(runtime, None, Some(("login", bytes)), "", String::new())
-                .map_err(|failure| failure.message)?;
+            let session = home(
+                &root,
+                runtime,
+                None,
+                Some(("login", bytes)),
+                "",
+                String::new(),
+            )
+            .map_err(|failure| failure.message)?;
             let directory = Path::new(&session.environment[variable]);
             assert_eq!(directory.parent(), Some(session.path.as_path()));
             assert_eq!(session.environment["HOME"], session.path.to_string_lossy());

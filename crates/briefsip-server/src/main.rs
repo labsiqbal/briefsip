@@ -653,6 +653,7 @@ async fn main() -> db::Result<()> {
         config.auth.is_some(),
         config.now(),
     )?));
+    let harness_homes = harness::config::prepare_homes(&config.database)?;
     let events = events::Hub::new();
     {
         let guard = database.lock().map_err(|_| "Database lock poisoned")?;
@@ -814,6 +815,7 @@ async fn main() -> db::Result<()> {
     computer.close().await;
     trial_watch.abort();
     result?;
+    harness_homes.unlock()?;
     Ok(())
 }
 
