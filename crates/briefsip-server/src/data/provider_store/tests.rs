@@ -57,9 +57,8 @@ impl Fixture {
             }),
         );
         let server = tokio::spawn(async move {
-            axum::serve(listener, router)
-                .await
-                .expect("serve fixture catalog");
+            // A failed fixture server surfaces as failed requests in the test.
+            let _ = axum::serve(listener, router).await;
         });
         let directory =
             std::env::temp_dir().join(format!("briefsip-provider-test-{}", uuid::Uuid::new_v4()));
@@ -100,7 +99,12 @@ impl Fixture {
         })
     }
 
-    async fn request(&self, path: &str, input: Option<Value>, origin: &str) -> (StatusCode, Value) {
+    async fn request(
+        &self,
+        path: &str,
+        input: Option<Value>,
+        origin: &str,
+    ) -> crate::db::Result<(StatusCode, Value)> {
         let mut request = Request::builder()
             .uri(path)
             .header("host", "127.0.0.1:4418")
@@ -113,19 +117,16 @@ impl Fixture {
         } else {
             Body::empty()
         };
-        let response =
-            crate::dispatch(State(self.state.clone()), request.body(body).unwrap()).await;
+        let response = crate::dispatch(State(self.state.clone()), request.body(body)?).await;
         let status = response.status();
-        let bytes = axum::body::to_bytes(response.into_body(), 64000)
-            .await
-            .unwrap();
-        let value: Value = serde_json::from_slice(&bytes).unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), 64000).await?;
+        let value: Value = serde_json::from_slice(&bytes)?;
         let text = value.to_string();
         assert!(![KEY, REPLACEMENT, ENV_KEY, "invalid-provider-secret"]
             .iter()
             .any(|key| text.contains(key)));
         assert!(!text.contains("apiKey\":") && !text.contains("key_ciphertext"));
-        (status, value)
+        Ok((status, value))
     }
 }
 
@@ -151,11 +152,11 @@ async fn agent_directory_checks_each_runtime_and_bound_account() -> crate::db::R
     assert_eq!(
         fixture
             .request("/api/agents", Some(profile.clone()), ORIGIN)
-            .await
+            .await?
             .0,
         201
     );
-    let (_, directory) = fixture.request("/api/agents", None, ORIGIN).await;
+    let (_, directory) = fixture.request("/api/agents", None, ORIGIN).await?;
     assert_eq!(directory["configured"], false);
     assert_eq!(directory["agents"][0]["runnable"], false);
     assert_eq!(
@@ -169,7 +170,7 @@ async fn agent_directory_checks_each_runtime_and_bound_account() -> crate::db::R
                 Some(json!({"id":id(),"text":"Answer"})),
                 ORIGIN,
             )
-            .await
+            .await?
             .0,
         503
     );
@@ -185,11 +186,11 @@ async fn agent_directory_checks_each_runtime_and_bound_account() -> crate::db::R
                 })),
                 ORIGIN
             )
-            .await
+            .await?
             .0,
         201
     );
-    let (_, directory) = fixture.request("/api/agents", None, ORIGIN).await;
+    let (_, directory) = fixture.request("/api/agents", None, ORIGIN).await?;
     assert_eq!(directory["configured"], false);
     let mut profile = profile;
     profile["id"] = json!(id());
@@ -198,11 +199,11 @@ async fn agent_directory_checks_each_runtime_and_bound_account() -> crate::db::R
     assert_eq!(
         fixture
             .request("/api/agents", Some(profile), ORIGIN)
-            .await
+            .await?
             .0,
         201
     );
-    let (_, directory) = fixture.request("/api/agents", None, ORIGIN).await;
+    let (_, directory) = fixture.request("/api/agents", None, ORIGIN).await?;
     assert_eq!(directory["configured"], true);
     assert_eq!(directory["agents"][0]["runnable"], false);
     assert_eq!(directory["agents"][1]["runnable"], true);
@@ -216,27 +217,25 @@ async fn settings_routes_verify_and_apply_accounts_live() -> crate::db::Result<(
     let path = "/api/provider-accounts";
     let account = id();
     let payload = json!({"id":account,"name":"Router","provider":"openai-compatible","baseURL":fixture.base,"apiKey":KEY,"defaultModel":"model-a"});
-    let (_, accounts) = fixture.request(path, None, ORIGIN).await;
-    assert_eq!(accounts.as_array().unwrap().len(), 2);
-    assert!(accounts
-        .as_array()
-        .unwrap()
+    let (_, accounts) = fixture.request(path, None, ORIGIN).await?;
+    assert_eq!(accounts.as_array().map(Vec::len), Some(2));
+    assert!(accounts.as_array().is_some_and(|rows| rows
         .iter()
-        .all(|row| row["source"] == "environment" && row["hasKey"] == true));
+        .all(|row| row["source"] == "environment" && row["hasKey"] == true)));
 
     let (status, _) = fixture
         .request(path, Some(payload.clone()), "https://foreign.example")
-        .await;
+        .await?;
     assert_eq!(status, 403);
     assert_eq!(fixture.calls.load(Ordering::Relaxed), 0);
 
     let mut invalid = payload.clone();
     invalid["apiKey"] = json!("invalid-provider-secret");
-    let (status, body) = fixture.request(path, Some(invalid), ORIGIN).await;
+    let (status, body) = fixture.request(path, Some(invalid), ORIGIN).await?;
     assert_eq!(status, 502);
     assert!(string(&body, "error").contains("rejected the API key"));
-    let (_, accounts) = fixture.request(path, None, ORIGIN).await;
-    assert_eq!(accounts.as_array().unwrap().len(), 2);
+    let (_, accounts) = fixture.request(path, None, ORIGIN).await?;
+    assert_eq!(accounts.as_array().map(Vec::len), Some(2));
     assert!(!fixture
         .directory
         .join("briefsip.sqlite.provider-key")
@@ -244,12 +243,12 @@ async fn settings_routes_verify_and_apply_accounts_live() -> crate::db::Result<(
 
     let (status, body) = fixture
         .request(&format!("{path}/test"), Some(payload.clone()), ORIGIN)
-        .await;
+        .await?;
     assert_eq!(status, 200);
     assert_eq!(body["models"], json!(["model-a", "model-b"]));
     assert_eq!(fixture.calls.load(Ordering::Relaxed), 2);
 
-    let (status, body) = fixture.request(path, Some(payload), ORIGIN).await;
+    let (status, body) = fixture.request(path, Some(payload), ORIGIN).await?;
     assert_eq!(status, 201);
     assert_eq!(body["id"], account);
     assert_eq!(body["hasKey"], true);
@@ -266,7 +265,7 @@ async fn settings_routes_verify_and_apply_accounts_live() -> crate::db::Result<(
     }
     let (status, models) = fixture
         .request(&format!("/api/models?account={account}"), None, ORIGIN)
-        .await;
+        .await?;
     assert_eq!(status, 200);
     assert_eq!(models["models"], json!(["model-a", "model-b"]));
 
@@ -276,16 +275,16 @@ async fn settings_routes_verify_and_apply_accounts_live() -> crate::db::Result<(
             Some(json!({"id":id()})),
             ORIGIN,
         )
-        .await;
+        .await?;
     assert_eq!(status, 200);
     let edit = format!("{path}/{account}/edit");
     let change =
         json!({"id":id(),"revision":1,"name":"Renamed","defaultModel":"model-b","apiKey":""});
-    let (status, body) = fixture.request(&edit, Some(change.clone()), ORIGIN).await;
+    let (status, body) = fixture.request(&edit, Some(change.clone()), ORIGIN).await?;
     assert_eq!(status, 200);
     assert_eq!(body["name"], "Renamed");
     assert_eq!(body["defaultModel"], "model-b");
-    let (status, _) = fixture.request(&edit, Some(change), ORIGIN).await;
+    let (status, _) = fixture.request(&edit, Some(change), ORIGIN).await?;
     assert_eq!(status, 409);
 
     let (status, body) = fixture
@@ -294,7 +293,7 @@ async fn settings_routes_verify_and_apply_accounts_live() -> crate::db::Result<(
             Some(json!({"id":id(),"revision":2,"baseURL":"https://another.example/v1"})),
             ORIGIN,
         )
-        .await;
+        .await?;
     assert_eq!(status, 400);
     assert!(string(&body, "error").contains("apiKey"));
     let (status, _) = fixture
@@ -303,7 +302,7 @@ async fn settings_routes_verify_and_apply_accounts_live() -> crate::db::Result<(
             Some(json!({"id":id(),"revision":2,"apiKey":"invalid-provider-secret"})),
             ORIGIN,
         )
-        .await;
+        .await?;
     assert_eq!(status, 502);
     let (status, _) = fixture
         .request(
@@ -311,7 +310,7 @@ async fn settings_routes_verify_and_apply_accounts_live() -> crate::db::Result<(
             Some(json!({"id":id(),"revision":2,"apiKey":REPLACEMENT})),
             ORIGIN,
         )
-        .await;
+        .await?;
     assert_eq!(status, 200);
     let live = providers::accounts(&fixture.state).map_err(|error| error.message)?;
     assert!(live
@@ -321,12 +320,12 @@ async fn settings_routes_verify_and_apply_accounts_live() -> crate::db::Result<(
     let agent = id();
     let (status, _) = fixture.request("/api/agents", Some(json!({
         "id":agent, "name":"Uses router", "model":"model-b", "instructions":"Answer", "providerAccount":account,
-    })), ORIGIN).await;
+    })), ORIGIN).await?;
     assert_eq!(status, 201);
     let remove = format!("{path}/{account}/delete");
     let (status, body) = fixture
         .request(&remove, Some(json!({"id":id()})), ORIGIN)
-        .await;
+        .await?;
     assert_eq!(status, 409);
     assert!(string(&body, "error").contains("Uses router"));
     let (status, _) = fixture
@@ -335,18 +334,22 @@ async fn settings_routes_verify_and_apply_accounts_live() -> crate::db::Result<(
             Some(json!({"id":id()})),
             ORIGIN,
         )
-        .await;
+        .await?;
     assert_eq!(status, 409);
     {
-        let db = fixture.state.database.lock().unwrap();
+        let db = fixture
+            .state
+            .database
+            .lock()
+            .map_err(|_| "database lock poisoned")?;
         db.connection
             .execute("UPDATE agents SET provider_account='' WHERE id=?", [&agent])?;
     }
     let (status, _) = fixture
         .request(&remove, Some(json!({"id":id()})), ORIGIN)
-        .await;
+        .await?;
     assert_eq!(status, 200);
-    let (_, accounts) = fixture.request(path, None, ORIGIN).await;
-    assert_eq!(accounts.as_array().unwrap().len(), 2);
+    let (_, accounts) = fixture.request(path, None, ORIGIN).await?;
+    assert_eq!(accounts.as_array().map(Vec::len), Some(2));
     Ok(())
 }
