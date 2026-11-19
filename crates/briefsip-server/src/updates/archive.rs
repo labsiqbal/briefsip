@@ -422,7 +422,8 @@ where
         .open(&partial)
         .map_err(|_| storage())?;
     briefsip_launcher::files::private_file(&partial).map_err(|_| storage())?;
-    for attempt in 0..3 {
+    let mut zero_progress_attempts = 0;
+    loop {
         let offset = file.metadata().map_err(|_| storage())?.len();
         let result = if offset > LIMIT {
             Err(PeerError::SizeLimit.failure())
@@ -444,13 +445,18 @@ where
                     return Err(failure);
                 }
                 file.sync_all().map_err(|_| storage())?;
-                if attempt == 2 {
+                let retained = file.metadata().map_err(|_| storage())?.len();
+                zero_progress_attempts = if retained > offset {
+                    0
+                } else {
+                    zero_progress_attempts + 1
+                };
+                if zero_progress_attempts >= 3 {
                     return Err(failure);
                 }
-                let retained = file.metadata().map_err(|_| storage())?.len();
                 eprintln!("peer release download retry release={id} bytes={retained} code={} message={:?}",
                     failure.code, failure.message);
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                tokio::time::sleep(Duration::from_millis(250)).await;
             }
         }
     }
@@ -498,6 +504,141 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{
+        body::{Body, Bytes},
+        http::{header, HeaderMap, Response, StatusCode},
+        Router,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::task::JoinSet;
+
+    const RELEASE_ID: &str = "1.2.3-abcdef12";
+
+    async fn fixture_archive(root: &Path) -> Result<Arc<Archive>> {
+        let release = root.join(RELEASE_ID);
+        fs::create_dir(&release).map_err(|_| storage())?;
+        fs::write(release.join("package.json"), br#"{"version":"1.2.3"}"#)
+            .map_err(|_| storage())?;
+        let files = briefsip_launcher::files::manifest(&release).map_err(|_| storage())?;
+        let info = serde_json::json!({"id": RELEASE_ID, "version": "1.2.3", "files": files});
+        fs::write(release.join("release.json"), info.to_string()).map_err(|_| storage())?;
+        create(root, RELEASE_ID).await
+    }
+
+    async fn fixture_sender(
+        tasks: &mut JoinSet<std::io::Result<()>>,
+        archive: &Archive,
+        stalls: &'static [usize],
+    ) -> Result<String> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .map_err(|_| storage())?;
+        let address = listener.local_addr().map_err(|_| storage())?;
+        let bytes = Bytes::from(fs::read(&archive.file).map_err(|_| storage())?);
+        let sha256 = archive.sha256.clone();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let router = Router::new().fallback(move |headers: HeaderMap| {
+            let bytes = bytes.clone();
+            let sha256 = sha256.clone();
+            let attempt = attempts.fetch_add(1, Ordering::Relaxed);
+            async move {
+                let start = headers
+                    .get(header::RANGE)
+                    .and_then(|value| value.to_str().ok()?.strip_prefix("bytes=")?.strip_suffix('-')?.parse::<usize>().ok())
+                    .unwrap_or(0);
+                let size = bytes.len();
+                let mut response = Response::builder()
+                    .header(header::CONTENT_TYPE, "application/gzip")
+                    .header(header::CONTENT_LENGTH, size - start)
+                    .header("x-briefsip-sha256", sha256);
+                if start > 0 {
+                    response = response.status(StatusCode::PARTIAL_CONTENT).header(
+                        header::CONTENT_RANGE,
+                        format!("bytes {start}-{}/{size}", size - 1),
+                    );
+                }
+                let body = match stalls.get(attempt) {
+                    Some(&len) => Body::from_stream(async_stream::stream! {
+                        if len > 0 {
+                            yield Ok::<_, std::convert::Infallible>(bytes.slice(start..start + len));
+                        }
+                        std::future::pending::<()>().await;
+                    }),
+                    None => Body::from(bytes.slice(start..)),
+                };
+                response.body(body).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+            }
+        });
+        tasks.spawn(async move { axum::serve(listener, router).await });
+        Ok(format!("http://{address}"))
+    }
+
+    async fn fixture_download(
+        client: &reqwest::Client,
+        url: &str,
+        offset: u64,
+    ) -> Result<reqwest::Response> {
+        let mut request = client.get(url);
+        if offset > 0 {
+            request = request.header(header::RANGE, format!("bytes={offset}-"));
+        }
+        request.send().await.map_err(PeerError::network)
+    }
+
+    async fn fixture_receive(
+        root: &Path,
+        stalls: &'static [usize],
+    ) -> Result<(Result<()>, Vec<u64>)> {
+        let archive = fixture_archive(root).await?;
+        let mut tasks = JoinSet::new();
+        let url = fixture_sender(&mut tasks, &archive, stalls).await?;
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .read_timeout(Duration::from_millis(250))
+            .build()
+            .map_err(PeerError::network)?;
+        let received = root.join("received");
+        let mut offsets = Vec::new();
+        let result = receive(
+            &received,
+            RELEASE_ID,
+            &archive.sha256,
+            |offset| {
+                offsets.push(offset);
+                fixture_download(&client, &url, offset)
+            },
+            || async { Ok(()) },
+        )
+        .await;
+        Ok((result, offsets))
+    }
+
+    #[tokio::test]
+    async fn peer_release_resumes_after_four_progressing_idle_timeouts() -> Result<()> {
+        let root = Temporary::new(&std::env::temp_dir(), "peer-resume-test")?;
+        let (result, offsets) = fixture_receive(&root.0, &[8, 8, 8, 8]).await?;
+        result?;
+        assert_eq!(offsets, [0, 8, 16, 24, 32]);
+        assert_eq!(
+            release::verify(&root.0.join("received"), RELEASE_ID)?["version"],
+            "1.2.3"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn peer_release_times_out_after_three_consecutive_attempts_without_progress() -> Result<()>
+    {
+        let root = Temporary::new(&std::env::temp_dir(), "peer-resume-test")?;
+        let (result, offsets) = fixture_receive(&root.0, &[8, 0, 0, 8, 0, 0, 0]).await?;
+        assert_eq!(
+            result.err().ok_or_else(storage)?.code,
+            "peer_transfer_timeout"
+        );
+        assert_eq!(offsets, [0, 8, 8, 8, 16, 16, 16]);
+        Ok(())
+    }
+
     fn tar(name: &str, kind: u8, bytes: &[u8]) -> Vec<u8> {
         let mut header = [0u8; 512];
         header[..name.len()].copy_from_slice(name.as_bytes());
