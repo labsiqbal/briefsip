@@ -26,7 +26,7 @@ test('peer transport accepts proxy host headers while owner machine routes retai
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-peer-host-'));
   const app = await startApp({ database: join(dir, 'db.sqlite'), peerTokenIssuer: fakePeerTokenIssuer() });
   const send = (path: string, body?: unknown) => new Promise<number>((resolve, reject) => {
-    const req = httpRequest(app.origin + path, { method: body === undefined ? 'GET' : 'POST', headers: { Host: 'workstation.example.ts.net:4317', 'Content-Type': 'application/json' } }, res => { res.resume(); res.once('end', () => resolve(res.statusCode!)); });
+    const req = httpRequest(app.origin + path, { method: body === undefined ? 'GET' : 'POST', headers: { Host: 'workstation.example.test:4317', 'Content-Type': 'application/json' } }, res => { res.resume(); res.once('end', () => resolve(res.statusCode!)); });
     req.once('error', reject); req.end(body === undefined ? undefined : JSON.stringify(body));
   });
   try {

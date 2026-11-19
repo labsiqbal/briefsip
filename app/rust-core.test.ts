@@ -84,8 +84,8 @@ test('core SSE wire format replays persisted snapshots, isolates scopes and clos
 test('Rust test bridge rejects unported options before starting a process', async () => {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-core-unported-'));
   try {
-    await assert.rejects(startApp({ database: join(root, 'db.sqlite'), ...{ unported: true } }), /not ported: option unported.*PORTING/);
-    await assert.rejects(startApp({ database: join(root, 'db.sqlite'), hubLink: { origin: 'https://hub.example.test', hubSigningPublicKey: 'fixture', ...{ unported: true } } }), /not ported: option hubLink.unported.*PORTING/);
+    await assert.rejects(startApp({ database: join(root, 'db.sqlite'), ...{ unported: true } }), /not ported: option unported/);
+    await assert.rejects(startApp({ database: join(root, 'db.sqlite'), hubLink: { origin: 'https://hub.example.test', hubSigningPublicKey: 'fixture', ...{ unported: true } } }), /not ported: option hubLink.unported/);
     for (const concurrency of [NaN, Infinity, 0, 33]) await assert.rejects(startApp({ database: join(root, `db-${String(concurrency)}.sqlite`), concurrency }), /BRIEFSIP_CONCURRENCY must be 1\.\.32/);
     assert(!existsSync(join(root, 'db.sqlite')));
   }

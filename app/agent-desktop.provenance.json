@@ -2,7 +2,6 @@
   "adapted": "Hermes Agent Bot Desktop runtime, lease/lock, display allocation and thumbnail concepts; rewritten in TypeScript for Briefsip.",
   "repository": "https://github.com/NousResearch/hermes-agent",
   "revision": "d923a5eb487a17c0a68801bba9ef0f56c81040a8",
-  "local_checkout": "/home/user/.hermes/hermes-agent",
   "sources": [
     "tools/bot_desktop/runtime.py",
     "tools/bot_desktop/launcher.sh",

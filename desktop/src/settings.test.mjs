@@ -7,11 +7,11 @@ import { addServer, readSettings, removeServer, resolveWindowBounds, writeSettin
 test('atomic settings persist server selection and bounds; removal switches to remaining server', (t) => {
   const root = path.resolve('.cache/tests'); fs.mkdirSync(root, { recursive: true });
   const dir = fs.mkdtempSync(path.join(root, 'settings-')); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  let value = addServer(readSettings(dir), 'https://nuc.example.ts.net:4317');
+  let value = addServer(readSettings(dir), 'https://nuc.example.test:4317');
   value = addServer(value, 'https://other.test/'); value.window = { width: 900, height: 700, x: 4, y: 8 };
   writeSettings(dir, value); assert.deepEqual(readSettings(dir), value);
   assert.equal(fs.statSync(path.join(dir, 'settings.json')).mode & 0o777, 0o600);
-  value = removeServer(value, 'https://other.test/'); assert.equal(value.activeServer, 'https://nuc.example.ts.net:4317/');
+  value = removeServer(value, 'https://other.test/'); assert.equal(value.activeServer, 'https://nuc.example.test:4317/');
   assert.equal(removeServer(value, value.activeServer).activeServer, null);
   fs.writeFileSync(path.join(dir, 'settings.json'), '{broken'); assert.throws(() => readSettings(dir), /Preserve/);
   assert.equal(fs.readFileSync(path.join(dir, 'settings.json'), 'utf8'), '{broken');

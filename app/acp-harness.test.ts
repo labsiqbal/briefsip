@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -111,8 +111,13 @@ test('ACP resume suppresses replay and keeps cwd and credentials scoped', async 
 test('ACP file requests reject outside paths and symlinks, require write approval', async () => {
   const f = await rustFixture('hermes');
   try {
-    symlinkSync('/tmp', join(f.workspace, 'outside'));
-    const done = await f.complete(await f.send('FILES'));
+    const id = await f.send('FILES');
+    const pending = await f.until(id, row => row.harnessApprovals.some((card: { state: string }) => card.state === 'approval'));
+    // Add the link after the initial workspace checkpoint, before the ACP file requests.
+    writeFileSync(join(dirname(f.database), 'escape.txt'), 'Outside workspace fixture');
+    symlinkSync(dirname(f.database), join(f.workspace, 'outside'));
+    assert.equal(pending.status, 'running');
+    const done = await f.complete(id);
     assert.equal(done.status, 'done', done.error);
     assert.equal(readFileSync(join(f.workspace, 'hello.txt'), 'utf8'), 'hello\n');
     assert.equal(done.harnessApprovals.length, 2);

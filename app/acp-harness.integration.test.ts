@@ -11,7 +11,7 @@ import { startApp } from './test-bridge.ts';
 import { findHostHarness } from './test-support/find-host-harness.ts';
 
 const enabled = process.env.BRIEFSIP_ACP_IT === '1';
-const evidence = new URL('../work/rebuild/acp-harnesses/', import.meta.url);
+const evidence = new URL('./test-support/acp-harnesses/', import.meta.url);
 if (enabled) mkdirSync(evidence, { recursive: true });
 for (const runtime of ['hermes', 'antigravity', 'grok', 'pi'] as const) test(`${runtime}: installed harness prompt, tool and stop`, { skip: !enabled, timeout: 240_000 }, async context => {
   const root = mkdtempSync(join(tmpdir(), `briefsip-${runtime}-it-`)), home = join(root, 'home'), workspace = join(root, 'workspace');

@@ -11,7 +11,7 @@
     "build": "tsc --noEmit && vite build && vite build --config vite.hub.config.ts",
     "hub": "node --experimental-strip-types hub/server.ts",
     "test": "node scripts/test.mjs",
-    "test:phase-0": "node ../work/rebuild/collaboration-check/t3-provenance.mjs --phase --receipt ../work/rebuild/collaboration-check/phase-0.json",
+    "test:phase-0": "node t3/provenance-check.mjs --phase --receipt t3/phase-0.json",
     "cli": "sh scripts/briefsip-command.sh script",
     "skills": "sh scripts/briefsip-command.sh skills",
     "lint": "eslint . --max-warnings 0 && node lint/check.mjs && node lint/markdown-paths.mjs"

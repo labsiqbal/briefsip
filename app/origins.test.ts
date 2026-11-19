@@ -18,14 +18,14 @@ function call(origin: string, path: string, headers: Record<string, string>, bod
   });
 }
 
-const tailnet = 'https://briefsip.example.ts.net:4317';
+const tailnet = 'https://briefsip.example.test:4317';
 const agent = () => ({ id: randomUUID(), name: 'Origin check', model: 'test-model', instructions: 'Check origins.', threadLimit: 2 });
 
 test('extra browser origins are denied unless explicitly configured', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-origins-'));
   const app = await startApp({ database: join(dir, 'state.sqlite') });
   try {
-    assert.equal((await call(app.origin, '/api/agents', { runtime: 'api', Host: 'briefsip.example.ts.net:4317' })).status, 403);
+    assert.equal((await call(app.origin, '/api/agents', { runtime: 'api', Host: 'briefsip.example.test:4317' })).status, 403);
     const loopbackHost = new URL(app.origin).host;
     assert.equal((await call(app.origin, '/api/agents', { runtime: 'api', Host: loopbackHost, Origin: tailnet }, agent())).status, 403);
     assert.equal((await call(app.origin, '/api/agents', { runtime: 'api', Host: loopbackHost, Origin: app.origin }, agent())).status, 201);
@@ -36,13 +36,13 @@ test('a configured https origin is accepted for host and writes while other orig
   const dir = mkdtempSync(join(tmpdir(), 'briefsip-origins-'));
   const app = await startApp({ database: join(dir, 'state.sqlite'), allowedOrigins: [tailnet] });
   try {
-    const host = 'briefsip.example.ts.net:4317';
+    const host = 'briefsip.example.test:4317';
     const read = await call(app.origin, '/api/agents', { runtime: 'api', Host: host });
     assert.equal(read.status, 200);
     assert.equal((await call(app.origin, '/api/agents', { runtime: 'api', Host: host, Origin: tailnet }, agent())).status, 201);
-    assert.equal((await call(app.origin, '/api/agents', { runtime: 'api', Host: host, Origin: 'https://evil.example.ts.net:4317' }, agent())).status, 403);
-    assert.equal((await call(app.origin, '/api/agents', { runtime: 'api', Host: host, Origin: 'http://briefsip.example.ts.net:4317' }, agent())).status, 403);
-    assert.equal((await call(app.origin, '/api/agents', { runtime: 'api', Host: 'other.example.ts.net:4317' })).status, 403);
+    assert.equal((await call(app.origin, '/api/agents', { runtime: 'api', Host: host, Origin: 'https://evil.example.test:4317' }, agent())).status, 403);
+    assert.equal((await call(app.origin, '/api/agents', { runtime: 'api', Host: host, Origin: 'http://briefsip.example.test:4317' }, agent())).status, 403);
+    assert.equal((await call(app.origin, '/api/agents', { runtime: 'api', Host: 'other.example.test:4317' })).status, 403);
     assert.equal((await call(app.origin, '/api/agents', { runtime: 'api', Host: host, 'Sec-Fetch-Site': 'cross-site' })).status, 403);
     const loopbackHost = new URL(app.origin).host;
     assert.equal((await call(app.origin, '/api/agents', { runtime: 'api', Host: loopbackHost, Origin: app.origin }, agent())).status, 201);
