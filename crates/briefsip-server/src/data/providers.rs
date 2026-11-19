@@ -549,6 +549,17 @@ pub fn usage(db: &Connection, q: &[(String, String)]) -> Result<Value> {
     )
 }
 
+pub(crate) fn format_timeout(timeout: Duration) -> String {
+    let millis = timeout.as_millis();
+    if millis > 0 && millis.is_multiple_of(60_000) {
+        format!("{} min", millis / 60_000)
+    } else if millis.is_multiple_of(1000) {
+        format!("{} s", millis / 1000)
+    } else {
+        format!("{millis} ms")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -609,16 +620,5 @@ mod tests {
         gemini["streamTermination"] = json!("finish-reason");
         assert!(parse(Some(json!([gemini]))).is_err());
         Ok(())
-    }
-}
-
-pub(crate) fn format_timeout(timeout: Duration) -> String {
-    let millis = timeout.as_millis();
-    if millis > 0 && millis.is_multiple_of(60_000) {
-        format!("{} min", millis / 60_000)
-    } else if millis.is_multiple_of(1000) {
-        format!("{} s", millis / 1000)
-    } else {
-        format!("{millis} ms")
     }
 }
