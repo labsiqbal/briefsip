@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { once } from 'node:events';
@@ -29,12 +29,14 @@ test('mise shim probes and launches with trusted mise paths and an isolated home
     script(shim, '#!/bin/bash\n[ "\${1:-}" = --version ] && cat >/dev/null\nexport MISE_MINIMUM_RELEASE_AGE=0; mise use -g --quiet "gemini" || exit 1; exec mise x "gemini" -- "gemini" "$@"\n');
     script(join(dir, 'mise'), `#!/bin/sh
 set -eu
-if [ ! -f "\${MISE_CONFIG_DIR:-}/config.toml" ] || [ ! -L "\${MISE_STATE_DIR:-}/trusted-configs/fixture" ]; then
+if [ ! -f "\${MISE_CONFIG_DIR:-}/config.toml" ] || [ "\${MISE_TRUSTED_CONFIG_PATHS:-}" != "$MISE_CONFIG_DIR" ]; then
   echo 'mise fixture: config is not trusted' >&2
   exit 1
 fi
 [ "$MISE_CONFIG_DIR" = '${config}' ]
-[ "$MISE_STATE_DIR" = '${state}' ]
+[ "$MISE_STATE_DIR" = "$HOME/.local/state/mise" ]
+# Like mise, record trust for this HOME in the state dir.
+mkdir -p "$MISE_STATE_DIR/trusted-configs" && ln -sfn "$HOME" "$MISE_STATE_DIR/trusted-configs/home-$$"
 [ "$MISE_CACHE_DIR" = '${cache}' ]
 [ "$MISE_DATA_DIR" = '${data}' ]
 [ "$HOME" != '${home}' ]
@@ -42,7 +44,6 @@ fi
 [ -z "\${GEMINI_API_KEY:-}" ]
 [ "$MISE_NO_ENV" = 1 ]
 [ "$MISE_NO_HOOKS" = 1 ]
-[ -z "\${MISE_TRUSTED_CONFIG_PATHS:-}" ]
 case "$1" in
   use) exit 0;;
   x) shift 4; exec '${fake}' "$@";;
@@ -95,6 +96,8 @@ exit 1
       if (['done', 'failed', 'cancelled'].includes(turn.status)) {
         assert.deepEqual([gemini.version, gemini.available, turn.status, turn.reply],
           ['fake-acp 1.0.0', true, 'done', 'Final answer.'], `${gemini.reason ?? ''} ${turn.error ?? ''}`);
+        // Probes and turns record mise trust in their isolated homes, not in the owner's state.
+        assert.deepEqual(readdirSync(join(state, 'trusted-configs')), ['fixture']);
         return;
       }
       await new Promise(resolve => setTimeout(resolve, 10));

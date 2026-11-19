@@ -40,10 +40,9 @@ pub(super) fn mise_shim(path: &Path) -> bool {
             })
 }
 
-const MISE_DIRS: [(&str, &str, &str); 4] = [
+const MISE_DIRS: [(&str, &str, &str); 3] = [
     ("MISE_CONFIG_DIR", "XDG_CONFIG_HOME", ".config"),
     ("MISE_DATA_DIR", "XDG_DATA_HOME", ".local/share"),
-    ("MISE_STATE_DIR", "XDG_STATE_HOME", ".local/state"),
     ("MISE_CACHE_DIR", "XDG_CACHE_HOME", ".cache"),
 ];
 
@@ -63,6 +62,14 @@ pub(super) fn configure_mise(env: &mut HashMap<String, String>) {
         if let Some(path) = path.and_then(|path| path.into_os_string().into_string().ok()) {
             env.insert(key.into(), path);
         }
+    }
+    // mise records trust for every new HOME in its state dir, so keep state in the isolated home
+    // and trust only the owner's mise config.
+    if let Some(home) = env.get("HOME").cloned() {
+        env.insert("MISE_STATE_DIR".into(), format!("{home}/.local/state/mise"));
+    }
+    if let Some(config) = env.get("MISE_CONFIG_DIR").cloned() {
+        env.insert("MISE_TRUSTED_CONFIG_PATHS".into(), config);
     }
     // Keep config-sourced env and hooks out of harness launches.
     for key in ["MISE_NO_ENV", "MISE_NO_HOOKS"] {
