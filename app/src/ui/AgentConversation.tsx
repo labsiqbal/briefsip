@@ -5,8 +5,8 @@ import { AgentAvatar } from '../AgentAvatar';
 import { Markdown, StreamingMarkdown } from '../Markdown';
 import { AgentMessage } from './ChatPrimitives';
 import { Collapsible } from './kit';
-import { activityLabel, livePartial, liveTurn, type TurnActivityData } from './transcript';
-import { TurnActivity, turnActivitySteps } from './TurnActivity';
+import { activityLabel, livePartial, liveTurn, turnActivitySteps, type TurnActivityData } from './transcript';
+import { TurnActivity } from './TurnActivity';
 import { useLiveClock } from '../hooks/useLiveClock';
 import type { StreamPartial } from '../../shared/turn-stream';
 

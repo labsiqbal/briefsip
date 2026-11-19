@@ -289,6 +289,7 @@ pub fn generated(db: &Connection, id: &str) -> Result<Value> {
     }
     Ok(json!(rows))
 }
+
 fn message_rows(db: &Connection, id: &str) -> Result<Vec<Value>> {
     let rows=rows(db,"agent_requests","SELECT r.id AS request,r.expects_reply,r.settled,t.id,t.agent,t.thread,coalesce(remote.name,a.name) AS name,remote.machine AS remote_machine,remote.agent AS remote_agent,t.status,CASE WHEN remote.id IS NOT NULL THEN 0 ELSE t.paused END AS paused,substr(t.reply,1,1000) AS reply,length(t.reply) AS reply_length,t.error,dg.id AS task_id,dg.wait AS task_wait,substr(t.text,1,1000) AS task,t.created,substr(t.reply,1,16000) AS detailReply,a.role,t.waiting_for FROM agent_requests r JOIN agent_deliveries d ON d.request=r.id JOIN turns t ON t.id=d.turn JOIN agents a ON a.id=t.agent LEFT JOIN delegation_tasks dg ON dg.delivery=t.id LEFT JOIN remote_agent_calls remote ON remote.delivery=t.id WHERE r.turn=? ORDER BY r.rowid,t.seq",[id])?;
     let mut out = Vec::new();
@@ -385,7 +386,7 @@ fn activity(db: &Connection, id: &str) -> Result<Value> {
     .ok_or_else(Failure::storage)?;
     v["dispatch"]=json!(all(db,"SELECT source_turn,target_turn,mode FROM dispatch_links WHERE source_turn=? OR target_turn=? ORDER BY created",[id,id])?);
     v["calls"]=json!(all(db,"SELECT seq,model,purpose,phase,status,created,finished FROM provider_calls WHERE turn=? ORDER BY seq",[id])?);
-    let mut tools=rows(db,"flow_tool_calls","SELECT call_id AS id,json_extract(call,'$.function.name') AS name,coalesce(after_action,0) AS after_action,CASE WHEN json_valid(result) THEN json_type(result,'$.error') IS NOT NULL ELSE 0 END AS failed FROM flow_tool_calls WHERE turn=? ORDER BY after_action,after_output,seq",[id])?;
+    let mut tools=rows(db,"flow_tool_calls","SELECT call_id AS id,json_extract(call,'$.function.name') AS name,coalesce(after_action,0) AS after_action,CASE WHEN json_valid(result) THEN (coalesce(json_type(result,'$.error'),'null') <> 'null' OR coalesce(json_extract(result,'$.exitCode'),0) <> 0 OR coalesce(json_extract(result,'$.isError'),0)=1 OR coalesce(json_extract(result,'$.status'),'') IN('error','failed')) ELSE 0 END AS failed FROM flow_tool_calls WHERE turn=? ORDER BY after_action,after_output,seq",[id])?;
     if table(db, "files")? {
         tools.extend(rows(db,"generated_files","SELECT g.call_id AS id,json_extract(g.call,'$.function.name') AS name,'Created '||f.name AS title,coalesce(g.after_action,0) AS after_action,0 AS failed FROM generated_files g JOIN files f ON f.id=g.file WHERE g.turn=? ORDER BY g.seq",[id])?);
     }
@@ -393,13 +394,13 @@ fn activity(db: &Connection, id: &str) -> Result<Value> {
     v["artifacts"] = json!(rows(
         db,
         "verification_artifacts",
-        "SELECT f.id,f.name,v.kind,'/api/' || replace(f.scope,':','/') || '/files/' || f.id AS url FROM verification_artifacts v JOIN files f ON f.id=v.file WHERE v.turn=? AND f.deleted=0 ORDER BY v.rowid",
+        "SELECT coalesce(f.id,v.source) AS id,coalesce(f.name,'Verification result') AS name,v.kind,CASE WHEN f.id IS NULL THEN NULL ELSE '/api/' || replace(f.scope,':','/') || '/files/' || f.id END AS url FROM verification_artifacts v LEFT JOIN files f ON f.id=v.file AND v.kind='screenshot' WHERE v.turn=? AND (f.id IS NULL OR f.deleted=0) ORDER BY v.rowid",
         [id]
     )?);
     v["harness"] = json!(rows(
         db,
         "harness_steps",
-        "SELECT id,name,state FROM harness_steps WHERE turn=? ORDER BY rowid",
+        "SELECT h.id,h.name,h.state,coalesce(s.failed,0) AS failed FROM harness_steps h LEFT JOIN turn_step_diagnostics s USING(turn,id) WHERE h.turn=? ORDER BY h.rowid",
         [id]
     )?);
     let mut stream=all(db,"SELECT c.seq,s.ordinal,s.id,s.kind,s.text,s.state,s.final,s.revision FROM provider_stream_segments s JOIN provider_calls c ON c.seq=s.call WHERE c.turn=? AND c.purpose='completion' AND c.phase IN('answer','budget_summary') ORDER BY c.seq,s.ordinal",[id])?;

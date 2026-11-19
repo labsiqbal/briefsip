@@ -6,7 +6,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
 };
 
@@ -58,6 +58,8 @@ fn signal(pid: u32) {
         let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
     }
 }
+const STDERR_BYTES: usize = 16 * 1024;
+
 pub struct Process {
     child: Child,
     stdin: ChildStdin,
@@ -66,6 +68,9 @@ pub struct Process {
     birth: String,
     owned: Arc<Mutex<HashMap<u32, String>>>,
     watch: tokio::task::JoinHandle<()>,
+    stderr: Arc<Mutex<Vec<u8>>>,
+    stderr_reader: tokio::task::JoinHandle<()>,
+    stderr_destination: Option<(AppState, i64, Vec<String>)>,
     bytes: usize,
     pending: Vec<u8>,
 }
@@ -83,7 +88,7 @@ impl Process {
             .env_clear()
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .kill_on_drop(true)
             .process_group(0);
         for key in ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TERM"] {
@@ -102,6 +107,19 @@ impl Process {
         let birth = identity(root).map(|v| v.2).unwrap_or_default();
         let stdin = child.stdin.take().ok_or_else(Failure::storage)?;
         let stdout = BufReader::new(child.stdout.take().ok_or_else(Failure::storage)?);
+        let mut pipe = child.stderr.take().ok_or_else(Failure::storage)?;
+        let stderr = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let tail = Arc::clone(&stderr);
+        let stderr_reader = tokio::spawn(async move {
+            let mut buffer = [0; 4096];
+            while let Ok(size @ 1..) = pipe.read(&mut buffer).await {
+                if let Ok(mut tail) = tail.lock() {
+                    let excess = (tail.len() + size).saturating_sub(STDERR_BYTES);
+                    tail.drain(..excess);
+                    tail.extend_from_slice(&buffer[..size]);
+                }
+            }
+        });
         let owned = Arc::new(Mutex::new(HashMap::new()));
         let descendants = owned.clone();
         let start = birth.clone();
@@ -121,10 +139,17 @@ impl Process {
             birth,
             owned,
             watch,
+            stderr,
+            stderr_reader,
+            stderr_destination: None,
             bytes: 0,
             pending: Vec::new(),
         })
     }
+    pub fn record_stderr(&mut self, state: &AppState, call: i64, secrets: &[String]) {
+        self.stderr_destination = Some((state.clone(), call, secrets.to_vec()));
+    }
+
     pub async fn send(&mut self, value: Value) -> Result<()> {
         let mut bytes = value.to_string().into_bytes();
         if bytes.len() > 2 * 1024 * 1024 {
@@ -186,6 +211,29 @@ impl Process {
 impl Drop for Process {
     fn drop(&mut self) {
         self.watch.abort();
+        self.stderr_reader.abort();
+        if let Some((state, call, secrets)) = self.stderr_destination.take() {
+            if let Ok(bytes) = self.stderr.lock() {
+                let raw = if bytes.len() == STDERR_BYTES {
+                    let start = bytes.iter().position(|byte| *byte == b'\n');
+                    start.map_or(&[][..], |index| &bytes[index + 1..])
+                } else {
+                    &bytes
+                };
+                let raw = String::from_utf8_lossy(raw);
+                let tail = raw.lines().rev().take(20).collect::<Vec<_>>();
+                let tail = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
+                let tail = crate::turns::diagnostics::text(&tail, &secrets);
+                if !tail.is_empty() {
+                    if let Ok(guard) = state.database.lock() {
+                        let _ = guard.connection.execute(
+                            "INSERT INTO harness_stderr(call,tail) VALUES(?,?)",
+                            rusqlite::params![call, crate::turns::diagnostics::bounded(&tail)],
+                        );
+                    }
+                }
+            }
+        }
         if let Ok(mut owned) = self.owned.lock() {
             track(self.root, &self.birth, &mut owned);
             for (pid, start) in owned.iter() {

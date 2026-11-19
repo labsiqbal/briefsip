@@ -1,11 +1,12 @@
 pub(crate) use admission::account as hub_account;
 pub(crate) use admission::prepare as prepare_script;
 pub(crate) use admission::route as script_route;
-pub(crate) use history::requested_files;
+pub(crate) use history::{inspect, requested_files};
 mod accounts;
 mod admission;
 mod compaction;
 mod coordination;
+pub(crate) mod diagnostics;
 mod dispatch;
 pub(crate) mod execution;
 pub(crate) mod harness;
@@ -93,6 +94,7 @@ impl Runtime {
 
 pub fn initialize_canonical(db: &Connection) -> Result<()> {
     db.execute_batch(include_str!("schema.sql"))?;
+    verification::migrate(db)?;
     if !all(db, "PRAGMA table_info(queue_edits)", [])?
         .iter()
         .any(|column| column["name"] == "expires_at")

@@ -185,3 +185,282 @@ pub fn read(db: &Connection, turn: &Value, name: &str, args: &Value) -> Result<V
     row["questions"] = json!([]);
     Ok(row)
 }
+
+fn inspect_step(mut row: Value, secrets: &[String]) -> Result<Value> {
+    let name = string(&row, "name");
+    row["name"] = json!(super::diagnostics::text(name, secrets));
+    let call = row.get("call").and_then(|value| data::json(value).ok());
+    let result = row
+        .get("result")
+        .map(|value| data::json(value).unwrap_or_else(|_| value.clone()));
+    if let Some(call) = call {
+        let raw = &call["function"]["arguments"];
+        let args = data::json(raw).unwrap_or_else(|_| raw.clone());
+        row["arguments"] = json!(super::diagnostics::display(&args, secrets));
+    }
+    if let Some(result) = result {
+        row["state"] = json!(if super::diagnostics::tool_failed(&result) {
+            "failed"
+        } else {
+            result["status"].as_str().unwrap_or("completed")
+        });
+        row["result"] = json!(super::diagnostics::display(&result, secrets));
+    }
+    if let Some(title) = row["title"].as_str() {
+        row["title"] = json!(super::diagnostics::text(title, secrets));
+    }
+    row.as_object_mut()
+        .ok_or_else(Failure::storage)?
+        .remove("call");
+    Ok(row)
+}
+
+pub fn inspect(
+    state: &AppState,
+    id: &str,
+    method: &Method,
+    headers: &axum::http::HeaderMap,
+    query: &[(String, String)],
+) -> Result<Response> {
+    if headers.contains_key("authorization")
+        || headers.contains_key("origin") && !data::origin(state, headers)
+    {
+        return Err(error(
+            403,
+            "Turn inspection requires the local owner in Briefsip.",
+        ));
+    }
+    if *method != Method::GET {
+        return Err(error(405, "Use GET to inspect a turn."));
+    }
+    if !query.is_empty() {
+        return Err(error(400, "Invalid inspection parameters."));
+    }
+    let missing = || error(404, "Turn not found.");
+    if !uuid(id) {
+        return Err(missing());
+    }
+    let guard = state.database.lock().map_err(|_| Failure::storage())?;
+    let db = &guard.connection;
+    let turn = one(
+        db,
+        "SELECT id,agent,channel,thread,status,error FROM turns WHERE id=?",
+        [id],
+    )?
+    .ok_or_else(missing)?;
+    let (kind, scope) = if let Some(channel) = turn["channel"].as_str() {
+        ("channels", channel)
+    } else if let Some(thread) = turn["thread"].as_str() {
+        ("threads", thread)
+    } else {
+        ("agents", string(&turn, "agent"))
+    };
+    data::conversations::owner(db, kind, scope).map_err(|failure| {
+        if failure.status == 404 {
+            missing()
+        } else {
+            failure
+        }
+    })?;
+
+    let secrets = super::diagnostics::secrets(state, db)?;
+    let tools = all(db,
+        "WITH journal AS (
+           SELECT c.seq,c.call_id,c.call,c.result,c.after_action,'Created '||f.name AS title
+           FROM flow_tool_calls c LEFT JOIN generated_files g USING(turn,call_id)
+           LEFT JOIN files f ON f.id=g.file WHERE c.turn=?1
+           UNION ALL
+           SELECT g.seq,g.call_id,g.call,json_object('id',f.id,'name',f.name),g.after_action,'Created '||f.name
+           FROM generated_files g JOIN files f ON f.id=g.file WHERE g.turn=?1
+           AND NOT EXISTS(SELECT 1 FROM flow_tool_calls c WHERE c.turn=g.turn AND c.call_id=g.call_id)
+         )
+         SELECT j.call_id AS id,json_extract(j.call,'$.function.name') AS name,j.call,j.result,j.title,
+         coalesce(j.after_action,0) AS after_action,s.started,s.finished
+         FROM journal j LEFT JOIN turn_step_diagnostics s ON s.turn=?1 AND s.id=j.call_id
+         ORDER BY after_action,j.seq",
+        [id],
+    )?.into_iter().map(|row| inspect_step(row, &secrets)).collect::<Result<Vec<_>>>()?;
+    let harness = all(
+        db,
+        "SELECT h.id,h.name,h.state,s.started,s.finished,s.arguments,s.result,coalesce(s.failed,0) AS failed FROM harness_steps h
+         LEFT JOIN turn_step_diagnostics s USING(turn,id) WHERE h.turn=? ORDER BY h.rowid",
+        [id],
+    )?
+    .into_iter()
+    .map(|mut row| {
+        for field in ["name", "arguments", "result"] {
+            if let Some(raw) = row[field].as_str() {
+                row[field] = json!(super::diagnostics::bounded(&super::diagnostics::text(
+                    raw, &secrets
+                )));
+            }
+        }
+        row
+    })
+    .collect::<Vec<_>>();
+    let mut providers = all(
+        db,
+        "SELECT seq,model,status,created,finished,input_tokens,output_tokens,total_tokens,
+         CAST(round((julianday(finished)-julianday(created))*86400000) AS INTEGER) AS duration_ms
+         FROM provider_calls WHERE turn=? ORDER BY seq",
+        [id],
+    )?;
+    for provider in &mut providers {
+        provider["model"] = json!(super::diagnostics::text(
+            string(provider, "model"),
+            &secrets
+        ));
+    }
+    let stderr = one(db,
+        "SELECT tail FROM harness_stderr JOIN provider_calls ON provider_calls.seq=harness_stderr.call
+         WHERE turn=? ORDER BY seq DESC LIMIT 1",
+        [id],
+    )?;
+    Ok(crate::json_response(
+        200,
+        json!({
+            "status": turn["status"],
+            "error": super::diagnostics::display(&turn["error"], &secrets),
+            "tools": tools,
+            "harness": harness,
+            "providers": providers,
+            "engineStderr": stderr.and_then(|row| super::diagnostics::display(&row["tail"], &secrets)),
+        }),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{body::Body, extract::State, http::StatusCode};
+
+    #[tokio::test]
+    async fn inspect_route_checks_access_and_redacts_failed_runs() -> crate::db::Result<()> {
+        let path = std::env::temp_dir().join(format!("briefsip-inspect-{}", uuid::Uuid::new_v4()));
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(path.clone());
+        let config: crate::Config = serde_json::from_value(
+            json!({"database":path.join("inspect.sqlite"),"scriptToken":"fixture-configured-value"}),
+        )?;
+        let database = crate::db::open(&config.database, false, 0)?;
+        crate::files::init(&database.connection)?;
+        data::initialize(&database)?;
+        super::super::initialize(&database.connection).map_err(|failure| failure.message)?;
+        let db = &database.connection;
+        let id = uuid::Uuid::new_v4().to_string();
+        db.execute_batch(
+            "INSERT INTO agents(id,name,model,instructions) VALUES('a','Agent','','');
+             INSERT INTO threads(id,agent,name) VALUES('thread','a','Thread');",
+        )?;
+        db.execute(
+            "INSERT INTO turns(id,agent,thread,text,status,error,created) VALUES(?,'a','thread','','failed',?,'2026-11-19T00:00:00.000Z')",
+            params![id, "Engine stopped: fixture-configured-value"],
+        )?;
+        let args =
+            json!({"password":"value-with spaces","command":"echo fixture-configured-value"});
+        let call = json!({"function":{"name":"run_shell","arguments":args.to_string()}});
+        let result =
+            json!({"exitCode":127,"output":"missing command\nBearer fixture-unconfigured-value"});
+        db.execute(
+            "INSERT INTO flow_tool_calls(turn,call_id,call,result,after_output) VALUES(?,'shell',?,?,0)",
+            params![id, call.to_string(), result.to_string()],
+        )?;
+        db.execute(
+            "INSERT INTO harness_steps(turn,id,name,state) VALUES(?,'shell-native','run_shell','completed')",
+            [&id],
+        )?;
+        db.execute(
+            "INSERT INTO turn_step_diagnostics(turn,id,started,finished) VALUES(?,'shell-native','2026-11-19T00:00:00.100Z','2026-11-19T00:00:00.200Z')",
+            [&id],
+        )?;
+        db.execute(
+            "INSERT INTO provider_calls(turn,agent,model,origin,purpose,status,created,finished,input_tokens,output_tokens,total_tokens)
+             VALUES(?,'a','fixture-model','local-harness','completion','failed','2026-11-19T00:00:00.000Z','2026-11-19T00:00:00.500Z',12,3,15)",
+            [&id],
+        )?;
+        db.execute(
+            "INSERT INTO harness_stderr VALUES(1,'Exit: fixture-configured-value')",
+            [],
+        )?;
+
+        let computer = std::sync::Arc::new(crate::computer::Manager::new(&config)?);
+        let state = AppState {
+            database: std::sync::Arc::new(Mutex::new(database)),
+            config: std::sync::Arc::new(config),
+            origin: "http://127.0.0.1:4423".into(),
+            auth: None,
+            events: crate::events::Hub::new(),
+            turns: super::super::Runtime::default(),
+            trial_pending: Default::default(),
+            computer,
+        };
+        let route = format!("/api/turns/{id}/inspect");
+        let send = |method, header: Option<(&str, &str)>| -> axum::http::Result<_> {
+            let mut request = Request::builder()
+                .method(method)
+                .uri(&route)
+                .header("host", "127.0.0.1:4423");
+            if let Some((name, value)) = header {
+                request = request.header(name, value);
+            }
+            Ok(crate::dispatch(
+                State(state.clone()),
+                request.body(Body::empty())?,
+            ))
+        };
+        let failed = send(Method::GET, Some(("origin", &state.origin)))?.await;
+        assert_eq!(failed.status(), StatusCode::OK);
+        assert_eq!(failed.headers()["cache-control"], "no-store");
+        let bytes = axum::body::to_bytes(failed.into_body(), 64 * 1024).await?;
+        let body: Value = serde_json::from_slice(&bytes)?;
+        assert_eq!(body["status"], "failed");
+        assert_eq!(body["tools"][0]["state"], "failed");
+        assert!(string(&body["tools"][0], "result").contains("missing command"));
+        assert!(string(&body["tools"][0], "arguments").contains("[REDACTED]"));
+        assert_eq!(body["harness"][0]["state"], "completed");
+        assert_eq!(body["harness"][0]["finished"], "2026-11-19T00:00:00.200Z");
+        assert_eq!(body["providers"][0]["duration_ms"], 500);
+        assert_eq!(body["providers"][0]["total_tokens"], 15);
+        assert!(string(&body, "engineStderr").contains("[REDACTED]"));
+        let wire = String::from_utf8(bytes.to_vec())?;
+        for secret in [
+            "fixture-configured-value",
+            "value-with spaces",
+            "fixture-unconfigured-value",
+        ] {
+            assert!(!wire.contains(secret), "synthetic secret exposed: {secret}");
+        }
+        for header in [
+            ("origin", "https://foreign.invalid"),
+            ("authorization", "Bearer agent"),
+        ] {
+            assert_eq!(
+                send(Method::GET, Some(header))?.await.status(),
+                StatusCode::FORBIDDEN
+            );
+        }
+        assert_eq!(
+            send(Method::POST, None)?.await.status(),
+            StatusCode::METHOD_NOT_ALLOWED
+        );
+        {
+            let guard = state
+                .database
+                .lock()
+                .map_err(|_| "fixture database lock poisoned")?;
+            guard
+                .connection
+                .execute("UPDATE threads SET deleted=1 WHERE id='thread'", [])?;
+        }
+        assert_eq!(
+            send(Method::GET, None)?.await.status(),
+            StatusCode::NOT_FOUND
+        );
+        Ok(())
+    }
+}

@@ -3,8 +3,9 @@ use crate::{
     data::{agents, exists},
     harness::{
         process::{self, Process},
-        snapshot::{redact, Snapshot},
+        snapshot::Snapshot,
     },
+    mcp::secrets::redact,
     turns,
 };
 use sha2::{Digest, Sha256};
@@ -364,19 +365,6 @@ fn reminder(
     let db = state.database.lock().map_err(|_| Failure::storage())?;
     turns::harness::reminder(&db.connection, turn, profile)
 }
-fn tool(
-    state: &AppState,
-    turn: &str,
-    snapshot: &mut Snapshot,
-    id: &str,
-    name: &str,
-    status: &str,
-) -> Result<()> {
-    let db = state.database.lock().map_err(|_| Failure::storage())?;
-    db.connection.execute("INSERT INTO harness_steps VALUES(?,?,?,?) ON CONFLICT(turn,id) DO UPDATE SET name=excluded.name,state=excluded.state",rusqlite::params![turn,id,name,status])?;
-    drop(db);
-    snapshot.tool(id, name, status)
-}
 async fn rpc(process: &mut Process, seq: &mut i64, method: &str, params: Value) -> Result<Value> {
     *seq += 1;
     let id = *seq;
@@ -586,6 +574,7 @@ async fn execute(
         turn: turn_id,
     };
     let process = child.process.as_mut().ok_or_else(Failure::storage)?;
+    process.record_stderr(state, call, &secrets);
     let mut seq = 0;
     if runtime == "codex" {
         rpc(process,&mut seq,"initialize",json!({"clientInfo":{"name":"briefsip","title":"Briefsip","version":"0.1.0"},"capabilities":{"experimentalApi":true}})).await?;
@@ -857,25 +846,61 @@ async fn execute(
                     snapshot.text(string(&p["item"], "text"), p["item"]["id"].as_str(), true)?;
                 }
                 if ["item/started", "item/completed"].contains(&method)
-                    && p["item"]["type"]
-                        .as_str()
-                        .is_some_and(|v| !["agentMessage", "reasoning", "plan"].contains(&v))
+                    && p["item"]["type"].as_str().is_some_and(|v| {
+                        matches!(
+                            v,
+                            "commandExecution"
+                                | "fileChange"
+                                | "mcpToolCall"
+                                | "dynamicToolCall"
+                                | "webSearch"
+                                | "imageView"
+                                | "imageGeneration"
+                                | "collabAgentToolCall"
+                        )
+                    })
                 {
                     let item = &p["item"];
-                    tool(
-                        state,
-                        string(turn, "id"),
-                        &mut snapshot,
+                    let kind = string(item, "type");
+                    let completed = method == "item/completed";
+                    let arguments = match kind {
+                        "commandExecution" => {
+                            json!({"command": item["command"], "cwd": item["cwd"]})
+                        }
+                        "fileChange" => item["changes"].clone(),
+                        "webSearch" => json!({"query": item["query"]}),
+                        _ => item["arguments"].clone(),
+                    };
+                    let result = match kind {
+                        "commandExecution" if completed => {
+                            json!({"output": item["aggregatedOutput"], "exitCode": item["exitCode"]})
+                        }
+                        "mcpToolCall" => item
+                            .get("error")
+                            .filter(|value| !value.is_null())
+                            .cloned()
+                            .map(|error| json!({"error": error}))
+                            .unwrap_or_else(|| {
+                                item["result"]["structuredContent"]
+                                    .as_object()
+                                    .map_or_else(|| item["result"].clone(), |value| json!(value))
+                            }),
+                        "dynamicToolCall" if completed => {
+                            json!({"content": item["contentItems"], "isError": item["success"] == false})
+                        }
+                        _ => Value::Null,
+                    };
+                    let status = item["status"].as_str().unwrap_or(if completed {
+                        "completed"
+                    } else {
+                        "running"
+                    });
+                    snapshot.tool(
                         string(item, "id"),
-                        item["command"]
-                            .as_str()
-                            .or(item["tool"].as_str())
-                            .unwrap_or(string(item, "type")),
-                        if method == "item/started" {
-                            "running"
-                        } else {
-                            item["status"].as_str().unwrap_or("completed")
-                        },
+                        item["tool"].as_str().unwrap_or(kind),
+                        status,
+                        &arguments,
+                        &result,
                     )?;
                 }
                 if method == "item/completed" && p["item"]["type"] == "commandExecution" {
@@ -887,7 +912,6 @@ async fn execute(
                             string(turn, "id"),
                             string(item, "id"),
                             &redact(string(item, "command"), &native_secrets, false),
-                            &redact(string(item, "aggregatedOutput"), &native_secrets, false),
                             item["exitCode"].as_i64(),
                             false,
                         )?;
@@ -1010,13 +1034,12 @@ async fn execute(
                                             }),
                                         ),
                                     );
-                                    tool(
-                                        state,
-                                        string(turn, "id"),
-                                        &mut snapshot,
+                                    snapshot.tool(
                                         string(block, "id"),
                                         string(block, "name"),
                                         "running",
+                                        &block["input"],
+                                        &Value::Null,
                                     )?;
                                 }
                             }
@@ -1032,10 +1055,7 @@ async fn execute(
                                     else {
                                         continue;
                                     };
-                                    tool(
-                                        state,
-                                        string(turn, "id"),
-                                        &mut snapshot,
+                                    snapshot.tool(
                                         string(block, "tool_use_id"),
                                         &name,
                                         if block["is_error"] == true {
@@ -1043,6 +1063,8 @@ async fn execute(
                                         } else {
                                             "completed"
                                         },
+                                        &Value::Null,
+                                        &block["content"],
                                     )?;
                                     if let Some(command) = command
                                         .or_else(|| (name == "Read").then(|| "cat file".into()))
@@ -1051,16 +1073,11 @@ async fn execute(
                                             .database
                                             .lock()
                                             .map_err(|_| Failure::storage())?;
-                                        let output = block["content"]
-                                            .as_str()
-                                            .map(str::to_owned)
-                                            .unwrap_or_else(|| block["content"].to_string());
                                         turns::harness::command(
                                             &guard.connection,
                                             string(turn, "id"),
                                             string(block, "tool_use_id"),
                                             &redact(&command, &native_secrets, false),
-                                            &redact(&output, &native_secrets, false),
                                             Some(if block["is_error"] == true { 1 } else { 0 }),
                                             false,
                                         )?;
@@ -1140,10 +1157,7 @@ async fn execute(
                     value["type"].as_str(),
                     Some("tool_execution_start" | "tool_execution_update" | "tool_execution_end")
                 ) {
-                    tool(
-                        state,
-                        string(turn, "id"),
-                        &mut snapshot,
+                    snapshot.tool(
                         string(&value, "toolCallId"),
                         string(&value, "toolName"),
                         if value["type"] == "tool_execution_end" {
@@ -1155,6 +1169,8 @@ async fn execute(
                         } else {
                             "running"
                         },
+                        &value["args"],
+                        &value["result"],
                     )?;
                 }
                 if value["type"] == "agent_end" {
@@ -1247,13 +1263,12 @@ async fn execute(
                     if update["sessionUpdate"] == "tool_call" {
                         acp_segment += 1;
                     }
-                    tool(
-                        state,
-                        string(turn, "id"),
-                        &mut snapshot,
+                    snapshot.tool(
                         string(update, "toolCallId"),
-                        update["title"].as_str().unwrap_or("Tool"),
-                        update["status"].as_str().unwrap_or("pending"),
+                        string(update, "title"),
+                        string(update, "status"),
+                        &update["rawInput"],
+                        &update["rawOutput"],
                     )?;
                 }
             }
@@ -1268,7 +1283,6 @@ async fn execute(
         };
         if pass == 0 {
             if let Some(reason) = reminder(state, turn, profile, phase)? {
-                snapshot.tool("verification-reminder", "Verify result", "requested")?;
                 prompt = reason;
                 continue;
             }
@@ -1458,7 +1472,7 @@ pub async fn run(
     let call = {
         let db = state.database.lock().map_err(|_| Failure::storage())?;
         db.connection.execute("UPDATE turns SET status='running',started_at=coalesce(started_at,?) WHERE id=? AND status IN('queued','running') AND paused=0",rusqlite::params![data::iso(&db.connection,state.config.now())?,turn_id])?;
-        db.connection.execute("INSERT INTO provider_calls(turn,agent,model,origin,purpose,phase,family,account,status,created) VALUES(?,?,?,'local-harness',?,? ,?,'','pending',?)",rusqlite::params![turn_id,turn["agent"].as_str(),label(runtime),if phase=="routing"{"routing"}else{"completion"},phase,runtime,data::iso(&db.connection,state.config.now())?])?;
+        db.connection.execute("INSERT INTO provider_calls(turn,agent,model,origin,purpose,phase,family,account,status,created) VALUES(?,?,?,'local-harness',?,? ,?,'','pending',?)",rusqlite::params![turn_id,turn["agent"].as_str(),if model.is_empty(){label(runtime)}else{model},if phase=="routing"{"routing"}else{"completion"},phase,runtime,data::iso(&db.connection,state.config.now())?])?;
         state.events.turn(&db.connection, turn_id)?;
         db.connection.last_insert_rowid()
     };
