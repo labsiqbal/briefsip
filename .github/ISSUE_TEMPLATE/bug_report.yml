@@ -1,0 +1,42 @@
+name: Bug report
+description: Something in Briefsip does not work as expected.
+labels: ["bug", "needs-triage"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Briefsip version
+      description: Shown in Settings > Updates.
+      placeholder: 0.13.13
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: Linux distribution, and browser if the problem is in the UI.
+      placeholder: Ubuntu 24.04, Firefox 150
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Click ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Include error messages, logs (`journalctl --user -u briefsip.service`) or a screenshot. Remove tokens and other secrets first.
+    validations:
+      required: true
