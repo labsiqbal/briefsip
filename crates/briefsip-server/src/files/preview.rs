@@ -130,12 +130,36 @@ type PdfResult = std::result::Result<String, (u16, String)>;
 type PendingPdf = Arc<OnceCell<PdfResult>>;
 static PENDING: LazyLock<Mutex<HashMap<String, PendingPdf>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+struct PdfWork<'a> {
+    id: &'a str,
+    cell: PendingPdf,
+}
+impl Drop for PdfWork<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut pending) = PENDING.lock() {
+            if Arc::strong_count(&self.cell) == 2
+                && pending
+                    .get(self.id)
+                    .is_some_and(|cell| Arc::ptr_eq(cell, &self.cell))
+            {
+                pending.remove(self.id);
+            }
+        }
+    }
+}
 pub fn forget(db: &Connection, id: &str) -> Result<()> {
     PENDING.lock().map_err(|_| Failure::storage())?.remove(id);
     db.execute("DELETE FROM pdf_text WHERE file=?", [id])?;
     Ok(())
 }
 pub async fn pdf(state: &AppState, meta: &Value, bytes: &[u8]) -> Result<Response> {
+    pdf_with(state, meta, crate::harness::pdf::extract(state, bytes)).await
+}
+async fn pdf_with(
+    state: &AppState,
+    meta: &Value,
+    extract: impl std::future::Future<Output = Result<String>>,
+) -> Result<Response> {
     let id = text(meta, "id");
     let cached = {
         let db = state.database.lock().map_err(|_| Failure::storage())?;
@@ -144,7 +168,7 @@ pub async fn pdf(state: &AppState, meta: &Value, bytes: &[u8]) -> Result<Respons
     let text = if let Some(cached) = cached {
         super::text(&cached, "text").to_owned()
     } else {
-        let work = {
+        let cell = {
             let mut pending = PENDING.lock().map_err(|_| Failure::storage())?;
             if let Some(prior) = pending.get(id) {
                 prior.clone()
@@ -160,15 +184,17 @@ pub async fn pdf(state: &AppState, meta: &Value, bytes: &[u8]) -> Result<Respons
                 work
             }
         };
+        let work = PdfWork { id, cell };
         let result = work
+            .cell
             .get_or_init(|| async {
                 let result = async {
-                    let text = crate::harness::pdf::extract(state, bytes).await?;
+                    let text = extract.await?;
                     let db = state.database.lock().map_err(|_| Failure::storage())?;
                     let pending = PENDING.lock().map_err(|_| Failure::storage())?;
                     if !pending
                         .get(id)
-                        .is_some_and(|current| Arc::ptr_eq(current, &work))
+                        .is_some_and(|current| Arc::ptr_eq(current, &work.cell))
                         || one(
                             &db.connection,
                             "SELECT id FROM files WHERE id=? AND deleted=0 AND digest=?",
@@ -187,13 +213,6 @@ pub async fn pdf(state: &AppState, meta: &Value, bytes: &[u8]) -> Result<Respons
             })
             .await
             .clone();
-        let mut pending = PENDING.lock().map_err(|_| Failure::storage())?;
-        if pending
-            .get(id)
-            .is_some_and(|current| Arc::ptr_eq(current, &work))
-        {
-            pending.remove(id);
-        }
         result.map_err(|(status, message)| error(status, message))?
     };
     Ok(json_response(
@@ -202,12 +221,34 @@ pub async fn pdf(state: &AppState, meta: &Value, bytes: &[u8]) -> Result<Respons
     ))
 }
 pub async fn extract_pdf(bytes: &[u8]) -> Result<String> {
+    extract_pdf_with(std::path::Path::new("/usr/bin/bwrap"), bytes).await
+}
+
+struct PdfChild(tokio::process::Child);
+impl PdfChild {
+    fn kill_group(&self) {
+        if let Some(pid) = self
+            .0
+            .id()
+            .and_then(|pid| rustix::process::Pid::from_raw(pid as i32))
+        {
+            let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+        }
+    }
+}
+impl Drop for PdfChild {
+    fn drop(&mut self) {
+        self.kill_group();
+    }
+}
+
+async fn extract_pdf_with(launcher: &std::path::Path, bytes: &[u8]) -> Result<String> {
     use std::{os::unix::process::CommandExt, process::Stdio};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     if !bytes.starts_with(b"%PDF-") || bytes.len() > 10 * 1024 * 1024 {
         return Err(error(415, "PDF is invalid or exceeds 10 MiB."));
     }
-    let mut command = tokio::process::Command::new("/usr/bin/bwrap");
+    let mut command = tokio::process::Command::new(launcher);
     command
         .args([
             "--unshare-all",
@@ -260,15 +301,15 @@ pub async fn extract_pdf(bytes: &[u8]) -> Result<String> {
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     command.as_std_mut().process_group(0);
-    let mut child = command.spawn().map_err(|_| {
+    let mut child = PdfChild(command.spawn().map_err(|_| {
         error(
             503,
             "PDF sandbox is unavailable. Check Bubblewrap and Poppler on the host.",
         )
-    })?;
-    let mut stdin = child.stdin.take().ok_or_else(Failure::storage)?;
-    let stdout = child.stdout.take().ok_or_else(Failure::storage)?;
-    let stderr = child.stderr.take().ok_or_else(Failure::storage)?;
+    })?);
+    let mut stdin = child.0.stdin.take().ok_or_else(Failure::storage)?;
+    let stdout = child.0.stdout.take().ok_or_else(Failure::storage)?;
+    let stderr = child.0.stderr.take().ok_or_else(Failure::storage)?;
     let work = async {
         let write = async {
             let _ = stdin.write_all(bytes).await;
@@ -301,7 +342,7 @@ pub async fn extract_pdf(bytes: &[u8]) -> Result<String> {
                 "PDF text exceeds 256 KiB. Use a smaller document.",
             ));
         }
-        let status = child.wait().await.map_err(|_| Failure::storage())?;
+        let status = child.0.wait().await.map_err(|_| Failure::storage())?;
         if !status.success() {
             return Err(
                 if err.starts_with(b"bwrap:") || err.starts_with(b"prlimit:") {
@@ -336,14 +377,8 @@ pub async fn extract_pdf(bytes: &[u8]) -> Result<String> {
         .await
         .unwrap_or_else(|_| Err(error(415, "PDF reading time limit exceeded.")));
     if result.is_err() {
-        if let Some(pid) = child.id() {
-            let _ = tokio::process::Command::new("/bin/kill")
-                .args(["-KILL", "--", &format!("-{pid}")])
-                .status()
-                .await;
-        }
-        let _ = child.kill().await;
-        let _ = child.wait().await;
+        child.kill_group();
+        let _ = child.0.kill().await;
     }
     result
 }
@@ -397,3 +432,7 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "pdf_tests.rs"]
+mod pdf_tests;

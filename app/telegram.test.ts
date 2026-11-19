@@ -127,6 +127,7 @@ test('Telegram bridge submits once through granted side-thread API and isolates 
   }});
   const {connector,ui}=f;
   const db=openConnectorJournalFixture('telegram',connector.directory);
+  db.exec('PRAGMA busy_timeout=5000');
   const update=telegramUpdate(1,'Hello');update.message.message_id=2;
   const sent=()=>connector.jsonPosts<{text:string}>('sendMessage').filter(post=>post.text==='Synthetic reply');
   const turns=()=>connector.requests.filter(req=>req.method==='POST'&&req.path.endsWith('/turns'));
@@ -178,7 +179,7 @@ for(const ask of [false,true])test(`Telegram runner ${ask?'answers a question':'
     res.end(JSON.stringify({ok:true,result}));});
   await Promise.all([new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve)),new Promise<void>(resolve=>telegram.listen(0,'127.0.0.1',resolve))]);
   const pa=provider.address(),ta=telegram.address();assert(pa&&typeof pa!=='string'&&ta&&typeof ta!=='string');
-  const app=await startApp({database:join(root,'app.sqlite'),baseURL:`http://127.0.0.1:${pa.port}/v1`,scriptDirectory:join(root,'scripts')});
+  const app=await startApp({database:join(root,'app.sqlite'),baseURL:`http://127.0.0.1:${pa.port}/v1`,scriptDirectory:join(root,'scripts')}, { directory: root, servers: [provider, telegram] });
   const timeout=setTimeout(()=>controller.abort(),10000);
   try{
     for(const [path,body]of [['/api/agents',{runtime:'api', id:agent,name:'Runner',model:'fixture',instructions:'Help'}],[`/api/agents/${agent}/scripts`,{id:randomUUID(),revision:0,enabled:true}]]as const){const response=await fetch(app.origin+path,{method:'POST',headers:{Origin:app.origin,'Content-Type':'application/json'},body:JSON.stringify(body)});assert(response.ok);await response.json();}

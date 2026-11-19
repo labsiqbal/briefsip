@@ -1,3 +1,4 @@
+import { readJson } from './http';
 import { useEffect, useRef, useState } from 'react';
 import { Info } from 'lucide-react';
 import { VoiceSettings } from './SpeechPlayback';
@@ -7,8 +8,8 @@ export function GeneralSettings({ notificationsMuted, notificationError, onNotif
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => { heading.current?.focus(); }, []);
   const [autoArchive, setAutoArchive] = useState<boolean | null>(null), [chatError, setChatError] = useState(''), [chatBusy, setChatBusy] = useState(false);
-  useEffect(() => { let stopped = false; void fetch('/api/conversations/settings').then(async response => { if (!response.ok) throw new Error(); const value = await response.json(); if (!stopped) setAutoArchive(value.autoArchive); }).catch(() => { if (!stopped) setChatError('Conversation settings could not be loaded. Reopen General to retry.'); }); return () => { stopped = true; }; }, []);
-  async function changeArchive(value: boolean) { setChatBusy(true); setChatError(''); try { const response = await fetch('/api/conversations/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: crypto.randomUUID(), autoArchive: value }) }); if (!response.ok) throw new Error(); setAutoArchive((await response.json()).autoArchive); } catch { setChatError('Conversation settings could not be saved. Reopen General to check the current value.'); } finally { setChatBusy(false); } }
+  useEffect(() => { let stopped = false; void fetch('/api/conversations/settings').then(async response => { const value = await readJson<{ autoArchive: boolean }>(response); if (!stopped) setAutoArchive(value.autoArchive); }).catch(() => { if (!stopped) setChatError('Conversation settings could not be loaded. Reopen General to retry.'); }); return () => { stopped = true; }; }, []);
+  async function changeArchive(value: boolean) { setChatBusy(true); setChatError(''); try { const response = await fetch('/api/conversations/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: crypto.randomUUID(), autoArchive: value }) }); setAutoArchive((await readJson<{ autoArchive: boolean }>(response)).autoArchive); } catch { setChatError('Conversation settings could not be saved. Reopen General to check the current value.'); } finally { setChatBusy(false); } }
   return <div className="k-page bs-root">
     <PageHeader headingRef={heading} title="General" />
     <Section title="Notifications"><Card><Row title="Workflow results" trailing={<><Switch label="Workflow results" checked={!notificationsMuted} onChange={onNotificationsChange} /></>} /></Card>{notificationError && <Alert tone="error">{notificationError}</Alert>}</Section>

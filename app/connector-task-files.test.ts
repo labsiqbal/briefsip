@@ -23,7 +23,7 @@ for(const platform of ['slack','telegram'] as const)for(const mode of ['reply','
  });
  await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));const address=provider.address();assert(address&&typeof address!=='string');
  const scriptToken='connector-artifact-test-token-0123456789';
- const app=await startApp({database:join(root,'app.sqlite'),baseURL:`http://127.0.0.1:${address.port}/v1`,scriptToken,scriptDirectory:join(root,'scripts')});
+ const app=await startApp({database:join(root,'app.sqlite'),baseURL:`http://127.0.0.1:${address.port}/v1`,scriptToken,scriptDirectory:join(root,'scripts')}, { directory: root, servers: [provider] });
  const actual=localScript(join(root,'scripts'));
  const connector=await rustConnectorFixture(platform,root,owner,app.origin,scriptToken,artifactReceiver(platform,uploads));
  const journal=join(connector.directory,platform+'.sqlite');

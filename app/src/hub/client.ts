@@ -1,3 +1,5 @@
+import { HttpError, readJson } from '../http.ts';
+
 export type Session = { accountId: string; name: string; csrf: string; expiresAt: number; projectId?: string; role?: string };
 export type Member = { accountId: string; name: string; role: string; revision: number };
 export type Project = { id: string; name: string; host: string; role: string };
@@ -10,9 +12,11 @@ export type History = { messages: Message[]; results: Result[] };
 export class HubError extends Error { status: number; code: string; constructor(status: number, code: string, message: string) { super(message); this.status = status; this.code = code; } }
 export async function hubRequest<T>(path: string, body?: unknown, csrf?: string, token?: string): Promise<T> {
   const response = await fetch(path, { method: body === undefined ? 'GET' : 'POST', credentials: 'same-origin', headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf ?? '' }), ...(token ? { Authorization: `Bearer ${token}` } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-  const data = await response.json();
-  if (!response.ok) throw new HubError(response.status, data.error?.code ?? 'request_failed', data.error?.message ?? 'Request failed. Try again.');
-  return data as T;
+  try { return await readJson<T>(response, 'Request failed. Try again.'); }
+  catch (error) {
+    if (error instanceof HttpError) throw new HubError(error.status, error.code ?? 'request_failed', error.message);
+    throw error;
+  }
 }
 export const invocationLabel = (policy: Policy) => policy.invocation.mode === 'owner' ? 'Owner only' : policy.invocation.mode === 'members' ? 'Specific members' : 'All members';
 export type Draft = { text: string; mentions: string[]; pending: { requestId: string; sectionId: string; text: string; mentions: string[] } | null };

@@ -17,5 +17,5 @@ export function rustBinary(name: 'briefsip-server' | 'briefsip-launcher', overri
     });
     built.add(name);
   }
-  return resolve(root, 'target/debug', name);
+  return resolve(root, buildEnvironment.CARGO_TARGET_DIR ?? 'target', 'debug', name);
 }

@@ -21,7 +21,7 @@ test('nine distinct tools complete before per-task budget requests a final answe
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
-  const app = await startApp({ database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` });
+  const app = await startApp({ database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` }, { directory: dir, servers: [provider] });
   const request = async (path: string, body?: unknown) => {
     const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const data = await response.json(); assert(response.ok, JSON.stringify(data)); return data;
@@ -65,7 +65,7 @@ async function fixture(answer: (body: any) => ProviderReply) {
     launch() { const child = Object.assign(new EventEmitter(), { exitCode: null, stdin: { end() { queueMicrotask(() => { Object.defineProperty(child, 'exitCode', { value: 0 }); child.emit('exit', 0); }); } } }) as unknown as ChildProcess; return { child, ready: Promise.resolve() }; },
     async run() { return Buffer.alloc(0); }, async capture() { captures++; return sharp({ create: { width: 1280, height: 800, channels: 3, background: { r: captures * 47 % 256, g: captures * 83 % 256, b: captures * 131 % 256 } } }).png().toBuffer(); },
   } } };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [provider] });
   const request = async (path: string, body?: unknown, status?: number) => {
     const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const data = await response.json(); if (status) assert.equal(response.status, status, JSON.stringify(data)); else assert(response.ok, JSON.stringify(data)); return data;

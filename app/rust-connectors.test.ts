@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { startRustServer } from './rust-test-server.ts';
+import { startApp } from './test-bridge.ts';
 import { runRustConnector, runRustConnectorJournal } from './rust-connectors-runner.ts';
 import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
 import { encryptMail, serializeMailEnvelope } from './test-support/mail-fixture.ts';
@@ -39,7 +40,7 @@ test('Rust Composio approval recovery, revocation, schema checks and uncertain w
     response.end(JSON.stringify({ choices: [{ finish_reason: result ? 'stop' : 'tool_calls', message }] }));
   });
   const options = { database, composio: { baseURL: await listen(remote) + '/api/v3.1' }, baseURL: await listen(provider) + '/v1' };
-  let app = await startRustServer(options);
+  let app = await startApp(options, { directory: root, servers: [remote, provider] });
   const request = async (path: string, body?: unknown, status = 200): Promise<any> => {
     const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const raw = await response.text(); responses.push(raw); assert.equal(response.status, status, raw); return JSON.parse(raw);
@@ -155,7 +156,7 @@ for (const platform of ['telegram', 'slack'] as const) for (const mode of ['repl
       res.end(JSON.stringify({ choices: [{ finish_reason: tool ? 'tool_calls' : 'stop', message: tool ? { tool_calls: [{ id: 'effect', type: 'function', function: { name: file ? 'create_text_file' : 'ask_user', arguments: JSON.stringify(file ? { name: 'fixture.txt', text: 'Exact native file bytes' } : { question: 'Proceed?', choices: ['Yes', 'No'] }) } }] } : { content: 'Native connector reply' } }] }));
     });
     const providerOrigin = await listen(provider);
-    const app = await startRustServer({ database: join(root, 'app.sqlite'), baseURL: providerOrigin + '/v1' });
+    const app = await startApp({ database: join(root, 'app.sqlite'), baseURL: providerOrigin + '/v1' }, { directory: root, servers: [provider] });
     const ui = async (path: string, body?: unknown): Promise<any> => {
       const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
       const value = await response.json(); assert(response.ok, JSON.stringify(value)); return value;
@@ -331,7 +332,7 @@ test('Rust mail retries exact envelope after lost response and fences expired, r
   });
   const origin = await listen(remote), keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const options = { database, auth: { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://briefsip.example', development: true, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString() }, mailApiKey: 'synthetic-mail-key', mailEndpoint: origin + '/emails', testKeyring: { [`mail-aead/${keyId}`]: key.toString('base64url'), 'sync-hmac/v1': randomBytes(32).toString('base64url') } };
-  let app = await startRustServer(options);
+  let app = await startApp(options, { directory: root, servers: [remote] }).catch(error => { db.close(); throw error; });
   const state = (id: string) => db.prepare('SELECT state,attempts,length(ciphertext) bytes FROM mail_outbox WHERE id=?').get(id)!;
   try {
     await wait(() => state(first).state === 'unknown'); assert.equal(bodies.length, 1);

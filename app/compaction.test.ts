@@ -27,7 +27,7 @@ test('incremental compaction keeps source scopes, originals, provenance and fail
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { timeout: 1000, database: join(dir, 'db.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [provider] });
   async function request(path: string, body?: unknown) {
     const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const value = await response.json(); assert(response.ok, JSON.stringify(value)); return value;
@@ -103,7 +103,7 @@ test('Rust compaction fences stale responses, changed sources, cancelled turns a
   const address = provider.address();
   assert(address && typeof address !== 'string');
   const options = { database, baseURL: `http://127.0.0.1:${address.port}/v1` };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory, servers: [provider] });
   async function request(path: string, body?: unknown) {
     const response = await fetch(app.origin + path, {
       method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' },

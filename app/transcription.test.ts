@@ -31,7 +31,7 @@ test('HTTP transcription requires consent, isolates files and never silently rep
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(dir, 'state.sqlite'), transcriptionProvider: { baseURL: `http://127.0.0.1:${address.port}/v1`, model: 'fixture-transcribe', apiKey: 'synthetic-secret' } };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [provider] });
   const post = (path: string, data: unknown, origin = app.origin) => fetch(app.origin + path, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
   const get = async (path: string) => { const response = await fetch(app.origin + path); assert.equal(response.status, 200); return response.json(); };
   try {
@@ -100,7 +100,7 @@ test('in-flight transcription deduplicates and cannot publish after archive or s
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(dir, 'state.sqlite'), transcriptionProvider: { baseURL: `http://127.0.0.1:${address.port}/v1`, model: 'fixture' } };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [provider] });
   const post = (path: string, data: unknown) => fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
   try {
     const agent = await (await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Held', model: 'fixture', instructions: 'Help.' })).json();

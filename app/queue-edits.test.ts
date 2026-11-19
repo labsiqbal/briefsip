@@ -40,7 +40,7 @@ test('queue edit holds survive restart, preserve order and original receipt, rej
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(dir, 'db.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, concurrency: 1 };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [provider] });
   async function request(path: string, body?: unknown, status?: number): Promise<any> {
     const res = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const result = await res.json(); if (status) assert.equal(res.status, status, JSON.stringify(result)); else assert(res.ok, JSON.stringify(result)); return result;
@@ -127,7 +127,7 @@ test('abandoned edit lease expires and drains its message and following queue in
   const address = provider.address(); assert(address && typeof address !== 'string');
   const database = join(dir, 'db.sqlite');
   const options = { database, baseURL: `http://127.0.0.1:${address.port}/v1` };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [provider] });
   const request = async (path: string, data?: unknown) => {
     const response = await fetch(app.origin + path, { method: data ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: data ? JSON.stringify(data) : undefined });
     assert(response.ok, await response.clone().text()); return response.json();

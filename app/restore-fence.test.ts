@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { initializeCanonicalSchema } from './schema.ts';
+import { initializeCanonicalSchema } from './test-support/legacy-schema.ts';
 import { checkedRestore, restoreCommand, workspaceSnapshot } from './test-support/backup.ts';
 import { restoreIdentity } from './test-support/restore-identity.ts';
 import type { HumanActor } from './test-support/auth.ts';
@@ -172,7 +172,7 @@ test('operator CLI creates and verifies bounded private fence files while keepin
 test('activation plan commits one fenced recovery receipt and exact retry', async () => {
   const f = await fixture();
   try {
-    const request = f.prepare(), evidence = f.signed(request, { expiresAt: Date.now() + 3000 }), plan = f.plan(evidence);
+    const request = f.prepare(), evidence = f.signed(request), plan = f.plan(evidence);
     assert.equal(plan.state, 'read_only_recovery');
     const result = f.activate(evidence, plan);
     assert.equal(result.state, 'active');
@@ -261,7 +261,7 @@ test('activation retains populated revoked grants and held tasks, refusing unsaf
 test('activation requires current schema, owner session and fresh infrastructure proof', async () => {
   const f = await fixture();
   try {
-    const request = f.prepare(), evidence = f.signed(request, { expiresAt: Date.now() + 3000 });
+    const request = f.prepare(), evidence = f.signed(request);
     for (const version of [1, 2]) {
       const migrations = f.db().prepare('SELECT * FROM schema_migrations WHERE version>?').all(version);
       f.db().prepare('DELETE FROM schema_migrations WHERE version>?').run(version);

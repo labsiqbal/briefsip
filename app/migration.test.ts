@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { initializeCanonicalSchema, schemaVersion } from './schema.ts';
+import { initializeCanonicalSchema, schemaVersion } from './test-support/legacy-schema.ts';
 import { startApp } from './test-bridge.ts';
 
 test('v1 migration preserves actual legacy rows without inferring ownership or scope', async () => {
