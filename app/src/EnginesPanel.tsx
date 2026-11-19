@@ -1,6 +1,6 @@
 import { Fragment, useId, useState } from 'react';
 import { Ellipsis, KeyRound, Plus } from 'lucide-react';
-import { ActionMenu, Alert, Badge, Button, Card, Dialog, Field, IconButton, Input, PageHeader, Row, SkeletonRows, useConfirm } from './ui/kit';
+import { ActionMenu, Alert, Badge, Button, Card, CodeBlock, Dialog, Field, IconButton, Input, PageHeader, Row, SkeletonRows, useConfirm } from './ui/kit';
 import { copyText } from './ui/clipboard';
 import type { HarnessRuntime } from '../shared/runtime';
 import { useSetupData } from './hooks/useSetupData';
@@ -131,8 +131,8 @@ function LoginCommand({ login, onClose }: { login: EngineLogin; onClose: () => v
   const [feedback, setFeedback] = useState('');
   return <Dialog open title="Sign in on this host" description={login.name} onOpenChange={open => { if (!open) onClose(); }} footer={<Button variant="primary" onClick={onClose}>Done</Button>}>
     <div className="k-stack">
-      <Field label="Terminal command"><Input value={login.command} readOnly spellCheck={false} onFocus={event => event.target.select()} /></Field>
-      <div className="k-row-actions">
+      <CodeBlock label="Terminal command">{login.command}</CodeBlock>
+      <div className="k-inline">
         <Button onClick={async () => {
           try { await copyText(login.command); setFeedback('Copied'); }
           catch { setFeedback('Copy failed. Select the command to copy it.'); }
