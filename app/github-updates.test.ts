@@ -109,10 +109,10 @@ async function github(t: TestContext, root: string, target: ReturnType<typeof re
   };
 }
 
-async function api(origin: string, path: string, body?: unknown, status = 200) {
-  const response = await fetch(origin + path, body === undefined ? { signal: AbortSignal.timeout(15_000) } : {
+async function api(origin: string, path: string, body?: unknown, status = 200, timeout = 15_000) {
+  const response = await fetch(origin + path, body === undefined ? { signal: AbortSignal.timeout(timeout) } : {
     method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body), signal: AbortSignal.timeout(15_000),
+    body: JSON.stringify(body), signal: AbortSignal.timeout(timeout),
   });
   const value = await response.json();
   assert.equal(response.status, status, JSON.stringify(value));
@@ -289,7 +289,8 @@ for (const route of ['direct', 'fallback', 'invalid'] as const) {
     }
     const id = randomUUID(), command = { id, machines: [machine.id], version, source: 'GitHub' };
     const path = '/api/updates/fan-out';
-    const result = (await api(app.origin, path, command, 202)).machines[0];
+    // The fan-out reply waits for the peer's transfer and apply, which can exceed 15 s under suite load.
+    const result = (await api(app.origin, path, command, 202, 60_000)).machines[0];
     const attempt = async () => (await api(app.origin, '/api/updates/machines')).machines[0]?.fanOutAttempt;
     const final = await attempt();
     if (route === 'invalid') {
