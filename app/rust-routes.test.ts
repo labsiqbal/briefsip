@@ -20,6 +20,7 @@ test('Rust route inventory stays within frozen Node matchers and reports ported 
     ['/api/provider-accounts/{id}/test', 'Tests a saved local provider account.'],
     ['/api/provider-accounts/{id}/edit', 'Updates a saved local provider account.'],
     ['/api/provider-accounts/{id}/delete', 'Removes a saved local provider account.'],
+    ['/api/turns/{id}/inspect', 'Reads redacted local run diagnostics for the owner.'],
   ]);
   const matchers = new Map(inventory.matchers.map(entry => [entry.kind.startsWith('regex') ? `/${entry.pattern}/${entry.flags ?? ''}` : entry.pattern, matcher(entry)]));
   const endpoints = new Map(inventory.matchers.filter(entry => entry.endpoint === true).map(entry => [entry.kind.startsWith('regex') ? `/${entry.pattern}/${entry.flags ?? ''}` : entry.pattern, matcher(entry)]));

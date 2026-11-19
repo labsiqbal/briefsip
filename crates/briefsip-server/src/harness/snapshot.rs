@@ -227,6 +227,7 @@ mod tests {
         let config: crate::config::Config =
             serde_json::from_value(json!({"database":scratch.0.join("state.sqlite")}))?;
         let database = crate::db::open(&config.database, false, 0)?;
+        crate::turns::initialize_canonical(&database.connection).map_err(|e| e.message)?;
         database.connection.execute_batch("INSERT INTO agents(id,name,model,instructions) VALUES('agent','Test','','');
             INSERT INTO turns(id,agent,text,status,created) VALUES('turn','agent','','running','');
             INSERT INTO provider_calls(seq,turn,agent,model,origin,purpose,status,created)
