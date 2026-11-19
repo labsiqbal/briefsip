@@ -81,8 +81,10 @@ test('release without issues warns loudly', t => {
 });
 
 test('Rust resource failure prevents publication; successful staging retains UI and notices', () => {
-  const f = fixture(), bin = mkdtempSync(join(tmpdir(), 'release-cargo-')), previousPath = process.env.PATH;
+  const f = fixture(), bin = mkdtempSync(join(tmpdir(), 'release-cargo-')), previousPath = process.env.PATH, previousTarget = process.env.CARGO_TARGET_DIR;
   try {
+    // A caller's shared target directory once made 0.13.2 publish the previous build's binaries.
+    process.env.CARGO_TARGET_DIR = join(bin, 'elsewhere');
     for (const directory of ['scripts', 'crates/briefsip-server', 'crates/briefsip-launcher', 'target/release']) mkdirSync(join(f.dir, directory), { recursive: true });
     writeFileSync(join(f.dir, 'Cargo.toml'), '[workspace]\n');
     writeFileSync(join(f.dir, 'crates/briefsip-server/provenance.json'), '{}');
@@ -92,7 +94,7 @@ test('Rust resource failure prevents publication; successful staging retains UI 
     writeFileSync(join(f.dir, 'crates/briefsip-launcher/NOTICE'), 'T3 MIT notice');
     for (const name of ['LICENSE', 'agent-delegation.LICENSE']) writeFileSync(join(f.dir, 'app', name), 'Fixture notice');
     writeFileSync(join(f.dir, 'app/package.json'), JSON.stringify({ version: '1.0.0', type: 'module', scripts: { lint: 'node -e "0"', build: 'node -e "0"', test: 'node -e "0"' } }));
-    writeFileSync(join(bin, 'cargo'), `#!${process.execPath}\nimport { appendFileSync } from 'node:fs';\nappendFileSync('cargo-checks', JSON.stringify(process.argv.slice(2)) + '\\n');\n`, { mode: 0o700 });
+    writeFileSync(join(bin, 'cargo'), `#!${process.execPath}\nimport { appendFileSync } from 'node:fs';\nappendFileSync('cargo-checks', JSON.stringify(process.argv.slice(2)) + '\\n');\nappendFileSync('cargo-targets', process.env.CARGO_TARGET_DIR + '\\n');\n`, { mode: 0o700 });
     writeFileSync(join(bin, 'ldd'), `#!${process.execPath}
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 appendFileSync(${JSON.stringify(join(f.dir, 'ldd-checks'))}, process.argv[2] + '\\n');
@@ -135,7 +137,11 @@ console.log(value === 'missing' ? 'libvips.so => not found' : value === 'externa
     const checks = readFileSync(join(f.dir, 'cargo-checks'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
     assert.equal(checks.length, 20);
     assert(checks.some(args => args.join(' ') === 'build --release --locked'));
-  } finally { process.env.PATH = previousPath; rmSync(f.dir, { recursive: true, force: true }); rmSync(bin, { recursive: true, force: true }); }
+    assert.deepEqual([...new Set(readFileSync(join(f.dir, 'cargo-targets'), 'utf8').trim().split('\n'))], [join(f.dir, 'target')]);
+  } finally {
+    process.env.PATH = previousPath;
+    if (previousTarget === undefined) delete process.env.CARGO_TARGET_DIR; else process.env.CARGO_TARGET_DIR = previousTarget;
+    rmSync(f.dir, { recursive: true, force: true }); rmSync(bin, { recursive: true, force: true }); }
 });
 
 test('release CLI demonstrates passing and failing --issues using a fixture gh reader', t => {

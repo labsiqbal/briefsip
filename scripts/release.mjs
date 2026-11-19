@@ -51,7 +51,9 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
   if (build) for (const script of ['lint', 'build', 'test']) execFileSync('npm', ['run', script], { cwd: source, stdio: 'inherit' });
   const rust = existsSync(join(repository, 'Cargo.toml'));
   if (build && rust) {
-    for (const args of [['fmt', '--check'], ['clippy', '--all-targets', '--', '-D', 'warnings'], ['test'], ['build', '--release', '--locked']]) execFileSync('cargo', args, { cwd: repository, stdio: 'inherit' });
+    // Publication copies from this directory, so a caller's CARGO_TARGET_DIR must not redirect the build.
+    const cargoEnv = { ...process.env, CARGO_TARGET_DIR: join(repository, 'target') };
+    for (const args of [['fmt', '--check'], ['clippy', '--all-targets', '--', '-D', 'warnings'], ['test'], ['build', '--release', '--locked']]) execFileSync('cargo', args, { cwd: repository, stdio: 'inherit', env: cargoEnv });
     execFileSync(process.execPath, [join(repository, 'scripts/resource-gate.mjs'), join(repository, 'target/release/briefsip-server'), join(repository, 'scripts/budgets.json'), join(repository, 'target/release/briefsip-launcher')], { cwd: repository, stdio: 'inherit', env: { ...process.env, TMPDIR: '/dev/shm' } });
     const gate = repository === root
       ? ['systemd-run', '--user', '--scope', '-q', '-p', 'MemoryMax=4G', '-p', 'MemorySwapMax=0', 'env', 'NODE_OPTIONS=--max-old-space-size=2048', 'TMPDIR=/dev/shm', process.execPath]
