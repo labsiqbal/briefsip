@@ -9,6 +9,7 @@ pub(crate) enum PeerError {
     PermissionRevoked,
     LauncherUnavailable,
     Unconfirmed,
+    GitHubUnsupported,
 }
 
 impl PeerError {
@@ -38,6 +39,11 @@ impl PeerError {
                 403,
                 "peer_permission_revoked",
                 "Machine updates require permission from both owners in Settings > Machines.",
+            ),
+            Self::GitHubUnsupported => (
+                409,
+                "peer_github_unsupported",
+                "Receiving machine uses the local feed.",
             ),
             Self::Unconfirmed => (
                 503,

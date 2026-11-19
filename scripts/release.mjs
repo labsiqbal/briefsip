@@ -1,11 +1,15 @@
 #!/usr/bin/env node
-import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { createPrivateKey, createPublicKey, createHash, sign, verify } from 'node:crypto';
+import { closeSync, constants, cpSync, createReadStream, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { durableWrite, fileManifest, parseRelease, syncDirectory } from './release-lib.mjs';
+import { parseArgs } from 'node:util';
+import { durableWrite, fileManifest, parseRelease, syncDirectory, verifyRelease } from './release-lib.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const githubRepository = 'labsiqbal/briefsip';
+const releasePublicKey = 'kSIv+agT4RsABust/LmvPVjfWDxZxM0YKL03gts/UEM=';
 
 export function readIssueComments(issue) {
   return JSON.parse(execFileSync('gh', ['issue', 'view', String(issue), '-R', 'labsiqbal/briefsip', '--json', 'comments'], { encoding: 'utf8' })).comments;
@@ -21,6 +25,139 @@ export function assertNativeDependencies(binary) {
       throw new Error(`Native dependency outside system loader paths for ${binary}: ${match[1]}`);
     }
   }
+}
+
+function signingKey(path) {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || (stat.mode & 0o7777) !== 0o600) throw new Error('Signing key must be a regular file with mode 0600.');
+    let key;
+    try { key = createPrivateKey(readFileSync(fd)); }
+    catch { throw new Error('Could not read an Ed25519 private key from the signing key file.'); }
+    if (key.asymmetricKeyType !== 'ed25519') throw new Error('Signing key must be an Ed25519 private key.');
+    return key;
+  } finally { closeSync(fd); }
+}
+
+async function sha256(path) {
+  const hash = createHash('sha256');
+  for await (const chunk of createReadStream(path)) hash.update(chunk);
+  return hash.digest('hex');
+}
+
+const publicationDirectory = (releases, id) => join(releases, '.github', id);
+function checkCleanTree() {
+  if (execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).trim()) {
+    throw new Error('Refusing dirty worktree. Use --allow-dirty for a local development release.');
+  }
+}
+
+function github(args, cwd = root) {
+  const result = spawnSync('gh', args, { encoding: 'utf8', cwd });
+  if (result.error) throw result.error;
+  if (result.status === 0) return result.stdout.trim();
+  const error = result.stderr.trim();
+  if (args[1] === 'view' && result.status === 1 && error === 'release not found') return undefined;
+  throw new Error(`gh ${args[0]} ${args[1]} failed: ${error || result.signal || `exit ${result.status}`}`);
+}
+
+async function signedRuntimeAssets(releases, directory, info, keyPath) {
+  const { version, id, commit, notes, created } = info;
+  const archive = `briefsip-${version}-linux-x86_64.tar.gz`;
+  const names = [archive, 'latest.json', 'latest.json.sig'];
+  const bundle = join(directory, 'signed');
+  const cached = existsSync(bundle);
+  const key = signingKey(keyPath);
+  const stage = cached ? bundle : mkdtempSync(join(directory, '.signing-'));
+  try {
+    const [archiveFile, manifestFile, signatureFile] = names.map(name => join(stage, name));
+    if (!cached) execFileSync('tar', ['--format=ustar', '-czf', archiveFile, '-C', join(releases, id), '.'], { stdio: 'inherit' });
+    const archiveHash = await sha256(archiveFile);
+    const bytes = Buffer.from(JSON.stringify({ version, id, commit, archive, sha256: archiveHash, size: statSync(archiveFile).size, notes, created }));
+    const signature = sign(null, bytes, key);
+    const publicKey = createPublicKey({ format: 'jwk', key: { kty: 'OKP', crv: 'Ed25519', x: Buffer.from(releasePublicKey, 'base64').toString('base64url') } });
+    if (!verify(null, bytes, publicKey, signature)) throw new Error('Signing key does not match the Briefsip release public key.');
+    const encoded = signature.toString('base64');
+    if (cached) {
+      if (!readFileSync(manifestFile).equals(bytes) || readFileSync(signatureFile, 'utf8') !== encoded) throw new Error('Cached signed release assets changed.');
+    } else {
+      durableWrite(manifestFile, bytes);
+      durableWrite(signatureFile, encoded);
+      renameSync(stage, bundle);
+      syncDirectory(directory);
+    }
+    return { files: names.map(name => join(bundle, name)), archiveHash };
+  } finally {
+    if (!cached) rmSync(stage, { recursive: true, force: true });
+  }
+}
+
+async function publishGithub(releases, id, keyPath) {
+  const info = verifyRelease(releases, id);
+  const { version, commit, notes } = info;
+  const directory = publicationDirectory(releases, id);
+  const readyFile = join(directory, 'ready.json');
+  if (!existsSync(readyFile)) throw new Error('This local release has no completed public release build with explicit --notes.');
+  const ready = JSON.parse(readFileSync(readyFile, 'utf8'));
+  if (ready.release !== await sha256(join(releases, id, 'release.json'))) throw new Error('Local release metadata changed after the release build.');
+  const desktop = ready.desktop ? desktopAssets(directory, version) : [];
+  const desktopHashes = await Promise.all(desktop.map(sha256));
+  if (ready.desktop && !desktopHashes.every((hash, i) => hash === ready.desktop[i])) throw new Error('Local desktop assets changed after the release build.');
+  const { files, archiveHash } = await signedRuntimeAssets(releases, directory, info, keyPath);
+  const tag = `v${version}`, title = `Briefsip ${version}`, repo = ['-R', githubRepository];
+  const hashes = [archiveHash, ...await Promise.all(files.slice(1).map(sha256)), ...desktopHashes];
+  const assets = [...files, ...desktop].map((file, i) => ({ file, name: basename(file), digest: `sha256:${hashes[i]}` }));
+  const paths = list => list.map(asset => relative(directory, asset.file));
+  const existing = github(['release', 'view', tag, ...repo, '--json', 'assets,body,isDraft,name,targetCommitish']);
+  const release = existing === undefined ? undefined : JSON.parse(existing);
+  // GitHub ignores --target when a tag already exists.
+  const endpoint = `repos/${githubRepository}/git`;
+  const refs = JSON.parse(github(['api', `${endpoint}/matching-refs/tags/${tag}`]));
+  let target = refs.find(ref => ref.ref === `refs/tags/${tag}`)?.object;
+  while (target?.type === 'tag') target = JSON.parse(github(['api', `${endpoint}/tags/${target.sha}`, '--jq', '.object']));
+  if ((target && (target.type !== 'commit' || target.sha !== commit)) || (!target && release && !release.isDraft)) {
+    throw new Error(`GitHub tag ${tag} does not point to release commit ${commit}.`);
+  }
+  if (!release) {
+    checkCleanTree();
+    // With asset arguments, gh uploads to a draft and publishes after all uploads pass.
+    github(['release', 'create', tag, ...repo, '--target', commit, '--title', title, '--notes', notes, ...paths(assets)], directory);
+  } else {
+    if (release.name !== title || release.body !== notes || (!target && release.targetCommitish !== commit)) {
+      throw new Error(`GitHub release ${tag} has different release metadata.`);
+    }
+    const remoteAssets = new Map((release.assets ?? []).map(asset => [asset.name, asset]));
+    if ([...remoteAssets.keys()].some(name => !assets.some(asset => asset.name === name))) throw new Error(`GitHub release ${tag} has unexpected assets.`);
+    const pending = [];
+    for (const asset of assets) {
+      const remote = remoteAssets.get(asset.name);
+      if (remote?.state === 'uploaded' && remote.digest === asset.digest) continue;
+      if (!release.isDraft || (remote && remote.state !== 'starter')) throw new Error(`GitHub release ${tag} has a missing or different asset: ${asset.name}.`);
+      pending.push(asset);
+    }
+    if (release.isDraft) {
+      checkCleanTree();
+      for (const { name } of pending) {
+        if (remoteAssets.has(name)) github(['release', 'delete-asset', tag, ...repo, name, '--yes']);
+      }
+      if (pending.length) github(['release', 'upload', tag, ...repo, ...paths(pending)], directory);
+      checkCleanTree();
+      github(['release', 'edit', tag, ...repo, '--draft=false']);
+    }
+  }
+  console.log(`Published ${tag} to ${githubRepository}`);
+}
+
+function desktopAssets(directory, version) {
+  const name = `Briefsip-${version}-x86_64.AppImage`;
+  const image = join(directory, name), metadata = join(directory, 'latest-linux.yml');
+  // ponytail: read electron-builder's fixed version and path lines. Parse YAML if accepting metadata from other builders.
+  const yaml = readFileSync(metadata, 'utf8');
+  if (/^version: (.+)$/m.exec(yaml)?.[1] !== version || /^path: (.+)$/m.exec(yaml)?.[1] !== name || !statSync(image).isFile()) {
+    throw new Error('Desktop build did not produce the matching AppImage and latest-linux.yml.');
+  }
+  return [image, metadata];
 }
 
 export function buildRelease({ source = join(root, 'app'), releases = join(homedir(), '.local/share/briefsip/releases'), allowDirty = false, notes, build = true, install = true, repository = root, issues = [], readIssueComments: readComments = readIssueComments } = {}) {
@@ -107,18 +244,63 @@ export function stageRuntime(source, stage) {
     cpSync(worker, join(stage, 'app', 'shared-data-worker.py'));
   }
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  const args = process.argv.slice(2), allowed = new Set(['--releases', '--notes', '--allow-dirty', '--desktop', '--desktop-feed', '--issues']);
-  const options = {};
-  for (let i = 0; i < args.length; i++) { const flag = args[i]; if (!allowed.has(flag)) throw new Error(`Unknown option: ${flag}`); if (!['--allow-dirty', '--desktop'].includes(flag) && (!args[i + 1] || args[i + 1].startsWith('--'))) throw new Error(`Missing value: ${flag}`); if (flag === '--releases') options.releases = resolve(args[++i]); else if (flag === '--notes') options.notes = args[++i]; else if (flag === '--allow-dirty') options.allowDirty = true; else if (flag === '--desktop-feed') options.desktopFeed = resolve(args[++i]); else if (flag === '--issues') { const value = args[++i]; if (!/^\d+(,\d+)*$/.test(value)) throw new Error('Invalid issues. Use --issues 30,31 with positive issue numbers.'); options.issues = value.split(',').map(Number); } }
-  if (!options.allowDirty && execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).trim()) throw new Error('Refusing dirty worktree. Use --allow-dirty for a development release.');
-  if (args.includes('--desktop')) {
-    const pkgPath = join(root, 'desktop/package.json'), lockPath = join(root, 'desktop/package-lock.json');
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')), lock = JSON.parse(readFileSync(lockPath, 'utf8')), version = JSON.parse(readFileSync(join(root, 'app/package.json'), 'utf8')).version;
-    if (pkg.version !== version) { pkg.version = version; lock.version = version; lock.packages[''].version = version; durableWrite(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 0o644); durableWrite(lockPath, JSON.stringify(lock, null, 2) + '\n', 0o644); }
+async function releaseCommand() {
+  const { values } = parseArgs({ options: {
+    releases: { type: 'string' }, notes: { type: 'string' }, issues: { type: 'string' }, desktop: { type: 'boolean' },
+    'allow-dirty': { type: 'boolean' }, 'no-github': { type: 'boolean' }, 'github-only': { type: 'string' }, 'signing-key': { type: 'string' },
+  } });
+  const releases = resolve(values.releases ?? join(homedir(), '.local/share/briefsip/releases'));
+  const keyPath = values['signing-key'] ?? process.env.BRIEFSIP_RELEASE_SIGNING_KEY ?? join(homedir(), '.config/briefsip-release/signing-ed25519.pem');
+  const retryId = values['github-only'], allowDirty = values['allow-dirty'], { notes, desktop } = values;
+  if (retryId !== undefined) {
+    if ([allowDirty, values['no-github'], values.issues, notes, desktop].some(value => value !== undefined)) {
+      throw new Error('--github-only accepts only --releases and --signing-key.');
+    }
+    checkCleanTree();
+    await uploadPublishedRelease(releases, retryId, keyPath);
+    return;
   }
-  // Desktop version sync is an intentional mutation after the clean-tree check.
-  const info = buildRelease({ ...options, allowDirty: options.allowDirty || args.includes('--desktop') });
-  if (args.includes('--desktop')) execFileSync(process.execPath, [join(root, 'desktop/scripts/publish-local.mjs'), options.desktopFeed ?? join(homedir(), '.local/share/briefsip/desktop-feed/desktop')], { cwd: root, stdio: 'inherit' });
-  console.log(`Published ${info.id}`);
+
+  const githubEnabled = !values['no-github'] && !allowDirty;
+  if (!allowDirty) checkCleanTree();
+  else if (!values['no-github']) console.warn('--allow-dirty publishes locally only.');
+  if (githubEnabled && !notes?.trim()) throw new Error('Pass --notes with user-facing release notes for GitHub, or use --no-github.');
+  if (values.issues !== undefined && !/^\d+(,\d+)*$/.test(values.issues)) throw new Error('Invalid issues. Use --issues 30,31 with positive issue numbers.');
+  const info = buildRelease({ releases, allowDirty, notes, issues: values.issues?.split(',').map(Number) });
+  console.log(`Published ${info.id} locally`);
+
+  const directory = publicationDirectory(releases, info.id);
+  let desktopHashes;
+  if (desktop) {
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const stage = mkdtempSync(join(directory, '.desktop-'));
+    try {
+      execFileSync(process.execPath, [join(root, 'desktop/scripts/build.mjs'), info.version, stage], { cwd: root, stdio: 'inherit' });
+      const files = desktopAssets(stage, info.version);
+      desktopHashes = await Promise.all(files.map(sha256));
+      for (const file of files) renameSync(file, join(directory, basename(file)));
+      syncDirectory(directory);
+    } finally { rmSync(stage, { recursive: true, force: true }); }
+  }
+  if (!allowDirty && notes?.trim()) {
+    checkCleanTree();
+    if (execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim() !== info.commit) throw new Error('Worktree HEAD changed during the release build.');
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    durableWrite(join(directory, 'ready.json'), JSON.stringify({
+      release: await sha256(join(releases, info.id, 'release.json')), desktop: desktopHashes,
+    }));
+  }
+  if (githubEnabled) await uploadPublishedRelease(releases, info.id, keyPath);
+}
+
+async function uploadPublishedRelease(releases, id, keyPath) {
+  try { await publishGithub(releases, id, keyPath); }
+  catch (error) {
+    throw new Error(`GitHub publication failed. Local release ${id} is unchanged. ${error.message}\nAfter resolving the error, retry with --github-only ${id} and the same --releases directory.`);
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  try { await releaseCommand(); }
+  catch (error) { console.error(`Error: ${error.message}`); process.exitCode = 1; }
 }

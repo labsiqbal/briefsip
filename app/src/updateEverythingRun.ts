@@ -6,20 +6,21 @@ type Receipt = { machine: string; status: string; reason?: string; id?: string }
 
 export const updateRunKey = 'briefsip:update-everything';
 export const localUpdateKey = 'briefsip:update';
+const validSource = (source: unknown) => source === undefined || source === 'GitHub' || source === 'Local feed';
 const validId = (value: unknown) => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,36}$/.test(value);
 
-export function readSavedUpdateRun(storage: Storage): UpdateRun | null {
+export function readSavedUpdateRun(storage: Pick<Storage, 'getItem'>): UpdateRun | null {
   const raw = storage.getItem(updateRunKey);
   if (!raw) return null;
   const run = JSON.parse(raw) as UpdateRun;
   if (!Array.isArray(run?.rows) || !Array.isArray(run.commands) || !run.commands.length
     || run.rows.some(row => !row || !validId(row.id) || typeof row.name !== 'string'
       || typeof row.current !== 'string' || row.local !== (row.id === 'local') || !Number.isSafeInteger(row.running) || row.running < 0
-      || typeof row.status !== 'string' || row.skipped !== null && typeof row.skipped !== 'string')
+      || typeof row.status !== 'string' || !validSource(row.source) || row.skipped !== null && typeof row.skipped !== 'string')
     || new Set(run.rows.map(row => row.id)).size !== run.rows.length
-    || run.commands.some(command => !command || !validId(command.id) || typeof command.version !== 'string'
+    || run.commands.some(command => !command || !validId(command.id) || typeof command.version !== 'string' || !validSource(command.source)
       || !Array.isArray(command.machines) || !command.machines.length || command.machines.length > 16
-      || command.machines.some(id => !run.rows.some(row => row.id === id && !row.skipped && row.target === command.version))
+      || command.machines.some(id => !run.rows.some(row => row.id === id && !row.skipped && row.target === command.version && row.source === command.source))
       || command.startedAt !== undefined && !Number.isFinite(command.startedAt)
       || command.submitted !== undefined && typeof command.submitted !== 'boolean')
     || run.commands.flatMap(command => command.machines).length !== run.rows.filter(row => !row.skipped).length
@@ -31,9 +32,9 @@ export function readSavedUpdateRun(storage: Storage): UpdateRun | null {
   return run;
 }
 
-export function readLocalUpdate(storage: Storage): Pick<UpdateCommand, 'id' | 'version'> | null {
-  const value = JSON.parse(storage.getItem(localUpdateKey) ?? 'null') as Pick<UpdateCommand, 'id' | 'version'> | null;
-  if (value && (!validId(value.id) || typeof value.version !== 'string')) throw new Error('Saved update could not be read.');
+export function readLocalUpdate(storage: Pick<Storage, 'getItem'>): Pick<UpdateCommand, 'id' | 'version' | 'source'> | null {
+  const value = JSON.parse(storage.getItem(localUpdateKey) ?? 'null') as Pick<UpdateCommand, 'id' | 'version' | 'source'> | null;
+  if (value && (!validId(value.id) || typeof value.version !== 'string' || !validSource(value.source))) throw new Error('Saved update could not be read.');
   return value;
 }
 
@@ -42,7 +43,7 @@ export function updateRunCommand(run: UpdateRun, command: UpdateCommand): Update
 }
 
 export async function submitUpdateCommand(request: UpdateRequest, command: UpdateCommand): Promise<Receipt[]> {
-  const body = { id: command.id, version: command.version };
+  const body = { id: command.id, version: command.version, ...(command.source && { source: command.source }) };
   if (command.machines[0] === 'local') {
     const result = await request<{ id: string }>('/api/updates/apply', body);
     return [{ machine: 'local', status: 'accepted', id: result.id }];

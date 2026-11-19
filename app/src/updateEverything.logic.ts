@@ -1,6 +1,6 @@
 // Adapted from T3 updateEverything.logic.ts (MIT). See app/t3/provenance.json.
 import type { PairedMachine } from '../shared/machines';
-import type { ReleaseInfo, UpdateAttempt, UpdateState } from '../shared/updates';
+import type { ReleaseInfo, UpdateAttempt, UpdateDownload, UpdateSource, UpdateState } from '../shared/updates';
 
 export type PeerState = {
   machine: string;
@@ -10,23 +10,25 @@ export type PeerState = {
   current?: { version: string };
   lastAttempt?: UpdateAttempt;
   reason?: string;
+  fanOutAttempt?: UpdateDownload & { id: string; state: string };
 };
 export type UpdateMachine = {
   id: string;
   name: string;
   current: string;
   target: string | null;
+  source?: UpdateSource;
   running: number;
   local: boolean;
   skipped: string | null;
 };
 export type RunMachine = UpdateMachine & { status: string; reason?: string; attemptId?: string };
-export type UpdateCommand = { id: string; version: string; machines: string[]; startedAt?: number; submitted?: boolean };
+export type UpdateCommand = { id: string; version: string; source?: UpdateSource; machines: string[]; startedAt?: number; submitted?: boolean };
 export type UpdateRun = { rows: RunMachine[]; commands: UpdateCommand[] };
 
 export const phases: Record<string, string> = {
   waiting: 'Waiting', submitting: 'Preparing update', accepted: 'Preparing update',
-  uncertain: 'Checking status', reconnecting: 'Reconnecting', 'backing-up': 'Backing up workspace',
+  downloading: 'Downloading', uncertain: 'Checking status', reconnecting: 'Reconnecting', 'backing-up': 'Backing up workspace',
   starting: 'Restarting', verifying: 'Verifying server health', restoring: 'Restoring workspace snapshot',
   done: 'Updated', 'rolled-back': 'Rolled back', failed: 'Update failed', unconfirmed: 'Update unconfirmed',
 };
@@ -44,10 +46,23 @@ function newer(candidate: string, current: string): boolean {
   return !a[4] && !!b[4];
 }
 
+export function availableUpdates(state: UpdateState) {
+  const primary = state.available;
+  if (!primary) return [];
+  const other = primary.source === 'GitHub' ? state.feed : state.github;
+  return other && newer(other.version, state.current.version) ? [primary, other] : [primary];
+}
+
+export function downloadLabel(download: UpdateDownload) {
+  const percent = download.totalBytes && Math.floor(100 * (download.bytesTransferred ?? 0) / download.totalBytes);
+  return percent == null || percent === 0 ? 'Downloading' : `Downloading ${Math.min(percent, 100)}%`;
+}
+
 export function collectServerUpdateTargets(state: UpdateState, machines: readonly PairedMachine[], peers: readonly PeerState[], localName: string) {
-  const feed = state.feed ?? state.available;
+  const localFeed = state.feed ?? state.available;
+  const feed = state.github && (!localFeed || !newer(localFeed.version, state.github.version)) ? state.github : localFeed;
   const local: UpdateMachine = {
-    id: 'local', name: localName, current: state.current.version, target: state.available?.version ?? null,
+    id: 'local', name: localName, current: state.current.version, target: state.available?.version ?? null, source: state.available?.source,
     running: state.runningTurns, local: true,
     skipped: !state.launcherAvailable ? 'Launcher unavailable'
       : state.lastAttempt && !terminalUpdate(state.lastAttempt.status) ? 'Already updating'
@@ -63,7 +78,7 @@ export function collectServerUpdateTargets(state: UpdateState, machines: readonl
     else if (peer?.lastAttempt && !terminalUpdate(peer.lastAttempt.status)) skipped = 'Already updating';
     else if (!peer?.available || !peer.launcherAvailable || !feed) skipped = peer?.reason ?? 'Updates unavailable';
     return {
-      id: machine.id, name: machine.name, current, target: skipped ? null : feed!.version,
+      id: machine.id, name: machine.name, current, target: skipped ? null : feed!.version, source: feed?.source,
       running: peer?.runningTurns ?? machine.agents.filter(agent => agent.status === 'running').length,
       local: false, skipped,
     };
@@ -100,9 +115,9 @@ export function planUpdateRun(rows: UpdateMachine[], createId: () => string): Up
   const peers = targets.filter(row => !row.local);
   const commands: UpdateCommand[] = [];
   for (let i = 0; i < peers.length; i += 16) {
-    commands.push({ id: createId(), version: peers[i].target!, machines: peers.slice(i, i + 16).map(row => row.id) });
+    commands.push({ id: createId(), version: peers[i].target!, source: peers[i].source, machines: peers.slice(i, i + 16).map(row => row.id) });
   }
-  if (local) commands.push({ id: createId(), version: local.target!, machines: [local.id] });
+  if (local) commands.push({ id: createId(), version: local.target!, source: local.source, machines: [local.id] });
   return { commands, rows: rows.map(row => ({ ...row, status: 'waiting' })) };
 }
 

@@ -8,8 +8,6 @@ use sha2::{Digest, Sha256};
 use std::{io::SeekFrom, time::Instant};
 use tokio::io::AsyncSeekExt;
 
-static RECEIVING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 pub async fn peer_statuses(state: &AppState) -> Result<Value> {
     let mut result = Vec::new();
     for machine in machines::list(state)? {
@@ -45,7 +43,8 @@ pub async fn peer_statuses(state: &AppState) -> Result<Value> {
 }
 
 pub async fn fan_out(state: &AppState, value: &Value) -> Result<Value> {
-    command(value, &["id", "machines", "version"])?;
+    command(value, &["id", "machines", "version", "source"])?;
+    let source = source(value)?;
     let invalid = || error(400, "Select 1 to 16 paired machines.");
     let mut ids = value["machines"]
         .as_array()
@@ -62,14 +61,18 @@ pub async fn fan_out(state: &AppState, value: &Value) -> Result<Value> {
     if ids.windows(2).any(|pair| pair[0] == pair[1]) {
         return Err(invalid());
     }
-    let digest = json!({"version":value["version"],"machines":ids}).to_string();
+    let mut digest = json!({"version":value["version"],"machines":ids});
+    if let Some(source) = source {
+        digest["source"] = json!(source);
+    }
+    let digest = digest.to_string();
     let id = string(value, "id");
     if let Some(saved) = prior(state, id, &digest)? {
         return Ok(saved);
     }
-    let release = target(state, string(value, "version"))?;
+    let release = selected_target(state, string(value, "version"), source).await?;
     let uncertain = json!({"accepted":true,"machines":ids.iter().map(|machine|json!({"machine":machine,"status":"uncertain","reason":"Submission interrupted. Check the receiving machine before retrying."})).collect::<Vec<_>>()});
-    if !attempts::record(state, id, &digest, &uncertain, &release, &ids)? {
+    if !attempts::record(state, id, &digest, &uncertain, &release.public(), &ids)? {
         return prior(state, id, &digest)?.ok_or_else(Failure::storage);
     }
     // Keep the attempt and archive alive if the owner closes the HTTP request.
@@ -86,26 +89,11 @@ pub async fn fan_out(state: &AppState, value: &Value) -> Result<Value> {
 async fn run_fan_out(
     state: AppState,
     id: String,
-    release: Value,
+    release: Target,
     ids: Vec<String>,
 ) -> Result<Value> {
-    let root = state
-        .config
-        .update
-        .options()
-        .releases_dir
-        .as_ref()
-        .ok_or_else(Failure::storage)?;
-    let archive = match archive::create(root, string(&release, "id")).await {
-        Ok(archive) => archive,
-        Err(failure) => {
-            for machine in ids {
-                attempts::finish(&state, &id, &machine, Some(&failure))?;
-            }
-            return Err(failure);
-        }
-    };
-    attempts::set_total(&state, &id, archive.size)?;
+    let release = Arc::new(release);
+    let fallback = Arc::new(tokio::sync::OnceCell::new());
     let mut tasks = tokio::task::JoinSet::new();
     let mut ids = ids.into_iter();
     let mut result = Vec::new();
@@ -113,15 +101,11 @@ async fn run_fan_out(
         while tasks.len() < 4 {
             let Some(machine) = ids.next() else { break };
             let state = state.clone();
-            let body = json!({"id":id,"version":release["version"],"target":release["id"],"sha256":archive.sha256});
-            let id = id.clone();
-            let bytes = archive.size;
+            let (release, fallback, id) = (release.clone(), fallback.clone(), id.clone());
             tasks.spawn(async move {
                 let outcome = async {
                     attempts::start(&state, &id, &machine)?;
-                    machines::update_remote(&state, &machine, Some(&body), bytes, |received| {
-                        attempts::progress(&state, &id, &machine, received.min(bytes))
-                    }).await
+                    update_peer_release(&state, &id, &machine, &release, &fallback).await
                 }.await;
                 attempts::finish(&state, &id, &machine, outcome.as_ref().err())?;
                 Ok::<_, Failure>(match outcome {
@@ -150,6 +134,50 @@ async fn run_fan_out(
     Ok(result)
 }
 
+async fn update_peer_release(
+    state: &AppState,
+    id: &str,
+    machine: &str,
+    release: &Target,
+    fallback: &tokio::sync::OnceCell<Arc<archive::Archive>>,
+) -> Result<Value> {
+    let progress = |bytes| attempts::progress(state, id, machine, bytes);
+    let mut transfer_id = id.to_owned();
+    if let Target::GitHub(manifest) = release {
+        attempts::transfer(state, id, machine, manifest.size, github::SOURCE)?;
+        let body = json!({"id":id,"version":manifest.version,"target":manifest.id,
+            "sha256":manifest.sha256,"size":manifest.size,"source":github::SOURCE});
+        match machines::update_remote(state, machine, Some(&body), manifest.size, progress).await {
+            Err(failure)
+                if failure.code == github::UNREACHABLE
+                    || failure.code == PeerError::GitHubUnsupported.code() => {}
+            result => return result,
+        }
+        // A receiver binds the request ID to one transport and archive.
+        transfer_id = uuid::Uuid::new_v4().to_string();
+    }
+    let info = release.public();
+    let target = string(&info, "id");
+    let archive = fallback
+        .get_or_try_init(|| async {
+            let options = state.config.update.options();
+            let root = options.releases_dir.as_ref().ok_or_else(Failure::storage)?;
+            if let Target::GitHub(manifest) = release {
+                if !release::verify(root, target).is_ok_and(|info| manifest.matches(&info)) {
+                    let _receiving = receive_lock()?;
+                    let feed = options.github.as_ref().ok_or_else(github::unreachable)?;
+                    feed.stage(root, manifest, || async { Ok(()) }).await?;
+                }
+            }
+            archive::create(root, target).await
+        })
+        .await?;
+    attempts::transfer(state, id, machine, archive.size, LOCAL_SOURCE)?;
+    let body =
+        json!({"id":transfer_id,"version":info["version"],"target":target,"sha256":archive.sha256});
+    machines::update_remote(state, machine, Some(&body), archive.size, progress).await
+}
+
 async fn check_permission(state: &AppState, machine: &str, bearer: Option<&str>) -> Result<()> {
     if authorize(state, bearer).await? != machine {
         return Err(PeerError::PermissionRevoked.failure());
@@ -158,7 +186,22 @@ async fn check_permission(state: &AppState, machine: &str, bearer: Option<&str>)
 }
 
 fn receipt_id(value: &Value, machine: &str) -> Result<String> {
-    command(value, &["id", "version", "target", "sha256", "poll"])?;
+    command(
+        value,
+        &[
+            "id", "version", "target", "sha256", "poll", "source", "size",
+        ],
+    )?;
+    let github = value["source"] == github::SOURCE;
+    if (github
+        && (value["poll"] != true
+            || !value["size"]
+                .as_u64()
+                .is_some_and(|size| (1..=archive::LIMIT).contains(&size))))
+        || (!github && (value.get("source").is_some() || value.get("size").is_some()))
+    {
+        return Err(error(400, "Invalid peer release source."));
+    }
     let target = string(value, "target");
     if !archive::valid_hash(string(value, "sha256"))
         || !release::id(target)
@@ -195,17 +238,42 @@ async fn apply_release(
         .releases_dir
         .as_ref()
         .ok_or_else(|| PeerError::LauncherUnavailable.failure())?;
-    if status(state).await?["launcherAvailable"] != true {
+    let status = status(state).await?;
+    if status["launcherAvailable"] != true {
         return Err(PeerError::LauncherUnavailable.failure());
     }
     let polling = value["poll"] == true;
-    let bytes = if releases.join(target).exists() {
+    let bytes = if value["source"] == github::SOURCE {
+        if !release::newer(
+            string(value, "version"),
+            string(&status["current"], "version"),
+        ) {
+            return Err(error(409, "Release version is not an update."));
+        }
+        let feed = options.github.as_ref().ok_or_else(github::unreachable)?;
+        let manifest = feed.check().await?;
+        if manifest.id != target
+            || manifest.version != value["version"]
+            || manifest.sha256 != expected
+            || manifest.size != value["size"]
+        {
+            return Err(github::invalid(
+                "Requested version or archive does not match the signed GitHub release.",
+            ));
+        }
+        feed.stage(releases, &manifest, || {
+            check_permission(state, machine, bearer)
+        })
+        .await?
+    } else if releases.join(target).exists() {
         0
     } else {
         archive::receive(
             releases,
-            target,
-            expected,
+            archive::Download::Peer {
+                id: target,
+                sha256: expected,
+            },
             |offset| machines::download_release(state, machine, target, offset, polling),
             || check_permission(state, machine, bearer),
         )
@@ -253,20 +321,26 @@ async fn peer_apply(
     bearer: Option<String>,
 ) -> Result<Response> {
     let id = receipt_id(&value, &machine)?;
-    let lock = || {
-        RECEIVING
-            .try_lock()
-            .map_err(|_| error(409, "Another update is already running."))
-    };
     if value["poll"] != true {
-        let _receiving = lock()?;
+        let _receiving = receive_lock()?;
         let result = apply_release(state, &value, &machine, bearer.as_deref(), &id).await;
         let (status, body) = apply_response(&value, &machine, result);
         return Ok(json_response(status, body));
     }
 
     let key = format!("peer-apply:{id}");
-    let fingerprint = json!([value["target"], value["version"], value["sha256"]]).to_string();
+    let fingerprint = if value["source"] == github::SOURCE {
+        json!([
+            value["target"],
+            value["version"],
+            value["sha256"],
+            value["source"],
+            value["size"]
+        ])
+    } else {
+        json!([value["target"], value["version"], value["sha256"]])
+    }
+    .to_string();
     let saved = {
         let db = state.database.lock().map_err(|_| Failure::storage())?;
         let saved = db
@@ -291,7 +365,7 @@ async fn peer_apply(
                 result
             }
         } else {
-            let receiving = lock()?;
+            let receiving = receive_lock()?;
             let pending = json!({"pending":true});
             db.connection.execute(
                 "INSERT INTO update_commands VALUES(?,?,?)",
@@ -303,7 +377,7 @@ async fn peer_apply(
                 let result = apply_release(&state, &value, &machine, bearer.as_deref(), &id).await;
                 let (status, body) = apply_response(&value, &machine, result);
                 if let Err(failure) =
-                    save_peer_result(&state, &key, &json!({"status":status,"body":body}))
+                    save_update_result(&state, &key, &json!({"status":status,"body":body}))
                 {
                     eprintln!("peer release apply receipt {id}: {}", failure.code);
                 }
@@ -312,22 +386,7 @@ async fn peer_apply(
         }
     };
     if saved["pending"] == true {
-        let bytes = state
-            .config
-            .update
-            .options()
-            .releases_dir
-            .as_ref()
-            .and_then(|root| {
-                std::fs::symlink_metadata(archive::partial_file(
-                    root,
-                    string(&value, "target"),
-                    string(&value, "sha256"),
-                ))
-                .ok()
-            })
-            .filter(std::fs::Metadata::is_file)
-            .map_or(0, |meta| meta.len());
+        let bytes = downloaded(state, string(&value, "target"), string(&value, "sha256"));
         return Ok(json_response(
             202,
             json!({"pending":true,"id":id,"bytesTransferred":bytes}),
@@ -347,19 +406,6 @@ async fn peer_apply(
         saved["status"].as_u64().ok_or_else(Failure::storage)? as u16,
         saved["body"].clone(),
     ))
-}
-
-fn save_peer_result(state: &AppState, key: &str, result: &Value) -> Result<()> {
-    state
-        .database
-        .lock()
-        .map_err(|_| Failure::storage())?
-        .connection
-        .execute(
-            "UPDATE update_commands SET result=? WHERE id=?",
-            rusqlite::params![result.to_string(), key],
-        )?;
-    Ok(())
 }
 
 async fn authorize(state: &AppState, bearer: Option<&str>) -> Result<String> {
@@ -523,6 +569,7 @@ async fn peer_request(state: &AppState, request: Request) -> Result<Response> {
     if path == "/api/peer/updates" && request.method() == Method::GET {
         let mut status = status(state).await?;
         status["peerApplyPolling"] = json!(true);
+        status["peerGitHubUpdates"] = json!(true);
         return Ok(json_response(200, status));
     }
     if path == "/api/peer/updates/apply" && request.method() == Method::POST {

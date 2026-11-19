@@ -388,6 +388,7 @@ impl Launcher {
                     .as_object_mut()
                     .ok_or("Invalid launcher state.")?
                     .remove("receipts");
+                value["releasePublicKey"] = json!(briefsip_launcher::RELEASE_PUBLIC_KEY);
                 Ok(value)
             }
             _ => Err("Unknown control request.".into()),

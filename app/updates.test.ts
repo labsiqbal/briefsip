@@ -68,7 +68,7 @@ test('release lint failure stops build, tests and packaging; successful gates ru
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 
-test('desktop release sync follows dirty guard and publishes matching version through desktop helper',()=>{
+test('desktop build follows dirty guard and packages release version without changing tracked desktop version',()=>{
  const dir=temp();try{
  for(const folder of ['app','scripts','desktop/scripts'])mkdirSync(join(dir,folder),{recursive:true});
  cpSync(join(root,'scripts/release.mjs'),join(dir,'scripts/release.mjs'));for(const name of ['install-machine.sh','uninstall-machine.sh'])cpSync(join(root,'scripts',name),join(dir,'scripts',name));cpSync(join(root,'scripts/release-lib.mjs'),join(dir,'scripts/release-lib.mjs'));
@@ -76,11 +76,12 @@ test('desktop release sync follows dirty guard and publishes matching version th
  writeFileSync(join(dir,'app/package.json'),JSON.stringify(app));writeFileSync(join(dir,'app/package-lock.json'),JSON.stringify({name:app.name,version:app.version,lockfileVersion:3,packages:{'':app}}));
  nativeReleaseFixture(join(dir,'app'),'1.0.1');mkdirSync(join(dir,'app/dist'));writeFileSync(join(dir,'app/dist/index.html'),'fixture');
  writeFileSync(join(dir,'desktop/package.json'),JSON.stringify({version:'1.0.0'}));writeFileSync(join(dir,'desktop/package-lock.json'),JSON.stringify({version:'1.0.0',packages:{'':{version:'1.0.0'}}}));
- writeFileSync(join(dir,'desktop/scripts/publish-local.mjs'),`import {writeFileSync,readFileSync} from 'node:fs';const version=JSON.parse(readFileSync(new URL('../package.json',import.meta.url))).version;writeFileSync(process.argv[2],version);`);
+ writeFileSync(join(dir,'desktop/scripts/build.mjs'),`import {writeFileSync} from 'node:fs';import {join} from 'node:path';const [version, out] = process.argv.slice(2);const name = 'Briefsip-' + version + '-x86_64.AppImage';writeFileSync(join(out,name),version);writeFileSync(join(out,'latest-linux.yml'),'version: ' + version + '\\npath: ' + name + '\\n');`);
  const git=(args:string[])=>execFileSync('git',args,{cwd:dir,stdio:'ignore'});git(['init']);git(['add','.']);git(['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','Fixture']);
- const args=[join(dir,'scripts/release.mjs'),'--desktop','--releases',join(dir,'releases'),'--desktop-feed',join(dir,'desktop-result')];
- writeFileSync(join(dir,'dirty'),'uncommitted');assert.throws(()=>execFileSync(process.execPath,args,{stdio:'pipe'}),/dirty worktree/);assert.equal(JSON.parse(readFileSync(join(dir,'desktop/package.json'),'utf8')).version,'1.0.0');rmSync(join(dir,'dirty'));
- execFileSync(process.execPath,args,{stdio:'pipe'});assert.equal(readFileSync(join(dir,'desktop-result'),'utf8'),'1.0.1');assert.equal(latestRelease(join(dir,'releases'))!.version,'1.0.1');
+ const releases=join(dir,'releases');
+ const args=[join(dir,'scripts/release.mjs'),'--desktop','--no-github','--releases',releases];
+ writeFileSync(join(dir,'dirty'),'uncommitted');assert.throws(()=>execFileSync(process.execPath,args,{stdio:'pipe'}),/dirty worktree/);assert(!existsSync(releases));rmSync(join(dir,'dirty'));
+ execFileSync(process.execPath,args,{stdio:'pipe'});const info=latestRelease(releases)!;assert.equal(info.version,'1.0.1');assert.equal(readFileSync(join(releases,'.github',info.id,'Briefsip-1.0.1-x86_64.AppImage'),'utf8'),'1.0.1');assert.equal(JSON.parse(readFileSync(join(dir,'desktop/package.json'),'utf8')).version,'1.0.0');
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 
@@ -162,14 +163,14 @@ test('Rust launcher trials native Rust server, commits over socket, and rolls ba
   assert.equal((await api(app,'/api/environment')).version,'1.0.0');
   const db=testDatabase(join(f.data,'briefsip.sqlite'));db.exec("CREATE TABLE native_fixture(value TEXT);INSERT INTO native_fixture VALUES('preserved')");db.close();
   const second=native('1.0.1'),id=randomUUID();
-  await api(app,'/api/updates/apply',{id,version:second.version},202);
+  await api(app,'/api/updates/apply',{id,version:second.version,source:'Local feed'},202);
   await until(async()=>{try{return (await launcherRequest(f!.options,{type:'trial',id})).committed===true;}catch{return false;}});
   await until(async()=>{try{return (await fetch(app.origin+'/api/agents')).status===200;}catch{return false;}});
   assert.equal((await api(app,'/api/environment')).version,'1.0.1');
-  assert.equal((await api(app,'/api/updates')).current.id,second.id);
+  assert.equal((await launcherRequest(f.options,{type:'status'})).current,second.id);
   const third=native('1.0.2');chmodSync(join(dir,'releases',third.id,'bin/briefsip-server'),0o600);
   third.files=fileManifest(join(dir,'releases',third.id));writeFileSync(join(dir,'releases',third.id,'release.json'),JSON.stringify(third));
-  const failed=randomUUID();await api(app,'/api/updates/apply',{id:failed,version:third.version},202);
+  const failed=randomUUID();await api(app,'/api/updates/apply',{id:failed,version:third.version,source:'Local feed'},202);
   const rollback=await until(async()=>{const state=await launcherRequest(f!.options,{type:'status'});return (state.lastAttempt as {status?:string})?.status==='rolled-back'?state:undefined;});
   assert.equal((rollback.lastAttempt as {snapshotReady?:boolean}).snapshotReady,true);
   assert.match((rollback.lastAttempt as {reason:string}).reason,/health|exited/i);
@@ -189,8 +190,8 @@ if(process.env.BRIEFSIP_UPDATE_IT==='1')test('real release build, HTTP update, b
  const app={origin:`http://127.0.0.1:${f.port}`};await until(async()=>{try{return (await originalFetch(app.origin+'/api/environment')).ok;}catch{return false;}},30000);
  const agent={id:randomUUID(),name:'Owner data survives',model:'fixture',instructions:'Preserve this agent.'};await api(app,'/api/agents',agent,201);
  function version(v:string){pkg.version=v;lock.version=v;lock.packages[''].version=v;writeFileSync(join(source,'package.json'),JSON.stringify(pkg,null,2)+'\n');writeFileSync(join(source,'package-lock.json'),JSON.stringify(lock,null,2)+'\n');}
- version('0.1.1');const second=await realBuild('Integration v2');const id=randomUUID();await api(app,'/api/updates/apply',{id,version:second.version},202);await until(async()=>{try{const state=await api(app,'/api/updates');return state.current.version==='0.1.1'&&state.lastAttempt?.status==='done';}catch{return false;}},60000).catch(e=>{throw new Error(String(e)+'\n'+f!.log);});assert.equal((await api(app,'/api/agents')).agents.find((r:{id:string})=>r.id===agent.id).name,agent.name);
- version('0.1.2');const serverPath=join(source,'server.ts');const code=readFileSync(serverPath,'utf8').replace("if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {", "if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {\n if (process.env.BRIEFSIP_UPDATE_TRIAL) { const damaged = new DatabaseSync(resolve(process.env.BRIEFSIP_DATA_DIR!, 'briefsip.sqlite')); damaged.exec(\"UPDATE agents SET name='BROKEN UPDATE'\"); damaged.close(); throw new Error('Integration broken release'); }");writeFileSync(serverPath,code);const third=await realBuild('Integration broken v3');const badId=randomUUID();await api(app,'/api/updates/apply',{id:badId,version:third.version},202);await until(async()=>{try{const state=await api(app,'/api/updates');return state.current.version==='0.1.1'&&state.lastAttempt?.id===badId&&state.lastAttempt?.status==='rolled-back';}catch{return false;}},60000).catch(e=>{throw new Error(String(e)+'\n'+f!.log);});assert.equal((await api(app,'/api/agents')).agents.find((r:{id:string})=>r.id===agent.id).name,agent.name);assert.equal(selectedRelease(releases),second.id);
+ version('0.1.1');const second=await realBuild('Integration v2');const id=randomUUID();await api(app,'/api/updates/apply',{id,version:second.version,source:'Local feed'},202);await until(async()=>{try{const state=await launcherRequest(f!.options,{type:'status'});return state.current===second.id&&(state.lastAttempt as {status?:string})?.status==='done';}catch{return false;}},60000).catch(e=>{throw new Error(String(e)+'\n'+f!.log);});assert.equal((await api(app,'/api/agents')).agents.find((r:{id:string})=>r.id===agent.id).name,agent.name);
+ version('0.1.2');const serverPath=join(source,'server.ts');const code=readFileSync(serverPath,'utf8').replace("if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {", "if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {\n if (process.env.BRIEFSIP_UPDATE_TRIAL) { const damaged = new DatabaseSync(resolve(process.env.BRIEFSIP_DATA_DIR!, 'briefsip.sqlite')); damaged.exec(\"UPDATE agents SET name='BROKEN UPDATE'\"); damaged.close(); throw new Error('Integration broken release'); }");writeFileSync(serverPath,code);const third=await realBuild('Integration broken v3');const badId=randomUUID();await api(app,'/api/updates/apply',{id:badId,version:third.version,source:'Local feed'},202);await until(async()=>{try{const state=await launcherRequest(f!.options,{type:'status'});const last=state.lastAttempt as {id?:string;status?:string}|undefined;return state.current===second.id&&last?.id===badId&&last.status==='rolled-back';}catch{return false;}},60000).catch(e=>{throw new Error(String(e)+'\n'+f!.log);});assert.equal((await api(app,'/api/agents')).agents.find((r:{id:string})=>r.id===agent.id).name,agent.name);assert.equal(selectedRelease(releases),second.id);
  }catch(error){throw new Error((error instanceof Error ? error.stack : String(error))+'\nCause: '+String((error as {cause?:unknown})?.cause)+'\n'+f?.log);}finally{await f?.close();rmSync(dir,{recursive:true,force:true});}
 });
 const originalFetch=globalThis.fetch;
