@@ -10,6 +10,7 @@ import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
 import { startRustServer } from './rust-test-server.ts';
+import { startApp } from './test-bridge.ts';
 
 test('Rust JWKS rotates keys, rejects unknown signatures and enforces audience', async () => {
   const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-jwks-'));
@@ -18,7 +19,7 @@ test('Rust JWKS rotates keys, rejects unknown signatures and enforces audience',
   const api = createServer((req,res) => { res.setHeader('Content-Type','application/json'); if (req.url === '/v1/jwks') { calls++; res.end(JSON.stringify({ keys: keys.slice(0,rotated?2:1).map((key,index) => ({ ...key.publicKey.export({ format:'jwk' }), kid:String(index), use:'sig', alg:'RS256' })) })); } else { res.statusCode=503; res.end('{}'); } });
   await new Promise<void>(ready => api.listen(0,'127.0.0.1',ready)); const address=api.address(); assert(address&&typeof address!=='string');
   const auth = { secretKey:'sk_test_fixture',publishableKey:'pk_test_fixture',issuer:'https://fixture.clerk.accounts.dev',origin:'https://briefsip.example',development:true,audience:'briefsip',apiUrl:`http://127.0.0.1:${address.port}` };
-  const app=await startRustServer({database:join(root,'db.sqlite'),auth});
+  const app = await startApp({ database: join(root, 'db.sqlite'), auth }, { directory: root, servers: [api] });
   const send=async (index:number,overrides:Record<string,unknown>={}) => { const now=Math.floor(Date.now()/1000); const input=`${Buffer.from(JSON.stringify({alg:'RS256',kid:String(index)})).toString('base64url')}.${Buffer.from(JSON.stringify({iss:auth.issuer,sub:'user_fixture',sid:'sess_fixture',azp:auth.origin,nbf:now-1,exp:now+60,aud:'briefsip',...overrides})).toString('base64url')}`; const jwt=`${input}.${sign('RSA-SHA256',Buffer.from(input),keys[index%2].privateKey).toString('base64url')}`; const response=await fetch(app.origin+'/api/session',{headers:{Authorization:`Bearer ${jwt}`,'Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':randomUUID()}}); const body=await response.json(); return {status:response.status,body}; };
   try { const first=await send(0); assert.equal(first.status,200); assert(calls>0); rotated=true; const before=calls; assert.equal((await send(1)).body.data.accountId,first.body.data.accountId); assert(calls>before); assert.equal((await send(2)).status,401); assert.equal((await send(0,{aud:'wrong'})).status,401); assert.equal((await send(0,{aud:['other','briefsip']})).status,200); }
   finally { await app.close(); api.closeAllConnections(); await new Promise<void>(ready=>api.close(()=>ready())); rmSync(root,{recursive:true,force:true}); }

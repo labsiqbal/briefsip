@@ -20,7 +20,7 @@ test('Telegram media uploads once in requester thread and retries lost uploads/m
  const scriptToken=token;
  let pdfUnavailable=false;
  const pdfFault=async()=>pdfUnavailable?{status:503,error:'PDF sandbox is unavailable.'}:undefined;
- const app=await startApp({database:join(root,'app.sqlite'),baseURL:`http://127.0.0.1:${pa.port}/v1`,scriptToken,scriptDirectory:join(root,'scripts'),pdfFault});
+ const app=await startApp({database:join(root,'app.sqlite'),baseURL:`http://127.0.0.1:${pa.port}/v1`,scriptToken,scriptDirectory:join(root,'scripts'),pdfFault}, { directory: root, servers: [provider] });
  let db:DatabaseSync|undefined;
  const connector=await rustConnectorFixture('telegram',root,agent,app.origin,scriptToken,(method,raw,req,res)=>{
   if(req.url!.startsWith('/file/')){downloads.push(method);res.end(payloads[method]);return;}

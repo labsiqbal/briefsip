@@ -27,7 +27,7 @@ test('agents bind isolated provider accounts across channels, side threads, edit
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve)); const address = provider.address(); assert(address && typeof address !== 'string');
   const accounts = ['openai','anthropic','gemini','public'].map(id => ({ id, name: id, provider: ['openai','public'].includes(id) ? 'openai-compatible' : id, baseURL: `http://127.0.0.1:${address.port}/${id}`, apiKey: id === 'public' ? undefined : `key-${id}` }));
   const options = { database: join(dir, 'state.sqlite'), accounts };
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [provider] });
   async function request(path: string, body?: unknown, status = 200) {
     const res = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const data = await res.json(); assert(status === 200 ? res.ok : res.status === status, JSON.stringify(data)); return data;

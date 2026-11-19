@@ -48,7 +48,10 @@ test('agent history tools retrieve old originals and reject foreign conversation
     if (String(event.request?.origin) === `http://127.0.0.1:${address.port}`) networkErrors.push({name: event.error?.name ?? 'unknown', code: event.error?.code ?? null});
   };
   subscribe('undici:request:error', captureError);
-  let app = await startApp(options);
+  let app = await startApp(options, { directory: dir, servers: [provider] }).catch(error => {
+    unsubscribe('undici:request:error', captureError);
+    throw error;
+  });
   async function post(path: string, data: unknown) {
     const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     assert(response.ok, await response.clone().text()); return response.json();

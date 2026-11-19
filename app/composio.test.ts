@@ -52,7 +52,7 @@ test('connected apps end to end: catalog, accounts, grants, tools, approvals, re
     res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{message,finish_reason:results.length?'stop':'tool_calls'}],usage:{prompt_tokens:1,completion_tokens:1,total_tokens:2}}));
   })();});
   const providerOrigin=await listen(provider),options={database,baseURL:providerOrigin+'/v1',apiKey:'FAKE_PROVIDER_KEY',defaultModel:'fake',port:0,composio:{baseURL:remoteOrigin+'/api/v3.1'}};
-  let app=await startApp(options),origin=app.origin,closed=false;
+  let app=await startApp(options, { directory: dir, servers: [remote, provider] }),origin=app.origin,closed=false;
   const request=async(path:string,data?:unknown,status=200)=>{const res=await fetch(origin+path,data?{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(data)}:{}),raw=await res.text();responses.push(raw);assert.equal(res.status,status,`${path}: ${raw}`);return JSON.parse(raw);};
   const wait=async(path:string,id:string,predicate:(row:any)=>boolean)=>{for(let n=0;n<400;n++){const row=(await request(path)).find((row:any)=>row.id===id);if(row&&predicate(row))return row;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Turn did not settle: '+id+' last='+JSON.stringify((await request(path)).find((row:any)=>row.id===id)));};
   try{
@@ -108,7 +108,7 @@ test('installation API key: validation, encrypted persistence, receipts, runtime
   const remoteCalls:{key:string;path:string}[]=[],responses:string[]=[];
   const remote=createServer((req,res)=>{const key=String(req.headers['x-api-key']);remoteCalls.push({key,path:req.url!});res.setHeader('Content-Type','application/json');if(![storedKey,replacement,environment].includes(key)){res.statusCode=401;return res.end(JSON.stringify({error:key}));}res.end(JSON.stringify(req.url!.endsWith('/toolkits/categories')?{items:[]}:{items:[{slug:'gmail',name:'Gmail',meta:{description:key},composio_managed_auth_schemes:['OAUTH2']}]}));});
   const remoteOrigin=await listen(remote),options={database,composio:{baseURL:remoteOrigin+'/api/v3.1'}};
-  let app=await startApp(options),origin=app.origin,closed=false;
+  let app=await startApp(options, { directory, servers: [remote] }),origin=app.origin,closed=false;
   const request=async(path:string,data?:unknown,status=200,headers?:Record<string,string>)=>{const response=await fetch(origin+path,data?{method:'POST',headers:{Origin:origin,'Content-Type':'application/json',...headers},body:JSON.stringify(data)}:{});const raw=await response.text();responses.push(raw);assert.equal(response.status,status,raw);return JSON.parse(raw);};
   try {
     assert.deepEqual(await request('/api/connected-apps/key'),{source:'none',revision:0});

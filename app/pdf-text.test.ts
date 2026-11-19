@@ -52,7 +52,7 @@ test('PDF HTTP preview and messages preserve source, scope, retry, routing, tool
     await pending?.(signal);
   };
   const options = { pdfFault, database: join(directory, 'db.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, scriptToken: token };
-  let app = await startApp(options), appClosed = false;
+  let app = await startApp(options, { directory, servers: [provider] }), appClosed = false;
   async function request(path: string, data?: unknown, expected?: number) {
     const res = await fetch(app.origin + path, { method: data === undefined ? 'GET' : 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: data === undefined ? undefined : JSON.stringify(data) });
     const value = await res.json(); if (expected !== undefined) assert.equal(res.status, expected, JSON.stringify(value)); else assert(res.ok, JSON.stringify(value)); return value;

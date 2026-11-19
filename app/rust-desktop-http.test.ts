@@ -89,7 +89,7 @@ test('server advertises gated tools, sends model image pixels, protects viewer r
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve)); const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(f.dir, 'server.sqlite'), desktop: { ...f.options, geometry: '1920x1200', idleMs: 30_000 }, baseURL: `http://127.0.0.1:${address.port}/v1` };
-  let app = await startApp(options), closed = false;
+  let app = await startApp(options, { directory: f.dir, servers: [provider] }), closed = false;
   async function request(path: string, body?: unknown, origin = app.origin) {
     const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     assert(response.ok, await response.clone().text()); return response.json();
@@ -167,7 +167,7 @@ test('HTTP control and user input enforce Origin, revision, validation and rate 
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve)); const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(f.dir, 'control-http.sqlite'), desktop: f.options, baseURL: `http://127.0.0.1:${address.port}/v1` };
-  let app = await startApp(options), closed = false;
+  let app = await startApp(options, { directory: f.dir, servers: [provider] }), closed = false;
   const agent = randomUUID(), path = `/api/agents/${agent}/computer`;
   async function raw(path: string, body?: unknown, origin = app.origin, content = 'application/json') { return fetch(app.origin + path, { method: body === undefined ? 'GET' : 'POST', headers: { Origin: origin, 'Content-Type': content }, body: body === undefined ? undefined : JSON.stringify(body) }); }
   async function request(path: string, body?: unknown) { const res = await raw(path, body); assert(res.ok, await res.clone().text()); return res.json(); }

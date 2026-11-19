@@ -8,6 +8,7 @@ import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
 import { startRustServer } from './rust-test-server.ts';
+import { startApp } from './test-bridge.ts';
 import { decryptMail } from './test-support/mail-fixture.ts';
 import { digestCommand } from './shared/protocol.ts';
 import sharp from 'sharp';
@@ -27,7 +28,7 @@ async function fixture() {
   for (const [id, subject] of [[owner, 'owner'], [member, 'member']]) db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,?,?,?)').run(id, auth.issuer, subject, Date.now());
   db.close();
   const options = { database, auth, testKeyringLocked: false, mailFrom: 'Briefsip <noreply@example.com>', testKeyring: { 'mail-aead/active': keyId, [`mail-aead/${keyId}`]: key.toString('base64url'), 'mail-lookup/v1': lookupKey.toString('base64url'), 'sync-hmac/v1': randomBytes(32).toString('base64url') } };
-  let app = await startRustServer(options);
+  let app = await startApp(options, { directory, servers: [upstream] });
   const token = (sub: string) => { const now = Math.floor(Date.now() / 1000), unsigned = `${Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url')}.${Buffer.from(JSON.stringify({ iss: auth.issuer, sub, sid: `sess_${sub}`, azp: auth.origin, nbf: now - 1, exp: now + 600, iat: now - 1 })).toString('base64url')}`; return `${unsigned}.${sign('RSA-SHA256', Buffer.from(unsigned), keys.privateKey).toString('base64url')}`; };
   async function request(path: string, body?: Record<string, unknown>, status = 200, subject = 'owner', method = 'POST'): Promise<any> {
     const response = await fetch(app.origin + path, { method: body ? method : 'GET', headers: { Authorization: `Bearer ${token(subject)}`, Origin: auth.origin, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': String(body?.requestId ?? randomUUID()) }, body: body ? JSON.stringify(body) : undefined });

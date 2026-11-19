@@ -11,9 +11,9 @@ const secret='PROJECT_CANARY_j4W8sK3p';
 const listen=async(server:ReturnType<typeof createServer>)=>{await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));return `http://127.0.0.1:${(server.address() as {port:number}).port}`;};
 async function body(req:AsyncIterable<Uint8Array>){let raw='';for await(const chunk of req)raw+=chunk;return raw?JSON.parse(raw):{};}
 const stop=async(server:ReturnType<typeof createServer>)=>{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));};
-async function fixture(extra:Record<string,any>={}){
+async function fixture(extra:Record<string,any>={}, servers: ReturnType<typeof createServer>[] = []){
   const directory=mkdtempSync(resolve('node_modules/.project-integrations-')),database=join(directory,'data/db.sqlite');mkdirSync(join(directory,'data'));
-  const options={database,port:0,projectRoot:join(directory,'projects'),...extra};let app=await startApp(options),closed=false;
+  const options={database,port:0,projectRoot:join(directory,'projects'),...extra};let app=await startApp(options, { directory, servers }),closed=false;
   const responses:string[]=[];
   async function request(path:string,data?:unknown,status=200){const response=await fetch(app.origin+path,data?{method:'POST',headers:{Origin:app.origin,'Content-Type':'application/json'},body:JSON.stringify(data)}:{});const raw=await response.text();responses.push(raw);assert.equal(response.status,status,`${path}: ${raw}`);return JSON.parse(raw);}
   async function until(path:string,id:string,predicate=(row:any)=>['done','failed'].includes(row.status)){for(let n=0;n<1000;n++){const row=(await request(path)).find((row:any)=>row.id===id);if(row&&predicate(row))return row;await new Promise(r=>setTimeout(r,15));}assert.fail('Turn timed out: '+id);}
@@ -107,7 +107,7 @@ test('project apps and MCP: separate OAuth identities, offered tools, approvals,
   const provider=createServer((req,res)=>{void(async()=>{const data=await body(req);providerBodies.push(data);const toolResults=data.messages.filter((row:any)=>row.role==='tool');let message:any={content:'No tools'};
     if(toolResults.length)message={content:toolResults.at(-1).content};else if(mode==='apps'&&data.tools?.some((tool:any)=>tool.function.name===composioToolName('GMAIL_ACTION')))message={tool_calls:[{id:randomUUID(),type:'function',function:{name:composioToolName('GMAIL_ACTION'),arguments:'{}'}}]};else if(mode==='mcp')message={tool_calls:[{id:randomUUID(),type:'function',function:{name:'call_mcp_tool',arguments:JSON.stringify({connection,name:'echo',arguments:{}})}}]};else if(mode==='list')message={tool_calls:[{id:randomUUID(),type:'function',function:{name:'list_mcp_tools',arguments:'{}'}}]};
     res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{message,finish_reason:message.tool_calls?'tool_calls':'stop'}]}));})();});
-  const remoteURL=await listen(remote),mcpURL=await listen(mcpServer),providerURL=await listen(provider);const f=await fixture({baseURL:providerURL+'/v1',composio:{baseURL:remoteURL}});
+  const remoteURL=await listen(remote),mcpURL=await listen(mcpServer),providerURL=await listen(provider);const f=await fixture({baseURL:providerURL+'/v1',composio:{baseURL:remoteURL}}, [remote, mcpServer, provider]);
   try{
     await f.request('/api/connected-apps/key',{id:randomUUID(),revision:0,key:'FAKE_COMPOSIO_KEY'});const a=await f.agent(),foreign=await f.agent('Nonmember'),p=await f.project(a.id,'Apps A'),b=await f.project(a.id,'Apps B');const direct=`/api/agents/${a.id}/turns`;
     const side=async(p:any)=>f.request(`/api/projects/${p.id}/thread`,{id:randomUUID(),revision:(await f.request(`/api/projects/${p.id}`)).revision,agent:a.id,name:'Apps thread'});const x=await side(p),y=await side(b),xp=`/api/threads/${x.threads.at(-1).id}/turns`,yp=`/api/threads/${y.threads.at(-1).id}/turns`;

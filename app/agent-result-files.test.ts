@@ -35,7 +35,7 @@ for(const pdf of [false,true]) test(`requester reads returned teammate ${pdf?'PD
   if(holdPdf){holdPdf=false;startPdf();await pdfReleased;}
   return undefined;
  }:undefined;
- const options={database:join(dir,'app.sqlite'),baseURL:`http://127.0.0.1:${address.port}/v1`,pdfFault};let app=await startApp(options);
+ const options={database:join(dir,'app.sqlite'),baseURL:`http://127.0.0.1:${address.port}/v1`,pdfFault};let app=await startApp(options, { directory: dir, servers: [provider] });
  async function ui(path:string,body?:unknown):Promise<any>{const res=await fetch(app.origin+path,{method:body?'POST':'GET',headers:{Origin:app.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const value=await res.json();assert(res.ok,JSON.stringify(value));return value;}
  async function wait(path:string,id:string,status:string){for(let i=0;i<300;i++){const row=(await ui(path)).find((t:any)=>t.id===id);if(row?.status===status)return row;await new Promise(r=>setTimeout(r,10));}assert.fail('Task did not settle');}
  try{
