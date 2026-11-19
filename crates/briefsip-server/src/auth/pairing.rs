@@ -523,10 +523,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_direct_loopback_bypasses_pairing() {
+    fn only_direct_loopback_bypasses_pairing() -> std::result::Result<(), std::net::AddrParseError>
+    {
         let local = "http://127.0.0.1:4412";
-        let peer = Some("127.0.0.1:51121".parse().unwrap());
-        let remote = Some("100.64.0.12:51121".parse().unwrap());
+        let peer = Some("127.0.0.1:51121".parse()?);
+        let remote = Some("100.64.0.12:51121".parse()?);
         assert!(trusted_loopback(local, Some(local), peer, false, false));
         assert!(!trusted_loopback(local, Some(local), peer, true, false));
         assert!(!trusted_loopback(local, Some(local), remote, false, false));
@@ -539,14 +540,16 @@ mod tests {
         ));
         assert!(!trusted_loopback(local, Some(local), peer, false, true));
         assert!(!trusted_loopback(local, Some(local), None, false, false));
+        Ok(())
     }
 
     #[test]
-    fn device_cookie_is_host_only_and_secure() {
-        let cookie = cookie_header("token", 10).unwrap();
+    fn device_cookie_is_host_only_and_secure() -> Result<()> {
+        let cookie = cookie_header("token", 10)?;
         assert_eq!(
             cookie,
             "__Host-briefsip-device=token; Path=/; Max-Age=10; HttpOnly; Secure; SameSite=Strict"
         );
+        Ok(())
     }
 }

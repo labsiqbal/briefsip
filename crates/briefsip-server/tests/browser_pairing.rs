@@ -21,7 +21,8 @@ impl Drop for Server {
 }
 
 #[tokio::test]
-async fn pairing_gates_remote_routes_without_locking_out_loopback() {
+async fn pairing_gates_remote_routes_without_locking_out_loopback(
+) -> Result<(), Box<dyn std::error::Error>> {
     const HOST: &str = "briefsip.example";
     const ORIGIN: &str = "https://briefsip.example";
     let data = std::env::temp_dir().join(format!("briefsip-pairing-{}", uuid::Uuid::new_v4()));
@@ -30,25 +31,29 @@ async fn pairing_gates_remote_routes_without_locking_out_loopback() {
         .env("BRIEFSIP_TEST_SERVER", "rust")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+        .spawn()?;
     let mut server = Server { child, data };
     let config = json!({
         "database": server.data.join("briefsip.sqlite"),
         "port": 0,
         "allowedOrigins": [ORIGIN]
     });
-    write!(server.child.stdin.take().unwrap(), "{config}").unwrap();
-    let mut output = BufReader::new(server.child.stdout.take().unwrap());
+    write!(
+        server.child.stdin.take().ok_or("server stdin missing")?,
+        "{config}"
+    )?;
+    let mut output = BufReader::new(server.child.stdout.take().ok_or("server stdout missing")?);
     let mut line = String::new();
-    output.read_line(&mut line).unwrap();
-    let local = line.trim().strip_prefix("Briefsip: ").unwrap();
+    output.read_line(&mut line)?;
+    let local = line
+        .trim()
+        .strip_prefix("Briefsip: ")
+        .ok_or("server did not report its origin")?;
     let client = reqwest::Client::builder()
         .no_proxy()
         .redirect(Policy::none())
         .timeout(Duration::from_secs(5))
-        .build()
-        .unwrap();
+        .build()?;
 
     let manage = format!("{local}/api/device-pairing");
     let agents = format!("{local}/api/agents");
@@ -56,16 +61,14 @@ async fn pairing_gates_remote_routes_without_locking_out_loopback() {
         .get(&manage)
         .header(header::HOST, HOST)
         .send()
-        .await
-        .unwrap();
-    assert_eq!(status.json::<Value>().await.unwrap()["required"], false);
+        .await?;
+    assert_eq!(status.json::<Value>().await?["required"], false);
     assert_eq!(
         client
             .get(&agents)
             .header(header::HOST, HOST)
             .send()
-            .await
-            .unwrap()
+            .await?
             .status(),
         StatusCode::OK
     );
@@ -76,30 +79,23 @@ async fn pairing_gates_remote_routes_without_locking_out_loopback() {
         .header(header::ORIGIN, ORIGIN)
         .json(&json!({"required":true}))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(locked.status(), StatusCode::FORBIDDEN);
-    assert_eq!(
-        locked.json::<Value>().await.unwrap()["code"],
-        "pair_browser_first"
-    );
+    assert_eq!(locked.json::<Value>().await?["code"], "pair_browser_first");
 
     let issue = client
         .post(format!("{manage}/code"))
         .header(header::ORIGIN, local)
         .json(&json!({}))
         .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap()
+        .await?
+        .error_for_status()?
         .json::<Value>()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(issue["url"], format!("{ORIGIN}/pair"));
     assert!(issue["qr"]
         .as_str()
-        .unwrap()
+        .ok_or("pairing response has no QR code")?
         .starts_with("data:image/svg+xml;base64,"));
 
     client
@@ -107,21 +103,15 @@ async fn pairing_gates_remote_routes_without_locking_out_loopback() {
         .header(header::ORIGIN, local)
         .json(&json!({"required":true}))
         .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap();
-    assert_eq!(
-        client.get(&agents).send().await.unwrap().status(),
-        StatusCode::OK
-    );
+        .await?
+        .error_for_status()?;
+    assert_eq!(client.get(&agents).send().await?.status(), StatusCode::OK);
     assert_eq!(
         client
             .get(&agents)
             .header("x-forwarded-for", "100.64.0.1")
             .send()
-            .await
-            .unwrap()
+            .await?
             .status(),
         StatusCode::UNAUTHORIZED
     );
@@ -131,23 +121,17 @@ async fn pairing_gates_remote_routes_without_locking_out_loopback() {
             .get(format!("{local}{path}"))
             .header(header::HOST, HOST)
             .send()
-            .await
-            .unwrap();
+            .await?;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
         assert_eq!(
-            response.json::<Value>().await.unwrap()["code"],
+            response.json::<Value>().await?["code"],
             "device_pairing_required"
         );
     }
-    let page = client
-        .get(local)
-        .header(header::HOST, HOST)
-        .send()
-        .await
-        .unwrap();
+    let page = client.get(local).header(header::HOST, HOST).send().await?;
     assert_eq!(page.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(page.headers()[header::REFERRER_POLICY], "same-origin");
-    assert!(page.text().await.unwrap().contains("Pair this device"));
+    assert!(page.text().await?.contains("Pair this device"));
 
     let paired = client
         .post(format!("{local}/pair"))
@@ -156,23 +140,23 @@ async fn pairing_gates_remote_routes_without_locking_out_loopback() {
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .body(format!(
             "code={}&name=Test+phone",
-            issue["code"].as_str().unwrap()
+            issue["code"]
+                .as_str()
+                .ok_or("pairing response has no code")?
         ))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(paired.status(), StatusCode::SEE_OTHER);
-    let cookie = paired.headers()[header::SET_COOKIE].to_str().unwrap();
+    let cookie = paired.headers()[header::SET_COOKIE].to_str()?;
     assert!(cookie.ends_with("; HttpOnly; Secure; SameSite=Strict"));
-    let cookie = cookie.split(';').next().unwrap();
+    let cookie = cookie.split(';').next().ok_or("empty pairing cookie")?;
     assert_eq!(
         client
             .get(&agents)
             .header(header::HOST, HOST)
             .header(header::COOKIE, cookie)
             .send()
-            .await
-            .unwrap()
+            .await?
             .status(),
         StatusCode::OK
     );
@@ -181,11 +165,9 @@ async fn pairing_gates_remote_routes_without_locking_out_loopback() {
         .header(header::HOST, HOST)
         .header(header::COOKIE, cookie)
         .send()
-        .await
-        .unwrap()
+        .await?
         .json::<Value>()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(status["devices"][0]["name"], "Test phone");
     assert_eq!(status["devices"][0]["id"], status["current"]);
     client
@@ -193,19 +175,17 @@ async fn pairing_gates_remote_routes_without_locking_out_loopback() {
         .header(header::ORIGIN, local)
         .json(&json!({"id":status["current"]}))
         .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap();
+        .await?
+        .error_for_status()?;
     assert_eq!(
         client
             .get(&agents)
             .header(header::HOST, HOST)
             .header(header::COOKIE, cookie)
             .send()
-            .await
-            .unwrap()
+            .await?
             .status(),
         StatusCode::UNAUTHORIZED
     );
+    Ok(())
 }
