@@ -8,6 +8,7 @@ license.workspace = true
 briefsip-launcher = { path = "../briefsip-launcher" }
 flate2 = "1"
 ammonia = "4"
+html5ever = "0.40"
 regex = "1"
 ring = "0.17"
 curve25519-dalek = "4"
@@ -17,6 +18,7 @@ async-stream = "0.3"
 hyper = { version = "1", features = ["client", "http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 base64 = "0.22"
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 jsonwebtoken = "9"
 rusqlite = { version = "0.31", features = ["bundled", "functions", "backup", "hooks"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart"] }

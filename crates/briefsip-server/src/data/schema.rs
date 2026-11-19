@@ -65,9 +65,15 @@ fn initialize_mode(database: &Database, canonical: bool) -> crate::db::Result<()
         db.execute_batch(include_str!("schema.sql"))?;
         if !canonical {
             db.execute_batch(include_str!("local.sql"))?;
+            device_pairing::initialize(db)?;
         }
         environment::initialize(db)?;
         for (table, name, definition) in [
+            (
+                "agents",
+                "web_access",
+                "INTEGER NOT NULL DEFAULT 1 CHECK(web_access IN(0,1))",
+            ),
             ("local_projects", "archived", "INTEGER NOT NULL DEFAULT 0"),
             (
                 "local_projects",
@@ -98,6 +104,7 @@ fn initialize_mode(database: &Database, canonical: bool) -> crate::db::Result<()
         if canonical {
             return Ok(());
         }
+        column(db, "turns", "attention_finished_at", "INTEGER")?;
         db.execute_batch("UPDATE turns SET status='interrupted',error='The process stopped before the result was saved. Check the provider before sending again.' WHERE status='running'; UPDATE provider_calls SET status='interrupted' WHERE status='pending';")?;
         for a in all(
             db,

@@ -94,7 +94,7 @@ test('room polling retains active members beyond full history and orders prose/t
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
-  const app = await startApp({ database, baseURL: `http://127.0.0.1:${address.port}/v1`, stream: true });
+  const app = await startApp({ database, baseURL: `http://127.0.0.1:${address.port}/v1`, stream: true }, { directory, servers: [provider] });
   const request = async (path: string, data?: unknown) => {
     const res = await fetch(app.origin + path, { method: data ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: data ? JSON.stringify(data) : undefined, signal: t.signal });
     if (!res.ok) assert.fail(await res.text());
@@ -188,7 +188,7 @@ test('SSE delivers ordered persisted snapshots; reconnect repairs missed text wi
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
-  const app = await startApp({ timeout: 3000, database: join(directory, 'db.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, stream: true });
+  const app = await startApp({ timeout: 3000, database: join(directory, 'db.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, stream: true }, { directory, servers: [provider] });
   let closed = false;
   const controllers: AbortController[] = [];
   const request = async (path: string, data?: unknown) => {

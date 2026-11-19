@@ -99,7 +99,7 @@ test('live backup restores history while holding pending work and disabling auto
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(dir, 'source.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` };
-  let app = await startApp(options), restored: Awaited<ReturnType<typeof startApp>> | undefined;
+  let app = await startApp(options, { directory: dir, servers: [provider] }), restored: Awaited<ReturnType<typeof startApp>> | undefined;
   async function request(path: string, body?: unknown) {
     const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const data = await response.json(); assert(response.ok, JSON.stringify(data)); return data;

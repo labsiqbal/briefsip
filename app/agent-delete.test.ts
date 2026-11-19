@@ -139,7 +139,7 @@ test('running provider work must settle before delete; transactional failure pre
   await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));
   const address=provider.address();assert(address&&typeof address!=='string');
   const dir=mkdtempSync(join(tmpdir(),'briefsip-delete-running-')),database=join(dir,'state.sqlite');
-  let app=await startApp({database,baseURL:`http://127.0.0.1:${address.port}/v1`});
+  let app=await startApp({database,baseURL:`http://127.0.0.1:${address.port}/v1`}, { directory: dir, servers: [provider] });
   t.after(async()=>{release?.();await app.close();provider.closeAllConnections();await new Promise<void>(resolve=>provider.close(()=>resolve()));rmSync(dir,{recursive:true,force:true});});
   async function post(path:string,body:unknown,status=200){const res=await fetch(app.origin+path,{method:'POST',headers:{Origin:app.origin,'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await res.json();assert.equal(res.status,status,JSON.stringify(data));return data;}
   const agent=randomUUID(),other=randomUUID(),turn=randomUUID(),command={id:randomUUID()},path=`/api/agents/${agent}/delete`;

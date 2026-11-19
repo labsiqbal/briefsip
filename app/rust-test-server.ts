@@ -42,12 +42,26 @@ export async function startRustServer(options: Config, attempt = 0): Promise<{ o
     const timeout = setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); }, 5000);
     try { await exited; } finally { clearTimeout(timeout); await bridge.close(); await connectors.close(); await harnessBridge.close(); await pdfBridge.close(); }
   })();
+  const startupOutput = () => `\nstdout tail:\n${stdout.trimEnd()}\nstderr tail:\n${stderr.trimEnd()}`;
   try {
     const origin = await new Promise<string>((ready, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Rust test server readiness timed out.')), 10000);
-      child.once('error', error => { clearTimeout(timeout); reject(error); });
-      void exited.then(() => { clearTimeout(timeout); reject(Object.assign(new Error(`Rust test server exited: ${stderr.trim()}`), /Address already in use/.test(stderr) ? { code: 'EADDRINUSE' } : {})); });
-      child.stdout.on('data', value => { stdout = (stdout + value).slice(-8192); const match = /^Briefsip: (https?:\/\/[^\r\n]+)$/m.exec(stdout); if (match) { clearTimeout(timeout); ready(match[1]); } });
+      const timeout = setTimeout(() => reject(new Error(`Rust test server readiness timed out after 120 s.${startupOutput()}`)), 120_000);
+      child.once('error', error => {
+        clearTimeout(timeout);
+        reject(Object.assign(new Error(`Rust test server could not start: ${error.message}${startupOutput()}`, { cause: error }), { code: (error as NodeJS.ErrnoException).code }));
+      });
+      void exited.then(() => {
+        clearTimeout(timeout);
+        const error = new Error(`Rust test server exited (${child.signalCode ?? child.exitCode}).${startupOutput()}`);
+        if (stderr.includes('Another canonical server is still running.')) Object.assign(error, { code: 'canonical_server_busy' });
+        else if (stderr.includes('Address already in use')) Object.assign(error, { code: 'EADDRINUSE' });
+        reject(error);
+      });
+      child.stdout.on('data', value => {
+        stdout = (stdout + value).slice(-8192);
+        const match = /^Briefsip: (https?:\/\/[^\r\n]+)\r?\n/m.exec(stdout);
+        if (match) { clearTimeout(timeout); ready(match[1]); }
+      });
     });
     const readOutput = () => ({ stdout, stderr });
     serverOutput.set(origin, readOutput);
@@ -63,11 +77,13 @@ export async function startRustServer(options: Config, attempt = 0): Promise<{ o
     return { origin, close, crash, hubLink: options.hubLink ? rustHubFacade(resolve(options.database), origin, bridge.config.token) : undefined, mcpServer: rustMcpFacade(resolve(options.database)), refreshMachines: async () => { const response = await fetch(origin + '/api/machines', { headers: { 'X-Briefsip-Test-Refresh': bridge.config.token } }); if (!response.ok) throw new Error(await response.text()); } };
   } catch (error) {
     await close().catch(() => {});
-    if (attempt < 20 && error instanceof Error && error.message.includes('Another canonical server is still running.')) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-      return startRustServer(options, attempt + 1);
+    if (error instanceof Error && 'code' in error && error.code === 'canonical_server_busy') {
+      if (attempt < 20) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        return startRustServer(options, attempt + 1);
+      }
+      throw new ProtocolError(409, 'canonical_server_busy', 'Another canonical server is still running.');
     }
-    if (error instanceof Error && error.message.includes('Another canonical server is still running.')) { throw new ProtocolError(409, 'canonical_server_busy', 'Another canonical server is still running.'); }
     throw error;
   }
 }

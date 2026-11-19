@@ -394,6 +394,9 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
     let account = account(v)?;
     let runtime = runtime(v)?;
     bounds(v)?;
+    if v.get("webAccess").is_some_and(|value| !value.is_boolean()) {
+        return Err(error(400, "Web access must be a boolean."));
+    }
     if !integer(&v["revision"], 1, 9_007_199_254_740_991) {
         return Err(error(400, "Invalid agent revision."));
     }
@@ -411,6 +414,7 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
         "toolBudget",
         "backupModel",
         "providerAccount",
+        "webAccess",
     ] {
         if let Some(value) = v.get(key) {
             request[key] = value.clone();
@@ -516,7 +520,7 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
         }
         db.execute("INSERT INTO harness_models(agent,runtime,model) VALUES(?,?,?) ON CONFLICT(agent,runtime) DO UPDATE SET model=excluded.model",[id,selected,harness_model])?;
     }
-    db.execute("UPDATE agents SET name=?,role=coalesce(?,role),model=?,instructions=?,thread_limit=coalesce(?,thread_limit),tool_budget=coalesce(?,tool_budget),backup_model=coalesce(?,backup_model),provider_account=coalesce(?,provider_account),revision=revision+1 WHERE id=?",rusqlite::params![name,role,model,instructions,v["threadLimit"].as_i64(),v["toolBudget"].as_i64(),backup,account,id])?;
+    db.execute("UPDATE agents SET name=?,role=coalesce(?,role),model=?,instructions=?,thread_limit=coalesce(?,thread_limit),tool_budget=coalesce(?,tool_budget),backup_model=coalesce(?,backup_model),provider_account=coalesce(?,provider_account),web_access=coalesce(?,web_access),revision=revision+1 WHERE id=?",rusqlite::params![name,role,model,instructions,v["threadLimit"].as_i64(),v["toolBudget"].as_i64(),backup,account,v["webAccess"].as_bool(),id])?;
     if account.is_some_and(|a| a != string(&current, "provider_account"))
         && table(db, "model_fallbacks")?
     {

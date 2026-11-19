@@ -1,0 +1,9 @@
+:root { color-scheme: light dark; font: 16px/1.5 system-ui, sans-serif; background: #f7f7f8; color: #181c24; }
+@media (prefers-color-scheme: dark) { :root { background: #181c24; color: #f7f7f8; } }
+body { margin: 0; min-height: 100svh; padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); box-sizing: border-box; }
+main { width: min(100%, 30rem); margin: 10svh auto 0; }
+h1 { font-size: 1.75rem; line-height: 1.2; }
+form { display: grid; gap: 16px; }
+label { display: grid; gap: 6px; }
+input, button { min-height: 44px; border: 1px solid currentColor; border-radius: 8px; padding: 8px 12px; box-sizing: border-box; font: inherit; }
+button { background: #b0b9ed; color: #181c24; font-weight: 600; }

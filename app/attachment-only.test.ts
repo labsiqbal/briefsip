@@ -18,7 +18,7 @@ test('attachment-only messages validate, recover and retry in direct chats, thre
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
-  const app = await startApp({ database: join(dir, 'db.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` });
+  const app = await startApp({ database: join(dir, 'db.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` }, { directory: dir, servers: [provider] });
   const request = async (path: string, data: unknown, status?: number) => {
     const res = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     if (status) assert.equal(res.status, status); else assert(res.ok, await res.clone().text()); return res.json();

@@ -116,7 +116,7 @@ async function fixture() {
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address() as any;
   const agent = randomUUID(), options = { database: join(data, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, projectRoot: join(directory, 'Projects') };
-  let app = await startApp(options), stopped = false;
+  let app = await startApp(options, { directory, servers: [provider] }), stopped = false;
   const request = async (path: string, body?: unknown, status = 200, headers: Record<string, string> = {}) => {
     const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json', ...headers }, body: body ? JSON.stringify(body) : undefined });
     const result = await response.json();
