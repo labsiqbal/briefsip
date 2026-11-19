@@ -73,6 +73,7 @@ pub struct Process {
     stderr_destination: Option<(AppState, i64, Vec<String>)>,
     bytes: usize,
     pending: Vec<u8>,
+    pub(super) clock: Option<super::config::TurnClock>,
 }
 impl Process {
     pub fn launch(
@@ -144,6 +145,7 @@ impl Process {
             stderr_destination: None,
             bytes: 0,
             pending: Vec::new(),
+            clock: None,
         })
     }
     pub fn record_stderr(&mut self, state: &AppState, call: i64, secrets: &[String]) {
@@ -202,8 +204,12 @@ impl Process {
                     self.pending.clear();
                     continue;
                 }
-                return serde_json::from_slice(&std::mem::take(&mut self.pending))
-                    .map_err(|_| error(502, "Coding harness sent invalid protocol data."));
+                let value = serde_json::from_slice(&std::mem::take(&mut self.pending))
+                    .map_err(|_| error(502, "Coding harness sent invalid protocol data."))?;
+                if let Some(clock) = &self.clock {
+                    clock.activity();
+                }
+                return Ok(value);
             }
         }
     }

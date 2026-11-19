@@ -135,7 +135,8 @@ pub fn mint(state: &AppState, agent: &str, turn: &str) -> Result<(String, String
     let id = uuid::Uuid::new_v4().to_string();
     let token = secret()?;
     let db = state.database.lock().map_err(|_| Failure::storage())?;
-    db.connection.execute("INSERT INTO mcp_server_tokens(id,token_hash,kind,name,agent,turn,scopes,created,expires,request_digest) VALUES(?,?,'session','',?,?,?,?,?,'')",params![id,hash(&token),agent,turn,json!(["agents:read","agents:profile","agents:message","history:read","conversations:read","conversations:write","projects:read","projects:write","routines:read","routines:write","workflows:read","workflows:run","machines:read","settings:read","usage:read","skills:read","computer:read","computer:run","orchestration"]).to_string(),state.config.now(),state.config.now()+120000])?;
+    // The live turn owns this lease and revokes it on exit. Startup revokes orphaned sessions.
+    db.connection.execute("INSERT INTO mcp_server_tokens(id,token_hash,kind,name,agent,turn,scopes,created,request_digest) VALUES(?,?,'session','',?,?,?,?,'')",params![id,hash(&token),agent,turn,json!(["agents:read","agents:profile","agents:message","history:read","conversations:read","conversations:write","projects:read","projects:write","routines:read","routines:write","workflows:read","workflows:run","machines:read","settings:read","usage:read","skills:read","computer:read","computer:run","orchestration"]).to_string(),state.config.now()])?;
     Ok((id, token))
 }
 pub fn verify(state: &AppState, token: &str) -> Result<Value> {

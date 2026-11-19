@@ -350,7 +350,9 @@ fn run_reserved(state: &AppState, active: &mut HashMap<String, Active>, id: Stri
                 if failure.message == "Turn stopped."
                     && exists(
                         &db.connection,
-                        "SELECT 1 FROM computer_waits WHERE turn=?",
+                        "SELECT 1 FROM computer_waits WHERE turn=?1
+                         UNION ALL SELECT 1 FROM questions q JOIN turns t ON t.id=q.turn
+                         WHERE q.turn=?1 AND t.status='queued'",
                         [&id],
                     )
                     .unwrap_or(false)

@@ -44,5 +44,8 @@ moxcms = "0.8"
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 chrono-tz = "0.10.4"
 
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
+
 [lints]
 workspace = true

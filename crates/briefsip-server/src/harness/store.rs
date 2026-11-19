@@ -214,7 +214,7 @@ pub async fn approve(
 ) -> Result<bool> {
     let id = uuid::Uuid::new_v4().to_string();
     let mut changes = state.events.subscribe();
-    {
+    let _wait = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
         let turn = one(
@@ -259,8 +259,10 @@ pub async fn approve(
         if serialized.len() > 32000 {
             return Err(error(502, "Harness approval arguments exceed 32 KiB."));
         }
+        let wait = config::CardWait::start(state, turn_id)?;
         db.execute("INSERT INTO harness_approvals(id,turn,agent,runtime,workspace,kind,description,command,prefix,input,state) VALUES(?,?,?,?,?,?,?,?,?,?,'approval')",rusqlite::params![id,turn_id,turn["agent"].as_str(),profile["runtime"].as_str(),binding.directory.to_str(),kind,clean(description),command.map(clean),prefix,serialized])?;
-    }
+        wait
+    };
     loop {
         {
             let guard = state.database.lock().map_err(|_| Failure::storage())?;
@@ -442,6 +444,7 @@ async fn execute(
     saved: Option<String>,
     binding: &crate::config::WorkspaceConfig,
     secrets: Vec<String>,
+    clock: Option<config::TurnClock>,
 ) -> Result<String> {
     let executable = super::executable(state, runtime).ok_or_else(|| {
         error(
@@ -575,6 +578,7 @@ async fn execute(
     };
     let process = child.process.as_mut().ok_or_else(Failure::storage)?;
     process.record_stderr(state, call, &secrets);
+    process.clock = clock;
     let mut seq = 0;
     if runtime == "codex" {
         rpc(process,&mut seq,"initialize",json!({"clientInfo":{"name":"briefsip","title":"Briefsip","version":"0.1.0"},"capabilities":{"experimentalApi":true}})).await?;
@@ -1528,10 +1532,24 @@ pub async fn run(
             None,
         )?);
     }
-    let result = tokio::time::timeout(Duration::from_millis(state.config.data.timeout.unwrap_or(120000)), execute(
-        state, &turn, &profile, runtime, model, messages, phase, call, &token, env, saved,
-        &binding, secrets,
-    )).await.map_err(|_|error(502,"Coding harness timed out. Check workspace changes before retrying; this turn was not replayed."))?;
+    let operation = |clock| {
+        execute(
+            state, &turn, &profile, runtime, model, messages, phase, call, &token, env, saved,
+            &binding, secrets, clock,
+        )
+    };
+    // Dropping execute flushes partial output and schedules the ACP cancel. The turn worker
+    // awaits that cleanup before releasing its slot.
+    let result = if let Some(ms) = state.config.data.timeout {
+        tokio::time::timeout(Duration::from_millis(ms), operation(None)).await.map_err(|_|error(502,"Coding harness timed out. Check workspace changes before retrying; this turn was not replayed."))?
+    } else {
+        let active = config::ActiveClock::new(state, turn_id)?;
+        tokio::select! {
+            biased;
+            failure = active.clock.expired() => return Err(failure),
+            result = operation(Some(active.clock.clone())) => result,
+        }
+    };
     if lease.external {
         bridge(state, "revoke", json!({"id":lease.id})).await?;
         lease.external = false;
@@ -1542,6 +1560,84 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn idle_timeout_flushes_partial_reply_and_cancels_acp() -> crate::db::Result<()> {
+        use std::sync::{Arc, Mutex};
+
+        let scratch = process::ProbeHome::new()?;
+        let executable = scratch.0.join("fake-acp");
+        std::fs::write(
+            &executable,
+            r#"#!/bin/sh
+read -r request
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}'
+read -r request
+printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"fixture","modes":{"availableModes":[{"id":"default"}]}}}'
+read -r request
+printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{}}'
+read -r request
+printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Still working."}}}}'
+read -r cancel
+printf '%s\n' "$cancel" > cancel.json
+while read -r request; do :; done
+"#,
+        )?;
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))?;
+        let mut config: crate::config::Config = serde_json::from_value(json!({
+            "database":scratch.0.join("state.sqlite"),
+            "harness":{"executables":{"hermes":executable}},
+            "workspaces":[{"agent":"agent","directory":scratch.0,"write":true}]
+        }))?;
+        config.data.turn_idle_timeout_ms = Some(1000);
+        config.data.validate()?;
+        let database = crate::db::open(&config.database, false, 0)?;
+        crate::files::init(&database.connection)?;
+        data::initialize(&database)?;
+        turns::initialize(&database.connection).map_err(|failure| failure.message)?;
+        crate::connectors::initialize(&database.connection).map_err(|failure| failure.message)?;
+        crate::automation::initialize(&database.connection).map_err(|failure| failure.message)?;
+        crate::harness::initialize(&database.connection).map_err(|failure| failure.message)?;
+        crate::mcp::initialize(&database.connection).map_err(|failure| failure.message)?;
+        crate::computer::initialize(&database.connection)?;
+        database.connection.execute_batch(
+            "INSERT INTO agents(id,name,model,instructions,runtime) VALUES('agent','Test','','','hermes');
+             INSERT INTO turns(id,agent,text,status,created) VALUES('turn','agent','Wait','queued','');",
+        )?;
+        let state = AppState {
+            computer: Arc::new(crate::computer::Manager::new(&config)?),
+            config: Arc::new(config),
+            database: Arc::new(Mutex::new(database)),
+            origin: "http://127.0.0.1".into(),
+            auth: None,
+            events: crate::events::Hub::new(),
+            turns: turns::Runtime::default(),
+            trial_pending: Arc::default(),
+        };
+        let Err(failure) = run(&state, "turn", "", &[], "answer").await else {
+            panic!("silent harness completed");
+        };
+        crate::harness::settle_process(&state, "turn").await;
+        assert!(
+            failure.message.starts_with("No activity for 1 s."),
+            "{}",
+            failure.message
+        );
+        let cancel: Value = serde_json::from_slice(&std::fs::read(scratch.0.join("cancel.json"))?)?;
+        assert_eq!(
+            cancel,
+            json!({"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"fixture"}})
+        );
+        let db = state
+            .database
+            .lock()
+            .map_err(|_| "Database lock poisoned")?;
+        let partial: String =
+            db.connection
+                .query_row("SELECT text FROM provider_streams", [], |row| row.get(0))?;
+        assert_eq!(partial, "Still working.");
+        Ok(())
+    }
 
     #[tokio::test]
     async fn acp_abort_before_launch_spawns_nothing() -> crate::db::Result<()> {

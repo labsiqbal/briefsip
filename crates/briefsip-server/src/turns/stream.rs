@@ -370,6 +370,7 @@ pub async fn read(
     mut response: Response,
     family: &str,
     termination: &str,
+    idle: Option<std::time::Duration>,
     mut publish: impl FnMut(&str) -> Result<()>,
 ) -> Result<Value> {
     let mut decoder = Decoder::default();
@@ -378,9 +379,8 @@ pub async fn read(
     let mut name = String::new();
     let mut size = 0;
     let mut count = 0;
-    while let Some(chunk) = response
-        .chunk()
-        .await
+    while let Some(chunk) = provider::wait_for_stream_data(idle, response.chunk())
+        .await?
         .map_err(|_| error(502, provider::STREAM_ERROR))?
     {
         size += chunk.len();
@@ -550,7 +550,7 @@ mod sse_tests {
             axum::serve(listener, app).await
         });
         let parsed = match reqwest::get(origin).await {
-            Ok(response) => read(response, family, termination, publish).await,
+            Ok(response) => read(response, family, termination, None, publish).await,
             Err(error) => Err(super::error(500, error.to_string())),
         };
         server.abort();
