@@ -1,4 +1,4 @@
-use super::{error, release, PeerError, Result};
+use super::{error, github, release, PeerError, Result};
 use flate2::read::MultiGzDecoder;
 use reqwest::StatusCode;
 use sha2::{Digest, Sha256};
@@ -12,7 +12,7 @@ use std::{
     sync::{Arc, LazyLock, Weak},
     time::Duration,
 };
-const LIMIT: u64 = 1024 * 1024 * 1024;
+pub(super) const LIMIT: u64 = 1024 * 1024 * 1024;
 const EXPANDED: u64 = 2 * LIMIT;
 pub struct Temporary(pub PathBuf);
 impl Temporary {
@@ -334,7 +334,14 @@ fn resume_range(value: &str, offset: u64) -> Option<u64> {
         .then_some(total)
 }
 
-async fn append(file: &mut File, mut response: reqwest::Response, expected: &str) -> Result<()> {
+async fn append(
+    file: &mut File,
+    mut response: reqwest::Response,
+    expected: &str,
+    expected_size: Option<u64>,
+) -> Result<()> {
+    let size_mismatch =
+        || github::invalid("GitHub release archive size mismatch or truncated archive.");
     let mut offset = file.metadata().map_err(|_| storage())?.len();
     let status = response.status();
     if [StatusCode::UNAUTHORIZED, StatusCode::FORBIDDEN].contains(&status) {
@@ -355,7 +362,9 @@ async fn append(file: &mut File, mut response: reqwest::Response, expected: &str
             "Origin rejected the release download (HTTP {status})."
         )));
     }
-    if get("x-briefsip-sha256") != Some(expected) || get("content-type") != Some("application/gzip")
+    if expected_size.is_none()
+        && (get("x-briefsip-sha256") != Some(expected)
+            || get("content-type") != Some("application/gzip"))
     {
         return Err(metadata_error());
     }
@@ -367,13 +376,22 @@ async fn append(file: &mut File, mut response: reqwest::Response, expected: &str
         StatusCode::OK => {
             file.set_len(0).map_err(|_| storage())?;
             offset = 0;
-            length
+            if expected_size
+                .zip(length)
+                .is_some_and(|(expected, actual)| expected != actual)
+            {
+                return Err(size_mismatch());
+            }
+            expected_size.or(length)
         }
         StatusCode::PARTIAL_CONTENT => {
             let total = resume_range(get("content-range").unwrap_or(""), offset)
                 .ok_or_else(metadata_error)?;
             if total > LIMIT {
                 return Err(PeerError::SizeLimit.failure());
+            }
+            if expected_size.is_some_and(|size| size != total) {
+                return Err(size_mismatch());
             }
             if length.is_some_and(|n| n != total - offset) {
                 return Err(metadata_error());
@@ -382,7 +400,10 @@ async fn append(file: &mut File, mut response: reqwest::Response, expected: &str
         }
         // A process may stop just after writing the last byte. Verify the saved archive normally.
         _ if offset > 0 && get("content-range") == Some(format!("bytes */{offset}").as_str()) => {
-            return Ok(())
+            if expected_size.is_some_and(|size| size != offset) {
+                return Err(size_mismatch());
+            }
+            return Ok(());
         }
         _ => return Err(metadata_error()),
     };
@@ -397,15 +418,23 @@ async fn append(file: &mut File, mut response: reqwest::Response, expected: &str
         file.write_all(&bytes).map_err(|_| storage())?;
     }
     if target.is_some_and(|total| offset != total) {
+        if expected_size.is_some() {
+            return Err(size_mismatch());
+        }
         return Err(PeerError::ConnectionLost.failure());
     }
     Ok(())
 }
 
-pub async fn receive<D, A>(
+#[derive(Clone, Copy)]
+pub(super) enum Download<'a> {
+    Peer { id: &'a str, sha256: &'a str },
+    GitHub(&'a github::Manifest),
+}
+
+pub(super) async fn receive<D, A>(
     root: &Path,
-    id: &str,
-    expected: &str,
+    source: Download<'_>,
     mut download: impl FnMut(u64) -> D,
     authorize: impl FnOnce() -> A,
 ) -> Result<u64>
@@ -413,6 +442,15 @@ where
     D: Future<Output = Result<reqwest::Response>>,
     A: Future<Output = Result<()>>,
 {
+    let (id, expected, signed) = match source {
+        Download::Peer { id, sha256 } => (id, sha256, None),
+        Download::GitHub(manifest) => (
+            manifest.id.as_str(),
+            manifest.sha256.as_str(),
+            Some(manifest),
+        ),
+    };
+    let size = signed.map(|manifest| manifest.size);
     if !release::id(id) || !valid_hash(expected) {
         return Err(metadata_error());
     }
@@ -433,7 +471,7 @@ where
             Err(PeerError::SizeLimit.failure())
         } else {
             match download(offset).await {
-                Ok(response) => append(&mut file, response, expected).await,
+                Ok(response) => append(&mut file, response, expected, size).await,
                 Err(failure) => Err(failure),
             }
         };
@@ -442,7 +480,7 @@ where
             Err(failure) => {
                 let resumable = matches!(
                     failure.code,
-                    "peer_transfer_timeout" | "peer_connection_lost"
+                    "peer_transfer_timeout" | "peer_connection_lost" | github::UNREACHABLE
                 );
                 if !resumable {
                     fs::remove_file(&partial).map_err(|_| storage())?;
@@ -456,7 +494,13 @@ where
                     zero_progress_attempts + 1
                 };
                 if zero_progress_attempts >= 3 {
-                    return Err(failure);
+                    return Err(if signed.is_some() && failure.code != github::UNREACHABLE {
+                        github::invalid(
+                            "GitHub release archive download was interrupted or truncated.",
+                        )
+                    } else {
+                        failure
+                    });
                 }
                 eprintln!("peer release download retry release={id} bytes={retained} code={} message={:?}",
                     failure.code, failure.message);
@@ -471,10 +515,16 @@ where
     let archive = partial.clone();
     let target = id.to_owned();
     let expected = expected.to_owned();
+    let signed = signed.cloned();
+    let destination = root.to_path_buf();
     let verified = async {
         let directory = tokio::task::spawn_blocking(move || {
             if hash(&archive)? != expected {
-                return Err(PeerError::IntegrityMismatch.detail("Peer release SHA-256 mismatch."));
+                return Err(if signed.is_some() {
+                    github::invalid("GitHub release SHA-256 mismatch.")
+                } else {
+                    PeerError::IntegrityMismatch.detail("Peer release SHA-256 mismatch.")
+                });
             }
             let stage = directory.0.join(&target);
             fs::DirBuilder::new()
@@ -488,10 +538,27 @@ where
                     failure
                 }
             })?;
-            release::verify(&directory.0, &target).map_err(|_| {
-                PeerError::IntegrityMismatch.detail("Peer release manifest mismatch.")
+            let info = release::verify(&directory.0, &target).map_err(|_| {
+                PeerError::IntegrityMismatch.detail("Release file manifest mismatch.")
             })?;
-            Ok(directory)
+            if let Some(manifest) = signed {
+                if !manifest.matches(&info) {
+                    return Err(github::invalid(
+                        "GitHub release version, ID or commit does not match the archive.",
+                    ));
+                }
+                if fs::symlink_metadata(destination.join(&target)).is_ok() {
+                    if release::verify(&destination, &target)
+                        .is_ok_and(|installed| installed == info)
+                    {
+                        return Ok(None);
+                    }
+                    return Err(github::invalid(
+                        "Installed release differs from the signed GitHub release.",
+                    ));
+                }
+            }
+            Ok(Some(directory))
         })
         .await
         .map_err(|_| storage())??;
@@ -500,9 +567,10 @@ where
     }
     .await;
     fs::remove_file(&partial).map_err(|_| storage())?;
-    let directory = verified?;
-    fs::rename(directory.0.join(id), root.join(id)).map_err(|_| storage())?;
-    briefsip_launcher::files::sync_dir(root).map_err(|_| storage())?;
+    if let Some(directory) = verified? {
+        fs::rename(directory.0.join(id), root.join(id)).map_err(|_| storage())?;
+        briefsip_launcher::files::sync_dir(root).map_err(|_| storage())?;
+    }
     Ok(length)
 }
 
@@ -606,8 +674,10 @@ mod tests {
         let mut offsets = Vec::new();
         let result = receive(
             &received,
-            RELEASE_ID,
-            &archive.sha256,
+            Download::Peer {
+                id: RELEASE_ID,
+                sha256: &archive.sha256,
+            },
             |offset| {
                 offsets.push(offset);
                 fixture_download(&client, &url, offset)
@@ -712,7 +782,7 @@ mod tests {
                 .send()
                 .await
                 .map_err(PeerError::network)?;
-            let failure = append(&mut file, response, "hash")
+            let failure = append(&mut file, response, "hash", None)
                 .await
                 .err()
                 .ok_or_else(storage)?;
