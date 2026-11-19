@@ -23,7 +23,7 @@
       "localPath": "desktop/scripts/build.mjs",
       "revision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "a26b7b2d2a7ab052a2cf538ce0f33baf2b1e1615e630d8ed4a72ea10330d6c27",
-      "adaptation": "Copy programmatic electron-builder configuration flow; strip Effect, generate local generic-feed metadata, force publish never."
+      "adaptation": "Copy programmatic electron-builder configuration flow; strip Effect, build generic GitHub Releases metadata and force publish never."
     },
     {
       "sourcePath": "apps/desktop/src/main.ts",
@@ -100,14 +100,14 @@
       "localPath": "desktop/src/updates.mjs",
       "revision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "027478f303b25d01295568b1fdff1e5ab83549174d20d8dcd1c87d94ff905717",
-      "adaptation": "Copy packaged/feed gating, startup/poll checks, update-downloaded event and explicit installation flow; six-hour polling, background autoDownload and native restart consent, no state machine or server update coordination."
+      "adaptation": "Copy packaged AppImage gating, startup/poll checks, update-downloaded event and explicit installation flow; six-hour polling, background autoDownload and native restart consent, no state machine or server update coordination."
     },
     {
       "sourcePath": "apps/desktop/src/electron/ElectronUpdater.ts",
       "localPath": "desktop/src/updates.mjs",
       "revision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "503258384ba3592d80099dd22c177712a931fc687a876214d697422e442f4196",
-      "adaptation": "Copy autoUpdater setFeedURL, autoDownload/autoInstallOnAppQuit, checkForUpdates and quitAndInstall calls; strip Effect wrappers, use generic private HTTPS feed."
+      "adaptation": "Copy autoDownload/autoInstallOnAppQuit, checkForUpdates and quitAndInstall calls; strip Effect wrappers and load the packaged GitHub Releases feed configuration."
     },
     {
       "sourcePath": "LICENSE",
@@ -138,7 +138,6 @@
     "desktop/src/policy.test.mjs",
     "desktop/src/settings.test.mjs",
     "desktop/src/updates.test.mjs",
-    "desktop/scripts/publish-local.mjs",
     "desktop/assets/icon.svg",
     "desktop/assets/icon.png"
   ],

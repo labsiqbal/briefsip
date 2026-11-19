@@ -1,6 +1,5 @@
 // Adapted from T3 apps/desktop. Source files and changes: ../provenance.json.
 import path from 'node:path';
-import fs from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell, session, screen } from 'electron';
 import electronUpdater from 'electron-updater';
@@ -118,10 +117,7 @@ else {
     settings = readSettings(app.getPath('userData'));
     // Dev URL is explicit and validated; packaged builds use saved servers only.
     if (isDev && process.env.BRIEFSIP_SERVER_URL) settings = addServer(settings, parseServerUrl(process.env.BRIEFSIP_SERVER_URL).href);
-    let feed = null;
-    try { feed = JSON.parse(fs.readFileSync(path.join(root, 'update-feed.json'), 'utf8')).url; }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
-    updates = configureUpdates({ updater: electronUpdater.autoUpdater, feed, enabled: app.isPackaged && Boolean(process.env.APPIMAGE), prompt: async (options) => (await dialog.showMessageBox(options)).response });
+    updates = configureUpdates({ updater: electronUpdater.autoUpdater, enabled: app.isPackaged && Boolean(process.env.APPIMAGE), prompt: async (options) => (await dialog.showMessageBox(options)).response });
     configurePermissions(); registerIpc(); createWindow(); buildMenu();
     app.on('activate', () => { if (!mainWindow) createWindow(); });
   }).catch((error) => { report(error.message); app.quit(); });

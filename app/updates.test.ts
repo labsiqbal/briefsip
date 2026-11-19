@@ -68,7 +68,7 @@ test('release lint failure stops build, tests and packaging; successful gates ru
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 
-test('desktop release sync follows dirty guard and publishes matching version through desktop helper',()=>{
+test('desktop build follows dirty guard and packages release version without changing tracked desktop version',()=>{
  const dir=temp();try{
  for(const folder of ['app','scripts','desktop/scripts'])mkdirSync(join(dir,folder),{recursive:true});
  cpSync(join(root,'scripts/release.mjs'),join(dir,'scripts/release.mjs'));for(const name of ['install-machine.sh','uninstall-machine.sh'])cpSync(join(root,'scripts',name),join(dir,'scripts',name));cpSync(join(root,'scripts/release-lib.mjs'),join(dir,'scripts/release-lib.mjs'));
@@ -76,11 +76,12 @@ test('desktop release sync follows dirty guard and publishes matching version th
  writeFileSync(join(dir,'app/package.json'),JSON.stringify(app));writeFileSync(join(dir,'app/package-lock.json'),JSON.stringify({name:app.name,version:app.version,lockfileVersion:3,packages:{'':app}}));
  nativeReleaseFixture(join(dir,'app'),'1.0.1');mkdirSync(join(dir,'app/dist'));writeFileSync(join(dir,'app/dist/index.html'),'fixture');
  writeFileSync(join(dir,'desktop/package.json'),JSON.stringify({version:'1.0.0'}));writeFileSync(join(dir,'desktop/package-lock.json'),JSON.stringify({version:'1.0.0',packages:{'':{version:'1.0.0'}}}));
- writeFileSync(join(dir,'desktop/scripts/publish-local.mjs'),`import {writeFileSync,readFileSync} from 'node:fs';const version=JSON.parse(readFileSync(new URL('../package.json',import.meta.url))).version;writeFileSync(process.argv[2],version);`);
+ writeFileSync(join(dir,'desktop/scripts/build.mjs'),`import {writeFileSync} from 'node:fs';import {join} from 'node:path';const [version, out] = process.argv.slice(2);const name = 'Briefsip-' + version + '-x86_64.AppImage';writeFileSync(join(out,name),version);writeFileSync(join(out,'latest-linux.yml'),'version: ' + version + '\\npath: ' + name + '\\n');`);
  const git=(args:string[])=>execFileSync('git',args,{cwd:dir,stdio:'ignore'});git(['init']);git(['add','.']);git(['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','Fixture']);
- const args=[join(dir,'scripts/release.mjs'),'--desktop','--releases',join(dir,'releases'),'--desktop-feed',join(dir,'desktop-result')];
- writeFileSync(join(dir,'dirty'),'uncommitted');assert.throws(()=>execFileSync(process.execPath,args,{stdio:'pipe'}),/dirty worktree/);assert.equal(JSON.parse(readFileSync(join(dir,'desktop/package.json'),'utf8')).version,'1.0.0');rmSync(join(dir,'dirty'));
- execFileSync(process.execPath,args,{stdio:'pipe'});assert.equal(readFileSync(join(dir,'desktop-result'),'utf8'),'1.0.1');assert.equal(latestRelease(join(dir,'releases'))!.version,'1.0.1');
+ const releases=join(dir,'releases');
+ const args=[join(dir,'scripts/release.mjs'),'--desktop','--no-github','--releases',releases];
+ writeFileSync(join(dir,'dirty'),'uncommitted');assert.throws(()=>execFileSync(process.execPath,args,{stdio:'pipe'}),/dirty worktree/);assert(!existsSync(releases));rmSync(join(dir,'dirty'));
+ execFileSync(process.execPath,args,{stdio:'pipe'});const info=latestRelease(releases)!;assert.equal(info.version,'1.0.1');assert.equal(readFileSync(join(releases,'.github',info.id,'Briefsip-1.0.1-x86_64.AppImage'),'utf8'),'1.0.1');assert.equal(JSON.parse(readFileSync(join(dir,'desktop/package.json'),'utf8')).version,'1.0.0');
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 
