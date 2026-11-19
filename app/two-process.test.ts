@@ -416,7 +416,7 @@ test('canonical questions survive lost RPC and answer replies, restart and home 
     const nextContext=await runtime.taskContext(taskId,owned.ownership,detail.revision),nextAction=randomUUID();
     await runtime.executeAction({taskId,actionId:nextAction,sequence:2,actionKind:'canonical',ownership:owned.ownership,payload:{toolCall:{id:nextAction,function:{name:'ask_user',arguments:JSON.stringify({question:'More input?',choices:[]})}},expectedRevision:nextContext.snapshot.taskRevision+1},context:nextContext,grantRevision:1},()=>assert.fail('Host effect'));
     await runtime.close();closed=true;
-    await until(async()=>(await f.send('/api/devices')).body.data[0].status!=='ready');
+    await until(async()=>(await f.send('/api/devices')).body.data[0].status!=='ready',deviceReconnectTimeout);
     detail=(await f.send(`/api/tasks/${taskId}`)).body.data;
     const offline=await f.send(`/api/tasks/${taskId}/questions/${detail.questions[1].id}/answer`,{requestId:randomUUID(),expectedRevision:detail.revision,text:'Saved while offline'});
     assert.equal(offline.status,200);assert.equal(offline.body.data.state,'waiting_device');
@@ -476,7 +476,8 @@ async function fixture() {
     finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
   } };
 }
-// Device hosts back off up to 60 s between reconnects, so a slow restart can leave one full step to wait.
+// Device hosts back off up to 60 s between reconnects, and under load a disconnect can wait for the
+// 30 s maintenance sweep, so device state changes get one full step.
 const deviceReconnectTimeout = 65_000;
 async function until(check: () => boolean | Promise<boolean>, timeout = 30000) {
   const deadline = performance.now() + timeout;
@@ -650,7 +651,7 @@ test('protected workflow wait discards delayed reveal and event replies after au
       if (change === 'expiry') db.prepare('UPDATE workflow_waits SET deadline=? WHERE run=?').run(Date.now(),f.run);
       if (change === 'revoke') { const device = (await f.send('/api/devices')).body.data[0]; assert.equal((await f.send(`/api/devices/${device.id}/revoke`, { requestId: randomUUID(), expectedRevision: device.revision })).status, 200); }
       const stopping = change === 'disconnect' ? f.connection.stop() : undefined;
-      if (stopping) await until(async () => (await f.send('/api/devices')).body.data[0].status !== 'ready');
+      if (stopping) await until(async () => (await f.send('/api/devices')).body.data[0].status !== 'ready', deviceReconnectTimeout);
       proxy.fault(); release();
       await stopping;
       const denied = await pending;
@@ -2463,7 +2464,7 @@ test('home execution loop rejects malformed or unadvertised provider outputs and
     const outputs = [{ text: '' }, { text: 'Mixed', toolCall: call }, { toolCall: call }, { toolCall: { ...call, function: { name: 'ask_user', arguments: 'not json' } } }, { unexpected: 'bad' }];
     for (const [index, output] of outputs.entries()) {
       if (index !== 0 && index % 2 === 0) {
-        await until(async () => (await f.send('/api/devices')).body.data[0].status !== 'ready');
+        await until(async () => (await f.send('/api/devices')).body.data[0].status !== 'ready', deviceReconnectTimeout);
         await f.restart();
       }
       const { taskId } = await loopTask(f, runtime); let calls = 0;
@@ -3109,7 +3110,7 @@ test('SIGKILL recovery proves no send before marker and never repeats marked eff
         const action = db.prepare('SELECT action_id, send_marker FROM device_journal WHERE task_id=? AND sequence=0').get(taskId)!;
         assert.equal(action.send_marker, Number(marked), checkpoint);
         for (let restart = 0; restart < 2; restart++) {
-          await until(async () => (await f.send('/api/devices')).body.data[0].status !== 'ready');
+          await until(async () => (await f.send('/api/devices')).body.data[0].status !== 'ready', deviceReconnectTimeout);
           await f.restart();
           const recovery = startRustDeviceConnection(options);
           try {
