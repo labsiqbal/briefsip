@@ -17,12 +17,19 @@ test('Rust route inventory stays within frozen Node matchers and reports ported 
     ['/api/restore/reconcile', 'Exchanges a backup bootstrap token for a read-only recovery session.'],
     ['/api/agents/{id}/folder', 'Reads or updates an agent working folder.'],
     ['/api/agents/{id}/folder/reset', 'Restores the managed agent working folder.'],
+    ['/api/sidebar/stream', 'Streams pending input and turn completion to the local owner.'],
+    ['/api/provider-accounts/test', 'Tests a new local provider account.'],
+    ['/api/provider-accounts/{id}/test', 'Tests a saved local provider account.'],
+    ['/api/provider-accounts/{id}/edit', 'Updates a saved local provider account.'],
+    ['/api/provider-accounts/{id}/delete', 'Removes a saved local provider account.'],
   ]);
   const matchers = new Map(inventory.matchers.map(entry => [entry.kind.startsWith('regex') ? `/${entry.pattern}/${entry.flags ?? ''}` : entry.pattern, matcher(entry)]));
   const endpoints = new Map(inventory.matchers.filter(entry => entry.endpoint === true).map(entry => [entry.kind.startsWith('regex') ? `/${entry.pattern}/${entry.flags ?? ''}` : entry.pattern, matcher(entry)]));
   const publicMatchers = inventory.publicMatchers.map(entry => new RegExp(entry.pattern, entry.flags));
   const src = new URL('../crates/briefsip-server/src/', import.meta.url);
-  const rust = readdirSync(src, { recursive: true }).filter(name => String(name).endsWith('.rs')).map(name => readFileSync(new URL(String(name), src), 'utf8')).join('\n');
+  const rust = readdirSync(src, { recursive: true }).map(String)
+    .filter(name => name.endsWith('.rs') && !/(^|\/)tests(\/|\.rs$)/.test(name))
+    .map(name => readFileSync(new URL(name, src), 'utf8')).join('\n');
   const routes = [...rust.matchAll(/\.route\(\s*"([^"\n]+)"/g)].map(match => match[1]);
   assert(routes.length > 0);
   const duplicates = routes.filter((route, index) => routes.indexOf(route) !== index);

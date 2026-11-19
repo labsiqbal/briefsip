@@ -1,3 +1,5 @@
+pub(crate) mod pairing;
+
 use crate::{
     config::AuthConfig,
     db::{self, Database},

@@ -96,6 +96,7 @@ pub fn workspace(source: &Path, target: &Path, canonical_only: bool) -> db::Resu
                 "UPDATE mcp_connections SET enabled=0,revision=revision+1; DELETE FROM mcp_tests;",
             ),
             ("turn_waits", include_str!("restore-local-waits.sql")),
+            ("browser_devices", "DELETE FROM browser_devices;"),
         ] {
             if table(&tx, name).map_err(|e| e.message)? {
                 tx.execute_batch(sql)?;

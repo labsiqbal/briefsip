@@ -3,9 +3,11 @@ import { HiddenAgents } from './AgentSidebar';
 import { useConversationRequests } from './hooks/useConversationRequests';
 import { useRouteThread } from './hooks/useRouteThread';
 import { useAppRoute, useRouteFallback } from './hooks/useAppRoute';
-import type { SettingsSection } from './navigation';
+import { parseRoute, routePath, type SettingsSection } from './navigation';
 import { useNarrowSidebar } from './hooks/useNarrowSidebar';
 import { useMessageChanged } from './hooks/useMessageChanged';
+import { focusNeedsYouTarget, NeedsYouFocus, notificationMuteKey, requestKey, useNeedsYouFocus, useNeedsYouNotifications, type PendingInput, type TurnDestination } from './hooks/useNeedsYouNotifications';
+import { NeedsYouBadge } from './NeedsYou';
 import { useOptimisticTurns } from './hooks/useOptimisticTurns';
 import { useComposerFocus } from './hooks/useComposerFocus';
 import { useQuickSwitcher } from './hooks/useQuickSwitcher';
@@ -44,6 +46,9 @@ import { SpeechPlayback } from './SpeechPlayback';
 import { useConversationAttachments } from './ConversationAttachments';
 import { Attachments } from './Attachments';
 import { ProvidersPanel } from './ProvidersPanel';
+import { EnginesPanel } from './EnginesPanel';
+import { DevicesPanel } from './DevicesPanel';
+import { FirstRun } from './FirstRun';
 import { TurnActivity } from './ui/TurnActivity';
 import { AgentMessage, ChatComposer, ChatEmptyState, ChatHeader, ChatTranscript, ChatTurn, HumanMessage, TurnStatus } from './ui/ChatPrimitives';
 import { liveTurn, livePartial, turnPollDelay, type TurnActivityData } from './ui/transcript';
@@ -58,7 +63,7 @@ import { QuestionCard, type Question } from './QuestionCard';
 import { ApprovalCard, type AppApproval } from './ApprovalCard';
 import { CompactionPanel } from './CompactionPanel';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, useId, type FormEvent, type ReactNode } from 'react';
-import { Link as LinkIcon, Archive, BarChart3, BookOpen, Database, Download, KeyRound, Palette, Plug, SlidersHorizontal, Bell, BellOff, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, GitFork, ListRestart, Square, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Cable, Trash2, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
+import { Link as LinkIcon, Smartphone, Archive, BarChart3, BookOpen, Cpu, Database, Download, KeyRound, Palette, Plug, SlidersHorizontal, Bell, BellOff, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, GitFork, ListRestart, Square, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Cable, Trash2, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
 import { PanelResizeHandle, sidebarPanel, useResizablePanel } from './ui/resizable';
@@ -102,7 +107,7 @@ const SkillsPanel = lazy(() => import('./SkillsPanel').then(module => ({ default
 
 import type { Agent } from './AgentProfileDialog';
 type Channel = { section_name?: string; project?: string | null; activity: number; read_position: number; revision: number; archived: number; id: string; name: string; instructions: string; members: string[]; lead: string | null };
-type Thread = { delivery?: boolean; active?: boolean; activity?: number; id: string; agent: string; name: string; revision: number; archived: number; deleted: number; fork?: { source_name: string; source_id: string; source_kind: 'agent' | 'channel' | 'thread'; source_agent: string; cutoff_turn: string; created: string } | null };
+type Thread = { needs_you?: number; delivery?: boolean; active?: boolean; activity?: number; id: string; agent: string; name: string; revision: number; archived: number; deleted: number; fork?: { source_name: string; source_id: string; source_kind: 'agent' | 'channel' | 'thread'; source_agent: string; cutoff_turn: string; created: string } | null };
 type ForkContext = { summary?: string; inherited?: string; turns: { id: string; text: string; reply: string | null }[] };
 type AgentMessage = Exchange & { taskId?: string; task?: string; wait?: boolean; generatedFiles?: { id: string; name: string; size: number; thread: string }[]; paused: number; request: string; expects_reply: number; settled: number; id: string; agent: string; thread: string; name: string; status: string; error: string | null; reply: string | null; truncated: boolean };
 
@@ -115,7 +120,7 @@ function plainPreview(text?: string) {
   if (!text) return '';
   return text.replace(/```[\s\S]*?```/g, ' ').replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[*_~`]+/g, '').replace(/^\s{0,3}(?:#{1,6}|>|[-+*]|\d+[.)])\s+/gm, '').replace(/\s+/g, ' ').trim();
 }
-type SidebarSummary = { agent: string; preview: string; time: string | null; status: string };
+type SidebarSummary = { agent: string; preview: string; time: string | null; status: string; needs_you?: number };
 type Pending = ChatCommand;
 const statusNames: Record<string, string> = { queued: 'Queued', running: 'Replying', done: 'Done', failed: 'Failed', interrupted: 'Interrupted', cancelled: 'Cancelled' };
 async function api<T>(path: string, data?: unknown, signal?: AbortSignal): Promise<T> {
@@ -205,13 +210,14 @@ function ForkHistory({ context, scope, depth = 0 }: { context: ForkContext; scop
 }
 
 type DetailsContent = { chats: ReactNode; onManageRoutines?: () => void };
-function Chat({ agent, configured, channel, thread, members = [], onRead, onRestored, onEdit, onOpenAgent, onOpenChannel, menuItems = [], detailsExtra, rename }: { rename?: ReactNode; menuItems?: MenuItem[]; detailsExtra?: DetailsContent; onOpenChannel?: (channel: string) => void; onOpenAgent?: (agent: string, thread: string) => void; onRead?: () => Promise<void>; onRestored?: () => Promise<void>; onEdit?: () => void; agent: Agent | Channel; configured: boolean; channel?: Channel; thread?: Thread; members?: Agent[] }) {
+function Chat({ agent, configured, firstRun, channel, thread, members = [], onRead, onRestored, onEdit, onOpenAgent, onOpenChannel, menuItems = [], detailsExtra, rename }: { rename?: ReactNode; menuItems?: MenuItem[]; detailsExtra?: DetailsContent; onOpenChannel?: (channel: string) => void; onOpenAgent?: (agent: string, thread: string) => void; onRead?: () => Promise<void>; onRestored?: () => Promise<void>; onEdit?: () => void; agent: Agent | Channel; configured: boolean; firstRun?: boolean; channel?: Channel; thread?: Thread; members?: Agent[] }) {
   const confirm = useConfirm();
   const archived = !!(channel?.archived || thread?.archived || (!channel && (agent as Agent).hidden));
   const scope = thread ? `thread:${thread.id}` : channel ? `channel:${agent.id}` : agent.id;
   const path = thread ? `/api/threads/${thread.id}/turns` : `/api/${channel ? 'channels' : 'agents'}/${agent.id}/turns`;
   const [showMemory, setShowMemory] = useState(false);
   const nextFrame = useNextFrame();
+  const [focusedCard, setFocusedCard] = useState<string>();
   const [focusedTask, setFocusedTask] = useState(() => { try { const key = `briefsip:focus:${scope}`, id = sessionStorage.getItem(key) ?? ''; sessionStorage.removeItem(key); return /^[a-f0-9-]{36}$/i.test(id) ? id : ''; } catch { return ''; } });
   const [query, setQuery] = useState('');
   const [finding, setFinding] = useState(false);
@@ -236,6 +242,11 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
   const [addressedTurn, setAddressedTurn] = useState('');
   const dispatchTarget = activeTurns.find(turn => channel ? turn.id === addressedTurn : true);
   const canSteer = !!dispatchTarget?.capabilities.steer;
+  const targets = channel ? members.filter(member => !dispatchTarget || member.id === dispatchTarget.agent) : [agent as Agent];
+  const blockedAgent = targets.find(target => target.runnable === false);
+  const canSend = !blockedAgent && (targets.length ? targets.every(target => target.runnable ?? configured) : false);
+  const needsProvider = blockedAgent?.provider_available === false || !blockedAgent && targets.length > 0 && !canSend;
+  const firstMessage = firstRun && !thread && !turns?.length;
   const draftKey = `briefsip:draft:${scope}`;
   const [draft, setDraft] = useState(() => { try { return sessionStorage.getItem(draftKey) ?? ''; } catch { return ''; } });
   const [recovery] = useState(() => {
@@ -291,16 +302,20 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
     return delay;
   }, { interval: 1200 }, [path, focusedTask, before, finding]);
   useEffect(() => {
-    if (focusedTask && loadedTask.current === focusedTask && turns && focusedOnce.current !== focusedTask) {
-      const target = document.getElementById(`turn-${focusedTask}`);
-      if (target) { target.focus({ preventScroll: true }); target.scrollIntoView({ block: 'start' }); focusedOnce.current = focusedTask; }
+    if (focusedTask && loadedTask.current === focusedTask && turns) {
+      const key = focusedCard ?? focusedTask;
+      const target = (focusedCard && document.getElementById(focusedCard)) || document.getElementById(`turn-${focusedTask}`);
+      if (target && focusedOnce.current !== key) {
+        focusNeedsYouTarget(target);
+        focusedOnce.current = key;
+      }
     }
     if (!focusedTask && loadedTask.current === '' && turns && focusHistory.current) {
       const target = !finding && !before && turns.length ? document.getElementById(`turn-${turns.at(-1)!.id}`) : historyTop.current;
       if (target) { target.focus({ preventScroll: true }); target.scrollIntoView({ block: before ? 'start' : 'end' }); focusHistory.current = false; }
     }
     if (!focusedTask && !before && !finding && nearBottom.current) jumpToLatest();
-  }, [focusedTask, turns, before, finding]);
+  }, [focusedTask, focusedCard, turns, before, finding]);
   useEffect(() => {
     if (!requestActive.current && pending && turns?.some(turn => turn.id === pending.id && !turn.optimistic)) {
       try { sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); } catch { /* The same ID remains safe to retry. */ }
@@ -309,7 +324,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
   }, [turns, pending, storageKey, draftKey, attachmentKey]);
   async function send(event: FormEvent, forcedMode?: 'queue' | 'steer') {
     event.preventDefault();
-    if (requestActive.current || pastedFiles.length || attachments.uploading || blocked || (!pending && !draft.trim() && !attached.length)) return;
+    if (requestActive.current || pastedFiles.length || attachments.uploading || blocked || (!pending && (!canSend || !draft.trim() && !attached.length))) return;
     if (archived) { setError('Restore the conversation before sending a new message.'); return; }
     const mode = dispatchTarget ? forcedMode ?? 'queue' : 'queue';
     const request = pending ?? { id: crypto.randomUUID(), text: draft.trim(), ...(mode !== 'queue' ? { dispatchMode: mode, targetTurn: dispatchTarget!.id, ...(channel ? { recipient: dispatchTarget!.agent } : {}) } : {}), ...(channel && mode === 'queue' && dispatchTarget ? { recipient: dispatchTarget.agent } : {}), ...(attached.length ? { files: attached } : {}),  };
@@ -384,7 +399,24 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
   const statusLabel = (turn: Turn) => turn.computerWait ? 'Waiting for you' : (turn.approvals?.some(approval => approval.state === 'approval') || turn.harnessApprovals?.some(approval => approval.state === 'approval')) && !['done','cancelled'].includes(turn.status) ? 'Waiting for approval' : turn.editing ? 'Editing' : turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) ? 'Waiting for your answer' : turn.no_update ? 'No updates' : turn.paused && !['done','cancelled'].includes(turn.status) ? 'Paused' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) && turn.status === 'queued' ? 'Waiting for agent reply' : turn.waiting_for && turn.status === 'queued' ? 'Waiting for delegation' : turn.routing === 'pending' && turn.status === 'running' ? 'Selecting recipient' : turn.routing === 'clarify' ? 'Needs clarification' : turn.routing === 'none' ? 'No task needed' : turn.status === 'running' ? 'Running' : statusNames[turn.status] ?? turn.status;
   const tone = (turn: Turn) => turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) || turn.paused && !['done','cancelled'].includes(turn.status) ? 'attention' : ['failed','interrupted'].includes(turn.status) ? 'error' : ['queued','running'].includes(turn.status) ? 'working' : 'done';
   const time = (value: string) => new Date(value).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-  const openFocused = (id: string) => { findHistory.current = null; focusedOnce.current = ''; setQuery(''); setFinding(false); setFocusedTask(id); };
+  const openFocused = (id: string, card?: string) => { findHistory.current = null; focusedOnce.current = ''; setQuery(''); setFinding(false); setFocusedTask(id); setFocusedCard(card); };
+  useNeedsYouFocus(scope, (turn, card) => {
+    setHistoryPages([]);
+    openFocused(turn, card);
+  });
+  const turnRequests = (turn: Turn) => {
+    const pathToTurn = `${path}/${turn.id}`;
+    const card = (kind: PendingInput['kind'], request: string, content: ReactNode) => {
+      const id = requestKey({ kind, request, turn: turn.id });
+      return <div key={id} id={id} tabIndex={-1} className="turn-request">{content}</div>;
+    };
+    return <>
+      {turn.harnessApprovals?.map(approval => card('harness', approval.id, <HarnessApprovalCard approval={approval} path={pathToTurn} status={turn.status} archived={archived} request={api} />))}
+      {turn.approvals?.map(approval => card('app', approval.id, <ApprovalCard approval={approval} path={pathToTurn} status={turn.status} archived={archived} request={api} />))}
+      {turn.computerWait && card('computer', turn.computerWait.call_id, <ComputerRequestCard agent={turn.agent} name={turn.agent_name ?? agent.name} wait={turn.computerWait} request={api} />)}
+      {turn.questions?.map(question => card('question', question.id, <QuestionCard question={question} path={pathToTurn} status={turn.status} archived={archived} request={api} />))}
+    </>;
+  };
   const answerActions = (turn: Turn) => {
     if (!['done', 'cancelled', 'failed', 'interrupted'].includes(turn.status)) return null;
     const text = turn.reply || turn.partial?.text || turn.activity?.stream?.filter(segment => segment.kind === 'text').map(segment => segment.text).join('\n\n') || turn.error || statusNames[turn.status];
@@ -419,7 +451,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
                     {turn.parent && !turn.messageOrigin && <a className="link-btn link-btn--small" href={`#turn-${turn.parent}`} onClick={event => { event.preventDefault(); openFocused(turn.parent!); }}>View parent task</a>}
                     {turn.messageOrigin && turn.messageOrigin.kind !== 'peer' && <button type="button" className="link-btn link-btn--small" onClick={() => turn.messageOrigin!.channel ? onOpenChannel?.(turn.messageOrigin!.channel) : onOpenAgent?.(turn.messageOrigin!.agent!, turn.messageOrigin!.thread ?? '')}>Open requester conversation</button>}
                 </HumanMessage>
-                {turn.room ? <><RoomMessages room={turn.room} members={members} scope={path.slice(0, -6)} turns={turns} controls={id => { const item = turns.find(item => item.id === id); return item && <><TaskControls key={`${item.id}:${item.revision}`} turn={item} path={path} members={members} archived={archived} overflow skip />{answerActions(item)}</>; }} pending={turns.filter(item => item.room?.root === turn.room!.root && !item.room.silent && !turn.room!.messages.some(message => message.kind === 'reply' && message.turn === item.id))} details={id => { const item = turns.find(item => item.id === id); return item && <TurnActivity scope={path.slice(0, -6)} logOnly turn={item} agentName={members.find(member => member.id === item.agent)?.name ?? agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} />; }} extras={id => { const item = turns.find(item => item.id === id); return item && <>{item.questions?.map(question => <QuestionCard key={question.id} question={question} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}{item.approvals?.map(approval => <ApprovalCard key={approval.id} approval={approval} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}{item.computerWait && <ComputerRequestCard agent={item.agent} name={item.agent_name ?? agent.name} wait={item.computerWait} request={api} />}{item.harnessApprovals?.map(approval => <HarnessApprovalCard key={approval.id} approval={approval} path={`${path}/${item.id}`} status={item.status} archived={archived} request={api} />)}</>; }} /></> : <AgentMessage identity={channel && members.length > 1 && <div className="agent-identity"><AgentAvatar agent={members.find(member => member.id === turn.agent) ?? { id: turn.agent, name: turn.agent_name ?? agent.name }} size={24} /><strong className="message-name">{turn.agent_name ?? agent.name}</strong></div>}>
+                {turn.room ? <><RoomMessages room={turn.room} members={members} scope={path.slice(0, -6)} turns={turns} controls={id => { const item = turns.find(item => item.id === id); return item && <><TaskControls key={`${item.id}:${item.revision}`} turn={item} path={path} members={members} archived={archived} overflow skip />{answerActions(item)}</>; }} pending={turns.filter(item => item.room?.root === turn.room!.root && !item.room.silent && !turn.room!.messages.some(message => message.kind === 'reply' && message.turn === item.id))} details={id => { const item = turns.find(item => item.id === id); return item && <TurnActivity scope={path.slice(0, -6)} logOnly turn={item} agentName={members.find(member => member.id === item.agent)?.name ?? agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} />; }} extras={id => { const item = turns.find(item => item.id === id); return item && turnRequests(item); }} /></> : <AgentMessage identity={channel && members.length > 1 && <div className="agent-identity"><AgentAvatar agent={members.find(member => member.id === turn.agent) ?? { id: turn.agent, name: turn.agent_name ?? agent.name }} size={24} /><strong className="message-name">{turn.agent_name ?? agent.name}</strong></div>}>
                     <TurnActivity scope={path.slice(0, -6)} turn={turn} agentName={agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} actions={turn.dispatch_mode !== 'steer' && !['done','cancelled','failed','interrupted'].includes(turn.status) && !turn.paused ? <TaskControls key={`${turn.id}:${turn.revision}`} turn={turn} path={path} members={channel ? members : []} archived={archived || !!turn.editing} overflow /> : undefined} />
                     {!channel && (!!turn.agentMessages?.length || !!turn.receivedAgentReplies?.length) && <AgentConversation items={[...(turn.agentMessages ?? []), ...(turn.receivedAgentReplies ?? []).filter(item => !turn.agentMessages?.some(sent => sent.id === item.id))]} sender={turn.agent_name ?? agent.name} scope={path.slice(0, -6)} onOpen={onOpenAgent} />}
                     <div className="message-body">
@@ -433,10 +465,7 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
                     {(!['failed','cancelled'].includes(turn.status) && ((turn.status !== 'done' && !['Running', 'Queued'].includes(statusLabel(turn))) || turn.activity?.fallback_model)) && <TurnStatus tone={tone(turn)} label={turn.activity?.fallback_model ? `${statusLabel(turn)} · Fallback model used` : statusLabel(turn)} />}
                     <div className="turn-extras k-stack">
                       {turn.events?.map(event => <section className="k-stack" key={event.id}><Row title={`Event ${event.event}: ${event.status === 'waiting' ? 'Waiting' : event.status === 'received' ? 'Received' : event.status === 'expired' ? 'Expired' : 'Closed'}`} meta={new Date(event.deadline).toLocaleString('en-US')} />{event.status === 'waiting' && !archived && <EventConnection path={`/api/turn-waits/${event.id}`} request={api} />}</section>)}
-                      {turn.harnessApprovals?.map(approval => <HarnessApprovalCard key={approval.id} approval={approval} path={`${path}/${turn.id}`} status={turn.status} archived={archived} request={api} />)}
-                      {turn.approvals?.map(approval => <ApprovalCard key={approval.id} approval={approval} path={`${path}/${turn.id}`} status={turn.status} archived={archived} request={api} />)}
-                      {turn.computerWait && <ComputerRequestCard agent={turn.agent} name={turn.agent_name ?? agent.name} wait={turn.computerWait} request={api} />}
-                      {turn.questions?.map(question => <QuestionCard key={question.id} question={question} path={`${path}/${turn.id}`} status={turn.status} archived={archived} request={api} />)}
+                      {turnRequests(turn)}
                       {!!turn.coordination?.length && <Collapsible title={`Task coordination (${turn.coordination.length})`}>{turn.coordination.map((action, index) => <div className="k-stack" key={index}><div className="k-section__title">{action.owner_name} {action.kind === 'delegate_task' ? 'delegated to' : 'reassigned to'} {action.target_name}.</div><div className="message-plain">{action.prompt}</div>{action.child && <div className="k-row-actions"><Button size="sm" variant="ghost" onClick={() => openFocused(action.child!)}>View subtask</Button></div>}</div>)}</Collapsible>}
                       {turn.status === 'queued' && !turn.approvals?.length && turn.dispatch_mode !== 'steer' && <QueueEditor turn={{ ...turn, files: turn.files ?? [] }} path={path} archived={archived} request={api} onChanged={refreshTurns} />}
                     </div>
@@ -453,16 +482,21 @@ function Chat({ agent, configured, channel, thread, members = [], onRead, onRest
       </ChatTranscript>
       <footer className="composer-area">
         {!channel && (agent as Agent).hidden ? <HiddenAgentBanner agent={agent as Agent} request={api} onChanged={onRestored} /> : archived && <p className="composer__note">Archived</p>}
-        {!configured && <p className="composer__note">{!channel && 'provider_account' in agent && !!agent.provider_account && agent.provider_available === false ? 'Provider account unavailable. Choose a provider in the agent profile.' : 'Provider not configured. Check Settings > Providers.'}</p>}
+        {!canSend && !archived && <p className="composer__note composer__note--blocked">
+          {needsProvider && <a className="k-link" href={routePath({ ...parseRoute(window.location.pathname + window.location.search), settings: 'providers' })}>Connect a provider</a>}
+          {blockedAgent?.blocked_reason && <span>{blockedAgent.blocked_reason}</span>}
+          {!targets.length && 'No available members.'}
+        </p>}
+        {firstMessage && canSend && <p className="composer__note">Send first message</p>}
         {error && <div className="composer__error" role="alert"><span>{error} {pending && 'Use Retry send to check the same request without creating a duplicate message.'}</span></div>}
         {blocked && <div className="composer__error" role="alert"><span>Message recovery data could not be read. Sending is blocked. Check history to confirm the previous message was not sent.</span><Button size="sm" variant="ghost" onClick={async () => { if (!await confirm({ title: 'Discard recovery data?', description: 'The previous message may already have been received. Check history before sending another message.', confirm: 'Discard message recovery', danger: true })) return; try { sessionStorage.removeItem(storageKey); setBlocked(false); setError(''); nextFrame(() => composer.current?.focus()); } catch { setError('Recovery data could not be deleted. Check site storage.'); } }}>Discard message recovery</Button></div>}
         <QueuedRunsControl turns={queueTurns.filter(queued)} path={path} target={dispatchTarget} request={api} archived={archived} onChanged={refreshTurns} onOrder={() => setQueueOrderOpen(true)} />
         <ChatComposer attachments={attachments.composer} hasAttachments={!!attached.length} onPasteFiles={files => { if (pastedFiles.length) { setError('Wait for pasted files to finish uploading.'); return; } setPastedFiles(files); }} mentions={channel ? members : []} onMention={value => { setDraft(value); try { sessionStorage.setItem(draftKey, value); } catch { setError('Draft was not saved. Copy your message before leaving.'); } }} label={channel ? `Message #${channel.section_name ?? channel.name}` : `Message ${agent.name}`} inputRef={composer} multiline={draft.includes('\n')} onSubmit={send} onSendKey={event => { void send(event, (event.ctrlKey || event.metaKey) && canSteer ? 'steer' : 'queue'); }} onAttach={attachments.choose} attachmentDisabledReason={archived || blocked || !!pending || busy || attachments.uploading ? 'Attachments unavailable' : undefined} actions={attachments.recordingAction}
           recipient={channel && activeTurns.length > 0 ? <Select size="sm" label="Addressed member" value={dispatchTarget?.id ?? ''} disabled={busy || !!pending || blocked} onChange={setAddressedTurn} options={[{ value: '', label: 'Everyone' }, ...activeTurns.map(turn => ({ value: turn.id, label: members.find(member => member.id === turn.agent)?.name ?? turn.agent }))]} /> : undefined}
           stopAction={runningRoom && !archived ? <RoomStop key={runningRoom.root} room={runningRoom} path={path} archived={archived} onStopped={() => { refreshTurns(); composer.current?.focus(); }} /> : runningTurn && !archived ? <CancelTurn key={runningTurn.id} primary turn={runningTurn.id} path={path} request={api} onCancelled={() => { refreshTurns(); composer.current?.focus(); }} /> : undefined}
-          input={{ id: 'message', value: pending?.text ?? draft, readOnly: blocked || !!pending || busy, onChange: event => { setDraft(event.target.value); try { sessionStorage.setItem(draftKey, event.target.value); } catch { setError('Draft was not saved in the browser. Copy the message before switching agents.'); } } }}
+          input={{ id: 'message', ...(firstMessage && { placeholder: 'Try: Say hello' }), value: pending?.text ?? draft, readOnly: blocked || !!pending || busy, onChange: event => { setDraft(event.target.value); try { sessionStorage.setItem(draftKey, event.target.value); } catch { setError('Draft was not saved in the browser. Copy the message before switching agents.'); } } }}
           busy={busy} retry={!!pending}
-          sendDisabled={!!pastedFiles.length || attachments.uploading || blocked || archived || !configured || busy || (!pending && !draft.trim() && !attached.length)}
+          sendDisabled={!!pastedFiles.length || attachments.uploading || blocked || archived || busy || (!pending && (!canSend || !draft.trim() && !attached.length))}
           sendLabel={busy ? 'Sending...' : pending ? 'Retry send' : dispatchTarget ? 'Queue message' : 'Send message'}
           sendTitle={pending ? 'Retry send' : dispatchTarget ? `Queue message (Enter to queue${canSteer ? ', Ctrl/Cmd+Enter to steer' : ''})` : 'Send (Enter)'} />
         {(focusedTask || before) && <p className="composer__foot">{focusedTask ? channel ? 'Task family shown' : 'Selected message shown' : 'Older messages · 100 per page'}</p>}
@@ -907,7 +941,7 @@ function RoutineForm({ owner, agents, projects, routine, onBack, onSaved }: { ow
   </Dialog>;
 }
 
-function AgentConversations({ agent, onRestored, configured, onEdit, onExport, workflowAgents, initialThread, onOpenAgent, onOpenChannel, onSelectThread, onManageRoutines }: { onRestored: () => Promise<void>; onExport: () => void; onManageRoutines: (agent: string) => void; onOpenChannel: (channel: string) => void; agent: Agent; workflowAgents: Agent[]; configured: boolean; onEdit: () => void; initialThread: string; onSelectThread: (thread: string, replace?: boolean) => void; onOpenAgent: (owner: string, thread: string) => void }) {
+function AgentConversations({ agent, attention, onRestored, configured, firstRun, onEdit, onExport, workflowAgents, initialThread, onOpenAgent, onOpenChannel, onSelectThread, onManageRoutines }: { onRestored: () => Promise<void>; onExport: () => void; onManageRoutines: (agent: string) => void; onOpenChannel: (channel: string) => void; agent: Agent; attention: ReadonlySet<string> | undefined; workflowAgents: Agent[]; configured: boolean; firstRun?: boolean; onEdit: () => void; initialThread: string; onSelectThread: (thread: string, replace?: boolean) => void; onOpenAgent: (owner: string, thread: string) => void }) {
   const [threads, setThreads] = useState<Thread[]>([]), [error, setError] = useState('');
   const selected = initialThread;
   const [form, setForm] = useState<Thread | null>(null), [loaded, setLoaded] = useState(false);
@@ -993,7 +1027,7 @@ function AgentConversations({ agent, onRestored, configured, onEdit, onExport, w
   ];
   const nameEditor = form && <InlineConversationName key={`${form.id}:${form.revision}`} thread={form} busy={locked} onCancel={() => { renameTarget.current = ''; setForm(null); nextFrame(() => document.querySelector<HTMLButtonElement>(`[data-conversation-id="${form.id}"] > .panel-row`)?.focus()); }} onSave={name => void execute({ path: `/api/threads/${form.id}/edit`, data: { id: crypto.randomUUID(), name, revision: form.revision, archived: !!form.archived } })} />;
   const row = (item: Thread) => <div data-conversation-id={item.id} key={item.id} className={`conversation-row${selected === item.id ? ' is-current' : ''}`}>
-    {form?.id === item.id && selected !== item.id ? nameEditor : <button type="button" className="panel-row panel-row--link" aria-current={selected === item.id || undefined} title={item.name} onClick={() => select(item.id)}><MessageSquare size={16} aria-hidden /><span className="panel-row__text"><span className="panel-row__title">{item.name}</span>{!!item.archived && <span className="panel-row__meta">Archived</span>}</span></button>}
+    {form?.id === item.id && selected !== item.id ? nameEditor : <button type="button" className="panel-row panel-row--link" aria-current={selected === item.id || undefined} title={item.name} onClick={() => select(item.id)}><MessageSquare size={16} aria-hidden /><span className="panel-row__text"><span className="panel-row__title">{item.name}</span>{!!item.archived && <span className="panel-row__meta">Archived</span>}</span><NeedsYouBadge count={attention ? Number(attention.has(item.id)) : item.needs_you} /></button>}
     <ActionMenu onCloseAutoFocus={event => { if (renameTarget.current === item.id && document.querySelector('.conversation-rename input')) { event.preventDefault(); renameTarget.current = ''; nextFrame(() => { const input = document.querySelector<HTMLInputElement>('.conversation-rename input'); input?.focus(); input?.select(); }); } }} label={`Menu conversation ${item.name}`} trigger={<IconButton label={`Menu conversation ${item.name}`} tooltip="More actions" disabled={locked}><Ellipsis size={15} aria-hidden /></IconButton>} items={actions(item)} />
   </div>;
   const visible = threads.filter(item => showArchived || !item.archived), deliveries = visible.filter(item => item.delivery);
@@ -1003,13 +1037,13 @@ function AgentConversations({ agent, onRestored, configured, onEdit, onExport, w
     <section aria-label="Agent conversations">
       <div className="section-label section-label--row"><span>Conversations</span><div className="details-list-actions"><DropdownMenu.Root><DropdownMenu.Trigger asChild><IconButton label="Conversation filters"><Filter size={15} aria-hidden /></IconButton></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="k-pop k-menu" align="end" sideOffset={6}><DropdownMenu.CheckboxItem className="k-menu__item" checked={showArchived} onCheckedChange={next => { setShowArchived(next); if (!next && thread?.archived) select(''); }}><DropdownMenu.ItemIndicator><Check size={14} aria-hidden /></DropdownMenu.ItemIndicator>Show archived</DropdownMenu.CheckboxItem></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{!locked && <IconButton label="New conversation" tooltip="New conversation (Ctrl/Cmd+Shift+O)" aria-keyshortcuts="Control+Shift+O Meta+Shift+O" onClick={openForm}><Plus size={15} aria-hidden /></IconButton>}</div></div>
       <div className="panel-card">
-        <div className="conversation-row" data-conversation-id="main"><button type="button" className={`panel-row panel-row--link${!thread ? ' is-current' : ''}`} aria-current={!thread || undefined} onClick={() => select('')}><MessageSquare size={16} aria-hidden /><span className="panel-row__title">Main chat</span></button><ActionMenu label="Menu conversation Main chat" trigger={<IconButton label="Menu conversation Main chat" tooltip="More actions"><Ellipsis size={15} aria-hidden /></IconButton>} items={[{ label: 'Edit profile', onSelect: onEdit }]} /></div>
+        <div className="conversation-row" data-conversation-id="main"><button type="button" className={`panel-row panel-row--link${!thread ? ' is-current' : ''}`} aria-current={!thread || undefined} onClick={() => select('')}><MessageSquare size={16} aria-hidden /><span className="panel-row__title">Main chat</span><NeedsYouBadge count={Number(attention?.has('') ?? false)} /></button><ActionMenu label="Menu conversation Main chat" trigger={<IconButton label="Menu conversation Main chat" tooltip="More actions"><Ellipsis size={15} aria-hidden /></IconButton>} items={[{ label: 'Edit profile', onSelect: onEdit }]} /></div>
         {visible.filter(item => !item.delivery).map(row)}
       </div>
       {!!deliveries.length && <Collapsible variant="section" title={<>From other agents <Badge>{deliveries.length}</Badge></>}><div className="panel-card">{deliveries.map(row)}</div></Collapsible>}
     </section>
   </>;
-  return <><Chat onRestored={onRestored} onOpenChannel={onOpenChannel} onOpenAgent={onOpenAgent} key={thread?.id ?? agent.id} agent={agent} thread={thread} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)}
+  return <><Chat onRestored={onRestored} onOpenChannel={onOpenChannel} onOpenAgent={onOpenAgent} key={thread?.id ?? agent.id} agent={agent} thread={thread} firstRun={firstRun} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)}
     onEdit={thread ? () => setForm(thread) : onEdit}
     menuItems={[{ label: 'New conversation', icon: <Plus size={15} aria-hidden />, onSelect: openForm, disabled: locked }, ...(thread ? actions(thread).map((item, index) => ({ ...item, separator: index === 0 || item.separator })) : []), { label: 'Routines', separator: !!thread, icon: <CalendarClock size={15} aria-hidden />, onSelect: openRoutines }, { label: 'Workflows', icon: <WorkflowIcon size={15} aria-hidden />, onSelect: openWorkflows }, { label: 'Workspace files', icon: <FolderOpen size={15} aria-hidden />, onSelect: openWorkspace }, { label: 'Export template', icon: <Download size={15} aria-hidden />, onSelect: onExport }]}
     detailsExtra={{ chats: conversations, onManageRoutines: openRoutines }} rename={form?.id === selected ? nameEditor : null} /></>;
@@ -1093,8 +1127,8 @@ function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agent
 const settingsGroups: { label: string; items: { id: SettingsSection; label: string; icon: typeof Settings }[] }[] = [
   { label: 'Preferences', items: [{ id: 'general', icon: SlidersHorizontal, label: 'General' }, { id: 'appearance', icon: Palette, label: 'Appearance' }] },
   { label: 'Agents', items: [{ id: 'skills', icon: BookOpen, label: 'Skills' }] },
-  { label: 'Connections', items: [{ id: 'providers', icon: Server, label: 'Providers' }, { id: 'hub', icon: LinkIcon, label: 'briefsip.com' }, { id: 'connected-apps', icon: Plug, label: 'Connected apps' }, { id: 'mcp', icon: Cable, label: 'MCP connections' }] },
-  { label: 'System', items: [{ id: 'machines', icon: Monitor, label: 'Machines' }, { id: 'updates', icon: Download, label: 'Updates' }] },
+  { label: 'Connections', items: [{ id: 'providers', icon: Server, label: 'Providers' }, { id: 'engines', icon: Cpu, label: 'Engines' }, { id: 'hub', icon: LinkIcon, label: 'briefsip.com' }, { id: 'connected-apps', icon: Plug, label: 'Connected apps' }, { id: 'mcp', icon: Cable, label: 'MCP connections' }] },
+  { label: 'System', items: [{ id: 'machines', icon: Monitor, label: 'Machines' }, { id: 'devices', icon: Smartphone, label: 'Devices' }, { id: 'updates', icon: Download, label: 'Updates' }] },
   { label: 'Data', items: [{ id: 'usage', icon: BarChart3, label: 'Usage' }, { id: 'data', icon: Database, label: 'Shared data' }, { id: 'backup', icon: Archive, label: 'Backup & restore' }] },
   { label: 'Advanced', items: [{ id: 'mcp-server', icon: KeyRound, label: 'External access' }] },
 ];
@@ -1128,7 +1162,9 @@ function App() {
     if (route.agent === id) navigate({}, true);
     await load(true); await projectState.reload();
   });
-  const [directory, setDirectory] = useState<Directory | null>(null); const selected = route.agent ?? directory?.agents[0]?.id ?? '';
+  const [directory, setDirectory] = useState<Directory | null>(null);
+  const defaultAgent = directory?.agents.find(agent => !agent.hidden && (agent.runnable ?? !!directory.configured));
+  const selected = route.agent ?? defaultAgent?.id ?? '';
   const [channels, setChannels] = useState<Channel[]>([]);
   const selectedChannel = route.room ?? '';
   const [environment, setEnvironment] = useState<Environment | null>(null), [summaries, setSummaries] = useState<SidebarSummary[]>([]);
@@ -1162,13 +1198,14 @@ function App() {
   const projectConversation = routeThread?.thread?.project ? routeThread.thread : null;
   const projectThread = projectConversation ? { project: projectConversation.project!, agent: selected, thread: projectConversation.id, conversation: projectConversation } : null;
   const [dialog, setDialog] = useState<Dialog>(null);
-  const [notificationsMuted, setNotificationsMuted] = useState(() => { try { return localStorage.getItem('briefsip:workflow-notifications-muted') === '1'; } catch { return false; } });
+  const [firstRunAgent, setFirstRunAgent] = useState('');
+  const [notificationsMuted, setNotificationsMuted] = useState(() => { try { return localStorage.getItem(notificationMuteKey) === '1'; } catch { return false; } });
   const [notificationError, setNotificationError] = useState('');
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() => { try { return localStorage.getItem(sidebarTabKey) === 'projects' ? 'projects' : 'agents'; } catch { return 'agents'; } });
   const [searches, setSearches] = useState({ agents: '', projects: '' });
   const search = searches[sidebarTab], query = search.trim().toLocaleLowerCase();
   const [searchMachineGroups, setSearchMachineGroups] = useState<Record<string, boolean>>({});
-  const [onlyOnline, setOnlyOnline] = useState(false), [filterMenu, setFilterMenu] = useState(false);
+  const [onlyOnline, setOnlyOnline] = useState(false), [onlyNeedsYou, setOnlyNeedsYou] = useState(false), [filterMenu, setFilterMenu] = useState(false);
   const [machineGroups, setMachineGroups] = useState<Record<string, boolean>>(() => { try { const value: unknown = JSON.parse(localStorage.getItem(machineGroupsKey) ?? '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).filter(([, expanded]) => typeof expanded === 'boolean')) as Record<string, boolean> : {}; } catch { return {}; } });
   const [desktopCollapsed, setCollapsedState] = useState(() => { try { return localStorage.getItem(collapsedKey) === '1'; } catch { return false; } });
   const narrowSidebar = useNarrowSidebar(), [narrowOpen, setNarrowOpen] = useState(false);
@@ -1195,7 +1232,7 @@ function App() {
     try {
       const version = directoryRequest.current;
       const [rooms, agents, summary] = await Promise.all([api<Channel[]>('/api/channels'), api<Directory>('/api/agents'), api<{ summaries: SidebarSummary[] }>('/api/sidebar/summary')]);
-      if (!signal.aborted && version === directoryRequest.current) setDirectory(current => current && ({ ...current, agents: agents.agents.map(fresh => { const old = current.agents.find(item => item.id === fresh.id); return old && old.revision > fresh.revision ? old : fresh; }) }));
+      if (!signal.aborted && version === directoryRequest.current) setDirectory(current => current && ({ ...agents, agents: agents.agents.map(fresh => { const old = current.agents.find(item => item.id === fresh.id); return old && old.revision > fresh.revision ? old : fresh; }) }));
       if (!signal.aborted) { setActivityError(false); setChannels(current => rooms.map(fresh => { const old=current.find(room=>room.id===fresh.id); return {...fresh, activity:Math.max(old?.activity??0,fresh.activity), read_position:Math.max(old?.read_position??0,fresh.read_position)}; })); }
       if (!signal.aborted) { setSummaries(summary.summaries); void projectState.reload().catch(() => {}); }
     } catch { if (!signal.aborted) setActivityError(true); }
@@ -1226,25 +1263,49 @@ function App() {
   const openAgent = (id: string) => { setSidebarTab('agents'); navigate({ agent: id }); setDialog(null); };
   const openChannel = (id: string) => { navigate({ room: id }); setDialog(null); };
   const openSection = (id: string) => { setSidebarTab('projects'); void load(true).then(() => openChannel(id)).catch(error => setError(message(error))); };
+  const [attentionFocus, setAttentionFocus] = useState<React.ContextType<typeof NeedsYouFocus>>(null);
+  const openAttention = (target: TurnDestination, input?: PendingInput) => {
+    const scope = target.channel ? `channel:${target.channel}` : target.thread ? `thread:${target.thread}` : target.agent;
+    setAttentionFocus({ scope, turn: target.focus, card: input && requestKey(input), consume: () => setAttentionFocus(null) });
+    navigate(target.channel ? { room: target.channel } : { agent: target.agent, thread: target.thread ?? undefined });
+    setDialog(null);
+  };
+  const attention = useNeedsYouNotifications(openAttention);
+  const attentionByAgent = new Map<string, Map<string, PendingInput>>();
+  for (const input of attention ?? []) {
+    const conversations = attentionByAgent.get(input.agent) ?? new Map<string, PendingInput>();
+    const key = input.channel ?? input.thread ?? '';
+    if (!conversations.has(key)) conversations.set(key, input);
+    attentionByAgent.set(input.agent, conversations);
+  }
+  const attentionCount = attention
+    ? new Set(attention.map(input => input.channel ?? input.thread ?? input.agent)).size
+    : summaries.reduce((sum, item) => sum + (item.needs_you ?? 0), 0);
   const openThread = (owner: string, thread: string) => {
     if (owner.includes('@')) { const [remoteAgent, machine] = owner.split('@'); navigate({ machine, remoteAgent }); }
     else navigate({ agent: owner, ...(thread ? { thread } : {}) });
     setDialog(null); focusComposer();
   };
   const invalidRoute = !!directory && (!!route.agent && !directory.agents.some(agent => agent.id === route.agent) || !!route.room && !channels.some(channel => channel.id === route.room) || !!route.project && !!projectState.root && !project || !!route.machine && remoteMachinesState.loaded && !remoteMachinesState.machines.some(machine => machine.id === route.machine && machine.agents.some(agent => agent.id === route.remoteAgent)));
-  useRouteFallback(!route.notFound && !invalidRoute && !!directory && !route.agent && !route.room && !route.project && !route.view && !route.machine, { ...(directory?.agents[0] ? { agent: directory.agents[0].id } : {}), ...(route.settings ? { settings: route.settings } : {}) }, navigate);
+  useRouteFallback(!route.notFound && !invalidRoute && !!directory && !route.agent && !route.room && !route.project && !route.view && !route.machine, { agent: defaultAgent?.id, settings: route.settings }, navigate);
   const notFound = route.notFound || invalidRoute || routeThread?.missing;
   const settingsName = settingsGroups.flatMap(group => group.items).find(item => item.id === route.settings)?.label;
   const pageTitle = notFound ? 'Page not found' : route.settings ? `Settings · ${settingsName}` : project ? project.name : channel ? `#${channel.section_name ?? channel.name} · ${sectionProject?.name ?? 'Room'}` : route.machine ? remoteMachinesState.machines.find(machine => machine.id === route.machine)?.agents.find(agent => agent.id === route.remoteAgent)?.name : route.view ? route.view === 'routines' ? 'Routines' : 'Workflows' : agent ? `${routeThread?.thread?.name ?? 'Main chat'} · ${agent.name}` : '';
-  useRoutePresentation(route, pageTitle, setSidebarTab);
+  useRoutePresentation(route, pageTitle, setSidebarTab, attentionCount);
   const relativeTime = (value: string | null | undefined) => { if (!value) return ''; const age = Math.max(0, Date.now() - Date.parse(value)); if (!Number.isFinite(age)) return ''; const minutes = Math.floor(age / 60000); if (minutes < 60) return `${Math.max(1, minutes)}m`; const hours = Math.floor(minutes / 60); if (hours < 24) return `${hours}h`; return `${Math.floor(hours / 24)}d`; };
   const summaryByAgent = new Map(summaries.map(item => [item.agent, item]));
   const summaryFor = (id: string) => summaryByAgent.get(id);
+  const needsYou = (id: string) => attention ? attentionByAgent.get(id)?.size ?? 0 : summaryFor(id)?.needs_you ?? 0;
+  const openAgentRow = (id: string) => {
+    const input = attentionByAgent.get(id)?.values().next().value;
+    if (input) openAttention(input, input);
+    else openAgent(id);
+  };
   const matches = (name: string, preview = '', role = '') => !query || `${name} ${role} ${preview}`.toLocaleLowerCase().includes(query);
   const retainedAgent = view === 'chat' && !selectedProject && !projectThread && !selectedChannel ? selected : '';
   const hiddenAgents = (directory?.agents ?? []).filter(item => item.hidden);
-  const matchingHiddenAgents = hiddenAgents.filter(item => matches(item.name, summaryFor(item.id)?.preview, item.role));
-  const localAgents = (directory?.agents ?? []).filter(item => !item.hidden || item.id === retainedAgent).filter(item => matches(item.name, summaryFor(item.id)?.preview, item.role));
+  const matchingHiddenAgents = hiddenAgents.filter(item => !onlyNeedsYou || needsYou(item.id)).filter(item => matches(item.name, summaryFor(item.id)?.preview, item.role));
+  const localAgents = (directory?.agents ?? []).filter(item => !item.hidden || item.id === retainedAgent).filter(item => !onlyNeedsYou || needsYou(item.id)).filter(item => matches(item.name, summaryFor(item.id)?.preview, item.role));
   const restoreFlight = useRef(false);
   const [restoring, setRestoring] = useState('');
   async function restoreAgent(item: Agent) {
@@ -1260,14 +1321,15 @@ function App() {
     const item = directory?.agents.find(agent => agent.id === id);
     if (!item) return null;
     const current = !notFound && view === 'chat' && !selectedProject && !projectThread && !selectedChannel && item.id === selected, summary = summaryFor(item.id);
+    const count = needsYou(item.id), status = count ? 'Needs you' : summary?.status === 'running' ? 'Working' : 'Idle';
     return collapsed
-      ? <button key={item.id} type="button" className={`bot-rail-item${current ? ' is-selected' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgent(item.id)} title={item.name} aria-label={item.name}><AgentAvatar agent={item} size={36} /></button>
-      : <AgentActions key={item.id} agent={item} request={api} onChanged={() => load(true)} onEdit={() => { openAgent(item.id); setDialog('edit'); }} onDelete={() => deleteAgent(item)} onError={error => setAgentActionError(message(error))}><button type="button" className={`bot-row${current ? ' is-selected' : ''}`} aria-label={`${item.name} ${summary?.status === 'running' ? 'Working' : 'Idle'}${item.computer_waiting ? ' - Waiting for you' : ''}${item.provider_available === false ? ' - Provider account unavailable' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgent(item.id)}>
-        <span className="bot-row__avatar"><AgentAvatar agent={item} size={36} /><span className={`status-dot ${summary?.status === 'running' ? 'is-working' : 'is-idle'}`} role="img" aria-label={summary?.status === 'running' ? 'Working' : 'Idle'} />{item.computer_waiting && <span className="status-dot is-attention" aria-label="Waiting for you" />}{item.provider_available === false && <span className="status-dot is-attention" aria-label="Provider account unavailable" />}</span>
-        <span className="bot-row__text"><span className="bot-row__name">{item.name}{item.computer_waiting && <small> · Waiting for you</small>}</span><span className="bot-row__preview" title={plainPreview(summary?.preview) || undefined}>{item.hidden ? 'Hidden' : plainPreview(summary?.preview) || item.role || ''}</span></span>{summary?.time && <time className="bot-row__time" dateTime={summary.time}>{relativeTime(summary.time)}</time>}
+      ? <button key={item.id} type="button" className={`bot-rail-item${current ? ' is-selected' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgentRow(item.id)} title={item.name} aria-label={`${item.name} ${status}`}><AgentAvatar agent={item} size={36} /></button>
+      : <AgentActions key={item.id} agent={item} request={api} onChanged={() => load(true)} onEdit={() => { openAgent(item.id); setDialog('edit'); }} onDelete={() => deleteAgent(item)} onError={error => setAgentActionError(message(error))}><button type="button" className={`bot-row${current ? ' is-selected' : ''}`} aria-label={`${item.name} ${status}${count ? `, ${count}` : ''}${item.provider_available === false ? ' - Provider account unavailable' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgentRow(item.id)}>
+        <span className="bot-row__avatar"><AgentAvatar agent={item} size={36} /><span className={`status-dot ${count || item.provider_available === false ? 'is-attention' : summary?.status === 'running' ? 'is-working' : 'is-idle'}`} aria-hidden /></span>
+        <span className="bot-row__text"><span className="bot-row__name">{item.name}</span><span className="bot-row__preview" title={plainPreview(summary?.preview) || undefined}>{item.hidden ? 'Hidden' : plainPreview(summary?.preview) || item.role || ''}</span></span>{count ? <NeedsYouBadge count={count} /> : summary?.time && <time className="bot-row__time" dateTime={summary.time}>{relativeTime(summary.time)}</time>}
       </button></AgentActions>;
   };
-  const remoteMachines = remoteMachinesState.machines.filter(machine => !onlyOnline || machine.status === 'online').sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  const remoteMachines = remoteMachinesState.machines.filter(machine => !onlyNeedsYou && (!onlyOnline || machine.status === 'online')).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   const anyMatchingAgents = localAgents.length > 0 || matchingHiddenAgents.length > 0 || remoteMachines.some(machine => machine.agents.some(item => matches(item.name, summaryFor(`${item.id}@${machine.id}`)?.preview, item.role)));
   const switcherItems: SwitcherItem[] = [
     ...(agent && !route.room && !route.project && !route.machine && !route.view ? [{ id: 'new-conversation', label: 'New conversation', detail: 'Ctrl/Cmd+Shift+O', icon: <Plus size={16} aria-hidden />, group: 'Create', onSelect: () => { setSettings(null); switcherFrame(() => window.dispatchEvent(new Event('briefsip:new-conversation'))); } }] : []),
@@ -1281,6 +1343,11 @@ function App() {
     { id: 'new-agent', label: 'New agent', group: 'Create', onSelect: () => { setSettings(null); setDialog('agent'); } },
     { id: 'new-project', label: 'New project', group: 'Create', onSelect: () => { setSettings(null); setDialog('project'); } },
   ];
+  const created = (item: Agent) => {
+    setDirectory(current => current && { ...current, agents: [...current.agents.filter(agent => agent.id !== item.id), item] });
+    openAgent(item.id);
+    void load();
+  };
   let content: ReactNode;
   if (error) content = <PageView><div className="empty"><h1>Workspace is not open</h1><p role="alert">{error}</p><button onClick={() => void load()}>Try again</button></div></PageView>;
   else if (!directory) content = <main className="chat chat--empty bs-root"><p className="empty-chat__sub" role="status">Loading workspace...</p></main>;
@@ -1293,9 +1360,8 @@ function App() {
   else if (route.thread && !routeThread?.thread) content = <PageView>{routeThread?.error ? <Alert tone="error">{routeThread.error} Retrying…</Alert> : <p role="status">Loading conversation...</p>}</PageView>;
   else if (projectThread && directory.agents.find(agent => agent.id === projectThread.agent)) { const owner = directory.agents.find(agent => agent.id === projectThread.agent)!; const thread = projectState.projects.find(project => project.id === projectThread.project)?.threads.find(thread => thread.id === projectThread.thread) ?? projectThread.conversation; content = thread ? <Chat onOpenAgent={openThread} key={thread.id} agent={owner} thread={{...thread,revision:1,archived:0,deleted:0}} configured={directory.configured} menuItems={[{label:'Back to project',onSelect:()=>openProject(projectThread.project)}]} /> : <PageView><EmptyState title="Project conversation unavailable" /></PageView>; }
   else if (channel) content = <Chat onOpenAgent={openThread} key={`channel:${channel.id}`} agent={channel} channel={{ ...channel, lead: directory.agents.find(agent => agent.id === channel.lead)?.hidden ? null : channel.lead }} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id) && !agent.hidden)} onEdit={channel.project ? undefined : () => setDialog('edit')} menuItems={channel.project ? [{label:'Back to project',onSelect:()=>openProject(channel.project!)}] : []} configured={directory.configured} />;
-  else if (agent) content = <AgentConversations onRestored={() => load(true)} onExport={() => setAgentContent({ agent, kind: 'export' })} onManageRoutines={id => { setRoutineAgent(id); setView('routines'); }} onOpenChannel={openChannel} key={agent.id} agent={agent} workflowAgents={directory.agents} configured={directory.configured} initialThread={route.thread ?? ''} onSelectThread={(thread, replace) => { navigate(current => ({ ...current, agent: agent.id, thread: thread || undefined, result: current.thread === (thread || undefined) ? current.result : undefined }), replace); focusComposer(); }} onOpenAgent={openThread} onEdit={() => setDialog('edit')} />;
-  else content = <main className="chat chat--empty bs-root"><div className="empty-chat"><div className="empty-chat__title">Create your first agent</div><button type="button" className="btn btn--primary" onClick={() => setDialog('agent')}><Plus size={16} aria-hidden /> New agent</button></div></main>;
-  const created = (item: Agent) => { setDirectory(current => current && { ...current, agents: [...current.agents.filter(agent => agent.id !== item.id), item] }); openAgent(item.id); };
+  else if (agent) content = <AgentConversations attention={attention ? new Set(attentionByAgent.get(agent.id)?.keys()) : undefined} onRestored={() => load(true)} onExport={() => setAgentContent({ agent, kind: 'export' })} onManageRoutines={id => { setRoutineAgent(id); setView('routines'); }} onOpenChannel={openChannel} key={agent.id} agent={agent} firstRun={firstRunAgent === agent.id} workflowAgents={directory.agents} configured={directory.configured} initialThread={route.thread ?? ''} onSelectThread={(thread, replace) => { navigate(current => ({ ...current, agent: agent.id, thread: thread || undefined, result: current.thread === (thread || undefined) ? current.result : undefined }), replace); focusComposer(); }} onOpenAgent={openThread} onEdit={() => setDialog('edit')} />;
+  else content = <FirstRun request={api} isClientError={error => error instanceof HttpError && error.status < 500} settingsOpen={!!settings} onCreated={item => { setFirstRunAgent(item.id); created(item); focusComposer(); }} />;
   const navigation = <aside ref={sidebar.ref} className="sidebar bs-root" style={{ width: `${sidebar.width}px` }} aria-label="Workspace navigation" onClick={event => { if (narrowSidebar && (event.target as HTMLElement).closest('.bot-row, .project-navigation__name, .project-navigation__room')) setNarrowOpen(false); }}>
       <div className="sidebar__titlebar">
         <span className="sidebar__bots-label">Briefsip</span>
@@ -1320,9 +1386,10 @@ function App() {
       <div className="sidebar__search">
         <Search size={15} aria-hidden /><Input aria-label={sidebarTab === 'agents' ? 'Search agents' : 'Search projects'} placeholder={sidebarTab === 'agents' ? 'Search agents' : 'Search projects'} value={search} onChange={event => setSearches(current => ({ ...current, [sidebarTab]: event.target.value }))} />
         {sidebarTab === 'agents' && <DropdownMenu.Root open={filterMenu} onOpenChange={setFilterMenu}>
-          <DropdownMenu.Trigger asChild><IconButton label="Filter sidebar" aria-pressed={onlyOnline}><Filter size={15} aria-hidden /></IconButton></DropdownMenu.Trigger>
+          <DropdownMenu.Trigger asChild><IconButton label="Filter sidebar" aria-pressed={onlyOnline || onlyNeedsYou}><Filter size={15} aria-hidden /></IconButton></DropdownMenu.Trigger>
           <DropdownMenu.Portal><DropdownMenu.Content className="k-pop k-menu" align="end" sideOffset={6}>
             <DropdownMenu.CheckboxItem className="k-menu__item" checked={onlyOnline} onCheckedChange={setOnlyOnline}><DropdownMenu.ItemIndicator><Check size={14} aria-hidden /></DropdownMenu.ItemIndicator>Only online</DropdownMenu.CheckboxItem>
+            <DropdownMenu.CheckboxItem className="k-menu__item" checked={onlyNeedsYou} onCheckedChange={setOnlyNeedsYou}><DropdownMenu.ItemIndicator><Check size={14} aria-hidden /></DropdownMenu.ItemIndicator>Needs you</DropdownMenu.CheckboxItem>
           </DropdownMenu.Content></DropdownMenu.Portal>
         </DropdownMenu.Root>}
       </div>
@@ -1330,7 +1397,7 @@ function App() {
       <div className="sidebar__scroll">
         <TabPanel value="agents">
         <nav className="machine-groups" aria-label="Machines">
-        {(!query || localAgents.length > 0) && <MachineGroup name="This device" subtitle={environment?.name} count={(directory?.agents ?? []).filter(item => !item.hidden || item.id === retainedAgent).length} expanded={query ? searchMachineGroups.local !== false : machineGroups.local !== false} onExpandedChange={expanded => setMachineExpanded('local', expanded)} local>
+        {(!(query || onlyNeedsYou) || localAgents.length > 0) && <MachineGroup name="This device" subtitle={environment?.name} count={(directory?.agents ?? []).filter(item => !item.hidden || item.id === retainedAgent).length} expanded={query ? searchMachineGroups.local !== false : machineGroups.local !== false} onExpandedChange={expanded => setMachineExpanded('local', expanded)} local>
           <div className="bot-list sidebar-agents">
             <nav className="bot-list" aria-label="Choose agent">{localAgents.map(item => agentRow(item.id))}
             {directory && !directory.agents.length && <button type="button" className="bot-list__empty" onClick={() => setDialog('agent')}><span className="bot-list__empty-plus"><Plus size={14} aria-hidden /></span><span><span className="bot-row__name">New agent</span></span></button>}
@@ -1350,9 +1417,9 @@ function App() {
             {!machine.agents.length && <p className="machine-group__note">No agents cached yet.</p>}
           </nav>
         </MachineGroup>)}
-        {query && !anyMatchingAgents && <p className="machine-group__note" role="status">No matching agents.</p>}
+        {(query || onlyNeedsYou) && !anyMatchingAgents && <p className="machine-group__note" role="status">{onlyNeedsYou && !query ? 'No agents need you.' : 'No matching agents.'}</p>}
         {remoteMachinesState.error && <p className="machine-group__note" role="status">Machines could not be refreshed.</p>}
-        {!remoteMachinesState.machines.length && <button type="button" className="bot-list__empty" onClick={() => setSettings('machines')}><Monitor size={16} aria-hidden /><span><span className="bot-row__name">Pair a machine</span></span></button>}
+        {!onlyNeedsYou && !remoteMachinesState.machines.length && <button type="button" className="bot-list__empty" onClick={() => setSettings('machines')}><Monitor size={16} aria-hidden /><span><span className="bot-row__name">Pair a machine</span></span></button>}
         <HiddenAgents agents={matchingHiddenAgents} searching={!!query} renderAgent={id => {
           const item = hiddenAgents.find(agent => agent.id === id)!;
           return <div className="hidden-agent-row"><button type="button" className="bot-row" aria-label={`Open hidden agent ${item.name}`} onClick={() => openAgent(item.id)}><AgentAvatar agent={item} size={36} /><span className="bot-row__text"><span className="bot-row__name">{item.name}</span></span></button><Button size="sm" variant="ghost" aria-label={`Restore ${item.name}`} busy={restoring === id} disabled={!!restoring} onClick={() => void restoreAgent(item)}>Restore</Button></div>;
@@ -1375,7 +1442,7 @@ function App() {
       </div>
       <PanelResizeHandle panel={sidebar} />
     </aside>;
-  return <RadixDialog.Root modal open={!!settings} onOpenChange={open => setSettings(current => open ? current ?? 'general' : null)}><div className={`app bs-root${collapsed ? ' is-sidebar-collapsed' : ''}`}>
+  return <NeedsYouFocus.Provider value={attentionFocus}><RadixDialog.Root modal open={!!settings} onOpenChange={open => setSettings(current => open ? current ?? 'general' : null)}><div className={`app bs-root${collapsed ? ' is-sidebar-collapsed' : ''}`}>
     {collapsed && <IconButton className="sidebar-reveal icon-btn--bordered" onClick={() => setCollapsed(false)} label="Expand sidebar" tooltip="Sidebar (Ctrl/Cmd+B)"><PanelLeft size={16} aria-hidden /></IconButton>}
     {narrowSidebar ? <RadixDialog.Root open={!collapsed} onOpenChange={setNarrowOpen}><RadixDialog.Portal>
       <RadixDialog.Overlay className="sidebar-backdrop" />
@@ -1422,6 +1489,8 @@ function App() {
           {!directory ? <p className="empty" role="status">Loading workspace...</p>
             : settings === 'skills' ? <Suspense fallback={<p className="empty" role="status">Loading skill library...</p>}><SkillsPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'providers' ? <ProvidersPanel request={api} />
+            : settings === 'engines' ? <EnginesPanel request={api} />
+            : settings === 'devices' ? <DevicesPanel request={api} />
             : settings === 'updates' ? <UpdatesPanel updates={updates} />
             : settings === 'machines' ? <MachinesPanel request={api} onChanged={() => { void remoteMachinesState.reload(); void api<Environment>('/api/environment').then(setEnvironment).catch(() => setActivityError(true)); }} />
             : settings === 'hub' ? <Suspense fallback={<p className="empty" role="status">Loading hub connection...</p>}><HubConnection agents={directory.agents} request={api} /></Suspense>
@@ -1431,13 +1500,13 @@ function App() {
             : settings === 'data' ? <Suspense fallback={<p className="empty" role="status">Loading shared data...</p>}><SharedDataPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'usage' ? <Suspense fallback={<p className="empty" role="status">Loading usage...</p>}><UsagePanel request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'backup' ? <Suspense fallback={<p className="empty" role="status">Loading backup...</p>}><BackupPanel onClose={() => setSettings(null)} /></Suspense>
-            : settings === 'general' ? <Suspense fallback={<p className="empty" role="status">Loading general settings...</p>}><GeneralSettings notificationsMuted={notificationsMuted} notificationError={notificationError} onNotificationsChange={enabled => { try { localStorage.setItem('briefsip:workflow-notifications-muted', enabled ? '0' : '1'); setNotificationsMuted(!enabled); setNotificationError(''); } catch { setNotificationError('Notification preference could not be saved. Check browser storage.'); } }} /></Suspense>
+            : settings === 'general' ? <Suspense fallback={<p className="empty" role="status">Loading general settings...</p>}><GeneralSettings notificationsMuted={notificationsMuted} notificationError={notificationError} onNotificationsChange={enabled => { try { localStorage.setItem(notificationMuteKey, enabled ? '0' : '1'); setNotificationsMuted(!enabled); setNotificationError(''); } catch { setNotificationError('Notification preference could not be saved. Check browser storage.'); } }} /></Suspense>
             : <Suspense fallback={<p className="empty" role="status">Loading appearance settings...</p>}><PresentationSettings /></Suspense>}
         </div>
       </div>
     </RadixDialog.Content></RadixDialog.Portal>
     <UpdateEverythingDialog updates={updates} />
-  </div></RadixDialog.Root>;
+  </div></RadixDialog.Root></NeedsYouFocus.Provider>;
 }
 
 function ComputerWindow() {
