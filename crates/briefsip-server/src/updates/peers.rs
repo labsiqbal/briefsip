@@ -19,7 +19,7 @@ pub async fn peer_statuses(state: &AppState) -> Result<Value> {
         } else if !["online", "version-mismatch"].contains(&string(&machine, "status")) {
             json!({"machine":id,"available":false,"reason":"Machine is offline."})
         } else {
-            match machines::update_remote(state, id, "/api/peer/updates", None, 0).await {
+            match machines::update_remote(state, id, None, 0, |_| Ok(())).await {
                 Ok(value) => {
                     let mut item = json!({"machine":id,"available":true});
                     if let Some(map) = value.as_object() {
@@ -119,11 +119,15 @@ async fn run_fan_out(
             tasks.spawn(async move {
                 let outcome = async {
                     attempts::start(&state, &id, &machine)?;
-                    machines::update_remote(&state, &machine, "/api/peer/updates/apply", Some(&body), bytes).await
+                    machines::update_remote(&state, &machine, Some(&body), bytes, |received| {
+                        attempts::progress(&state, &id, &machine, received.min(bytes))
+                    }).await
                 }.await;
                 attempts::finish(&state, &id, &machine, outcome.as_ref().err())?;
                 Ok::<_, Failure>(match outcome {
                     Ok(value) => json!({"machine":machine,"status":"accepted","id":value["id"].as_str().unwrap_or("undefined")}),
+                    Err(failure) if failure.code == PeerError::Unconfirmed.code() =>
+                        json!({"machine":machine,"status":"uncertain","reason":failure.message}),
                     Err(failure) => json!({"machine":machine,"status":"failed","reason":failure.message}),
                 })
             });
@@ -153,21 +157,39 @@ async fn check_permission(state: &AppState, machine: &str, bearer: Option<&str>)
     machines::ensure_updates_allowed(state, machine)
 }
 
-async fn peer_apply(
+fn receipt_id(value: &Value, machine: &str) -> Result<String> {
+    command(value, &["id", "version", "target", "sha256", "poll"])?;
+    let target = string(value, "target");
+    if !archive::valid_hash(string(value, "sha256"))
+        || !release::id(target)
+        || !target.starts_with(&format!("{}-", string(value, "version")))
+        || value.get("poll").is_some_and(|poll| poll != true)
+    {
+        return Err(error(400, "Invalid peer release."));
+    }
+    let hash = format!(
+        "{:x}",
+        Sha256::digest(format!("update:{machine}:{}", string(value, "id")).as_bytes())
+    );
+    Ok(format!(
+        "{}-{}-4{}-8{}-{}",
+        &hash[..8],
+        &hash[8..12],
+        &hash[13..16],
+        &hash[17..20],
+        &hash[20..32]
+    ))
+}
+
+async fn apply_release(
     state: &AppState,
     value: &Value,
     machine: &str,
     bearer: Option<&str>,
+    id: &str,
 ) -> Result<Value> {
-    command(value, &["id", "version", "target", "sha256"])?;
     let target = string(value, "target");
     let expected = string(value, "sha256");
-    if !archive::valid_hash(expected)
-        || !release::id(target)
-        || !target.starts_with(&format!("{}-", string(value, "version")))
-    {
-        return Err(error(400, "Invalid peer release."));
-    }
     let options = state.config.update.options();
     let releases = options
         .releases_dir
@@ -176,42 +198,168 @@ async fn peer_apply(
     if status(state).await?["launcherAvailable"] != true {
         return Err(PeerError::LauncherUnavailable.failure());
     }
-    let _receiving = RECEIVING
-        .try_lock()
-        .map_err(|_| error(409, "Another update is already running."))?;
-    let hash = format!(
-        "{:x}",
-        Sha256::digest(format!("update:{machine}:{}", string(value, "id")).as_bytes())
-    );
-    let id = format!(
-        "{}-{}-4{}-8{}-{}",
-        &hash[..8],
-        &hash[8..12],
-        &hash[13..16],
-        &hash[17..20],
-        &hash[20..32]
-    );
-    if !releases.join(target).exists() {
+    let polling = value["poll"] == true;
+    let bytes = if releases.join(target).exists() {
+        0
+    } else {
         archive::receive(
             releases,
             target,
             expected,
-            |offset| machines::download_release(state, machine, target, offset),
+            |offset| machines::download_release(state, machine, target, offset, polling),
             || check_permission(state, machine, bearer),
         )
-        .await?;
-    }
+        .await?
+    };
     let release = release::verify(releases, target)
         .map_err(|_| PeerError::IntegrityMismatch.detail("Peer release manifest mismatch."))?;
     if release["version"] != value["version"] {
         return Err(PeerError::IntegrityMismatch.detail("Peer release version mismatch."));
     }
     check_permission(state, machine, bearer).await?;
-    launcher(
+    let mut result = launcher(
         options,
         json!({"type":"apply","id":id,"target":release["id"],"version":release["version"]}),
     )
-    .await
+    .await?;
+    if polling {
+        result["bytesTransferred"] = json!(bytes);
+    }
+    Ok(result)
+}
+
+fn apply_response(value: &Value, machine: &str, result: Result<Value>) -> (u16, Value) {
+    match result {
+        Ok(value) => (202, value),
+        Err(failure) => {
+            eprintln!(
+                "peer release apply machine={machine} release={:?} code={} message={:?}",
+                string(value, "target"),
+                failure.code,
+                failure.message
+            );
+            (
+                failure.status,
+                json!({"error":failure.message,"code":failure.code}),
+            )
+        }
+    }
+}
+
+async fn peer_apply(
+    state: &AppState,
+    value: Value,
+    machine: String,
+    bearer: Option<String>,
+) -> Result<Response> {
+    let id = receipt_id(&value, &machine)?;
+    let lock = || {
+        RECEIVING
+            .try_lock()
+            .map_err(|_| error(409, "Another update is already running."))
+    };
+    if value["poll"] != true {
+        let _receiving = lock()?;
+        let result = apply_release(state, &value, &machine, bearer.as_deref(), &id).await;
+        let (status, body) = apply_response(&value, &machine, result);
+        return Ok(json_response(status, body));
+    }
+
+    let key = format!("peer-apply:{id}");
+    let fingerprint = json!([value["target"], value["version"], value["sha256"]]).to_string();
+    let saved = {
+        let db = state.database.lock().map_err(|_| Failure::storage())?;
+        let saved = db
+            .connection
+            .query_row(
+                "SELECT request,result FROM update_commands WHERE id=?",
+                [&key],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        if let Some((request, result)) = saved {
+            if request != fingerprint {
+                return Err(error(
+                    409,
+                    "Request ID was already used for another release.",
+                ));
+            }
+            let result: Value = serde_json::from_str(&result).map_err(|_| Failure::storage())?;
+            if result["pending"] == true && RECEIVING.try_lock().is_ok() {
+                json!({"unconfirmed":true})
+            } else {
+                result
+            }
+        } else {
+            let receiving = lock()?;
+            let pending = json!({"pending":true});
+            db.connection.execute(
+                "INSERT INTO update_commands VALUES(?,?,?)",
+                rusqlite::params![key, fingerprint, pending.to_string()],
+            )?;
+            let (state, value, id) = (state.clone(), value.clone(), id.clone());
+            tokio::spawn(async move {
+                let _receiving = receiving;
+                let result = apply_release(&state, &value, &machine, bearer.as_deref(), &id).await;
+                let (status, body) = apply_response(&value, &machine, result);
+                if let Err(failure) =
+                    save_peer_result(&state, &key, &json!({"status":status,"body":body}))
+                {
+                    eprintln!("peer release apply receipt {id}: {}", failure.code);
+                }
+            });
+            pending
+        }
+    };
+    if saved["pending"] == true {
+        let bytes = state
+            .config
+            .update
+            .options()
+            .releases_dir
+            .as_ref()
+            .and_then(|root| {
+                std::fs::symlink_metadata(archive::partial_file(
+                    root,
+                    string(&value, "target"),
+                    string(&value, "sha256"),
+                ))
+                .ok()
+            })
+            .filter(std::fs::Metadata::is_file)
+            .map_or(0, |meta| meta.len());
+        return Ok(json_response(
+            202,
+            json!({"pending":true,"id":id,"bytesTransferred":bytes}),
+        ));
+    }
+    if saved["interrupted"] == true || saved["unconfirmed"] == true {
+        let control = launcher(state.config.update.options(), json!({"type":"status"})).await?;
+        if control["lastAttempt"]["id"] == id {
+            return Ok(json_response(202, json!({"accepted":true,"id":id})));
+        }
+        if saved["unconfirmed"] == true {
+            return Err(PeerError::Unconfirmed.failure());
+        }
+        return Err(error(409, "Receiving server restarted during the update."));
+    }
+    Ok(json_response(
+        saved["status"].as_u64().ok_or_else(Failure::storage)? as u16,
+        saved["body"].clone(),
+    ))
+}
+
+fn save_peer_result(state: &AppState, key: &str, result: &Value) -> Result<()> {
+    state
+        .database
+        .lock()
+        .map_err(|_| Failure::storage())?
+        .connection
+        .execute(
+            "UPDATE update_commands SET result=? WHERE id=?",
+            rusqlite::params![result.to_string(), key],
+        )?;
+    Ok(())
 }
 
 async fn authorize(state: &AppState, bearer: Option<&str>) -> Result<String> {
@@ -296,7 +444,11 @@ async fn serve_release(
         .await
         .map_err(|_| error(500, "Could not seek release."))?;
     let mut file = file.take(length);
-    let attempt = attempts::active(state, &machine, id)?;
+    let attempt = if headers.contains_key("x-briefsip-update-poll") {
+        None
+    } else {
+        attempts::active(state, &machine, id)?
+    };
     if let Some(attempt) = &attempt {
         attempts::progress(state, attempt, &machine, start)?;
     }
@@ -369,7 +521,9 @@ async fn peer_request(state: &AppState, request: Request) -> Result<Response> {
     let machine = authorize(state, bearer).await?;
     let path = request.uri().path();
     if path == "/api/peer/updates" && request.method() == Method::GET {
-        return Ok(json_response(200, status(state).await?));
+        let mut status = status(state).await?;
+        status["peerApplyPolling"] = json!(true);
+        return Ok(json_response(200, status));
     }
     if path == "/api/peer/updates/apply" && request.method() == Method::POST {
         if crate::text_header(request.headers(), "content-type").and_then(|v| v.split(';').next())
@@ -383,22 +537,7 @@ async fn peer_request(state: &AppState, request: Request) -> Result<Response> {
             .map_err(|_| error(400, "Invalid update request."))?;
         let value =
             serde_json::from_slice(&bytes).map_err(|_| error(400, "Invalid update request."))?;
-        let result = peer_apply(state, &value, &machine, bearer.as_deref()).await;
-        if let Err(failure) = &result {
-            eprintln!(
-                "peer release apply machine={machine} release={:?} code={} message={:?}",
-                string(&value, "target"),
-                failure.code,
-                failure.message
-            );
-        }
-        return Ok(match result {
-            Ok(value) => json_response(202, value),
-            Err(failure) => json_response(
-                failure.status,
-                json!({"error":failure.message,"code":failure.code}),
-            ),
-        });
+        return peer_apply(state, value, machine, bearer).await;
     }
     if let Some(id) = path
         .strip_prefix("/api/updates/releases/")

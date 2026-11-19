@@ -18,7 +18,7 @@ use std::{
     fs::{self, OpenOptions},
     io::{Read, Write},
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const SCOPES: [&str; 3] = ["agents:read", "agents:message", "history:read"];
@@ -422,6 +422,8 @@ fn no_secrets(value: &Value, tokens: &[&str]) -> Result<()> {
     }
     Ok(())
 }
+const UPDATE_STATUS: &str = "/api/peer/updates";
+const UPDATE_APPLY: &str = "/api/peer/updates/apply";
 const UPDATE_TIMEOUT: Duration = Duration::from_secs(300);
 const RELEASE_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 fn update_deadline(bytes: u64) -> Duration {
@@ -436,6 +438,9 @@ fn rejection(status: u16, update: bool, value: Option<&Value>) -> Failure {
         if [401, 403].contains(&status) {
             return PeerError::PermissionRevoked.failure();
         }
+        if status >= 500 && value.is_none_or(|v| v["code"] != "storage_failed") {
+            return PeerError::Unconfirmed.failure();
+        }
     }
     let message = if update {
         let reason =
@@ -445,6 +450,7 @@ fn rejection(status: u16, update: bool, value: Option<&Value>) -> Failure {
             | "Release version is not an update."
             | "Insufficient disk space for update snapshot and trial."
             | "Request ID was already used for another release."
+            | "Receiving server restarted during the update."
             | "Receiving machine is not running under the Briefsip launcher."
             | "Peer release download failed integrity, permission, time or size checks."
             | "Machine updates require permission from both owners in Settings > Machines.")
@@ -483,28 +489,68 @@ async fn remote_request(
     body: Option<&Value>,
     peer_update_timeout: Option<Duration>,
 ) -> Result<Value> {
+    let client = peer_client()?;
+    remote_with_client(s, origin, path, token, body, peer_update_timeout, &client).await
+}
+
+fn peer_client() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|_| Failure::storage())
+}
+
+async fn remote_with_client(
+    s: &AppState,
+    origin: &str,
+    path: &str,
+    token: Option<&str>,
+    body: Option<&Value>,
+    peer_update_timeout: Option<Duration>,
+    client: &reqwest::Client,
+) -> Result<Value> {
     let track_transport = peer_update_timeout.is_some();
     let timeout = peer_update_timeout.unwrap_or(Duration::from_secs(10));
-    let update = path == "/api/peer/updates/apply";
+    let update = path == UPDATE_APPLY;
     let unavailable = || {
+        if update {
+            return PeerError::Unconfirmed.failure();
+        }
         error(
             502,
             "Remote machine is unavailable or exceeded its time, size, or JSON limits.",
         )
     };
+    let started = Instant::now();
+    let interrupted = |phase: &str, failure: Failure| {
+        if track_transport && matches!(path, "/api/environment" | UPDATE_APPLY) {
+            eprintln!(
+                "peer update request path={path} phase={phase} elapsed_ms={} code={}",
+                started.elapsed().as_millis(),
+                failure.code
+            );
+        }
+        if update {
+            PeerError::Unconfirmed.failure()
+        } else if path == "/api/environment" && failure.code == PeerError::Timeout.code() {
+            Failure::new(
+                504,
+                "peer_precheck_timeout",
+                "Remote machine identity check timed out.",
+            )
+        } else {
+            failure
+        }
+    };
     let operation = async {
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(timeout)
-            .build()
-            .map_err(|_| Failure::storage())?;
         let mut req = if let Some(body) = body {
             client.post(format!("{origin}{path}")).json(body)
         } else {
             client.get(format!("{origin}{path}"))
-        };
+        }
+        .timeout(timeout);
         if let Some(token) = token {
             req = req.bearer_auth(token);
         }
@@ -515,7 +561,7 @@ async fn remote_request(
         }
         let mut response = peer_http(s, req).await.map_err(|failure| {
             if track_transport {
-                failure
+                interrupted("headers", failure)
             } else {
                 unavailable()
             }
@@ -535,25 +581,19 @@ async fn remote_request(
             return Err(if !status.is_success() {
                 rejection(status.as_u16(), update, None)
             } else {
-                error(
-                    502,
-                    "Remote machine is unavailable or exceeded its time, size, or JSON limits.",
-                )
+                unavailable()
             });
         }
         let mut bytes = Vec::new();
         while let Some(chunk) = response.chunk().await.map_err(|err| {
             if track_transport {
-                PeerError::network(err)
+                interrupted("body", PeerError::network(err))
             } else {
                 Failure::storage()
             }
         })? {
             if bytes.len() + chunk.len() > 128 * 1024 {
-                return Err(error(
-                    502,
-                    "Remote machine is unavailable or exceeded its time, size, or JSON limits.",
-                ));
+                return Err(unavailable());
             }
             bytes.extend_from_slice(&chunk);
         }
@@ -561,18 +601,13 @@ async fn remote_request(
         if !status.is_success() {
             return Err(rejection(status.as_u16(), update, value.as_ref().ok()));
         }
-        value.map_err(|_| {
-            error(
-                502,
-                "Remote machine is unavailable or exceeded its time, size, or JSON limits.",
-            )
-        })
+        value.map_err(|_| unavailable())
     };
     tokio::time::timeout(timeout, operation)
         .await
         .map_err(|_| {
             if track_transport {
-                PeerError::Timeout.failure()
+                interrupted("deadline", PeerError::Timeout.failure())
             } else {
                 unavailable()
             }
@@ -1086,9 +1121,9 @@ fn update_peer(s: &AppState, machine: &str) -> Result<Value> {
 pub async fn update_remote(
     s: &AppState,
     machine: &str,
-    path: &str,
     body: Option<&Value>,
     bytes: u64,
+    progress: impl Fn(u64) -> Result<()>,
 ) -> Result<Value> {
     let r = update_peer(s, machine)?;
     let origin = text(&r, "origin");
@@ -1107,17 +1142,35 @@ pub async fn update_remote(
         return Err(error(401, "Remote machine identity changed."));
     }
     let token = crypt(s, text(&r, "token"), origin, false)?;
-    let value = if body.is_some() {
-        let deadline = s
-            .config
-            .update
-            .options()
-            .test_peer_update_timeout_ms
-            .map_or_else(|| update_deadline(bytes), Duration::from_millis);
-        remote_request(s, origin, path, Some(&token), body, Some(deadline)).await?
-    } else {
-        remote(s, origin, path, Some(&token), body).await?
+    let status = remote(s, origin, UPDATE_STATUS, Some(&token), None).await?;
+    let value = match body {
+        Some(body) if status["peerApplyPolling"] == true => {
+            let mut body = body.clone();
+            body["poll"] = json!(true);
+            poll_update(s, origin, &token, &body, progress).await?
+        }
+        Some(body) => {
+            let deadline = s
+                .config
+                .update
+                .options()
+                .test_peer_update_timeout_ms
+                .map_or_else(|| update_deadline(bytes), Duration::from_millis);
+            remote_request(
+                s,
+                origin,
+                UPDATE_APPLY,
+                Some(&token),
+                Some(body),
+                Some(deadline),
+            )
+            .await?
+        }
+        None => status,
     };
+    if body.is_some() && crate::web::id(text(&value, "id")).is_none() {
+        return Err(PeerError::Unconfirmed.failure());
+    }
     no_secrets(
         &value,
         &[
@@ -1132,6 +1185,49 @@ pub async fn update_remote(
     )?;
     Ok(value)
 }
+async fn poll_update(
+    s: &AppState,
+    origin: &str,
+    token: &str,
+    body: &Value,
+    progress: impl Fn(u64) -> Result<()>,
+) -> Result<Value> {
+    let client = peer_client()?;
+    let mut last_reply = Instant::now();
+    loop {
+        let reply = remote_with_client(
+            s,
+            origin,
+            UPDATE_APPLY,
+            Some(token),
+            Some(body),
+            Some(Duration::from_secs(10)),
+            &client,
+        )
+        .await;
+        match reply {
+            Ok(value) if value["pending"] == true => {
+                progress(value["bytesTransferred"].as_u64().unwrap_or(0))?;
+                last_reply = Instant::now();
+            }
+            Ok(value)
+                if value["accepted"] == true && crate::web::id(text(&value, "id")).is_some() =>
+            {
+                if let Some(bytes) = value["bytesTransferred"].as_u64() {
+                    progress(bytes)?;
+                }
+                return Ok(value);
+            }
+            Err(failure) if failure.code != PeerError::Unconfirmed.code() => return Err(failure),
+            _ if last_reply.elapsed() >= Duration::from_secs(90) => {
+                return Err(PeerError::Unconfirmed.failure())
+            }
+            _ => {}
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
 async fn peer_http(s: &AppState, request: reqwest::RequestBuilder) -> Result<reqwest::Response> {
     if s.config.computer.test_computer_bridge.is_none() {
         return request.send().await.map_err(PeerError::network);
@@ -1321,6 +1417,7 @@ pub async fn download_release(
     machine: &str,
     release: &str,
     offset: u64,
+    polling: bool,
 ) -> Result<reqwest::Response> {
     let r = update_peer(s, machine)?;
     if !briefsip_launcher::files::release_id(release) {
@@ -1338,6 +1435,9 @@ pub async fn download_release(
     let mut request = client
         .get(format!("{origin}/api/updates/releases/{release}"))
         .bearer_auth(token);
+    if polling {
+        request = request.header("X-Briefsip-Update-Poll", "1");
+    }
     if offset > 0 {
         request = request.header(reqwest::header::RANGE, format!("bytes={offset}-"));
     }

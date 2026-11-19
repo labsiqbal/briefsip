@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer, request, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createServer as controlServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -59,7 +59,7 @@ async function start(cleanup: Cleanup, dir: string, config: object) {
 }
 
 type Transfer = (upstream: IncomingMessage, downstream: ServerResponse) => Promise<void>;
-async function fixture(t: TestContext, testPeerUpdateTimeoutMs?: number) {
+async function fixture(t: TestContext, testPeerUpdateTimeoutMs?: number, relayApply = false) {
   const dir = await mkdtemp(join(tmpdir(), 'briefsip-peer-transfer-'));
   const cleanup: Cleanup = [];
   t.after(async () => {
@@ -94,6 +94,33 @@ async function fixture(t: TestContext, testPeerUpdateTimeoutMs?: number) {
   await setPermission(initial.origin, machine.id, true);
   await setPermission(receiver.origin, back.id, true);
 
+  let applyStarted = 0, applyResponse = 0;
+  if (relayApply) {
+    const origin = receiver.origin;
+    await receiver.close();
+    const relay = createServer((req, res) => {
+      const apply = req.url === '/api/peer/updates/apply';
+      if (apply && !applyStarted) applyStarted = performance.now();
+      const upstream = request(receiver.origin + req.url, {
+        method: req.method, headers: { ...req.headers, host: new URL(receiver.origin).host }, agent: false,
+      }, async reply => {
+        if (apply && !applyResponse) {
+          applyResponse = performance.now();
+          res.destroy();
+          return reply.resume();
+        }
+        if (res.destroyed) return reply.resume();
+        await forwardPeer(req, reply, res, origin).catch(() => res.destroy());
+      });
+      upstream.once('error', () => res.destroy());
+      req.pipe(upstream);
+    });
+    relay.listen(Number(new URL(origin).port), '127.0.0.1');
+    await once(relay, 'listening');
+    cleanup.push(() => new Promise<void>(resolve => { relay.closeAllConnections(); relay.close(() => resolve()); }));
+    receiver = await start(cleanup, dir, to);
+  }
+
   // Keep the paired public origin stable while inserting the throttling proxy.
   await initial.close();
   let backend: string;
@@ -104,18 +131,11 @@ async function fixture(t: TestContext, testPeerUpdateTimeoutMs?: number) {
       method: req.method, headers: { ...req.headers, host: new URL(backend).host }, agent: false,
     }, async reply => {
       try {
-        if (req.url === '/api/environment') {
-          const chunks: Buffer[] = [];
-          for await (const chunk of reply) chunks.push(chunk);
-          const data = JSON.parse(Buffer.concat(chunks).toString());
-          res.writeHead(reply.statusCode!, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ...data, origin: initial.origin }));
-        } else if (req.url?.startsWith('/api/updates/releases/')) {
+        if (req.url?.startsWith('/api/updates/releases/')) {
           ranges.push({ range: req.headers.range, status: reply.statusCode, length: reply.headers['content-length'] });
           await transfer(reply, res);
         } else {
-          res.writeHead(reply.statusCode!, reply.headers);
-          reply.pipe(res);
+          await forwardPeer(req, reply, res, initial.origin);
         }
       } catch { res.destroy(); }
     });
@@ -152,6 +172,8 @@ async function fixture(t: TestContext, testPeerUpdateTimeoutMs?: number) {
   return {
     release, ranges, received,
     get applied() { return applied; },
+    get applyStarted() { return applyStarted; },
+    get applyResponse() { return applyResponse; },
     get stderr() { return receiver.stderr; },
     setLauncher(available: boolean) { launcherAvailable = available; },
     setTransfer(handle: Transfer) { transfer = handle; },
@@ -173,9 +195,37 @@ async function fixture(t: TestContext, testPeerUpdateTimeoutMs?: number) {
     },
   };
 }
+async function forwardPeer(req: IncomingMessage, reply: IncomingMessage, res: ServerResponse, origin: string) {
+  if (req.url === '/api/environment') {
+    const chunks: Buffer[] = [];
+    for await (const chunk of reply) chunks.push(chunk);
+    const data = JSON.parse(Buffer.concat(chunks).toString());
+    res.writeHead(reply.statusCode!, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ...data, origin }));
+  } else {
+    res.writeHead(reply.statusCode!, reply.headers);
+    reply.pipe(res);
+  }
+}
+
 async function forward(reply: IncomingMessage, res: ServerResponse) {
   res.writeHead(reply.statusCode!, reply.headers);
   for await (const bytes of reply) res.write(bytes);
+  res.end();
+}
+async function throttle(reply: IncomingMessage, res: ServerResponse, rate: number) {
+  res.writeHead(reply.statusCode!, reply.headers);
+  const started = performance.now();
+  let emitted = 0;
+  for await (const chunk of reply) {
+    for (let offset = 0; offset < chunk.length; offset += 8192) {
+      const part = chunk.subarray(offset, offset + 8192);
+      emitted += part.length;
+      await delay(Math.max(0, emitted * 1000 / rate - (performance.now() - started)));
+      if (res.destroyed) return;
+      res.write(part);
+    }
+  }
   res.end();
 }
 async function drop(reply: IncomingMessage, res: ServerResponse) {
@@ -187,6 +237,37 @@ async function drop(reply: IncomingMessage, res: ServerResponse) {
     return;
   }
 }
+
+test('peer fan-out follows receiver progress beyond the apply request deadline', { timeout: 90_000 }, async t => {
+  const slow = process.env.BRIEFSIP_PEER_CONTROL === '1';
+  const deadline = slow ? 49_000 : 1_000;
+  const peers = await fixture(t, deadline, true);
+  const release = await peers.release(11, randomBytes(slow ? 1_625_000 : 90_000));
+  peers.setTransfer((reply, res) => throttle(reply, res, 25_000));
+  const started = performance.now();
+  const partialBytes = async () => {
+    const partial = (await readdir(peers.received)).find(name => name.startsWith('.peer-release-partial-'));
+    return partial ? (await stat(join(peers.received, partial))).size : 0;
+  };
+  const outcome = peers.fanOut(release.version);
+  await delay(deadline + 350);
+  const before = await partialBytes();
+  const attempt = await peers.attempt();
+  await delay(500);
+  const after = await partialBytes();
+  const replyMs = peers.applyResponse ? Math.round(peers.applyResponse - peers.applyStarted) : 'pending';
+  t.diagnostic(`${attempt.state} ${attempt.error?.code ?? ''}, POST started +${Math.round(peers.applyStarted - started)} ms, reply latency ${replyMs} ms, receiver partial ${before} to ${after} bytes`);
+  assert(before > 0 && after > before, `${before} to ${after}`);
+  assert.equal(attempt.state, 'transferring');
+  assert(attempt.bytesTransferred > 0 && attempt.bytesTransferred <= after);
+  assert(peers.applyResponse > peers.applyStarted && peers.applyResponse - peers.applyStarted < deadline);
+  assert.equal(peers.applied, 0);
+  assert.equal((await outcome).status, 'accepted');
+  const done = await peers.attempt();
+  assert.equal(done.bytesTransferred, done.totalBytes);
+  assert.equal(peers.applied, 1);
+  t.diagnostic(`accepted after ${((performance.now() - started) / 1000).toFixed(2)} s`);
+});
 
 test('peer fan-out resumes dropped downloads, including after receiver restart', { timeout: 30000 }, async t => {
   const peers = await fixture(t), bytes = randomBytes(524288);
@@ -230,27 +311,31 @@ test('peer fan-out resumes dropped downloads, including after receiver restart',
   assert(!(await readdir(peers.received)).some(name => name.startsWith('.peer-release-partial-')));
 });
 
-test('peer fan-out resumes a retained partial after the sender deadline', { timeout: 30000 }, async t => {
-  const peers = await fixture(t, 2500);
+test('peer fan-out reports receiver restart and can resume its retained partial', { timeout: 30000 }, async t => {
+  const peers = await fixture(t);
   const release = await peers.release(9, randomBytes(524288));
-  let transferClosed: Promise<unknown> | undefined;
   let retained = 0;
+  let markPartial!: () => void;
+  const partial = new Promise<void>(resolve => { markPartial = resolve; });
   peers.setTransfer(async (reply, res) => {
     res.writeHead(reply.statusCode!, reply.headers);
     for await (const bytes of reply) {
       const part = bytes.subarray(0, 16384);
       retained = part.length;
       res.write(part);
-      transferClosed = once(res, 'close');
-      await transferClosed;
+      markPartial();
+      await once(res, 'close');
       return;
     }
   });
-  assert.equal((await peers.fanOut(release.version)).status, 'failed');
-  assert.equal((await peers.attempt()).error?.code, 'peer_transfer_timeout');
+  const outcome = peers.fanOut(release.version);
+  await partial;
+  while (!(await peers.attempt()).bytesTransferred) await delay(100);
+  await peers.restartReceiver();
+  const interrupted = await outcome;
+  assert.equal(interrupted.status, 'failed');
+  assert.match(interrupted.reason ?? '', /Receiving server restarted/);
   assert.equal(peers.applied, 0);
-  assert(transferClosed);
-  await transferClosed;
   assert(retained > 0);
 
   peers.ranges.length = 0;
@@ -297,7 +382,6 @@ test('peer fan-out reports timeout, integrity, size, permission, and launcher fa
     let first = true;
     for await (const bytes of reply) {
       if (first) {
-        assert.equal((await peers.attempt()).state, 'transferring');
         await peers.setReceiverPermission(false);
       }
       first = false;
@@ -310,26 +394,26 @@ test('peer fan-out reports timeout, integrity, size, permission, and launcher fa
   await fails(7, 'peer_launcher_unavailable', forward);
 });
 
+if (process.env.BRIEFSIP_PEER_CONTROL === '1') {
+  test('25 KB/s control keeps fan-out open beyond 60 seconds', { timeout: 90_000 }, async t => {
+    const peers = await fixture(t);
+    const release = await peers.release(10, randomBytes(1_625_000));
+    peers.setTransfer((reply, res) => throttle(reply, res, 25_000));
+    const started = performance.now();
+    assert.equal((await peers.fanOut(release.version)).status, 'accepted');
+    const elapsed = performance.now() - started;
+    assert(elapsed > 60_000);
+    assert.equal(peers.applied, 1);
+    t.diagnostic(`accepted after ${(elapsed / 1000).toFixed(2)} s`);
+  });
+}
+
 for (const rate of (process.env.BRIEFSIP_PEER_TEST_RATES ?? '').split(',').filter(Boolean).map(Number)) {
   test(`20.8 MB peer archive reaches launcher at ${rate / 1000} KB/s`, { timeout: 900_000, concurrency: true }, async t => {
     assert(rate === 30000 || rate === 160000);
     const peers = await fixture(t);
     const release = await peers.release(8, randomBytes(20_800_000));
-    peers.setTransfer(async (reply, res) => {
-      res.writeHead(reply.statusCode!, reply.headers);
-      const started = performance.now();
-      let emitted = 0;
-      for await (const chunk of reply) {
-        for (let offset = 0; offset < chunk.length; offset += 8192) {
-          const part = chunk.subarray(offset, offset + 8192);
-          emitted += part.length;
-          await delay(Math.max(0, emitted * 1000 / rate - (performance.now() - started)));
-          if (res.destroyed) return;
-          res.write(part);
-        }
-      }
-      res.end();
-    });
+    peers.setTransfer((reply, res) => throttle(reply, res, rate));
     const started = performance.now();
     assert.equal((await peers.fanOut(release.version)).status, 'accepted');
     const elapsed = performance.now() - started;

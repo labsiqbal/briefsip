@@ -83,9 +83,11 @@ describe('update run', () => {
     assert.equal(describeUpdateCapsule(run, false).label, '1 of 2 updated');
     assert.equal(describeUpdateCapsule(run, true).label, 'Reconnecting…');
     run.rows[0].status = 'failed';
-    assert.deepEqual(describeUpdateCapsule(run, false), { label: '1 update failed', failed: true });
+    assert.deepEqual(describeUpdateCapsule(run, false), { label: '1 update failed', attention: true });
+    run.rows[0].status = 'unconfirmed';
+    assert.deepEqual(describeUpdateCapsule(run, false), { label: '1 update unconfirmed', attention: true });
     run.rows[0].status = 'done';
-    assert.deepEqual(describeUpdateCapsule(run, false), { label: '2 of 2 updated', failed: false });
+    assert.deepEqual(describeUpdateCapsule(run, false), { label: '2 of 2 updated', attention: false });
   });
 });
 

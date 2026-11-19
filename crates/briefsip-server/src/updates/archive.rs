@@ -279,10 +279,14 @@ fn extract(archive: &Path, destination: &Path) -> Result<()> {
     }
     Ok(())
 }
-fn partial_path(root: &Path, id: &str, expected: &str) -> Result<PathBuf> {
-    const PREFIX: &str = ".peer-release-partial-";
+const PARTIAL_PREFIX: &str = ".peer-release-partial-";
+pub(super) fn partial_file(root: &Path, id: &str, expected: &str) -> PathBuf {
     let key = Sha256::digest(format!("{id}:{expected}"));
-    let partial = root.join(format!("{PREFIX}{key:x}"));
+    root.join(format!("{PARTIAL_PREFIX}{key:x}"))
+}
+
+fn partial_path(root: &Path, id: &str, expected: &str) -> Result<PathBuf> {
+    let partial = partial_file(root, id, expected);
     fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
@@ -295,7 +299,7 @@ fn partial_path(root: &Path, id: &str, expected: &str) -> Result<PathBuf> {
         if entry
             .file_name()
             .to_str()
-            .is_some_and(|name| name.strip_prefix(PREFIX).is_some_and(valid_hash))
+            .is_some_and(|name| name.strip_prefix(PARTIAL_PREFIX).is_some_and(valid_hash))
             && entry.path() != partial
         {
             fs::remove_file(entry.path()).map_err(|_| storage())?;
@@ -404,7 +408,7 @@ pub async fn receive<D, A>(
     expected: &str,
     mut download: impl FnMut(u64) -> D,
     authorize: impl FnOnce() -> A,
-) -> Result<()>
+) -> Result<u64>
 where
     D: Future<Output = Result<reqwest::Response>>,
     A: Future<Output = Result<()>>,
@@ -461,6 +465,7 @@ where
         }
     }
     file.sync_all().map_err(|_| storage())?;
+    let length = file.metadata().map_err(|_| storage())?.len();
     drop(file);
     let directory = Temporary::new(root, "download")?;
     let archive = partial.clone();
@@ -498,7 +503,7 @@ where
     let directory = verified?;
     fs::rename(directory.0.join(id), root.join(id)).map_err(|_| storage())?;
     briefsip_launcher::files::sync_dir(root).map_err(|_| storage())?;
-    Ok(())
+    Ok(length)
 }
 
 #[cfg(test)]
@@ -588,7 +593,7 @@ mod tests {
     async fn fixture_receive(
         root: &Path,
         stalls: &'static [usize],
-    ) -> Result<(Result<()>, Vec<u64>)> {
+    ) -> Result<(Result<u64>, Vec<u64>)> {
         let archive = fixture_archive(root).await?;
         let mut tasks = JoinSet::new();
         let url = fixture_sender(&mut tasks, &archive, stalls).await?;
