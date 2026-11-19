@@ -1,0 +1,352 @@
+use super::*;
+use axum::{
+    body::Body,
+    extract::{Request, State},
+    http::StatusCode,
+    routing::get,
+    Router,
+};
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
+};
+
+const ORIGIN: &str = "http://127.0.0.1:4418";
+const KEY: &str = "fixture-provider-secret";
+const REPLACEMENT: &str = "fixture-replacement-secret";
+const ENV_KEY: &str = "fixture-environment-secret";
+
+struct Fixture {
+    directory: PathBuf,
+    state: AppState,
+    base: String,
+    calls: Arc<AtomicUsize>,
+    server: tokio::task::JoinHandle<()>,
+}
+
+impl Fixture {
+    async fn new() -> crate::db::Result<Self> {
+        Self::with_environment_accounts(true).await
+    }
+
+    async fn with_environment_accounts(configured: bool) -> crate::db::Result<Self> {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let base = format!("http://{}/v1", listener.local_addr()?);
+        let router = Router::new().route(
+            "/v1/models",
+            get(move |request: Request| {
+                let count = count.clone();
+                async move {
+                    count.fetch_add(1, Ordering::Relaxed);
+                    let key = crate::text_header(request.headers(), "authorization")
+                        .and_then(|header| header.strip_prefix("Bearer "))
+                        .unwrap_or("");
+                    if [KEY, REPLACEMENT].contains(&key) {
+                        json_response(200, json!({"data":[{"id":"model-a"},{"id":"model-b"}]}))
+                    } else {
+                        json_response(401, json!({"error":key}))
+                    }
+                }
+            }),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve fixture catalog");
+        });
+        let directory =
+            std::env::temp_dir().join(format!("briefsip-provider-test-{}", uuid::Uuid::new_v4()));
+        let mut options = json!({
+            "database": directory.join("briefsip.sqlite"),
+            "harness": {"executables": {"codex": std::env::current_exe()?, "claude": std::env::current_exe()?}},
+        });
+        if configured {
+            options["baseURL"] = json!(base);
+            options["apiKey"] = json!(ENV_KEY);
+            options["defaultModel"] = json!("env-model");
+            options["accounts"] =
+                json!([{"id":"env", "name":"Environment", "baseURL":base, "apiKey":ENV_KEY}]);
+        }
+        let mut config: crate::config::Config = serde_json::from_value(options)?;
+        config.data.validate()?;
+        let database = crate::db::open(&config.database, false, 0)?;
+        crate::data::initialize(&database)?;
+        crate::files::init(&database.connection)?;
+        crate::turns::initialize(&database.connection).map_err(|error| error.message)?;
+        let computer = Arc::new(crate::computer::Manager::new(&config)?);
+        let state = AppState {
+            database: Arc::new(Mutex::new(database)),
+            config: Arc::new(config),
+            origin: ORIGIN.into(),
+            auth: None,
+            events: crate::events::Hub::new(),
+            turns: crate::turns::Runtime::default(),
+            computer,
+            trial_pending: Arc::new(AtomicBool::new(false)),
+        };
+        Ok(Self {
+            state,
+            directory,
+            base,
+            calls,
+            server,
+        })
+    }
+
+    async fn request(&self, path: &str, input: Option<Value>, origin: &str) -> (StatusCode, Value) {
+        let mut request = Request::builder()
+            .uri(path)
+            .header("host", "127.0.0.1:4418")
+            .header("origin", origin);
+        let body = if let Some(input) = input {
+            request = request
+                .method(Method::POST)
+                .header("content-type", "application/json");
+            Body::from(input.to_string())
+        } else {
+            Body::empty()
+        };
+        let response =
+            crate::dispatch(State(self.state.clone()), request.body(body).unwrap()).await;
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 64000)
+            .await
+            .unwrap();
+        let value: Value = serde_json::from_slice(&bytes).unwrap();
+        let text = value.to_string();
+        assert!(![KEY, REPLACEMENT, ENV_KEY, "invalid-provider-secret"]
+            .iter()
+            .any(|key| text.contains(key)));
+        assert!(!text.contains("apiKey\":") && !text.contains("key_ciphertext"));
+        (status, value)
+    }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        self.server.abort();
+        let _ = fs::remove_dir_all(&self.directory);
+    }
+}
+
+fn id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
+#[tokio::test]
+async fn agent_directory_checks_each_runtime_and_bound_account() -> crate::db::Result<()> {
+    let fixture = Fixture::with_environment_accounts(false).await?;
+    let agent = id();
+    let profile = json!({
+        "id": agent, "name": "Coder", "instructions": "Answer", "model": "model-a",
+        "runtime": "codex",
+    });
+    assert_eq!(
+        fixture
+            .request("/api/agents", Some(profile.clone()), ORIGIN)
+            .await
+            .0,
+        201
+    );
+    let (_, directory) = fixture.request("/api/agents", None, ORIGIN).await;
+    assert_eq!(directory["configured"], false);
+    assert_eq!(directory["agents"][0]["runnable"], false);
+    assert_eq!(
+        directory["agents"][0]["blocked_reason"],
+        "Codex needs an OpenAI-compatible provider."
+    );
+    assert_eq!(
+        fixture
+            .request(
+                &format!("/api/agents/{agent}/turns"),
+                Some(json!({"id":id(),"text":"Answer"})),
+                ORIGIN,
+            )
+            .await
+            .0,
+        503
+    );
+
+    let account = id();
+    assert_eq!(
+        fixture
+            .request(
+                "/api/provider-accounts",
+                Some(json!({
+                    "id": account, "name": "Router", "provider": "openai-compatible",
+                    "baseURL": fixture.base, "apiKey": KEY, "defaultModel": "model-a",
+                })),
+                ORIGIN
+            )
+            .await
+            .0,
+        201
+    );
+    let (_, directory) = fixture.request("/api/agents", None, ORIGIN).await;
+    assert_eq!(directory["configured"], false);
+    let mut profile = profile;
+    profile["id"] = json!(id());
+    profile["runtime"] = json!("api");
+    profile["providerAccount"] = json!(account);
+    assert_eq!(
+        fixture
+            .request("/api/agents", Some(profile), ORIGIN)
+            .await
+            .0,
+        201
+    );
+    let (_, directory) = fixture.request("/api/agents", None, ORIGIN).await;
+    assert_eq!(directory["configured"], true);
+    assert_eq!(directory["agents"][0]["runnable"], false);
+    assert_eq!(directory["agents"][1]["runnable"], true);
+    assert_eq!(directory["agents"][1]["blocked_reason"], Value::Null);
+    Ok(())
+}
+
+#[tokio::test]
+async fn settings_routes_verify_and_apply_accounts_live() -> crate::db::Result<()> {
+    let fixture = Fixture::new().await?;
+    let path = "/api/provider-accounts";
+    let account = id();
+    let payload = json!({"id":account,"name":"Router","provider":"openai-compatible","baseURL":fixture.base,"apiKey":KEY,"defaultModel":"model-a"});
+    let (_, accounts) = fixture.request(path, None, ORIGIN).await;
+    assert_eq!(accounts.as_array().unwrap().len(), 2);
+    assert!(accounts
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|row| row["source"] == "environment" && row["hasKey"] == true));
+
+    let (status, _) = fixture
+        .request(path, Some(payload.clone()), "https://foreign.example")
+        .await;
+    assert_eq!(status, 403);
+    assert_eq!(fixture.calls.load(Ordering::Relaxed), 0);
+
+    let mut invalid = payload.clone();
+    invalid["apiKey"] = json!("invalid-provider-secret");
+    let (status, body) = fixture.request(path, Some(invalid), ORIGIN).await;
+    assert_eq!(status, 502);
+    assert!(string(&body, "error").contains("rejected the API key"));
+    let (_, accounts) = fixture.request(path, None, ORIGIN).await;
+    assert_eq!(accounts.as_array().unwrap().len(), 2);
+    assert!(!fixture
+        .directory
+        .join("briefsip.sqlite.provider-key")
+        .exists());
+
+    let (status, body) = fixture
+        .request(&format!("{path}/test"), Some(payload.clone()), ORIGIN)
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(body["models"], json!(["model-a", "model-b"]));
+    assert_eq!(fixture.calls.load(Ordering::Relaxed), 2);
+
+    let (status, body) = fixture.request(path, Some(payload), ORIGIN).await;
+    assert_eq!(status, 201);
+    assert_eq!(body["id"], account);
+    assert_eq!(body["hasKey"], true);
+    assert_eq!(body["source"], "settings");
+    assert_eq!(body["revision"], 1);
+    assert_eq!(fixture.calls.load(Ordering::Relaxed), 3);
+    let key_path = fixture.directory.join("briefsip.sqlite.provider-key");
+    assert_eq!(fs::metadata(&key_path)?.permissions().mode() & 0o777, 0o600);
+    assert_eq!(fs::metadata(key_path)?.len(), 32);
+    for name in ["briefsip.sqlite", "briefsip.sqlite-wal"] {
+        assert!(!fs::read(fixture.directory.join(name))?
+            .windows(KEY.len())
+            .any(|window| window == KEY.as_bytes()));
+    }
+    let (status, models) = fixture
+        .request(&format!("/api/models?account={account}"), None, ORIGIN)
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(models["models"], json!(["model-a", "model-b"]));
+
+    let (status, _) = fixture
+        .request(
+            &format!("{path}/{account}/test"),
+            Some(json!({"id":id()})),
+            ORIGIN,
+        )
+        .await;
+    assert_eq!(status, 200);
+    let edit = format!("{path}/{account}/edit");
+    let change =
+        json!({"id":id(),"revision":1,"name":"Renamed","defaultModel":"model-b","apiKey":""});
+    let (status, body) = fixture.request(&edit, Some(change.clone()), ORIGIN).await;
+    assert_eq!(status, 200);
+    assert_eq!(body["name"], "Renamed");
+    assert_eq!(body["defaultModel"], "model-b");
+    let (status, _) = fixture.request(&edit, Some(change), ORIGIN).await;
+    assert_eq!(status, 409);
+
+    let (status, body) = fixture
+        .request(
+            &edit,
+            Some(json!({"id":id(),"revision":2,"baseURL":"https://another.example/v1"})),
+            ORIGIN,
+        )
+        .await;
+    assert_eq!(status, 400);
+    assert!(string(&body, "error").contains("apiKey"));
+    let (status, _) = fixture
+        .request(
+            &edit,
+            Some(json!({"id":id(),"revision":2,"apiKey":"invalid-provider-secret"})),
+            ORIGIN,
+        )
+        .await;
+    assert_eq!(status, 502);
+    let (status, _) = fixture
+        .request(
+            &edit,
+            Some(json!({"id":id(),"revision":2,"apiKey":REPLACEMENT})),
+            ORIGIN,
+        )
+        .await;
+    assert_eq!(status, 200);
+    let live = providers::accounts(&fixture.state).map_err(|error| error.message)?;
+    assert!(live
+        .iter()
+        .any(|row| row.id == account && row.key.as_deref() == Some(REPLACEMENT)));
+
+    let agent = id();
+    let (status, _) = fixture.request("/api/agents", Some(json!({
+        "id":agent, "name":"Uses router", "model":"model-b", "instructions":"Answer", "providerAccount":account,
+    })), ORIGIN).await;
+    assert_eq!(status, 201);
+    let remove = format!("{path}/{account}/delete");
+    let (status, body) = fixture
+        .request(&remove, Some(json!({"id":id()})), ORIGIN)
+        .await;
+    assert_eq!(status, 409);
+    assert!(string(&body, "error").contains("Uses router"));
+    let (status, _) = fixture
+        .request(
+            &format!("{path}/env/delete"),
+            Some(json!({"id":id()})),
+            ORIGIN,
+        )
+        .await;
+    assert_eq!(status, 409);
+    {
+        let db = fixture.state.database.lock().unwrap();
+        db.connection
+            .execute("UPDATE agents SET provider_account='' WHERE id=?", [&agent])?;
+    }
+    let (status, _) = fixture
+        .request(&remove, Some(json!({"id":id()})), ORIGIN)
+        .await;
+    assert_eq!(status, 200);
+    let (_, accounts) = fixture.request(path, None, ORIGIN).await;
+    assert_eq!(accounts.as_array().unwrap().len(), 2);
+    Ok(())
+}

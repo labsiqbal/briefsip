@@ -1,0 +1,15 @@
+.first-run { width: min(600px, 100%); margin: 0 auto; padding: 40px 24px; }
+.first-run .k-page-head { margin-bottom: 20px; }
+.first-run__steps { margin: 0; padding: 0; list-style: none; }
+.first-run__steps li { border-top: .5px solid var(--color-border-tertiary); }
+.first-run__step { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-height: 56px; padding-block: 10px; }
+.first-run__step strong { flex: 1; color: var(--color-text-secondary); font-size: 14px; font-weight: 600; }
+.first-run__status { min-width: 0; overflow-wrap: anywhere; color: var(--color-text-secondary); font-size: 13px; }
+.first-run__icon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex: none; border-radius: 50%; color: var(--color-text-secondary); background: var(--color-bg-tertiary); }
+.first-run__steps .is-active .first-run__icon { color: var(--color-on-primary); background: var(--color-primary); }
+.first-run__steps .is-active strong { color: var(--color-text-primary); }
+.first-run__steps .is-done .first-run__icon { color: var(--color-success-text); background: var(--color-success-bg); }
+.first-run__form { max-width: 440px; padding: 2px 0 20px 38px; }
+.first-run__form:empty { display: none; }
+.first-run__form .k-btn { min-height: 40px; }
+.composer__note--blocked { flex-wrap: wrap; }
