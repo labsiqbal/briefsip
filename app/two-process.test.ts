@@ -1495,7 +1495,7 @@ test('canonical routine configuration and flow stay scoped across projects resta
     assert.equal(created.body.data.homeDeviceId,f.home.id);assert.equal(created.body.data.projectId,f.project);
     assert.equal((await f.send(detail)).body.data.prompt,command.prompt);
     const calendar=await fetch(f.origin()+`/api/projects/${f.project}/agents/${f.agent}/routines/calendar.ics`,{headers:{Authorization:`Bearer ${f.jwt()}`,Origin:f.origin(),Connection:'close','Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':randomUUID()}});
-    const calendarText=await calendar.text();assert.equal(calendar.status,200);assert(calendarText.includes(`UID:${routine}@minarbot.local`));assert(calendarText.includes('RRULE:FREQ=SECONDLY;INTERVAL=300'));assert(!calendarText.includes(command.prompt));
+    const calendarText=await calendar.text();assert.equal(calendar.status,200);assert(calendarText.includes(`UID:${routine}@briefsip.local`));assert(calendarText.includes('RRULE:FREQ=SECONDLY;INTERVAL=300'));assert(!calendarText.includes(command.prompt));
     const foreignCalendar=await f.send(`/api/projects/${f.other}/agents/${f.agent}/routines/calendar.ics`);assert.equal(foreignCalendar.status,404);
     assert.deepEqual((await f.send(list,command)).body.receipt,created.body.receipt);
     assert.equal((await f.send(list,{...command,name:'Other'})).status,409);
@@ -1861,7 +1861,7 @@ test('canonical routine wall-clock HTTP keeps exact retries and pending identiti
     assert.equal(pendingCron.id, createHash('sha256').update(JSON.stringify([cron, 1, f.home.zone_revision, pendingCron.dueAt, 0])).digest('base64url'));
     const response = await fetch(f.origin() + list + '/calendar.ics', { headers: { Authorization: `Bearer ${f.jwt()}`, Origin: f.origin(), Connection: 'close', 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': randomUUID() } });
     const calendar = (await response.text()).replace(/\r\n /g, ''); assert.equal(response.status, 200);
-    assert(calendar.includes(`UID:${once}@minarbot.local`)); assert(!calendar.includes(`UID:${cron}@minarbot.local`));
+    assert(calendar.includes(`UID:${once}@briefsip.local`)); assert(!calendar.includes(`UID:${cron}@briefsip.local`));
     assert(calendar.includes('Omitted cron routine "Daily cron"')); assert(!calendar.includes(command.prompt));
     const snapshot = (await f.send('/api/sync?projectId=' + f.project)).body.data;
     const observed = snapshot.page.events.filter((event: any) => event.recordKind.startsWith('routine'));
@@ -1905,7 +1905,7 @@ test('canonical routine calendar exports only current project and reader schedul
     db.prepare("UPDATE record_scopes SET project=? WHERE table_name='routines' AND key_json=?").run(f.other,JSON.stringify([entries.foreign]));
     const owned=await calendar();assert.equal(owned.res.status,200);assert.equal(owned.res.headers.get('content-type'),'text/calendar; charset=utf-8');
     assert.equal(owned.res.headers.get('x-briefsip-protocol'),'1');assert.equal(owned.res.headers.get('cache-control'),'no-store');
-    assert(owned.text.includes(`UID:${entries.shared}@minarbot.local`));assert(owned.text.includes(`UID:${entries.private}@minarbot.local`));
+    assert(owned.text.includes(`UID:${entries.shared}@briefsip.local`));assert(owned.text.includes(`UID:${entries.private}@briefsip.local`));
     for(const name of ['disabled','webhook','foreign'])assert(!owned.text.includes(entries[name]),name);
     assert(!owned.text.includes('CALENDAR_PRIVATE_PROMPT'));assert(owned.text.includes('DTSTART:20270101T090000Z'));assert(owned.text.includes('RRULE:FREQ=SECONDLY;INTERVAL=300'));
     assert.equal((await calendar('user_collaborator')).res.status,404);

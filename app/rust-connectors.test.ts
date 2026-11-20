@@ -291,7 +291,7 @@ test('Rust calendar exports folded and escaped iCalendar with exact UTC interval
     for (const [index, row] of entries.slice(0, 4).entries()) {
       const summary = index === 0 ? 'Calendar\\; comma\\, \\\\ line\\nBEGIN:VEVENT ' + 'é'.repeat(100) : row.name;
       const event = [
-        'BEGIN:VEVENT', `UID:${row.id}@minarbot.local`, 'DTSTAMP:20260101T000000Z',
+        'BEGIN:VEVENT', `UID:${row.id}@briefsip.local`, 'DTSTAMP:20260101T000000Z',
         `SEQUENCE:${row.revision}`, `DTSTART:${starts[index]}`, `SUMMARY:${summary}`,
         ...(index === 0 ? ['RRULE:FREQ=SECONDLY;INTERVAL=3600'] : []), 'END:VEVENT',
       ];
