@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { sha256, digestCommand } from '../shared/protocol.ts';
 import { initializeAgentMessages } from './agent-messages.ts';
+import { markCurrentTestSchema } from './database.ts';
 
 export const SCHEMA_VERSION = 4;
 export const migration = `
@@ -164,6 +165,7 @@ export function initializeCanonicalSchema(db: DatabaseSync, now = Date.now(), th
   if (db.isTransaction) throw new Error('Schema initialization requires an idle connection');
   db.function('minarbot_capability_digest', { deterministic: true }, value => digestCommand(['minarbot-capabilities-v1', JSON.parse(String(value))]));
   db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000');
+  markCurrentTestSchema(db);
   transaction(db, () => {
     let version = schemaVersion(db);
     if (version > SCHEMA_VERSION) throw new Error('Database schema is newer than this server');

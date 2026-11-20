@@ -41,6 +41,8 @@ Minarbot is free and open source under the [Apache License 2.0](LICENSE).
 
 Minarbot runs as a local server you open in the browser. A one-line installer is planned in [#13](https://github.com/labsiqbal/minarbot/issues/13). Until then, install a release by hand.
 
+If your data directory was created by Minarbot 0.14.0 or earlier, move it aside before installing. This release requires a fresh data directory.
+
 **Requirements:** Linux x86_64, `curl`, `tar` and `sha256sum`. To use agents, install and sign in to at least one engine (for example [Codex CLI](https://developers.openai.com/codex/cli) or [Claude Code](https://claude.com/product/claude-code)), or add a model API key in Settings after the first start.
 
 1. Download the latest release and check it against `latest.json`:

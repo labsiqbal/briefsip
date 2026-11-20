@@ -14,6 +14,7 @@ mod sql {
 }
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 pub const SCHEMA_VERSION: i64 = 6;
+const DATA_FORMAT_ID: i64 = 0x4d4e5231; // MNR1
 const PROVIDER_ACCOUNTS: &str = include_str!("data/provider-accounts.sql");
 const CANONICAL_INDEXES: &str = concat!(
     include_str!("files/indexes.sql"),
@@ -61,6 +62,14 @@ pub fn open(path: &Path, canonical_mode: bool, now: i64) -> Result<Database> {
     connection.set_prepared_statement_cache_capacity(128);
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     let guard = server_guard(path)?;
+    let marker: i64 = connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
+    if marker != DATA_FORMAT_ID {
+        let pages: i64 = connection.pragma_query_value(None, "page_count", |row| row.get(0))?;
+        if pages != 0 {
+            return Err("This data was created by an older Minarbot version. Install fresh: https://github.com/labsiqbal/minarbot#install".into());
+        }
+        connection.pragma_update(None, "application_id", DATA_FORMAT_ID)?;
+    }
     connection.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000")?;
     if canonical_mode {
         migrate(&connection, now, SCHEMA_VERSION)?;
@@ -402,6 +411,30 @@ mod tests {
         )?;
         assert!(migrate(&db, 2, SCHEMA_VERSION).is_err());
         assert!(db.is_autocommit());
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unmarked_data_and_accepts_fresh_data() -> Result<()> {
+        let directory =
+            std::env::temp_dir().join(format!("minarbot-format-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&directory)?;
+        let old = directory.join("old.sqlite");
+        Connection::open(&old)?.execute_batch("CREATE TABLE old_data(value TEXT)")?;
+        let before = fs::read(&old)?;
+        let error = open(&old, true, 0)
+            .err()
+            .ok_or("Unmarked database must be rejected")?;
+        assert!(error
+            .to_string()
+            .contains("This data was created by an older Minarbot version"));
+        assert_eq!(fs::read(&old)?, before);
+        for canonical in [false, true] {
+            let fresh = directory.join(format!("fresh-{canonical}.sqlite"));
+            drop(open(&fresh, canonical, 0)?);
+            drop(open(&fresh, canonical, 0)?);
+        }
+        fs::remove_dir_all(directory)?;
         Ok(())
     }
 }
