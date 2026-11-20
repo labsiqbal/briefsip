@@ -208,7 +208,7 @@
   "localFiles": {
     "app/t3/connection-registry.ts": "a7bfb8ae826cd788584b6ac66ebc66bd79ff46bb492abfd5983ec2944a9ab2cd",
     "app/t3/environment-contract.ts": "9cf05fc15e5f8e66448e96abf312445f22761cc8d8b6d23ba23031510f9f9717",
-    "app/t3/environment-link.ts": "37474dea53c058fb41dbbd1abd6e68159a012b1143c8a8c5380e130ea70be73b",
+    "app/t3/environment-link.ts": "56b36e30a5b8eef00936b9649c0305eb9c0fddcde738927c7722f5eed30c99fc",
     "app/t3/mcp-session-registry.ts": "6a16d9d250b10dd01556180e31dc2efb38f3580aad47cbfaa8eefb7ad3357967",
     "app/t3/mcp-tool-access.ts": "b9b209f536312658cd9c962a99a874945ac7915a95f959fa092a671cf55c3c50",
     "app/mcp-server.ts": "3c1155a6f508891353a9cc95f68a0a12243e83ef5249ec49686e360685b51585",

@@ -84,13 +84,13 @@ export function parseManagedEndpointLocalOrigin(localOrigin: string) {
   };
 }
 
-// Local bootstrap subject is authenticated by the Briefsip caller, not by this helper.
+// Local bootstrap subject is authenticated by the Minarbot caller, not by this helper.
 export function canLinkHere(
   request: LinkRequest,
   subject: string,
 ): boolean {
   return (
-    subject === "briefsip-local-bootstrap" &&
+    subject === "minarbot-local-bootstrap" &&
     requestAbsoluteUrl(request) !== null &&
     !hasForwardedAuthorityHeaders(request)
   );

@@ -112,7 +112,7 @@ for (const entry of entries.filter(entry => entry.sourcePath.startsWith("apps/se
   const symbols = [...entry.symbols];
   if (entry.sourcePath.endsWith("linkChecks.ts")) symbols.push("CLOUD_PROOF_MAX_LIFETIME_SECONDS", "CLOUD_PROOF_CLOCK_SKEW_SECONDS", "LOOPBACK_HOSTNAMES");
   for (const symbol of symbols) {
-    assert.deepEqual(tokens(declaration(local, symbol)), tokens(declaration(upstream, symbol).replace("desktop-bootstrap", "briefsip-local-bootstrap")), `changed source behavior ${symbol}`);
+    assert.deepEqual(tokens(declaration(local, symbol)), tokens(declaration(upstream, symbol).replace("desktop-bootstrap", "minarbot-local-bootstrap")), `changed source behavior ${symbol}`);
   }
 }
 function literals(source, name) { return [...declaration(source, name).matchAll(/"([^"]+)"/g)].map(match => match[1]).sort(); }
