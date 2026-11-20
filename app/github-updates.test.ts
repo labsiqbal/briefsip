@@ -15,7 +15,7 @@ import { startApp } from './test-bridge.ts';
 import { nativeReleaseFixture } from './test-support/native-release-fixture.ts';
 import { freePort } from '../scripts/test-port.mjs';
 
-const base = '/minarbot/minarbot/releases';
+const base = '/labsiqbal/minarbot/releases';
 const created = '2026-11-19T09:00:00.000Z';
 const currentVersion = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
 const version = '9.1.2';

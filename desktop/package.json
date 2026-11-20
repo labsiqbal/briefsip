@@ -40,7 +40,7 @@
     "publish": [
       {
         "provider": "generic",
-        "url": "https://github.com/minarbot/minarbot/releases/latest/download/"
+        "url": "https://github.com/labsiqbal/minarbot/releases/latest/download/"
       }
     ],
     "artifactName": "Minarbot-${version}-${arch}.${ext}",

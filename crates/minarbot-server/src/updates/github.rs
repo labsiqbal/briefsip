@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{future::Future, path::Path, time::Duration};
 
-const GITHUB_REPOSITORY: &str = "minarbot/minarbot";
+const GITHUB_REPOSITORY: &str = "labsiqbal/minarbot";
 pub(super) const SOURCE: &str = "GitHub";
 pub(super) const UNREACHABLE: &str = "github_unreachable";
 pub(super) const INVALID: &str = "github_release_invalid";

@@ -4,7 +4,7 @@ Minarbot is a self-hosted workspace where you work with a team of AI agents. You
 
 Minarbot is free and open source under the [Apache License 2.0](LICENSE).
 
-> **Status:** early and moving fast. It runs every day on two Linux machines, but expect rough edges and breaking changes. Today it supports **Linux x86_64 only**. macOS and Windows are planned in [#13](https://github.com/minarbot/minarbot/issues/13).
+> **Status:** early and moving fast. It runs every day on two Linux machines, but expect rough edges and breaking changes. Today it supports **Linux x86_64 only**. macOS and Windows are planned in [#13](https://github.com/labsiqbal/minarbot/issues/13).
 
 ## Features
 
@@ -39,7 +39,7 @@ Minarbot is free and open source under the [Apache License 2.0](LICENSE).
 
 ## Install
 
-Minarbot runs as a local server you open in the browser. A one-line installer is planned in [#13](https://github.com/minarbot/minarbot/issues/13). Until then, install a release by hand.
+Minarbot runs as a local server you open in the browser. A one-line installer is planned in [#13](https://github.com/labsiqbal/minarbot/issues/13). Until then, install a release by hand.
 
 **Requirements:** Linux x86_64, `curl`, `tar` and `sha256sum`. To use agents, install and sign in to at least one engine (for example [Codex CLI](https://developers.openai.com/codex/cli) or [Claude Code](https://claude.com/product/claude-code)), or add a model API key in Settings after the first start.
 
@@ -47,11 +47,11 @@ Minarbot runs as a local server you open in the browser. A one-line installer is
 
    ```sh
    mkdir -p ~/minarbot-download && cd ~/minarbot-download
-   curl -fsSLO https://github.com/minarbot/minarbot/releases/latest/download/latest.json
+   curl -fsSLO https://github.com/labsiqbal/minarbot/releases/latest/download/latest.json
    archive=$(sed -n 's/.*"archive":"\([^"]*\)".*/\1/p' latest.json)
    id=$(sed -n 's/.*"id":"\([^"]*\)".*/\1/p' latest.json)
    sha=$(sed -n 's/.*"sha256":"\([^"]*\)".*/\1/p' latest.json)
-   curl -fsSLO "https://github.com/minarbot/minarbot/releases/latest/download/$archive"
+   curl -fsSLO "https://github.com/labsiqbal/minarbot/releases/latest/download/$archive"
    echo "$sha  $archive" | sha256sum -c -
    ```
 
@@ -103,7 +103,7 @@ Then run `systemctl --user daemon-reload && systemctl --user enable --now minarb
 
 ### Computer (optional)
 
-Computer gives an agent its own desktop with Chrome. It is off until you set it up on the machine and turn it on for an agent. One-click setup is planned in [#11](https://github.com/minarbot/minarbot/issues/11). For now, on Debian, Ubuntu or Mint:
+Computer gives an agent its own desktop with Chrome. It is off until you set it up on the machine and turn it on for an agent. One-click setup is planned in [#11](https://github.com/labsiqbal/minarbot/issues/11). For now, on Debian, Ubuntu or Mint:
 
 ```sh
 sudo apt install tigervnc-standalone-server xfwm4 xfdesktop4 xfce4-panel xdotool scrot bubblewrap dbus
@@ -116,7 +116,7 @@ Also install [Google Chrome](https://www.google.com/chrome/) so that `google-chr
 You need Node.js 22.23.4 or later, npm, and a Rust toolchain.
 
 ```sh
-git clone https://github.com/minarbot/minarbot.git
+git clone https://github.com/labsiqbal/minarbot.git
 cd minarbot/app
 npm ci
 npm run build

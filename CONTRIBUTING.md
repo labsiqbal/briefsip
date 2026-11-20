@@ -4,7 +4,7 @@ Thanks for helping. This guide covers setup, the checks every change must pass, 
 
 ## Find something to work on
 
-- Browse the [open issues](https://github.com/minarbot/minarbot/issues). Issues labeled `good first issue` are a gentle start, and `help wanted` marks work that is ready for anyone.
+- Browse the [open issues](https://github.com/labsiqbal/minarbot/issues). Issues labeled `good first issue` are a gentle start, and `help wanted` marks work that is ready for anyone.
 - Before you start, comment on the issue that you are taking it. One issue can have only one owner at a time, so this avoids duplicate work.
 - For a new feature or a large change, open an issue first so the approach can be agreed before you write code.
 
@@ -13,7 +13,7 @@ Thanks for helping. This guide covers setup, the checks every change must pass, 
 You need Linux x86_64, Node.js 22.23.4 or later, npm, Git, and a Rust toolchain with `rustfmt` and `clippy`.
 
 ```sh
-git clone https://github.com/minarbot/minarbot.git
+git clone https://github.com/labsiqbal/minarbot.git
 cd minarbot
 cargo build --workspace
 cd app
@@ -25,7 +25,7 @@ To run your build, start `cargo run --release -p minarbot-server` from the repos
 
 ## Checks
 
-Run these before you open a pull request. Continuous integration runs the same checks once it lands ([#13](https://github.com/minarbot/minarbot/issues/13)).
+Run these before you open a pull request. Continuous integration runs the same checks once it lands ([#13](https://github.com/labsiqbal/minarbot/issues/13)).
 
 From the repository root:
 
