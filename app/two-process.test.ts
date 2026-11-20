@@ -3141,9 +3141,9 @@ test('SIGKILL recovery proves no send before marker and never repeats marked eff
   }
 });
 
-test('Rust exports prepared, in-flight and reported Node v3 journal evidence offline', () => {
+test('Rust exports prepared, in-flight and reported device journal evidence offline', () => {
   const dir = mkdtempSync(join(tmpdir(), 'minarbot-frozen-journal-'));
-  const source = new URL('./test-support/fixtures/node-device-journal-v3/', import.meta.url);
+  const source = new URL('./test-support/fixtures/device-journal-v3/', import.meta.url);
   try {
     const { identity, keyring: syntheticKeys, samples } = JSON.parse(readFileSync(new URL('synthetic.json', source), 'utf8'));
     const database = join(dir, 'home.sqlite'), keyring = join(dir, 'keys.json'), metadata = database + '.host';
