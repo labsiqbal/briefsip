@@ -82,7 +82,7 @@ fn server_guard(path: &Path) -> Result<Connection> {
     if fs::metadata(&source)?.nlink() != 1 {
         return Err("Canonical database must be a file without hard links.".into());
     }
-    let guard_path = format!("{}.server-lock.sqlite", source.display());
+    let guard_path = crate::rename_migration::exact_sidecar(&source, ".server-lock.sqlite");
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -118,8 +118,7 @@ fn server_guard(path: &Path) -> Result<Connection> {
 
 pub(crate) fn open_recovery(path: &Path, exclusive: bool) -> Result<Database> {
     for suffix in ["", "-wal", "-shm", "-journal"] {
-        let mut companion = path.as_os_str().to_owned();
-        companion.push(suffix);
+        let companion = crate::rename_migration::exact_sidecar(path, suffix);
         match fs::symlink_metadata(companion) {
             Ok(meta)
                 if meta.is_file()

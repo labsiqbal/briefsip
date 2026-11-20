@@ -15,6 +15,30 @@ pub const DATABASE: &str = "minarbot.sqlite";
 pub const LEGACY_DATABASE: &str = "briefsip.sqlite";
 const DATABASE_MARKER: &str = ".minarbot-database-v1";
 
+pub fn sidecar(database: &Path, suffix: &str) -> PathBuf {
+    let modern = exact_sidecar(database, suffix);
+    if suffix.is_empty() {
+        return modern;
+    }
+    if database.file_name().is_some_and(|name| name == DATABASE) {
+        let legacy_database = database.with_file_name(LEGACY_DATABASE);
+        let legacy = exact_sidecar(&legacy_database, suffix);
+        if fs::symlink_metadata(&legacy).is_ok()
+            || (suffix.ends_with("-key") && !modern.exists() && legacy_database.exists())
+        {
+            return legacy;
+        }
+    }
+    modern
+}
+
+/// SQLite journals and leases use the actual database name. Key mirrors need both names.
+pub fn exact_sidecar(database: &Path, suffix: &str) -> PathBuf {
+    let mut path = database.as_os_str().to_owned();
+    path.push(suffix);
+    path.into()
+}
+
 fn old_env_name(key: &OsStr) -> Option<String> {
     Some(format!(
         "BRIEFSIP_{}",
@@ -209,11 +233,11 @@ pub fn migrate_database(data: &Path) -> Result<()> {
         return Ok(());
     }
     let _old_guard = files::lease(
-        &data.join(format!("{LEGACY_DATABASE}.server-lock.sqlite")),
+        &exact_sidecar(&old, ".server-lock.sqlite"),
         "Legacy database is in use.",
     )?;
     let _new_guard = files::lease(
-        &data.join(format!("{DATABASE}.server-lock.sqlite")),
+        &exact_sidecar(&new, ".server-lock.sqlite"),
         "Minarbot database is in use.",
     )?;
     if link_is(&old, OsStr::new(DATABASE)) && new.is_file() {
@@ -237,7 +261,7 @@ pub fn migrate_database(data: &Path) -> Result<()> {
         fs::copy(&old, &staged)?;
         File::open(&staged)?.sync_all()?;
         for suffix in ["-wal", "-shm", "-journal"] {
-            files::remove(&data.join(format!("{DATABASE}{suffix}")))?;
+            files::remove(&exact_sidecar(&new, suffix))?;
         }
         fs::rename(&staged, &new)?;
         files::sync_dir(data)?;
@@ -351,8 +375,8 @@ mod database_tests {
         connection.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; UPDATE sample SET value='wal';",
         )?;
-        let wal = scratch.0.join(format!("{LEGACY_DATABASE}-wal"));
-        let shm = scratch.0.join(format!("{LEGACY_DATABASE}-shm"));
+        let wal = exact_sidecar(&old, "-wal");
+        let shm = exact_sidecar(&old, "-shm");
         let saved_wal = fs::read(&wal)?;
         let saved_shm = fs::read(&shm)?;
         drop(connection);

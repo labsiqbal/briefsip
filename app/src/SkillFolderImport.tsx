@@ -2,7 +2,7 @@ import { downloadBlob } from './hooks/downloadBlob';
 import { useEffect, useRef, useState } from 'react';
 import { FileUp, FolderUp } from 'lucide-react';
 import { Button } from './ui/kit';
-import { parseSkillFiles, skillFileFromBytes, type SkillFile } from '../shared/skill-files';
+import { exportedSkillFiles, parseSkillFiles, skillFileFromBytes, type SkillFile } from '../shared/skill-files';
 import { readSkillZip, writeSkillZip } from '../shared/skill-zip';
 
 export function SkillFolderImport({ disabled, onImport, onBusy, compact = false, onError }: { disabled: boolean; onImport: (files: SkillFile[]) => void; onBusy: (busy: boolean) => void; compact?: boolean; onError?: (message: string) => void }) {
@@ -22,9 +22,7 @@ export function SkillFolderImport({ disabled, onImport, onBusy, compact = false,
       let files: unknown = zip ? await readSkillZip(new Uint8Array(await input[0].arrayBuffer())) : texts;
       if (input.length === 1 && !input[0].webkitRelativePath && input[0].name.endsWith('.json')) {
         if (texts[0].encoding) throw new Error('JSON exports must be UTF-8 text.');
-        const bundle = JSON.parse(texts[0].content);
-        if (bundle?.format !== 'minarbot-skill-folder' || bundle.version !== 1 || Object.keys(bundle).some(key => !['format', 'version', 'files'].includes(key))) throw new Error('File is not a Minarbot version 1 skill folder export.');
-        files = bundle.files;
+        files = exportedSkillFiles(JSON.parse(texts[0].content));
       }
       const parsed = parseSkillFiles(files);
       if (input[0].webkitRelativePath && input[0].webkitRelativePath.split('/')[0] !== parsed.name) throw new Error('Folder name must match the name in SKILL.md.');

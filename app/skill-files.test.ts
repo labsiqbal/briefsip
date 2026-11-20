@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseSkillFiles } from './shared/skill-files.ts';
+import { exportedSkillFiles, parseSkillFiles } from './shared/skill-files.ts';
 import { restoreSkillCommand } from './shared/skill-command.ts';
 import { startApp } from './test-bridge.ts';
 
@@ -17,7 +17,11 @@ const files = [
 ];
 test('skill folders preserve exact files and reject invalid or unsupported inputs as a whole', () => {
   const parsed = parseSkillFiles(files); assert.equal(parsed.description, 'Use for examples.'); assert.deepEqual(parsed.files, files);
-  assert.deepEqual(parseSkillFiles(JSON.parse(JSON.stringify({ format: 'minarbot-skill-folder', version: 1, files })).files).files, files);
+  for (const format of ['briefsip-skill-folder', 'minarbot-skill-folder']) {
+    const bundle = { format, version: 1, files };
+    assert.deepEqual(parseSkillFiles(exportedSkillFiles(bundle)).files, files);
+    assert.throws(() => exportedSkillFiles({ ...bundle, version: 2 }));
+  }
   const command = { path: '/api/skills', body: { id: randomUUID(), revision: 0, files } };
   assert.deepEqual(restoreSkillCommand(JSON.stringify(command)), command);
   for (const path of ['/etc/passwd', '../secret', 'a/../b', 'a\\b', 'a//b', 'a:', '', 'SKILL.md', 'skill.md']) assert.throws(() => parseSkillFiles([...files, { path, content: 'secret' }]));

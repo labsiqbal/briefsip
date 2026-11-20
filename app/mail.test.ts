@@ -70,7 +70,7 @@ test('Rust mail retries an exact envelope once and fences missing keys, old auth
     await waitFor(() => state(first).state === 'sent', 'Mail retry did not settle');
     assert.equal(requests.length, 2);
     assert.deepEqual(requests[0], requests[1]);
-    assert.equal(requests[0].key, `minarbot-invite/${first}/1`);
+    assert.equal(requests[0].key, `briefsip-invite/${first}/1`);
     assert.equal(state(first).bytes, 0);
     assert.equal(state(first).revision, 2);
     assert.equal(state(locked).attempts, 0);

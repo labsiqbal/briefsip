@@ -25,7 +25,7 @@ fn wrapping_key(database: &Path, create: bool) -> Result<LessSafeKey> {
         .canonicalize()
         .map_err(|_| Failure::storage())?;
     let directory = operator_file::open_directory(&parent).map_err(|_| Failure::storage())?;
-    let key_path = crate::rename_migration::file_key_path(database, "provider-key");
+    let key_path = crate::rename_migration::sidecar(database, ".provider-key");
     let name = key_path.file_name().ok_or_else(Failure::storage)?;
     let open = |name: &OsStr| operator_file::file_at(&directory, name);
     let file = match open(name) {
@@ -44,7 +44,7 @@ fn wrapping_key(database: &Path, create: bool) -> Result<LessSafeKey> {
         .map_err(|_| Failure::storage())?
         .try_into()
         .map_err(|_| Failure::storage())?;
-    crate::rename_migration::sync_file_key(database, &key_path, "provider-key", &bytes)
+    crate::rename_migration::sync_file_key(database, &key_path, ".provider-key", &bytes)
         .map_err(|_| Failure::storage())?;
     let key = UnboundKey::new(&AES_256_GCM, &bytes).map_err(|_| Failure::storage())?;
     Ok(LessSafeKey::new(key))

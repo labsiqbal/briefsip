@@ -8,6 +8,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub use layout::{exact_sidecar, sidecar};
+
 const OLD_UNIT: &str = "briefsip.service";
 const UNIT: &str = "minarbot.service";
 const MARKER: &str = ".minarbot-rename-v1";
@@ -144,15 +146,16 @@ pub fn prepare(config: &mut Config) -> Result<Option<PathBuf>> {
     ) {
         let directory = config.database.parent().ok_or("Invalid data directory.")?;
         layout::migrate_database(directory).map_err(boxed)?;
-        for suffix in ["mcp-key", "project-env-key", "provider-key"] {
-            let legacy = directory.join(format!("{LEGACY_DATABASE}.{suffix}"));
+        let legacy_database = directory.join(LEGACY_DATABASE);
+        let modern_database = directory.join(DATABASE);
+        for suffix in [".mcp-key", ".project-env-key", ".provider-key"] {
+            let legacy = sidecar(&legacy_database, suffix);
             if legacy.exists() {
-                let current = directory.join(format!("{DATABASE}.{suffix}"));
                 let bytes = read_file_key(&legacy)?;
-                mirror_file_key(&current, &bytes)?;
+                sync_file_key(&modern_database, &legacy, suffix, &bytes)?;
             }
         }
-        config.database = directory.join(DATABASE);
+        config.database = modern_database;
     }
     Ok(handoff)
 }
@@ -239,21 +242,8 @@ fn read_file_key(path: &Path) -> Result<[u8; 32]> {
         .map_err(|_| "Invalid encryption key length.".into())
 }
 
-pub fn file_key_path(database: &Path, suffix: &str) -> PathBuf {
-    let modern = PathBuf::from(format!("{}.{suffix}", database.display()));
-    if database.file_name().is_some_and(|name| name == DATABASE) {
-        let legacy = database.with_file_name(format!("{LEGACY_DATABASE}.{suffix}"));
-        if legacy.exists()
-            || (!modern.exists() && database.with_file_name(LEGACY_DATABASE).exists())
-        {
-            return legacy;
-        }
-    }
-    modern
-}
-
 pub fn sync_file_key(database: &Path, source: &Path, suffix: &str, bytes: &[u8; 32]) -> Result<()> {
-    let modern = PathBuf::from(format!("{}.{suffix}", database.display()));
+    let modern = exact_sidecar(database, suffix);
     if modern != source {
         mirror_file_key(&modern, bytes)?;
     }
@@ -381,6 +371,78 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn prepares_database_with_legacy_sidecars_and_preserves_rollback_paths() -> Result<()> {
+        let scratch = Scratch(env::temp_dir().join(format!("mb-{}", uuid::Uuid::new_v4())));
+        files::mkdir(&scratch.0).map_err(boxed)?;
+        let legacy = scratch.0.join(LEGACY_DATABASE);
+        let modern = scratch.0.join(DATABASE);
+        drop(rusqlite::Connection::open(&legacy)?);
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&legacy, fs::Permissions::from_mode(0o600))?;
+        let keys = [
+            (".peer-key", [1; 32], false),
+            (".composio-key", [2; 32], false),
+            (".mcp-key", [3; 32], true),
+            (".project-env-key", [4; 32], true),
+            (".provider-key", [5; 32], true),
+        ];
+        for (suffix, bytes, _) in keys {
+            let path = scratch.0.join(format!("{LEGACY_DATABASE}{suffix}"));
+            files::durable(&path, &bytes).map_err(boxed)?;
+        }
+        let directories = [
+            (".host", "identity.json"),
+            (".harness-homes", "engine-login"),
+        ];
+        for (suffix, name) in directories {
+            let path = scratch.0.join(format!("{LEGACY_DATABASE}{suffix}"));
+            files::mkdir(&path).map_err(boxed)?;
+            files::durable(&path.join(name), name.as_bytes()).map_err(boxed)?;
+        }
+        let mut config: Config = serde_json::from_value(serde_json::json!({"database": modern}))?;
+        prepare(&mut config)?;
+        prepare(&mut config)?;
+        assert_eq!(config.database, modern);
+        assert_eq!(legacy.canonicalize()?, modern);
+        let _homes = crate::harness::config::prepare_homes(&config.database)?;
+        for (suffix, bytes, mirrored) in keys {
+            let old_path = scratch.0.join(format!("{LEGACY_DATABASE}{suffix}"));
+            let new_path = scratch.0.join(format!("{DATABASE}{suffix}"));
+            assert_eq!(sidecar(&config.database, suffix), old_path);
+            assert_eq!(read_file_key(&old_path)?, bytes);
+            if mirrored {
+                assert_eq!(read_file_key(&new_path)?, bytes);
+            } else {
+                assert!(!new_path.exists());
+            }
+        }
+        for (suffix, name) in directories {
+            let old_path = scratch.0.join(format!("{LEGACY_DATABASE}{suffix}"));
+            assert_eq!(sidecar(&config.database, suffix), old_path);
+            let directory = crate::operator_file::open_directory(&old_path)?;
+            let file = crate::operator_file::file_at(&directory, std::ffi::OsStr::new(name))?;
+            assert_eq!(
+                crate::operator_file::bounded_read(file, 32)?,
+                name.as_bytes()
+            );
+            assert!(!scratch.0.join(format!("{DATABASE}{suffix}")).exists());
+        }
+        let missing = ".unused-key";
+        let old_key = scratch.0.join("briefsip.sqlite.unused-key");
+        let new_key = scratch.0.join("minarbot.sqlite.unused-key");
+        assert_eq!(sidecar(&modern, missing), old_key);
+        files::durable(&new_key, &[6; 32]).map_err(boxed)?;
+        assert_eq!(sidecar(&modern, missing), new_key);
+        let live = rusqlite::Connection::open(&modern)?;
+        live.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE sample(id INTEGER);")?;
+        fs::write(scratch.0.join("briefsip.sqlite-wal"), b"stale")?;
+        let wal = exact_sidecar(&config.database, "-wal");
+        assert_eq!(wal, scratch.0.join("minarbot.sqlite-wal"));
+        assert!(fs::metadata(wal)?.len() > b"stale".len() as u64);
+        Ok(())
     }
 
     #[test]

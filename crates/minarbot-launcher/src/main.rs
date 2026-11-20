@@ -313,7 +313,7 @@ impl Launcher {
         let mut bytes = 0;
         let database = rename_migration::database_path(&self.config.data);
         for suffix in ["", "-wal", "-shm"] {
-            if let Ok(s) = fs::metadata(format!("{}{suffix}", database.display())) {
+            if let Ok(s) = fs::metadata(rename_migration::exact_sidecar(&database, suffix)) {
                 bytes += s.len();
             }
         }

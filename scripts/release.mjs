@@ -16,6 +16,12 @@ export function readIssueComments(issue) {
   return JSON.parse(execFileSync('gh', ['issue', 'view', String(issue), '-R', githubRepository, '--json', 'comments'], { encoding: 'utf8' })).comments;
 }
 
+export function defaultSigningKey(home) {
+  const current = join(home, '.config/minarbot-release/signing-ed25519.pem');
+  const legacy = join(home, '.config/briefsip-release/signing-ed25519.pem');
+  return !existsSync(current) && existsSync(legacy) ? legacy : current;
+}
+
 export function assertNativeDependencies(binary) {
   const output = execFileSync('ldd', [binary], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   if (/not found/i.test(output)) throw new Error(`Native dependency missing for ${binary}: ${output}`);
@@ -253,7 +259,7 @@ async function releaseCommand() {
   } });
   const releases = resolve(values.releases ?? join(homedir(), '.local/share/minarbot/releases'));
   const keyPath = values['signing-key'] ?? productEnv('MINARBOT_RELEASE_SIGNING_KEY')
-    ?? join(homedir(), '.config/minarbot-release/signing-ed25519.pem');
+    ?? defaultSigningKey(homedir());
   const retryId = values['github-only'], allowDirty = values['allow-dirty'], { notes, desktop } = values;
   if (retryId !== undefined) {
     if ([allowDirty, values['no-github'], values.issues, notes, desktop].some(value => value !== undefined)) {

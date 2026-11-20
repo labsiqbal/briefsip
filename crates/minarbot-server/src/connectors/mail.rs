@@ -251,8 +251,9 @@ pub async fn deliver(state: &AppState, id: &str) -> Result<()> {
             .bearer_auth(api_key)
             .header("Content-Type", "application/json")
             .header(
+                // Preserve deduplication if a pending send retries after an upgrade.
                 "Idempotency-Key",
-                format!("minarbot-invite/{id}/{}", row["revision"]),
+                format!("briefsip-invite/{id}/{}", row["revision"]),
             )
             .body(plaintext)
             .timeout(Duration::from_secs(15))

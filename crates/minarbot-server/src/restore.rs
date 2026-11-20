@@ -36,8 +36,7 @@ pub fn read_only(source: &Path, target: &Path) -> db::Result<Value> {
 
 pub fn workspace(source: &Path, target: &Path, canonical_only: bool) -> db::Result<Option<Value>> {
     for suffix in ["", "-wal", "-shm", "-journal"] {
-        let mut path = target.as_os_str().to_owned();
-        path.push(suffix);
+        let path = crate::rename_migration::exact_sidecar(target, suffix);
         match fs::symlink_metadata(path) {
             Ok(_) => {
                 return Err("Restore target must be a new database without companion files.".into())

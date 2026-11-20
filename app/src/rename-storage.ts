@@ -13,7 +13,6 @@ export function readProductStorage(storage: ReadStorage, key: string): string | 
   if (saved !== null && storage.setItem) {
     try {
       storage.setItem(key, saved);
-      storage.removeItem?.(old);
     } catch {
       // A failed copy must leave recovery data readable under its old key.
     }

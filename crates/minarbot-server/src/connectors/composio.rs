@@ -53,7 +53,7 @@ pub fn initialize(db: &Connection) -> Result<()> {
     Ok(())
 }
 fn file_key(state: &AppState, create: bool) -> Result<Vec<u8>> {
-    let path = format!("{}.composio-key", state.config.database.display());
+    let path = crate::rename_migration::sidecar(&state.config.database, ".composio-key");
     if create {
         match OpenOptions::new()
             .write(true)

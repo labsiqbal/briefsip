@@ -13,13 +13,19 @@ fn home() -> Result<PathBuf> {
         .ok_or_else(Failure::storage)
 }
 pub fn root(state: &AppState) -> Result<PathBuf> {
-    Ok(state
-        .config
-        .data
-        .project_root
-        .as_ref()
-        .map(PathBuf::from)
-        .unwrap_or(home()?.join("Minarbot/Projects")))
+    if let Some(root) = &state.config.data.project_root {
+        return Ok(PathBuf::from(root));
+    }
+    Ok(default_root(&home()?))
+}
+
+fn default_root(home: &Path) -> PathBuf {
+    let modern = home.join("Minarbot/Projects");
+    let legacy = home.join("Briefsip/Projects");
+    if !modern.exists() && legacy.is_dir() {
+        return legacy;
+    }
+    modern
 }
 fn contains(parent: &Path, child: &Path) -> bool {
     child.starts_with(parent)
@@ -56,6 +62,7 @@ pub fn validate(state: &AppState, value: &Value, browse: bool, existing: bool) -
         home.join(".hermes"),
         home.join(".config"),
         home.join(".local/share/minarbot"),
+        home.join(".local/share/briefsip"),
         home.join(".aws"),
         home.join(".gnupg"),
     ];
@@ -194,4 +201,26 @@ pub fn browse(state: &AppState, path: Option<&str>) -> Result<Value> {
     Ok(
         json!({"path":path,"parent":if path==home()?{None}else{path.parent().map(|v|v.to_string_lossy().into_owned())},"folders":dirs}),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_project_root_reuses_legacy_directory() -> crate::db::Result<()> {
+        let scratch = std::env::temp_dir().join(format!("projects-{}", uuid::Uuid::new_v4()));
+        let legacy = scratch.join("Briefsip/Projects");
+        let modern = scratch.join("Minarbot/Projects");
+        let result = (|| -> crate::db::Result<()> {
+            assert_eq!(default_root(&scratch), modern);
+            std::fs::create_dir_all(&legacy)?;
+            assert_eq!(default_root(&scratch), legacy);
+            std::fs::create_dir_all(&modern)?;
+            assert_eq!(default_root(&scratch), modern);
+            Ok(())
+        })();
+        std::fs::remove_dir_all(scratch)?;
+        result
+    }
 }

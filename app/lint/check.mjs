@@ -152,3 +152,25 @@ console.log(`Lint: ${checks} assertions passed; ${browserSafeModules.length} sha
   assert.deepEqual(rootModules.sort(), [],
     'Server code belongs in Rust. Put browser code under src/ or shared/, hub code under hub/, and test helpers under test-support/.');
 }
+
+// DB companions need the migration resolver even when the database has a custom name.
+const databasePathDerivation = [
+  /\b(?:database|db_path|database_path)\s*\.\s*(?:display\(\)|as_os_str\(\)\s*\.\s*(?:to_owned|to_os_string))/i,
+  /\.push(?:_str)?\(\s*(?:suffix\b|"(?:-wal|-shm|-journal|\.host|\.harness-homes|\.[\w-]+-key)")/,
+  /format!\s*\(\s*"[^"\n]*(?:\}(?:\{\w*suffix\w*\}|\.[\w-]+-key|\.host|\.harness-homes|\.server-lock\.sqlite|-(?:wal|shm|journal))|(?:briefsip|minarbot)\.sqlite\{)/i,
+];
+const exceptions = new Map([
+  ['minarbot-launcher/src/rename_migration.rs', 'Central resolver implements suffix appending.'],
+  ['minarbot-server/src/rename_migration.rs', 'Migration test spells both expected filenames independently of the resolver.'],
+  ['minarbot-server/src/automation/scripts.rs', 'Script temp names are unrelated to database companions.'],
+]);
+const crates = resolve(root, '../crates');
+for (const crate of readdirSync(crates, { withFileTypes: true }).filter(entry => entry.isDirectory())) {
+  for (const file of readdirSync(resolve(crates, crate.name, 'src'), { recursive: true }).filter(name => name.endsWith('.rs'))) {
+    const relative = crate.name + '/src/' + file;
+    const source = readFileSync(resolve(crates, relative), 'utf8');
+    const violation = databasePathDerivation.find(pattern => pattern.test(source));
+    assert(exceptions.has(relative) || !violation,
+      relative + ' must use rename_migration::sidecar for database companions');
+  }
+}

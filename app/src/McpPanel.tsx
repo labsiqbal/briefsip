@@ -6,7 +6,8 @@ import { ArrowLeft, ChevronLeft, ChevronRight, Info, Ellipsis, Plug, Plus } from
 import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Collapsible, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Tooltip, useConfirm, RecoveryAlert } from './ui/kit';
 type Connection = { id: string; name: string; url: string; hasToken: boolean; enabled: number; revision: number };
 type Tool = { name: string; title?: string; description?: string; inputSchema: unknown; _meta?: Record<string, unknown> };
-const label = (tool: Tool) => `${tool._meta?.['minarbot.kind'] === 'resource-template' ? 'Resource template: ' : tool._meta?.['minarbot.kind'] === 'resource' ? 'Resource: ' : tool._meta?.['minarbot.kind'] === 'prompt' ? 'Prompt: ' : 'Tool: '}${tool.title && tool.title !== tool.name && !tool._meta?.['minarbot.kind'] ? `${tool.title} (${tool.name})` : tool.title ?? tool.name}`;
+const kind = (tool: Tool) => tool._meta?.['minarbot.kind'] ?? tool._meta?.['briefsip.kind'];
+const label = (tool: Tool) => `${kind(tool) === 'resource-template' ? 'Resource template: ' : kind(tool) === 'resource' ? 'Resource: ' : kind(tool) === 'prompt' ? 'Prompt: ' : 'Tool: '}${tool.title && tool.title !== tool.name && !kind(tool) ? `${tool.title} (${tool.name})` : tool.title ?? tool.name}`;
 type Detail = Connection & { tools: Tool[]; grant: { revision: number; tools: string[] } };
 type Command = { path: string; body: Record<string, unknown> & { id: string } };
 function restore(raw: string | null): Command | null {
@@ -120,7 +121,7 @@ export function McpPanel({ agents, request, project }: { project?: string; agent
               <Row title={<Checkbox label={label(tool)} checked={tools.includes(tool.name)} disabled={locked} onChange={checked => setTools(value => checked ? [...value, tool.name] : value.filter(name => name !== tool.name))} />} />
               <div style={{ padding: '0 16px 12px' }}><Collapsible title={`Details: ${tool.title ?? tool.name}`}>
                 {tool.description && <p className="k-field__hint">{tool.description}</p>}
-                {tool._meta?.['minarbot.kind'] === 'resource-template' && <Alert tone="warn">Permissions cover all URIs this template can form, including parameter values chosen by the agent. The target server still controls access to its data.</Alert>}
+                {kind(tool) === 'resource-template' && <Alert tone="warn">Permissions cover all URIs this template can form, including parameter values chosen by the agent. The target server still controls access to its data.</Alert>}
                 {typeof tool._meta?.['minarbot.target'] === 'string' && <span className="k-field__hint" style={{ overflowWrap: 'anywhere' }}>{tool._meta['minarbot.target']}</span>}
                 <CodeBlock label={`Parameters for ${label(tool)}`}>{JSON.stringify(tool.inputSchema, null, 2)}</CodeBlock>
               </Collapsible></div>

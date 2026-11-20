@@ -8,7 +8,22 @@ import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { parseRelease } from '../scripts/release-lib.mjs';
 import { bridgeArchiveName, githubRepository } from '../scripts/rename-compat.mjs';
-const { buildRelease, assertNativeDependencies } = await import(new URL('../scripts/release.mjs', import.meta.url).href);
+const { buildRelease, assertNativeDependencies, defaultSigningKey } = await import(new URL('../scripts/release.mjs', import.meta.url).href);
+
+test('release signing keeps using the legacy default key until a modern key exists', () => {
+  const home = mkdtempSync(join(tmpdir(), 'release-key-path-'));
+  try {
+    const legacy = join(home, '.config/briefsip-release/signing-ed25519.pem');
+    const modern = join(home, '.config/minarbot-release/signing-ed25519.pem');
+    assert.equal(defaultSigningKey(home), modern);
+    mkdirSync(join(home, '.config/briefsip-release'), { recursive: true });
+    writeFileSync(legacy, 'fixture', { mode: 0o600 });
+    assert.equal(defaultSigningKey(home), legacy);
+    mkdirSync(join(home, '.config/minarbot-release'));
+    writeFileSync(modern, 'fixture', { mode: 0o600 });
+    assert.equal(defaultSigningKey(home), modern);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'release-gates-'));

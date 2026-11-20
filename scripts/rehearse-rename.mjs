@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import { once } from 'node:events';
-import { createDecipheriv, randomUUID } from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { createConnection } from 'node:net';
@@ -25,7 +25,7 @@ const start = join(legacy, 'scripts/start.sh'), control = join(data, 'launcher.s
 let child, closed, provider, worktree = false, log = '';
 
 function buildBinaries(tree) {
-  const target = join(scratch, 'build');
+  const target = process.env.CARGO_TARGET_DIR ? resolve(process.env.CARGO_TARGET_DIR) : join(scratch, 'build');
   const slot = join(process.env.HOME ?? '', '.cache/briefsip-cargo-slot.sh');
   const args = ['cargo', 'build', '--workspace', '--locked'];
   const env = { ...process.env, CARGO_TARGET_DIR: target, CARGO_PROFILE_DEV_DEBUG: '0', CARGO_BUILD_JOBS: '4' };
@@ -75,8 +75,8 @@ function seal(bin, version, commit, bridge, fail = false) {
   return release;
 }
 
-async function until(probe, description) {
-  const deadline = Date.now() + 30_000;
+async function until(probe, description, timeout = 30_000) {
+  const deadline = Date.now() + timeout;
   let failure;
   while (Date.now() < deadline) {
     try {
@@ -112,6 +112,26 @@ function decrypt(database, project, secret) {
     assert(Buffer.concat([decoder.update(encrypted.subarray(12, -16)), decoder.final()]).equals(Buffer.from(secret)));
     assert(!readFileSync(database).includes(Buffer.from(secret)));
   } finally { databaseFile.close(); }
+}
+
+function seedPeer(peer, token) {
+  const key = randomBytes(32);
+  writeFileSync(join(data, 'briefsip.sqlite.peer-key'), key, { mode: 0o600, flag: 'wx' });
+  const encrypt = (secret, aad) => {
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', key, iv);
+    cipher.setAAD(Buffer.from(aad));
+    return Buffer.concat([iv, cipher.update(secret), cipher.final(), cipher.getAuthTag()]).toString('base64');
+  };
+  const database = new DatabaseSync(legacyDb);
+  try {
+    database.prepare(`INSERT INTO paired_machines
+      (environment_id,name,origin,token,local_token_id,return_token,state,status,version,agents)
+      VALUES (?,?,?,?,?,?,'paired','offline',?,'[]')`)
+      .run(peer.id, peer.name, peer.origin, encrypt(token, peer.origin), randomUUID(),
+        encrypt(randomUUID(), peer.origin + ':return'), peer.version);
+  } finally { database.close(); }
+  return key;
 }
 
 try {
@@ -164,16 +184,34 @@ try {
   const agent = await update('/api/agents', { id: randomUUID(), name: 'Rename rehearsal', model: 'fixture', instructions: 'Keep fixture data.', runtime: 'api' }, 201);
   const project = await update('/api/projects', { id: randomUUID(), name: 'Rename rehearsal', members: [{ agent: agent.id, write: false }] });
   const providerSecret = randomUUID(), account = randomUUID();
+  const peerSecret = randomUUID();
+  const peer = { id: randomUUID(), name: 'Legacy peer', version: old.version, origin: '' };
   provider = createServer((request, response) => {
-    if (request.headers.authorization !== 'Bearer ' + providerSecret || request.url !== '/v1/models') {
-      response.writeHead(401).end();
-      return;
-    }
     response.setHeader('Content-Type', 'application/json');
-    response.end(JSON.stringify({ data: [{ id: 'fixture' }] }));
+    if (request.url === '/api/environment') return response.end(JSON.stringify(peer));
+    if (request.url === '/api/peer/agents' && request.headers.authorization === 'Bearer ' + peerSecret)
+      return response.end(JSON.stringify({ agents: [] }));
+    if (request.url === '/v1/models' && request.headers.authorization === 'Bearer ' + providerSecret)
+      return response.end(JSON.stringify({ data: [{ id: 'fixture' }] }));
+    response.writeHead(401).end('{}');
   });
   provider.listen(0, '127.0.0.1');
   await once(provider, 'listening');
+  peer.origin = `http://127.0.0.1:${provider.address().port}`;
+  const peerKey = seedPeer(peer, peerSecret);
+  const harnessHome = join(data, 'briefsip.sqlite.harness-homes', randomUUID());
+  mkdirSync(harnessHome, { mode: 0o700 });
+  const harnessFile = join(harnessHome, 'credential');
+  const harnessSecret = randomUUID();
+  writeFileSync(harnessFile, harnessSecret, { mode: 0o600 });
+  const checkSidecars = () => {
+    assert.deepEqual(readFileSync(join(data, 'briefsip.sqlite.peer-key')), peerKey);
+    assert.equal(readFileSync(harnessFile, 'utf8'), harnessSecret);
+    assert(!existsSync(join(data, 'minarbot.sqlite.peer-key')));
+    assert(!existsSync(join(data, 'minarbot.sqlite.harness-homes')));
+  };
+  const checkPeer = () => until(async () => (await update('/api/machines')).machines.some(
+    row => row.id === peer.id && row.name === peer.name && row.status === 'online'), peer.name, 45_000);
   await update('/api/provider-accounts', {
     id: account, provider: 'openai-compatible', name: 'Provider fixture',
     baseURL: `http://127.0.0.1:${provider.address().port}/v1`, defaultModel: 'fixture', apiKey: providerSecret,
@@ -191,8 +229,10 @@ try {
   await ready(old.version);
   decrypt(legacyDb, project.id, secret);
   await until(async () => { await checkProvider(); return true; }, "provider account");
+  checkSidecars();
   console.log('Failed bridge trial under 0.13.13 restores old snapshot and decrypts secret.');
 
+  peer.name = 'Peer after upgrade';
   await switchInApp(bridge, 'done');
   await ready(bridge.version);
   assert.equal(realpathSync(legacyDb), newDb);
@@ -204,17 +244,22 @@ try {
   assert((await update(secretRoute)).items.some(row => row.name === setSecret.name));
   decrypt(newDb, project.id, secret);
   await until(async () => { await checkProvider(); return true; }, "provider account");
-  console.log('Old launcher commits bridge update; Minarbot uses migrated DB, project and secret.');
+  checkSidecars();
+  await checkPeer();
+  console.log('Minarbot uses migrated DB, project and secrets, authenticates to paired peer and keeps harness home.');
 
   await down();
   boot(join(releases, 'current/bin/minarbot-launcher'), ['--config', join(newConfig, 'launcher.json')]);
   await ready(bridge.version);
+  peer.name = 'Peer after rollback';
   const rollback = randomUUID();
   assert.equal((await launcher({ type: 'apply', id: rollback, target: old.id, version: old.version })).accepted, true);
   await waitAttempt(rollback, 'done');
   await ready(old.version);
   decrypt(legacyDb, project.id, secret);
   await until(async () => { await checkProvider(); return true; }, "provider account");
+  checkSidecars();
+  await checkPeer();
   const failed = randomUUID();
   await until(async () => (await launcher({ type: 'apply', id: failed, target: next.id, version: next.version })).accepted, 'failed trial admission');
   await waitAttempt(failed, 'rolled-back');
@@ -222,7 +267,8 @@ try {
   assert.equal(readlinkSync(join(releases, 'current')), old.id);
   decrypt(legacyDb, project.id, secret);
   await until(async () => { await checkProvider(); return true; }, "provider account");
-  console.log('Minarbot launcher starts 0.13.13 and rolls a failed trial back with its secret intact.');
+  checkSidecars();
+  console.log('0.13.13 rolls back with secrets, paired peer and harness home intact.');
 } finally {
   await down();
   if (provider) { provider.closeAllConnections(); await new Promise(done => provider.close(done)); }

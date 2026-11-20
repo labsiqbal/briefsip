@@ -201,9 +201,12 @@ pub(crate) fn discard_account_snapshots(account: &str) {
 }
 
 fn wal_size(state: &AppState) -> u64 {
-    std::fs::metadata(format!("{}-wal", state.config.database.display()))
-        .map(|m| m.len())
-        .unwrap_or(0)
+    std::fs::metadata(crate::rename_migration::exact_sidecar(
+        &state.config.database,
+        "-wal",
+    ))
+    .map(|m| m.len())
+    .unwrap_or(0)
 }
 fn visible(db: &Connection, scope: &Value, events: &[Value]) -> Result<()> {
     let records = super::sync_projection::records(db)?;

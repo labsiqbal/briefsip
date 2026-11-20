@@ -1,4 +1,5 @@
 use crate::{files::*, timestamp, Result};
+use minarbot_launcher::rename_migration::exact_sidecar;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use std::{fs, os::unix::fs::MetadataExt, path::Path, time::Duration};
 
@@ -9,13 +10,7 @@ pub fn run(command: &str, database: &Path, destination: &Path) -> Result<()> {
         return Err("Canonical database must be a file without hard links.".into());
     }
     let _guard = lease(
-        &source.with_file_name(format!(
-            "{}.server-lock.sqlite",
-            source
-                .file_name()
-                .ok_or("Invalid database")?
-                .to_string_lossy()
-        )),
+        &exact_sidecar(&source, ".server-lock.sqlite"),
         "Another canonical server is still running.",
     )?;
     match command {
@@ -53,7 +48,7 @@ pub fn run(command: &str, database: &Path, destination: &Path) -> Result<()> {
                 .join(".update-restore.sqlite");
             durable(&staged, &fs::read(destination)?)?;
             for suffix in ["-wal", "-shm", "-journal"] {
-                remove(Path::new(&format!("{}{suffix}", source.display())))?;
+                remove(&exact_sidecar(&source, suffix))?;
             }
             fs::rename(staged, &source)?;
             sync_dir(source.parent().ok_or("Invalid database path")?)

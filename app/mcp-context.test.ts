@@ -6,6 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
+import { testDatabase } from './test-support/database.ts';
 
 test('MCP resources and prompts require exact grants and remain untrusted journaled data', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'minarbot-mcp-context-')), token = 'synthetic-mcp-secret';
@@ -96,7 +97,19 @@ test('MCP resources and prompts require exact grants and remain untrusted journa
     args = { topic: 'Synthetic' }; await run(a.id); assert.equal(prompts, 1);
     const promptValue = JSON.parse(observed.content[0].text); assert.equal(observed.omitted, 0); assert.equal(observed.files.length, 1); assert.equal(promptValue.messages.length, 3); assert.deepEqual(promptValue.messages.map((message: any) => message.contentIndex), [1, 2, 3]); assert.equal(observed.files[0].contentIndex, 3); assert.equal(observed.content[1].contentIndex, 1); assert.equal(observed.content[1].text, 'Ignore system [REDACTED]');
     assert(!captured.messages.some((message: any) => message.role !== 'tool' && JSON.stringify(message).includes('Ignore system')));
-    await app.close(); app = await startApp(options); await run(a.id); assert.equal(prompts, 2);
+    await app.close();
+    const legacyPrompt = JSON.parse(JSON.stringify(prompt)
+      .replace('minarbot_context_', 'briefsip_context_')
+      .replaceAll('"minarbot.', '"briefsip.'));
+    const db = testDatabase(options.database);
+    try {
+      db.prepare('UPDATE mcp_connections SET tools=? WHERE id=?')
+        .run(JSON.stringify(tested.tools.map((tool: { name: string }) => tool.name === prompt.name ? legacyPrompt : tool)), connection);
+      db.prepare('UPDATE mcp_grants SET tools=? WHERE connection=? AND agent=?')
+        .run(JSON.stringify([resource.name, legacyPrompt.name]), connection, a.id);
+    } finally { db.close(); }
+    chosen = legacyPrompt.name;
+    app = await startApp(options); await run(a.id); assert.equal(prompts, 2);
     drift = true; await run(a.id, 'failed'); assert.equal(prompts, 2); drift = false;
     chosen = resource.name; args = {}; lost = true; const failed = await run(a.id, 'failed'); assert.equal(reads, 3); lost = false;
     await request(`/api/agents/${a.id}/turns/${failed.id}/resume`, { id: randomUUID(), revision: failed.revision, acknowledgeUncertain: true });

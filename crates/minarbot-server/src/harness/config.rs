@@ -47,21 +47,18 @@ pub struct Bridge {
 const HOMES_SUFFIX: &str = ".harness-homes";
 pub(super) const SESSION_PREFIX: &str = "minarbot-session-";
 
-/// One homes directory per database, beside it, so servers sharing DATA never contend.
-fn homes_name(database: &Path) -> std::io::Result<String> {
+pub(super) fn homes_root(database: &Path) -> std::io::Result<PathBuf> {
     let name = database
         .file_name()
-        .and_then(|name| name.to_str())
         .ok_or_else(|| std::io::Error::other("Database path has no file name"))?;
-    Ok(format!("{name}{HOMES_SUFFIX}"))
-}
-
-pub(super) fn homes_root(database: &Path) -> std::io::Result<PathBuf> {
     let data = database
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    Ok(data.canonicalize()?.join(homes_name(database)?))
+    Ok(crate::rename_migration::sidecar(
+        &data.canonicalize()?.join(name),
+        HOMES_SUFFIX,
+    ))
 }
 
 fn session_name(name: &str) -> bool {
@@ -72,13 +69,13 @@ fn session_name(name: &str) -> bool {
 
 pub(crate) fn prepare_homes(database: &Path) -> crate::db::Result<File> {
     let root = homes_root(database)?;
-    let name = homes_name(database)?;
+    let name = root.file_name().ok_or("Invalid harness homes path")?;
     let data = operator_file::open_directory(root.parent().ok_or("Invalid harness homes path")?)?;
-    match mkdirat(&data, name.as_str(), Mode::RWXU) {
+    match mkdirat(&data, name, Mode::RWXU) {
         Ok(()) | Err(rustix::io::Errno::EXIST) => {}
         Err(error) => return Err(error.into()),
     }
-    let directory = operator_file::directory_at(&data, &name)?;
+    let directory = operator_file::directory_at(&data, name)?;
     if !operator_file::private(&directory) {
         return Err("Harness homes directory must be private and owned by the server user".into());
     }

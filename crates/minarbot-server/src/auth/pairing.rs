@@ -261,10 +261,7 @@ async fn pair(state: &AppState, request: Request, origin: &str) -> Result<Respon
             match token {
                 Ok(token) => {
                     let mut response = Redirect::to("/").into_response();
-                    response.headers_mut().insert(
-                        header::SET_COOKIE,
-                        cookie_header(&token, store::COOKIE_AGE / 1000)?,
-                    );
+                    set_cookies(&mut response, &token, store::COOKIE_AGE / 1000)?;
                     Ok(response)
                 }
                 Err(error) => Ok(page(
@@ -278,11 +275,15 @@ async fn pair(state: &AppState, request: Request, origin: &str) -> Result<Respon
     }
 }
 
-fn cookie_header(token: &str, age: i64) -> Result<HeaderValue> {
-    HeaderValue::from_str(&format!(
-        "{COOKIE}={token}; Path=/; Max-Age={age}; HttpOnly; Secure; SameSite=Strict"
-    ))
-    .map_err(|_| Failure::storage())
+fn set_cookies(response: &mut Response, token: &str, age: i64) -> Result<()> {
+    for name in [COOKIE, LEGACY_COOKIE] {
+        let cookie = HeaderValue::from_str(&format!(
+            "{name}={token}; Path=/; Max-Age={age}; HttpOnly; Secure; SameSite=Strict"
+        ))
+        .map_err(|_| Failure::storage())?;
+        response.headers_mut().append(header::SET_COOKIE, cookie);
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -387,9 +388,7 @@ async fn manage(
             state.events.publish("browser-pairing".to_owned());
             let mut response = crate::json_response(200, json!({"ok":true}));
             if current.as_deref() == Some(&id) {
-                response
-                    .headers_mut()
-                    .insert(header::SET_COOKIE, cookie_header("", 0)?);
+                set_cookies(&mut response, "", 0)?;
             }
             Ok(response)
         }
@@ -556,11 +555,19 @@ mod tests {
 
     #[test]
     fn device_cookie_is_host_only_and_secure() -> Result<()> {
-        let cookie = cookie_header("token", 10)?;
-        assert_eq!(
-            cookie,
-            "__Host-minarbot-device=token; Path=/; Max-Age=10; HttpOnly; Secure; SameSite=Strict"
-        );
+        let mut response = ().into_response();
+        set_cookies(&mut response, "token", 10)?;
+        let cookies = response.headers().get_all(header::SET_COOKIE);
+        let mut cookies = cookies.iter();
+        for name in [COOKIE, LEGACY_COOKIE] {
+            let cookie = cookies.next().ok_or_else(Failure::storage)?;
+            assert_eq!(
+                cookie,
+                format!("{name}=token; Path=/; Max-Age=10; HttpOnly; Secure; SameSite=Strict")
+                    .as_str()
+            );
+        }
+        assert!(cookies.next().is_none());
         Ok(())
     }
 }

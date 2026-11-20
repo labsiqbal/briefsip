@@ -219,9 +219,7 @@ pub fn list(s: &AppState) -> Result<Vec<Value>> {
     .collect()
 }
 fn key(s: &AppState, create: bool) -> Result<Vec<u8>> {
-    let mut p = s.config.database.as_os_str().to_owned();
-    p.push(".peer-key");
-    let path = std::path::PathBuf::from(p);
+    let path = crate::rename_migration::sidecar(&s.config.database, ".peer-key");
     if create {
         match OpenOptions::new()
             .write(true)

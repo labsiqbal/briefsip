@@ -165,9 +165,7 @@ impl Host {
             return Err("Device server must be a configured HTTPS origin".into());
         }
         let database = std::path::absolute(database)?;
-        let mut metadata = database.as_os_str().to_owned();
-        metadata.push(".host");
-        let directory = PathBuf::from(metadata);
+        let directory = crate::rename_migration::sidecar(&database, ".host");
         fs::DirBuilder::new()
             .recursive(true)
             .mode(0o700)

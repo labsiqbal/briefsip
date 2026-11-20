@@ -335,7 +335,7 @@ async fn test(state: &AppState, v: &Value, project: &str) -> Result<Value> {
         }
     }
     let mut session = client::Session::open(&url, &token).await?;
-    let catalogue = session.catalogue().await;
+    let catalogue = session.catalogue(false).await;
     session.close().await;
     let tools = clean_tools(&catalogue?, &token)?;
     let expires = state.config.now() + 600000;

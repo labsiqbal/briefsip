@@ -13,6 +13,12 @@ export function skillFileFromBytes(path: string, bytes: Uint8Array, binary = fal
   let raw = ''; for (const byte of bytes) raw += String.fromCharCode(byte);
   return { path, content: btoa(raw), encoding: 'base64' };
 }
+export function exportedSkillFiles(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('File is not a Minarbot version 1 skill folder export.');
+  const bundle = value as Record<string, unknown>;
+  if ((bundle.format !== 'minarbot-skill-folder' && bundle.format !== 'briefsip-skill-folder') || bundle.version !== 1 || Object.keys(bundle).some(key => !['format', 'version', 'files'].includes(key))) throw new Error('File is not a Minarbot version 1 skill folder export.');
+  return bundle.files;
+}
 export function parseSkillFiles(value: unknown) {
   // ponytail: bounded immutable snapshots; packages above 2 MiB need a streamed asset store.
   if (!Array.isArray(value) || !value.length || value.length > 32 || new TextEncoder().encode(JSON.stringify(value)).length > 4 * 1024 * 1024) throw new Error('Skill folder limit is 32 files, 48 KB of text, and 2 MiB of binary assets.');
