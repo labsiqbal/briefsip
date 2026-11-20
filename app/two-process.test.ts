@@ -55,7 +55,7 @@ async function protectedWaitFixture() {
     assert.equal((await f.send('/api/projects', { requestId: randomUUID(), id: project, name: 'Events' })).status, 201);
     assert.equal((await f.send('/api/agents', { requestId: agent, id: agent, name: 'Waiter', model: 'fixture', backupModel: '', instructions: 'Wait', threadLimit: 2, projectId: project, homeDeviceId: home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: home.revision, providerBinding: null })).status, 201);
     const taskId = randomUUID(), payload = { v: 1, kind: 'direct', message: { text: 'Wait', files: [] } }, expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 };
-    { const admitted = await f.send('/api/tasks', { requestId: taskId, projectId: project, agentId: agent, homeDeviceId: home.id, payload, expectedRevisions, payloadDigest: digestCommand(['briefsip-task-payload-v1', taskId, project, agent, home.id, payload, expectedRevisions]) }); assert.equal(admitted.status, 202, JSON.stringify(admitted.body)); }
+    { const admitted = await f.send('/api/tasks', { requestId: taskId, projectId: project, agentId: agent, homeDeviceId: home.id, payload, expectedRevisions, payloadDigest: digestCommand(['minarbot-task-payload-v1', taskId, project, agent, home.id, payload, expectedRevisions]) }); assert.equal(admitted.status, 202, JSON.stringify(admitted.body)); }
     const owned = await runtime.startTask(taskId), context = await runtime.taskContext(taskId, owned.ownership, owned.revision), actionId = randomUUID();
     await assert.rejects(runtime.executeAction({ taskId, actionId, sequence: 0, actionKind: 'canonical', ownership: owned.ownership, payload: { toolCall: { id: 'wait-ready', function: { name: 'wait_for_event', arguments: JSON.stringify({ event: 'ready', timeoutSeconds: 60 }) } }, expectedRevision: context.snapshot.taskRevision + 1 }, context, grantRevision: 1 }, () => assert.fail('No host effect')), { code: 'device_offline' });
     let waitId = '';
@@ -72,13 +72,13 @@ test('protected turn event verifies on home, saves one receipt and resumes with 
     const small = '{ "event": "ready", "payload": {"message":"hello 🌏"} }', body = small + ' '.repeat(65536 - Buffer.byteLength(small));
     const eventPath = `/api/turn-waits/${waitId}/events`, timestamp = String(Math.floor(Date.now() / 1000));
     const sendEvent = async (text = body, eventId = delivery, time = timestamp, extra: Record<string,string> = {}) => {
-      const headers = { 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': eventId, 'X-Briefsip-Signature': createHmac('sha256', secret).update(`${time}\n${eventId}\n${text}`).digest('hex'), ...extra };
+      const headers = { 'Content-Type': 'application/json', 'X-Minarbot-Time': time, 'X-Minarbot-Id': eventId, 'X-Minarbot-Signature': createHmac('sha256', secret).update(`${time}\n${eventId}\n${text}`).digest('hex'), ...extra };
       const response = await fetch(f.origin() + eventPath, { method: 'POST', headers, body: text });
       return { status: response.status, body: await response.json() };
     };
     const oversize = await sendEvent(body + ' '); assert.equal(oversize.status, 413, JSON.stringify(oversize.body)); await until(() => connection.state().phase === 'connected');
     assert.equal((await sendEvent(body, delivery, timestamp, { Origin: f.origin() })).status, 403);
-    const wrongSignature = await sendEvent(body, delivery, timestamp, { 'X-Briefsip-Signature': '0'.repeat(64) }); assert.equal(wrongSignature.status, 401, JSON.stringify(wrongSignature.body));
+    const wrongSignature = await sendEvent(body, delivery, timestamp, { 'X-Minarbot-Signature': '0'.repeat(64) }); assert.equal(wrongSignature.status, 401, JSON.stringify(wrongSignature.body));
     assert.equal((await sendEvent(body, delivery, '1')).status, 401, 'Stale unaccepted delivery denies');
     assert.equal((await sendEvent('{')).status, 400);
     assert.equal((await sendEvent('{"event":"other"}')).status, 409);
@@ -95,7 +95,7 @@ test('protected turn event verifies on home, saves one receipt and resumes with 
     assert.equal(accepted.body.data.accepted, true); assert.equal(accepted.body.data.delivery, delivery);
     assert.deepEqual((await sendEvent()).body, accepted.body);
     assert.deepEqual((await sendEvent(body, delivery, '1')).body, accepted.body, 'Accepted retry skips freshness after verifying HMAC');
-    assert.equal((await sendEvent(body, delivery, '1', { 'X-Briefsip-Signature': '0'.repeat(64) })).status, 401);
+    assert.equal((await sendEvent(body, delivery, '1', { 'X-Minarbot-Signature': '0'.repeat(64) })).status, 401);
     assert.equal((await sendEvent(small)).status, 409, 'Whitespace is part of exact raw body digest');
     assert.equal((await sendEvent(body, randomUUID())).status, 409);
     assert.equal((await f.send(`/api/turn-waits/${waitId}`)).body.data.status, 'received');
@@ -130,7 +130,7 @@ test('protected turn event rejects delayed verification after scope or connectio
     const gate = new Promise<void>(resolve => { release = resolve; });
     const secret = [...f.keys.values].find(([key]) => key.includes('/event-wait/'))![1], delivery = randomUUID(), body = '{"event":"ready","payload":{"ok":true}}', time = String(Math.floor(Date.now() / 1000));
     const sendEvent = async () => {
-      const response = await originalFetch(f.origin() + `/api/turn-waits/${f.waitId}/events`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': delivery, 'X-Briefsip-Signature': createHmac('sha256', secret).update(`${time}\n${delivery}\n${body}`).digest('hex') }, body });
+      const response = await originalFetch(f.origin() + `/api/turn-waits/${f.waitId}/events`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Minarbot-Time': time, 'X-Minarbot-Id': delivery, 'X-Minarbot-Signature': createHmac('sha256', secret).update(`${time}\n${delivery}\n${body}`).digest('hex') }, body });
       return { status: response.status, body: await response.json() };
     };
     try {
@@ -165,7 +165,7 @@ test('protected turn wait uses outbound stream and recovers lost host ACK withou
     assert.equal((await f.send('/api/projects', { requestId: randomUUID(), id: project, name: 'Waits' })).status, 201);
     assert.equal((await f.send('/api/agents', { requestId: agent, id: agent, name: 'Waiter', model: 'fixture', backupModel: '', instructions: 'Wait', threadLimit: 2, projectId: project, homeDeviceId: home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: home.revision, providerBinding: null })).status, 201);
     const taskId = randomUUID(), payload = { v: 1, kind: 'direct', message: { text: 'Wait for ready', files: [] } }, expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 };
-    { const admitted = await f.send('/api/tasks', { requestId: taskId, projectId: project, agentId: agent, homeDeviceId: home.id, payload, expectedRevisions, payloadDigest: digestCommand(['briefsip-task-payload-v1', taskId, project, agent, home.id, payload, expectedRevisions]) }); assert.equal(admitted.status, 202, JSON.stringify(admitted.body)); }
+    { const admitted = await f.send('/api/tasks', { requestId: taskId, projectId: project, agentId: agent, homeDeviceId: home.id, payload, expectedRevisions, payloadDigest: digestCommand(['minarbot-task-payload-v1', taskId, project, agent, home.id, payload, expectedRevisions]) }); assert.equal(admitted.status, 202, JSON.stringify(admitted.body)); }
     const owned = await runtime.startTask(taskId), context = await runtime.taskContext(taskId, owned.ownership, owned.revision), actionId = randomUUID();
     const input = { taskId, actionId, sequence: 0, actionKind: 'canonical' as const, ownership: owned.ownership, payload: { toolCall: { id: 'wait-ready', function: { name: 'wait_for_event', arguments: JSON.stringify({ event: 'ready', timeoutSeconds: 60 }) } }, expectedRevision: context.snapshot.taskRevision + 1 }, context, grantRevision: 1 };
     globalThis.fetch = async (url, init) => {
@@ -227,7 +227,7 @@ test('protected turn wait uses outbound stream and recovers lost host ACK withou
     assert(!JSON.stringify(encrypted.body).includes(secret));
     const decrypt = (privateKey = browser.privateKey, associatedOwner = owner) => {
       const shared = diffieHellman({ privateKey, publicKey: createPublicKey({ key: Buffer.from(JSON.parse(device.descriptor_json).encryptionPublicKey, 'base64url'), type: 'spki', format: 'der' }) });
-      const cipher = createDecipheriv('aes-256-gcm', Buffer.from(hkdfSync('sha256', shared, reveal.requestId, 'briefsip-wait-reveal-v1', 32)), Buffer.from(value.iv, 'base64url'));
+      const cipher = createDecipheriv('aes-256-gcm', Buffer.from(hkdfSync('sha256', shared, reveal.requestId, 'minarbot-wait-reveal-v1', 32)), Buffer.from(value.iv, 'base64url'));
       cipher.setAAD(Buffer.from(JSON.stringify([value.requestId,value.waitKey,associatedOwner,value.deviceGeneration,value.secretGeneration,value.expiresAt]))); cipher.setAuthTag(Buffer.from(value.tag, 'base64url'));
       return Buffer.concat([cipher.update(Buffer.from(value.ciphertext, 'base64url')), cipher.final()]).toString('utf8');
     };
@@ -237,7 +237,7 @@ test('protected turn wait uses outbound stream and recovers lost host ACK withou
     assert.equal((await f.send(path, { ...reveal, requestId: randomUUID(), expectedSecretGeneration: 2 })).status, 409);
     assert.equal((await f.send(path, { ...reveal, requestId: randomUUID(), ephemeralPublicKey: 'invalid' })).status, 400);
     assert.equal((await f.send(path, { ...reveal, requestId: randomUUID() }, 'user_collaborator')).status, 404);
-    const wrongOrigin = await originalFetch(f.origin() + path, { method: 'POST', headers: { Authorization: `Bearer ${f.jwt()}`, Origin: 'https://foreign.invalid', 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': reveal.requestId }, body: JSON.stringify(reveal) });
+    const wrongOrigin = await originalFetch(f.origin() + path, { method: 'POST', headers: { Authorization: `Bearer ${f.jwt()}`, Origin: 'https://foreign.invalid', 'Content-Type': 'application/json', 'X-Minarbot-Protocol': '1', 'X-Minarbot-Request-Id': reveal.requestId }, body: JSON.stringify(reveal) });
     assert.equal(wrongOrigin.status, 403); await wrongOrigin.body?.cancel();
     let held = false, releaseResult!: () => void;
     const gate = new Promise<void>(resolve => { releaseResult = resolve; });
@@ -289,7 +289,7 @@ test('canonical shared data isolates project images and recovers one write after
     assert.equal((await f.send(`/api/projects/${other}/agents/${agent}`,{requestId:randomUUID(),expectedProjectRevision:1,expectedAgentRevision:1,expectedAuthorityRevision:1,expectedParticipationRevision:0,rules:'',capabilities:{v:1,tools:['list_data_tables','query_data'],resources:[]}},'user_owner','PUT')).status,201);
     const start=async(projectId:string)=>{
       const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'Use data',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
-      assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,projectId,agent,home.id,payload,expectedRevisions])})).status,202);
+      assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['minarbot-task-payload-v1',taskId,projectId,agent,home.id,payload,expectedRevisions])})).status,202);
       return {...await runtime.startTask(taskId),sequence:0};
     };
     const first=await start(project);
@@ -325,7 +325,7 @@ test('canonical avatar removal recovers its original result after a lost reply, 
     assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Avatar owner',model:'fixture',backupModel:'',instructions:'Remove avatar',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
     const seed=fixtureDatabase(join(f.dir,'canonical.sqlite'));try{seed.prepare('INSERT INTO agent_avatars VALUES (?,1,?)').run(agent,image);}finally{seed.close();}
     const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'Remove my avatar',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
-    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
+    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['minarbot-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
     const owned=await runtime.startTask(taskId),context=await runtime.taskContext(taskId,owned.ownership,owned.revision),actionId=randomUUID();assert.equal((context.snapshot.profile as {avatarRevision:number}).avatarRevision,1);
     const action={taskId,actionId,sequence:0,actionKind:'canonical' as const,ownership:owned.ownership,payload:{toolCall:{id:actionId,function:{name:'set_avatar',arguments:JSON.stringify({image:null,revision:1})}},expectedRevision:context.snapshot.taskRevision+1},context,grantRevision:1};
     globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith('/context-mutations')){assert.equal(response.status,200,await response.clone().text());await response.body?.cancel();throw new Error('Lost avatar removal');}return response;};
@@ -357,7 +357,7 @@ test('canonical site management keeps project scope and recovers one deletion af
       }
     }finally{db.close();}
     const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'List and delete my site',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
-    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
+    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['minarbot-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
     const owned=await runtime.startTask(taskId);let sequence=0;
     const input=async(name:string,args:unknown)=>{
       const detail=(await f.send(`/api/tasks/${taskId}`)).body.data,context=await runtime.taskContext(taskId,owned.ownership,detail.revision),actionId=randomUUID();
@@ -386,7 +386,7 @@ test('canonical questions survive lost RPC and answer replies, restart and home 
     assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Questions'})).status,201);
     assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Reader',model:'fixture',backupModel:'',instructions:'Ask first',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
     const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'Ask before continuing',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
-    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
+    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['minarbot-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
     const owned=await runtime.startTask(taskId),context=await runtime.taskContext(taskId,owned.ownership,owned.revision),actionId=randomUUID();
     const input={taskId,actionId,sequence:0,actionKind:'canonical' as const,ownership:owned.ownership,payload:{toolCall:{id:actionId,function:{name:'ask_user',arguments:JSON.stringify({question:'Continue?',choices:['Yes','No']})}},expectedRevision:context.snapshot.taskRevision+1},context,grantRevision:1};
     globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith('/context-mutations')){assert.equal(response.status,200,await response.clone().text());await response.body?.cancel();throw new Error('Lost question result');}return response;};
@@ -460,7 +460,7 @@ async function fixture() {
     return `${header}.${claims}.${sign('RSA-SHA256', Buffer.from(`${header}.${claims}`), keys.privateKey).toString('base64url')}`;
   };
   const send = async (path: string, body?: { requestId: string; [key: string]: unknown }, subject = 'user_owner', method = body ? 'POST' : 'GET') => {
-    const response = await fetch(app.origin + path, { method, headers: { Authorization: `Bearer ${jwt(subject)}`, Origin: auth.origin, Connection: 'close', 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': body?.requestId ?? randomUUID() }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    const response = await fetch(app.origin + path, { method, headers: { Authorization: `Bearer ${jwt(subject)}`, Origin: auth.origin, Connection: 'close', 'Content-Type': 'application/json', 'X-Minarbot-Protocol': '1', 'X-Minarbot-Request-Id': body?.requestId ?? randomUUID() }, ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
   };
   return { dir, jwt, send, device, webhookKeys, webhookFault, stderr: () => rustServerOutput(app.origin).stderr, stdout: () => rustServerOutput(app.origin).stdout, origin: () => app.origin, startAgain: (database=options.database,port=0) => startCanonicalApp({...options,database,port}), async restart() { const ready = ((await send('/api/devices')).body.data ?? []).filter((device:any)=>device.status==='ready').map((device:any)=>device.id); const port = new URL(app.origin).port; await app.close(); app = await startCanonicalApp({ ...options, port: Number(port) }); if(ready.length)await until(async()=>{const devices=(await send('/api/devices')).body.data;return ready.every((id:string)=>devices.some((device:any)=>device.id===id&&device.status==='ready'));},deviceReconnectTimeout); }, async restoreFrom(backup:string){
@@ -550,7 +550,7 @@ test('protected workflow connection reveals only ciphertext to its current owner
     assert.deepEqual(Object.keys(value).sort(), ['requestId','waitKey','sourceDeviceId','deviceGeneration','secretGeneration','expiresAt','iv','ciphertext','tag'].sort());
     const decrypt = (ownerId = owner, privateKey = browser.privateKey) => {
       const shared = diffieHellman({ privateKey, publicKey: createPublicKey({ key: Buffer.from(JSON.parse(device.descriptor_json).encryptionPublicKey, 'base64url'), type: 'spki', format: 'der' }) });
-      const cipher = createDecipheriv('aes-256-gcm', Buffer.from(hkdfSync('sha256', shared, reveal.requestId, 'briefsip-wait-reveal-v1', 32)), Buffer.from(value.iv, 'base64url'));
+      const cipher = createDecipheriv('aes-256-gcm', Buffer.from(hkdfSync('sha256', shared, reveal.requestId, 'minarbot-wait-reveal-v1', 32)), Buffer.from(value.iv, 'base64url'));
       cipher.setAAD(Buffer.from(JSON.stringify([value.requestId,value.waitKey,ownerId,value.deviceGeneration,value.secretGeneration,value.expiresAt]))); cipher.setAuthTag(Buffer.from(value.tag, 'base64url'));
       return Buffer.concat([cipher.update(Buffer.from(value.ciphertext, 'base64url')), cipher.final()]).toString('utf8');
     };
@@ -565,7 +565,7 @@ test('protected workflow connection reveals only ciphertext to its current owner
     finally { db.close(); }
     assert.equal((await f.send(f.waitPath, undefined, 'user_collaborator')).status, 200);
     assert.equal((await f.send(path, { ...reveal, requestId: randomUUID() }, 'user_collaborator')).status, 403);
-    const wrongOrigin = await fetch(f.origin() + path, { method: 'POST', headers: { Authorization: 'Bearer ' + f.jwt(), Origin: 'https://foreign.invalid', 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': reveal.requestId }, body: JSON.stringify(reveal) });
+    const wrongOrigin = await fetch(f.origin() + path, { method: 'POST', headers: { Authorization: 'Bearer ' + f.jwt(), Origin: 'https://foreign.invalid', 'Content-Type': 'application/json', 'X-Minarbot-Protocol': '1', 'X-Minarbot-Request-Id': reveal.requestId }, body: JSON.stringify(reveal) });
     assert.equal(wrongOrigin.status, 403); await wrongOrigin.body?.cancel();
     await f.connection.stop(); assert.equal((await f.send(path, { ...reveal, requestId: randomUUID() })).status, 503);
     assert.equal((await f.send(path)).status, 200);
@@ -579,7 +579,7 @@ test('protected workflow event commits one transition and keeps exact retries af
     const secret = [...f.keys.values].find(([key]) => key.includes('/event-wait/'))![1], delivery = randomUUID(), timestamp = String(Math.floor(Date.now() / 1000));
     const small = '{ "event": "ready", "eventTime": 1234, "payload": {"message":"hello 🌏"} }', body = small + ' '.repeat(65536 - Buffer.byteLength(small));
     const sendEvent = async (text = body, eventId = delivery, time = timestamp, extra: Record<string,string> = {}, path = f.waitPath + '/events') => {
-      const response = await fetch(f.origin() + path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': eventId, 'X-Briefsip-Signature': createHmac('sha256', secret).update(`${time}\n${eventId}\n${text}`).digest('hex'), ...extra }, body: text });
+      const response = await fetch(f.origin() + path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Minarbot-Time': time, 'X-Minarbot-Id': eventId, 'X-Minarbot-Signature': createHmac('sha256', secret).update(`${time}\n${eventId}\n${text}`).digest('hex'), ...extra }, body: text });
       return { status: response.status, body: await response.json() };
     };
     assert.equal((await sendEvent()).status, 200);
@@ -588,7 +588,7 @@ test('protected workflow event commits one transition and keeps exact retries af
     assert.equal((await f.send(f.path)).body.data.stepCount, 2);
     assert.deepEqual(JSON.parse((await f.send(f.path)).body.data.last), { event: 'ready', eventTime: 1234, payload: { message: 'hello 🌏' } });
     assert.deepEqual((await sendEvent(body, delivery, '1')).body, accepted.body, 'Accepted retry skips freshness only after verifying HMAC');
-    assert.equal((await sendEvent(body, delivery, '1', { 'X-Briefsip-Signature': '0'.repeat(64) })).status, 401);
+    assert.equal((await sendEvent(body, delivery, '1', { 'X-Minarbot-Signature': '0'.repeat(64) })).status, 401);
     assert.equal((await sendEvent(small)).status, 409, 'Raw body whitespace changes delivery digest');
     assert.equal((await sendEvent(body, randomUUID())).status, 409);
     const status = (await f.send(f.waitPath)).body.data; assert.equal(status.status, 'received'); assert.deepEqual(status.receipt, accepted.body.receipt);
@@ -600,7 +600,7 @@ test('protected workflow event commits one transition and keeps exact retries af
     await until(async () => (await f.send(nextWait)).body.data?.status === 'waiting');
     const nextSecret = [...f.keys.values].filter(([key]) => key.includes('/event-wait/')).find(([,value]) => value !== secret)![1];
     const freshEvent = async (text: string, time = timestamp, extra: Record<string,string> = {}) => {
-      const eventId = randomUUID(); return sendEvent(text, eventId, time, { 'X-Briefsip-Signature': createHmac('sha256', nextSecret).update(`${time}\n${eventId}\n${text}`).digest('hex'), ...extra }, nextWait + '/events');
+      const eventId = randomUUID(); return sendEvent(text, eventId, time, { 'X-Minarbot-Signature': createHmac('sha256', nextSecret).update(`${time}\n${eventId}\n${text}`).digest('hex'), ...extra }, nextWait + '/events');
     };
     assert.equal((await freshEvent(body + ' ')).status, 413);
     assert.equal((await freshEvent(body, timestamp, { Origin: f.origin() })).status, 403);
@@ -635,7 +635,7 @@ test('protected workflow wait discards delayed reveal and event replies after au
     const secret = [...f.keys.values].find(([key]) => key.includes('/event-wait/'))![1], delivery = randomUUID(), body = '{"event":"ready","payload":"once"}', time = String(Math.floor(Date.now() / 1000));
     const send = async () => {
       if (kind === 'reveal') return f.send(f.waitPath + '/connection', { ...reveal, requestId: randomUUID() });
-      const response = await fetch(f.origin() + f.waitPath + '/events', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': delivery, 'X-Briefsip-Signature': createHmac('sha256', secret).update(`${time}\n${delivery}\n${body}`).digest('hex') }, body });
+      const response = await fetch(f.origin() + f.waitPath + '/events', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Minarbot-Time': time, 'X-Minarbot-Id': delivery, 'X-Minarbot-Signature': createHmac('sha256', secret).update(`${time}\n${delivery}\n${body}`).digest('hex') }, body });
       return { status: response.status, body: await response.json() };
     };
     const db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
@@ -1192,7 +1192,7 @@ test('canonical workflow capacity retries leave no empty threads before admissio
     const expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 }, payload = { v: 1, kind: 'direct', message: { text: 'Fill queue', files: [] } };
     for (let index = 0; index < 100; index++) {
       const requestId = randomUUID();
-      assert.equal((await f.send('/api/tasks', { requestId, projectId: project, agentId: f.agent, homeDeviceId: f.home.id, payload, expectedRevisions, payloadDigest: digestCommand(['briefsip-task-payload-v1', requestId, project, f.agent, f.home.id, payload, expectedRevisions]) })).status, 202);
+      assert.equal((await f.send('/api/tasks', { requestId, projectId: project, agentId: f.agent, homeDeviceId: f.home.id, payload, expectedRevisions, payloadDigest: digestCommand(['minarbot-task-payload-v1', requestId, project, f.agent, f.home.id, payload, expectedRevisions]) })).status, 202);
     }
     const graph = { entry: 'work', maxSteps: 2, nodes: [{ id: 'work', kind: 'agent', agent: f.agent, prompt: 'Wait for capacity', next: 'out' }, { id: 'out', kind: 'output' }] };
     assert.equal((await f.send(list, { requestId: workflow, id: workflow, revision: 0, name: 'Capacity', graph })).status, 201);
@@ -1482,7 +1482,7 @@ test('canonical routine manual admission enforces current authority private scop
     assert.equal((await f.send(otherDetail+'/run',{requestId:'bad'})).status,400);
     assert.equal((await f.send(otherDetail+'/run',{requestId:randomUUID(),prompt:'Extra'})).status,400);
     assert.equal((await f.send(otherDetail+'/run')).status,404);
-    const selectorId=randomUUID(),selector=await fetch(f.origin()+otherDetail+'/run',{method:'POST',headers:{Authorization:`Bearer ${f.jwt()}`,Origin:f.origin(),'Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':selectorId,'X-Briefsip-Project':f.other},body:JSON.stringify({requestId:selectorId})});assert.equal(selector.status,404);await selector.body?.cancel();
+    const selectorId=randomUUID(),selector=await fetch(f.origin()+otherDetail+'/run',{method:'POST',headers:{Authorization:`Bearer ${f.jwt()}`,Origin:f.origin(),'Content-Type':'application/json','X-Minarbot-Protocol':'1','X-Minarbot-Request-Id':selectorId,'X-Minarbot-Project':f.other},body:JSON.stringify({requestId:selectorId})});assert.equal(selector.status,404);await selector.body?.cancel();
     assert.equal(db.prepare('SELECT count(*) n FROM routine_occurrences').get()!.n,1);
   }finally{db.close();await f.close();}
 });
@@ -1494,8 +1494,8 @@ test('canonical routine configuration and flow stay scoped across projects resta
     const created=await f.send(list,command);assert.equal(created.status,201,JSON.stringify(created.body));
     assert.equal(created.body.data.homeDeviceId,f.home.id);assert.equal(created.body.data.projectId,f.project);
     assert.equal((await f.send(detail)).body.data.prompt,command.prompt);
-    const calendar=await fetch(f.origin()+`/api/projects/${f.project}/agents/${f.agent}/routines/calendar.ics`,{headers:{Authorization:`Bearer ${f.jwt()}`,Origin:f.origin(),Connection:'close','Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':randomUUID()}});
-    const calendarText=await calendar.text();assert.equal(calendar.status,200);assert(calendarText.includes(`UID:${routine}@briefsip.local`));assert(calendarText.includes('RRULE:FREQ=SECONDLY;INTERVAL=300'));assert(!calendarText.includes(command.prompt));
+    const calendar=await fetch(f.origin()+`/api/projects/${f.project}/agents/${f.agent}/routines/calendar.ics`,{headers:{Authorization:`Bearer ${f.jwt()}`,Origin:f.origin(),Connection:'close','Content-Type':'application/json','X-Minarbot-Protocol':'1','X-Minarbot-Request-Id':randomUUID()}});
+    const calendarText=await calendar.text();assert.equal(calendar.status,200);assert(calendarText.includes(`UID:${routine}@minarbot.local`));assert(calendarText.includes('RRULE:FREQ=SECONDLY;INTERVAL=300'));assert(!calendarText.includes(command.prompt));
     const foreignCalendar=await f.send(`/api/projects/${f.other}/agents/${f.agent}/routines/calendar.ics`);assert.equal(foreignCalendar.status,404);
     assert.deepEqual((await f.send(list,command)).body.receipt,created.body.receipt);
     assert.equal((await f.send(list,{...command,name:'Other'})).status,409);
@@ -1859,9 +1859,9 @@ test('canonical routine wall-clock HTTP keeps exact retries and pending identiti
     });
     assert.equal(pendingOnce.scheduleKind, 'once'); assert.equal(pendingCron.scheduleKind, 'cron'); assert(pendingCron.missedCount > 1);
     assert.equal(pendingCron.id, createHash('sha256').update(JSON.stringify([cron, 1, f.home.zone_revision, pendingCron.dueAt, 0])).digest('base64url'));
-    const response = await fetch(f.origin() + list + '/calendar.ics', { headers: { Authorization: `Bearer ${f.jwt()}`, Origin: f.origin(), Connection: 'close', 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': randomUUID() } });
+    const response = await fetch(f.origin() + list + '/calendar.ics', { headers: { Authorization: `Bearer ${f.jwt()}`, Origin: f.origin(), Connection: 'close', 'Content-Type': 'application/json', 'X-Minarbot-Protocol': '1', 'X-Minarbot-Request-Id': randomUUID() } });
     const calendar = (await response.text()).replace(/\r\n /g, ''); assert.equal(response.status, 200);
-    assert(calendar.includes(`UID:${once}@briefsip.local`)); assert(!calendar.includes(`UID:${cron}@briefsip.local`));
+    assert(calendar.includes(`UID:${once}@minarbot.local`)); assert(!calendar.includes(`UID:${cron}@minarbot.local`));
     assert(calendar.includes('Omitted cron routine "Daily cron"')); assert(!calendar.includes(command.prompt));
     const snapshot = (await f.send('/api/sync?projectId=' + f.project)).body.data;
     const observed = snapshot.page.events.filter((event: any) => event.recordKind.startsWith('routine'));
@@ -1891,7 +1891,7 @@ test('canonical routine calendar exports only current project and reader schedul
   const f=await rustWorkflowConfigurationFixture(),list=`/api/projects/${f.project}/agents/${f.agent}/routines`,path=list+'/calendar.ics',db=fixtureDatabase(join(f.dir,'canonical.sqlite'));
   const at=Date.parse('2027-01-01T09:00:00Z'),entries:Record<string,string>={};
   const calendar=async(subject='user_owner',suffix='',extra:Record<string,string>={})=>{
-    const res=await fetch(f.origin()+path+suffix,{headers:{Authorization:`Bearer ${f.jwt(subject)}`,Origin:f.origin(),Connection:'close','Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':randomUUID(),...extra}});
+    const res=await fetch(f.origin()+path+suffix,{headers:{Authorization:`Bearer ${f.jwt(subject)}`,Origin:f.origin(),Connection:'close','Content-Type':'application/json','X-Minarbot-Protocol':'1','X-Minarbot-Request-Id':randomUUID(),...extra}});
     return {res,text:await res.text()};
   };
   try{
@@ -1904,8 +1904,8 @@ test('canonical routine calendar exports only current project and reader schedul
     db.prepare("UPDATE record_scopes SET visibility='owner' WHERE table_name='routines' AND key_json=?").run(JSON.stringify([entries.private]));
     db.prepare("UPDATE record_scopes SET project=? WHERE table_name='routines' AND key_json=?").run(f.other,JSON.stringify([entries.foreign]));
     const owned=await calendar();assert.equal(owned.res.status,200);assert.equal(owned.res.headers.get('content-type'),'text/calendar; charset=utf-8');
-    assert.equal(owned.res.headers.get('x-briefsip-protocol'),'1');assert.equal(owned.res.headers.get('cache-control'),'no-store');
-    assert(owned.text.includes(`UID:${entries.shared}@briefsip.local`));assert(owned.text.includes(`UID:${entries.private}@briefsip.local`));
+    assert.equal(owned.res.headers.get('x-minarbot-protocol'),'1');assert.equal(owned.res.headers.get('cache-control'),'no-store');
+    assert(owned.text.includes(`UID:${entries.shared}@minarbot.local`));assert(owned.text.includes(`UID:${entries.private}@minarbot.local`));
     for(const name of ['disabled','webhook','foreign'])assert(!owned.text.includes(entries[name]),name);
     assert(!owned.text.includes('CALENDAR_PRIVATE_PROMPT'));assert(owned.text.includes('DTSTART:20270101T090000Z'));assert(owned.text.includes('RRULE:FREQ=SECONDLY;INTERVAL=300'));
     assert.equal((await calendar('user_collaborator')).res.status,404);
@@ -1915,7 +1915,7 @@ test('canonical routine calendar exports only current project and reader schedul
     db.prepare("UPDATE devices SET zone='Pacific/Honolulu',zone_revision=zone_revision+1 WHERE id=?").run(f.home.id);
     await f.restart();assert((await calendar('user_collaborator')).text.includes('DTSTART:20270101T090000Z'),'Viewer/home-zone changes cannot rewrite absolute timing');
     for(const suffix of ['?projectId='+f.project,'?after='+entries.shared])assert.equal((await calendar('user_collaborator',suffix)).res.status,404);
-    assert.equal((await calendar('user_collaborator','',{'X-Briefsip-Project-Id':f.project})).res.status,404);
+    assert.equal((await calendar('user_collaborator','',{'X-Minarbot-Project-Id':f.project})).res.status,404);
     db.prepare('UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE project=? AND account=?').run(f.project,collaborator);
     const denied=await calendar('user_collaborator');assert.equal(denied.res.status,404);assert(!denied.text.includes(entries.shared));
     assert.equal((await f.send(`/api/agents/${f.agent}/routines/calendar.ics`)).status,404);
@@ -1989,7 +1989,7 @@ test('canonical workflows enforce current assignments private mappings selectors
       const path = query === 'after=' ? detail : `/api/projects/${project}/workflows`;
       const denied = await f.send(path + '?' + query); assert.equal(denied.status, 404, JSON.stringify(denied.body));
     }
-    const headerResponse = await fetch(f.origin() + detail, { headers: { Authorization: 'Bearer ' + f.jwt(), 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': randomUUID(), 'X-Briefsip-Project-Id': project } });
+    const headerResponse = await fetch(f.origin() + detail, { headers: { Authorization: 'Bearer ' + f.jwt(), 'Content-Type': 'application/json', 'X-Minarbot-Protocol': '1', 'X-Minarbot-Request-Id': randomUUID(), 'X-Minarbot-Project-Id': project } });
     assert.equal(headerResponse.status, 404); await headerResponse.body?.cancel();
     assert.equal((await f.send(detail + '/edit', { ...edit, id: edit.requestId, projectId: project })).status, 404);
     assert.equal((await f.send(detail + '/edit', { ...edit, requestId: randomUUID(), id: randomUUID() })).status, 400);
@@ -2112,8 +2112,8 @@ test('canonical workflow inbox hides foreign selectors and rechecks current read
     assert.equal((await f.send(readPath,{...command,projectId:f.project})).status,404);
     assert.equal((await f.send(readPath,{...command,read:true})).status,400);
     assert.equal((await f.send(readPath,{...command,id:randomUUID()})).status,400);
-    for (const header of ['X-Briefsip-Project','X-Briefsip-Project-Id']) {
-      const response = await fetch(f.origin()+inbox,{headers:{Authorization:`Bearer ${f.jwt()}`,Origin:f.origin(),'Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':randomUUID(),[header]:f.project}});
+    for (const header of ['X-Minarbot-Project','X-Minarbot-Project-Id']) {
+      const response = await fetch(f.origin()+inbox,{headers:{Authorization:`Bearer ${f.jwt()}`,Origin:f.origin(),'Content-Type':'application/json','X-Minarbot-Protocol':'1','X-Minarbot-Request-Id':randomUUID(),[header]:f.project}});
       assert.equal(response.status,404); await response.arrayBuffer();
     }
     for (const [table,key] of [['workflows',[f.workflow]],['workflow_versions',[f.workflow,1]],['workflow_runs',[run]]] as const) {
@@ -2210,7 +2210,7 @@ test('workflow sync includes protected wait activation delivery and expiry witho
     const secret = [...f.keys.values].find(([key]) => key.includes('/event-wait/'))![1];
     const time = String(Math.floor(Date.now() / 1000)), delivery = randomUUID(), body = '{"event":"ready","payload":"Private event canary"}';
     const send = async () => {
-      const response = await fetch(f.origin() + f.waitPath + '/events', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': delivery, 'X-Briefsip-Signature': createHmac('sha256', secret).update(`${time}\n${delivery}\n${body}`).digest('hex') }, body });
+      const response = await fetch(f.origin() + f.waitPath + '/events', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Minarbot-Time': time, 'X-Minarbot-Id': delivery, 'X-Minarbot-Signature': createHmac('sha256', secret).update(`${time}\n${delivery}\n${body}`).digest('hex') }, body });
       return { status: response.status, body: await response.json() };
     };
     db.exec("CREATE TRIGGER fail_workflow_sync BEFORE INSERT ON sync_events WHEN NEW.record_kind='workflow_run' BEGIN SELECT RAISE(ABORT,'synthetic workflow event failure'); END");
@@ -2347,7 +2347,7 @@ async function loopTask(f: Awaited<ReturnType<typeof fixture>>, runtime: { devic
   const taskId = setup ? agent : randomUUID();
   if (!setup) {
     const payload = { v: 1, kind: 'direct', message: { text: 'Answer once', files: [] } }, expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 };
-    { const admitted = await f.send('/api/tasks', { requestId: taskId, projectId: project, agentId: agent, homeDeviceId: home.id, payload, expectedRevisions, payloadDigest: digestCommand(['briefsip-task-payload-v1', taskId, project, agent, home.id, payload, expectedRevisions]) }); assert.equal(admitted.status, 202, JSON.stringify(admitted.body)); }
+    { const admitted = await f.send('/api/tasks', { requestId: taskId, projectId: project, agentId: agent, homeDeviceId: home.id, payload, expectedRevisions, payloadDigest: digestCommand(['minarbot-task-payload-v1', taskId, project, agent, home.id, payload, expectedRevisions]) }); assert.equal(admitted.status, 202, JSON.stringify(admitted.body)); }
   }
   return { taskId, agent, project, binding };
 }
@@ -2365,7 +2365,7 @@ test('signed task and device mutations publish atomic scoped observations across
     const agent = randomUUID();
     assert.equal((await f.send('/api/agents', { requestId: agent, id: agent, name: 'Sync agent', model: 'fixture', backupModel: '', instructions: 'Private profile canary', threadLimit: 2, projectId: project, homeDeviceId: home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: home.revision, providerBinding: null })).status, 201);
     const before = (await f.send(path)).body.data, taskId = randomUUID(), payload = { v: 1, kind: 'direct', message: { text: 'Private prompt canary', files: [] } }, expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 };
-    const command = { requestId: taskId, projectId: project, agentId: agent, homeDeviceId: home.id, payload, expectedRevisions, payloadDigest: digestCommand(['briefsip-task-payload-v1', taskId, project, agent, home.id, payload, expectedRevisions]) };
+    const command = { requestId: taskId, projectId: project, agentId: agent, homeDeviceId: home.id, payload, expectedRevisions, payloadDigest: digestCommand(['minarbot-task-payload-v1', taskId, project, agent, home.id, payload, expectedRevisions]) };
     const accepted = await f.send('/api/tasks', command); assert.equal(accepted.status, 202); assert.deepEqual((await f.send('/api/tasks', command)).body.receipt, accepted.body.receipt);
     assert.equal((await f.send(`/api/tasks/${taskId}/control`, { requestId: randomUUID(), expectedRevision: 1, operation: 'pause' })).status, 200);
     const cancellation = { requestId: randomUUID(), expectedRevision: 2, operation: 'cancel' }, inspect = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
@@ -2587,7 +2587,7 @@ test('home execution loop consumes resolved late-known output without repeating 
     const recovery = await f.send(`/api/tasks/${taskId}/recovery-session`, { requestId: randomUUID(), expectedAuthorityGeneration: prepared.ownership.authorityGeneration, sourceDeviceId: home.id, sourceDeviceGeneration: prepared.ownership.deviceGeneration });
     assert.equal(recovery.status, 201);
     const exported = exportRustDeviceRecovery(runtime.options, taskId, [String(prepared.actionId)], randomUUID(), recovery.body.data.recoveryGeneration, true);
-    const response = await fetch(f.origin() + `/api/tasks/${taskId}/recovery-results`, { method: 'POST', headers: { Authorization: `Bearer ${f.jwt()}`, Origin: f.origin(), 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': exported.requestId, 'X-Briefsip-Recovery': recovery.body.data.session }, body: JSON.stringify(exported) });
+    const response = await fetch(f.origin() + `/api/tasks/${taskId}/recovery-results`, { method: 'POST', headers: { Authorization: `Bearer ${f.jwt()}`, Origin: f.origin(), 'Content-Type': 'application/json', 'X-Minarbot-Protocol': '1', 'X-Minarbot-Request-Id': exported.requestId, 'X-Minarbot-Recovery': recovery.body.data.session }, body: JSON.stringify(exported) });
     assert.equal(response.status, 200, await response.text());
     assert.equal(exported.envelope.entries[0].effectStatus, 'known');
     assert.deepEqual(exported.envelope.entries[0].resultRef, resultRef); assert.deepEqual(exported.resultContent, resultContent);
@@ -2634,7 +2634,7 @@ test('home execution loop holds missing bindings and enforces provider slots bef
     const first = await loopTask(f, runtime); running.push(runtime.runTask(first.taskId, hold)); await until(() => releases.length === 1);
     await assert.rejects(runtime.runTask(first.taskId, hold), (error: unknown) => error instanceof ProtocolError && error.code === 'executor_busy');
     const same = randomUUID(), payload = { v: 1, kind: 'direct', message: { text: 'Same agent/project', files: [] } }, expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 };
-    assert.equal((await f.send('/api/tasks', { requestId: same, projectId: first.project, agentId: first.agent, homeDeviceId: runtime.deviceId(), payload, expectedRevisions, payloadDigest: digestCommand(['briefsip-task-payload-v1', same, first.project, first.agent, runtime.deviceId(), payload, expectedRevisions]) })).status, 202);
+    assert.equal((await f.send('/api/tasks', { requestId: same, projectId: first.project, agentId: first.agent, homeDeviceId: runtime.deviceId(), payload, expectedRevisions, payloadDigest: digestCommand(['minarbot-task-payload-v1', same, first.project, first.agent, runtime.deviceId(), payload, expectedRevisions]) })).status, 202);
     assert.equal((await runtime.runTask(same, () => assert.fail('Same agent/project must wait'))).state, 'waiting_capacity');
     const second = await loopTask(f, runtime, false, first.binding); running.push(runtime.runTask(second.taskId, hold)); await until(() => releases.length === 2);
     const third = await loopTask(f, runtime, false, first.binding); assert.equal((await runtime.runTask(third.taskId, () => assert.fail('Third binding call must wait'))).state, 'waiting_capacity');
@@ -2661,7 +2661,7 @@ for (const lostAt of ['request', 'reply', 'receipt', 'revoked', 'storage'] as co
     try { seed.prepare("INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','synthetic-completion','Synthetic','ready',1)").run(binding, home.id, seed.prepare('SELECT account FROM devices WHERE id=?').get(home.id)!.account); } finally { seed.close(); }
     assert.equal((await f.send('/api/agents', { requestId: agent, id: agent, name: 'Writer', model: 'fixture', backupModel: '', instructions: 'Answer carefully', threadLimit: 2, projectId: project, homeDeviceId: home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: home.revision, providerBinding: { bindingId: binding, expectedRevision: 1 } })).status, 201);
     const taskId = randomUUID(), payload = { v: 1, kind: 'direct', message: { text: 'Answer once', files: [] } }, expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 };
-    { const admitted = await f.send('/api/tasks', { requestId: taskId, projectId: project, agentId: agent, homeDeviceId: home.id, payload, expectedRevisions, payloadDigest: digestCommand(['briefsip-task-payload-v1', taskId, project, agent, home.id, payload, expectedRevisions]) }); assert.equal(admitted.status, 202, JSON.stringify(admitted.body)); }
+    { const admitted = await f.send('/api/tasks', { requestId: taskId, projectId: project, agentId: agent, homeDeviceId: home.id, payload, expectedRevisions, payloadDigest: digestCommand(['minarbot-task-payload-v1', taskId, project, agent, home.id, payload, expectedRevisions]) }); assert.equal(admitted.status, 202, JSON.stringify(admitted.body)); }
     const owned = await runtime.startTask(taskId), context = await runtime.taskContext(taskId, owned.ownership, owned.revision), actionId = randomUUID();
     await runtime.executeAction({ taskId, actionId, sequence: 0, actionKind: 'provider', ownership: owned.ownership, payload: { purpose: 'answer' }, context, grantRevision: 1, bindingId: binding, bindingRevision: 1 }, () => { calls++; return { text: 'Saved final answer' }; });
     globalThis.fetch = async (url, init) => {
@@ -2741,7 +2741,7 @@ for (const scenario of ['pause', 'cancel', 'latest', 'invalid', 'setup', 'revoke
       assert.equal((await f.send('/api/agents', { requestId: agent, id: agent, name: 'Writer', model: 'fixture', backupModel: '', instructions: 'Answer carefully', threadLimit: 2, projectId: project, homeDeviceId: home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: home.revision, providerBinding: { bindingId: binding, expectedRevision: 1 }, setup: scenario === 'setup' })).status, 201);
       if (scenario !== 'setup') {
         const payload = { v: 1, kind: 'direct', message: { text: 'Answer once', files: [] } }, expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 };
-        { const admitted = await f.send('/api/tasks', { requestId: taskId, projectId: project, agentId: agent, homeDeviceId: home.id, payload, expectedRevisions, payloadDigest: digestCommand(['briefsip-task-payload-v1', taskId, project, agent, home.id, payload, expectedRevisions]) }); assert.equal(admitted.status, 202, JSON.stringify(admitted.body)); }
+        { const admitted = await f.send('/api/tasks', { requestId: taskId, projectId: project, agentId: agent, homeDeviceId: home.id, payload, expectedRevisions, payloadDigest: digestCommand(['minarbot-task-payload-v1', taskId, project, agent, home.id, payload, expectedRevisions]) }); assert.equal(admitted.status, 202, JSON.stringify(admitted.body)); }
       }
       const owned = await runtime.startTask(taskId); let sequence = 0;
       const run = async (content: unknown, canonical = false) => {
@@ -2816,7 +2816,7 @@ test('cross-device reassign survives lost reply and restart, preserves old resul
       assert.equal((await f.send('/api/agents',{requestId:agentId,id:agentId,name:agentId,model:'fixture',backupModel:'',instructions:'Continue safely',threadLimit:2,projectId:project,homeDeviceId:homeId,expectedProjectRevision:1,expectedHomeDeviceRevision:homes.find((home:{id:string})=>home.id===homeId).revision,providerBinding:null})).status,201);
     }
     const taskId = randomUUID(), payload = {v:1,kind:'direct',message:{text:'Keep earlier evidence',files:[]}}, expectedRevisions = {project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
-    const command = {requestId:taskId,projectId:project,agentId:source,homeDeviceId:first.deviceId(),payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,source,first.deviceId(),payload,expectedRevisions])};
+    const command = {requestId:taskId,projectId:project,agentId:source,homeDeviceId:first.deviceId(),payload,expectedRevisions,payloadDigest:digestCommand(['minarbot-task-payload-v1',taskId,project,source,first.deviceId(),payload,expectedRevisions])};
     const accepted = await f.send('/api/tasks',command); assert.equal(accepted.status,202);
     const owned = await first.startTask(taskId), context = await first.taskContext(taskId,owned.ownership,owned.revision);
     await first.executeAction({taskId,actionId:randomUUID(),sequence:0,actionKind:'read',ownership:owned.ownership,payload:{operation:'original'},context,grantRevision:1},()=>{effects++;return{text:'Saved source output'};});
@@ -2955,7 +2955,7 @@ test('canonical task HTTP survives lost acceptance response/restart without disp
     assert.equal((await f.send('/api/projects', { requestId: randomUUID(), id: project, name: 'Task project' })).status, 201);
     assert.equal((await f.send('/api/agents', { requestId: agent, id: agent, name: 'Agent', model: 'fixture', backupModel: '', instructions: 'Research', threadLimit: 2, projectId: project, homeDeviceId: home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: home.revision, providerBinding: null })).status, 201);
     const input = { requestId: randomUUID(), projectId: project, agentId: agent, homeDeviceId: home.id, payload: { v: 1, kind: 'direct', message: { text: 'Persistent task', files: [] } }, expectedRevisions: { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 } };
-    const command = { ...input, payloadDigest: digestCommand(['briefsip-task-payload-v1', input.requestId, project, agent, home.id, input.payload, input.expectedRevisions]) };
+    const command = { ...input, payloadDigest: digestCommand(['minarbot-task-payload-v1', input.requestId, project, agent, home.id, input.payload, input.expectedRevisions]) };
     assert.equal((await f.send('/api/tasks', command)).status, 202);
     await f.restart();
     const detail = await f.send(`/api/tasks/${command.requestId}`); assert.equal(detail.status, 200); assert.equal(detail.body.data.state, 'waiting_device');
@@ -2977,7 +2977,7 @@ test('signed host HTTP admission commits once and result ACK survives canonical 
     assert.equal((await f.send('/api/projects', { requestId: randomUUID(), id: project, name: 'Recovery' })).status, 201);
     assert.equal((await f.send('/api/agents', { requestId: agent, id: agent, name: 'Agent', model: 'fixture', backupModel: '', instructions: 'Research', threadLimit: 2, projectId: project, homeDeviceId: home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: home.revision, providerBinding: null })).status, 201);
     const input = { requestId: randomUUID(), projectId: project, agentId: agent, homeDeviceId: home.id, payload: { v: 1, kind: 'direct', message: { text: 'Persistent result', files: [] } }, expectedRevisions: { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 } };
-    const command = { ...input, payloadDigest: digestCommand(['briefsip-task-payload-v1', input.requestId, project, agent, home.id, input.payload, input.expectedRevisions]) };
+    const command = { ...input, payloadDigest: digestCommand(['minarbot-task-payload-v1', input.requestId, project, agent, home.id, input.payload, input.expectedRevisions]) };
     assert.equal((await f.send('/api/tasks', command)).status, 202);
     const taskId = input.requestId, acquireId = randomUUID(), lockProof = { bootId: randomUUID(), processId: 1234, processStart: '999', lockId: randomUUID(), previousOwnerStopped: true, reconciledThrough: 0, journalDigest: sha256('journal') };
     let dropAcquire = true;
@@ -3022,7 +3022,7 @@ test('journal-backed host dispatches once, retries publication only and refuses 
     assert.equal((await f.send('/api/agents', { requestId: agent, id: agent, name: 'Agent', model: 'fixture', backupModel: '', instructions: 'Research', threadLimit: 2, projectId: project, homeDeviceId: home.id, expectedProjectRevision: 1, expectedHomeDeviceRevision: home.revision, providerBinding: null })).status, 201);
     async function action(loseAcquire=false) {
       const taskId = randomUUID(), payload = { v: 1, kind: 'direct', message: { text: 'Run once', files: [] } }, expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 };
-      assert.equal((await f.send('/api/tasks', { requestId: taskId, projectId: project, agentId: agent, homeDeviceId: home.id, payload, expectedRevisions, payloadDigest: digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions]) })).status, 202);
+      assert.equal((await f.send('/api/tasks', { requestId: taskId, projectId: project, agentId: agent, homeDeviceId: home.id, payload, expectedRevisions, payloadDigest: digestCommand(['minarbot-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions]) })).status, 202);
       if(loseAcquire) {
         globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith('/acquire')){await response.body?.cancel();throw new Error('Lost acquire ACK');}return response;};
         await assert.rejects(runtime.startTask(taskId),/Lost acquire ACK/);globalThis.fetch=originalFetch;
@@ -3176,7 +3176,7 @@ test('stalled normal requests cannot starve control reads and disconnected reque
   const f=await fixture(), held: ReturnType<typeof httpRequest>[]=[], answered: (number|undefined)[]=[];let holding=true;
   // Probes can take a slot before a held request arrives; replace any held request the server answers.
   const hold=()=>{
-    const request=httpRequest(f.origin()+'/api/projects',{method:'POST',headers:{Authorization:`Bearer ${f.jwt()}`,Origin:f.origin(),'Content-Type':'application/json','Content-Length':'8','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':randomUUID()}});
+    const request=httpRequest(f.origin()+'/api/projects',{method:'POST',headers:{Authorization:`Bearer ${f.jwt()}`,Origin:f.origin(),'Content-Type':'application/json','Content-Length':'8','X-Minarbot-Protocol':'1','X-Minarbot-Request-Id':randomUUID()}});
     request.on('error',()=>{});request.on('response',response=>{answered.push(response.statusCode);response.resume();if(holding)hold();});request.write('{');held.push(request);
   };
   try {
@@ -3213,7 +3213,7 @@ test('canonical transfer survives lost RPC reply and canonical restart without d
       seed.prepare("INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)").run(JSON.stringify([channel]),ownerId,project,channel);
     } finally {seed.close();}
     const taskId=randomUUID(),payload={v:1,kind:'channel',channelId:channel,routing:'assigned',message:{text:'Original request',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1,channel:1};
-    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:source,homeDeviceId:home.deviceId(),payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,source,home.deviceId(),payload,expectedRevisions])})).status,202);
+    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:source,homeDeviceId:home.deviceId(),payload,expectedRevisions,payloadDigest:digestCommand(['minarbot-task-payload-v1',taskId,project,source,home.deviceId(),payload,expectedRevisions])})).status,202);
     const owned=await home.startTask(taskId),context=await home.taskContext(taskId,owned.ownership,owned.revision),actionId=randomUUID();
     const transferSchema=(context.snapshot.tools as any[]).find((tool:any)=>tool.function.name==='transfer_task') as any;
     assert.deepEqual(transferSchema.function.parameters.properties.recipient.enum,[recipient]);
@@ -3243,7 +3243,7 @@ test('owner recovers revoked-device journal through HTTP without device session 
     assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Recovery'})).status,201);
     assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Agent',model:'fixture',backupModel:'',instructions:'Recover',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
     const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'One effect',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
-    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
+    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['minarbot-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
     const owned=await runtime.startTask(taskId),context=await runtime.taskContext(taskId,owned.ownership,owned.revision),actionId=randomUUID();
     globalThis.fetch=async(url,init)=>{if(String(url).endsWith('/reconcile'))throw new Error('Report offline');return originalFetch(url,init);};
     await assert.rejects(runtime.executeAction({taskId,actionId,sequence:0,actionKind:'read',ownership:owned.ownership,payload:{operation:'one effect'},context,grantRevision:1},()=>{calls++;return{text:'Original output'};}),/Report offline/);
@@ -3255,7 +3255,7 @@ test('owner recovers revoked-device journal through HTTP without device session 
     assert.equal((await f.send(`/api/tasks/${taskId}/recovery-session`,start)).body.data.session,undefined);
     const generation=session.body.data.recoveryGeneration,proof=session.body.data.session;
     const send=async(operation:string,body:RecoveryExport,origin=f.origin(),subject='user_owner')=>{
-      const response=await fetch(f.origin()+`/api/tasks/${taskId}/recovery-${operation}`,{method:'POST',headers:{Authorization:`Bearer ${f.jwt(subject)}`,Origin:origin,'Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':body.requestId,'X-Briefsip-Recovery':proof,Connection:'close'},body:JSON.stringify(body)});
+      const response=await fetch(f.origin()+`/api/tasks/${taskId}/recovery-${operation}`,{method:'POST',headers:{Authorization:`Bearer ${f.jwt(subject)}`,Origin:origin,'Content-Type':'application/json','X-Minarbot-Protocol':'1','X-Minarbot-Request-Id':body.requestId,'X-Minarbot-Recovery':proof,Connection:'close'},body:JSON.stringify(body)});
       return{status:response.status,body:await response.json()};
     };
     const metadata=exportRecovery(taskId,[actionId],randomUUID(),generation);
@@ -3297,7 +3297,7 @@ test('disaster recovery imports original host result without original server and
     assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Disaster recovery'})).status,201);
     assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Agent',model:'fixture',backupModel:'',instructions:'Recover',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
     const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'Original action',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
-    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
+    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['minarbot-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
     const owned=await runtime.startTask(taskId),context=await runtime.taskContext(taskId,owned.ownership,owned.revision),actionId=randomUUID();
     globalThis.fetch=async(url,init)=>{if(String(url).endsWith('/reconcile'))throw new Error('Original server lost');return originalFetch(url,init);};
     await assert.rejects(runtime.executeAction({taskId,actionId,sequence:0,actionKind:'read',ownership:owned.ownership,payload:{operation:'one call'},context,grantRevision:1},()=>{calls++;return{text:'Saved on original host'};}),/Original server lost/);
@@ -3308,7 +3308,7 @@ test('disaster recovery imports original host result without original server and
     const proof=await f.restoreFrom(backup.file);
     assert.notEqual(proof.recoveryGeneration,owned.ownership.authorityGeneration);
     const send=async(kind:string,body:RecoveryExport,session=proof.session,subject='user_owner')=>{
-      const response=await fetch(f.origin()+`/api/tasks/${taskId}/recovery-${kind}`,{method:'POST',headers:{Authorization:`Bearer ${f.jwt(subject)}`,Origin:f.origin(),Connection:'close','Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':body.requestId,'X-Briefsip-Recovery':session},body:JSON.stringify(body)});
+      const response=await fetch(f.origin()+`/api/tasks/${taskId}/recovery-${kind}`,{method:'POST',headers:{Authorization:`Bearer ${f.jwt(subject)}`,Origin:f.origin(),Connection:'close','Content-Type':'application/json','X-Minarbot-Protocol':'1','X-Minarbot-Request-Id':body.requestId,'X-Minarbot-Recovery':session},body:JSON.stringify(body)});
       return{status:response.status,body:await response.json()};
     };
     const metadata=exportRecovery(taskId,[actionId],randomUUID(),proof.recoveryGeneration);
@@ -3345,7 +3345,7 @@ test('disaster recovery quarantines signed post-backup actions and tasks without
     assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Agent',model:'fixture',backupModel:'',instructions:'Recover',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
     const admit=async()=>{
       const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'Post-backup action',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
-      assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
+      assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['minarbot-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
       return taskId;
     };
     const knownTask=await admit(),source=fixtureDatabase(join(f.dir,'canonical.sqlite'));try{backup=await workspaceSnapshot(source);}finally{source.close();}
@@ -3357,7 +3357,7 @@ test('disaster recovery quarantines signed post-backup actions and tasks without
     }
     await connection.stop(); await runtime.close();globalThis.fetch=originalFetch;const proof=await f.restoreFrom(backup.file);
     const send=async(taskId:string,body:RecoveryExport,session=proof.session,subject='user_owner')=>{
-      const response=await fetch(f.origin()+`/api/tasks/${taskId}/recovery-import`,{method:'POST',headers:{Authorization:`Bearer ${f.jwt(subject)}`,Origin:f.origin(),Connection:'close','Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':body.requestId,'X-Briefsip-Recovery':session},body:JSON.stringify(body)});
+      const response=await fetch(f.origin()+`/api/tasks/${taskId}/recovery-import`,{method:'POST',headers:{Authorization:`Bearer ${f.jwt(subject)}`,Origin:f.origin(),Connection:'close','Content-Type':'application/json','X-Minarbot-Protocol':'1','X-Minarbot-Request-Id':body.requestId,'X-Minarbot-Recovery':session},body:JSON.stringify(body)});
       return{status:response.status,body:await response.json()};
     };
     for(const {taskId,actionId} of actions){
@@ -3394,7 +3394,7 @@ test('canonical memory RPC isolates projects and retains committed memory after 
     assert.equal((await f.send(`/api/projects/${other}/agents/${agent}`,{requestId:randomUUID(),expectedProjectRevision:1,expectedAgentRevision:1,expectedAuthorityRevision:1,expectedParticipationRevision:0,rules:'',capabilities:{v:1,tools:['remember_memory','search_memory','select_memory'],resources:[]}},'user_owner','PUT')).status,201);
     const start=async(projectId:string)=>{
       const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'Remember here',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
-      assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,projectId,agent,home.id,payload,expectedRevisions])})).status,202);
+      assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['minarbot-task-payload-v1',taskId,projectId,agent,home.id,payload,expectedRevisions])})).status,202);
       return {...await runtime.startTask(taskId),sequence:0};
     };
     const first=await start(project);
@@ -3451,7 +3451,7 @@ test('canonical history RPC pages scoped originals and retains exact reads after
     db.close();
     const start=async(kind:'direct'|'side'|'channel')=>{
       const taskId=randomUUID(),payload={v:1,kind,...(kind==='side'?{threadId:thread}:kind==='channel'?{channelId:channel,routing:'assigned'}:{}),message:{text:'Read history',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1,...(kind==='side'?{thread:1}:kind==='channel'?{channel:1}:{})};
-      assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
+      assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['minarbot-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
       return {...await runtime.startTask(taskId),sequence:0};
     };
     const first=await start('direct');
@@ -3509,7 +3509,7 @@ test('canonical skill reads recover exact pinned text after lost response, disab
       for(const [table,key] of [['skills',[skill]],['skill_versions',[skill,1]],['agent_skills',[agent,skill]],['skill_files',[skill,1]]] as const)db.prepare("INSERT INTO record_scopes VALUES (?,?,?,?,'owner','agent',?)").run(table,JSON.stringify(key),owner,project,agent);
     }finally{db.close();}
     const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'Inspect pinned skill',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
-    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
+    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['minarbot-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
     const owned=await runtime.startTask(taskId);let sequence=0;
     const run=async(name:string,args:unknown,lose=false)=>{
       const detail=(await f.send(`/api/tasks/${taskId}`)).body.data,context=await runtime.taskContext(taskId,owned.ownership,detail.revision),actionId=randomUUID();
@@ -3538,7 +3538,7 @@ test('canonical agent directory isolates projects and recovers exact roster afte
     for(const id of [project,other])assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id,name:'Directory'})).status,201);
     for(const [id,projectId] of [[agent,project],[peer,project],[foreign,other]])assert.equal((await f.send('/api/agents',{requestId:id,id,name:id===peer?'Original teammate':'Agent',model:'fixture',backupModel:'',instructions:'Project teammate',threadLimit:2,projectId,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
     const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'List teammates',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
-    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
+    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['minarbot-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
     const owned=await runtime.startTask(taskId);let context=await runtime.taskContext(taskId,owned.ownership,owned.revision);const actionId=randomUUID(),cursorAction=randomUUID();
     assert((context.snapshot.tools as {function:{name:string}}[]).some(tool=>tool.function.name==='list_agents'));
     await runtime.executeAction({taskId,actionId:cursorAction,sequence:0,actionKind:'canonical',ownership:owned.ownership,payload:{toolCall:{id:cursorAction,function:{name:'list_agents',arguments:JSON.stringify({after:peer.toUpperCase()})}},expectedRevision:context.snapshot.taskRevision+1},context,grantRevision:1},()=>assert.fail('Host effect'));
@@ -3563,7 +3563,7 @@ test('canonical teammate sends retain one scoped delivery on its fixed home afte
     assert.equal((await f.send('/api/projects',{requestId:randomUUID(),id:project,name:'Messages'})).status,201);
     for(const [id,device] of [[agent,home],[peer,otherHome]])assert.equal((await f.send('/api/agents',{requestId:id,id,name:id===agent?'Sender':'Recipient',model:'fixture',backupModel:'',instructions:'Project teammate',threadLimit:2,projectId:project,homeDeviceId:device.id,expectedProjectRevision:1,expectedHomeDeviceRevision:device.revision,providerBinding:null})).status,201);
     const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'PRIVATE_SENDER_HISTORY',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
-    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
+    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['minarbot-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
     const owned=await runtime.startTask(taskId),context=await runtime.taskContext(taskId,owned.ownership,owned.revision),actionId=randomUUID();
     const input={taskId,actionId,sequence:0,actionKind:'canonical' as const,ownership:owned.ownership,payload:{toolCall:{id:actionId,function:{name:'send_message',arguments:JSON.stringify({recipients:[peer],text:'Only this text',expects_reply:false})}},expectedRevision:context.snapshot.taskRevision+1},context,grantRevision:1};
     globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith('/context-mutations')){assert.equal(response.status,200,await response.clone().text());await response.body?.cancel();throw new Error('Lost message result');}return response;};
@@ -3626,7 +3626,7 @@ test('canonical caller interruption retains one notice and fences remote deliver
     for(const [id,device] of [[agent,home],[peer,otherHome]])assert.equal((await f.send('/api/agents',{requestId:id,id,name:id,model:'fixture',backupModel:'',instructions:'Project teammate',threadLimit:2,projectId:project,homeDeviceId:device.id,expectedProjectRevision:1,expectedHomeDeviceRevision:device.revision,providerBinding:null})).status,201);
     const admit=async()=>{
       const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'Caller command',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
-      assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
+      assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['minarbot-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
       return runtime.startTask(taskId);
     };
     const input=async(task:Awaited<ReturnType<typeof admit>>,name:string,args:unknown)=>{
@@ -3663,7 +3663,7 @@ test('canonical profile edits recover exact result without replacing later edits
     assert.equal((await f.send('/api/agents',{requestId:agent,id:agent,name:'Reader',model:'fixture',backupModel:'',instructions:'Original instructions',threadLimit:2,projectId:project,homeDeviceId:home.id,expectedProjectRevision:1,expectedHomeDeviceRevision:home.revision,providerBinding:null})).status,201);
     const admit=async(agentRevision:number)=>{
       const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'Edit profile',files:[]}},expectedRevisions={project:1,agent:agentRevision,homeBinding:1,membership:1,assignment:1,capability:1};
-      assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);return taskId;
+      assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['minarbot-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);return taskId;
     };
     const taskId=await admit(1),owned=await runtime.startTask(taskId),context=await runtime.taskContext(taskId,owned.ownership,owned.revision),actionId=randomUUID();
     const input={taskId,actionId,sequence:0,actionKind:'canonical' as const,ownership:owned.ownership,payload:{toolCall:{id:actionId,function:{name:'edit_profile',arguments:JSON.stringify({revision:1,name:'Edited',instructions:'Saved instructions'})}},expectedRevision:context.snapshot.taskRevision+1},context,grantRevision:1};
@@ -3692,7 +3692,7 @@ test('canonical provider settings use home binding metadata and recover saved re
       db.prepare("UPDATE agents SET provider_account='LEGACY_MUST_NOT_LEAK' WHERE id=?").run(agent);
     }finally{db.close();}
     const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'Read provider settings',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
-    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
+    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['minarbot-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
     const owned=await runtime.startTask(taskId),detail=(await f.send(`/api/tasks/${taskId}`)).body.data,context=await runtime.taskContext(taskId,owned.ownership,detail.revision),actionId=randomUUID();
     const input={taskId,actionId,sequence:0,actionKind:'canonical' as const,ownership:owned.ownership,payload:{toolCall:{id:actionId,function:{name:'read_provider_settings',arguments:'{}'}},expectedRevision:context.snapshot.taskRevision+1},context,grantRevision:1};
     globalThis.fetch=async(url,init)=>{const response=await originalFetch(url,init);if(String(url).endsWith('/context-mutations')){assert.equal(response.status,200,await response.clone().text());await response.body?.cancel();throw new Error('Lost provider settings result');}return response;};
@@ -3722,7 +3722,7 @@ test('canonical routine reads and edits isolate project configuration and recove
       db.prepare('INSERT INTO routine_flows VALUES (?,?,1)').run(routine,JSON.stringify(graph));db.prepare("INSERT INTO record_scopes VALUES ('routine_flows',?,?,?,'owner','agent',?)").run(JSON.stringify([routine]),owner,project,agent);
     }finally{db.close();}
     const taskId=randomUUID(),payload={v:1,kind:'direct',message:{text:'Read routine',files:[]}},expectedRevisions={project:1,agent:1,homeBinding:1,membership:1,assignment:1,capability:1};
-    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['briefsip-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
+    assert.equal((await f.send('/api/tasks',{requestId:taskId,projectId:project,agentId:agent,homeDeviceId:home.id,payload,expectedRevisions,payloadDigest:digestCommand(['minarbot-task-payload-v1',taskId,project,agent,home.id,payload,expectedRevisions])})).status,202);
     const owned=await runtime.startTask(taskId);let sequence=0;
     const run=async(name:string,args:unknown,lose=false)=>{
       const detail=(await f.send(`/api/tasks/${taskId}`)).body.data,context=await runtime.taskContext(taskId,owned.ownership,detail.revision),actionId=randomUUID();
@@ -3751,7 +3751,7 @@ async function routineWebhookFixture() {
     const create = { requestId: randomUUID(), revision: 0, rotate: true, filters: [{ pointer: '/count', equals: 4 }] };
     const hook = await f.send(path + '/webhook', create); assert.equal(hook.status, 201, JSON.stringify(hook.body));
     const event = async (secret = hook.body.data.secret, eventId = 'fixture.event', body: string | Uint8Array = '{"event":"ready","payload":{"count":4}}', time = String(Math.floor(Date.now() / 1000)), extra: Record<string,string | undefined> = {}, route = path + '/webhook-events') => {
-      const headers = new Headers({ Connection: 'close', 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': eventId, 'X-Briefsip-Signature': createHmac('sha256', secret).update(`${time}\n${eventId}\n`).update(body).digest('hex') });
+      const headers = new Headers({ Connection: 'close', 'Content-Type': 'application/json', 'X-Minarbot-Time': time, 'X-Minarbot-Id': eventId, 'X-Minarbot-Signature': createHmac('sha256', secret).update(`${time}\n${eventId}\n`).update(body).digest('hex') });
       for (const [name, value] of Object.entries(extra)) { if (value === undefined) headers.delete(name); else headers.set(name, value); }
       const response = await fetch(f.origin() + route, { method: 'POST', headers, body: typeof body === 'string' ? body : new Uint8Array(body) });
       return { status: response.status, body: await response.json() };
@@ -3829,7 +3829,7 @@ test('canonical routine webhook conceals missing and inactive targets until sign
     };
     const badSignature = () => f.event('wrong-secret');
     expectDenied(await badSignature());
-    for (const header of ['X-Briefsip-Time', 'X-Briefsip-Id', 'X-Briefsip-Signature']) {
+    for (const header of ['X-Minarbot-Time', 'X-Minarbot-Id', 'X-Minarbot-Signature']) {
       for (const value of ['', 'invalid!', undefined]) expectDenied(await f.event(undefined, undefined, undefined, undefined, { [header]: value }));
     }
     for (const offset of [-301, 301]) expectDenied(await f.event(undefined, undefined, undefined, String(Math.floor(Date.now() / 1000) + offset)));
@@ -3839,10 +3839,10 @@ test('canonical routine webhook conceals missing and inactive targets until sign
     const routine = randomUUID(), noHook = `/api/projects/${f.project}/routines/${routine}/webhook-events`;
     assert.equal((await f.send(`/api/projects/${f.project}/agents/${f.agent}/routines`, { ...f.configuration, requestId: routine, id: routine })).status, 201);
     expectDenied(await f.event(undefined, undefined, undefined, undefined, {}, noHook));
-    expectDenied(await f.event('briefsip-routine-webhook-dummy-secret-v1', undefined, '{', undefined, {}, noHook));
+    expectDenied(await f.event('minarbot-routine-webhook-dummy-secret-v1', undefined, '{', undefined, {}, noHook));
     f.webhookFault.read = true;
     expectDenied(await f.event(undefined, undefined, undefined, undefined, {}, noHook));
-    for (const extra of [{}, { 'X-Briefsip-Signature': '' }, { 'X-Briefsip-Signature': '0'.repeat(64) }]) {
+    for (const extra of [{}, { 'X-Minarbot-Signature': '' }, { 'X-Minarbot-Signature': '0'.repeat(64) }]) {
       const before = f.stderr().length;
       expectDenied(await f.event(undefined, undefined, undefined, undefined, extra));
       await until(() => f.stderr().length > before);
@@ -3881,7 +3881,7 @@ test('canonical routine webhook performs one keyring read for configured and mis
     assert.notEqual(missing.name, configured.name);
     assert.deepEqual(otherMissing, missing);
     assert(!f.webhookKeys.values.has(`${missing.service}/${missing.name}`));
-    for (const extra of [{ 'X-Briefsip-Signature': '' }, { 'X-Briefsip-Id': 'invalid!' }, { 'X-Briefsip-Time': undefined }]) {
+    for (const extra of [{ 'X-Minarbot-Signature': '' }, { 'X-Minarbot-Id': 'invalid!' }, { 'X-Minarbot-Time': undefined }]) {
       assert.deepEqual(await read(f.path + '/webhook-events', extra), configured);
       assert.deepEqual(await read(f.path.replace(f.routine, randomUUID()) + '/webhook-events', extra), missing);
     }
@@ -3892,15 +3892,15 @@ test('canonical routine webhook rejects invalid deliveries and records ignored r
   const f = await routineWebhookFixture(), db = fixtureDatabase(join(f.dir, 'canonical.sqlite'));
   try {
     const secret = f.hook.data.secret, body = '{"event":"ready","payload":{"count":4}}', time = String(Math.floor(Date.now() / 1000));
-    for (const header of ['X-Briefsip-Time','X-Briefsip-Id','X-Briefsip-Signature']) assert.equal((await f.event(secret, 'bad', body, time, { [header]: '' })).status, 401);
-    assert.equal((await f.event(secret, 'bad', body, time, { 'X-Briefsip-Signature': '0'.repeat(64) })).status, 401);
+    for (const header of ['X-Minarbot-Time','X-Minarbot-Id','X-Minarbot-Signature']) assert.equal((await f.event(secret, 'bad', body, time, { [header]: '' })).status, 401);
+    assert.equal((await f.event(secret, 'bad', body, time, { 'X-Minarbot-Signature': '0'.repeat(64) })).status, 401);
     // Fresh whole seconds per request; ±302 keeps a margin over the server's fractional 300 s window.
     for (const offset of [-302,302]) assert.equal((await f.event(secret, 'expired', body, String(Math.floor(Date.now() / 1000) + offset))).status, 401);
     assert.equal((await f.event(secret, 'large', ' '.repeat(65537))).status, 413);
     assert.equal((await f.event(secret, 'json', '{')).status, 400); assert.equal((await f.event(secret, 'utf8', Buffer.from([0xff]))).status, 400);
     assert.equal((await f.event(secret, 'content', body, time, { 'Content-Type': 'text/plain' })).status, 415);
     assert.equal((await f.event(secret, 'origin', body, time, { Origin: f.origin() })).status, 403);
-    assert.equal((await f.event(secret, 'selector', body, time, { 'X-Briefsip-Project': f.project })).status, 404);
+    assert.equal((await f.event(secret, 'selector', body, time, { 'X-Minarbot-Project': f.project })).status, 404);
     const changed = '{"event":"ready","payload":{"count":5}}', ignored = await f.event(secret, 'ignored', changed);
     assert.equal(ignored.status, 202); assert.equal(ignored.body.data.outcome, 'ignored'); assert.equal(db.prepare('SELECT count(*) n FROM routine_occurrences').get()!.n, 0);
     assert.equal((await f.send(f.path + '/webhook')).body.data.receipts[0].outcome, 'ignored');

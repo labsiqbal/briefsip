@@ -177,7 +177,7 @@ export function constantTimeEqualHex(left: string, right: string): boolean {
 }
 
 export function requestMetadata(headers: Headers) {
-  if (headers.get('X-Briefsip-Protocol') !== String(PROTOCOL_VERSION)) throw new ProtocolError(426, 'unsupported_version', 'Unsupported protocol version.');
+  if (headers.get('X-Minarbot-Protocol') !== String(PROTOCOL_VERSION)) throw new ProtocolError(426, 'unsupported_version', 'Unsupported protocol version.');
   if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(headers.get('Content-Type') ?? '')) throw new ProtocolError(415, 'unsupported_media_type', 'Use Content-Type application/json.');
-  return { requestId: id(headers.get('X-Briefsip-Request-Id'), 'requestId') };
+  return { requestId: id(headers.get('X-Minarbot-Request-Id'), 'requestId') };
 }

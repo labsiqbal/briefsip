@@ -20,7 +20,7 @@ function payload(value: unknown): MailPayload {
 }
 
 function aad(invitationId: string, revision: number, authorityGeneration: string, emailHash: string): Buffer {
-  return Buffer.from(JSON.stringify(['briefsip-mail-outbox-v1', invitationId, revision, authorityGeneration, emailHash]));
+  return Buffer.from(JSON.stringify(['minarbot-mail-outbox-v1', invitationId, revision, authorityGeneration, emailHash]));
 }
 
 export function encryptMail(invitationId: string, outboxRevision: number, authorityGeneration: string, emailHash: string, value: unknown, keyId: string, key: Uint8Array): { envelope: MailEnvelope; plaintext: Buffer; payloadDigest: string } {

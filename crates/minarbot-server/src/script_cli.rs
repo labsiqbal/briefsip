@@ -593,8 +593,7 @@ fn receipt_id(value: &Value, field: &str, lowercase: bool) -> Result<String> {
 }
 
 pub async fn run(args: &[String]) -> Value {
-    let Some(directory) = minarbot_launcher::rename_migration::var_os("MINARBOT_SCRIPT_DIRECTORY")
-        .filter(|v| !v.is_empty())
+    let Some(directory) = std::env::var_os("MINARBOT_SCRIPT_DIRECTORY").filter(|v| !v.is_empty())
     else {
         return json!({"exitCode":5,"error":"Set MINARBOT_SCRIPT_DIRECTORY to the server discovery directory."});
     };

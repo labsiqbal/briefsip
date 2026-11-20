@@ -79,7 +79,7 @@ pub fn execute(
     let pd = hex(&v["payloadDigest"], "payloadDigest")?;
     if pd
         != digest(&json!([
-            "briefsip-canonical-tool-v1",
+            "minarbot-canonical-tool-v1",
             call,
             v["expectedRevision"],
             null
@@ -319,7 +319,7 @@ pub fn publish(
     db.execute("UPDATE task_actions SET state='acknowledged',result_digest=?,effect_status='known',uncertain_reason=NULL WHERE id=?",params![rd,action_id])?;
     let report = json!({"v":1,"taskId":task["id"],"actionId":action_id,"payloadDigest":pd,"state":"reported","effectStatus":"known","resultDigest":rd,"resultRef":result_ref});
     let report_digest = digest(&json!([
-        "briefsip-canonical-tool-v1",
+        "minarbot-canonical-tool-v1",
         task["id"],
         action_id,
         pd,

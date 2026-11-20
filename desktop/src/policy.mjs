@@ -58,7 +58,7 @@ export async function validateServer(input, fetchImpl = globalThis.fetch) {
   } else if (environment.status === 404) {
     await environment.body?.cancel();
     const root = await request('/');
-    if (!root.ok || !/text\/html/i.test(root.headers.get('content-type') ?? '') || !/<title>\s*(?:Minarbot|Briefsip)\s*<\/title>/i.test(await responseText(root))) throw new Error('URL did not return the Minarbot app.');
+    if (!root.ok || !/text\/html/i.test(root.headers.get('content-type') ?? '') || !/<title>\s*Minarbot\s*<\/title>/i.test(await responseText(root))) throw new Error('URL did not return the Minarbot app.');
   } else throw new Error(`Environment endpoint returned HTTP ${environment.status}. Check server access.`);
   return url.href;
 }

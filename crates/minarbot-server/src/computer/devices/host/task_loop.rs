@@ -277,7 +277,7 @@ impl Host {
             .await?;
         let data = &response["data"];
         let receipt = &response["receipt"];
-        let digest = digest(&json!(["briefsip-task-wait-provider-v1", task, command]));
+        let digest = digest(&json!(["minarbot-task-wait-provider-v1", task, command]));
         if data["taskId"] != task
             || data["state"] != "waiting_resource"
             || data["revision"] != expected + 1

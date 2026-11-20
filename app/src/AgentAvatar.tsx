@@ -1,4 +1,3 @@
-import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Card, Dialog, Field, IconButton, Input, Row, Section, useConfirm, RecoveryAlert, Tooltip } from './ui/kit';
 import { RefreshCw } from 'lucide-react';
@@ -31,7 +30,7 @@ export function AvatarEditor({ agent, request, onChanged, onClose }: { agent: st
   }
   useEffect(() => {
     try {
-      const raw = readProductStorage(sessionStorage, key);
+      const raw = sessionStorage.getItem(key);
       if (raw) {
         const value = JSON.parse(raw);
         if (!value || Object.keys(value).some(key => !['id','revision','image'].includes(key)) || typeof value.id !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(value.id) || !Number.isSafeInteger(value.revision) || value.revision < 0 || value.image !== null && (typeof value.image !== 'string' || value.image.length > 699052 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value.image))) throw new Error();
@@ -66,7 +65,7 @@ export function AvatarEditor({ agent, request, onChanged, onClose }: { agent: st
       if (current !== version.current) return;
       await onChanged();
       if (current !== version.current) return;
-      removeProductStorage(sessionStorage, key); setPending(null); setState(latest); setSelected(null); setLook(null); if (file.current) file.current.value = '';
+      sessionStorage.removeItem(key); setPending(null); setState(latest); setSelected(null); setLook(null); if (file.current) file.current.value = '';
       setNotice('Avatar updated.');
     } catch (error) { if (current === version.current) setError(error instanceof Error ? error.message : 'Avatar has not been saved. Try again.'); }
     finally { flight.current = false; if (current === version.current) setBusy(false); }
@@ -74,7 +73,7 @@ export function AvatarEditor({ agent, request, onChanged, onClose }: { agent: st
   const confirm = useConfirm();
   async function reload() {
     if (busy || flight.current || (pending || invalid) && !await confirm({ title: 'Discard the saved avatar request and load the latest version?', description: 'Changes already accepted by the server still apply.', confirm: 'Discard and reload', danger: true })) return;
-    try { removeProductStorage(sessionStorage, key); setPending(null); setInvalid(false); setNotice(''); await load(true); }
+    try { sessionStorage.removeItem(key); setPending(null); setInvalid(false); setNotice(''); await load(true); }
     catch { setError('Browser storage is unavailable. Try again.'); }
   }
   return <Dialog open size="md" title="Avatar" onOpenChange={open => { if (!open) onClose?.(); }} footer={<>

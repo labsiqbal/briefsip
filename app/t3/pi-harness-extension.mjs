@@ -1,11 +1,10 @@
-import { productEnv } from './rename-env.mjs';
 // Adapted from T3 Pi permission hook and MCP injection (MIT). See provenance.json.
 export default async function minarbot(pi) {
   let sequence = 0, session;
   const owned = new Set();
   const request = async (method, params, signal = AbortSignal.timeout(120_000)) => {
     const id = method.startsWith('notifications/') ? undefined : ++sequence;
-    const response = await fetch(productEnv('MINARBOT_MCP_URL'), { method: 'POST', headers: { Authorization: `Bearer ${productEnv('MINARBOT_MCP_TOKEN')}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...(session ? { 'Mcp-Session-Id': session } : {}) }, body: JSON.stringify({ jsonrpc: '2.0', id, method, params }), signal });
+    const response = await fetch(process.env.MINARBOT_MCP_URL, { method: 'POST', headers: { Authorization: `Bearer ${process.env.MINARBOT_MCP_TOKEN}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...(session ? { 'Mcp-Session-Id': session } : {}) }, body: JSON.stringify({ jsonrpc: '2.0', id, method, params }), signal });
     session = response.headers.get('mcp-session-id') ?? session;
     if (!response.ok) throw new Error('Minarbot MCP unavailable.');
     if (id === undefined) return {};

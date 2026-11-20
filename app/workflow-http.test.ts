@@ -300,7 +300,7 @@ test('workflow webhooks authenticate, deduplicate, ignore busy runs and recover 
   async function deliver(route: string, secret: string, id: string, payload: unknown = { marker: 'external' }, status = 202, browser = false) {
     const body = JSON.stringify({ event: 'build.done', payload }), time = String(Math.floor(Date.now() / 1000));
     const signature = createHmac('sha256', secret).update(`${time}\n${id}\n`).update(body).digest('hex');
-    const response = await fetch(`${app.origin}/api/workflow-webhooks/${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-briefsip-time': time, 'x-briefsip-id': id, 'x-briefsip-signature': signature, ...(browser ? { Origin: app.origin } : {}) }, body });
+    const response = await fetch(`${app.origin}/api/workflow-webhooks/${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-minarbot-time': time, 'x-minarbot-id': id, 'x-minarbot-signature': signature, ...(browser ? { Origin: app.origin } : {}) }, body });
     const value = await response.json(); assert.equal(response.status, status, JSON.stringify(value)); return value;
   }
   try {
@@ -383,7 +383,7 @@ test('parallel webhook waits for provider before creating a receipt', async () =
     const hook = await request(`/api/workflows/${workflow.id}/webhook`, { id: randomUUID(), revision: 0, enabled: true, rotate: true });
     const body = JSON.stringify({ event: 'parallel', payload: {} }), time = String(Math.floor(Date.now() / 1000)), delivery = randomUUID();
     const signature = createHmac('sha256', hook.secret).update(`${time}\n${delivery}\n`).update(body).digest('hex');
-    const response = await fetch(`${app.origin}/api/workflow-webhooks/${hook.route}`, { method: 'POST', headers: { 'x-briefsip-time': time, 'x-briefsip-id': delivery, 'x-briefsip-signature': signature, 'Content-Type': 'application/json' }, body });
+    const response = await fetch(`${app.origin}/api/workflow-webhooks/${hook.route}`, { method: 'POST', headers: { 'x-minarbot-time': time, 'x-minarbot-id': delivery, 'x-minarbot-signature': signature, 'Content-Type': 'application/json' }, body });
     assert.equal(response.status, 503); await response.body?.cancel();
     const runs = await fetch(app.origin + `/api/workflows/${workflow.id}/runs`);
     assert.equal(runs.status, 200); assert.deepEqual(await runs.json(), []);
@@ -393,9 +393,9 @@ test('parallel webhook waits for provider before creating a receipt', async () =
     await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
     const address = provider.address(); assert(address && typeof address !== 'string');
     app = await startApp({ database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` });
-    const retry = await fetch(`${app.origin}/api/workflow-webhooks/${hook.route}`, { method: 'POST', headers: { 'x-briefsip-time': time, 'x-briefsip-id': delivery, 'x-briefsip-signature': signature, 'Content-Type': 'application/json' }, body });
+    const retry = await fetch(`${app.origin}/api/workflow-webhooks/${hook.route}`, { method: 'POST', headers: { 'x-minarbot-time': time, 'x-minarbot-id': delivery, 'x-minarbot-signature': signature, 'Content-Type': 'application/json' }, body });
     assert.equal(retry.status, 202); await retry.body?.cancel();
-    const duplicate = await fetch(`${app.origin}/api/workflow-webhooks/${hook.route}`, { method: 'POST', headers: { 'x-briefsip-time': time, 'x-briefsip-id': delivery, 'x-briefsip-signature': signature, 'Content-Type': 'application/json' }, body });
+    const duplicate = await fetch(`${app.origin}/api/workflow-webhooks/${hook.route}`, { method: 'POST', headers: { 'x-minarbot-time': time, 'x-minarbot-id': delivery, 'x-minarbot-signature': signature, 'Content-Type': 'application/json' }, body });
     assert.equal(duplicate.status, 200); await duplicate.body?.cancel();
     assert.equal((await (await fetch(app.origin + `/api/workflows/${workflow.id}/runs`)).json()).length, 1);
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }

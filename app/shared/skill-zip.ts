@@ -2,7 +2,7 @@ import { parseSkillFiles, skillFileBytes, skillFileFromBytes, skillBinaryLimit, 
 
 const encoder = new TextEncoder(), decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 // Entry comments preserve explicit binary classification, including empty and UTF-8 assets.
-const binaryComment = encoder.encode('briefsip-binary-v1');
+const binaryComment = encoder.encode('minarbot-binary-v1');
 function crc32(bytes: Uint8Array) {
   let crc = 0xffffffff;
   for (const byte of bytes) { crc ^= byte; for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0); }

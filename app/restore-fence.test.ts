@@ -6,7 +6,7 @@ import { testDatabase } from './test-support/database.ts';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { initializeCanonicalSchema } from './test-support/legacy-schema.ts';
+import { initializeCanonicalSchema } from './test-support/schema-fixture.ts';
 import { checkedRestore, restoreCommand, workspaceSnapshot } from './test-support/backup.ts';
 import { restoreIdentity } from './test-support/restore-identity.ts';
 import type { HumanActor } from './test-support/auth.ts';
@@ -22,7 +22,7 @@ type FenceEvidence = {
   observedAt: number; expiresAt: number; signature: string;
 };
 function fenceEvidenceBody(evidence: Omit<FenceEvidence, 'signature'>) {
-  return ['briefsip-infrastructure-fence-v1', evidence.request, evidence.fenceId, evidence.processFenced, evidence.routeFenced, evidence.admissionsFenced, evidence.observedAt, evidence.expiresAt];
+  return ['minarbot-infrastructure-fence-v1', evidence.request, evidence.fenceId, evidence.processFenced, evidence.routeFenced, evidence.admissionsFenced, evidence.observedAt, evidence.expiresAt];
 }
 function holdRestoreGuard(database: string) {
   const path = database + '.server-lock.sqlite';

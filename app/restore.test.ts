@@ -7,7 +7,7 @@ import { testDatabase } from './test-support/database.ts';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { initializeCanonicalSchema } from './test-support/legacy-schema.ts';
+import { initializeCanonicalSchema } from './test-support/schema-fixture.ts';
 import { checkedRestore, restoreCommand, restoreWorkspace, workspaceSnapshot } from './test-support/backup.ts';
 import { createMailWorker } from './test-support/legacy-mail-worker.ts';
 import { startApp } from './test-bridge.ts';

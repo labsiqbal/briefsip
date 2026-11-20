@@ -1,4 +1,3 @@
-import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { ConnectionError, HttpError, readJson } from './http';
 import { HiddenAgents } from './AgentSidebar';
 import { useConversationRequests } from './hooks/useConversationRequests';
@@ -136,7 +135,7 @@ const message = (error: unknown) => error instanceof Error ? error.message : 'Co
 function RoomStop({ room, path, archived, onStopped }: { room: RoomView; path: string; archived: boolean; onStopped: () => void }) {
   const key = `minarbot:room-stop:${path}:${room.root}`;
   const [pending, setPending] = useState<{ id: string; generation: string } | null>(() => {
-    try { const value = JSON.parse(readProductStorage(sessionStorage, key) ?? 'null'); return value && typeof value.id === 'string' && value.generation === room.generation ? value : null; } catch { return null; }
+    try { const value = JSON.parse(sessionStorage.getItem(key) ?? 'null'); return value && typeof value.id === 'string' && value.generation === room.generation ? value : null; } catch { return null; }
   });
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   async function stop() {
@@ -145,7 +144,7 @@ function RoomStop({ room, path, archived, onStopped }: { room: RoomView; path: s
     try {
       sessionStorage.setItem(key, JSON.stringify(request)); setPending(request); setBusy(true); setError('');
       await api(`${path.replace(/\/turns$/, '')}/discussions/${room.root}/stop`, request);
-      removeProductStorage(sessionStorage, key); setPending(null); onStopped();
+      sessionStorage.removeItem(key); setPending(null); onStopped();
     } catch (error) { setError(message(error)); }
     finally { setBusy(false); }
   }
@@ -191,11 +190,11 @@ function ForkAnswer({ path, turn, onOpen }: { path: string; turn: Turn; onOpen?:
     if (flight.current) return;
     flight.current = true; setBusy(true); setError('');
     try {
-      const saved = readProductStorage(sessionStorage, key), id = saved ?? crypto.randomUUID();
+      const saved = sessionStorage.getItem(key), id = saved ?? crypto.randomUUID();
       if (!/^[a-f0-9-]{36}$/i.test(id)) throw new Error('Fork recovery could not be read. Check browser storage before retrying.');
       sessionStorage.setItem(key, id);
       const result = await api<Thread>(`${path}/${turn.id}/fork`, { id });
-      removeProductStorage(sessionStorage, key);
+      sessionStorage.removeItem(key);
       onOpen?.(result.agent, result.id);
     } catch (error) { setError(message(error)); }
     finally { flight.current = false; setBusy(false); }
@@ -222,7 +221,7 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
   const [showMemory, setShowMemory] = useState(false);
   const nextFrame = useNextFrame();
   const [focusedCard, setFocusedCard] = useState<string>();
-  const [focusedTask, setFocusedTask] = useState(() => { try { const key = `minarbot:focus:${scope}`, id = readProductStorage(sessionStorage, key) ?? ''; removeProductStorage(sessionStorage, key); return /^[a-f0-9-]{36}$/i.test(id) ? id : ''; } catch { return ''; } });
+  const [focusedTask, setFocusedTask] = useState(() => { try { const key = `minarbot:focus:${scope}`, id = sessionStorage.getItem(key) ?? ''; sessionStorage.removeItem(key); return /^[a-f0-9-]{36}$/i.test(id) ? id : ''; } catch { return ''; } });
   const [query, setQuery] = useState('');
   const [finding, setFinding] = useState(false);
   const [historyPages, setHistoryPages] = useState<number[]>([]);
@@ -235,7 +234,7 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
   const inheritedLoaded = useRef(false);
   const [pastedFiles, setPastedFiles] = useState<File[]>([]);
   const attachmentKey = `minarbot:attachments:${scope}`;
-  const [attached, setAttached] = useState<string[]>(() => { try { const ids = JSON.parse(readProductStorage(sessionStorage, attachmentKey) ?? '[]'); return Array.isArray(ids) && ids.length <= 4 && ids.every(id => typeof id === 'string') ? ids : []; } catch { return []; } });
+  const [attached, setAttached] = useState<string[]>(() => { try { const ids = JSON.parse(sessionStorage.getItem(attachmentKey) ?? '[]'); return Array.isArray(ids) && ids.length <= 4 && ids.every(id => typeof id === 'string') ? ids : []; } catch { return []; } });
   function attach(ids: string[]) { try { sessionStorage.setItem(attachmentKey, JSON.stringify(ids)); setAttached(ids); } catch { setError('Attachment selection was not saved. Check browser storage.'); } }
   const storageKey = `minarbot:pending:${scope}`;
   const [turns, setTurns] = useState<Turn[] | null>(null);
@@ -253,9 +252,9 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
   const needsProvider = blockedAgent?.provider_available === false || !blockedAgent && targets.length > 0 && !canSend;
   const firstMessage = firstRun && !thread && !turns?.length;
   const draftKey = `minarbot:draft:${scope}`;
-  const [draft, setDraft] = useState(() => { try { return readProductStorage(sessionStorage, draftKey) ?? ''; } catch { return ''; } });
+  const [draft, setDraft] = useState(() => { try { return sessionStorage.getItem(draftKey) ?? ''; } catch { return ''; } });
   const [recovery] = useState(() => {
-    try { return { command: restoreChatCommand(readProductStorage(sessionStorage, storageKey), !!channel), blocked: false }; }
+    try { return { command: restoreChatCommand(sessionStorage.getItem(storageKey), !!channel), blocked: false }; }
     catch { return { command: null, blocked: true }; }
   });
   const [pending, setPending] = useState<Pending | null>(recovery.command), [blocked, setBlocked] = useState(recovery.blocked);
@@ -323,7 +322,7 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
   }, [focusedTask, focusedCard, turns, before, finding]);
   useEffect(() => {
     if (!requestActive.current && pending && turns?.some(turn => turn.id === pending.id && !turn.optimistic)) {
-      try { removeProductStorage(sessionStorage, storageKey); removeProductStorage(sessionStorage, draftKey); removeProductStorage(sessionStorage, attachmentKey); } catch { /* The same ID remains safe to retry. */ }
+      try { sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); } catch { /* The same ID remains safe to retry. */ }
       setPending(null); setDraft(''); setAttached([]); setError('');
     }
   }, [turns, pending, storageKey, draftKey, attachmentKey]);
@@ -344,11 +343,11 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
       // A remounted conversation owns recovery and any newer draft after navigation.
       if (!mounted.current) return;
       setAddressedTurn('');
-      removeProductStorage(sessionStorage, storageKey); removeProductStorage(sessionStorage, draftKey); removeProductStorage(sessionStorage, attachmentKey); setPending(null); setDraft(''); setAttached([]); setFocusedTask(''); setHistoryPages([]); setQuery(''); setFinding(false);
+      sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); setPending(null); setDraft(''); setAttached([]); setFocusedTask(''); setHistoryPages([]); setQuery(''); setFinding(false);
     } catch (error) {
       if (!mounted.current) return;
       if (error instanceof HttpError && (error.status < 500 || error.status === 503 && !error.restarting)) {
-        try { removeProductStorage(sessionStorage, storageKey); sessionStorage.setItem(draftKey, request.text); } catch { /* Keep the draft in memory if storage fails. */ }
+        try { sessionStorage.removeItem(storageKey); sessionStorage.setItem(draftKey, request.text); } catch { /* Keep the draft in memory if storage fails. */ }
         optimistic.remove(request.id); setTurns(rows => rows?.filter(turn => turn.id !== request.id) ?? null); setQueueTurns(rows => rows.filter(turn => turn.id !== request.id));
         setPending(null); setDraft(request.text);
       }
@@ -498,7 +497,7 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
         </p>}
         {firstMessage && canSend && <p className="composer__note">Send first message</p>}
         {error && <div className="composer__error" role="alert"><span>{error} {pending && 'Use Retry send to check the same request without creating a duplicate message.'}</span></div>}
-        {blocked && <div className="composer__error" role="alert"><span>Message recovery data could not be read. Sending is blocked. Check history to confirm the previous message was not sent.</span><Button size="sm" variant="ghost" onClick={async () => { if (!await confirm({ title: 'Discard recovery data?', description: 'The previous message may already have been received. Check history before sending another message.', confirm: 'Discard message recovery', danger: true })) return; try { removeProductStorage(sessionStorage, storageKey); setBlocked(false); setError(''); nextFrame(() => composer.current?.focus()); } catch { setError('Recovery data could not be deleted. Check site storage.'); } }}>Discard message recovery</Button></div>}
+        {blocked && <div className="composer__error" role="alert"><span>Message recovery data could not be read. Sending is blocked. Check history to confirm the previous message was not sent.</span><Button size="sm" variant="ghost" onClick={async () => { if (!await confirm({ title: 'Discard recovery data?', description: 'The previous message may already have been received. Check history before sending another message.', confirm: 'Discard message recovery', danger: true })) return; try { sessionStorage.removeItem(storageKey); setBlocked(false); setError(''); nextFrame(() => composer.current?.focus()); } catch { setError('Recovery data could not be deleted. Check site storage.'); } }}>Discard message recovery</Button></div>}
         <QueuedRunsControl turns={queueTurns.filter(queued)} path={path} target={dispatchTarget} request={api} archived={archived} onChanged={refreshTurns} onOrder={() => setQueueOrderOpen(true)} />
         <ChatComposer attachments={attachments.composer} hasAttachments={!!attached.length} onPasteFiles={files => { if (pastedFiles.length) { setError('Wait for pasted files to finish uploading.'); return; } setPastedFiles(files); }} mentions={channel ? members : []} onMention={value => { setDraft(value); try { sessionStorage.setItem(draftKey, value); } catch { setError('Draft was not saved. Copy your message before leaving.'); } }} label={channel ? `Message #${channel.section_name ?? channel.name}` : `Message ${agent.name}`} inputRef={composer} multiline={draft.includes('\n')} onSubmit={send} onSendKey={event => { void send(event, (event.ctrlKey || event.metaKey) && canSteer ? 'steer' : 'queue'); }} onAttach={attachments.choose} attachmentDisabledReason={archived || blocked || !!pending || busy || attachments.uploading ? 'Attachments unavailable' : undefined} actions={attachments.recordingAction}
           recipient={channel && activeTurns.length > 0 ? <Select size="sm" label="Addressed member" value={dispatchTarget?.id ?? ''} disabled={busy || !!pending || blocked} onChange={setAddressedTurn} options={[{ value: '', label: 'Everyone' }, ...activeTurns.map(turn => ({ value: turn.id, label: members.find(member => member.id === turn.agent)?.name ?? turn.agent }))]} /> : undefined}
@@ -591,7 +590,7 @@ function UpcomingRoutines({ agent, onManage }: { agent: string; onManage: () => 
 }
 function pendingRoutine(agent: string): RoutineCommand | null {
   try {
-    const value = JSON.parse(readProductStorage(sessionStorage, `minarbot:routine-command:${agent}`) ?? 'null'), data = value?.data;
+    const value = JSON.parse(sessionStorage.getItem(`minarbot:routine-command:${agent}`) ?? 'null'), data = value?.data;
     return value && typeof data?.id === 'string' && typeof data.name === 'string' && typeof data.prompt === 'string' && typeof data.enabled === 'boolean'
       && (data.schedule && typeof data.schedule === 'object' && typeof data.schedule.kind === 'string' && typeof data.zone === 'string'
         || Number.isSafeInteger(data.nextAt) && data.nextAt > 0 && data.nextAt <= 253370764799999 && (data.intervalSeconds === null || Number.isSafeInteger(data.intervalSeconds)))
@@ -602,7 +601,7 @@ function ScriptAccess({ agent }: { agent: string }) {
   const key = `minarbot:script-access:${agent}`;
   const [access, setAccess] = useState<{ enabled: number; revision: number; configured: boolean } | null>(null);
   const [pending, setPending] = useState<{ id: string; revision: number; enabled: boolean } | null>(() => {
-    try { const value = JSON.parse(readProductStorage(sessionStorage, key) ?? 'null'); return value && typeof value.id === 'string' && Number.isSafeInteger(value.revision) && typeof value.enabled === 'boolean' ? value : null; } catch { return null; }
+    try { const value = JSON.parse(sessionStorage.getItem(key) ?? 'null'); return value && typeof value.id === 'string' && Number.isSafeInteger(value.revision) && typeof value.enabled === 'boolean' ? value : null; } catch { return null; }
   });
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [reload, setReload] = useState(0);
   const mounted = useRef(true);
@@ -624,10 +623,10 @@ function ScriptAccess({ agent }: { agent: string }) {
       await api(`/api/agents/${agent}/scripts`, request);
       const latest = await api<NonNullable<typeof access>>(`/api/agents/${agent}/scripts`);
       if (!mounted.current) return;
-      removeProductStorage(sessionStorage, key); setPending(null); setAccess(latest);
+      sessionStorage.removeItem(key); setPending(null); setAccess(latest);
     } catch (error) {
       if (!mounted.current) return;
-      if (error instanceof HttpError && error.status < 500) { removeProductStorage(sessionStorage, key); setPending(null); setAccess(null); }
+      if (error instanceof HttpError && error.status < 500) { sessionStorage.removeItem(key); setPending(null); setAccess(null); }
       setError(message(error));
     } finally { if (mounted.current) setBusy(false); }
   }
@@ -644,7 +643,7 @@ function WebhookSettings({ routine, onBack }: { routine: Routine; onBack: () => 
   type Command = { id: string; revision: number; rotate: boolean; eventName: string; filters: unknown[] };
   const key = `minarbot:webhook:${routine.id}`, path = `/api/routines/${routine.id}/webhook`;
   const [pending, setPending] = useState<Command | null>(() => {
-    try { const value = JSON.parse(readProductStorage(sessionStorage, key) ?? 'null'); return value && typeof value.id === 'string' && Number.isSafeInteger(value.revision) && typeof value.rotate === 'boolean' && typeof value.eventName === 'string' && Array.isArray(value.filters) ? value : null; } catch { return null; }
+    try { const value = JSON.parse(sessionStorage.getItem(key) ?? 'null'); return value && typeof value.id === 'string' && Number.isSafeInteger(value.revision) && typeof value.rotate === 'boolean' && typeof value.eventName === 'string' && Array.isArray(value.filters) ? value : null; } catch { return null; }
   });
   const [hook, setHook] = useState<WebhookConfig | null | undefined>(undefined), [secret, setSecret] = useState('');
   const [events, setEvents] = useState<{ delivery: string; received: number; result: { outcome: string; reason?: string } }[]>([]);
@@ -673,10 +672,10 @@ function WebhookSettings({ routine, onBack }: { routine: Routine; onBack: () => 
       const latest = await api<WebhookConfig | null>(path);
       if (!mounted.current) return;
       if (!latest || latest.revision !== result.revision || latest.route !== result.route) throw new HttpError(409, 'Webhook changed. Reload before using the secret.');
-      removeProductStorage(sessionStorage, key); setPending(null); setHook(latest); setSecret(result.secret ?? '');
+      sessionStorage.removeItem(key); setPending(null); setHook(latest); setSecret(result.secret ?? '');
     } catch (error) {
       if (!mounted.current) return;
-      if (error instanceof HttpError && error.status < 500) { removeProductStorage(sessionStorage, key); setPending(null); setConflict(true); }
+      if (error instanceof HttpError && error.status < 500) { sessionStorage.removeItem(key); setPending(null); setConflict(true); }
       setError(message(error));
     } finally { if (mounted.current) setBusy(false); }
   }
@@ -712,7 +711,7 @@ function FlowEditor({ routine, onOpen }: { routine: Routine; onOpen: (thread: st
   type Command = { id: string; revision: number; links: FlowLink[] };
   const key = `minarbot:flow:${routine.id}`, path = `/api/routines/${routine.id}/flow`;
   const [pending, setPending] = useState<Command | null>(() => {
-    try { const value = JSON.parse(readProductStorage(sessionStorage, key) ?? 'null'); return value && typeof value.id === 'string' && Number.isSafeInteger(value.revision) && Array.isArray(value.links) ? value : null; } catch { return null; }
+    try { const value = JSON.parse(sessionStorage.getItem(key) ?? 'null'); return value && typeof value.id === 'string' && Number.isSafeInteger(value.revision) && Array.isArray(value.links) ? value : null; } catch { return null; }
   });
   const [agents, setAgents] = useState<Agent[]>([]), [links, setLinks] = useState<FlowLink[]>([]), [revision, setRevision] = useState(0);
   const [runs, setRuns] = useState<FlowRun[]>([]), [runError, setRunError] = useState('');
@@ -746,10 +745,10 @@ function FlowEditor({ routine, onOpen }: { routine: Routine; onOpen: (thread: st
       await api(path, request);
       const latest = await api<{ graph: FlowGraph; revision: number }>(path);
       if (!mounted.current) return;
-      removeProductStorage(sessionStorage, key); setPending(null); setLinks(latest.graph.links); setRevision(latest.revision);
+      sessionStorage.removeItem(key); setPending(null); setLinks(latest.graph.links); setRevision(latest.revision);
     } catch (error) {
       if (!mounted.current) return;
-      if (error instanceof HttpError && error.status < 500) { removeProductStorage(sessionStorage, key); setPending(null); setConflict(true); }
+      if (error instanceof HttpError && error.status < 500) { sessionStorage.removeItem(key); setPending(null); setConflict(true); }
       setError(message(error));
     } finally { if (mounted.current) setBusy(false); }
   }
@@ -785,7 +784,7 @@ function RoutinesHub({ agents, projects, initialAgent, onOpen }: { agents: Agent
   const key = 'minarbot:routine-hub-command';
   const [recovered] = useState(() => {
     try {
-      const raw = readProductStorage(sessionStorage, key); if (!raw) return { command: null, blocked: false };
+      const raw = sessionStorage.getItem(key); if (!raw) return { command: null, blocked: false };
       const value = JSON.parse(raw);
       if (!value || !['test','edit','delete'].includes(value.action) || !/^[a-f0-9-]{36}$/i.test(value.routine) || !/^[a-f0-9-]{36}$/i.test(value.data?.id) || !Number.isSafeInteger(value.data?.revision)) throw new Error('Invalid command');
       return { command: value as Command, blocked: false };
@@ -817,8 +816,8 @@ function RoutinesHub({ agents, projects, initialAgent, onOpen }: { agents: Agent
       // Retain the original request before sending; retries never regenerate an ID or payload.
       sessionStorage.setItem(key, JSON.stringify(request)); setPending(request);
       const result = await api<Routine>(`/api/routines/${request.routine}/${request.action}`, request.data);
-      removeProductStorage(sessionStorage, key);
-      if (request.action === 'test') removeProductStorage(sessionStorage, `minarbot:routine-test:${request.routine}`);
+      sessionStorage.removeItem(key);
+      if (request.action === 'test') sessionStorage.removeItem(`minarbot:routine-test:${request.routine}`);
       if (!mounted.current) return;
       loadVersion.current++; setPending(null);
       if (request.action === 'edit') { setDetail(current => current?.id === request.routine ? { ...current, ...result } : current); setPage(current => current && ({ ...current, routines: current.routines.map(row => row.id === request.routine ? { ...row, ...result } : row) })); }
@@ -827,7 +826,7 @@ function RoutinesHub({ agents, projects, initialAgent, onOpen }: { agents: Agent
       if (request.action === 'delete') setDetail(null);
     } catch (error) {
       if (!mounted.current) return;
-      if (error instanceof HttpError && error.status < 500) { removeProductStorage(sessionStorage, key); if (request.action === 'test') removeProductStorage(sessionStorage, `minarbot:routine-test:${request.routine}`); setPending(null); setReload(value => value + 1); }
+      if (error instanceof HttpError && error.status < 500) { sessionStorage.removeItem(key); if (request.action === 'test') sessionStorage.removeItem(`minarbot:routine-test:${request.routine}`); setPending(null); setReload(value => value + 1); }
       setError(message(error));
     } finally { flight.current = false; if (mounted.current) setBusy(false); }
   }
@@ -838,7 +837,7 @@ function RoutinesHub({ agents, projects, initialAgent, onOpen }: { agents: Agent
   function run(routine: Routine) {
     if (locked) return;
     try {
-      const saved = readProductStorage(sessionStorage, `minarbot:routine-test:${routine.id}`), data = saved ? JSON.parse(saved) : { id: crypto.randomUUID(), revision: routine.revision };
+      const saved = sessionStorage.getItem(`minarbot:routine-test:${routine.id}`), data = saved ? JSON.parse(saved) : { id: crypto.randomUUID(), revision: routine.revision };
       if (!data || typeof data.id !== 'string' || !Number.isSafeInteger(data.revision)) throw new Error('Previous run request could not be read. Check browser storage and run history before retrying.');
       void command({ routine: routine.id, action: 'test', data });
     } catch (error) { setError(message(error)); }
@@ -849,7 +848,7 @@ function RoutinesHub({ agents, projects, initialAgent, onOpen }: { agents: Agent
   }
   async function discard() {
     if (!await confirm({ title: 'Discard routine recovery?', description: 'Check routines and run history first. The previous request may already have succeeded.', confirm: 'Discard recovery', danger: true })) return;
-    try { removeProductStorage(sessionStorage, key); setPending(null); setBlocked(false); setReload(value => value + 1); } catch (error) { setError(message(error)); }
+    try { sessionStorage.removeItem(key); setPending(null); setBlocked(false); setReload(value => value + 1); } catch (error) { setError(message(error)); }
   }
   const recovery = <>{blocked && <Alert tone="error" title="Routine recovery could not be read" actions={<Button disabled={busy} onClick={() => void discard()}>Discard recovery</Button>}>Check routine settings and run history before discarding.</Alert>}{pending && <RecoveryAlert inFlight={busy} tone="warn" title="Request is not confirmed yet" actions={<><Button disabled={busy} busy={busy} onClick={() => void command(pending)}>Retry request</Button><Button disabled={busy} onClick={() => void discard()}>Discard recovery</Button></>}>Retry the original request to check its result without duplicating work.</RecoveryAlert>}{error && <Alert tone="error" actions={<Button size="sm" onClick={() => { setError(''); setReload(value => value + 1); }}>Reload routines</Button>}>{error}</Alert>}{notice && <p role="status" className="k-field__hint">{notice}</p>}</>;
   const hasFilters = Object.values(filters).some(Boolean) || !!after;
@@ -892,7 +891,7 @@ function RoutineForm({ owner, agents, projects, routine, onBack, onSaved }: { ow
   const key = `minarbot:routine-command:${agent.id}`;
   const pending = useRef<RoutineCommand | null>(pendingRoutine(owner.id));
   const [initial] = useState(() => pending.current);
-  const [blocked, setBlocked] = useState(() => { try { return readProductStorage(sessionStorage, key) !== null && !pending.current; } catch { return true; } });
+  const [blocked, setBlocked] = useState(() => { try { return sessionStorage.getItem(key) !== null && !pending.current; } catch { return true; } });
   const confirm = useConfirm();
   const routineId = initial?.routineId ?? routine?.id ?? null;
   const revision = initial?.data.revision ?? routine?.revision;
@@ -918,11 +917,11 @@ function RoutineForm({ owner, agents, projects, routine, onBack, onSaved }: { ow
     try {
       const updated = await api<Routine>(request.routineId ? `/api/routines/${request.routineId}/edit` : `/api/agents/${agent.id}/routines`, request.data);
       if (!mounted.current) return;
-      if (pendingRoutine(agent.id)?.data.id === request.data.id) removeProductStorage(sessionStorage, key);
+      if (pendingRoutine(agent.id)?.data.id === request.data.id) sessionStorage.removeItem(key);
       pending.current = null; onSaved(updated);
     } catch (error) {
       if (!mounted.current) return;
-      if (error instanceof HttpError && error.status < 500) { if (pendingRoutine(agent.id)?.data.id === request.data.id) removeProductStorage(sessionStorage, key); pending.current = null; }
+      if (error instanceof HttpError && error.status < 500) { if (pendingRoutine(agent.id)?.data.id === request.data.id) sessionStorage.removeItem(key); pending.current = null; }
       if (error instanceof HttpError && error.status === 409) setConflict(true);
       setError(message(error));
     } finally { if (mounted.current) setBusy(false); }
@@ -933,7 +932,7 @@ function RoutineForm({ owner, agents, projects, routine, onBack, onSaved }: { ow
     <form id="routine-form" className="k-fieldset bs-root" onSubmit={save}>
       {blocked && <Alert tone="error" title="Routine recovery could not be read" actions={<Button onClick={async () => {
         if (!await confirm({ title: 'Discard routine save recovery?', description: 'Check routines and run history first. The previous save may already have succeeded.', confirm: 'Discard recovery', danger: true })) return;
-        try { removeProductStorage(sessionStorage, key); setBlocked(false); } catch { setError('Browser storage is unavailable. Check site storage before saving.'); }
+        try { sessionStorage.removeItem(key); setBlocked(false); } catch { setError('Browser storage is unavailable. Check site storage before saving.'); }
       }}>Discard recovery</Button>}>Check saved routines before discarding this request.</Alert>}
       <div className="k-grid-2"><Field label="Owner agent" hint={routineId ? 'The owner cannot change after creation.' : undefined}><Select value={agent.id} disabled={!!routineId || !!pending.current || busy || blocked} onChange={id => { const next = agents.find(item => item.id === id); if (next) {setAgent(next); if(project && !projects.find(item=>item.id===project)?.members.some(member=>member.agent===next.id)) {setProject(null);setReportTo('direct');}} }} options={agents.map(item => ({ value: item.id, label: item.name, disabled: item.id !== agent.id && !!pendingRoutine(item.id) }))} /></Field>
       <Field label="Name"><Input name="name" required maxLength={80} readOnly={!!pending.current} defaultValue={snapshot?.name ?? routine?.name} placeholder="Morning briefing" /></Field></div>
@@ -957,7 +956,7 @@ function AgentConversations({ agent, attention, onRestored, configured, firstRun
   const [showArchived, setShowArchived] = useState(false), [busy, setBusy] = useState(false);
   const confirm = useConfirm();
   const commandKey = `minarbot:thread-command:${agent.id}`;
-  const [recovery] = useState(() => { try { return { command: restoreThreadCommand(readProductStorage(sessionStorage, commandKey), agent.id), invalid: false }; } catch { return { command: null, invalid: true }; } });
+  const [recovery] = useState(() => { try { return { command: restoreThreadCommand(sessionStorage.getItem(commandKey), agent.id), invalid: false }; } catch { return { command: null, invalid: true }; } });
   const [pending, setPending] = useState<ThreadCommand | null>(recovery.command), [invalid, setInvalid] = useState(recovery.invalid);
   const flight = useRef(false), actionFlight = useRef(false), renameTarget = useRef('');
   const [showWorkspace, setShowWorkspace] = useState(false);
@@ -1000,13 +999,13 @@ function AgentConversations({ agent, attention, onRestored, configured, firstRun
     try {
       sessionStorage.setItem(commandKey, JSON.stringify(command)); setPending(command);
       const result = await api<Thread>(command.path, command.data);
-      removeProductStorage(sessionStorage, commandKey); setPending(null); setForm(null);
+      sessionStorage.removeItem(commandKey); setPending(null); setForm(null);
       if (version === navigation.current) {
         const hidden = result.deleted || result.archived && !showArchived;
         await load(command.path === `/api/agents/${agent.id}/threads` ? result.id : selected === result.id && hidden ? '' : selected, true);
       }
     } catch (error) {
-      if (error instanceof HttpError && error.status < 500) { removeProductStorage(sessionStorage, commandKey); setPending(null); }
+      if (error instanceof HttpError && error.status < 500) { sessionStorage.removeItem(commandKey); setPending(null); }
       setError(message(error));
     } finally { flight.current = false; setBusy(false); }
   }
@@ -1042,7 +1041,7 @@ function AgentConversations({ agent, attention, onRestored, configured, firstRun
   const visible = threads.filter(item => showArchived || !item.archived), deliveries = visible.filter(item => item.delivery);
   const conversations = <>
     {error && <Alert tone="error" actions={<Button size="sm" disabled={busy} onClick={() => void load().catch(() => {})}>Reload conversations</Button>}>{error}</Alert>}
-    {(pending || invalid) && <RecoveryAlert inFlight={busy} tone="warn" title={invalid ? 'Conversation recovery is unavailable' : 'Conversation change is not confirmed'} actions={<>{pending && <Button size="sm" busy={busy} onClick={() => void execute(pending)}>Retry change</Button>}<Button size="sm" disabled={busy} onClick={async () => { if (await confirm({ title: 'Discard pending change?', description: 'Check conversations first. The change may already have been saved.', confirm: 'Discard', danger: true })) { try { removeProductStorage(sessionStorage, commandKey); setPending(null); setInvalid(false); } catch { setError('Recovery could not be cleared. Check browser storage.'); } } }}>Discard</Button></>} />}
+    {(pending || invalid) && <RecoveryAlert inFlight={busy} tone="warn" title={invalid ? 'Conversation recovery is unavailable' : 'Conversation change is not confirmed'} actions={<>{pending && <Button size="sm" busy={busy} onClick={() => void execute(pending)}>Retry change</Button>}<Button size="sm" disabled={busy} onClick={async () => { if (await confirm({ title: 'Discard pending change?', description: 'Check conversations first. The change may already have been saved.', confirm: 'Discard', danger: true })) { try { sessionStorage.removeItem(commandKey); setPending(null); setInvalid(false); } catch { setError('Recovery could not be cleared. Check browser storage.'); } } }}>Discard</Button></>} />}
     <section aria-label="Agent conversations">
       <div className="section-label section-label--row"><span>Conversations</span><div className="details-list-actions"><DropdownMenu.Root><DropdownMenu.Trigger asChild><IconButton label="Conversation filters"><Filter size={15} aria-hidden /></IconButton></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="k-pop k-menu" align="end" sideOffset={6}><DropdownMenu.CheckboxItem className="k-menu__item" checked={showArchived} onCheckedChange={next => { setShowArchived(next); if (!next && thread?.archived) select(''); }}><DropdownMenu.ItemIndicator><Check size={14} aria-hidden /></DropdownMenu.ItemIndicator>Show archived</DropdownMenu.CheckboxItem></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{!locked && <IconButton label="New conversation" tooltip="New conversation (Ctrl/Cmd+Shift+O)" aria-keyshortcuts="Control+Shift+O Meta+Shift+O" onClick={openForm}><Plus size={15} aria-hidden /></IconButton>}</div></div>
       <div className="panel-card">
@@ -1072,7 +1071,7 @@ function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agent
   const confirm = useConfirm();
   const storageKey = `minarbot:channel-command:${channel?.id ?? 'new'}`;
   const [recovery] = useState(() => {
-    try { return { command: restoreChannelCommand(readProductStorage(sessionStorage, storageKey), !!channel), blocked: false }; }
+    try { return { command: restoreChannelCommand(sessionStorage.getItem(storageKey), !!channel), blocked: false }; }
     catch { return { command: null, blocked: true }; }
   });
   const [pending, setPending] = useState<ChannelCommand | null>(recovery.command), [blocked, setBlocked] = useState(recovery.blocked);
@@ -1085,7 +1084,7 @@ function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agent
   const locked = busy || !!pending || blocked;
   async function discard() {
     if (!await confirm({ title: 'Discard section recovery data?', description: 'Changes may already be saved. Check the list and section settings before creating a new request.', confirm: 'Discard', danger: true })) return;
-    try { removeProductStorage(sessionStorage, storageKey); setPending(null); setBlocked(false); setError(''); nameInput.current?.focus(); }
+    try { sessionStorage.removeItem(storageKey); setPending(null); setBlocked(false); setError(''); nameInput.current?.focus(); }
     catch { setError('Recovery data could not be deleted. Check site storage.'); }
   }
   async function create(event: FormEvent<HTMLFormElement>) {
@@ -1097,12 +1096,12 @@ function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agent
     try {
       const saved = await api<Channel>(channel ? `/api/channels/${channel.id}/edit` : '/api/channels', data);
       if (!mounted.current) return;
-      removeProductStorage(sessionStorage, storageKey); setPending(null); onCreated(saved);
+      sessionStorage.removeItem(storageKey); setPending(null); onCreated(saved);
     }
     catch (error) {
       if (!mounted.current) return;
       if (error instanceof HttpError && error.status < 500) {
-        try { removeProductStorage(sessionStorage, storageKey); setPending(null); }
+        try { sessionStorage.removeItem(storageKey); setPending(null); }
         catch { setBlocked(true); }
       }
       setError(message(error));
@@ -1208,15 +1207,15 @@ function App() {
   const projectThread = projectConversation ? { project: projectConversation.project!, agent: selected, thread: projectConversation.id, conversation: projectConversation } : null;
   const [dialog, setDialog] = useState<Dialog>(null);
   const [firstRunAgent, setFirstRunAgent] = useState('');
-  const [notificationsMuted, setNotificationsMuted] = useState(() => { try { return readProductStorage(localStorage, notificationMuteKey) === '1'; } catch { return false; } });
+  const [notificationsMuted, setNotificationsMuted] = useState(() => { try { return localStorage.getItem(notificationMuteKey) === '1'; } catch { return false; } });
   const [notificationError, setNotificationError] = useState('');
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() => { try { return readProductStorage(localStorage, sidebarTabKey) === 'projects' ? 'projects' : 'agents'; } catch { return 'agents'; } });
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() => { try { return localStorage.getItem(sidebarTabKey) === 'projects' ? 'projects' : 'agents'; } catch { return 'agents'; } });
   const [searches, setSearches] = useState({ agents: '', projects: '' });
   const search = searches[sidebarTab], query = search.trim().toLocaleLowerCase();
   const [searchMachineGroups, setSearchMachineGroups] = useState<Record<string, boolean>>({});
   const [onlyOnline, setOnlyOnline] = useState(false), [onlyNeedsYou, setOnlyNeedsYou] = useState(false), [filterMenu, setFilterMenu] = useState(false);
-  const [machineGroups, setMachineGroups] = useState<Record<string, boolean>>(() => { try { const value: unknown = JSON.parse(readProductStorage(localStorage, machineGroupsKey) ?? '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).filter(([, expanded]) => typeof expanded === 'boolean')) as Record<string, boolean> : {}; } catch { return {}; } });
-  const [desktopCollapsed, setCollapsedState] = useState(() => { try { return readProductStorage(localStorage, collapsedKey) === '1'; } catch { return false; } });
+  const [machineGroups, setMachineGroups] = useState<Record<string, boolean>>(() => { try { const value: unknown = JSON.parse(localStorage.getItem(machineGroupsKey) ?? '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).filter(([, expanded]) => typeof expanded === 'boolean')) as Record<string, boolean> : {}; } catch { return {}; } });
+  const [desktopCollapsed, setCollapsedState] = useState(() => { try { return localStorage.getItem(collapsedKey) === '1'; } catch { return false; } });
   const narrowSidebar = useNarrowSidebar(), [narrowOpen, setNarrowOpen] = useState(false);
   const collapsed = narrowSidebar ? !narrowOpen : desktopCollapsed;
   const [detailsVisible] = useDetailsOpen();

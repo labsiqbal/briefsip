@@ -267,9 +267,9 @@ pub(super) fn event(
                 None
             }
         };
-        let time = crate::text_header(headers, "x-briefsip-time").unwrap_or("");
-        let delivery = crate::text_header(headers, "x-briefsip-id").unwrap_or("");
-        let signature = crate::text_header(headers, "x-briefsip-signature").unwrap_or("");
+        let time = crate::text_header(headers, "x-minarbot-time").unwrap_or("");
+        let delivery = crate::text_header(headers, "x-minarbot-id").unwrap_or("");
+        let signature = crate::text_header(headers, "x-minarbot-signature").unwrap_or("");
         let valid_time =
             !time.is_empty() && time.len() <= 12 && time.bytes().all(|b| b.is_ascii_digit());
         let valid_id = !delivery.is_empty()
@@ -306,7 +306,7 @@ pub(super) fn event(
             hmac::HMAC_SHA256,
             secret
                 .as_deref()
-                .unwrap_or("briefsip-routine-webhook-dummy-secret-v1")
+                .unwrap_or("minarbot-routine-webhook-dummy-secret-v1")
                 .as_bytes(),
         );
         if hmac::verify(&mac, &input, &provided).is_err()

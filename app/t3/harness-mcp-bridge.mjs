@@ -1,9 +1,8 @@
-import { productEnv } from './rename-env.mjs';
 // Minarbot HTTP session credentials stay in environment and never enter argv.
 import { StringDecoder } from 'node:string_decoder';
 let session, pending = '', bytes = 0, active = 0;
 const decoder = new StringDecoder('utf8');
-const endpoint = productEnv('MINARBOT_MCP_URL'), token = productEnv('MINARBOT_MCP_TOKEN');
+const endpoint = process.env.MINARBOT_MCP_URL, token = process.env.MINARBOT_MCP_TOKEN;
 process.stdin.on('data', chunk => {
   bytes += chunk.length;
   if (bytes > 16 * 1024 * 1024) process.exit(1);

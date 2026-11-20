@@ -168,7 +168,7 @@ impl Host {
             loop {
                 let mut signed = self.signed(path, Method::POST, data.clone(), id, Some(token))?;
                 if let Some(executor) = executor {
-                    signed = signed.header("x-briefsip-executor", executor);
+                    signed = signed.header("x-minarbot-executor", executor);
                 }
                 match submit_bounded(signed, limit, timeout).await {
                     Err(err) if err.status == 429 && err.code == "rate_limited" => {

@@ -75,7 +75,7 @@ type ToolLog = { id: string; name: string; title?: string | null; state?: string
 type NativeToolLog = { id: string; name: string; state: string; failed?: number };
 
 const hiddenTool = (name: string) => /^(?:user[ _-]?message|agent[ _-]?message|assistant[ _-]?message|reasoning|plan|context[ _-]?compaction|verification[ _-]?reminder)$/i.test(name);
-const journalName = (name: string) => name.replace(/^mcp__(?:minarbot|briefsip)__/, '');
+const journalName = (name: string) => name.replace(/^mcp__minarbot__/, '');
 
 export function stepTitle(name: string) {
   if (/^\//.test(name) || ['commandExecution', 'exec_command', 'Bash', 'bash'].includes(name)) return 'Run shell';

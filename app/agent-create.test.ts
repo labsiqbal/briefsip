@@ -100,7 +100,7 @@ function canonicalFixture() {
       const expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 4 };
       return f.request('/api/tasks', 'POST', {
         requestId, projectId: project, agentId: agent, homeDeviceId: home, payload, expectedRevisions,
-        payloadDigest: digestCommand(['briefsip-task-payload-v1', requestId, project, agent, home, payload, expectedRevisions]),
+        payloadDigest: digestCommand(['minarbot-task-payload-v1', requestId, project, agent, home, payload, expectedRevisions]),
       }, actor);
     },
   };
@@ -174,7 +174,7 @@ test('provider binding stays explicit and avatar receipt hashes original bytes',
     assert.equal(db.prepare('SELECT provider_account FROM agents').get()!.provider_account, 'owner-provider');
     const image = db.prepare('SELECT image,revision FROM agent_avatars').get()!, metadata = await sharp(image.image as Uint8Array).metadata();
     assert.equal(metadata.width, 256); assert.equal(metadata.height, 256); assert.equal(image.revision, 1);
-    assert.equal(result.receipt.payloadDigest, digestCommand(['briefsip-agent-create-v1', { ...command, avatar: sha256(original) }]));
+    assert.equal(result.receipt.payloadDigest, digestCommand(['minarbot-agent-create-v1', { ...command, avatar: sha256(original) }]));
     assert(!String(db.prepare('SELECT request FROM agent_creations').get()!.request).includes(withAvatar.avatar));
     db.prepare("UPDATE provider_bindings SET readiness='revoked',revision=2").run();
     assert.equal((await access.createAgent(owner, withAvatar)).status, 200);

@@ -41,7 +41,7 @@ pub fn snapshot(
     fields(v, &["requestId", "ownership", "expectedTaskRevision"])?;
     let request = id(&v["requestId"])?;
     let scope = format!("tasks:context:{}", string(task, "id"));
-    let pd = digest(&json!(["briefsip-task-context-v1", task["id"], v]));
+    let pd = digest(&json!(["minarbot-task-context-v1", task["id"], v]));
     if let Some(old) = replay(
         db,
         &p.account,

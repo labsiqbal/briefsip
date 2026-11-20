@@ -37,7 +37,7 @@ test('agent event waits release workers, survive restart, honor pause and accept
   async function send(connection: any, id = randomUUID(), expected = 200) {
     const body = JSON.stringify({ event: 'ready', payload: 'synthetic' }), time = String(Math.floor(Date.now() / 1000));
     const signature = createHmac('sha256', connection.secret).update(`${time}\n${id}\n${body}`).digest('hex');
-    const res = await fetch(app.origin + new URL(connection.url).pathname, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': id, 'X-Briefsip-Signature': signature }, body });
+    const res = await fetch(app.origin + new URL(connection.url).pathname, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Minarbot-Time': time, 'X-Minarbot-Id': id, 'X-Minarbot-Signature': signature }, body });
     const value = await res.json(); assert.equal(res.status, expected, JSON.stringify(value)); return value;
   }
   try {
@@ -135,7 +135,7 @@ test('routine waits preserve artifacts and reject events cancelled before upload
   const body = JSON.stringify({ event: 'ready', payload: 'ready-data' });
   function headers(secret: string, id: string) {
     const time = String(Math.floor(Date.now() / 1000));
-    return { 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': id, 'X-Briefsip-Signature': createHmac('sha256', secret).update(`${time}\n${id}\n${body}`).digest('hex') };
+    return { 'Content-Type': 'application/json', 'X-Minarbot-Time': time, 'X-Minarbot-Id': id, 'X-Minarbot-Signature': createHmac('sha256', secret).update(`${time}\n${id}\n${body}`).digest('hex') };
   }
   try {
     const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Routine', model: 'fixture', instructions: 'Help' });
@@ -249,7 +249,7 @@ for (const boundary of ['workflow', 'channel', 'thread'] as const) test(`${bound
     assert.equal(stopped.events[0].status, 'closed');
     await verifyRoot();
     const body = JSON.stringify({ event: 'ready' }), id = randomUUID(), time = String(Math.floor(Date.now() / 1000));
-    const headers = { 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': id, 'X-Briefsip-Signature': createHmac('sha256', connection.secret).update(`${time}\n${id}\n${body}`).digest('hex') };
+    const headers = { 'Content-Type': 'application/json', 'X-Minarbot-Time': time, 'X-Minarbot-Id': id, 'X-Minarbot-Signature': createHmac('sha256', connection.secret).update(`${time}\n${id}\n${body}`).digest('hex') };
     const send = () => fetch(app.origin + new URL(connection.url).pathname, { method: 'POST', headers, body });
     const denied = await send(); assert.equal(denied.status, 409); await denied.arrayBuffer();
     await app.close(); app = await startApp(options);

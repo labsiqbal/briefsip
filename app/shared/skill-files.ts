@@ -16,7 +16,7 @@ export function skillFileFromBytes(path: string, bytes: Uint8Array, binary = fal
 export function exportedSkillFiles(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('File is not a Minarbot version 1 skill folder export.');
   const bundle = value as Record<string, unknown>;
-  if ((bundle.format !== 'minarbot-skill-folder' && bundle.format !== 'briefsip-skill-folder') || bundle.version !== 1 || Object.keys(bundle).some(key => !['format', 'version', 'files'].includes(key))) throw new Error('File is not a Minarbot version 1 skill folder export.');
+  if (bundle.format !== 'minarbot-skill-folder' || bundle.version !== 1 || Object.keys(bundle).some(key => !['format', 'version', 'files'].includes(key))) throw new Error('File is not a Minarbot version 1 skill folder export.');
   return bundle.files;
 }
 export function parseSkillFiles(value: unknown) {

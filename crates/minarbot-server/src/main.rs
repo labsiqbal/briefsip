@@ -12,12 +12,12 @@ mod harness;
 mod mcp;
 mod media;
 mod operator_file;
-mod rename_migration;
 mod restore;
 mod restore_cli;
 mod restore_fence;
 mod script_cli;
 mod skill_directory;
+mod system_keyring;
 mod tasks;
 mod turns;
 mod updates;
@@ -397,11 +397,11 @@ async fn canonical(state: &AppState, request: Request) -> Response {
     );
     response
         .headers_mut()
-        .insert("x-briefsip-protocol", HeaderValue::from_static("1"));
+        .insert("x-minarbot-protocol", HeaderValue::from_static("1"));
     if let Ok(value) = HeaderValue::from_str(&request_id) {
         response
             .headers_mut()
-            .insert("x-briefsip-request-id", value);
+            .insert("x-minarbot-request-id", value);
     }
     response
 }
@@ -423,7 +423,7 @@ async fn canonical_request(
             .await?
             .ok_or_else(|| Failure::new(404, "resource_not_found", "Resource not found."));
     }
-    if text_header(request.headers(), "x-briefsip-protocol") != Some("1") {
+    if text_header(request.headers(), "x-minarbot-protocol") != Some("1") {
         return Err(Failure::new(
             426,
             "unsupported_version",
@@ -444,7 +444,7 @@ async fn canonical_request(
             "Use Content-Type application/json.",
         ));
     }
-    let id = text_header(request.headers(), "x-briefsip-request-id")
+    let id = text_header(request.headers(), "x-minarbot-request-id")
         .and_then(web::id)
         .ok_or_else(|| Failure::new(400, "invalid_id", "requestId must be a UUID v4."))?;
     *request_id = id;
@@ -647,7 +647,6 @@ async fn main() -> db::Result<()> {
         return Ok(());
     }
     let mut config = Config::read()?;
-    let service_handoff = rename_migration::prepare(&mut config)?;
     harness::hydrate(&mut config.harness).await;
     let _script_discovery = automation::scripts::open(&config)?;
     let database = Arc::new(Mutex::new(db::open(
@@ -760,22 +759,6 @@ async fn main() -> db::Result<()> {
         ))
         .with_state(state);
     println!("Minarbot: {origin}");
-    if let Some(home) = service_handoff {
-        let data = shutdown_state
-            .config
-            .database
-            .parent()
-            .ok_or("Invalid data directory.")?
-            .to_owned();
-        let release =
-            minarbot_launcher::rename_migration::var("MINARBOT_RELEASE_ID").unwrap_or_default();
-        let trial = shutdown_state.config.update.options().trial.is_some();
-        tokio::spawn(async move {
-            if let Err(error) = rename_migration::handoff(&home, &data, &release, trial).await {
-                eprintln!("[minarbot] Service handoff failed: {error}");
-            }
-        });
-    }
     let result = if let Some(tls) = tls {
         let configuration = axum_server::tls_rustls::RustlsConfig::from_pem(
             tls.cert.into_bytes(),

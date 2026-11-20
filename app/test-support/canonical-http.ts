@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { testDatabase } from './database.ts';
 import { ProtocolError } from '../shared/protocol.ts';
 import { startCanonicalApp } from '../test-bridge.ts';
-import { installFrozenNodeSchema } from './canonical-schema.ts';
+import { installCanonicalFixture } from './canonical-schema.ts';
 
 const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const jwtKey = keys.publicKey.export({ type: 'spki', format: 'pem' }).toString();
@@ -16,7 +16,7 @@ export function canonicalHttp(prefix: string) {
   const dir = mkdtempSync(join(tmpdir(), prefix));
   const database = join(dir, 'canonical.sqlite');
   const db = testDatabase(database);
-  installFrozenNodeSchema(db);
+  installCanonicalFixture(db);
   const addAccount = (subject: string, accountId = randomUUID()) => {
     db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(accountId, issuer, subject, Date.now());
     return { accountId, issuer, subject };
@@ -39,7 +39,7 @@ export function canonicalHttp(prefix: string) {
     const token = `${input}.${sign('RSA-SHA256', Buffer.from(input), keys.privateKey).toString('base64url')}`;
     const response = await fetch(app.origin + path, {
       method, body: body ? JSON.stringify(body) : undefined,
-      headers: { Origin: app.origin, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': String(body?.requestId ?? randomUUID()) },
+      headers: { Origin: app.origin, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Minarbot-Protocol': '1', 'X-Minarbot-Request-Id': String(body?.requestId ?? randomUUID()) },
     });
     return { status: response.status, body: await response.json() };
   };

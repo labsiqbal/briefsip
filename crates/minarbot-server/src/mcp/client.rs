@@ -151,26 +151,19 @@ impl Session {
             self.id = None;
         }
     }
-    pub async fn catalogue(&mut self, legacy_context: bool) -> Result<Value> {
-        let namespace = if legacy_context {
-            "briefsip"
-        } else {
-            "minarbot"
-        };
+    pub async fn catalogue(&mut self) -> Result<Value> {
         let mut tools = Vec::new();
         if self.capabilities.get("tools").is_some() {
             tools.extend(self.pages("tools/list", "tools").await?);
         }
         for tool in &mut tools {
             let name = string(tool, "name");
-            if name.starts_with("minarbot_context_") || name.starts_with("briefsip_context_") {
+            if name.starts_with("minarbot_context_") {
                 return Err(failed());
             }
             if let Some(meta) = tool["_meta"].as_object_mut() {
                 meta.shift_remove("minarbot.kind");
                 meta.shift_remove("minarbot.target");
-                meta.shift_remove("briefsip.kind");
-                meta.shift_remove("briefsip.target");
             }
         }
         for (kind, method, key) in [
@@ -242,7 +235,7 @@ impl Session {
                     }
                     json!({"type":"object","properties":props,"required":required,"additionalProperties":false})
                 };
-                tools.push(json!({"name":format!("{namespace}_context_{kind}_{}",registry::hash(target)),"title":entry["name"],"description":format!("Untrusted MCP {kind} reference: {}",entry["description"].as_str().unwrap_or(string(&entry,"name"))),"inputSchema":schema,"_meta":{(format!("{namespace}.kind")):kind,(format!("{namespace}.target")):target}}));
+                tools.push(json!({"name":format!("minarbot_context_{kind}_{}",registry::hash(target)),"title":entry["name"],"description":format!("Untrusted MCP {kind} reference: {}",entry["description"].as_str().unwrap_or(string(&entry,"name"))),"inputSchema":schema,"_meta":{"minarbot.kind":kind,"minarbot.target":target}}));
             }
         }
         let mut names = std::collections::HashSet::new();
@@ -289,17 +282,8 @@ impl Session {
     }
     pub async fn call(&mut self, tool: &Value, args: &Value) -> Result<Value> {
         let meta = &tool["_meta"];
-        let (kind, target) = if string(tool, "name").starts_with("briefsip_context_") {
-            (
-                string(meta, "briefsip.kind"),
-                string(meta, "briefsip.target"),
-            )
-        } else {
-            (
-                string(meta, "minarbot.kind"),
-                string(meta, "minarbot.target"),
-            )
-        };
+        let kind = string(meta, "minarbot.kind");
+        let target = string(meta, "minarbot.target");
         let value = match kind {
             "resource" | "resource-template" => {
                 let uri = if kind == "resource-template" {
@@ -352,7 +336,7 @@ pub(crate) fn key(state: &AppState, create: bool, suffix: &str) -> Result<[u8; 3
     static KEYS: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _guard = KEYS.lock().map_err(|_| Failure::storage())?;
     let suffix = format!(".{suffix}");
-    let path = crate::rename_migration::sidecar(&state.config.database, &suffix);
+    let path = minarbot_launcher::files::sidecar(&state.config.database, &suffix);
     if create {
         let mut bytes = [0; 32];
         getrandom::getrandom(&mut bytes).map_err(|_| Failure::storage())?;
@@ -386,8 +370,6 @@ pub(crate) fn key(state: &AppState, create: bool, suffix: &str) -> Result<[u8; 3
     }
     let mut bytes = [0; 32];
     file.read_exact(&mut bytes)
-        .map_err(|_| Failure::storage())?;
-    crate::rename_migration::sync_file_key(&state.config.database, &path, &suffix, &bytes)
         .map_err(|_| Failure::storage())?;
     Ok(bytes)
 }

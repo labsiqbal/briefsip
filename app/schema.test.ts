@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { testDatabase } from './test-support/database.ts';
 import { readFileSync } from 'node:fs';
-import { initializeCanonicalSchema, schemaVersion, SCHEMA_VERSION, migration, migrationV2, migrationV3, migrationV4 } from './test-support/legacy-schema.ts';
+import { initializeCanonicalSchema, schemaVersion, SCHEMA_VERSION, migration, migrationV2, migrationV3, migrationV4 } from './test-support/schema-fixture.ts';
 
 test('legacy schema fixture stays byte-identical to Rust migrations', () => {
   for (const [version, fixture] of [[1, migration], [2, migrationV2], [3, migrationV3], [4, migrationV4]] as const) {

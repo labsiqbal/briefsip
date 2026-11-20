@@ -1,4 +1,3 @@
-import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { readClipboardText } from './ui/clipboard';
 import { MessageCopyButton } from './ui/MessageCopyButton';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -29,7 +28,7 @@ export function useComputerControl(agent: string, request: ComputerRequest, susp
   useEffect(() => {
     mounted.current = true;
     try {
-      const saved = JSON.parse(readProductStorage(sessionStorage, key) ?? 'null');
+      const saved = JSON.parse(sessionStorage.getItem(key) ?? 'null');
       if (saved) {
         if (typeof saved !== 'object' || Object.keys(saved).some(k => !['id','revision','operation','turn'].includes(k)) || typeof saved.id !== 'string' || !/^[a-f0-9-]{36}$/i.test(saved.id) || !Number.isSafeInteger(saved.revision) || saved.revision < 0 || !['take','hand-back','dismiss'].includes(saved.operation) || saved.operation === 'dismiss' && typeof saved.turn !== 'string') throw new Error();
         setPending(saved);
@@ -56,7 +55,7 @@ export function useComputerControl(agent: string, request: ComputerRequest, susp
     flight.current = true; setBusy(true); setPending(command); setError('');
     try {
       const value = await request<ComputerStatus>(`/api/agents/${agent}/computer/control`, command);
-      removeProductStorage(sessionStorage, key);
+      sessionStorage.removeItem(key);
       if (mounted.current) { updateStatus(value); setPending(null); }
     } catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : 'Control change is not confirmed. Retry the saved request.'); }
     finally { flight.current = false; if (mounted.current) setBusy(false); }
@@ -65,7 +64,7 @@ export function useComputerControl(agent: string, request: ComputerRequest, susp
     if (!await confirm({ title: 'Load current control?', description: 'Accepted changes still apply. Check current control before taking another action.', confirm: 'Load current control' })) return;
     try {
       const value = await request<ComputerStatus>(`/api/agents/${agent}/computer`);
-      removeProductStorage(sessionStorage, key); updateStatus(value); setPending(null); setInvalid(false); setError('');
+      sessionStorage.removeItem(key); updateStatus(value); setPending(null); setInvalid(false); setError('');
     } catch (error) { setError(error instanceof Error ? error.message : 'Computer status unavailable.'); }
   }
   const recovery = <>

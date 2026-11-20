@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testDatabase } from './test-support/database.ts';
 import { sha256, digestCommand } from './shared/protocol.ts';
-import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
+import { installCanonicalFixture } from './test-support/canonical-schema.ts';
 import { descriptorBody, deviceLinkBody, deviceProofBody } from './test-support/device-protocol.ts';
 import { startApp } from './test-bridge.ts';
 
@@ -29,7 +29,7 @@ test('signed device enrollment and heartbeat preserve challenge, key and session
     db.close();
     rmSync(dir, { recursive: true, force: true });
   });
-  installFrozenNodeSchema(db);
+  installCanonicalFixture(db);
   db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,?,?,?)').run(accountId, auth.issuer, sub, now);
 
   app = await startApp({ database, auth, fixedClock: clock });
@@ -39,7 +39,7 @@ test('signed device enrollment and heartbeat preserve challenge, key and session
     app = await startApp({ database, auth, fixedClock: clock });
   }
   function headers(requestId: string) {
-    return { Origin: auth.origin, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': requestId };
+    return { Origin: auth.origin, 'Content-Type': 'application/json', 'X-Minarbot-Protocol': '1', 'X-Minarbot-Request-Id': requestId };
   }
   async function human<T extends { requestId: string }>(path: string, value: T, status: number) {
     const claims = { iss: auth.issuer, sub, sid, azp: auth.origin, exp: Math.floor(clock / 1000) + 60, nbf: Math.floor(clock / 1000) - 1 };
@@ -100,7 +100,7 @@ test('signed device enrollment and heartbeat preserve challenge, key and session
   }
   await restart(clock + 60001);
   const first = await enrollment('new');
-  assert.equal(first.body[10], digestCommand(['briefsip-device-capabilities-v1', ['execution']]));
+  assert.equal(first.body[10], digestCommand(['minarbot-device-capabilities-v1', ['execution']]));
   const savedChallenge = db.prepare('SELECT nonce_digest,candidate_json FROM link_challenges WHERE id=?').get(first.request.challengeId)!;
   assert.equal(savedChallenge.nonce_digest, sha256(Buffer.from(first.request.nonce, 'base64url')));
   assert(!String(savedChallenge.candidate_json).includes(first.request.nonce));
@@ -159,7 +159,7 @@ test('signed device enrollment and heartbeat preserve challenge, key and session
       method: p.method, body,
       headers: {
         ...headers(requestId), ...(token ? { Authorization: 'Device ' + token } : {}),
-        'X-Briefsip-Proof': JSON.stringify({ ...p, signature: sign(null, Buffer.from(JSON.stringify(deviceProofBody(p))), originalKey.privateKey).toString('base64url') }),
+        'X-Minarbot-Proof': JSON.stringify({ ...p, signature: sign(null, Buffer.from(JSON.stringify(deviceProofBody(p))), originalKey.privateKey).toString('base64url') }),
       },
     };
   }
@@ -227,7 +227,7 @@ test('signed device enrollment and heartbeat preserve challenge, key and session
   await signed(streamPath, proof(streamPath, fresh.deviceSession), 401);
   const newKey = generateKeyPairSync('ed25519'), rotation = await enrollment('rotate', newKey, 2);
   assert.equal((await human(linkPath, rotation.request, 409)).error.code, 'old_key_unavailable');
-  const transition = ['briefsip-device-key-transition-v1', sha256(der(originalKey.publicKey)), rotation.body];
+  const transition = ['minarbot-device-key-transition-v1', sha256(der(originalKey.publicKey)), rotation.body];
   const rotated = await human(linkPath, {
     ...rotation.request, rotationSignature: sign(null, Buffer.from(JSON.stringify(transition)), originalKey.privateKey).toString('base64url'),
   }, 201);

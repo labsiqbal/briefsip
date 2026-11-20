@@ -249,7 +249,7 @@ fn member_edit(
         command["agentAssignments"] = json!(entries);
     }
     let scope = format!("members:edit:{project}:{target}");
-    let hash = digest(json!(["briefsip-member-edit-v1", project, target, command]));
+    let hash = digest(json!(["minarbot-member-edit-v1", project, target, command]));
     transaction(db, || {
         let owner = member(db, account, project, true)?;
         if let Some(prior) = replay(db, account, &request, project, &scope, &hash)? {
@@ -348,7 +348,7 @@ fn policy(
     let command = json!({"requestId":request,"accountId":target,"expectedRevision":expected,"respond":v["respond"]});
     let scope = format!("response-policy:{project}:{aid}:{target}");
     let hash = digest(json!([
-        "briefsip-response-policy-v1",
+        "minarbot-response-policy-v1",
         project,
         aid,
         command
@@ -485,7 +485,7 @@ pub async fn route(
         let name = label(&v["name"])?;
         let command = json!({"requestId":request,"id":project,"name":name});
         let scope = format!("projects:create:{project}");
-        let hash = digest(json!(["briefsip-project-create-v1", command]));
+        let hash = digest(json!(["minarbot-project-create-v1", command]));
         let result = transaction(db, || {
             if let Some(old) = one(
                 db,
@@ -606,7 +606,7 @@ pub async fn route(
             command["deleted"] = deleted.clone();
         }
         let scope = format!("projects:edit:{project}");
-        let hash = digest(json!(["briefsip-project-edit-v1", project, command]));
+        let hash = digest(json!(["minarbot-project-edit-v1", project, command]));
         let result = transaction(db, || {
             let row = member(db, account, &project, true)?;
             if let Some(prior) = replay(db, account, &request, &project, &scope, &hash)? {

@@ -17,14 +17,12 @@ pub struct Options {
 impl Config {
     pub fn environment() -> crate::db::Result<Self> {
         Ok(Self {
-            hub_link: minarbot_launcher::rename_migration::var("MINARBOT_HUB_ORIGIN")
+            hub_link: std::env::var("MINARBOT_HUB_ORIGIN")
                 .ok()
                 .map(|origin| {
                     Ok::<_, Box<dyn std::error::Error + Send + Sync>>(Options {
                         origin,
-                        hub_signing_public_key: minarbot_launcher::rename_migration::var(
-                            "MINARBOT_HUB_SIGNING_PUBLIC_KEY",
-                        )?,
+                        hub_signing_public_key: std::env::var("MINARBOT_HUB_SIGNING_PUBLIC_KEY")?,
                         development: false,
                         reconnect_ms: None,
                     })

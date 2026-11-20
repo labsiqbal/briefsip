@@ -1,11 +1,10 @@
-import { readProductStorage } from '../rename-storage.ts';
 import { useEffect, useRef } from 'react';
 import { usePolling } from './usePolling.ts';
 
 type Lease = { editor: string; revision: number };
 export type SavedQueueEdit = Lease & { id: string; action: 'save'; text: string; files: string[] };
 export function readQueueEdit(key: string): SavedQueueEdit | null {
-  const raw = readProductStorage(sessionStorage, key);
+  const raw = sessionStorage.getItem(key);
   if (!raw) return null;
   const value = JSON.parse(raw), uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
   if (!value || value.action !== 'save' || typeof value.id !== 'string' || !uuid.test(value.id)

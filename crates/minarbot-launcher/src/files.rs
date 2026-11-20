@@ -11,6 +11,12 @@ use std::{
 };
 use uuid::Uuid;
 
+pub fn sidecar(database: &Path, suffix: &str) -> PathBuf {
+    let mut path = database.as_os_str().to_owned();
+    path.push(suffix);
+    path.into()
+}
+
 pub fn release_id(value: &str) -> bool {
     let Some((version, hash)) = value.rsplit_once('-') else {
         return false;

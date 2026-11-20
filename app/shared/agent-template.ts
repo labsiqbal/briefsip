@@ -13,7 +13,7 @@ export type AgentTemplate = { format: 'minarbot-agent'; version: 1; name: string
 export function parseAgentTemplate(value: unknown): AgentTemplate {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Template must be a JSON object.');
   const data = value as Record<string, unknown>;
-  if (!['minarbot-agent', 'briefsip-agent'].includes(String(data.format)) || data.version !== 1 || Object.keys(data).some(key => !['format', 'version', 'name', 'role', 'model', 'backupModel', 'instructions', 'threadLimit', 'toolBudget', 'avatar'].includes(key))) throw new Error('Unsupported template format or version.');
+  if (String(data.format) !== 'minarbot-agent' || data.version !== 1 || Object.keys(data).some(key => !['format', 'version', 'name', 'role', 'model', 'backupModel', 'instructions', 'threadLimit', 'toolBudget', 'avatar'].includes(key))) throw new Error('Unsupported template format or version.');
   if (data.avatar !== undefined) {
     if (typeof data.avatar !== 'string' || data.avatar.length > 699052 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data.avatar)) throw new Error('Invalid template avatar.');
     const bytes = atob(data.avatar);

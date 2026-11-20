@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { testDatabase } from './test-support/database.ts';
-import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
+import { installCanonicalFixture } from './test-support/canonical-schema.ts';
 import { startRustServer } from './rust-test-server.ts';
 import { startApp } from './test-bridge.ts';
 import { decryptMail } from './test-support/mail-fixture.ts';
@@ -23,7 +23,7 @@ async function fixture() {
   await new Promise<void>(ready => upstream.listen(0, '127.0.0.1', ready));
   const address = upstream.address(); assert(address && typeof address !== 'string');
   const auth = { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://minarbot.example', development: true, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), apiUrl: `http://127.0.0.1:${address.port}` };
-  const db = testDatabase(database); installFrozenNodeSchema(db);
+  const db = testDatabase(database); installCanonicalFixture(db);
   const owner = randomUUID(), member = randomUUID();
   for (const [id, subject] of [[owner, 'owner'], [member, 'member']]) db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,?,?,?)').run(id, auth.issuer, subject, Date.now());
   db.close();
@@ -31,7 +31,7 @@ async function fixture() {
   let app = await startApp(options, { directory, servers: [upstream] });
   const token = (sub: string) => { const now = Math.floor(Date.now() / 1000), unsigned = `${Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url')}.${Buffer.from(JSON.stringify({ iss: auth.issuer, sub, sid: `sess_${sub}`, azp: auth.origin, nbf: now - 1, exp: now + 600, iat: now - 1 })).toString('base64url')}`; return `${unsigned}.${sign('RSA-SHA256', Buffer.from(unsigned), keys.privateKey).toString('base64url')}`; };
   async function request(path: string, body?: Record<string, unknown>, status = 200, subject = 'owner', method = 'POST'): Promise<any> {
-    const response = await fetch(app.origin + path, { method: body ? method : 'GET', headers: { Authorization: `Bearer ${token(subject)}`, Origin: auth.origin, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': String(body?.requestId ?? randomUUID()) }, body: body ? JSON.stringify(body) : undefined });
+    const response = await fetch(app.origin + path, { method: body ? method : 'GET', headers: { Authorization: `Bearer ${token(subject)}`, Origin: auth.origin, 'Content-Type': 'application/json', 'X-Minarbot-Protocol': '1', 'X-Minarbot-Request-Id': String(body?.requestId ?? randomUUID()) }, body: body ? JSON.stringify(body) : undefined });
     const value = await response.json(); assert.equal(response.status, status, JSON.stringify(value)); return value;
   }
   return { database, owner, member, key, keyId, request, keyring(locked: boolean) { options.testKeyringLocked = locked; }, mailbox(value: string) { mailbox = value; }, lock(value: boolean) { locked = value; }, async restart() { await app.close(); app = await startRustServer(options); }, async close() { await app.close(); upstream.closeAllConnections(); await new Promise<void>(ready => upstream.close(() => ready())); rmSync(directory, { recursive: true, force: true }); } };

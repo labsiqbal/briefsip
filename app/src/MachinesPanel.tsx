@@ -1,4 +1,3 @@
-import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { isReconnecting } from './http';
 import { RightPanel, useRightPanel } from './RightPanel';
 import { useDetailsOpen } from './ui/layout';
@@ -138,7 +137,7 @@ export function RemoteAgentDetail({ machine, agent, request }: { machine?: Paire
   const rightPanel = useRightPanel(`remote:${machine?.id}:${agent?.id}`);
   const [detailsOpen, setDetailsOpen] = useDetailsOpen();
   const storage=`minarbot:remote-message:${machine?.id}:${agent?.id}`;
-  const [recovery]=useState(()=>{try{return {pending:restoreRemoteMessage(readProductStorage(sessionStorage, storage),machine?.id ?? '',agent?.id ?? ''),draft:readProductStorage(sessionStorage, storage+':draft') ?? '',invalid:false};}catch{return {pending:null,draft:'',invalid:true};}});
+  const [recovery]=useState(()=>{try{return {pending:restoreRemoteMessage(sessionStorage.getItem(storage),machine?.id ?? '',agent?.id ?? ''),draft:sessionStorage.getItem(storage+':draft') ?? '',invalid:false};}catch{return {pending:null,draft:'',invalid:true};}});
   const [pending,setPending]=useState(recovery.pending),[invalid,setInvalid]=useState(recovery.invalid);
   const [messages,setMessages]=useState<RemoteMessage[]|null>(null),[text,setText]=useState(recovery.pending?.text ?? recovery.draft),[error,setError]=useState(''),[loadError,setLoadError]=useState(''),[busy,setBusy]=useState(false);
   const end=useRef<HTMLDivElement>(null),readEpoch=useRef(0),flight=useRef(false),mounted=useRef(true),confirm=useConfirm();
@@ -154,12 +153,12 @@ export function RemoteAgentDetail({ machine, agent, request }: { machine?: Paire
     try{
       sessionStorage.setItem(storage,JSON.stringify(command));setPending(command);
       await request('/api/remote-agents/messages',command);
-      removeProductStorage(sessionStorage, storage);removeProductStorage(sessionStorage, storage+':draft');
+      sessionStorage.removeItem(storage);sessionStorage.removeItem(storage+':draft');
       if(!mounted.current)return;
       setPending(null);setText('');const epoch=++readEpoch.current,result=await request<{messages:RemoteMessage[]}>(path);if(mounted.current&&epoch===readEpoch.current)setMessages(result.messages);
     }catch(e){if(mounted.current)setError(message(e));}finally{flight.current=false;if(mounted.current)setBusy(false);}
   }
-  async function discard(){if(!await confirm({title:'Discard saved message?',description:'Delivery may already have succeeded. Check this conversation and the receiving machine before sending a replacement.',confirm:'Discard message',danger:true}))return;try{removeProductStorage(sessionStorage, storage);setPending(null);setInvalid(false);}catch{setError('Browser storage could not be updated.');}}
+  async function discard(){if(!await confirm({title:'Discard saved message?',description:'Delivery may already have succeeded. Check this conversation and the receiving machine before sending a replacement.',confirm:'Discard message',danger:true}))return;try{sessionStorage.removeItem(storage);setPending(null);setInvalid(false);}catch{setError('Browser storage could not be updated.');}}
   const heading = useRef<HTMLDivElement>(null); useEffect(() => { heading.current?.focus(); }, [machine?.id, agent?.id]);
   const binding = agent && machine?.agentProviders?.[agent.id];
   const provider = machine?.providerAccounts?.find(account => account.id === binding?.provider_account);

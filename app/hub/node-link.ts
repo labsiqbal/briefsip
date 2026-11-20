@@ -9,11 +9,11 @@ export const NODE_FRAME_LIMIT = 65536;
 // Version 1 signatures must verify across the rename and rollback.
 export function signedNodeMessage(body: unknown, key: KeyObject, direction: 'hub' | 'node') {
     const keyId = sha256(createPublicKey(key).export({ type: 'spki', format: 'der' }));
-    return { v: 1, keyId, body, signature: sign(null, Buffer.from(`briefsip.${direction}.v1\n${canonicalJson(body)}`), key).toString('base64url') };
+    return { v: 1, keyId, body, signature: sign(null, Buffer.from(`minarbot.${direction}.v1\n${canonicalJson(body)}`), key).toString('base64url') };
 }
 export function verifiedNodeMessage(value: unknown, key: string, direction: 'hub' | 'node'): Record<string, unknown> {
     const envelope = closedObject(value, ['v', 'keyId', 'body', 'signature']), parsed = publicKey(key, 'ed25519');
-    if (envelope.v !== 1 || envelope.keyId !== sha256(parsed.key.export({ type: 'spki', format: 'der' })) || !verify(null, Buffer.from(`briefsip.${direction}.v1\n${canonicalJson(envelope.body)}`), parsed.key, base64url(envelope.signature, 64)))
+    if (envelope.v !== 1 || envelope.keyId !== sha256(parsed.key.export({ type: 'spki', format: 'der' })) || !verify(null, Buffer.from(`minarbot.${direction}.v1\n${canonicalJson(envelope.body)}`), parsed.key, base64url(envelope.signature, 64)))
         throw new ProtocolError(401, 'invalid_signature', 'Invalid node link proof.');
     if (!envelope.body || typeof envelope.body !== 'object' || Array.isArray(envelope.body))
         throw new ProtocolError(400, 'invalid_frame', 'Invalid node link body.');
@@ -302,7 +302,7 @@ export function attachNodeLink(hub: { mountNodeUpgrade(handler: (req: IncomingMe
             const n = a.one("SELECT * FROM nodes WHERE id=? AND status!='revoked'", String(row.node_id));
             if (!n || n.generation !== row.node_generation || row.authority_generation !== a.generation())
                 throw deny();
-            const raw = req.headers['x-briefsip-proof'];
+            const raw = req.headers['x-minarbot-proof'];
             if (typeof raw !== 'string' || raw.length > 8192)
                 throw deny();
             const p = verifiedNodeMessage(parseJson(raw, 8192), String(n.signing_public_key), 'node');

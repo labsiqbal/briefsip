@@ -1,4 +1,3 @@
-import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { downloadBlob } from './hooks/downloadBlob';
 import { useEffect, useRef, useState } from 'react';
 import { parseAgentTemplate, restoreTemplateImport, templateCommand, type AgentTemplate } from '../shared/agent-template';
@@ -7,7 +6,7 @@ import { Alert, Button, Card, CodeBlock, Field, Input, Section, Textarea, useCon
 type Agent = { id: string; name: string; role: string; model: string; instructions: string; thread_limit: number; revision: number };
 const storage = 'minarbot:agent-template-import';
 export function AgentTemplateImport({ request, onCreated }: { request: <T>(path: string, data?: unknown) => Promise<T>; onCreated: (agent: Agent) => void; onClose: () => void }) {
-  const [recovery] = useState(() => { try { return { pending: restoreTemplateImport(readProductStorage(sessionStorage, storage)), invalid: false }; } catch { return { pending: null, invalid: true }; } });
+  const [recovery] = useState(() => { try { return { pending: restoreTemplateImport(sessionStorage.getItem(storage)), invalid: false }; } catch { return { pending: null, invalid: true }; } });
   const [pending, setPending] = useState(recovery.pending), [invalid, setInvalid] = useState(recovery.invalid);
   const [draft, setDraft] = useState<AgentTemplate | null>(recovery.pending?.template ?? null);
   const [error, setError] = useState(''), [busy, setBusy] = useState(false);
@@ -34,14 +33,14 @@ export function AgentTemplateImport({ request, onCreated }: { request: <T>(path:
       const agent = await request<Agent>('/api/agents', templateCommand(command.template, command.id));
       if (current !== generation.current) return;
       // Remove only this command; preserve any newer recovery data.
-      if (readProductStorage(sessionStorage, storage) === JSON.stringify(command)) removeProductStorage(sessionStorage, storage);
+      if (sessionStorage.getItem(storage) === JSON.stringify(command)) sessionStorage.removeItem(storage);
       onCreated(agent);
     } catch (error) { if (current === generation.current) setError(error instanceof Error ? error.message : 'Import is not confirmed yet. Try again.'); }
     finally { inFlight.current = false; if (current === generation.current) setBusy(false); }
   }
   async function discard() {
     if (inFlight.current || busy || !await confirm({ title: 'Ignore import recovery?', description: 'The agent may already have been created. Check the agent list before importing again.', confirm: 'Ignore', danger: true })) return;
-    try { removeProductStorage(sessionStorage, storage); setPending(null); setDraft(null); setInvalid(false); setError(''); }
+    try { sessionStorage.removeItem(storage); setPending(null); setDraft(null); setInvalid(false); setError(''); }
     catch { setError('Browser storage could not be updated. Try again.'); }
   }
   return <div className="k-page bs-root">

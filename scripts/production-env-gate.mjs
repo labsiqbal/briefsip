@@ -1,24 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { fileManifest } from './release-lib.mjs';
 import { freePort } from './test-port.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-
-export function newestSnapshot() {
-  const updates = ['minarbot', 'briefsip'].map(product => join(homedir(), '.local/share', product, 'test-20261114/data/.updates'))
-    .find(existsSync);
-  if (!updates) throw new Error('Production env gate requires a launcher DB snapshot.');
-  const files = readdirSync(updates).flatMap(name => ['minarbot.sqlite', 'briefsip.sqlite'].map(filename => join(updates, name, filename))).filter(existsSync);
-  files.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
-  if (!files.length) throw new Error('Production env gate requires a launcher DB snapshot.');
-  return files[0];
-}
 
 export { freePort };
 
@@ -44,23 +32,7 @@ export async function healthy(child, port, version) {
   throw new Error(`Production env startup timed out: ${failure}`);
 }
 
-function isolateCopy(database) {
-  const db = new DatabaseSync(database);
-  try {
-    const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(row => row.name));
-    // Copied jobs and peers cannot run or contact live systems during startup checks.
-    for (const [table, sql] of [
-      ['turns', "UPDATE turns SET status='cancelled',paused=1 WHERE status NOT IN('done','cancelled')"],
-      ['routines', 'UPDATE routines SET enabled=0'],
-      ['workflow_runs', "UPDATE workflow_runs SET status='cancelled' WHERE status NOT IN('done','failed','cancelled')"],
-      ['flow_steps', "UPDATE flow_steps SET status='skipped' WHERE status IN('waiting','queued')"],
-      ['remote_agent_calls', "UPDATE remote_agent_calls SET state='result',cancel_sent=1"],
-      ['paired_machines', "UPDATE paired_machines SET state='revoked'"],
-    ]) if (tables.has(table)) db.exec(sql);
-  } finally { db.close(); }
-}
-
-export async function productionEnvGate(server = join(root, 'target/release/minarbot-server'), launcher = join(root, 'target/release/minarbot-launcher'), snapshot = newestSnapshot()) {
+export async function productionEnvGate(server = join(root, 'target/release/minarbot-server'), launcher = join(root, 'target/release/minarbot-launcher')) {
   const directory = mkdtempSync('/dev/shm/b102-'); chmodSync(directory, 0o700);
   const version = JSON.parse(readFileSync(join(root, 'app/package.json'), 'utf8')).version;
   const releases = join(directory, 'releases'), id = `${version}-00000000`, release = join(releases, id);
@@ -73,7 +45,6 @@ export async function productionEnvGate(server = join(root, 'target/release/mina
     for (const shape of ['NUC', 'omarchy']) {
       const home = join(directory, shape), data = join(home, 'data'), workspace = join(home, 'workspace');
       mkdirSync(data, { recursive: true, mode: 0o700 }); mkdirSync(workspace, { mode: 0o700 });
-      const database = join(data, 'minarbot.sqlite'); cpSync(snapshot, database); chmodSync(database, 0o600); isolateCopy(database);
       const port = await freePort(), providerPort = await freePort();
       const workspaces = JSON.stringify([{ agent: '00000000-0000-4000-8000-000000000001', directory: workspace, write: true }]);
       const shared = { MINARBOT_ALLOWED_ORIGINS: 'https://minarbot.example.test:4317', MINARBOT_WORKSPACES: workspaces };

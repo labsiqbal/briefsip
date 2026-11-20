@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { productEnv } from '../desktop/src/rename-env.mjs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createPrivateKey, createPublicKey, createHash, sign, verify } from 'node:crypto';
 import { closeSync, constants, cpSync, createReadStream, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
@@ -7,19 +6,13 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
-import { githubRepository, bridgeArchiveName, stageBridgeAliases } from './rename-compat.mjs';
 import { durableWrite, fileManifest, parseRelease, syncDirectory, verifyRelease } from './release-lib.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const releasePublicKey = 'kSIv+agT4RsABust/LmvPVjfWDxZxM0YKL03gts/UEM=';
+export const githubRepository = 'labsiqbal/minarbot';
 
 export function readIssueComments(issue) {
   return JSON.parse(execFileSync('gh', ['issue', 'view', String(issue), '-R', githubRepository, '--json', 'comments'], { encoding: 'utf8' })).comments;
-}
-
-export function defaultSigningKey(home) {
-  const current = join(home, '.config/minarbot-release/signing-ed25519.pem');
-  const legacy = join(home, '.config/briefsip-release/signing-ed25519.pem');
-  return !existsSync(current) && existsSync(legacy) ? legacy : current;
 }
 
 export function assertNativeDependencies(binary) {
@@ -71,7 +64,7 @@ function github(args, cwd = root) {
 
 async function signedRuntimeAssets(releases, directory, info, keyPath) {
   const { version, id, commit, notes, created } = info;
-  const archive = bridgeArchiveName(version);
+  const archive = `minarbot-${version}-linux-x86_64.tar.gz`;
   const names = [archive, 'latest.json', 'latest.json.sig'];
   const bundle = join(directory, 'signed');
   const cached = existsSync(bundle);
@@ -213,7 +206,6 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
       mkdirSync(join(stage, 'bin'), { recursive: true, mode: 0o700 }); cpSync(join(repository, 'target/release/minarbot-server'), join(stage, 'bin/minarbot-server'));
       cpSync(join(repository, 'target/release/minarbot-launcher'), join(stage, 'bin/minarbot-launcher'));
       for (const name of ['minarbot-server', 'minarbot-launcher']) assertNativeDependencies(join(stage, 'bin', name));
-      stageBridgeAliases(join(stage, 'bin'));
       cpSync(join(repository, 'crates/minarbot-launcher/provenance.json'), join(stage, 'bin/launcher-provenance.json'));
       cpSync(join(repository, 'crates/minarbot-launcher/NOTICE'), join(stage, 'bin/launcher.NOTICE'));
       cpSync(join(repository, 'crates/minarbot-server/provenance.json'), join(stage, 'bin/provenance.json'));
@@ -258,8 +250,8 @@ async function releaseCommand() {
     'allow-dirty': { type: 'boolean' }, 'no-github': { type: 'boolean' }, 'github-only': { type: 'string' }, 'signing-key': { type: 'string' },
   } });
   const releases = resolve(values.releases ?? join(homedir(), '.local/share/minarbot/releases'));
-  const keyPath = values['signing-key'] ?? productEnv('MINARBOT_RELEASE_SIGNING_KEY')
-    ?? defaultSigningKey(homedir());
+  const keyPath = values['signing-key'] ?? process.env.MINARBOT_RELEASE_SIGNING_KEY
+    ?? join(homedir(), '.config/minarbot-release/signing-ed25519.pem');
   const retryId = values['github-only'], allowDirty = values['allow-dirty'], { notes, desktop } = values;
   if (retryId !== undefined) {
     if ([allowDirty, values['no-github'], values.issues, notes, desktop].some(value => value !== undefined)) {

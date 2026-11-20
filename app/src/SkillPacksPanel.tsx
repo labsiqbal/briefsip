@@ -1,4 +1,3 @@
-import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { usePolling } from './hooks/usePolling';
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { restoreSkillCommand, type SkillCommand } from '../shared/skill-command';
@@ -15,7 +14,7 @@ export function SkillPacksPanel({ agents, initialOwner, request, onClose, embedd
   const [cursors, setCursors] = useState(['']), [skillCursors, setSkillCursors] = useState(['']), [refresh, setRefresh] = useState(0);
   const [editor, setEditor] = useState<Pack | null>(null), [baseline, setBaseline] = useState(''), [binding, setBinding] = useState<Binding | null | undefined>(undefined);
   const [version, setVersion] = useState(1), [skill, setSkill] = useState(''), [skillVersion, setSkillVersion] = useState(1);
-  const [recovery] = useState(() => { try { const command = restoreSkillCommand(readProductStorage(sessionStorage, storage)); if (command && !command.path.includes('/skill-packs')) throw Error(); return { command, invalid: false }; } catch { return { command: null, invalid: true }; } });
+  const [recovery] = useState(() => { try { const command = restoreSkillCommand(sessionStorage.getItem(storage)); if (command && !command.path.includes('/skill-packs')) throw Error(); return { command, invalid: false }; } catch { return { command: null, invalid: true }; } });
   const [pending, setPending] = useState(recovery.command), [invalid, setInvalid] = useState(recovery.invalid), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const localHeading = useRef<HTMLHeadingElement>(null), heading = headingRef ?? localHeading, generation = useRef(0), inFlight = useRef(false);
   const after = cursors.at(-1)!, skillAfter = skillCursors.at(-1)!, locked = busy || !!pending || invalid;
@@ -57,7 +56,7 @@ export function SkillPacksPanel({ agents, initialOwner, request, onClose, embedd
       restoreSkillCommand(JSON.stringify(command)); sessionStorage.setItem(storage, JSON.stringify(command)); setPending(command); setBusy(true); inFlight.current = true;
       await request(command.path, command.body);
       if (current !== generation.current) return;
-      if (readProductStorage(sessionStorage, storage) === JSON.stringify(command)) removeProductStorage(sessionStorage, storage);
+      if (sessionStorage.getItem(storage) === JSON.stringify(command)) sessionStorage.removeItem(storage);
       setPending(null); if (!command.path.startsWith('/api/agents/')) setEditor(null); setRefresh(value => value + 1); heading.current?.focus();
     } catch (error) { if (current === generation.current) setError(error instanceof Error ? error.message : 'Changes are not confirmed yet.'); }
     finally { inFlight.current = false; if (current === generation.current) setBusy(false); }
@@ -70,7 +69,7 @@ export function SkillPacksPanel({ agents, initialOwner, request, onClose, embedd
   }
   const startNew = async () => { if (await replace()) { const row = { id: '', name: '', revision: 0, latest: 0, members: [] }; setEditor(row); setBaseline(JSON.stringify(row)); } };
   const discard = async () => {
-    if (await confirm({ title: 'Discard saved request?', description: 'Changes may already have succeeded. Check the list before trying again.', confirm: 'Discard request', danger: true })) try { removeProductStorage(sessionStorage, storage); setPending(null); setInvalid(false); setRefresh(value => value + 1); } catch { setError('Browser storage could not be updated.'); }
+    if (await confirm({ title: 'Discard saved request?', description: 'Changes may already have succeeded. Check the list before trying again.', confirm: 'Discard request', danger: true })) try { sessionStorage.removeItem(storage); setPending(null); setInvalid(false); setRefresh(value => value + 1); } catch { setError('Browser storage could not be updated.'); }
   };
   const pager = (back: boolean, next: boolean, disabled: boolean, onBack: () => void, onNext: () => void, label: string) => (back || next) && <div className="k-pager">
     <IconButton label={`Previous ${label}`} disabled={disabled || !back} onClick={onBack}><ChevronLeft size={16} aria-hidden /></IconButton>

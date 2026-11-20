@@ -61,12 +61,7 @@ impl Manifest {
         if !release::version(&value.version)
             || !release::id(&value.id)
             || !value.id.starts_with(&format!("{}-", value.version))
-            || ![
-                "minarbot",
-                minarbot_launcher::rename_migration::LEGACY_PRODUCT,
-            ]
-            .iter()
-            .any(|name| value.archive == format!("{name}-{}-linux-x86_64.tar.gz", value.version))
+            || value.archive != format!("minarbot-{}-linux-x86_64.tar.gz", value.version)
         {
             return Err(invalid(
                 "GitHub release version, ID or archive name mismatch.",

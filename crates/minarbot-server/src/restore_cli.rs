@@ -83,7 +83,7 @@ fn save(base: &Path, tag: &str, value: &Value) -> db::Result<PathBuf> {
 
 fn auth_config() -> db::Result<AuthConfig> {
     let required = |name| {
-        minarbot_launcher::rename_migration::var(name)
+        std::env::var(name)
             .ok()
             .filter(|s| !s.is_empty())
             .ok_or_else(|| exit_error(5, format!("{name} is required to verify the owner.")))
@@ -298,7 +298,7 @@ async fn execute(database: &Path, operation: Operation<'_>) -> db::Result<Value>
     else {
         return Err("Invalid recovery operation.".into());
     };
-    let trust_path = minarbot_launcher::rename_migration::var_os("MINARBOT_RESTORE_TRUST")
+    let trust_path = std::env::var_os("MINARBOT_RESTORE_TRUST")
         .filter(|s| !s.is_empty())
         .ok_or_else(|| {
             exit_error(

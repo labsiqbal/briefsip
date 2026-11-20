@@ -1,5 +1,4 @@
 use crate::{files::*, Result};
-use minarbot_launcher::rename_migration;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -15,9 +14,8 @@ pub struct Config {
 }
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
-        let path = rename_migration::config_path(path);
-        private_file(&path)?;
-        let value = json(&path)?;
+        private_file(path)?;
+        let value = json(path)?;
         let object = value.as_object().ok_or("Invalid launcher configuration.")?;
         if object.keys().any(|key| {
             ![
@@ -61,7 +59,7 @@ impl Config {
                 .ok_or("Invalid launcher configuration.")?,
         ))?;
         let releases = if value["releasesDir"].is_null() {
-            rename_migration::default_releases(Path::new(&std::env::var("HOME")?))
+            Path::new(&std::env::var("HOME")?).join(".local/share/minarbot/releases")
         } else {
             PathBuf::from(
                 value["releasesDir"]
@@ -90,9 +88,7 @@ impl Config {
         ] {
             env.insert(key.into(), path.to_string_lossy().into_owned());
         }
-        let mut env = rename_migration::child_env(&env);
         env.remove("MINARBOT_UPDATE_TRIAL");
-        env.remove("BRIEFSIP_UPDATE_TRIAL");
         Ok(Self {
             data,
             releases,

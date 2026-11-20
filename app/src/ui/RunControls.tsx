@@ -1,4 +1,3 @@
-import { readProductStorage, removeProductStorage } from '../rename-storage.ts';
 // Queue and primary Stop patterns adapted from T3 (MIT, see app/t3/NOTICE).
 import { ArrowUp, Square, X } from 'lucide-react';
 import { useRef, useState } from 'react';
@@ -17,11 +16,11 @@ export function CancelTurn({ turn, path, request, onCancelled, primary = false, 
     if (flight.current) return;
     flight.current = true; setBusy(true); setError('');
     try {
-      const saved = readProductStorage(sessionStorage, key), id = saved ?? crypto.randomUUID();
+      const saved = sessionStorage.getItem(key), id = saved ?? crypto.randomUUID();
       if (!/^[a-f0-9-]{36}$/i.test(id)) throw new Error('Stop recovery could not be read. Check browser storage.');
       sessionStorage.setItem(key, id);
       await request(`${path}/${turn}/cancel`, { id });
-      removeProductStorage(sessionStorage, key); onCancelled(turn);
+      sessionStorage.removeItem(key); onCancelled(turn);
     } catch (error) { setError(error instanceof Error ? error.message : 'Stop not confirmed. Retry Stop.'); }
     finally { flight.current = false; setBusy(false); }
   }
@@ -35,20 +34,20 @@ export function CancelTurn({ turn, path, request, onCancelled, primary = false, 
 function QueuedRun({ turn, path, target, request, archived, onChanged }: { turn: QueuedTurn; path: string; target?: { id: string; capabilities: { steer: boolean } }; request: Request; archived: boolean; onChanged: () => void }) {
   const key = `minarbot:queue-dispatch:${path}:${turn.id}`;
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const [retry, setRetry] = useState(() => { try { return !!readProductStorage(sessionStorage, key); } catch { return false; } });
+  const [retry, setRetry] = useState(() => { try { return !!sessionStorage.getItem(key); } catch { return false; } });
   const flight = useRef(false);
   async function dispatch(mode: 'steer' | 'restart') {
     if ((!target && !retry) || flight.current) return;
     flight.current = true; setBusy(true); setError('');
     try {
-      const saved = readProductStorage(sessionStorage, key);
+      const saved = sessionStorage.getItem(key);
       const command = saved ? JSON.parse(saved) : { id: crypto.randomUUID(), revision: turn.revision, mode, targetTurn: target!.id };
       if (!command || !/^[a-f0-9-]{36}$/i.test(command.id) || !/^[a-f0-9-]{36}$/i.test(command.targetTurn) || !Number.isSafeInteger(command.revision) || !['steer', 'restart'].includes(command.mode)) throw new Error('Queue recovery could not be read. Check browser storage.');
       sessionStorage.setItem(key, JSON.stringify(command)); setRetry(true);
       await request(`${path}/${turn.id}/dispatch`, command);
-      removeProductStorage(sessionStorage, key); setRetry(false); onChanged();
+      sessionStorage.removeItem(key); setRetry(false); onChanged();
     } catch (error) {
-      if (error && typeof error === 'object' && 'status' in error && typeof error.status === 'number' && error.status < 500) { removeProductStorage(sessionStorage, key); setRetry(false); onChanged(); }
+      if (error && typeof error === 'object' && 'status' in error && typeof error.status === 'number' && error.status < 500) { sessionStorage.removeItem(key); setRetry(false); onChanged(); }
       setError(error instanceof Error ? error.message : 'Change not confirmed. Try again.');
     } finally { flight.current = false; setBusy(false); }
   }

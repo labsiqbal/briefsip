@@ -17,8 +17,8 @@ CREATE TRIGGER IF NOT EXISTS task_successor_provenance BEFORE INSERT ON tasks WH
   AND previous.logical_turn=NEW.logical_turn AND previous.project=NEW.project AND previous.initiator_account=NEW.initiator_account
   AND home.home_device=NEW.home_device AND participation.deleted=0 AND member.deleted=0
   AND NEW.capability_revision=participation.revision
-  AND briefsip_capability_digest(NEW.capability_snapshot_json)=briefsip_capability_digest(participation.capabilities_json)
-  AND NEW.capability_digest=briefsip_capability_digest(participation.capabilities_json)
+  AND minarbot_capability_digest(NEW.capability_snapshot_json)=minarbot_capability_digest(participation.capabilities_json)
+  AND NEW.capability_digest=minarbot_capability_digest(participation.capabilities_json)
   AND NEW.assignment_revision=CASE WHEN member.role='owner' THEN member.grant_revision ELSE assignment.revision END
   AND (member.role='owner' OR assignment.enabled=1)
   AND NEW.provider_binding_id IS home.provider_binding

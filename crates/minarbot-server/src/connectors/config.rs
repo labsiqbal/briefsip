@@ -25,7 +25,7 @@ impl Options {
     pub fn environment() -> Self {
         Self {
             mail_api_key: std::env::var("RESEND_API_KEY").ok(),
-            mail_endpoint: minarbot_launcher::rename_migration::var("MINARBOT_MAIL_ENDPOINT").ok(),
+            mail_endpoint: std::env::var("MINARBOT_MAIL_ENDPOINT").ok(),
             ..Self::default()
         }
     }
@@ -34,9 +34,7 @@ impl Options {
             loopback(base).map_err(|_| "Composio test endpoint must be loopback HTTP.")?;
         }
         if let Some(bridge) = &self.test_connector_bridge {
-            if minarbot_launcher::rename_migration::var("MINARBOT_TEST_SERVER").as_deref()
-                != Ok("rust")
-            {
+            if std::env::var("MINARBOT_TEST_SERVER").as_deref() != Ok("rust") {
                 return Err("Connector fixture bridge requires Rust test mode.".into());
             }
             loopback(&bridge.origin)?;
@@ -51,7 +49,7 @@ impl Options {
                 })?;
             }
         }
-        if minarbot_launcher::rename_migration::var("MINARBOT_TEST_SERVER").as_deref() == Ok("rust")
+        if std::env::var("MINARBOT_TEST_SERVER").as_deref() == Ok("rust")
             && self.mail_api_key.is_some()
             && self
                 .mail_endpoint

@@ -174,11 +174,8 @@ pub fn start(state: AppState) -> Result<tokio::task::JoinHandle<()>> {
         let mut changes = state.events.subscribe();
         let mut timer = tokio::time::interval(std::time::Duration::from_secs(1));
         loop {
-            if minarbot_launcher::rename_migration::var("MINARBOT_TEST_SERVER").as_deref()
-                == Ok("rust")
-            {
-                if let Ok(parent) = minarbot_launcher::rename_migration::var("MINARBOT_TEST_PARENT")
-                {
+            if std::env::var("MINARBOT_TEST_SERVER").as_deref() == Ok("rust") {
+                if let Ok(parent) = std::env::var("MINARBOT_TEST_PARENT") {
                     if parent.bytes().all(|b| b.is_ascii_digit())
                         && !std::path::Path::new(&format!("/proc/{parent}")).exists()
                     {

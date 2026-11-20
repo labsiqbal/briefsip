@@ -29,13 +29,13 @@ pub(super) trait Store: Send + Sync {
 pub(super) struct System;
 impl Store for System {
     fn read(&self, service: &str, name: &str) -> Result<Option<String>> {
-        crate::rename_migration::read_system_key(service, name).map_err(|_| unavailable())
+        crate::system_keyring::read(service, name).map_err(|_| unavailable())
     }
     fn write(&self, service: &str, name: &str, secret: &str) -> Result<()> {
-        crate::rename_migration::write_system_key(service, name, secret).map_err(|_| unavailable())
+        crate::system_keyring::write(service, name, secret).map_err(|_| unavailable())
     }
     fn remove(&self, service: &str, name: &str) -> Result<()> {
-        crate::rename_migration::remove_system_key(service, name).map_err(|_| unavailable())
+        crate::system_keyring::remove(service, name).map_err(|_| unavailable())
     }
 }
 pub(super) enum Private {

@@ -99,13 +99,13 @@ fn default_host() -> String {
     "127.0.0.1".to_owned()
 }
 pub fn local_database() -> PathBuf {
-    minarbot_launcher::rename_migration::var_os("MINARBOT_DATA_DIR")
+    std::env::var_os("MINARBOT_DATA_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             PathBuf::from(env::var_os("HOME").unwrap_or_default())
                 .join(".local/share/minarbot/new-app")
         })
-        .join("minarbot.sqlite")
+        .join(minarbot_launcher::DATABASE_NAME)
 }
 fn default_dist() -> PathBuf {
     if let Ok(executable) = env::current_exe() {
@@ -146,9 +146,7 @@ impl Config {
     pub fn read() -> crate::db::Result<Self> {
         let args: Vec<_> = env::args().skip(1).collect();
         if args == ["--test-config"] {
-            if minarbot_launcher::rename_migration::var("MINARBOT_TEST_SERVER").as_deref()
-                != Ok("rust")
-            {
+            if std::env::var("MINARBOT_TEST_SERVER").as_deref() != Ok("rust") {
                 return Err("--test-config requires MINARBOT_TEST_SERVER=rust".into());
             }
             let mut input = String::new();
@@ -170,14 +168,12 @@ impl Config {
         if port == 0 {
             return Err("PORT must be 1..65535".into());
         }
-        let required = |key| {
-            minarbot_launcher::rename_migration::var(key)
-                .map_err(|_| format!("{key} is required for canonical mode"))
-        };
+        let required =
+            |key| std::env::var(key).map_err(|_| format!("{key} is required for canonical mode"));
         let canonical_mode = args.iter().any(|arg| arg == "--mode=canonical");
         let tls = match (
-            minarbot_launcher::rename_migration::var("MINARBOT_TLS_CERT").ok(),
-            minarbot_launcher::rename_migration::var("MINARBOT_TLS_KEY").ok(),
+            std::env::var("MINARBOT_TLS_CERT").ok(),
+            std::env::var("MINARBOT_TLS_KEY").ok(),
         ) {
             (Some(cert), Some(key)) => Some(Tls {
                 cert: std::fs::read_to_string(cert)?,
@@ -216,7 +212,7 @@ impl Config {
             host: default_host(),
             dist: default_dist(),
             auth,
-            allowed_origins: minarbot_launcher::rename_migration::var("MINARBOT_ALLOWED_ORIGINS")
+            allowed_origins: std::env::var("MINARBOT_ALLOWED_ORIGINS")
                 .unwrap_or_default()
                 .split(',')
                 .map(str::trim)
@@ -226,7 +222,7 @@ impl Config {
             fixed_clock: None,
             test_remote_pairing: false,
             tls,
-            workspaces: match minarbot_launcher::rename_migration::var("MINARBOT_WORKSPACES") {
+            workspaces: match std::env::var("MINARBOT_WORKSPACES") {
                 Ok(raw) if raw.len() > 65536 => {
                     return Err("Workspace configuration exceeds 64 KiB".into())
                 }

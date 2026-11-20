@@ -200,11 +200,11 @@ test('routine occurrences persist once and isolate each run from main history', 
     const calendar = await fetch(`${app.origin}${list}/calendar.ics`);
     assert.equal(calendar.headers.get('content-type'), 'text/calendar; charset=utf-8');
     const calendarText = await calendar.text();
-    assert(calendarText.includes(`UID:${future.id}@briefsip.local`));
+    assert(calendarText.includes(`UID:${future.id}@minarbot.local`));
     assert(calendarText.includes('DTSTART:20300102T030400Z'));
     assert(calendarText.includes('RRULE:FREQ=SECONDLY;INTERVAL=3600'));
     assert(!calendarText.includes('PRIVATE_CALENDAR_PROMPT'));
-    assert(!calendarText.includes(`UID:${paused.id}@briefsip.local`));
+    assert(!calendarText.includes(`UID:${paused.id}@minarbot.local`));
 
 
 

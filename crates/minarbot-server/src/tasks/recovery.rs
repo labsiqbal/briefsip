@@ -40,7 +40,7 @@ fn descriptor(db: &Connection, account: &str, device: &str, generation: i64) -> 
     devices::verify(
         &d["signingPublicKey"],
         &json!([
-            "briefsip-device-descriptor-v1",
+            "minarbot-device-descriptor-v1",
             d["accountId"],
             d["installationId"],
             d["deviceId"],
@@ -78,7 +78,7 @@ pub fn session(
     let source_generation = revision(&v["sourceDeviceGeneration"], 1)?;
     let scope = format!("tasks:recovery-session:{task_id}");
     let pd = digest(
-        &json!(["briefsip-recovery-session-v1",task_id,{"requestId":request,"authorityGeneration":generation,"sourceDeviceId":device,"sourceDeviceGeneration":source_generation}]),
+        &json!(["minarbot-recovery-session-v1",task_id,{"requestId":request,"authorityGeneration":generation,"sourceDeviceId":device,"sourceDeviceGeneration":source_generation}]),
     );
     let t = owner(db, account, task_id, false)?;
     if !exists(
@@ -182,7 +182,7 @@ pub(super) fn journal_body(
     e: &Value,
 ) -> Value {
     json!([
-        "briefsip-journal-entry-v1",
+        "minarbot-journal-entry-v1",
         authority,
         device,
         generation,
@@ -211,7 +211,7 @@ pub(super) fn stop_body(s: &Value) -> Value {
         .map(|c| json!([c["processId"], c["processStart"], c["processGroupId"]]))
         .collect::<Vec<_>>();
     json!([
-        "briefsip-stop-evidence-v1",
+        "minarbot-stop-evidence-v1",
         s["sourceAuthority"],
         s["taskId"],
         s["actionId"],
@@ -558,7 +558,7 @@ pub(super) fn envelope_body(generation: &str, request: &str, e: &Value) -> Value
         })
         .collect::<Vec<_>>();
     json!([
-        "briefsip-recovery-envelope-v1",
+        "minarbot-recovery-envelope-v1",
         generation,
         request,
         e["sourceAuthority"],
@@ -642,7 +642,7 @@ fn restore(db: &Connection, actor: &Actor, proof: &str, generation: &str, now: i
     )?
     .ok_or_else(denied)?;
     let pd = digest(&json!([
-        "briefsip-restore-session-v1",
+        "minarbot-restore-session-v1",
         actor.account,
         issuer["issuer"],
         actor.subject,
@@ -708,7 +708,7 @@ pub fn ingest(
     );
     let ed = digest(e);
     let pd = digest(&json!([
-        "briefsip-recovery-import-v1",
+        "minarbot-recovery-import-v1",
         generation,
         ed,
         v["signature"],

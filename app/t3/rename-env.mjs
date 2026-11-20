@@ -1,1 +1,0 @@
-../../desktop/src/rename-env.mjs

@@ -462,7 +462,7 @@ async fn serve_release(
     let mut response = Response::builder()
         .header(header::CONTENT_TYPE, "application/gzip")
         .header(header::ACCEPT_RANGES, "bytes")
-        .header("x-briefsip-sha256", &archive.sha256);
+        .header("x-minarbot-sha256", &archive.sha256);
     let (start, end) = if let Some(value) = headers.get(header::RANGE) {
         let Some((start, end)) = value
             .to_str()
@@ -490,7 +490,7 @@ async fn serve_release(
         .await
         .map_err(|_| error(500, "Could not seek release."))?;
     let mut file = file.take(length);
-    let attempt = if headers.contains_key("x-briefsip-update-poll") {
+    let attempt = if headers.contains_key("x-minarbot-update-poll") {
         None
     } else {
         attempts::active(state, &machine, id)?

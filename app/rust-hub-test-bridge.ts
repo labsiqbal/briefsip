@@ -59,7 +59,7 @@ export function rustHubFacade(database: string, origin: string, token: string) {
   const read = <T>(work: (db: DatabaseSync) => T) => { const db = new DatabaseSync(database, { readOnly: true }); try { return work(db); } finally { db.close(); } };
   const snapshot = () => read(db => JSON.parse(String(db.prepare('SELECT value FROM hub_link_runtime WHERE id=1').get()?.value ?? '{}')));
   const command = async (operation: string, value: unknown = {}) => {
-    const response = await fetch(origin + '/api/hub-link', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', 'X-Briefsip-Test-Hub': token }, body: JSON.stringify({ operation, value }) });
+    const response = await fetch(origin + '/api/hub-link', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', 'X-Minarbot-Test-Hub': token }, body: JSON.stringify({ operation, value }) });
     const result = await response.json(); if (!response.ok) throw new ProtocolError(response.status, result.code ?? 'local_policy_denied', result.error);
     return result;
   };

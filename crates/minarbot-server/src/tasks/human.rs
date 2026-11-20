@@ -130,7 +130,7 @@ pub fn control(
         ));
     }
     let mut payload = json!([
-        "briefsip-task-control-v1",
+        "minarbot-task-control-v1",
         task_id,
         request,
         expected,
@@ -504,7 +504,7 @@ pub fn transfer(
         payload["message"]["text"] = json!(instruction);
     }
     let pd = digest(&json!([
-        "briefsip-task-transfer-v1",
+        "minarbot-task-transfer-v1",
         task["id"],
         task_id,
         recipient,
@@ -526,7 +526,7 @@ pub fn transfer(
         "UPDATE execution_owners SET stopped=1 WHERE task=?",
         [string(task, "id")],
     )?;
-    db.execute("INSERT INTO tasks(id,logical_turn,predecessor_task,project,agent,initiator_account,home_device,assignment_revision,capability_revision,capability_digest,capability_snapshot_json,provider_binding_id,provider_binding_revision,provider_binding_owner,state,payload_digest,payload_json,revision,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)",params![task_id,string(task,"logical_turn"),string(task,"id"),string(task,"project"),recipient,string(task,"initiator_account"),string(&device,"id"),n(&current,"assignment"),n(&current["participation"],"capability_revision"),digest(&json!(["briefsip-capabilities-v1",cap])),canonical(&cap),binding.as_ref().and_then(|b|b["id"].as_str()),binding.as_ref().map(|b|n(b,"revision")),binding.as_ref().and_then(|b|b["owner_account"].as_str()),state,pd,canonical(&payload),now])?;
+    db.execute("INSERT INTO tasks(id,logical_turn,predecessor_task,project,agent,initiator_account,home_device,assignment_revision,capability_revision,capability_digest,capability_snapshot_json,provider_binding_id,provider_binding_revision,provider_binding_owner,state,payload_digest,payload_json,revision,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)",params![task_id,string(task,"logical_turn"),string(task,"id"),string(task,"project"),recipient,string(task,"initiator_account"),string(&device,"id"),n(&current,"assignment"),n(&current["participation"],"capability_revision"),digest(&json!(["minarbot-capabilities-v1",cap])),canonical(&cap),binding.as_ref().and_then(|b|b["id"].as_str()),binding.as_ref().map(|b|n(b,"revision")),binding.as_ref().and_then(|b|b["owner_account"].as_str()),state,pd,canonical(&payload),now])?;
     observe(db, &super::task(db, &task_id)?, now)?;
     db.execute("UPDATE turns SET agent=?,recipient=CASE WHEN channel IS NULL THEN NULL ELSE ? END,routing='assigned',status='queued',paused=0,revision=revision+1,error=NULL WHERE id=?",[recipient,recipient,string(task,"logical_turn")])?;
     Ok(
@@ -575,7 +575,7 @@ pub fn answer(
         ));
     }
     let pd = digest(&json!([
-        "briefsip-question-answer-v1",
+        "minarbot-question-answer-v1",
         task_id,
         question_id,
         request,

@@ -14,5 +14,5 @@ test('protocol identity and mailbox normalization stay closed', () => {
   assert.equal(normalizeEmail(' User@Example.COM '), 'user@example.com');
   assert.equal(normalizeEmail('a@bücher.example'), 'a@xn--bcher-kva.example');
   for (const email of ['a..b@example.com', 'a@example..com', 'a@example.com\n']) assert.throws(() => normalizeEmail(email));
-  assert.throws(() => requestMetadata(new Headers({ 'X-Briefsip-Protocol': '2', 'X-Briefsip-Request-Id': 'bad', 'Content-Type': 'application/json' })), /protocol version/);
+  assert.throws(() => requestMetadata(new Headers({ 'X-Minarbot-Protocol': '2', 'X-Minarbot-Request-Id': 'bad', 'Content-Type': 'application/json' })), /protocol version/);
 });

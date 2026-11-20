@@ -82,7 +82,7 @@ fn server_guard(path: &Path) -> Result<Connection> {
     if fs::metadata(&source)?.nlink() != 1 {
         return Err("Canonical database must be a file without hard links.".into());
     }
-    let guard_path = crate::rename_migration::exact_sidecar(&source, ".server-lock.sqlite");
+    let guard_path = minarbot_launcher::files::sidecar(&source, ".server-lock.sqlite");
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -118,7 +118,7 @@ fn server_guard(path: &Path) -> Result<Connection> {
 
 pub(crate) fn open_recovery(path: &Path, exclusive: bool) -> Result<Database> {
     for suffix in ["", "-wal", "-shm", "-journal"] {
-        let companion = crate::rename_migration::exact_sidecar(path, suffix);
+        let companion = minarbot_launcher::files::sidecar(path, suffix);
         match fs::symlink_metadata(companion) {
             Ok(meta)
                 if meta.is_file()
@@ -187,7 +187,7 @@ fn messages(db: &Connection) -> Result<()> {
 
 pub fn migrate(db: &Connection, now: i64, through: i64) -> Result<()> {
     db.create_scalar_function(
-        "briefsip_capability_digest",
+        "minarbot_capability_digest",
         1,
         FunctionFlags::SQLITE_DETERMINISTIC | FunctionFlags::SQLITE_UTF8,
         |context| {
@@ -195,7 +195,7 @@ pub fn migrate(db: &Connection, now: i64, through: i64) -> Result<()> {
             let value: Value = serde_json::from_str(&raw)
                 .map_err(|error| rusqlite::Error::UserFunctionError(Box::new(error)))?;
             Ok(digest(&canonical(&json!([
-                "briefsip-capabilities-v1",
+                "minarbot-capabilities-v1",
                 value
             ]))))
         },

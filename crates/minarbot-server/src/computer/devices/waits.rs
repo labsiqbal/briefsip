@@ -112,13 +112,13 @@ fn parse_request(v: &Value, event: bool) -> Result<()> {
     let h = &v["headers"];
     fields(
         h,
-        &["x-briefsip-time", "x-briefsip-id", "x-briefsip-signature"],
+        &["x-minarbot-time", "x-minarbot-id", "x-minarbot-signature"],
     )?;
-    if h["x-briefsip-time"]
+    if h["x-minarbot-time"]
         .as_str()
         .is_none_or(|s| s.is_empty() || s.len() > 12 || !s.bytes().all(|b| b.is_ascii_digit()))
-        || !event_id(&h["x-briefsip-id"])
-        || hash(&h["x-briefsip-signature"]).is_err()
+        || !event_id(&h["x-minarbot-id"])
+        || hash(&h["x-minarbot-signature"]).is_err()
     {
         return Err(fail(
             401,
@@ -225,9 +225,9 @@ fn enqueue(
     let job_id = uuid::Uuid::new_v4().to_string();
     let hash = digest(&json!([
         if event {
-            "briefsip-wait-event-v1"
+            "minarbot-wait-event-v1"
         } else {
-            "briefsip-wait-reveal-v1"
+            "minarbot-wait-reveal-v1"
         },
         value
     ]));
@@ -399,7 +399,7 @@ pub(super) fn resolve(
             }
             hash(&r["digest"])?;
             revision(&r["eventTime"], 0)?;
-            if r["id"] != request["headers"]["x-briefsip-id"]
+            if r["id"] != request["headers"]["x-minarbot-id"]
                 || r["digest"] != request["bodyDigest"]
             {
                 return Err(invalid("Event result body does not match."));
@@ -511,7 +511,7 @@ mod tests {
             assert_eq!(result.try_recv().map_err(|_|Failure::storage())??,reply["result"]);
             assert_eq!(resolve(&db,&p,&reply,false,1000).err().map(|e|e.code),Some("wait_invalid"));
             let bytes=vec![42;65536];
-            let event=json!({"waitKey":"wait-fixture","sourceDeviceId":p.device,"deviceGeneration":1,"authorityGeneration":p.authority,"secretGeneration":1,"expiresAt":10000,"connectionGeneration":7,"byteLength":65536,"bodyDigest":byte_digest(&bytes),"headers":{"x-briefsip-time":"1","x-briefsip-id":"event:fixture","x-briefsip-signature":"0".repeat(64)}});
+            let event=json!({"waitKey":"wait-fixture","sourceDeviceId":p.device,"deviceGeneration":1,"authorityGeneration":p.authority,"secretGeneration":1,"expiresAt":10000,"connectionGeneration":7,"byteLength":65536,"bodyDigest":byte_digest(&bytes),"headers":{"x-minarbot-time":"1","x-minarbot-id":"event:fixture","x-minarbot-signature":"0".repeat(64)}});
             let (id,mut result)=enqueue(&db,&event,Some(&bytes),1000)?;
             let event_frames=frames.recv().await.ok_or_else(Failure::storage)?;
             assert_eq!(event_frames.lines().count(),3);
@@ -523,7 +523,7 @@ mod tests {
                 restored.extend(B64.decode(text(&frame["body"],"chunk")).map_err(|_|Failure::storage())?);
             }
             assert_eq!(restored,bytes);
-            let reply=json!({"requestId":id,"payloadDigest":digest(&json!(["briefsip-wait-event-v1",event])),"result":{"id":"event:fixture","digest":event["bodyDigest"],"eventTime":1}});
+            let reply=json!({"requestId":id,"payloadDigest":digest(&json!(["minarbot-wait-event-v1",event])),"result":{"id":"event:fixture","digest":event["bodyDigest"],"eventTime":1}});
             assert_eq!(resolve(&db,&p,&reply,true,1000)?["accepted"],true);
             assert_eq!(result.try_recv().map_err(|_|Failure::storage())??,reply["result"]);
             assert!(!connection(&db,&p.device,2,1000));
@@ -536,7 +536,7 @@ mod tests {
                 assert_eq!(frames.try_recv().map_err(|_|Failure::storage())?,"occupied\n");
             }
             let (id,mut result)=enqueue(&db,&request,None,1000)?;
-            let payload_digest=digest(&json!(["briefsip-wait-reveal-v1",request]));
+            let payload_digest=digest(&json!(["minarbot-wait-reveal-v1",request]));
             let failed=json!({"requestId":id,"payloadDigest":payload_digest,"errorCode":"keystore_unavailable"});
             assert_eq!(resolve(&db,&p,&failed,false,1000)?["accepted"],true);
             assert_eq!(result.try_recv().map_err(|_|Failure::storage())?.err().map(|e|e.code),Some("keystore_unavailable"));

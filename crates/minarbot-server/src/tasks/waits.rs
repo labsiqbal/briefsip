@@ -40,7 +40,7 @@ pub fn reserve(
 }
 pub fn insert(db: &Connection, body: &Value, key: &str, command: Option<&Value>) -> Result<Value> {
     let mut provision = body.clone();
-    let pd = digest(&json!(["briefsip-wait-provision-v1", body]));
+    let pd = digest(&json!(["minarbot-wait-provision-v1", body]));
     provision["payloadDigest"] = json!(pd);
     let mut saved = json!({"provision":provision});
     if let Some(v) = command {
@@ -183,7 +183,7 @@ pub fn secret_result(
             "Result does not match the wait reservation.",
         ));
     }
-    let pd = digest(&json!(["briefsip-wait-secret-result-v1", v]));
+    let pd = digest(&json!(["minarbot-wait-secret-result-v1", v]));
     if let Some(old) = replay(
         db,
         &p.account,

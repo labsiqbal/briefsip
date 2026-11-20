@@ -201,7 +201,7 @@ fn restore(root: &Path, args: &Value) -> Result<Value> {
     if parts.last() != Some(&"file")
         || !parts
             .get(parts.len().saturating_sub(2))
-            .and_then(|directory| crate::rename_migration::workspace_recovery_id(directory))
+            .and_then(|directory| directory.strip_prefix(".minarbot-removed-"))
             .is_some_and(valid_id)
     {
         return Err(error(400, "Invalid workspace recovery path"));
@@ -443,16 +443,10 @@ mod tests {
 
     #[test]
     fn killed_workspace_writes_keep_publication_state_and_never_replay() -> crate::db::Result<()> {
-        if let Some(root) =
-            minarbot_launcher::rename_migration::var_os("MINARBOT_TEST_WRITES_CRASH")
-        {
+        if let Some(root) = std::env::var_os("MINARBOT_TEST_WRITES_CRASH") {
             let root = PathBuf::from(root);
-            let command = serde_json::from_str(&minarbot_launcher::rename_migration::var(
-                "MINARBOT_TEST_WRITES_CALL",
-            )?)?;
-            set_fault(&minarbot_launcher::rename_migration::var(
-                "MINARBOT_TEST_WRITES_PHASE",
-            )?);
+            let command = serde_json::from_str(&std::env::var("MINARBOT_TEST_WRITES_CALL")?)?;
+            set_fault(&std::env::var("MINARBOT_TEST_WRITES_PHASE")?);
             let db = Connection::open(root.join("state.sqlite"))?;
             let result = execute(&db, &binding(&root, "agent"), "turn", &command, 0);
             panic!("crash hook not reached: {result:?}");
@@ -561,7 +555,7 @@ mod tests {
     fn restores_workspace_file_from_legacy_recovery_directory() -> crate::db::Result<()> {
         let scratch = Scratch::new()?;
         let root = scratch.0.join("workspace");
-        let directory = format!(".briefsip-removed-{}", uuid::Uuid::new_v4());
+        let directory = format!(".minarbot-removed-{}", uuid::Uuid::new_v4());
         let source = format!("{directory}/file");
         fs::create_dir(root.join(directory))?;
         fs::write(root.join(&source), b"KEEP")?;

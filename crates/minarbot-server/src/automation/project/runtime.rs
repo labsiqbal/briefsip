@@ -62,7 +62,7 @@ pub(super) fn task(
         json!({"v":1,"kind":"side","threadId":thread,"message":{"text":prompt,"files":[]}});
     let revisions = json!({"project":member["revision"],"agent":home["agent_revision"],"homeBinding":home["home_revision"],"membership":member["grant_revision"],"assignment":home["assignment"],"capability":home["participation_revision"],"thread":1});
     let digest = crate::db::digest(&crate::db::canonical(&json!([
-        "briefsip-task-payload-v1",
+        "minarbot-task-payload-v1",
         id,
         s.project,
         agent,
@@ -72,7 +72,7 @@ pub(super) fn task(
     ])));
     let capability = data::json(&home["capabilities_json"])?;
     let capability_digest = crate::db::digest(&crate::db::canonical(&json!([
-        "briefsip-capabilities-v1",
+        "minarbot-capabilities-v1",
         capability
     ])));
     s.db.execute(

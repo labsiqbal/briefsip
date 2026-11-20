@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { testDatabase } from './test-support/database.ts';
-import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
+import { installCanonicalFixture } from './test-support/canonical-schema.ts';
 import { descriptorBody, deviceLinkBody, deviceProofBody } from './test-support/device-protocol.ts';
 import { digestCommand, sha256 } from './shared/protocol.ts';
 import { startRustServer } from './rust-test-server.ts';
@@ -15,7 +15,7 @@ test('Rust signed device enrollment, stream fencing, sessions, receipts and sync
   const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const auth = { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://minarbot.example', development: true, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString() };
   const account = randomUUID(), project = randomUUID(), actor = { accountId: account, subject: 'user_fixture', issuer: auth.issuer, sessionId: 'sess_fixture', expiresAt: now + 60000 };
-  const db = testDatabase(database); installFrozenNodeSchema(db);
+  const db = testDatabase(database); installCanonicalFixture(db);
   db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,?,?,?)').run(account, auth.issuer, actor.subject, now);
   db.prepare("INSERT INTO projects(id,account,name,private) VALUES(?,?,'Fixture',0)").run(project, account);
   db.prepare("INSERT INTO project_members VALUES(?,?,'owner',1,0)").run(project, account);
@@ -23,7 +23,7 @@ test('Rust signed device enrollment, stream fencing, sessions, receipts and sync
   const token = `${input}.${sign('RSA-SHA256', Buffer.from(input), keys.privateKey).toString('base64url')}`;
   const app = await startRustServer({ database, auth, fixedClock: now }), controller = new AbortController();
   t.after(async () => { controller.abort(); await app.close(); db.close(); rmSync(dir, { recursive: true, force: true }); });
-  const headers = (requestId: string) => ({ Authorization: `Bearer ${token}`, Origin: auth.origin, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': requestId });
+  const headers = (requestId: string) => ({ Authorization: `Bearer ${token}`, Origin: auth.origin, 'Content-Type': 'application/json', 'X-Minarbot-Protocol': '1', 'X-Minarbot-Request-Id': requestId });
   const human = async (path: string, value?: Record<string, unknown>, extra: Record<string, string> = {}) => { const response = await fetch(app.origin + path, { method: value ? 'POST' : 'GET', headers: { ...headers(String(value?.requestId ?? randomUUID())), ...extra }, ...(value ? { body: JSON.stringify(value) } : {}) }); return { status: response.status, body: await response.json() }; };
   const installation = generateKeyPairSync('ed25519'), encryption = generateKeyPairSync('x25519');
   let signing = generateKeyPairSync('ed25519'), generation = 1;
@@ -72,7 +72,7 @@ test('Rust signed device enrollment, stream fencing, sessions, receipts and sync
   function proof(path: string, session: string | undefined, value?: Record<string, unknown>) {
     const requestId = String(value?.requestId ?? randomUUID()).toLowerCase(), body = value ? JSON.stringify(value) : '';
     const p = { deviceId: candidate.deviceId, deviceGeneration: generation, authorityGeneration: challenge.authorityGeneration, requestId, nonce: randomBytes(32).toString('base64url'), iat: Math.floor(now / 1000), exp: Math.floor(now / 1000) + 60, method: value ? 'POST' : 'GET', path, bodyDigest: sha256(body) };
-    return { method: p.method, headers: { ...headers(requestId), Authorization: session ? `Device ${session}` : '', 'X-Briefsip-Proof': JSON.stringify({ ...p, signature: sign(null, Buffer.from(JSON.stringify(deviceProofBody(p))), signing.privateKey).toString('base64url') }) }, ...(value ? { body } : {}) };
+    return { method: p.method, headers: { ...headers(requestId), Authorization: session ? `Device ${session}` : '', 'X-Minarbot-Proof': JSON.stringify({ ...p, signature: sign(null, Buffer.from(JSON.stringify(deviceProofBody(p))), signing.privateKey).toString('base64url') }) }, ...(value ? { body } : {}) };
   }
   const streamPath = `/api/devices/${candidate.deviceId}/stream`, signed = proof(streamPath, session);
   const response = await fetch(app.origin + streamPath, { ...signed, signal: controller.signal }); assert.equal(response.status, 200, await (response.status === 200 ? Promise.resolve('') : response.text()));
@@ -81,7 +81,7 @@ test('Rust signed device enrollment, stream fencing, sessions, receipts and sync
   const path = `/api/devices/${candidate.deviceId}/heartbeat`, command = { requestId: randomUUID().toUpperCase(), connectionGeneration: connected.connectionGeneration, zone: 'Asia/Jakarta', zoneRevision: 1, journalWatermark: 0 };
   const heartbeat = await fetch(app.origin + path, proof(path, session, command)); assert.equal(heartbeat.status, 200, await (heartbeat.status === 200 ? Promise.resolve('') : heartbeat.text()));
   const accepted = await heartbeat.json();
-  assert.equal(accepted.receipt.payloadDigest, digestCommand(['briefsip-device-heartbeat-v1', candidate.deviceId, { ...command, requestId: command.requestId.toLowerCase() }]));
+  assert.equal(accepted.receipt.payloadDigest, digestCommand(['minarbot-device-heartbeat-v1', candidate.deviceId, { ...command, requestId: command.requestId.toLowerCase() }]));
   const retry = await fetch(app.origin + path, proof(path, session, { ...command, requestId: command.requestId.toLowerCase() }));
   assert.equal(retry.status, 200); assert.deepEqual(await retry.json(), accepted);
   assert.equal((await human('/api/devices')).body.data[0].status, 'ready');
@@ -107,7 +107,7 @@ test('Rust signed device enrollment, stream fencing, sessions, receipts and sync
     const response = await human('/api/devices/link-challenges', input); assert.equal(response.status, 201, JSON.stringify(response.body));
     const challenge = response.body.data, desc = { ...descriptor, deviceGeneration: generation + 1, keyRevision: mode === 'rotate' ? 2 : 1, signingPublicKey: input.deviceSigningKey };
     const body = deviceLinkBody(input, challenge), bytes = Buffer.from(JSON.stringify(body));
-    const value = { requestId: randomUUID(), challengeId: challenge.challengeId, nonce: challenge.nonce, installationSignature: sign(null, bytes, installation.privateKey).toString('base64url'), deviceSignature: sign(null, bytes, signing.privateKey).toString('base64url'), descriptor: { ...desc, signature: sign(null, Buffer.from(JSON.stringify(descriptorBody(desc))), signing.privateKey).toString('base64url') }, ...(mode === 'rotate' ? { rotationSignature: sign(null, Buffer.from(JSON.stringify(['briefsip-device-key-transition-v1', sha256(previous.publicKey.export({ type: 'spki', format: 'der' })), body])), previous.privateKey).toString('base64url') } : {}) };
+    const value = { requestId: randomUUID(), challengeId: challenge.challengeId, nonce: challenge.nonce, installationSignature: sign(null, bytes, installation.privateKey).toString('base64url'), deviceSignature: sign(null, bytes, signing.privateKey).toString('base64url'), descriptor: { ...desc, signature: sign(null, Buffer.from(JSON.stringify(descriptorBody(desc))), signing.privateKey).toString('base64url') }, ...(mode === 'rotate' ? { rotationSignature: sign(null, Buffer.from(JSON.stringify(['minarbot-device-key-transition-v1', sha256(previous.publicKey.export({ type: 'spki', format: 'der' })), body])), previous.privateKey).toString('base64url') } : {}) };
     const linked = await human('/api/devices/link', value); assert.equal(linked.status, 201, JSON.stringify(linked.body)); generation++;
     assert.equal(linked.body.data.generation, generation); activeSession = linked.body.data.deviceSession;
     const initial = db.prepare('SELECT result_json FROM receipts WHERE request_id=?').get(request.requestId);

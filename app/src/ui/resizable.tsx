@@ -1,4 +1,3 @@
-import { readProductStorage } from '../rename-storage.ts';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Separator } from 'radix-ui';
 import { clampPanelWidth, maxPanelWidth } from '../panel-width';
@@ -11,7 +10,7 @@ export const detailsPanel: PanelSpec = { key: 'minarbot:details-width', label: '
 
 function readWidth(spec: PanelSpec) {
   try {
-    const saved = readProductStorage(localStorage, spec.key);
+    const saved = localStorage.getItem(spec.key);
     const value = saved?.trim() ? Number(saved) : NaN;
     return Number.isFinite(value) ? value : spec.defaultWidth;
   } catch {

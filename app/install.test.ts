@@ -66,12 +66,12 @@ test('install release is current-only, bounded, SHA-256 checked and public scrip
  const dir=temp(),{releases,info}=fixture(dir),app=await startApp({database:join(dir,'db'),updates:{releasesDir:releases}});
  try {
    const created=await api(app,'/api/install/tokens',{id:randomUUID()},201);
-   const response=await fetch(app.origin+'/api/install/release',{headers:{Authorization:`Bearer ${created.token}`}}),bytes=Buffer.from(await response.arrayBuffer());assert.equal(response.status,200);assert.equal(response.headers.get('x-briefsip-release'),info.id);assert.equal(response.headers.get('x-briefsip-size'),String(bytes.length));assert.equal(response.headers.get('content-length'),String(bytes.length));assert.equal(response.headers.get('x-briefsip-sha256'),createHash('sha256').update(bytes).digest('hex'));
+   const response=await fetch(app.origin+'/api/install/release',{headers:{Authorization:`Bearer ${created.token}`}}),bytes=Buffer.from(await response.arrayBuffer());assert.equal(response.status,200);assert.equal(response.headers.get('x-minarbot-release'),info.id);assert.equal(response.headers.get('x-minarbot-size'),String(bytes.length));assert.equal(response.headers.get('content-length'),String(bytes.length));assert.equal(response.headers.get('x-minarbot-sha256'),createHash('sha256').update(bytes).digest('hex'));
    for(const path of ['/api/install/release?version=other','/api/install/release?token='+created.token]) await api(app,path,undefined,401,created.token,false);
    const script=await fetch(app.origin+'/api/install/script');assert.equal(script.status,200);assert.equal(await script.text(),readFileSync(join(root,'scripts/install-machine.sh'),'utf8'));assert(!readFileSync(join(root,'scripts/install-machine.sh'),'utf8').includes(created.token));
    // A new feed publication cannot change what an existing install token may fetch.
    const changed={...info,id:'1.0.1-12345678',version:'1.0.1',commit:'12345678'.repeat(5)};writeFileSync(join(releases,'feed/latest.json'),JSON.stringify(changed));
-   const pinned=await fetch(app.origin+'/api/install/release',{headers:{Authorization:`Bearer ${created.token}`}});assert.equal(pinned.headers.get('x-briefsip-release'),info.id);await pinned.arrayBuffer();
+   const pinned=await fetch(app.origin+'/api/install/release',{headers:{Authorization:`Bearer ${created.token}`}});assert.equal(pinned.headers.get('x-minarbot-release'),info.id);await pinned.arrayBuffer();
    // Sparse fixture proves preflight rejects size before hashing or packaging.
    const oversized=join(releases,info.id,'huge.ts');const fd=await import('node:fs');fd.closeSync(fd.openSync(oversized,'w'));fd.truncateSync(oversized,2*1024*1024*1024+1);
    await api(app,'/api/install/release',undefined,413,created.token,false);
@@ -123,7 +123,7 @@ test('installer rejects bad metadata, checksums and archive links without publis
  await exec('tar',['--format=ustar','-czf',join(dir,'unsafe.tar.gz'),'-C',linkSource,'.']);const unsafe=readFileSync(join(dir,'unsafe.tar.gz'));
  let mode='metadata';const server=httpServer((req,res)=>{
    assert.equal(req.headers.authorization,'Bearer bsi_'+ 'X'.repeat(43));const bytes=mode==='link'?unsafe:valid;
-   res.writeHead(200,{'Content-Type':'application/gzip','Content-Length':bytes.length,'X-Briefsip-Release':info.id,'X-Briefsip-Size':mode==='metadata'?String(1024*1024*1024+1):String(bytes.length),'X-Briefsip-SHA256':mode==='hash'?'0'.repeat(64):createHash('sha256').update(bytes).digest('hex')});res.end(bytes);
+   res.writeHead(200,{'Content-Type':'application/gzip','Content-Length':bytes.length,'X-Minarbot-Release':info.id,'X-Minarbot-Size':mode==='metadata'?String(1024*1024*1024+1):String(bytes.length),'X-Minarbot-SHA256':mode==='hash'?'0'.repeat(64):createHash('sha256').update(bytes).digest('hex')});res.end(bytes);
  });await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const source=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
  try {
    for(mode of ['metadata','hash','link']) {

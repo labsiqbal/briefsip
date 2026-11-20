@@ -1,4 +1,3 @@
-import { readProductStorage, removeProductStorage } from '../rename-storage.ts';
 import { useEffect } from 'react';
 
 export function useEmptyQueueRecovery(path: string, empty: boolean, request: <T>(path: string) => Promise<T>) {
@@ -7,10 +6,10 @@ export function useEmptyQueueRecovery(path: string, empty: boolean, request: <T>
     const endpoint = path.replace(/\/turns$/, '/queue'), key = `minarbot-queue-order:${endpoint}`;
     let active = true;
     try {
-      const saved = readProductStorage(sessionStorage, key);
+      const saved = sessionStorage.getItem(key);
       if (saved) void request<{ turns: unknown[]; more: boolean }>(endpoint).then(result => {
         if (active && !result.turns.length && !result.more) {
-          try { if (readProductStorage(sessionStorage, key) === saved) removeProductStorage(sessionStorage, key); } catch { return; }
+          try { if (sessionStorage.getItem(key) === saved) sessionStorage.removeItem(key); } catch { return; }
         }
       }).catch(() => {});
     } catch { return; }

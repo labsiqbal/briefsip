@@ -97,7 +97,7 @@ fn validate_provision(value: &Value) -> Result<()> {
         .ok_or_else(invalid)?
         .remove("payloadDigest");
     if value["waitKey"] != key
-        || value["payloadDigest"] != digest(&json!(["briefsip-wait-provision-v1", body]))
+        || value["payloadDigest"] != digest(&json!(["minarbot-wait-provision-v1", body]))
     {
         return Err(invalid());
     }
@@ -258,7 +258,7 @@ fn acknowledge(host: &Host, result: &Value, response: &Value) -> Result<()> {
     if receipt["requestId"] != result["requestId"]
         || receipt["recordId"] != result["provisionId"]
         || receipt["actorId"] != descriptor["accountId"]
-        || receipt["payloadDigest"] != digest(&json!(["briefsip-wait-secret-result-v1", result]))
+        || receipt["payloadDigest"] != digest(&json!(["minarbot-wait-secret-result-v1", result]))
         || ack["provisionId"] != result["provisionId"]
         || !matches!(text(ack, "state"), "activated" | "closed")
         || (ack["state"] == "activated" && result["state"] != "ready")
@@ -320,7 +320,7 @@ fn event(host: &Host, request: &Value, bytes: &[u8]) -> Result<Value> {
     let row = stored_wait(host, request)?;
     let secret = read_secret(host, &row)?;
     let mut headers = HeaderMap::new();
-    for h in ["x-briefsip-time", "x-briefsip-id", "x-briefsip-signature"] {
+    for h in ["x-minarbot-time", "x-minarbot-id", "x-minarbot-signature"] {
         headers.insert(
             h,
             HeaderValue::from_str(text(&request["headers"], h)).map_err(|_| invalid())?,
@@ -329,7 +329,7 @@ fn event(host: &Host, request: &Value, bytes: &[u8]) -> Result<Value> {
     let current = now();
     let accepted = request.get("accepted");
     let verify_at = if accepted.is_some() {
-        text(&request["headers"], "x-briefsip-time")
+        text(&request["headers"], "x-minarbot-time")
             .parse::<i64>()
             .map_err(|_| invalid())?
             * 1000
@@ -378,7 +378,7 @@ fn event(host: &Host, request: &Value, bytes: &[u8]) -> Result<Value> {
 fn seal(request: &Value, secret: &str, private: &keys::Private) -> Result<Value> {
     let shared = private.agree(&request["ephemeralPublicKey"])?;
     let salt = hkdf::Salt::new(hkdf::HKDF_SHA256, text(request, "requestId").as_bytes());
-    let info = [b"briefsip-wait-reveal-v1".as_slice()];
+    let info = [b"minarbot-wait-reveal-v1".as_slice()];
     let key = salt.extract(&shared);
     let key = key
         .expand(&info, &aead::AES_256_GCM)
@@ -533,9 +533,9 @@ impl Stream {
         let request_id = id(&job["jobId"])?;
         let descriptor = host.identity.descriptor.as_ref().ok_or_else(invalid)?;
         let label = if event {
-            "briefsip-wait-event-v1"
+            "minarbot-wait-event-v1"
         } else {
-            "briefsip-wait-reveal-v1"
+            "minarbot-wait-reveal-v1"
         };
         let payload_digest = digest(&json!([label, request]));
         if job["payloadDigest"] != payload_digest

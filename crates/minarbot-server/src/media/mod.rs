@@ -20,17 +20,14 @@ impl Options {
     pub fn environment() -> crate::db::Result<Self> {
         let read = |prefix: &str| -> crate::db::Result<Option<config::Provider>> {
             match (
-                minarbot_launcher::rename_migration::var(format!("MINARBOT_{prefix}_BASE_URL")),
-                minarbot_launcher::rename_migration::var(format!("MINARBOT_{prefix}_MODEL")),
+                std::env::var(format!("MINARBOT_{prefix}_BASE_URL")),
+                std::env::var(format!("MINARBOT_{prefix}_MODEL")),
             ) {
                 (Err(_), Err(_)) => Ok(None),
                 (Ok(base_url), Ok(model)) => Ok(Some(config::Provider {
                     base_url,
                     model,
-                    api_key: minarbot_launcher::rename_migration::var(format!(
-                        "MINARBOT_{prefix}_API_KEY"
-                    ))
-                    .ok(),
+                    api_key: std::env::var(format!("MINARBOT_{prefix}_API_KEY")).ok(),
                 })),
                 _ => Err("Media provider requires base URL and model".into()),
             }

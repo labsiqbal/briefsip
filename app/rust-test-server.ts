@@ -1,4 +1,3 @@
-import { productEnv } from '../desktop/src/rename-env.mjs';
 import { rustHubFacade } from './rust-hub-test-bridge.ts';
 import type { HubLinkOptions } from './rust-hub-test-bridge.ts';
 import { connectorsTestBridge } from './rust-connectors-test-bridge.ts';
@@ -21,7 +20,7 @@ export async function startRustServer(options: Config, attempt = 0): Promise<{ o
   const supported = new Set(['pdfFault', 'testPathPrefix', 'testCanonicalBridge', 'hubLink', 'composio', 'mailApiKey', 'mailEndpoint', 'agentLimits', 'imageProvider', 'transcriptionProvider', 'scriptToken', 'scriptDirectory', 'installationId', 'mailFrom', 'mailOrigin', 'testKeyring', 'testKeyringLocked', 'updates', 'desktop', 'peerTokenIssuer', 'machines', 'database', 'port', 'host', 'tls', 'allowedOrigins', 'dist', 'auth', 'fixedClock', 'baseURL', 'apiKey', 'defaultModel', 'provider', 'accounts', 'timeout', 'concurrency', 'workspaces', 'projectRoot', 'harness', 'stream', 'streamTermination', 'maxTokens']);
   for (const key of Object.keys(options)) if (!supported.has(key)) throw new Error(`not ported: option ${key}`);
   for (const key of Object.keys(options.hubLink ?? {})) if (!['origin', 'hubSigningPublicKey', 'development', 'entry', 'fetch', 'webSocket', 'reconnectMs', 'now'].includes(key)) throw new Error(`not ported: option hubLink.${key}`);
-  const binary = rustBinary('minarbot-server', productEnv('MINARBOT_RUST_BINARY'));
+  const binary = rustBinary('minarbot-server', process.env.MINARBOT_RUST_BINARY);
   const bridge = await computerTestBridge(options);
   const connectors = await connectorsTestBridge(options).catch(async error => { await bridge.close(); throw error; });
   const pdfBridge = await pdfTestBridge(options.pdfFault);
@@ -75,7 +74,7 @@ export async function startRustServer(options: Config, attempt = 0): Promise<{ o
       if (child.signalCode !== 'SIGKILL') throw new Error('Rust fixture did not exit with SIGKILL.');
       await close();
     };
-    return { origin, close, crash, hubLink: options.hubLink ? rustHubFacade(resolve(options.database), origin, bridge.config.token) : undefined, mcpServer: rustMcpFacade(resolve(options.database)), refreshMachines: async () => { const response = await fetch(origin + '/api/machines', { headers: { 'X-Briefsip-Test-Refresh': bridge.config.token } }); if (!response.ok) throw new Error(await response.text()); } };
+    return { origin, close, crash, hubLink: options.hubLink ? rustHubFacade(resolve(options.database), origin, bridge.config.token) : undefined, mcpServer: rustMcpFacade(resolve(options.database)), refreshMachines: async () => { const response = await fetch(origin + '/api/machines', { headers: { 'X-Minarbot-Test-Refresh': bridge.config.token } }); if (!response.ok) throw new Error(await response.text()); } };
   } catch (error) {
     await close().catch(() => {});
     if (error instanceof Error && 'code' in error && error.code === 'canonical_server_busy') {

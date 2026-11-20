@@ -12,7 +12,7 @@ pub fn cleanup(db: &Connection, agent: &str) -> Result<()> {
     )? {
         let reference = string(&row, "ref");
         let hash = string(&row, "hash");
-        let suffix = crate::rename_migration::checkpoint_id(reference);
+        let suffix = reference.strip_prefix("refs/minarbot/checkpoints/");
         if !suffix.is_some_and(|s| {
             s.len() == 36
                 && s.bytes()

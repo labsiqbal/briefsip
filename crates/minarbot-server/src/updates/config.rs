@@ -16,7 +16,7 @@ pub struct Options {
 }
 impl Options {
     pub fn environment() -> crate::db::Result<Self> {
-        let trial = minarbot_launcher::rename_migration::var("MINARBOT_UPDATE_TRIAL").ok();
+        let trial = std::env::var("MINARBOT_UPDATE_TRIAL").ok();
         if trial
             .as_deref()
             .is_some_and(|id| crate::web::id(id).is_none())
@@ -24,12 +24,8 @@ impl Options {
             return Err("Invalid update trial ID.".into());
         }
         Ok(Self {
-            releases_dir: minarbot_launcher::rename_migration::var_os("MINARBOT_RELEASES_DIR")
-                .map(PathBuf::from),
-            launcher_socket: minarbot_launcher::rename_migration::var_os(
-                "MINARBOT_LAUNCHER_SOCKET",
-            )
-            .map(PathBuf::from),
+            releases_dir: std::env::var_os("MINARBOT_RELEASES_DIR").map(PathBuf::from),
+            launcher_socket: std::env::var_os("MINARBOT_LAUNCHER_SOCKET").map(PathBuf::from),
             trial,
             ..Self::default()
         })

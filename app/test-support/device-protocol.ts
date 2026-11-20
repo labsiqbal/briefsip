@@ -26,7 +26,7 @@ export function parseLinkChallenge(value: unknown) {
 }
 export type DeviceDescriptor = { v: 1; accountId: string; installationId: string; deviceId: string; authorityGeneration: string; deviceGeneration: number; keyRevision: number; zone: string; zoneRevision: number; signingPublicKey: string; encryptionPublicKey: string; signature: string };
 export function descriptorBody(d: Omit<DeviceDescriptor, 'signature'>) {
-  return ['briefsip-device-descriptor-v1', d.accountId, d.installationId, d.deviceId, d.authorityGeneration, d.deviceGeneration, d.keyRevision, d.zone, d.zoneRevision, d.signingPublicKey, d.encryptionPublicKey];
+  return ['minarbot-device-descriptor-v1', d.accountId, d.installationId, d.deviceId, d.authorityGeneration, d.deviceGeneration, d.keyRevision, d.zone, d.zoneRevision, d.signingPublicKey, d.encryptionPublicKey];
 }
 export function parseDeviceDescriptor(value: unknown, checkSignature = true): DeviceDescriptor {
   const d = closedObject(value, ['v', 'accountId', 'installationId', 'deviceId', 'authorityGeneration', 'deviceGeneration', 'keyRevision', 'zone', 'zoneRevision', 'signingPublicKey', 'encryptionPublicKey', 'signature']);
@@ -39,7 +39,7 @@ export function parseDeviceDescriptor(value: unknown, checkSignature = true): De
 }
 export type LinkChallengeResponse = { challengeId: string; accountId: string; clerkSub: string; authorityGeneration: string; deviceGeneration: number; keyRevision: number; nonce: string; expiresAt: number; installationThumbprint: string; signingThumbprint: string; encryptionThumbprint: string };
 export function deviceLinkBody(c: ReturnType<typeof parseLinkChallenge>, r: LinkChallengeResponse) {
-  return ['briefsip-link-v1', r.challengeId, r.accountId, r.clerkSub, c.installationId, c.deviceId, r.installationThumbprint, r.signingThumbprint, r.encryptionThumbprint, c.deviceLabel, digestCommand(['briefsip-device-capabilities-v1', c.requestedCapabilities]), r.authorityGeneration, r.deviceGeneration, r.keyRevision, c.zone, c.zoneRevision, c.mode, c.expectedGeneration ?? null, c.expectedKeyRevision ?? null, r.nonce, r.expiresAt];
+  return ['minarbot-link-v1', r.challengeId, r.accountId, r.clerkSub, c.installationId, c.deviceId, r.installationThumbprint, r.signingThumbprint, r.encryptionThumbprint, c.deviceLabel, digestCommand(['minarbot-device-capabilities-v1', c.requestedCapabilities]), r.authorityGeneration, r.deviceGeneration, r.keyRevision, c.zone, c.zoneRevision, c.mode, c.expectedGeneration ?? null, c.expectedKeyRevision ?? null, r.nonce, r.expiresAt];
 }
 export type DeviceProof = { deviceId: string; deviceGeneration: number; authorityGeneration: string; requestId: string; nonce: string; iat: number; exp: number; method: string; path: string; bodyDigest: string; signature: string };
-export function deviceProofBody(p: Omit<DeviceProof, 'signature'>) { return ['briefsip-device-request-v1', p.deviceId, p.deviceGeneration, p.authorityGeneration, p.requestId, p.nonce, p.iat, p.exp, p.method, p.path, p.bodyDigest]; }
+export function deviceProofBody(p: Omit<DeviceProof, 'signature'>) { return ['minarbot-device-request-v1', p.deviceId, p.deviceGeneration, p.authorityGeneration, p.requestId, p.nonce, p.iat, p.exp, p.method, p.path, p.bodyDigest]; }

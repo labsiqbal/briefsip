@@ -290,15 +290,15 @@ async fn verify_event(
     request["byteLength"] = json!(body.len());
     request["bodyDigest"] = json!(format!("{:x}", Sha256::digest(body)));
     request["headers"] = json!({
-        "x-briefsip-time":crate::text_header(headers,"x-briefsip-time"),
-        "x-briefsip-id":crate::text_header(headers,"x-briefsip-id"),
-        "x-briefsip-signature":crate::text_header(headers,"x-briefsip-signature")
+        "x-minarbot-time":crate::text_header(headers,"x-minarbot-time"),
+        "x-minarbot-id":crate::text_header(headers,"x-minarbot-id"),
+        "x-minarbot-signature":crate::text_header(headers,"x-minarbot-signature")
     });
     if !scope.wait["delivery"].is_null() {
         request["accepted"] = json!({"id":scope.wait["delivery"],"digest":scope.wait["digest"]});
     }
     let verified = devices::waits::request(state, &request, Some(body)).await?;
-    if verified["id"] != request["headers"]["x-briefsip-id"]
+    if verified["id"] != request["headers"]["x-minarbot-id"]
         || verified["digest"] != request["bodyDigest"]
     {
         return Err(invalid());
@@ -351,7 +351,7 @@ async fn deliver_turn(
         let task = &current.record;
         let request = uuid::Uuid::new_v4().to_string();
         let pd = digest(&json!([
-            "briefsip-turn-event-v1",
+            "minarbot-turn-event-v1",
             id,
             verified["id"],
             verified["digest"]

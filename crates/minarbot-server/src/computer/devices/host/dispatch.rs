@@ -489,7 +489,7 @@ impl Host {
             validate_tool_call(&payload["toolCall"])?;
             revision(&payload["expectedRevision"], 0)?;
             digest(&json!([
-                "briefsip-canonical-tool-v1",
+                "minarbot-canonical-tool-v1",
                 payload["toolCall"],
                 payload["expectedRevision"],
                 payload["fileInput"]

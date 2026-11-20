@@ -20,7 +20,7 @@ impl Api {
         if origin != "https://api.telegram.org" && super::config::loopback(&origin).is_err() {
             return Err(error(400, "Invalid Telegram endpoint"));
         }
-        if minarbot_launcher::rename_migration::var("MINARBOT_TEST_SERVER").as_deref() == Ok("rust")
+        if std::env::var("MINARBOT_TEST_SERVER").as_deref() == Ok("rust")
             && super::config::loopback(&origin).is_err()
         {
             return Err(error(

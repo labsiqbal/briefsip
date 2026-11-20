@@ -114,7 +114,7 @@ export async function widePanelsSmoke({ check, page, agentChat, visible, hidden,
     const baseline = await metrics();
     let dialog = await settings('Appearance');
     await dialog.getByRole('radio', { name: 'Compact', exact: true }).click();
-    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('briefsip-presentation-v1')).textSize), 'compact');
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('minarbot-presentation-v1')).textSize), 'compact');
     await dialog.getByRole('button', { name: 'Close settings', exact: true }).click();
     const compact = await metrics();
     for (const key of ['name', 'search', 'chat']) assert(Math.abs(compact[key].font / baseline[key].font - .875) < .001, `${key}: ${JSON.stringify({baseline, compact})}`);

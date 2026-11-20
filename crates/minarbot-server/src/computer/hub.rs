@@ -217,7 +217,7 @@ pub async fn handle(state: &AppState, request: Request) -> Result<Response> {
         }
         let test = request
             .headers()
-            .get("x-briefsip-test-hub")
+            .get("x-minarbot-test-hub")
             .and_then(|v| v.to_str().ok())
             .is_some_and(|t| {
                 state
@@ -406,18 +406,13 @@ async fn key(state: &AppState, name: &str, create: bool) -> Result<Vec<u8>> {
                 "Node key is unavailable.",
             ));
         }
-        crate::rename_migration::read_system_key(&service, name).map_err(|_| denied())
+        crate::system_keyring::read(&service, name).map_err(|_| denied())
     };
     let mut saved = if state.config.computer.test_computer_bridge.is_some() {
-        crate::rename_migration::read_bridged_key(&service, |service| async move {
-            Ok::<_, Failure>(
-                machines::bridge(state, "hub-key-get", json!({"service":service,"name":name}))
-                    .await?
-                    .as_str()
-                    .map(str::to_owned),
-            )
-        })
-        .await?
+        machines::bridge(state, "hub-key-get", json!({"service":service,"name":name}))
+            .await?
+            .as_str()
+            .map(str::to_owned)
     } else {
         read()?
     };
@@ -452,8 +447,7 @@ async fn key(state: &AppState, name: &str, create: bool) -> Result<Vec<u8>> {
                 .as_str()
                 .map(str::to_owned);
         } else {
-            crate::rename_migration::write_system_key(&service, name, &encoded)
-                .map_err(|_| denied())?;
+            crate::system_keyring::write(&service, name, &encoded).map_err(|_| denied())?;
             saved = read()?;
         }
         if saved.as_ref() != Some(&encoded) {
@@ -485,7 +479,7 @@ fn sign(state: &AppState, body: Value, name: &str) -> Result<Value> {
     let raw = keys.get(name).ok_or_else(denied)?;
     let pair = Ed25519KeyPair::from_pkcs8(raw).map_err(|_| denied())?;
     let encoded = URL_SAFE_NO_PAD.decode(public(raw)?).map_err(|_| denied())?;
-    let signature = pair.sign(format!("briefsip.node.v1\n{}", canonical(&body)).as_bytes());
+    let signature = pair.sign(format!("minarbot.node.v1\n{}", canonical(&body)).as_bytes());
     Ok(
         json!({"v":1,"keyId":hash(encoded),"body":body,"signature":URL_SAFE_NO_PAD.encode(signature.as_ref())}),
     )
@@ -508,7 +502,7 @@ fn verify(state: &AppState, envelope: &Value) -> Result<Value> {
         .map_err(|_| denied())?;
     UnparsedPublicKey::new(&ED25519, &raw[12..])
         .verify(
-            format!("briefsip.hub.v1\n{}", canonical(&envelope["body"])).as_bytes(),
+            format!("minarbot.hub.v1\n{}", canonical(&envelope["body"])).as_bytes(),
             &signature,
         )
         .map_err(|_| denied())?;
@@ -1960,7 +1954,7 @@ async fn connection(state: &AppState) -> Result<()> {
         .clone()
         .ok_or_else(denied)?;
     let proof=proof(state,json!({"kind":"connection.proof","nodeId":i["node_id"],"nodeGeneration":i["node_generation"],"authorityGeneration":i["authority_generation"],"sessionDigest":hash(text(&session,"token")),"method":"GET","path":"/node"})).await?;
-    let headers = json!({"Authorization":format!("Device {}",text(&session,"token")),"X-Briefsip-Proof":canonical(&proof)});
+    let headers = json!({"Authorization":format!("Device {}",text(&session,"token")),"X-Minarbot-Proof":canonical(&proof)});
     let (tx, mut rx) = mpsc::channel::<Outgoing>(128);
     *state
         .computer

@@ -53,7 +53,7 @@ pub fn initialize(db: &Connection) -> Result<()> {
     Ok(())
 }
 fn file_key(state: &AppState, create: bool) -> Result<Vec<u8>> {
-    let path = crate::rename_migration::sidecar(&state.config.database, ".composio-key");
+    let path = minarbot_launcher::files::sidecar(&state.config.database, ".composio-key");
     if create {
         match OpenOptions::new()
             .write(true)
@@ -148,9 +148,7 @@ async fn environment_key(state: &AppState) -> Result<String> {
             .map_err(|_| Failure::storage())?;
         let data = read(response, 8192).await?;
         string(&data, "key").to_owned()
-    } else if minarbot_launcher::rename_migration::var("MINARBOT_TEST_SERVER").as_deref()
-        == Ok("rust")
-    {
+    } else if std::env::var("MINARBOT_TEST_SERVER").as_deref() == Ok("rust") {
         String::new()
     } else {
         std::env::var("COMPOSIO_API_KEY").unwrap_or_default()

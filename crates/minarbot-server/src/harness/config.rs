@@ -55,7 +55,7 @@ pub(super) fn homes_root(database: &Path) -> std::io::Result<PathBuf> {
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    Ok(crate::rename_migration::sidecar(
+    Ok(minarbot_launcher::files::sidecar(
         &data.canonicalize()?.join(name),
         HOMES_SUFFIX,
     ))
@@ -63,7 +63,7 @@ pub(super) fn homes_root(database: &Path) -> std::io::Result<PathBuf> {
 
 fn session_name(name: &str) -> bool {
     name.strip_prefix(SESSION_PREFIX)
-        .or_else(|| name.strip_prefix("briefsip-session-"))
+        .or_else(|| name.strip_prefix("minarbot-session-"))
         .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok_and(|uuid| uuid.to_string() == id))
 }
 

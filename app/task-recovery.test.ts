@@ -7,8 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { HumanActor } from './test-support/auth.ts';
-import { transaction } from './test-support/legacy-schema.ts';
-import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
+import { transaction } from './test-support/schema-fixture.ts';
+import { installCanonicalFixture } from './test-support/canonical-schema.ts';
 import { initializeMemory, rememberMemory } from './test-support/memory.ts';
 import { requireSkillSchema as initializeSkills, seedSkillVersion as saveSkill } from './test-support/skill-fixture.ts';
 import { initializeQuestions } from './test-support/questions.ts';
@@ -23,7 +23,7 @@ import { startRustServer } from './rust-test-server.ts';
 
 async function fixture(tools = ['transfer_task'], testPathPrefix?: string) {
   const directory = mkdtempSync(join(tmpdir(), 'minarbot-recovery-rust-')), database = join(directory, 'canonical.sqlite');
-  const db = testDatabase(database); installFrozenNodeSchema(db);
+  const db = testDatabase(database); installCanonicalFixture(db);
   // Keep human JWTs valid through host stalls while wait-expiry tests use the real clock.
   const expiresAt = Date.now() + 60 * 60_000;
   const actor = (subject: string): HumanActor => ({ accountId: randomUUID(), issuer: 'https://fixture.example', subject, sessionId: `sess_${subject}`, expiresAt });
@@ -48,7 +48,7 @@ async function fixture(tools = ['transfer_task'], testPathPrefix?: string) {
     db.prepare('UPDATE agent_projects SET capabilities_json=? WHERE project=? AND agent=?').run(canonicalJson({ v: 1, tools, resources: [] }), project, agent);
     function command(change: Record<string, unknown> = {}) {
       const c = { requestId: randomUUID(), projectId: project, agentId: agent, homeDeviceId: home, payload: { v: 1, kind: 'direct', message: { text: 'Research this', files: [] } }, expectedRevisions: { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 }, ...change };
-      return { ...c, payloadDigest: digestCommand(['briefsip-task-payload-v1', c.requestId, c.projectId, c.agentId, c.homeDeviceId, c.payload, c.expectedRevisions]) };
+      return { ...c, payloadDigest: digestCommand(['minarbot-task-payload-v1', c.requestId, c.projectId, c.agentId, c.homeDeviceId, c.payload, c.expectedRevisions]) };
     }
     const principal = { deviceId: home, accountId: owner.accountId, generation: 1, authorityGeneration: challenge.authorityGeneration };
     return { db, owner, member, foreign, project, agent, home, tasks, access, devices, command, signing, principal, async close() { await close(); db.close(); rmSync(directory, { recursive: true, force: true }); } };
@@ -64,7 +64,7 @@ function storedTurnProvision(raw: unknown) {
     provision: { provisionId: string; payloadDigest: string; waitKey: string; deadline: number; target: { kind: string } };
   };
   const { payloadDigest, ...payload } = provision;
-  assert.equal(payloadDigest, digestCommand(['briefsip-wait-provision-v1', payload]));
+  assert.equal(payloadDigest, digestCommand(['minarbot-wait-provision-v1', payload]));
   return provision;
 }
 
@@ -379,7 +379,7 @@ test('canonical wait maintenance survives SQLite failure and retries after stora
     });
     await new Promise(resolve => setTimeout(resolve, 1400));
     const response = await fetch(restarted.origin + '/api/session', {
-      headers: { 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': randomUUID() },
+      headers: { 'X-Minarbot-Protocol': '1', 'X-Minarbot-Request-Id': randomUUID() },
       signal: AbortSignal.timeout(5000),
     });
     assert(response.status >= 400 && response.status < 500);
@@ -1624,7 +1624,7 @@ function recoveryEnvelope(f: Awaited<ReturnType<typeof preparedTask>>, requestId
   const entry: JournalEntry={taskId:f.taskId,actionId:f.actionId,sequence:Number(action.sequence),executorGeneration:f.ownership.executorGeneration,actionKind:String(action.action_kind),payloadDigest:f.payloadDigest,intentDigest:String(action.intent_digest),grantRevision:Number(action.grant_revision),state:resultContent===undefined?'uncertain':'reported',effectStatus:resultContent===undefined?'unknown':'known',journalSequence:2,...(resultDigest?{resultDigest,resultRef:{v:1,taskId:f.taskId,actionId:f.actionId,digest:resultDigest,size:Buffer.byteLength(canonicalJson(resultContent)),encoding:'canonical-json-v1'}}:{})};
   const signed={...entry,signature:sign(null,Buffer.from(JSON.stringify(journalEntryBody(f.principal.authorityGeneration,f.home,1,entry))),f.signing.privateKey).toString('base64url')};
   const envelope={v:1,sourceAuthority:f.principal.authorityGeneration,sourceDeviceId:f.home,sourceDeviceGeneration:1,watermark:2,entries:[signed],stopEvidence:[]};
-  const signature=sign(null,Buffer.from(JSON.stringify(['briefsip-recovery-envelope-v1',recoveryGeneration,requestId,envelope.sourceAuthority,envelope.sourceDeviceId,envelope.sourceDeviceGeneration,envelope.watermark,envelope.entries.map(e=>[e.taskId,e.actionId,e.sequence,e.executorGeneration,e.actionKind,e.payloadDigest,e.intentDigest,e.bindingId??null,e.bindingRevision??null,e.grantRevision,e.state,e.effectStatus,e.resultDigest??null,e.resultRef??null,e.journalSequence,e.signature]),[]])),f.signing.privateKey).toString('base64url');
+  const signature=sign(null,Buffer.from(JSON.stringify(['minarbot-recovery-envelope-v1',recoveryGeneration,requestId,envelope.sourceAuthority,envelope.sourceDeviceId,envelope.sourceDeviceGeneration,envelope.watermark,envelope.entries.map(e=>[e.taskId,e.actionId,e.sequence,e.executorGeneration,e.actionKind,e.payloadDigest,e.intentDigest,e.bindingId??null,e.bindingRevision??null,e.grantRevision,e.state,e.effectStatus,e.resultDigest??null,e.resultRef??null,e.journalSequence,e.signature]),[]])),f.signing.privateKey).toString('base64url');
   return {requestId,recoveryGeneration,envelope,signature,...(resultContent===undefined?{}:{resultContent})};
 }
 

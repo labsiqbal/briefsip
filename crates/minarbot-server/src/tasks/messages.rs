@@ -210,7 +210,7 @@ pub fn send(db: &Connection, task: &Value, args: &Value, call: &Value, now: i64)
             .map(|r| (string(r, "kind").to_owned(), r["revision"].clone()))
             .collect::<serde_json::Map<_, _>>();
         let pd = digest(&json!([
-            "briefsip-agent-message-v1",
+            "minarbot-agent-message-v1",
             request,
             child,
             task["id"],
@@ -224,7 +224,7 @@ pub fn send(db: &Connection, task: &Value, args: &Value, call: &Value, now: i64)
         } else {
             "waiting_device"
         };
-        db.execute("INSERT INTO tasks(id,logical_turn,project,agent,initiator_account,home_device,assignment_revision,capability_revision,capability_digest,capability_snapshot_json,provider_binding_id,provider_binding_revision,provider_binding_owner,state,payload_digest,payload_json,revision,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)",params![child,child,string(task,"project"),recipient,string(task,"initiator_account"),string(&home,"home_device"),current["assignment"].as_i64(),part["capability_revision"].as_i64(),digest(&json!(["briefsip-capabilities-v1",capability])),canonical(&capability),binding.as_ref().and_then(|b|b["id"].as_str()),binding.as_ref().and_then(|b|b["revision"].as_i64()),binding.as_ref().and_then(|b|b["owner_account"].as_str()),state,pd,canonical(&payload),now])?;
+        db.execute("INSERT INTO tasks(id,logical_turn,project,agent,initiator_account,home_device,assignment_revision,capability_revision,capability_digest,capability_snapshot_json,provider_binding_id,provider_binding_revision,provider_binding_owner,state,payload_digest,payload_json,revision,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)",params![child,child,string(task,"project"),recipient,string(task,"initiator_account"),string(&home,"home_device"),current["assignment"].as_i64(),part["capability_revision"].as_i64(),digest(&json!(["minarbot-capabilities-v1",capability])),canonical(&capability),binding.as_ref().and_then(|b|b["id"].as_str()),binding.as_ref().and_then(|b|b["revision"].as_i64()),binding.as_ref().and_then(|b|b["owner_account"].as_str()),state,pd,canonical(&payload),now])?;
         observe(db, &candidate, now)?;
         db.execute(
             "INSERT INTO agent_deliveries VALUES(?,?)",

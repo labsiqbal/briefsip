@@ -1,4 +1,3 @@
-import { readProductStorage } from './rename-storage.ts';
 import { usePolling } from './hooks/usePolling';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Badge, Button, Card, EmptyState, IconButton, PageHeader, Row, Section, SkeletonRows } from './ui/kit';
@@ -35,7 +34,7 @@ export function WorkflowInbox({ request, onBack }: {
           const count = current.notifications.filter(item => item.seq > seen.current! && !item.read).length;
           if (count) {
             let muted = false;
-            try { muted = readProductStorage(localStorage, 'minarbot:workflow-notifications-muted') === '1'; } catch { /* Browser preference is unavailable. */ }
+            try { muted = localStorage.getItem('minarbot:workflow-notifications-muted') === '1'; } catch { /* Browser preference is unavailable. */ }
             try { if (!muted) new Notification('Workflow results available', { body: 'Open the Minarbot inbox to read results.', tag: 'minarbot-workflow-results' }); }
             catch { setEnabled(false); setError('Browser notifications are unavailable. Results remain saved in the inbox.'); }
           }

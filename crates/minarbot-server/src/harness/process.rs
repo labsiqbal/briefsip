@@ -176,7 +176,7 @@ impl Process {
                 command.env(key, value);
             }
         }
-        command.envs(minarbot_launcher::rename_migration::child_env(env));
+        command.envs(env);
         let mut child = command.spawn().map_err(|_| {
             error(
                 502,

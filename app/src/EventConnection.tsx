@@ -21,7 +21,7 @@ export function EventConnection({ path, request, compact = false }: { path: stri
       <p className="k-field__hint" style={{ margin: 0 }}>Event name: {connection.event}. Deadline: {new Date(connection.deadline).toLocaleString('en-US')}.</p>
       <Field label="Event URL"><Input readOnly value={connection.url} /></Field><Field label="Signing secret"><Input readOnly value={connection.secret} autoComplete="off" spellCheck={false} /></Field>
       <Alert tone="warn">The secret grants permission to resume this step. Store it only in trusted integrations; do not enter it in conversations.</Alert>
-      <p className="k-field__hint" style={{ margin: 0 }}>Send JSON with event, optional eventTime, and payload. The X-Briefsip-Time header contains Unix time in seconds, X-Briefsip-Id contains a unique delivery ID, and X-Briefsip-Signature contains the hexadecimal HMAC-SHA256 of the time, newline, ID, newline, then the exact JSON bytes. Use the secret as UTF-8 text.</p>
+      <p className="k-field__hint" style={{ margin: 0 }}>Send JSON with event, optional eventTime, and payload. The X-Minarbot-Time header contains Unix time in seconds, X-Minarbot-Id contains a unique delivery ID, and X-Minarbot-Signature contains the hexadecimal HMAC-SHA256 of the time, newline, ID, newline, then the exact JSON bytes. Use the secret as UTF-8 text.</p>
     </>}
   </section>;
 }

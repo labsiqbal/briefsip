@@ -11,7 +11,7 @@ export function canonicalToolDigest(value: unknown) {
   const call = closedObject(payload.toolCall, ['id','function'], 'toolCall'), fn = closedObject(call.function, ['name','arguments'], 'toolCall.function');
   if (typeof call.id !== 'string' || !call.id || call.id.length > 200 || /[\u0000-\u001f\u007f]/.test(call.id) || typeof fn.name !== 'string' || !fn.name || fn.name.length > 160 || typeof fn.arguments !== 'string' || fn.arguments.length > 20000) throw new ProtocolError(400, 'invalid_tool_call', 'Invalid tool call.');
   revision(payload.expectedRevision, 'expectedRevision');
-  return digestCommand(['briefsip-canonical-tool-v1', call, payload.expectedRevision, payload.fileInput ?? null]);
+  return digestCommand(['minarbot-canonical-tool-v1', call, payload.expectedRevision, payload.fileInput ?? null]);
 }
 
 export type JournalEntry = {
@@ -21,11 +21,11 @@ export type JournalEntry = {
 };
 
 export function journalEntryBody(sourceAuthority: string, sourceDeviceId: string, sourceDeviceGeneration: number, entry: JournalEntry) {
-  return ['briefsip-journal-entry-v1',sourceAuthority,sourceDeviceId,sourceDeviceGeneration,entry.taskId,entry.actionId,entry.sequence,entry.executorGeneration,entry.actionKind,entry.payloadDigest,entry.intentDigest,entry.bindingId??null,entry.bindingRevision??null,entry.grantRevision,entry.state,entry.effectStatus,entry.resultDigest??null,entry.resultRef??null,entry.journalSequence];
+  return ['minarbot-journal-entry-v1',sourceAuthority,sourceDeviceId,sourceDeviceGeneration,entry.taskId,entry.actionId,entry.sequence,entry.executorGeneration,entry.actionKind,entry.payloadDigest,entry.intentDigest,entry.bindingId??null,entry.bindingRevision??null,entry.grantRevision,entry.state,entry.effectStatus,entry.resultDigest??null,entry.resultRef??null,entry.journalSequence];
 }
 
 export function reconcileCommandDigest(taskId:string,body:Record<string,unknown>) {
-  return digestCommand(['briefsip-task-reconcile-v1',taskId,{requestId:body.requestId,actionId:body.actionId,ownership:body.ownership,payloadDigest:body.payloadDigest,state:body.state,effectStatus:body.effectStatus,journalSequence:body.journalSequence,resultDigest:body.resultDigest??null,resultRef:body.resultRef??null,uncertainReason:body.uncertainReason??null,resultContentDigest:body.resultContentDigest??(body.resultContent===undefined?null:sha256(canonicalJson(body.resultContent))),noMarkerEvidence:body.noMarkerEvidence??null,stopEvidence:body.stopEvidence??null}]);
+  return digestCommand(['minarbot-task-reconcile-v1',taskId,{requestId:body.requestId,actionId:body.actionId,ownership:body.ownership,payloadDigest:body.payloadDigest,state:body.state,effectStatus:body.effectStatus,journalSequence:body.journalSequence,resultDigest:body.resultDigest??null,resultRef:body.resultRef??null,uncertainReason:body.uncertainReason??null,resultContentDigest:body.resultContentDigest??(body.resultContent===undefined?null:sha256(canonicalJson(body.resultContent))),noMarkerEvidence:body.noMarkerEvidence??null,stopEvidence:body.stopEvidence??null}]);
 }
 
 export type StopEvidence = {
@@ -35,11 +35,11 @@ export type StopEvidence = {
 };
 
 export function stopEvidenceBody(stop: Omit<StopEvidence, 'signature'>) {
-  return ['briefsip-stop-evidence-v1',stop.sourceAuthority,stop.taskId,stop.actionId,stop.sourceDeviceId,stop.sourceDeviceGeneration,stop.executorGeneration,stop.bootId,stop.processId,stop.processStart,stop.lockId,stop.observationBootId,stop.observation,stop.children.map(child=>[child.processId,child.processStart,child.processGroupId]),stop.observedAt,stop.journalDigest];
+  return ['minarbot-stop-evidence-v1',stop.sourceAuthority,stop.taskId,stop.actionId,stop.sourceDeviceId,stop.sourceDeviceGeneration,stop.executorGeneration,stop.bootId,stop.processId,stop.processStart,stop.lockId,stop.observationBootId,stop.observation,stop.children.map(child=>[child.processId,child.processStart,child.processGroupId]),stop.observedAt,stop.journalDigest];
 }
 
 export function recoveryEnvelopeBody(recoveryGeneration: string, requestId: string, envelope: { sourceAuthority: string; sourceDeviceId: string; sourceDeviceGeneration: number; watermark: number; entries: (JournalEntry & { signature: string })[]; stopEvidence: StopEvidence[] }) {
-  return ['briefsip-recovery-envelope-v1', recoveryGeneration, requestId, envelope.sourceAuthority, envelope.sourceDeviceId, envelope.sourceDeviceGeneration, envelope.watermark,
+  return ['minarbot-recovery-envelope-v1', recoveryGeneration, requestId, envelope.sourceAuthority, envelope.sourceDeviceId, envelope.sourceDeviceGeneration, envelope.watermark,
     envelope.entries.map(entry => [entry.taskId,entry.actionId,entry.sequence,entry.executorGeneration,entry.actionKind,entry.payloadDigest,entry.intentDigest,entry.bindingId??null,entry.bindingRevision??null,entry.grantRevision,entry.state,entry.effectStatus,entry.resultDigest??null,entry.resultRef??null,entry.journalSequence,entry.signature]),
     envelope.stopEvidence.map(stop => [stop.taskId,stop.actionId,stop.journalDigest,stop.signature])];
 }

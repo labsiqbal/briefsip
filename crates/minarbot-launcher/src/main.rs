@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 mod backup;
 mod config;
-use minarbot_launcher::{files, rename_migration};
+use minarbot_launcher::{files, DATABASE_NAME};
 #[cfg(test)]
 mod tests;
 
@@ -121,7 +121,7 @@ impl Launcher {
             return Ok(());
         }
         let path = path_for(&self.config.releases, id)?;
-        let binary = rename_migration::server_binary(&path);
+        let binary = path.join("bin/minarbot-server");
         if !binary.is_file() {
             return Err("Release is missing bin/minarbot-server.".into());
         }
@@ -135,14 +135,11 @@ impl Launcher {
             .env_clear()
             .envs(&self.config.env)
             .env("MINARBOT_RELEASE_ID", id)
-            .env("BRIEFSIP_RELEASE_ID", id)
             .stdin(Stdio::null())
             .kill_on_drop(true);
         if trial {
             let id = self.attempt()?.id;
-            command
-                .env("MINARBOT_UPDATE_TRIAL", &id)
-                .env("BRIEFSIP_UPDATE_TRIAL", &id);
+            command.env("MINARBOT_UPDATE_TRIAL", &id);
         }
         let result = command.spawn();
         *self.child.borrow_mut() = Some(Managed { process: result? });
@@ -204,8 +201,13 @@ impl Launcher {
     async fn worker(&self, operation: &str) -> Result<()> {
         let attempt = self.attempt()?;
         path_for(&self.config.releases, &attempt.from)?;
-        let database = rename_migration::database_path(&self.config.data);
-        let destination = rename_migration::backup_input(&self.config.data, &attempt.id);
+        let database = self.config.data.join(DATABASE_NAME);
+        let destination = self
+            .config
+            .data
+            .join(".updates")
+            .join(&attempt.id)
+            .join(DATABASE_NAME);
         let mut worker = Command::new(own_executable()?)
             .arg("--backup")
             .arg(operation)
@@ -311,9 +313,9 @@ impl Launcher {
         }
         let disk = statvfs(&self.config.data)?;
         let mut bytes = 0;
-        let database = rename_migration::database_path(&self.config.data);
+        let database = self.config.data.join(DATABASE_NAME);
         for suffix in ["", "-wal", "-shm"] {
-            if let Ok(s) = fs::metadata(rename_migration::exact_sidecar(&database, suffix)) {
+            if let Ok(s) = fs::metadata(sidecar(&database, suffix)) {
                 bytes += s.len();
             }
         }

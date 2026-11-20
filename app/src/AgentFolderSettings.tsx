@@ -1,4 +1,3 @@
-import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { useCallback, useId, useRef, useState } from 'react';
 import { useVisiblePolling } from './hooks/useVisiblePolling';
 import { Alert, Button, Card, Dialog, Field, Input, RecoveryAlert, Row, Select, SkeletonRows, useConfirm } from './ui/kit';
@@ -13,7 +12,7 @@ type Command = { id: string; revision: number } & ({ path: string; mode: Mode } 
 
 function recover(key: string): { command: Command | null; corrupt: boolean } {
   try {
-    const value = JSON.parse(readProductStorage(sessionStorage, key) ?? 'null');
+    const value = JSON.parse(sessionStorage.getItem(key) ?? 'null');
     if (value === null) return { command: null, corrupt: false };
     if (typeof value.id !== 'string' || !/^[a-f0-9-]{36}$/i.test(value.id) ||
         !Number.isSafeInteger(value.revision) || value.revision < 0 ||
@@ -61,7 +60,7 @@ export function AgentFolderSettings({ agent, request, isClientError }: {
   }, [endpoint, request, reload]));
 
   function clearRecovery() {
-    removeProductStorage(sessionStorage, storageKey);
+    sessionStorage.removeItem(storageKey);
     setPending(null);
     setCorrupt(false);
   }

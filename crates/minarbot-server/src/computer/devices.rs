@@ -418,7 +418,7 @@ fn descriptor(v: &Value, check: bool) -> Result<Value> {
         verify(
             &d["signingPublicKey"],
             &json!([
-                "briefsip-device-descriptor-v1",
+                "minarbot-device-descriptor-v1",
                 d["accountId"],
                 d["installationId"],
                 d["deviceId"],
@@ -603,7 +603,7 @@ fn link(db: &Connection, actor: &Actor, v: &Value, now: i64) -> Result<Value> {
     command["requestId"] = request.clone().into();
     command["challengeId"] = cid.clone().into();
     command["descriptor"] = desc.clone();
-    let hash = digest(&json!(["briefsip-device-link-v1", command]));
+    let hash = digest(&json!(["minarbot-device-link-v1", command]));
     let result = super::transaction(db, |db| {
         authority(db)?;
         if desc["accountId"] != actor.account {
@@ -660,7 +660,7 @@ fn link(db: &Connection, actor: &Actor, v: &Value, now: i64) -> Result<Value> {
         }
         descriptor(&desc, true)?;
         let body = json!([
-            "briefsip-link-v1",
+            "minarbot-link-v1",
             r["challengeId"],
             r["accountId"],
             r["clerkSub"],
@@ -671,7 +671,7 @@ fn link(db: &Connection, actor: &Actor, v: &Value, now: i64) -> Result<Value> {
             r["encryptionThumbprint"],
             c["deviceLabel"],
             digest(&json!([
-                "briefsip-device-capabilities-v1",
+                "minarbot-device-capabilities-v1",
                 c["requestedCapabilities"]
             ])),
             r["authorityGeneration"],
@@ -703,7 +703,7 @@ fn link(db: &Connection, actor: &Actor, v: &Value, now: i64) -> Result<Value> {
             verify(
                 &old["signing_public_key"],
                 &json!([
-                    "briefsip-device-key-transition-v1",
+                    "minarbot-device-key-transition-v1",
                     old["signing_thumbprint"],
                     body
                 ]),
@@ -829,7 +829,7 @@ pub fn authenticate(
     refresh: bool,
     now: i64,
 ) -> Result<Principal> {
-    let raw = crate::text_header(headers, "x-briefsip-proof")
+    let raw = crate::text_header(headers, "x-minarbot-proof")
         .filter(|s| s.len() <= 16384)
         .ok_or_else(denied)?;
     let d = crate::web::parse_json(raw.as_bytes())?;
@@ -898,7 +898,7 @@ pub fn authenticate(
     verify(
         &row["signing_public_key"],
         &json!([
-            "briefsip-device-request-v1",
+            "minarbot-device-request-v1",
             p.device,
             p.generation,
             p.authority,
@@ -1065,7 +1065,7 @@ pub async fn human(
             let request = id(&v["requestId"])?;
             let expected = revision(&v["expectedRevision"], 1)?;
             let hash = digest(&json!([
-                "briefsip-device-revoke-v1",
+                "minarbot-device-revoke-v1",
                 device,
                 json!({"requestId":request,"expectedRevision":expected})
             ]));
@@ -1173,7 +1173,7 @@ pub async fn host(state: &AppState, request: Request, request_id: &str) -> Resul
         return crate::tasks::response(result);
     }
     if method == Method::POST && operation == "acquire" {
-        let token = crate::text_header(&headers, "x-briefsip-executor").ok_or_else(|| {
+        let token = crate::text_header(&headers, "x-minarbot-executor").ok_or_else(|| {
             fail(
                 401,
                 "executor_invalid",
@@ -1229,7 +1229,7 @@ pub async fn host(state: &AppState, request: Request, request_id: &str) -> Resul
                 ))
             }
         };
-        let hash = digest(&json!(["briefsip-device-heartbeat-v1", device, normalized]));
+        let hash = digest(&json!(["minarbot-device-heartbeat-v1", device, normalized]));
         let scope = format!("device_heartbeat:{device}");
         let mut fresh = false;
         let result = super::transaction(db, |db| {

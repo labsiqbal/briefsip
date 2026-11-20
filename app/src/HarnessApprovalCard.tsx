@@ -1,4 +1,3 @@
-import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { useRef, useState } from 'react';
 import { ShieldCheck } from 'lucide-react';
 import { Alert, Badge, Button, Card, CodeBlock, Collapsible, Row } from './ui/kit';
@@ -12,12 +11,12 @@ export function HarnessApprovalCard({ approval, path, status, archived, request 
     if (disabled || !open) return;
     setBusy(true); setError('');
     try {
-      const saved = readProductStorage(sessionStorage, key);
+      const saved = sessionStorage.getItem(key);
       const command = pending.current ?? (saved ? JSON.parse(saved) : { id: crypto.randomUUID(), revision: approval.revision, decision });
       if (!command || typeof command.id !== 'string' || command.revision !== approval.revision || !['allow','always','deny'].includes(command.decision)) throw new Error('Saved approval expired. Reload the transcript.');
       pending.current = command; sessionStorage.setItem(key, JSON.stringify(command));
       await request(`${path}/harness-approvals/${approval.id}`, command);
-      removeProductStorage(sessionStorage, key); pending.current = null;
+      sessionStorage.removeItem(key); pending.current = null;
     } catch (error) { setError(error instanceof Error ? error.message : 'Decision not confirmed. Retry the same decision.'); }
     finally { setBusy(false); }
   }

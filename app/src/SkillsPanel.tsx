@@ -1,4 +1,3 @@
-import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { usePolling } from './hooks/usePolling';
 import { getNonce } from 'get-nonce';
 import { SkillPacksPanel } from './SkillPacksPanel';
@@ -15,7 +14,7 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
   const [tab, setTab] = useState('library');
   const importControl = useRef<HTMLSpanElement>(null);
   const [owner, setOwner] = useState(agents[0]?.id ?? '');
-  const [recovery] = useState(() => { try { return { command: restoreSkillCommand(readProductStorage(sessionStorage, storage)), invalid: false }; } catch { return { command: null, invalid: true }; } });
+  const [recovery] = useState(() => { try { return { command: restoreSkillCommand(sessionStorage.getItem(storage)), invalid: false }; } catch { return { command: null, invalid: true }; } });
   const [pending, setPending] = useState(recovery.command), [invalid, setInvalid] = useState(recovery.invalid);
   const [page, setPage] = useState<{ skills: Skill[]; next_after: string | null } | null>(null), [installed, setInstalled] = useState<Installed[] | null>(null);
   const [installCursors, setInstallCursors] = useState(['']), installAfter = installCursors.at(-1)!;
@@ -59,14 +58,14 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
       restoreSkillCommand(JSON.stringify(command)); sessionStorage.setItem(storage, JSON.stringify(command)); setPending(command); inFlight.current = true; setBusy(true);
       await request(command.path, command.body);
       if (current !== navigation.current) return;
-      if (readProductStorage(sessionStorage, storage) === JSON.stringify(command)) removeProductStorage(sessionStorage, storage);
+      if (sessionStorage.getItem(storage) === JSON.stringify(command)) sessionStorage.removeItem(storage);
       setPending(null); setRefresh(value => value + 1); if (!command.path.startsWith('/api/agents/')) { setEditor(null); heading.current?.focus(); }
     } catch (error) { if (current === navigation.current) setError(error instanceof Error ? error.message : 'Changes are not confirmed yet. Try again.'); }
     finally { inFlight.current = false; if (current === navigation.current) setBusy(false); }
   }
   async function discard() {
     if (busy || !await confirm({ title: 'Discard saved request?', description: 'Changes may already have succeeded. The list reloads before the next change.', confirm: 'Discard request' })) return;
-    try { removeProductStorage(sessionStorage, storage); setPending(null); setInvalid(false); setRefresh(value => value + 1); }
+    try { sessionStorage.removeItem(storage); setPending(null); setInvalid(false); setRefresh(value => value + 1); }
     catch { setError('Browser storage could not be updated.'); }
   }
   const ownerName = agents.find(agent => agent.id === owner)?.name ?? '';

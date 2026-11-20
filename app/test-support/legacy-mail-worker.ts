@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { closedObject, parseJson, ProtocolError } from '../shared/protocol.ts';
-import { transaction } from './legacy-schema.ts';
+import { transaction } from './schema-fixture.ts';
 import { decryptMail } from './mail-fixture.ts';
 
 type SyncWriter = { appendRecord(project: string, kind: string, id: string): void };

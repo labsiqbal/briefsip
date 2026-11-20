@@ -175,7 +175,7 @@ impl Scope<'_> {
     }
     fn digest(&self, path: &str, v: &Value) -> String {
         crate::db::digest(&crate::db::canonical(&json!([
-            "briefsip-retained-command-v1",
+            "minarbot-retained-command-v1",
             self.account,
             self.project,
             "POST",
@@ -328,8 +328,8 @@ pub fn route(
         return Ok(None);
     }
     if !valid(path)
-        || headers.contains_key("x-briefsip-project")
-        || headers.contains_key("x-briefsip-project-id")
+        || headers.contains_key("x-minarbot-project")
+        || headers.contains_key("x-minarbot-project-id")
         || v.get("projectId").is_some()
     {
         return Err(missing());
@@ -415,8 +415,8 @@ pub async fn event(
             "Use Content-Type application/json.",
         ));
     }
-    if request.headers().contains_key("x-briefsip-project")
-        || request.headers().contains_key("x-briefsip-project-id")
+    if request.headers().contains_key("x-minarbot-project")
+        || request.headers().contains_key("x-minarbot-project-id")
     {
         return Err(missing());
     }

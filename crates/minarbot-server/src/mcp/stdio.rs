@@ -1,9 +1,7 @@
 use serde_json::Value;
 use std::io::{BufRead, Read, Write};
 pub async fn run() -> crate::db::Result<()> {
-    let url = url::Url::parse(&minarbot_launcher::rename_migration::var(
-        "MINARBOT_MCP_URL",
-    )?)?;
+    let url = url::Url::parse(&std::env::var("MINARBOT_MCP_URL")?)?;
     if url.scheme() != "http"
         || !url.host_str().is_some_and(|v| {
             v.parse::<std::net::IpAddr>()
@@ -17,7 +15,7 @@ pub async fn run() -> crate::db::Result<()> {
     {
         return Err("Invalid local MCP address".into());
     }
-    let token = minarbot_launcher::rename_migration::var("MINARBOT_MCP_TOKEN")?;
+    let token = std::env::var("MINARBOT_MCP_TOKEN")?;
     let client = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())

@@ -88,7 +88,7 @@ fn parse_accounts_environment(
     }
 }
 fn timeout_environment(name: &str) -> crate::db::Result<Option<u64>> {
-    match minarbot_launcher::rename_migration::var(name) {
+    match std::env::var(name) {
         Err(std::env::VarError::NotPresent) => Ok(None),
         raw => raw.ok()
             .and_then(|value| value.parse::<u64>().ok())
@@ -111,7 +111,7 @@ impl Options {
 
     pub fn environment() -> crate::db::Result<Self> {
         use std::env;
-        let provider = minarbot_launcher::rename_migration::var("MINARBOT_PROVIDER").ok();
+        let provider = std::env::var("MINARBOT_PROVIDER").ok();
         let family = provider.as_deref().unwrap_or("openai-compatible");
         let prefix = match family {
             "anthropic" => "ANTHROPIC",
@@ -119,7 +119,7 @@ impl Options {
             _ => "OPENAI",
         };
         let parsed = |key: &str| -> crate::db::Result<Option<Value>> {
-            minarbot_launcher::rename_migration::var(key)
+            std::env::var(key)
                 .ok()
                 .map(|s| {
                     if s.len() > 65536 {
@@ -134,18 +134,11 @@ impl Options {
             api_key: env::var(format!("{prefix}_API_KEY")).ok(),
             default_model: env::var(format!("{prefix}_MODEL")).ok(),
             provider,
-            accounts: parse_accounts_environment(minarbot_launcher::rename_migration::var(
-                "MINARBOT_PROVIDER_ACCOUNTS",
-            ))?,
-            project_root: minarbot_launcher::rename_migration::var("MINARBOT_PROJECT_ROOT").ok(),
+            accounts: parse_accounts_environment(std::env::var("MINARBOT_PROVIDER_ACCOUNTS"))?,
+            project_root: std::env::var("MINARBOT_PROJECT_ROOT").ok(),
             concurrency: parsed("MINARBOT_CONCURRENCY")?,
-            stream: Some(
-                minarbot_launcher::rename_migration::var("MINARBOT_STREAM").as_deref() == Ok("1"),
-            ),
-            stream_termination: minarbot_launcher::rename_migration::var(
-                "MINARBOT_STREAM_TERMINATION",
-            )
-            .ok(),
+            stream: Some(std::env::var("MINARBOT_STREAM").as_deref() == Ok("1")),
+            stream_termination: std::env::var("MINARBOT_STREAM_TERMINATION").ok(),
             max_tokens: parsed("MINARBOT_MAX_TOKENS")?,
             turn_idle_timeout_ms: timeout_environment("MINARBOT_TURN_IDLE_TIMEOUT_MS")?,
             turn_max_ms: timeout_environment("MINARBOT_TURN_MAX_MS")?,

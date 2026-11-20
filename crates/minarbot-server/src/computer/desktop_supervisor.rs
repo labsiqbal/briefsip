@@ -284,8 +284,8 @@ impl Supervisor {
             .and_then(|value| value.to_str())
             .ok_or("Desktop display unavailable.")?
             .to_owned();
-        let geometry = minarbot_launcher::rename_migration::var("MINARBOT_DESKTOP_GEOMETRY")
-            .unwrap_or_else(|_| "1280x800".into());
+        let geometry =
+            std::env::var("MINARBOT_DESKTOP_GEOMETRY").unwrap_or_else(|_| "1280x800".into());
         super::options::dimensions(&geometry)?;
         self.launch(
             "Xvnc",

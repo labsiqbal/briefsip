@@ -1,4 +1,3 @@
-import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { usePolling } from './hooks/usePolling';
 import { getNonce } from 'get-nonce';
 import { useEffect, useRef, useState } from 'react';
@@ -15,7 +14,7 @@ type Policy = { toolkit: string; tool: string; account: string; fingerprint: str
 export function ConnectedAppsPanel({ agents, request, project, onInstallationAppsChange }: { project?: LocalProject; onInstallationAppsChange?: (enabled: boolean) => Promise<void>; agents: { id: string; name: string }[]; request: <T>(path: string, data?: unknown) => Promise<T> }) {
   const storage = 'minarbot:connected-app-command'+(project?`:${project.id}`:'');
   const confirm = useConfirm(), heading = useRef<HTMLHeadingElement>(null), mounted = useRef(false), sending = useRef(false);
-  const [recovery] = useState(() => { try { return { pending: restoreConnectedAppCommand(readProductStorage(sessionStorage, storage)), invalid: false }; } catch { return { pending: null, invalid: true }; } });
+  const [recovery] = useState(() => { try { return { pending: restoreConnectedAppCommand(sessionStorage.getItem(storage)), invalid: false }; } catch { return { pending: null, invalid: true }; } });
   const [pending,setPending] = useState(recovery.pending), [invalid,setInvalid] = useState(recovery.invalid);
   const [catalog,setCatalog] = useState<Catalog | null>(null), [accounts,setAccounts] = useState<Account[] | null>(null), [grants,setGrants] = useState<Grant[] | null>(null), [policies,setPolicies] = useState<Policy[] | null>(null), [keyStatus,setKeyStatus] = useState<KeyStatus | null>(null), [key,setKey] = useState(''), [replacing,setReplacing] = useState(false);
   const [agent,setAgent] = useState(agents[0]?.id ?? ''), [search,setSearch] = useState(''), [query,setQuery] = useState(''), [category,setCategory] = useState(''), [cursors,setCursors] = useState(['']);
@@ -43,12 +42,12 @@ export function ConnectedAppsPanel({ agents, request, project, onInstallationApp
       restoreConnectedAppCommand(JSON.stringify(command)); sessionStorage.setItem(storage,JSON.stringify(command)); setPending(command); sending.current=true; setBusy(true); setError('');
       const result=await request<{redirect_url?:string}>(command.path,command.path==='/api/connected-apps/key'?{...command.body,key}:command.body);
       if(result.redirect_url){if(popup)popup.location.href=result.redirect_url; if(mounted.current)setLink(result.redirect_url);} else popup?.close();
-      if(readProductStorage(sessionStorage, storage)===JSON.stringify(command))removeProductStorage(sessionStorage, storage);
+      if(sessionStorage.getItem(storage)===JSON.stringify(command))sessionStorage.removeItem(storage);
       if(mounted.current){if(command.path.startsWith('/api/connected-apps/key')){setKey('');setReplacing(false);setSetup(false);setLink('');}setPending(null);setRefresh(n=>n+1);}
     }catch(error){popup?.close();if(mounted.current)setError(error instanceof Error?error.message:'Change is not confirmed. Retry the saved request.');}
     finally{sending.current=false;if(mounted.current)setBusy(false);}
   }
-  async function discard(){if(!await confirm({title:'Discard saved request?',description:'The change may already have succeeded. Connected accounts and access reload before another change.',confirm:'Discard request',danger:true}))return;try{removeProductStorage(sessionStorage, storage);setPending(null);setInvalid(false);setRefresh(n=>n+1);}catch{setError('Browser recovery data could not be removed.');}}
+  async function discard(){if(!await confirm({title:'Discard saved request?',description:'The change may already have succeeded. Connected accounts and access reload before another change.',confirm:'Discard request',danger:true}))return;try{sessionStorage.removeItem(storage);setPending(null);setInvalid(false);setRefresh(n=>n+1);}catch{setError('Browser recovery data could not be removed.');}}
   async function saveKey() {
     if(sending.current || invalid || !keyStatus || !key.trim() || pending && !keySave)return;
     await execute(pending ?? {path:'/api/connected-apps/key',body:{id:crypto.randomUUID(),revision:keyStatus.revision}});

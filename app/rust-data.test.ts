@@ -100,7 +100,7 @@ test('Rust deletion rolls back FK closure, preserves room history and retries ex
     mkdirSync(desktop, { recursive: true }); writeFileSync(join(desktop, 'saved'), 'saved'); mkdirSync(workspace);
     execFileSync('git', ['init', '-q', workspace]);
     execFileSync('git', ['-C', workspace, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'Fixture', '--allow-empty']);
-    const hash = execFileSync('git', ['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), ref = `refs/briefsip/checkpoints/${direct}`;
+    const hash = execFileSync('git', ['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), ref = `refs/minarbot/checkpoints/${direct}`;
     execFileSync('git', ['-C', workspace, 'update-ref', ref, hash]);
     for (const id of [agent, other]) db.prepare("INSERT INTO agents(id,name,model,instructions) VALUES(?,'Fixture','fixture','Help')").run(id);
     db.prepare("INSERT INTO channels(id,name,instructions,lead) VALUES(?,'Room','Help',?)").run(channel, agent);
@@ -146,7 +146,7 @@ test('Rust canonical projects preserve ownership, CAS and durable command receip
     assert(Number.isSafeInteger(committedAt));
     assert.deepEqual(receipt, {
       requestId: command.requestId, actorId: account, projectId: project,
-      payloadDigest: digestCommand(['briefsip-project-create-v1', { ...command, name: 'Shared project' }]),
+      payloadDigest: digestCommand(['minarbot-project-create-v1', { ...command, name: 'Shared project' }]),
       status: 201, recordId: project, recordRevision: 1,
     });
     assert.deepEqual((await send('/api/projects', 'POST', command)).body, created.body);
@@ -163,7 +163,7 @@ test('Rust canonical projects preserve ownership, CAS and durable command receip
     const createdAgent = await send('/api/agents', 'POST', creation);
     assert.equal(createdAgent.status, 201, JSON.stringify(createdAgent));
     assert.deepEqual(createdAgent.body.data, agentData);
-    assert.equal(createdAgent.body.receipt.payloadDigest, digestCommand(['briefsip-agent-create-v1', { ...creation, name: 'Agent', role: 'Helper' }]));
+    assert.equal(createdAgent.body.receipt.payloadDigest, digestCommand(['minarbot-agent-create-v1', { ...creation, name: 'Agent', role: 'Helper' }]));
     assert.deepEqual((await send('/api/agents', 'POST', creation)).body, createdAgent.body);
 
     const setupId = randomUUID(), setup = { ...creation, requestId: setupId, id: setupId, providerBinding: { bindingId: binding, expectedRevision: 1 }, setup: true };
@@ -179,9 +179,9 @@ Help`, files: [] } };
     const revisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 };
     assert.deepEqual({ ...db.prepare(`SELECT ${taskFields} FROM tasks WHERE id=?`).get(setupId) }, {
       id: setupId, logical_turn: setupId, project, agent: setupId, initiator_account: account, home_device: home,
-      assignment_revision: 1, capability_revision: 1, capability_digest: digestCommand(['briefsip-capabilities-v1', caps]),
+      assignment_revision: 1, capability_revision: 1, capability_digest: digestCommand(['minarbot-capabilities-v1', caps]),
       capability_snapshot_json: canonicalJson(caps), provider_binding_id: binding, provider_binding_revision: 1,
-      provider_binding_owner: account, state: 'waiting_device', payload_digest: digestCommand(['briefsip-task-payload-v1', setupId, project, setupId, home, payload, revisions]),
+      provider_binding_owner: account, state: 'waiting_device', payload_digest: digestCommand(['minarbot-task-payload-v1', setupId, project, setupId, home, payload, revisions]),
       payload_json: canonicalJson(payload), revision: 1,
     });
 
@@ -192,14 +192,14 @@ Help`, files: [] } };
     const attached = await send(agentPath, 'PUT', participation);
     assert.equal(attached.status, 201, JSON.stringify(attached));
     assert.deepEqual(attached.body.data, { projectId: second, agentId: aid, participationRevision: 1, homeDeviceId: home });
-    assert.equal(attached.body.receipt.payloadDigest, digestCommand(['briefsip-agent-participation-v1', second, aid, participation]));
+    assert.equal(attached.body.receipt.payloadDigest, digestCommand(['minarbot-agent-participation-v1', second, aid, participation]));
     const rules = { requestId: randomUUID(), expectedParticipationRevision: 1, rules: 'Changed rules' };
     const capabilities = { requestId: randomUUID(), expectedRevision: 2, capabilities: { v: 1, tools: ['ask_user', 'read_history'], resources: [] } };
     for (const [kind, change, fields, revision] of [['rules', rules, { rules: rules.rules }, 2], ['capabilities', capabilities, { capabilities: capabilities.capabilities }, 3]] as const) {
       const changed = await send(agentPath + '/' + kind, 'PUT', change);
       assert.equal(changed.status, 200, JSON.stringify(changed));
       assert.deepEqual(changed.body.data, { projectId: second, agentId: aid, ...fields, revision });
-      assert.equal(changed.body.receipt.payloadDigest, digestCommand([`briefsip-agent-${kind}-v1`, second, aid, change]));
+      assert.equal(changed.body.receipt.payloadDigest, digestCommand([`minarbot-agent-${kind}-v1`, second, aid, change]));
     }
     const collaborator = f.addAccount('user_member').accountId;
     db.prepare("INSERT INTO project_members VALUES(?,?,'member',1,0)").run(project, collaborator);

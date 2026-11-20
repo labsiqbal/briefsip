@@ -988,10 +988,8 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     pub(super) fn crash_ref_publication(root: &Path, phase: &str) {
-        if minarbot_launcher::rename_migration::var_os("MINARBOT_TEST_GIT_REPO").as_deref()
-            == Some(root.as_os_str())
-            && minarbot_launcher::rename_migration::var("MINARBOT_TEST_GIT_PHASE").as_deref()
-                == Ok(phase)
+        if std::env::var_os("MINARBOT_TEST_GIT_REPO").as_deref() == Some(root.as_os_str())
+            && std::env::var("MINARBOT_TEST_GIT_PHASE").as_deref() == Ok(phase)
         {
             rustix::process::kill_process(rustix::process::getpid(), rustix::process::Signal::KILL)
                 .unwrap_or_else(|e| panic!("{e}"));
@@ -1051,9 +1049,7 @@ mod tests {
             write: true,
             managed: false,
         };
-        if let Some(workspace) =
-            minarbot_launcher::rename_migration::var_os("MINARBOT_TEST_GIT_REPO")
-        {
+        if let Some(workspace) = std::env::var_os("MINARBOT_TEST_GIT_REPO") {
             let workspace = PathBuf::from(workspace);
             let state = state_at(workspace.parent().ok_or_else(Failure::storage)?)?;
             let result = execute(&state, &binding(workspace), turn, &call, &value, 0).await;

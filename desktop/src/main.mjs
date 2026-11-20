@@ -1,10 +1,9 @@
-import { productEnv } from './rename-env.mjs';
 // Adapted from T3 apps/desktop. Source files and changes: ../provenance.json.
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell, session, screen } from 'electron';
 import electronUpdater from 'electron-updater';
-import { addServer, legacyUserData, readSettings, removeServer, resolveWindowBounds, writeSettings } from './settings.mjs';
+import { addServer, readSettings, removeServer, resolveWindowBounds, writeSettings } from './settings.mjs';
 import { canGrantPermission, canNotify, isAllowedExternal, isAllowedNavigation, parseServerUrl, trustedSender, validateServer } from './policy.mjs';
 import { installContextMenu } from './context-menu.mjs';
 import { configureUpdates } from './updates.mjs';
@@ -111,16 +110,13 @@ function registerIpc() {
   handle('check-for-updates', () => updates.check(true));
   handle('open-external', openExternal);
 }
-const userData = app.getPath('userData');
-const previousData = legacyUserData(userData);
-if (previousData !== userData) app.setPath('userData', previousData);
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => { if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); } });
   app.whenReady().then(() => {
     settings = readSettings(app.getPath('userData'));
     // Dev URL is explicit and validated; packaged builds use saved servers only.
-    const devServer = isDev && productEnv('MINARBOT_SERVER_URL');
+    const devServer = isDev && process.env.MINARBOT_SERVER_URL;
     if (devServer) settings = addServer(settings, parseServerUrl(devServer).href);
     updates = configureUpdates({ updater: electronUpdater.autoUpdater, enabled: app.isPackaged && Boolean(process.env.APPIMAGE), prompt: async (options) => (await dialog.showMessageBox(options)).response });
     configurePermissions(); registerIpc(); createWindow(); buildMenu();

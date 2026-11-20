@@ -12,7 +12,7 @@ pub fn migrate(db: &Connection, now: i64) -> Result<()> {
             one(db, "SELECT name FROM agents WHERE id=?", [origin.get(8..).unwrap_or("")])?
                 .and_then(|a| a["name"].as_str().map(str::to_owned)).unwrap_or_else(|| "Agent".to_owned())
         };
-        let machine = peer.then(|| sender.strip_prefix("Minarbot:").or_else(|| sender.strip_prefix("Briefsip:")).map(str::trim_start).unwrap_or(&sender));
+        let machine = peer.then(|| sender.strip_prefix("Minarbot:").or_else(|| sender.strip_prefix("Minarbot:")).map(str::trim_start).unwrap_or(&sender));
         let agent = if peer { "Minarbot" } else { &sender };
         db.execute("INSERT INTO delivery_conversations(thread,sender,machine,activity) VALUES(?,?,?,?)",rusqlite::params![row["id"].as_str(),agent,machine,now])?;
         if row["revision"] == 1 && string(&row,"name").starts_with("Message from ") {

@@ -165,7 +165,7 @@ impl Host {
             return Err("Device server must be a configured HTTPS origin".into());
         }
         let database = std::path::absolute(database)?;
-        let directory = crate::rename_migration::sidecar(&database, ".host");
+        let directory = minarbot_launcher::files::sidecar(&database, ".host");
         fs::DirBuilder::new()
             .recursive(true)
             .mode(0o700)
@@ -376,8 +376,8 @@ impl Host {
             .bearer_auth(token)
             .header("origin", &self.identity.server)
             .header("content-type", "application/json")
-            .header("x-briefsip-protocol", "1")
-            .header("x-briefsip-request-id", request);
+            .header("x-minarbot-protocol", "1")
+            .header("x-minarbot-request-id", request);
         if let Some(value) = value {
             req = req.body(value.to_string());
         }
@@ -470,7 +470,7 @@ impl Host {
             let d = &challenge;
             let c = &candidate;
             let body = json!([
-                "briefsip-link-v1",
+                "minarbot-link-v1",
                 d["challengeId"],
                 account,
                 d["clerkSub"],
@@ -481,7 +481,7 @@ impl Host {
                 d["encryptionThumbprint"],
                 c["deviceLabel"],
                 digest(&json!([
-                    "briefsip-device-capabilities-v1",
+                    "minarbot-device-capabilities-v1",
                     c["requestedCapabilities"]
                 ])),
                 d["authorityGeneration"],
@@ -496,7 +496,7 @@ impl Host {
                 expires_at
             ]);
             let signature = signing.sign(&json!([
-                "briefsip-device-descriptor-v1",
+                "minarbot-device-descriptor-v1",
                 account,
                 c["installationId"],
                 c["deviceId"],
@@ -517,7 +517,7 @@ impl Host {
                 let old = self.key(&self.identity.signing_ref, false, false)?;
                 request["rotationSignature"] = old
                     .sign(&json!([
-                        "briefsip-device-key-transition-v1",
+                        "minarbot-device-key-transition-v1",
                         byte_digest(&old.public()),
                         body
                     ]))?
@@ -579,7 +579,7 @@ impl Host {
         let body_digest = byte_digest(body.as_bytes());
         let name = method.as_str();
         let sign = json!([
-            "briefsip-device-request-v1",
+            "minarbot-device-request-v1",
             self.identity.device_id,
             d["deviceGeneration"],
             d["authorityGeneration"],
@@ -599,9 +599,9 @@ impl Host {
             .client
             .request(method, format!("{}{path}", self.identity.server))
             .header("content-type", "application/json")
-            .header("x-briefsip-protocol", "1")
-            .header("x-briefsip-request-id", request)
-            .header("x-briefsip-proof", proof.to_string())
+            .header("x-minarbot-protocol", "1")
+            .header("x-minarbot-request-id", request)
+            .header("x-minarbot-proof", proof.to_string())
             .body(body);
         if let Some(token) = token {
             req = req.header("authorization", format!("Device {token}"));
@@ -818,10 +818,8 @@ pub async fn run() -> db::Result<()> {
         }
     }
     let server = server.ok_or("Missing --server <origin>")?;
-    let database = minarbot_launcher::rename_migration::var_os("MINARBOT_DEVICE_DB")
-        .ok_or("Missing MINARBOT_DEVICE_DB")?;
-    let development =
-        minarbot_launcher::rename_migration::var("MINARBOT_DEVELOPMENT").as_deref() == Ok("1");
+    let database = std::env::var_os("MINARBOT_DEVICE_DB").ok_or("Missing MINARBOT_DEVICE_DB")?;
+    let development = std::env::var("MINARBOT_DEVELOPMENT").as_deref() == Ok("1");
     let testing = fixture_keys.is_some();
     if control && (!testing || !development || enroll || export || task.is_some()) {
         return Err(
@@ -876,7 +874,7 @@ pub async fn run() -> db::Result<()> {
         .await;
         command_output(result)
     } else {
-        if !testing || minarbot_launcher::rename_migration::var_os("MINARBOT_DATA_DIR").is_some() {
+        if !testing || std::env::var_os("MINARBOT_DATA_DIR").is_some() {
             host.provider = Some(Arc::new(provider::Provider::new(None, testing)?));
         }
         stream::run(host).await

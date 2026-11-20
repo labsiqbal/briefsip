@@ -71,7 +71,7 @@ impl Fixture {
         let result = async {
             let path = req.uri().path().to_owned();
             if super::super::host_path(&path) {
-                let request = crate::text_header(req.headers(), "x-briefsip-request-id")
+                let request = crate::text_header(req.headers(), "x-minarbot-request-id")
                     .unwrap_or("")
                     .to_owned();
                 return super::super::host(&f.state, req, &request).await;
@@ -257,7 +257,7 @@ fn decrypt(
     let shared = private.agree(host_public)?;
     let salt = hkdf::Salt::new(hkdf::HKDF_SHA256, text(request, "requestId").as_bytes());
     let prk = salt.extract(&shared);
-    let info = [b"briefsip-wait-reveal-v1".as_slice()];
+    let info = [b"minarbot-wait-reveal-v1".as_slice()];
     let mut bytes = [0; 32];
     prk.expand(&info, &aead::AES_256_GCM)
         .map_err(|_| Failure::storage())?
@@ -320,7 +320,7 @@ async fn signed_stream_handles_bounded_wait_event_and_reveal_without_sending_pla
         "sourceDeviceId":home.identity.device_id,"sourceDeviceGeneration":descriptor["deviceGeneration"],
         "authorityGeneration":descriptor["authorityGeneration"],"secretGeneration":1,"event":"ready","deadline":now()+60000,
         "target":{"kind":"turn","taskId":request_id(),"actionId":request_id(),"toolCallId":"call"}});
-    provision["payloadDigest"] = digest(&json!(["briefsip-wait-provision-v1", provision])).into();
+    provision["payloadDigest"] = digest(&json!(["minarbot-wait-provision-v1", provision])).into();
     let reference = format!("event-wait/{key}/1");
     let key_service = format!(
         "minarbot/{}/{}",
@@ -381,7 +381,7 @@ async fn signed_stream_handles_bounded_wait_event_and_reveal_without_sending_pla
     .collect();
     event["byteLength"] = body.len().into();
     event["bodyDigest"] = byte_digest(&body).into();
-    event["headers"] = json!({"x-briefsip-time":at.to_string(),"x-briefsip-id":delivery,"x-briefsip-signature":signature});
+    event["headers"] = json!({"x-minarbot-time":at.to_string(),"x-minarbot-id":delivery,"x-minarbot-signature":signature});
     let (response, handled) =
         tokio::join!(waits::request(&fixture.state, &event, Some(&body)), async {
             for _ in 0..3 {

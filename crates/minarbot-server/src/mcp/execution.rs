@@ -55,12 +55,7 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value, args: &Value) -> 
     let token = client::decrypt(state, string(&row, "token"), url)?;
     let mut session = client::Session::open(url, &token).await?;
     let name = string(args, "name");
-    let tools = connections::clean_tools(
-        &session
-            .catalogue(name.starts_with("briefsip_context_"))
-            .await?,
-        &token,
-    )?;
+    let tools = connections::clean_tools(&session.catalogue().await?, &token)?;
     let expected = data::json(&row["tools"])?;
     let tool=tools.as_array().and_then(|a|a.iter().find(|v|v["name"]==name)).ok_or_else(||error(409,"MCP tool definition changed. Test a connection update before granting access again."))?;
     if expected

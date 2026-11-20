@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { testDatabase } from './test-support/database.ts';
-import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
+import { installCanonicalFixture } from './test-support/canonical-schema.ts';
 import { startRustServer } from './rust-test-server.ts';
 import { startApp } from './test-bridge.ts';
 
@@ -20,7 +20,7 @@ test('Rust JWKS rotates keys, rejects unknown signatures and enforces audience',
   await new Promise<void>(ready => api.listen(0,'127.0.0.1',ready)); const address=api.address(); assert(address&&typeof address!=='string');
   const auth = { secretKey:'sk_test_fixture',publishableKey:'pk_test_fixture',issuer:'https://fixture.clerk.accounts.dev',origin:'https://minarbot.example',development:true,audience:'minarbot',apiUrl:`http://127.0.0.1:${address.port}` };
   const app = await startApp({ database: join(root, 'db.sqlite'), auth }, { directory: root, servers: [api] });
-  const send=async (index:number,overrides:Record<string,unknown>={}) => { const now=Math.floor(Date.now()/1000); const input=`${Buffer.from(JSON.stringify({alg:'RS256',kid:String(index)})).toString('base64url')}.${Buffer.from(JSON.stringify({iss:auth.issuer,sub:'user_fixture',sid:'sess_fixture',azp:auth.origin,nbf:now-1,exp:now+60,aud:'minarbot',...overrides})).toString('base64url')}`; const jwt=`${input}.${sign('RSA-SHA256',Buffer.from(input),keys[index%2].privateKey).toString('base64url')}`; const response=await fetch(app.origin+'/api/session',{headers:{Authorization:`Bearer ${jwt}`,'Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':randomUUID()}}); const body=await response.json(); return {status:response.status,body}; };
+  const send=async (index:number,overrides:Record<string,unknown>={}) => { const now=Math.floor(Date.now()/1000); const input=`${Buffer.from(JSON.stringify({alg:'RS256',kid:String(index)})).toString('base64url')}.${Buffer.from(JSON.stringify({iss:auth.issuer,sub:'user_fixture',sid:'sess_fixture',azp:auth.origin,nbf:now-1,exp:now+60,aud:'minarbot',...overrides})).toString('base64url')}`; const jwt=`${input}.${sign('RSA-SHA256',Buffer.from(input),keys[index%2].privateKey).toString('base64url')}`; const response=await fetch(app.origin+'/api/session',{headers:{Authorization:`Bearer ${jwt}`,'Content-Type':'application/json','X-Minarbot-Protocol':'1','X-Minarbot-Request-Id':randomUUID()}}); const body=await response.json(); return {status:response.status,body}; };
   try { const first=await send(0); assert.equal(first.status,200); assert(calls>0); rotated=true; const before=calls; assert.equal((await send(1)).body.data.accountId,first.body.data.accountId); assert(calls>before); assert.equal((await send(2)).status,401); assert.equal((await send(0,{aud:'wrong'})).status,401); assert.equal((await send(0,{aud:['other','minarbot']})).status,200); }
   finally { await app.close(); api.closeAllConnections(); await new Promise<void>(ready=>api.close(()=>ready())); rmSync(root,{recursive:true,force:true}); }
 });
@@ -52,7 +52,7 @@ test('Rust opens every canonical schema version and rejects migration drift', as
     const expected = inspect(database);
     for (const version of [1, 2, 3, 4] as const) {
       const upgrade = join(root, `v${version}`), db = testDatabase(upgrade);
-      installFrozenNodeSchema(db, version);
+      installCanonicalFixture(db, version);
       db.close();
       const server = await startRustServer({ database: upgrade, auth });
       await server.close();

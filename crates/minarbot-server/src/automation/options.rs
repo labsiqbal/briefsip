@@ -14,10 +14,7 @@ pub struct Options {
 impl Options {
     pub fn environment() -> Self {
         Self {
-            script_directory: minarbot_launcher::rename_migration::var_os(
-                "MINARBOT_SCRIPT_DIRECTORY",
-            )
-            .map(PathBuf::from),
+            script_directory: std::env::var_os("MINARBOT_SCRIPT_DIRECTORY").map(PathBuf::from),
             ..Self::default()
         }
     }

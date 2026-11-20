@@ -155,11 +155,7 @@ impl Metrics {
             ("rollback-journal", "-journal"),
             ("mcp-key", ".mcp-key"),
         ] {
-            let path = if kind == "mcp-key" {
-                crate::rename_migration::sidecar(&state.config.database, suffix)
-            } else {
-                crate::rename_migration::exact_sidecar(&state.config.database, suffix)
-            };
+            let path = minarbot_launcher::files::sidecar(&state.config.database, suffix);
             let (status, bytes) = match fs::symlink_metadata(path) {
                 Ok(m) if m.is_file() => ("present", Some(m.len().to_string())),
                 Ok(_) => ("not-regular", None),

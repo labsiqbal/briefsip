@@ -36,7 +36,7 @@ pub fn read_only(source: &Path, target: &Path) -> db::Result<Value> {
 
 pub fn workspace(source: &Path, target: &Path, canonical_only: bool) -> db::Result<Option<Value>> {
     for suffix in ["", "-wal", "-shm", "-journal"] {
-        let path = crate::rename_migration::exact_sidecar(target, suffix);
+        let path = minarbot_launcher::files::sidecar(target, suffix);
         match fs::symlink_metadata(path) {
             Ok(_) => {
                 return Err("Restore target must be a new database without companion files.".into())
@@ -59,7 +59,6 @@ pub fn workspace(source: &Path, target: &Path, canonical_only: bool) -> db::Resu
     connection.execute_batch(
         "PRAGMA trusted_schema=OFF; PRAGMA foreign_keys=ON; PRAGMA journal_mode=DELETE;",
     )?;
-    minarbot_launcher::rename_migration::normalize_backup_tables(&connection)?;
     let manifest = connection.query_row(
         "SELECT format,version,(SELECT count(*) FROM minarbot_backup) FROM minarbot_backup",
         [],
@@ -71,18 +70,13 @@ pub fn workspace(source: &Path, target: &Path, canonical_only: bool) -> db::Resu
             ))
         },
     )?;
-    let canonical = manifest.1 == 6
-        && manifest.2 == 1
-        && minarbot_launcher::rename_migration::backup_format(&manifest.0, manifest.1);
+    let canonical = manifest.0 == "minarbot-canonical-v6" && manifest.1 == 6 && manifest.2 == 1;
     if !canonical && canonical_only {
         return Err("Read-only restore requires a canonical backup.".into());
     }
     let has_authority = table(&connection, "authority_state").map_err(|e| e.message)?;
     if canonical != has_authority
-        || !canonical
-            && (manifest.1 != 1
-                || manifest.2 != 1
-                || !minarbot_launcher::rename_migration::backup_format(&manifest.0, manifest.1))
+        || !canonical && (manifest.0 != "minarbot-workspace" || manifest.1 != 1 || manifest.2 != 1)
     {
         return Err("Unsupported Minarbot backup format.".into());
     }
@@ -219,7 +213,7 @@ pub(super) fn owner(db: &Connection, actor: &Actor, now: i64) -> Result<Value, F
 
 pub(super) fn session_digest(actor: &Actor, issuer: &Value, session: &str) -> String {
     digest(&canonical(&json!([
-        "briefsip-restore-session-v1",
+        "minarbot-restore-session-v1",
         actor.account,
         issuer,
         actor.subject,

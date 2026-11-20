@@ -1,4 +1,3 @@
-import { readProductStorage } from './rename-storage.ts';
 import { useState, type ReactNode } from 'react';
 import { Collapsible } from 'radix-ui';
 import { ChevronRight } from 'lucide-react';
@@ -9,7 +8,7 @@ export function AgentSidebar({ machine = 'local', label = 'Choose agent', agents
   searching?: boolean; children?: ReactNode;
 }) {
   const key = `minarbot:sidebar-agents:${machine}`;
-  const [expanded, setExpanded] = useState(() => { try { return readProductStorage(localStorage, key) !== 'closed'; } catch { return true; } });
+  const [expanded, setExpanded] = useState(() => { try { return localStorage.getItem(key) !== 'closed'; } catch { return true; } });
   return <Collapsible.Root className="agent-sidebar" open={searching || expanded} onOpenChange={open => {
     setExpanded(open); try { localStorage.setItem(key, open ? 'open' : 'closed'); } catch { /* Keep dropdown usable without storage. */ }
   }}>

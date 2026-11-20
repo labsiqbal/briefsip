@@ -1,5 +1,4 @@
 use crate::{files::*, timestamp, Result};
-use minarbot_launcher::rename_migration::exact_sidecar;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use std::{fs, os::unix::fs::MetadataExt, path::Path, time::Duration};
 
@@ -10,7 +9,7 @@ pub fn run(command: &str, database: &Path, destination: &Path) -> Result<()> {
         return Err("Canonical database must be a file without hard links.".into());
     }
     let _guard = lease(
-        &exact_sidecar(&source, ".server-lock.sqlite"),
+        &sidecar(&source, ".server-lock.sqlite"),
         "Another canonical server is still running.",
     )?;
     match command {
@@ -28,15 +27,16 @@ pub fn run(command: &str, database: &Path, destination: &Path) -> Result<()> {
         "restore" => {
             let snapshot =
                 Connection::open_with_flags(destination, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-            let table = minarbot_launcher::rename_migration::backup_table(&snapshot)?;
             let (format, version): (String, i64) =
-                snapshot.query_row(&format!("SELECT format,version FROM {table}"), [], |r| {
+                snapshot.query_row("SELECT format,version FROM minarbot_backup", [], |r| {
                     Ok((r.get(0)?, r.get(1)?))
                 })?;
             let integrity: String =
                 snapshot.query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
-            if !minarbot_launcher::rename_migration::backup_format(&format, version)
-                || integrity != "ok"
+            if !matches!(
+                (format.as_str(), version),
+                ("minarbot-workspace", 1) | ("minarbot-canonical-v6", 6)
+            ) || integrity != "ok"
                 || snapshot.prepare("PRAGMA foreign_key_check")?.exists([])?
             {
                 return Err("Invalid update snapshot.".into());
@@ -48,7 +48,7 @@ pub fn run(command: &str, database: &Path, destination: &Path) -> Result<()> {
                 .join(".update-restore.sqlite");
             durable(&staged, &fs::read(destination)?)?;
             for suffix in ["-wal", "-shm", "-journal"] {
-                remove(&exact_sidecar(&source, suffix))?;
+                remove(&sidecar(&source, suffix))?;
             }
             fs::rename(staged, &source)?;
             sync_dir(source.parent().ok_or("Invalid database path")?)
@@ -63,7 +63,6 @@ fn snapshot(source: &Path, target: &Path) -> Result<()> {
         let backup = rusqlite::backup::Backup::new(&source, &mut db)?;
         backup.run_to_completion(100, Duration::from_millis(10), None)?;
     }
-    minarbot_launcher::rename_migration::normalize_backup_tables(&db)?;
     db.execute_batch("CREATE TABLE IF NOT EXISTS minarbot_backup (format TEXT NOT NULL,version INTEGER NOT NULL,created TEXT NOT NULL) STRICT; DELETE FROM minarbot_backup;")?;
     db.execute(
         "INSERT INTO minarbot_backup VALUES ('minarbot-workspace',1,?)",

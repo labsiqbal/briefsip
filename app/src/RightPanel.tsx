@@ -1,4 +1,3 @@
-import { readProductStorage } from './rename-storage.ts';
 // Panel tabs and surface composition adapted from T3 (MIT); see ../t3/provenance.json.
 import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -25,7 +24,7 @@ type Context = { workspace: { name: string; project?: string } | null; computer:
 export type RightPanelExtension = { value: string; label: ReactNode; content: ReactNode };
 
 export function useRightPanel(scope: string) {
-  const store = useMemo(() => createRightPanelStore({ getItem: key => readProductStorage(localStorage, key), setItem: (key, value) => localStorage.setItem(key, value) }), []);
+  const store = useMemo(() => createRightPanelStore({ getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) }), []);
   const [selection, setSelection] = useState<{ scope: string; tab: string; file: OpenFile | null }>(() => ({ scope, tab: store.read(scope).tab, file: null }));
   if (selection.scope !== scope) setSelection({ scope, tab: store.read(scope).tab, file: null });
   const [inspector, setInspector] = useState<{ scope: string; target: RunTarget } | null>(null);

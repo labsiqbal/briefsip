@@ -1,4 +1,3 @@
-import { productEnv } from '../../desktop/src/rename-env.mjs';
 import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -116,14 +115,14 @@ export function rustDeviceFixture(database: string, proxy: Awaited<ReturnType<ty
   let results: Recovery[] = [];
   let startupFailure: unknown;
   function worker() {
-    const process = spawn(rustBinary('minarbot-server', productEnv('MINARBOT_RUST_BINARY')),
+    const child = spawn(rustBinary('minarbot-server', process.env.MINARBOT_RUST_BINARY),
       hostArgs(options, ['--test-control']), { env: hostEnv(options), stdio: ['pipe', 'pipe', 'pipe'] });
     let sequence = 0, stderr = '', exitError: Error | undefined;
     const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: unknown) => void }>();
-    process.stdin.on('error', () => {});
-    process.stderr.setEncoding('utf8').on('data', value => { stderr = (stderr + value).slice(-8192); });
-    process.on('error', error => { exitError = error; });
-    createInterface({ input: process.stdout }).on('line', line => {
+    child.stdin.on('error', () => {});
+    child.stderr.setEncoding('utf8').on('data', value => { stderr = (stderr + value).slice(-8192); });
+    child.on('error', error => { exitError = error; });
+    createInterface({ input: child.stdout }).on('line', line => {
       const message = JSON.parse(line);
       if ('phase' in message) { state = message; return; }
       if ('recovery' in message) { results = message.recovery; return; }
@@ -137,7 +136,7 @@ export function rustDeviceFixture(database: string, proxy: Awaited<ReturnType<ty
         operation.resolve(message.value);
       }
     });
-    const exited = new Promise<void>(resolve => process.once('close', () => {
+    const exited = new Promise<void>(resolve => child.once('close', () => {
       exitError ??= new Error(stderr.trim() || 'Rust device fixture stopped.');
       for (const operation of pending.values()) operation.reject(exitError);
       pending.clear();
@@ -149,13 +148,13 @@ export function rustDeviceFixture(database: string, proxy: Awaited<ReturnType<ty
           if (exitError) { reject(exitError); return; }
           const id = ++sequence;
           pending.set(id, { resolve: value => resolve(value as T), reject });
-          process.stdin.write(JSON.stringify({ id, op, ...args }) + '\n');
+          child.stdin.write(JSON.stringify({ id, op, ...args }) + '\n');
         });
       },
       async close() {
-        if (!process.stdin.writableEnded) process.stdin.end();
+        if (!child.stdin.writableEnded) child.stdin.end();
         const timeout = setTimeout(() => {
-          if (process.exitCode === null && process.signalCode === null) process.kill('SIGKILL');
+          if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
         }, 5000);
         try { await exited; } finally { clearTimeout(timeout); }
       },
@@ -248,7 +247,7 @@ function hostEnv(options: Options) {
 }
 
 function launch(options: Options, enrollment?: 'new' | 'reenroll' | 'rotate') {
-  const binary = rustBinary('minarbot-server', productEnv('MINARBOT_RUST_BINARY'));
+  const binary = rustBinary('minarbot-server', process.env.MINARBOT_RUST_BINARY);
   const args = hostArgs(options, enrollment ? ['enroll'] : []);
   if (enrollment && enrollment !== 'new') args.push('--' + enrollment);
   const child = spawn(binary, args, { env: hostEnv(options), stdio: ['ignore', 'pipe', 'pipe'] });
@@ -323,7 +322,7 @@ export async function enrollRustDevice(options: Options, clerkToken: string, mod
 }
 
 export function startRustDeviceTask(options: Options, taskId: string, provider: string, checkpoint?: string) {
-  const binary = rustBinary('minarbot-server', productEnv('MINARBOT_RUST_BINARY'));
+  const binary = rustBinary('minarbot-server', process.env.MINARBOT_RUST_BINARY);
   const args = hostArgs(options, ['run-task', taskId]);
   args.push('--test-provider', provider);
   if (checkpoint) args.push('--test-checkpoint', checkpoint);
@@ -335,7 +334,7 @@ export type RecoveryExport = {
 };
 
 export function exportRustDeviceRecovery(options: Options, taskId: string, actionIds: string[], requestId: string, recoveryGeneration: string, withContent = false): RecoveryExport {
-  const binary = rustBinary('minarbot-server', productEnv('MINARBOT_RUST_BINARY'));
+  const binary = rustBinary('minarbot-server', process.env.MINARBOT_RUST_BINARY);
   try {
     const output = execFileSync(binary, hostArgs(options, ['export-recovery']), {
       env: hostEnv(options), encoding: 'utf8', maxBuffer: 9 * 1024 * 1024, timeout: 15_000,

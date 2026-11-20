@@ -219,7 +219,7 @@ pub fn list(s: &AppState) -> Result<Vec<Value>> {
     .collect()
 }
 fn key(s: &AppState, create: bool) -> Result<Vec<u8>> {
-    let path = crate::rename_migration::sidecar(&s.config.database, ".peer-key");
+    let path = minarbot_launcher::files::sidecar(&s.config.database, ".peer-key");
     if create {
         match OpenOptions::new()
             .write(true)
@@ -557,8 +557,8 @@ async fn remote_with_client(
         }
         if path == "/api/peer/agents" {
             req = req
-                .header("X-Briefsip-Messaging-Policy", "1")
-                .header("X-Briefsip-Provider-Accounts", "1");
+                .header("X-Minarbot-Messaging-Policy", "1")
+                .header("X-Minarbot-Provider-Accounts", "1");
         }
         let mut response = peer_http(s, req).await.map_err(|failure| {
             if track_transport {
@@ -1457,7 +1457,7 @@ pub async fn download_release(
         .get(format!("{origin}/api/updates/releases/{release}"))
         .bearer_auth(token);
     if polling {
-        request = request.header("X-Briefsip-Update-Poll", "1");
+        request = request.header("X-Minarbot-Update-Poll", "1");
     }
     if offset > 0 {
         request = request.header(reqwest::header::RANGE, format!("bytes={offset}-"));
@@ -1629,7 +1629,7 @@ pub async fn handle(
                     .is_some_and(|b| {
                         request
                             .headers()
-                            .get("x-briefsip-test-refresh")
+                            .get("x-minarbot-test-refresh")
                             .and_then(|v| v.to_str().ok())
                             == Some(b.token.as_str())
                     })
@@ -1644,10 +1644,10 @@ pub async fn handle(
                     auth.as_deref(),
                     request
                         .headers()
-                        .get("x-briefsip-messaging-policy")
+                        .get("x-minarbot-messaging-policy")
                         .and_then(|v| v.to_str().ok())
                         == Some("1"),
-                    crate::text_header(request.headers(), "x-briefsip-provider-accounts")
+                    crate::text_header(request.headers(), "x-minarbot-provider-accounts")
                         == Some("1"),
                 )
                 .await?

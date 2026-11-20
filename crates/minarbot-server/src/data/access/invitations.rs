@@ -141,7 +141,7 @@ pub(super) fn create(
     let command = parse(v)?;
     let request = string(&command, "requestId");
     let scope = format!("invitations:create:{project}");
-    let hash = digest(json!(["briefsip-invitation-create-v1", project, command]));
+    let hash = digest(json!(["minarbot-invitation-create-v1", project, command]));
     transaction(db, || {
         member(db, account, project, true)?;
         if let Some(old) = replay(db, account, request, project, &scope, &hash)? {
@@ -228,7 +228,7 @@ pub(super) fn revoke(
     let command = json!({"requestId":request,"expectedRevision":expected});
     let scope = format!("invitations:revoke:{invitation}");
     let hash = digest(json!([
-        "briefsip-invitation-revoke-v1",
+        "minarbot-invitation-revoke-v1",
         invitation,
         command
     ]));
@@ -312,7 +312,7 @@ pub async fn accept(
         })?;
     let token_digest = digest_bytes(&token);
     let hash = digest(json!([
-        "briefsip-invitation-accept-v1",
+        "minarbot-invitation-accept-v1",
         invitation,
         request,
         token_digest,

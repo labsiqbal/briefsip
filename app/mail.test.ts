@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
-import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
+import { installCanonicalFixture } from './test-support/canonical-schema.ts';
 import { encryptMail, mailLookupDigest, serializeMailEnvelope } from './test-support/mail-fixture.ts';
 import { waitFor } from './test-support/rust-connector-fixture.ts';
 
@@ -15,7 +15,7 @@ test('Rust mail retries an exact envelope once and fences missing keys, old auth
   const root = mkdtempSync(join(tmpdir(), 'minarbot-rust-mail-retry-'));
   const database = join(root, 'app.sqlite');
   const db = testDatabase(database);
-  installFrozenNodeSchema(db);
+  installCanonicalFixture(db);
   const account = randomUUID(), project = randomUUID(), keyId = randomUUID(), key = randomBytes(32);
   const now = Date.now();
   const generation = String(db.prepare('SELECT generation FROM authority_state').get()!.generation);
@@ -70,7 +70,7 @@ test('Rust mail retries an exact envelope once and fences missing keys, old auth
     await waitFor(() => state(first).state === 'sent', 'Mail retry did not settle');
     assert.equal(requests.length, 2);
     assert.deepEqual(requests[0], requests[1]);
-    assert.equal(requests[0].key, `briefsip-invite/${first}/1`);
+    assert.equal(requests[0].key, `minarbot-invite/${first}/1`);
     assert.equal(state(first).bytes, 0);
     assert.equal(state(first).revision, 2);
     assert.equal(state(locked).attempts, 0);

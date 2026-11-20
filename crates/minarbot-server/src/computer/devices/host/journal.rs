@@ -50,7 +50,7 @@ pub(super) fn reported(row: &Value, saved: &Value) -> Result<Value> {
 }
 
 fn report_digest(task: &str, report: &Value) -> String {
-    digest(&json!(["briefsip-task-reconcile-v1",task,{
+    digest(&json!(["minarbot-task-reconcile-v1",task,{
         "requestId":report["requestId"],"actionId":report["actionId"],"ownership":report["ownership"],"payloadDigest":report["payloadDigest"],
         "state":report["state"],"effectStatus":report["effectStatus"],"journalSequence":report["journalSequence"],"resultDigest":report["resultDigest"],
         "resultRef":report["resultRef"],"uncertainReason":report["uncertainReason"],"resultContentDigest":report.get("resultContent").map(|v| db::digest(&db::canonical(v))),
@@ -418,7 +418,7 @@ impl Host {
                     || receipt["recordRevision"] != data["revision"]
                     || receipt["payloadDigest"]
                         != digest(&json!([
-                            "briefsip-task-complete-v1",
+                            "minarbot-task-complete-v1",
                             task,
                             action,
                             saved["ownership"]

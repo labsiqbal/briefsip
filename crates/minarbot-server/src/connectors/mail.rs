@@ -18,7 +18,7 @@ fn decode(value: &Value) -> Result<Vec<u8>> {
 }
 fn aad(invitation: &Value, revision: &Value, generation: &Value, email_hash: &Value) -> String {
     json!([
-        "briefsip-mail-outbox-v1",
+        "minarbot-mail-outbox-v1",
         invitation,
         revision,
         generation,
@@ -253,7 +253,7 @@ pub async fn deliver(state: &AppState, id: &str) -> Result<()> {
             .header(
                 // Preserve deduplication if a pending send retries after an upgrade.
                 "Idempotency-Key",
-                format!("briefsip-invite/{id}/{}", row["revision"]),
+                format!("minarbot-invite/{id}/{}", row["revision"]),
             )
             .body(plaintext)
             .timeout(Duration::from_secs(15))

@@ -17,7 +17,7 @@ use std::{net::SocketAddr, time::Duration};
 type Result<T> = std::result::Result<T, Failure>;
 
 const COOKIE: &str = "__Host-minarbot-device";
-const LEGACY_COOKIE: &str = "__Host-briefsip-device";
+const LEGACY_COOKIE: &str = "__Host-minarbot-device";
 const MANAGE: &str = "/api/device-pairing";
 const ISSUE: &str = "/api/device-pairing/code";
 const REVOKE: &str = "/api/device-pairing/revoke";

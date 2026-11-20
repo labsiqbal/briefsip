@@ -61,7 +61,7 @@ impl Home {
         });
         descriptor["signature"] = signing
             .sign(&json!([
-                "briefsip-device-descriptor-v1",
+                "minarbot-device-descriptor-v1",
                 descriptor["accountId"],
                 descriptor["installationId"],
                 descriptor["deviceId"],
@@ -125,7 +125,7 @@ impl Home {
         json!({"data":{"provisionId":result["provisionId"],"state":state,"receipt":{"marker":"canonical"}},
             "receipt":{"requestId":result["requestId"],"recordId":result["provisionId"],
                 "actorId":self.host.identity.descriptor.as_ref().unwrap_or_else(|| panic!("Missing wait fixture state"))["accountId"],
-                "payloadDigest":digest(&json!(["briefsip-wait-secret-result-v1",result]))}})
+                "payloadDigest":digest(&json!(["minarbot-wait-secret-result-v1",result]))}})
     }
 
     fn secret(&self, request: &Value) -> db::Result<Option<String>> {
@@ -152,7 +152,7 @@ fn signed_provision(mut body: Value) -> Value {
     body.as_object_mut()
         .unwrap_or_else(|| panic!("Missing wait fixture state"))
         .remove("payloadDigest");
-    body["payloadDigest"] = digest(&json!(["briefsip-wait-provision-v1", body])).into();
+    body["payloadDigest"] = digest(&json!(["minarbot-wait-provision-v1", body])).into();
     body
 }
 
@@ -590,10 +590,10 @@ fn event_assembly_rejects_bounds_duplicates_disorder_corruption_and_timeout() {
     let mut request = json!({
         "waitKey":request_id(),"sourceDeviceId":request_id(),"deviceGeneration":1,"authorityGeneration":request_id(),
         "secretGeneration":1,"connectionGeneration":1,"expiresAt":1,"byteLength":body.len(),"bodyDigest":byte_digest(&body),
-        "headers":{"x-briefsip-time":"1","x-briefsip-id":"delivery","x-briefsip-signature":"0".repeat(64)}
+        "headers":{"x-minarbot-time":"1","x-minarbot-id":"delivery","x-minarbot-signature":"0".repeat(64)}
     });
     let job_id = request_id();
-    let digest = digest(&json!(["briefsip-wait-event-v1", request]));
+    let digest = digest(&json!(["minarbot-wait-event-v1", request]));
     let chunks: Vec<_> = body.chunks(CHUNK).enumerate().map(|(index, chunk)| {
         json!({"jobId":job_id,"request":request,"payloadDigest":digest,"offset":index*CHUNK,"chunk":B64.encode(chunk)})
     }).collect();
@@ -687,7 +687,7 @@ fn home_event_rechecks_keys_authority_and_hmac_on_expired_replay() -> db::Result
         .collect::<String>()
     };
     let time = now() / 1000;
-    request["headers"] = json!({"x-briefsip-time":time.to_string(),"x-briefsip-id":delivery,"x-briefsip-signature":signature(time)});
+    request["headers"] = json!({"x-minarbot-time":time.to_string(),"x-minarbot-id":delivery,"x-minarbot-signature":signature(time)});
     assert_eq!(
         event(&f.host, &request, body)
             .unwrap_or_else(|error| panic!("Wait fixture failed: {error:?}"))["digest"],
@@ -711,8 +711,8 @@ fn home_event_rechecks_keys_authority_and_hmac_on_expired_replay() -> db::Result
         );
     }
 
-    request["headers"]["x-briefsip-time"] = "1".into();
-    request["headers"]["x-briefsip-signature"] = signature(1).into();
+    request["headers"]["x-minarbot-time"] = "1".into();
+    request["headers"]["x-minarbot-signature"] = signature(1).into();
     f.host
         .db
         .execute("UPDATE device_wait_secrets SET deadline=?", [now()])?;
@@ -730,7 +730,7 @@ fn home_event_rechecks_keys_authority_and_hmac_on_expired_replay() -> db::Result
         delivery
     );
     let mut changed = request.clone();
-    changed["headers"]["x-briefsip-signature"] = "0".repeat(64).into();
+    changed["headers"]["x-minarbot-signature"] = "0".repeat(64).into();
     assert_eq!(
         event(&f.host, &changed, body)
             .err()

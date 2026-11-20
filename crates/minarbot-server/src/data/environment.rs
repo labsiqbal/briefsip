@@ -45,7 +45,7 @@ fn name(v: &Value) -> Result<&str> {
         "GLOBIGNORE",
     ]
     .contains(&value)
-        || ["LD_", "DYLD_", "NODE_", "MINARBOT_", "BRIEFSIP_", "PYTHON"]
+        || ["LD_", "DYLD_", "NODE_", "MINARBOT_", "PYTHON"]
             .iter()
             .any(|prefix| value.starts_with(prefix))
     {

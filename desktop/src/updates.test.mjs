@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
-import { githubRepository } from '../../scripts/rename-compat.mjs';
+import { githubRepository } from '../../scripts/release.mjs';
 import { configureUpdates, UPDATE_INTERVAL_MS } from './updates.mjs';
 
 test('AppImage updater uses electron-builder configuration for the public release feed', () => {

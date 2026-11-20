@@ -1,4 +1,3 @@
-import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { usePolling } from './hooks/usePolling';
 import { diffLines } from './diff-lines';
 export { diffLines } from './diff-lines';
@@ -68,7 +67,7 @@ export function RestoreCheckpoint({ agent, turn, request }: { agent: string; tur
   const [pending, setPending] = useState<RestoreCommand | null>(null), [invalid, setInvalid] = useState(false);
   const flight = useRef(false);
   useEffect(() => { try {
-    const raw = readProductStorage(sessionStorage, storage); if (!raw) return;
+    const raw = sessionStorage.getItem(storage); if (!raw) return;
     const value = JSON.parse(raw);
     if (!value || Object.keys(value).some(key => !['id', 'checkpointId', 'digest'].includes(key)) || !/^[a-f0-9-]{36}$/.test(value.id) || value.checkpointId !== turn || !/^[a-f0-9]{64}$/.test(value.digest)) throw new Error('Invalid saved restoration.');
     setPending(value);
@@ -88,13 +87,13 @@ export function RestoreCheckpoint({ agent, turn, request }: { agent: string; tur
       sessionStorage.setItem(storage, JSON.stringify(command)); setPending(command);
       const result = await request<{ restored?: boolean; error?: string }>(`/api/agents/${agent}/git/checkpoints/${turn}/restore`, command);
       if (!result.restored) throw new Error(result.error ?? 'Restoration is uncertain. Inspect source control before another write.');
-      removeProductStorage(sessionStorage, storage); setPending(null); setOpen(false); setNotice('Workspace files restored. A safety checkpoint was saved.');
+      sessionStorage.removeItem(storage); setPending(null); setOpen(false); setNotice('Workspace files restored. A safety checkpoint was saved.');
     } catch (error) { setError(message(error)); }
     finally { flight.current = false; setBusy(false); }
   }
   async function discard() {
     if (!await confirm({ title: 'Clear restoration request?', description: 'Inspect the workspace first. Files already restored stay changed; clearing this request does not undo them.', confirm: 'Clear request', danger: true })) return;
-    try { removeProductStorage(sessionStorage, storage); setPending(null); setInvalid(false); setOpen(false); setError(''); } catch (error) { setError(message(error)); }
+    try { sessionStorage.removeItem(storage); setPending(null); setInvalid(false); setOpen(false); setError(''); } catch (error) { setError(message(error)); }
   }
   return <div className="bs-root checkpoint-action"><IconButton label="Restore to before this turn" onClick={() => void show()}><RotateCcw size={14} aria-hidden /></IconButton>{notice && <p role="status" className="source-control__hint">{notice}</p>}
     <Dialog open={open} onOpenChange={next => { if (!busy) setOpen(next); }} title="Restore to before this turn?" description="Restore the listed workspace files. Current files are checkpointed first. HEAD and the Git index stay unchanged." footer={<>

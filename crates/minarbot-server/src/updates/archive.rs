@@ -363,7 +363,7 @@ async fn append(
         )));
     }
     if expected_size.is_none()
-        && (get("x-briefsip-sha256") != Some(expected)
+        && (get("x-minarbot-sha256") != Some(expected)
             || get("content-type") != Some("application/gzip"))
     {
         return Err(metadata_error());
@@ -623,7 +623,7 @@ mod tests {
                 let mut response = Response::builder()
                     .header(header::CONTENT_TYPE, "application/gzip")
                     .header(header::CONTENT_LENGTH, size - start)
-                    .header("x-briefsip-sha256", sha256);
+                    .header("x-minarbot-sha256", sha256);
                 if start > 0 {
                     response = response.status(StatusCode::PARTIAL_CONTENT).header(
                         header::CONTENT_RANGE,
@@ -763,7 +763,7 @@ mod tests {
                 (
                     [
                         ("content-type", "application/gzip"),
-                        ("x-briefsip-sha256", "hash"),
+                        ("x-minarbot-sha256", "hash"),
                     ],
                     Body::from_stream(body),
                 )

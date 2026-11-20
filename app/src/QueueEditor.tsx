@@ -1,4 +1,3 @@
-import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { useRef, useState } from 'react';
 import { Pencil } from 'lucide-react';
 import { Attachments } from './Attachments';
@@ -17,7 +16,7 @@ export function QueueEditor({ turn, path, archived, request, onChanged }: { turn
   const pending = useRef<Command | null>(recovery.command), flight = useRef(false);
   useQueueEditLease(endpoint, draft, request, value => {
     try {
-      if (readProductStorage(sessionStorage, key)) { void act('save'); return; }
+      if (sessionStorage.getItem(key)) { void act('save'); return; }
     } catch { setError('Draft storage is unavailable. Copy your edit before leaving.'); return; }
     setDraft(null); pending.current = null; setError(value); onChanged();
   }, key);
@@ -41,7 +40,7 @@ export function QueueEditor({ turn, path, archived, request, onChanged }: { turn
     try {
       const result = await request<{ revision: number }>(endpoint, command);
       pending.current = null;
-      if (command.action !== 'hold') removeProductStorage(sessionStorage, key);
+      if (command.action !== 'hold') sessionStorage.removeItem(key);
       setDraft(command.action === 'hold' ? { ...value, revision: result.revision } : null);
       onChanged();
     } catch (error) {

@@ -1,4 +1,3 @@
-import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { useVisiblePolling } from './hooks/useVisiblePolling';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { siteCommand } from './site-command';
@@ -23,7 +22,7 @@ export function SitesPanel({ agent, request }: { agent: string; request: <T>(pat
   const after = cursors.at(-1)!;
   const failure = (reason: unknown) => reason instanceof TypeError ? 'Connection lost. Retry with the same request.' : reason instanceof Error ? reason.message : 'Site could not load. Try again.';
   useEffect(() => {
-    try { const stored = readProductStorage(sessionStorage, key); if (stored) { setPending(siteCommand(JSON.parse(stored))); setOpen(true); setEditorOpen(true); } }
+    try { const stored = sessionStorage.getItem(key); if (stored) { setPending(siteCommand(JSON.parse(stored))); setOpen(true); setEditorOpen(true); } }
     catch { setInvalid(true); setOpen(true); setEditorOpen(true); }
     return () => { generation.current++; };
   }, [key]);
@@ -51,7 +50,7 @@ export function SitesPanel({ agent, request }: { agent: string; request: <T>(pat
       const command = pending ?? siteCommand({ id: crypto.randomUUID(), ...(editing ? { site: editing.id, revision: editing.revision } : {}), ...(deleting ? { delete: true } : { name, source }) });
       sessionStorage.setItem(key, JSON.stringify(command)); setPending(command);
       const result = await request<Site>(path, command);
-      if (readProductStorage(sessionStorage, key) === JSON.stringify(command)) removeProductStorage(sessionStorage, key);
+      if (sessionStorage.getItem(key) === JSON.stringify(command)) sessionStorage.removeItem(key);
       if (version !== generation.current) return;
       setPending(null); reset(); setNotice(result.deleted ? 'Site deleted.' : 'Site saved.'); setReload(value => value + 1);
     } catch (reason) { if (version === generation.current) setError(failure(reason)); }
@@ -59,7 +58,7 @@ export function SitesPanel({ agent, request }: { agent: string; request: <T>(pat
   }
   async function discard() {
     if (!await confirm({ title: 'Discard site recovery?', description: 'Changes may already be saved. Check the site list before making new changes.', confirm: 'Discard recovery', danger: true })) return;
-    try { removeProductStorage(sessionStorage, key); setPending(null); setInvalid(false); reset(); setReload(value => value + 1); }
+    try { sessionStorage.removeItem(key); setPending(null); setInvalid(false); reset(); setReload(value => value + 1); }
     catch { setError('Recovery could not be cleared. Check browser storage.'); }
   }
   const locked = busy || !!pending || invalid;

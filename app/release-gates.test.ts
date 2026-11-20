@@ -7,23 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { parseRelease } from '../scripts/release-lib.mjs';
-import { bridgeArchiveName, githubRepository } from '../scripts/rename-compat.mjs';
-const { buildRelease, assertNativeDependencies, defaultSigningKey } = await import(new URL('../scripts/release.mjs', import.meta.url).href);
-
-test('release signing keeps using the legacy default key until a modern key exists', () => {
-  const home = mkdtempSync(join(tmpdir(), 'release-key-path-'));
-  try {
-    const legacy = join(home, '.config/briefsip-release/signing-ed25519.pem');
-    const modern = join(home, '.config/minarbot-release/signing-ed25519.pem');
-    assert.equal(defaultSigningKey(home), modern);
-    mkdirSync(join(home, '.config/briefsip-release'), { recursive: true });
-    writeFileSync(legacy, 'fixture', { mode: 0o600 });
-    assert.equal(defaultSigningKey(home), legacy);
-    mkdirSync(join(home, '.config/minarbot-release'));
-    writeFileSync(modern, 'fixture', { mode: 0o600 });
-    assert.equal(defaultSigningKey(home), modern);
-  } finally { rmSync(home, { recursive: true, force: true }); }
-});
+const { buildRelease, assertNativeDependencies, githubRepository } = await import(new URL('../scripts/release.mjs', import.meta.url).href);
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'release-gates-'));
@@ -149,8 +133,6 @@ console.log(value === 'missing' ? 'libvips.so => not found' : value === 'externa
     for (const name of ['LICENSE', 'agent-delegation.LICENSE']) assert.equal(readFileSync(join(stage, 'bin', name), 'utf8'), 'Fixture notice');
     assert.equal(readFileSync(join(stage, 'bin/provenance.json'), 'utf8'), '{}');
     assert.equal(readFileSync(join(stage, 'bin/minarbot-launcher'), 'utf8'), 'fixture launcher');
-    assert.equal(readFileSync(join(stage, 'bin/briefsip-server'), 'utf8'), 'fixture binary');
-    assert.equal(readFileSync(join(stage, 'bin/briefsip-launcher'), 'utf8'), 'fixture launcher');
     assert.equal(readFileSync(join(stage, 'bin/launcher-provenance.json'), 'utf8'), '{"launcher":true}');
     assert.equal(readFileSync(join(stage, 'bin/launcher.NOTICE'), 'utf8'), 'T3 MIT notice');
     assert.equal(readFileSync(join(stage, 'machine/install-machine.sh'), 'utf8'), readFileSync(new URL('../scripts/install-machine.sh', import.meta.url), 'utf8'));
@@ -164,18 +146,9 @@ console.log(value === 'missing' ? 'libvips.so => not found' : value === 'externa
     rmSync(f.dir, { recursive: true, force: true }); rmSync(bin, { recursive: true, force: true }); }
 });
 
-function copyReleaseSupport(dir: string) {
-  for (const path of ['scripts/rename-compat.mjs', 'desktop/src/rename-env.mjs', 'desktop/package.json']) {
-    const destination = join(dir, path);
-    mkdirSync(join(destination, '..'), { recursive: true });
-    cpSync(new URL(`../${path}`, import.meta.url), destination);
-  }
-}
-
 test('release CLI demonstrates passing and failing --issues using a fixture gh reader', t => {
   const f = fixture(), bin = mkdtempSync(join(tmpdir(), 'release-gh-'));
   try {
-    copyReleaseSupport(f.dir);
     mkdirSync(join(f.dir, 'scripts'), { recursive: true });
     for (const name of ['release.mjs', 'release-lib.mjs', 'install-machine.sh', 'uninstall-machine.sh']) cpSync(new URL(`../scripts/${name}`, import.meta.url), join(f.dir, 'scripts', name));
     cpSync(new URL('../scripts/release-lib.mjs', import.meta.url), join(f.dir, 'scripts/release-lib.mjs'));
@@ -214,7 +187,6 @@ console.log(JSON.stringify({comments: [{body: 'Claimed by Fixture, branch ' + (a
 function githubFixture(t: TestContext) {
   const f = fixture();
   const sandbox = mkdtempSync(join(tmpdir(), 'release-github-'));
-  copyReleaseSupport(f.dir);
   t.after(() => { rmSync(f.dir, { recursive: true, force: true }); rmSync(sandbox, { recursive: true, force: true }); });
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
@@ -317,7 +289,7 @@ test('release CLI uploads exact signed ustar assets and the version-matched desk
   const result = f.run(['--desktop', '--notes', 'Public notes', '--signing-key', f.key], { MINARBOT_RELEASE_SIGNING_KEY: '/wrong/path' });
   assert.equal(result.status, 0, result.stderr);
   const uploaded = (name: string) => readFileSync(join(f.output, name));
-  const archive = bridgeArchiveName('1.0.0');
+  const archive = 'minarbot-1.0.0-linux-x86_64.tar.gz';
   assert.deepEqual(f.calls().find(args => args[1] === 'create')?.slice(11).map(path => path.split('/').at(-1)).sort(), [
     archive, 'latest.json', 'latest.json.sig', 'Minarbot-1.0.0-x86_64.AppImage', 'latest-linux.yml',
   ].sort());

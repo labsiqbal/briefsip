@@ -37,7 +37,7 @@ fn scope(db: &Connection, account: &str, project: &str) -> Result<Value> {
     access::active(db)?;
     let row=one(db,"SELECT p.deleted,p.private,m.role,m.deleted AS revoked,m.grant_revision,a.revision,s.generation,(SELECT coalesce(sum(revision),0) FROM collaborator_agents WHERE account=m.account AND project=m.project) AS assignments,(SELECT count(*) FROM collaborator_agents WHERE account=m.account AND project=m.project) AS assignment_count,(SELECT revision FROM sync_scope_revisions WHERE project=p.id) AS scope_revision FROM projects p JOIN project_members m ON m.project=p.id JOIN accounts a ON a.id=m.account CROSS JOIN authority_state s WHERE p.id=? AND m.account=? AND s.id=1",[project,account])?.ok_or_else(denied)?;
     let generation = access::digest(json!([
-        "briefsip-sync-authorization-v1",
+        "minarbot-sync-authorization-v1",
         row["role"],
         row["grant_revision"],
         row["revision"],
@@ -201,7 +201,7 @@ pub(crate) fn discard_account_snapshots(account: &str) {
 }
 
 fn wal_size(state: &AppState) -> u64 {
-    std::fs::metadata(crate::rename_migration::exact_sidecar(
+    std::fs::metadata(minarbot_launcher::files::sidecar(
         &state.config.database,
         "-wal",
     ))

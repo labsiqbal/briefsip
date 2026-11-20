@@ -9,7 +9,7 @@ import { testDatabase } from './test-support/database.ts';
 import { startRustServer } from './rust-test-server.ts';
 import { startApp } from './test-bridge.ts';
 import { runRustConnector, runRustConnectorJournal } from './rust-connectors-runner.ts';
-import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
+import { installCanonicalFixture } from './test-support/canonical-schema.ts';
 import { encryptMail, serializeMailEnvelope } from './test-support/mail-fixture.ts';
 import { composioToolName } from './test-support/composio-tool-name.ts';
 
@@ -291,7 +291,7 @@ test('Rust calendar exports folded and escaped iCalendar with exact UTC interval
     for (const [index, row] of entries.slice(0, 4).entries()) {
       const summary = index === 0 ? 'Calendar\\; comma\\, \\\\ line\\nBEGIN:VEVENT ' + 'é'.repeat(100) : row.name;
       const event = [
-        'BEGIN:VEVENT', `UID:${row.id}@briefsip.local`, 'DTSTAMP:20260101T000000Z',
+        'BEGIN:VEVENT', `UID:${row.id}@minarbot.local`, 'DTSTAMP:20260101T000000Z',
         `SEQUENCE:${row.revision}`, `DTSTART:${starts[index]}`, `SUMMARY:${summary}`,
         ...(index === 0 ? ['RRULE:FREQ=SECONDLY;INTERVAL=3600'] : []), 'END:VEVENT',
       ];
@@ -308,7 +308,7 @@ test('Rust calendar exports folded and escaped iCalendar with exact UTC interval
 
 test('Rust mail retries exact envelope after lost response and fences expired, revoked, tampered and exhausted jobs', async () => {
   const root = mkdtempSync(join(tmpdir(), 'minarbot-rust-mail-')), database = join(root, 'db');
-  const db = testDatabase(database); installFrozenNodeSchema(db);
+  const db = testDatabase(database); installCanonicalFixture(db);
   const account = randomUUID(), project = randomUUID(), keyId = randomUUID(), key = randomBytes(32), now = Date.now();
   const generation = String(db.prepare('SELECT generation FROM authority_state').get()!.generation);
   db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,?,?,?)').run(account, 'fixture', 'owner', now);

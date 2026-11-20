@@ -47,9 +47,9 @@ stage=$(mktemp -d "$releases/.install.XXXXXX"); archive=$stage/release.tar.gz
 trap 'rm -rf "$stage"' EXIT HUP INT TERM
 headers=$stage/headers
 curl -fsSL -D "$headers" -H "Authorization: Bearer $token" -o "$archive" "$source/api/install/release"
-id=$(sed -n 's/^x-briefsip-release:[[:space:]]*//Ip' "$headers" | tr -d '\r' | tail -n 1)
-sha=$(sed -n 's/^x-briefsip-sha256:[[:space:]]*//Ip' "$headers" | tr -d '\r' | tail -n 1)
-size=$(sed -n 's/^x-briefsip-size:[[:space:]]*//Ip' "$headers" | tr -d '\r' | tail -n 1)
+id=$(sed -n 's/^x-minarbot-release:[[:space:]]*//Ip' "$headers" | tr -d '\r' | tail -n 1)
+sha=$(sed -n 's/^x-minarbot-sha256:[[:space:]]*//Ip' "$headers" | tr -d '\r' | tail -n 1)
+size=$(sed -n 's/^x-minarbot-size:[[:space:]]*//Ip' "$headers" | tr -d '\r' | tail -n 1)
 case "$id" in ''|*[!A-Za-z0-9.-]*) echo 'Invalid release metadata.' >&2; exit 1 ;; esac
 case "$sha" in ''|*[!a-f0-9]*) echo 'Invalid release metadata.' >&2; exit 1 ;; esac
 case "$size" in ''|*[!0-9]*) echo 'Invalid release metadata.' >&2; exit 1 ;; esac

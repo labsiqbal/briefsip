@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { testDatabase } from './test-support/database.ts';
 import { startCanonicalApp } from './test-bridge.ts';
 import { digestCommand } from './shared/protocol.ts';
-import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
+import { installCanonicalFixture } from './test-support/canonical-schema.ts';
 
 const key = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const issuer = 'https://fixture.clerk.accounts.dev';
@@ -20,7 +20,7 @@ function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'minarbot-old-automation-'));
   const database = join(dir, 'state.sqlite'), db = testDatabase(database);
   const owner = randomUUID(), project = randomUUID(), agent = randomUUID(), home = randomUUID(), installation = randomUUID();
-  installFrozenNodeSchema(db);
+  installCanonicalFixture(db);
   db.prepare("INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,'user_owner',?)").run(owner, issuer, now);
   db.prepare("INSERT INTO projects(id,account,name,private) VALUES (?,?,'Private',1)").run(project, owner);
   db.prepare("INSERT INTO project_members VALUES (?,?,'owner',1,0)").run(project, owner);
@@ -48,7 +48,7 @@ function fixture() {
     const token = `${input}.${sign('RSA-SHA256', Buffer.from(input), key.privateKey).toString('base64url')}`;
     const response = await fetch(app!.origin + path, {
       method: body ? 'POST' : 'GET',
-      headers: { 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': body?.requestId ?? randomUUID(), 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, Origin: app!.origin },
+      headers: { 'X-Minarbot-Protocol': '1', 'X-Minarbot-Request-Id': body?.requestId ?? randomUUID(), 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, Origin: app!.origin },
       body: body ? JSON.stringify(body) : undefined,
     });
     const data = await response.json();
@@ -102,7 +102,7 @@ const command = (revision: number, spec: unknown, enabled = true) => {
 };
 
 function saveReceipt(f: Fixture, path: string, input: { requestId: string }, record: string, data: unknown) {
-  const payloadDigest = digestCommand(['briefsip-retained-command-v1', f.owner, f.project, 'POST', path, input]);
+  const payloadDigest = digestCommand(['minarbot-retained-command-v1', f.owner, f.project, 'POST', path, input]);
   const receipt = { requestId: input.requestId, actorId: f.owner, projectId: f.project, payloadDigest, status: 201, recordId: record, recordRevision: 1, committedAt: now };
   f.db.prepare('INSERT INTO receipts VALUES (?,?,?,?,?,201,?,?)')
     .run(input.requestId, f.owner, f.project, `retained:${path}`, payloadDigest, JSON.stringify({ status: 201, receipt, data }), now);

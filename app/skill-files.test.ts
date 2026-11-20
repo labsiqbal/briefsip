@@ -17,7 +17,7 @@ const files = [
 ];
 test('skill folders preserve exact files and reject invalid or unsupported inputs as a whole', () => {
   const parsed = parseSkillFiles(files); assert.equal(parsed.description, 'Use for examples.'); assert.deepEqual(parsed.files, files);
-  for (const format of ['briefsip-skill-folder', 'minarbot-skill-folder']) {
+  for (const format of ['minarbot-skill-folder']) {
     const bundle = { format, version: 1, files };
     assert.deepEqual(parseSkillFiles(exportedSkillFiles(bundle)).files, files);
     assert.throws(() => exportedSkillFiles({ ...bundle, version: 2 }));

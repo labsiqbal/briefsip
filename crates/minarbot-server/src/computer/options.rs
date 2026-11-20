@@ -26,20 +26,16 @@ pub struct DesktopOptions {
 impl Options {
     pub fn environment() -> crate::db::Result<Self> {
         let desktop = DesktopOptions {
-            enabled: Some(
-                minarbot_launcher::rename_migration::var("MINARBOT_AGENT_DESKTOP").as_deref()
-                    == Ok("1"),
-            ),
-            max: minarbot_launcher::rename_migration::var("MINARBOT_AGENT_DESKTOP_MAX")
+            enabled: Some(std::env::var("MINARBOT_AGENT_DESKTOP").as_deref() == Ok("1")),
+            max: std::env::var("MINARBOT_AGENT_DESKTOP_MAX")
                 .ok()
                 .map(|v| v.parse())
                 .transpose()?,
-            idle_ms: minarbot_launcher::rename_migration::var("MINARBOT_AGENT_DESKTOP_IDLE_MS")
+            idle_ms: std::env::var("MINARBOT_AGENT_DESKTOP_IDLE_MS")
                 .ok()
                 .map(|v| v.parse())
                 .transpose()?,
-            geometry: minarbot_launcher::rename_migration::var("MINARBOT_AGENT_DESKTOP_GEOMETRY")
-                .ok(),
+            geometry: std::env::var("MINARBOT_AGENT_DESKTOP_GEOMETRY").ok(),
             ..Default::default()
         };
         Ok(Self {
@@ -50,8 +46,7 @@ impl Options {
     pub fn validate(&self) -> crate::db::Result<()> {
         if let Some(bridge) = &self.test_computer_bridge {
             let url = url::Url::parse(&bridge.origin)?;
-            if minarbot_launcher::rename_migration::var("MINARBOT_TEST_SERVER").as_deref()
-                != Ok("rust")
+            if std::env::var("MINARBOT_TEST_SERVER").as_deref() != Ok("rust")
                 || url.scheme() != "http"
                 || url.host_str() != Some("127.0.0.1")
                 || url.origin().ascii_serialization() != bridge.origin
@@ -71,10 +66,7 @@ impl Options {
             return Err("Desktop fixture runtime requires test bridge".into());
         }
         if let Some(target) = &d.test_only_proxy_target {
-            if minarbot_launcher::rename_migration::var("MINARBOT_TEST_SERVER").as_deref()
-                != Ok("rust")
-                || !target.valid()
-            {
+            if std::env::var("MINARBOT_TEST_SERVER").as_deref() != Ok("rust") || !target.valid() {
                 return Err("Invalid test-only proxy fixture.".into());
             }
         }

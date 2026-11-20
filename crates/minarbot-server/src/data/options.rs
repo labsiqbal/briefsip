@@ -98,19 +98,16 @@ impl Options {
     }
     pub fn environment() -> Self {
         Self {
-            script_token: minarbot_launcher::rename_migration::var("MINARBOT_SCRIPT_TOKEN").ok(),
-            installation_id: minarbot_launcher::rename_migration::var("MINARBOT_INSTALLATION_ID")
-                .ok(),
-            mail_from: minarbot_launcher::rename_migration::var("MINARBOT_MAIL_FROM").ok(),
-            mail_origin: minarbot_launcher::rename_migration::var("MINARBOT_ORIGIN").ok(),
+            script_token: std::env::var("MINARBOT_SCRIPT_TOKEN").ok(),
+            installation_id: std::env::var("MINARBOT_INSTALLATION_ID").ok(),
+            mail_from: std::env::var("MINARBOT_MAIL_FROM").ok(),
+            mail_origin: std::env::var("MINARBOT_ORIGIN").ok(),
             ..Self::default()
         }
     }
     pub fn validate(&self) -> crate::db::Result<()> {
         if let Some(bridge) = &self.test_canonical_bridge {
-            if minarbot_launcher::rename_migration::var("MINARBOT_TEST_SERVER").as_deref()
-                != Ok("rust")
-            {
+            if std::env::var("MINARBOT_TEST_SERVER").as_deref() != Ok("rust") {
                 return Err("Canonical fixture requires Rust test mode".into());
             }
             crate::connectors::config::loopback(&bridge.origin)?;
@@ -147,12 +144,10 @@ impl Options {
             let saved = self.stored.lock().map_err(|_| unavailable(mail))?;
             return Ok(saved.get(name).or_else(|| stub.get(name)).cloned());
         }
-        if minarbot_launcher::rename_migration::var("MINARBOT_TEST_SERVER").as_deref() == Ok("rust")
-        {
+        if std::env::var("MINARBOT_TEST_SERVER").as_deref() == Ok("rust") {
             return Err(unavailable(mail));
         }
-        crate::rename_migration::read_system_key(&self.service(name, mail)?, name)
-            .map_err(|_| unavailable(mail))
+        crate::system_keyring::read(&self.service(name, mail)?, name).map_err(|_| unavailable(mail))
     }
     pub(crate) fn write(&self, name: &str, value: &str, mail: bool) -> Result<()> {
         if self.test_keyring_locked {
@@ -165,11 +160,10 @@ impl Options {
                 .insert(name.into(), value.into());
             return Ok(());
         }
-        if minarbot_launcher::rename_migration::var("MINARBOT_TEST_SERVER").as_deref() == Ok("rust")
-        {
+        if std::env::var("MINARBOT_TEST_SERVER").as_deref() == Ok("rust") {
             return Err(unavailable(mail));
         }
-        crate::rename_migration::write_system_key(&self.service(name, mail)?, name, value)
+        crate::system_keyring::write(&self.service(name, mail)?, name, value)
             .map_err(|_| unavailable(mail))
     }
     pub(crate) fn key(&self, name: &str, mail: bool) -> Result<Vec<u8>> {

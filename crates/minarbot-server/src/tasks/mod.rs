@@ -330,7 +330,7 @@ pub async fn device(state: &AppState, request: Request, request_id: &str) -> Res
                 state.config.now(),
             )?
         };
-        let token = crate::text_header(&headers, "x-briefsip-executor").ok_or_else(|| {
+        let token = crate::text_header(&headers, "x-minarbot-executor").ok_or_else(|| {
             fail(
                 401,
                 "executor_invalid",
@@ -352,7 +352,7 @@ pub async fn device(state: &AppState, request: Request, request_id: &str) -> Res
         false,
         state.config.now(),
     )?;
-    let token = crate::text_header(&headers, "x-briefsip-executor").ok_or_else(|| {
+    let token = crate::text_header(&headers, "x-minarbot-executor").ok_or_else(|| {
         fail(
             401,
             "executor_invalid",
@@ -448,7 +448,7 @@ pub async fn human(
                 actor,
                 &id(&json!(t))?,
                 v,
-                crate::text_header(headers, "x-briefsip-recovery").unwrap_or(""),
+                crate::text_header(headers, "x-minarbot-recovery").unwrap_or(""),
                 *op == "recovery-results",
                 state.config.now(),
             )

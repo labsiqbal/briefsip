@@ -50,7 +50,7 @@ pub fn acquire(db: &Connection, p: &Principal, v: &Value, token: &str, now: i64)
     let reconciled = revision(&proof["reconciledThrough"], 0)?;
     let proof = json!({"bootId":boot,"processId":proof["processId"],"processStart":proof["processStart"],"lockId":lock,"previousOwnerStopped":proof["previousOwnerStopped"],"reconciledThrough":reconciled,"journalDigest":journal});
     let pd = digest(&json!([
-        "briefsip-acquire-v1",
+        "minarbot-acquire-v1",
         request,
         task_id,
         previous,
@@ -246,7 +246,7 @@ pub fn prepare(
     let current = authority::dispatch(db, &task)?;
     let scope = format!("tasks:prepare:{task_id}");
     let pd = digest(&json!([
-        "briefsip-action-prepare-v1",
+        "minarbot-action-prepare-v1",
         task_id,
         action_id,
         command
@@ -392,7 +392,7 @@ pub fn commit(
     let task = task(db, task_id)?;
     authority::owner(db, p, &task, &v["ownership"], token, false, now)?;
     let scope = format!("tasks:commit:{task_id}");
-    let pd = digest(&json!(["briefsip-action-commit-v1", task_id, action_id, v]));
+    let pd = digest(&json!(["minarbot-action-commit-v1", task_id, action_id, v]));
     if let Some(old) = replay(
         db,
         &p.account,
@@ -497,7 +497,7 @@ pub fn route(
             fields(v, &["requestId", "ownership", "expectedTaskRevision"])?;
             let request = id(&v["requestId"])?;
             revision(&v["expectedTaskRevision"], 1)?;
-            let pd = digest(&json!(["briefsip-task-wait-provider-v1", task_id, v]));
+            let pd = digest(&json!(["minarbot-task-wait-provider-v1", task_id, v]));
             let scope = format!("tasks:wait-provider:{task_id}");
             if let Some(old) = replay(
                 db,
@@ -694,7 +694,7 @@ fn reconcile(
         ));
     }
     let command = json!({"requestId":request,"actionId":action_id,"ownership":v["ownership"],"payloadDigest":v["payloadDigest"],"state":state,"effectStatus":effect,"journalSequence":sequence,"resultDigest":v["resultDigest"],"resultRef":v["resultRef"],"uncertainReason":v["uncertainReason"],"resultContentDigest":encoded.as_ref().map(|e|hash(e)),"noMarkerEvidence":marker,"stopEvidence":stop});
-    let pd = digest(&json!(["briefsip-task-reconcile-v1", task_id, command]));
+    let pd = digest(&json!(["minarbot-task-reconcile-v1", task_id, command]));
     let scope = format!("tasks:reconcile:{task_id}");
     devices::current(db, p, now)?;
     if task["home_device"] != p.device
@@ -739,7 +739,7 @@ fn reconcile(
         ));
     }
     let report_digest = digest(&json!([
-        "briefsip-task-report-v1",
+        "minarbot-task-report-v1",
         task_id,
         action_id,
         v["payloadDigest"],
@@ -956,7 +956,7 @@ fn complete(
     let task_id = string(task, "id");
     authority::ownership(&v["ownership"])?;
     let pd = digest(&json!([
-        "briefsip-task-complete-v1",
+        "minarbot-task-complete-v1",
         task_id,
         action,
         v["ownership"]

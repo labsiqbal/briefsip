@@ -1,4 +1,3 @@
-import { readProductStorage } from './rename-storage.ts';
 // Adapted from T3 updateEverythingRun.tsx (MIT). See app/t3/provenance.json.
 import type { UpdateCommand, UpdateRun } from './updateEverything.logic.ts';
 
@@ -11,7 +10,7 @@ const validSource = (source: unknown) => source === undefined || source === 'Git
 const validId = (value: unknown) => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,36}$/.test(value);
 
 export function readSavedUpdateRun(storage: Pick<Storage, 'getItem'>): UpdateRun | null {
-  const raw = readProductStorage(storage, updateRunKey);
+  const raw = storage.getItem(updateRunKey);
   if (!raw) return null;
   const run = JSON.parse(raw) as UpdateRun;
   if (!Array.isArray(run?.rows) || !Array.isArray(run.commands) || !run.commands.length
@@ -34,7 +33,7 @@ export function readSavedUpdateRun(storage: Pick<Storage, 'getItem'>): UpdateRun
 }
 
 export function readLocalUpdate(storage: Pick<Storage, 'getItem'>): Pick<UpdateCommand, 'id' | 'version' | 'source'> | null {
-  const value = JSON.parse(readProductStorage(storage, localUpdateKey) ?? 'null') as Pick<UpdateCommand, 'id' | 'version' | 'source'> | null;
+  const value = JSON.parse(storage.getItem(localUpdateKey) ?? 'null') as Pick<UpdateCommand, 'id' | 'version' | 'source'> | null;
   if (value && (!validId(value.id) || typeof value.version !== 'string' || !validSource(value.source))) throw new Error('Saved update could not be read.');
   return value;
 }

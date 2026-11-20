@@ -119,7 +119,7 @@ pub fn validate(v: &Value) -> Result<()> {
     }
     if hex(&v["payloadDigest"], "payloadDigest")?
         != digest(&json!([
-            "briefsip-task-payload-v1",
+            "minarbot-task-payload-v1",
             v["requestId"],
             v["projectId"],
             v["agentId"],
@@ -292,7 +292,7 @@ pub fn admit(db: &Connection, account: &str, v: &Value, now: i64) -> Result<Valu
         ],
     )?;
     let cap = data::json(&part["capabilities_json"])?;
-    db.execute("INSERT INTO tasks(id,logical_turn,project,agent,initiator_account,home_device,assignment_revision,capability_revision,capability_digest,capability_snapshot_json,provider_binding_id,provider_binding_revision,provider_binding_owner,state,payload_digest,payload_json,revision,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)",params![request,request,project,agent,account,device,assignment,n(&part,"revision"),digest(&json!(["briefsip-capabilities-v1",cap])),canonical(&cap),binding.as_ref().and_then(|b|b["id"].as_str()),binding.as_ref().map(|b|n(b,"revision")),binding.as_ref().and_then(|b|b["owner_account"].as_str()),state,pd,canonical(payload),now])?;
+    db.execute("INSERT INTO tasks(id,logical_turn,project,agent,initiator_account,home_device,assignment_revision,capability_revision,capability_digest,capability_snapshot_json,provider_binding_id,provider_binding_revision,provider_binding_owner,state,payload_digest,payload_json,revision,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)",params![request,request,project,agent,account,device,assignment,n(&part,"revision"),digest(&json!(["minarbot-capabilities-v1",cap])),canonical(&cap),binding.as_ref().and_then(|b|b["id"].as_str()),binding.as_ref().map(|b|n(b,"revision")),binding.as_ref().and_then(|b|b["owner_account"].as_str()),state,pd,canonical(payload),now])?;
     let task = task(db, &request)?;
     observe(db, &task, now)?;
     Save{account,task:&task,request:&request,scope:&scope,payload:&pd,now}.save(db,&request,1,202,json!({"taskId":request,"state":state,"revision":1,"homeDeviceId":device,"payloadDigest":pd}),None)

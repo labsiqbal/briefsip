@@ -273,9 +273,9 @@ async fn handle(state: &AppState, request: Request) -> Result<Response> {
     for (key, value) in [
         ("content-type", "application/gzip".to_owned()),
         ("content-length", size.to_string()),
-        ("x-briefsip-size", size.to_string()),
-        ("x-briefsip-sha256", hash),
-        ("x-briefsip-release", id),
+        ("x-minarbot-size", size.to_string()),
+        ("x-minarbot-sha256", hash),
+        ("x-minarbot-release", id),
     ] {
         response.headers_mut().insert(
             axum::http::HeaderName::from_static(key),

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testDatabase } from './test-support/database.ts';
 import { createClerkClient } from '@clerk/backend';
-import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
+import { installCanonicalFixture } from './test-support/canonical-schema.ts';
 import { startCanonicalApp } from './test-bridge.ts';
 import { startRustServer } from './rust-test-server.ts';
 
@@ -23,7 +23,7 @@ test('Rust project automation matches Node scopes, receipts, versions, calendars
   for (const name of ['node', 'rust']) {
     const db = testDatabase(join(directory, name));
     try {
-      installFrozenNodeSchema(db);
+      installCanonicalFixture(db);
       db.prepare('UPDATE authority_state SET generation=?').run(generation);
       db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,?,?,?)').run(account, auth.issuer, 'user_fixture', now * 1000);
       for (const id of [project, foreign]) {
@@ -53,7 +53,7 @@ test('Rust project automation matches Node scopes, receipts, versions, calendars
     return value;
   };
   const compare = async (path: string, body?: Record<string, unknown>, expected = 200, extra: Record<string, string> = {}) => {
-    const headers = { Authorization: `Bearer ${token}`, Origin: auth.origin, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': String(body?.requestId ?? randomUUID()), ...extra };
+    const headers = { Authorization: `Bearer ${token}`, Origin: auth.origin, 'Content-Type': 'application/json', 'X-Minarbot-Protocol': '1', 'X-Minarbot-Request-Id': String(body?.requestId ?? randomUUID()), ...extra };
     const rows = await Promise.all([node, rust!].map(async app => {
       const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers, ...(body ? { body: JSON.stringify(body) } : {}) });
       const text = await response.text(), calendar = response.headers.get('content-type')?.startsWith('text/calendar');
@@ -68,7 +68,7 @@ test('Rust project automation matches Node scopes, receipts, versions, calendars
     const base = `/api/projects/${project}`;
     for (const suffix of ['/routines', `/agents/${agent}/routines`, '/workflows', `/agents/${agent}/workflows`, '/workflow-notifications']) await compare(base + suffix);
     for (const suffix of ['/routines/unknown', '/routines/unknown/flow', `/agents/${agent}/routines/calendar.ics/extra`, '/workflows/unknown/edit', '/workflow-runs/unknown', '/workflow-notifications/unknown/read']) await compare(base + suffix, undefined, 404);
-    await compare(base + '/routines', undefined, 404, { 'X-Briefsip-Project': project });
+    await compare(base + '/routines', undefined, 404, { 'X-Minarbot-Project': project });
     const routine = randomUUID(), configuration = { requestId: routine, id: routine, revision: 0, name: 'Routine', prompt: 'Help.', nextAt: Date.now() + 86400000, intervalSeconds: 300, enabled: true };
     const routinePath = `${base}/routines/${routine}`;
     await compare(`${base}/agents/${agent}/routines`, configuration, 201);
@@ -93,7 +93,7 @@ test('Rust project automation matches Node scopes, receipts, versions, calendars
     for (const app of [node, rust]) {
       let count = 0;
       for (let attempt = 0; attempt < 250 && !count; attempt++) {
-        const response = await fetch(app.origin + scheduledPath, { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': randomUUID() } });
+        const response = await fetch(app.origin + scheduledPath, { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Minarbot-Protocol': '1', 'X-Minarbot-Request-Id': randomUUID() } });
         count = (await response.json()).data?.items?.length ?? 0;
         if (!count) await new Promise(resolve => setTimeout(resolve, 20));
       }
@@ -105,7 +105,7 @@ test('Rust project automation matches Node scopes, receipts, versions, calendars
     await compare(routinePath + '/webhook');
     const time = String(Math.floor(Date.now() / 1000)), eventId = 'ignored', raw = '{"event":"ready","payload":{"count":5}}';
     const events = await Promise.all([node, rust].map(async (app, index) => {
-      const response = await fetch(app.origin + routinePath + '/webhook-events', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': eventId, 'X-Briefsip-Signature': createHmac('sha256', hooks[index].data.secret).update(`${time}\n${eventId}\n${raw}`).digest('hex') }, body: raw });
+      const response = await fetch(app.origin + routinePath + '/webhook-events', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Minarbot-Time': time, 'X-Minarbot-Id': eventId, 'X-Minarbot-Signature': createHmac('sha256', hooks[index].data.secret).update(`${time}\n${eventId}\n${raw}`).digest('hex') }, body: raw });
       return { status: response.status, value: await response.json() };
     }));
     assert.deepEqual(events[1], events[0]); assert.equal(events[1].status, 202);
@@ -122,7 +122,7 @@ test('Rust project automation matches Node scopes, receipts, versions, calendars
     for (const app of [node, rust]) {
       let count = 0;
       for (let attempt = 0; attempt < 250 && !count; attempt++) {
-        const response = await fetch(app.origin + workflowPath + '/schedule', { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': randomUUID() } });
+        const response = await fetch(app.origin + workflowPath + '/schedule', { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Minarbot-Protocol': '1', 'X-Minarbot-Request-Id': randomUUID() } });
         count = (await response.json()).data?.occurrences?.length ?? 0;
         if (!count) await new Promise(resolve => setTimeout(resolve, 20));
       }
@@ -137,7 +137,7 @@ test('Rust project automation matches Node scopes, receipts, versions, calendars
     for (const app of [node, rust]) {
       let state = '';
       for (let attempt = 0; attempt < 250 && state !== 'approval'; attempt++) {
-        const response = await fetch(app.origin + runPath, { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': randomUUID() } });
+        const response = await fetch(app.origin + runPath, { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Minarbot-Protocol': '1', 'X-Minarbot-Request-Id': randomUUID() } });
         state = (await response.json()).data?.status;
         if (state !== 'approval') await new Promise(resolve => setTimeout(resolve, 20));
       }
@@ -152,7 +152,7 @@ test('Rust project automation matches Node scopes, receipts, versions, calendars
       for (const app of [node, rust]) {
         let state = '';
         for (let attempt = 0; attempt < 250 && state !== status; attempt++) {
-          const response = await fetch(app.origin + outputPath, { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': randomUUID() } });
+          const response = await fetch(app.origin + outputPath, { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Minarbot-Protocol': '1', 'X-Minarbot-Request-Id': randomUUID() } });
           state = (await response.json()).data?.status;
           if (state !== status) await new Promise(resolve => setTimeout(resolve, 20));
         }

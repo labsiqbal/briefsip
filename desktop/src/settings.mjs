@@ -13,16 +13,6 @@ export function resolveWindowBounds(bounds, displays) {
         bounds.y + bounds.height <= display.y + display.height + 1)) return bounds;
   return { ...DEFAULT_WINDOW };
 }
-export function legacyUserData(userData) {
-  if (fs.existsSync(path.join(userData, 'settings.json'))) return userData;
-  const parent = path.dirname(userData);
-  if (!['Minarbot', 'minarbot', 'minarbot-desktop'].includes(path.basename(userData))) return userData;
-  for (const name of ['Briefsip', 'briefsip', 'briefsip-desktop']) {
-    const legacy = path.join(parent, name);
-    if (fs.existsSync(path.join(legacy, 'settings.json'))) return legacy;
-  }
-  return userData;
-}
 export function readSettings(userData) {
   let value;
   try { value = JSON.parse(fs.readFileSync(path.join(userData, 'settings.json'), 'utf8')); }

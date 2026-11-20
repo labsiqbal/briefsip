@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { testDatabase } from './test-support/database.ts';
-import { installFrozenNodeSchema } from './test-support/canonical-schema.ts';
+import { installCanonicalFixture } from './test-support/canonical-schema.ts';
 import { descriptorBody, deviceLinkBody, deviceProofBody, parseLinkChallenge, type LinkChallengeResponse } from './test-support/device-protocol.ts';
 import { canonicalToolDigest, journalEntryBody, recoveryEnvelopeBody, stopEvidenceBody } from './test-support/task-protocol.ts';
 import { canonicalJson, digestCommand, sha256 } from './shared/protocol.ts';
@@ -15,7 +15,7 @@ import { startRustServer } from './rust-test-server.ts';
 
 test('Rust signed task admission, context fencing, one-use commits and durable results', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'minarbot-rust-tasks-')), database = join(directory, 'db');
-  const db = testDatabase(database); installFrozenNodeSchema(db); initializeMemory(db);
+  const db = testDatabase(database); installCanonicalFixture(db); initializeMemory(db);
   const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const authConfig = { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://minarbot.example', development: true, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString() };
   const owner = { accountId: randomUUID(), issuer: authConfig.issuer, subject: 'user_fixture', sessionId: 'sess_fixture', expiresAt: Date.now() + 600000 };
@@ -33,11 +33,11 @@ test('Rust signed task admission, context fencing, one-use commits and durable r
   const token = randomBytes(32).toString('base64url');
   const send = async (path: string, body?: Record<string, unknown>, device = false, status = 200, extra: Record<string, string> = {}, attempt = 0): Promise<Awaited<ReturnType<Response['json']>>> => {
     const requestId = String(body?.requestId ?? randomUUID()), raw = body ? JSON.stringify(body) : '', method = body ? 'POST' : 'GET';
-    const headers: Record<string, string> = { Authorization: `Bearer ${jwt()}`, Origin: authConfig.origin, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': requestId };
+    const headers: Record<string, string> = { Authorization: `Bearer ${jwt()}`, Origin: authConfig.origin, 'Content-Type': 'application/json', 'X-Minarbot-Protocol': '1', 'X-Minarbot-Request-Id': requestId };
     if (device) {
       const iat = Math.floor(Date.now() / 1000), proof = { deviceId: home, deviceGeneration: 1, authorityGeneration, requestId, nonce: randomBytes(32).toString('base64url'), iat, exp: iat + 60, method, path, bodyDigest: sha256(raw) };
-      headers.Authorization = `Device ${deviceSession}`; headers['X-Briefsip-Executor'] = token;
-      headers['X-Briefsip-Proof'] = JSON.stringify({ ...proof, signature: sign(null, Buffer.from(JSON.stringify(deviceProofBody(proof))), signing.privateKey).toString('base64url') });
+      headers.Authorization = `Device ${deviceSession}`; headers['X-Minarbot-Executor'] = token;
+      headers['X-Minarbot-Proof'] = JSON.stringify({ ...proof, signature: sign(null, Buffer.from(JSON.stringify(deviceProofBody(proof))), signing.privateKey).toString('base64url') });
     }
     Object.assign(headers, extra);
     const response = await fetch(app.origin + path, { method, headers, ...(body ? { body: raw } : {}) });
@@ -63,7 +63,7 @@ test('Rust signed task admission, context fencing, one-use commits and durable r
     await send('/api/projects', { requestId: randomUUID(), id: project, name: 'Fixture' }, false, 201);
     await send('/api/agents', { requestId: agent, id: agent, name: 'Agent', model: 'fixture', backupModel: '', instructions: 'Help', threadLimit: 2, projectId: project, homeDeviceId: home, expectedProjectRevision: 1, expectedHomeDeviceRevision: 1, providerBinding: null }, false, 201);
     const requestId = randomUUID(), payload = { v: 1, kind: 'direct', message: { text: 'Keep\nline breaks', files: [] } }, expectedRevisions = { project: 1, agent: 1, homeBinding: 1, membership: 1, assignment: 1, capability: 1 };
-    const command = { requestId, projectId: project, agentId: agent, homeDeviceId: home, payload, expectedRevisions, payloadDigest: digestCommand(['briefsip-task-payload-v1', requestId, project, agent, home, payload, expectedRevisions]) };
+    const command = { requestId, projectId: project, agentId: agent, homeDeviceId: home, payload, expectedRevisions, payloadDigest: digestCommand(['minarbot-task-payload-v1', requestId, project, agent, home, payload, expectedRevisions]) };
     const admitted = await send('/api/tasks', command, false, 202); assert.equal(admitted.data.state, 'waiting_device');
     assert.deepEqual((await send('/api/tasks', command)).data, admitted.data);
     const lockProof = { bootId: randomUUID(), processId: 1234, processStart: '999', lockId: randomUUID(), previousOwnerStopped: true, reconciledThrough: 0, journalDigest: sha256('journal') };
@@ -169,7 +169,7 @@ test('Rust signed task admission, context fencing, one-use commits and durable r
     assert.equal((await send(`/api/tasks/${requestId}/recovery-session`, sessionCommand, false, 409)).error.code, 'recovery_source_current');
     db.prepare("UPDATE devices SET status='revoked' WHERE id=?").run(home);
     const recovery = await send(`/api/tasks/${requestId}/recovery-session`, sessionCommand, false, 201);
-    const proof = { 'X-Briefsip-Recovery': recovery.data.session };
+    const proof = { 'X-Minarbot-Recovery': recovery.data.session };
     const replay = await send(`/api/tasks/${requestId}/recovery-session`, sessionCommand);
     assert.equal(replay.data.session, undefined);
     assert.equal(replay.data.recoveryGeneration, recovery.data.recoveryGeneration);
@@ -204,7 +204,7 @@ test('Rust signed task admission, context fencing, one-use commits and durable r
     const signedUnknown = { ...unknown, signature: sign(null, Buffer.from(JSON.stringify(journalEntryBody(authorityGeneration, home, 1, unknown))), signing.privateKey).toString('base64url') };
     const quarantineEnvelope = { ...envelope, watermark: 5, entries: [signedUnknown] }, quarantineId = randomUUID();
     const quarantine = { requestId: quarantineId, recoveryGeneration: restoreProof.recoveryGeneration, envelope: quarantineEnvelope, signature: sign(null, Buffer.from(JSON.stringify(recoveryEnvelopeBody(restoreProof.recoveryGeneration, quarantineId, quarantineEnvelope))), signing.privateKey).toString('base64url') };
-    const quarantineProof = { 'X-Briefsip-Recovery': restoreProof.session };
+    const quarantineProof = { 'X-Minarbot-Recovery': restoreProof.session };
     const quarantined = await send(`/api/tasks/${requestId}/recovery-import`, quarantine, false, 200, quarantineProof);
     assert.equal(quarantined.data.state, 'quarantined');
     assert.equal(quarantined.receipt.projectId, undefined);

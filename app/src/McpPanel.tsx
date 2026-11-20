@@ -1,4 +1,3 @@
-import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { usePolling } from './hooks/usePolling';
 import { getNonce } from 'get-nonce';
 import { useEffect, useRef, useState } from 'react';
@@ -6,7 +5,7 @@ import { ArrowLeft, ChevronLeft, ChevronRight, Info, Ellipsis, Plug, Plus } from
 import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Collapsible, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Tooltip, useConfirm, RecoveryAlert } from './ui/kit';
 type Connection = { id: string; name: string; url: string; hasToken: boolean; enabled: number; revision: number };
 type Tool = { name: string; title?: string; description?: string; inputSchema: unknown; _meta?: Record<string, unknown> };
-const kind = (tool: Tool) => tool._meta?.['minarbot.kind'] ?? tool._meta?.['briefsip.kind'];
+const kind = (tool: Tool) => tool._meta?.['minarbot.kind'];
 const label = (tool: Tool) => `${kind(tool) === 'resource-template' ? 'Resource template: ' : kind(tool) === 'resource' ? 'Resource: ' : kind(tool) === 'prompt' ? 'Prompt: ' : 'Tool: '}${tool.title && tool.title !== tool.name && !kind(tool) ? `${tool.title} (${tool.name})` : tool.title ?? tool.name}`;
 type Detail = Connection & { tools: Tool[]; grant: { revision: number; tools: string[] } };
 type Command = { path: string; body: Record<string, unknown> & { id: string } };
@@ -19,7 +18,7 @@ function restore(raw: string | null): Command | null {
 }
 export function McpPanel({ agents, request, project }: { project?: string; agents: { id: string; name: string }[]; request: <T>(path: string, body?: unknown) => Promise<T>; onClose: () => void }) {
   const storage = 'minarbot:mcp-command'+(project?`:${project}`:'');
-  const [recovery] = useState(() => { try { return { command: restore(readProductStorage(sessionStorage, storage)), invalid: false }; } catch { return { command: null, invalid: true }; } });
+  const [recovery] = useState(() => { try { return { command: restore(sessionStorage.getItem(storage)), invalid: false }; } catch { return { command: null, invalid: true }; } });
   const [pending, setPending] = useState(recovery.command), [invalid, setInvalid] = useState(recovery.invalid);
   const [page, setPage] = useState<{ items: Connection[]; next_after: string | null } | null>(null), [cursors, setCursors] = useState(['']);
   const [agent, setAgent] = useState(agents[0]?.id ?? ''), [selected, setSelected] = useState(''), [detail, setDetail] = useState<Detail | null>(null), [tools, setTools] = useState<string[]>([]);
@@ -71,7 +70,7 @@ export function McpPanel({ agents, request, project }: { project?: string; agent
       restore(JSON.stringify(command)); sessionStorage.setItem(storage, JSON.stringify(command)); setPending(command); setBusy(true); flight.current = true; reads.current++; setError('');
       await request(command.path, command.body);
       if (current !== generation.current) return;
-      if (readProductStorage(sessionStorage, storage) === JSON.stringify(command)) removeProductStorage(sessionStorage, storage);
+      if (sessionStorage.getItem(storage) === JSON.stringify(command)) sessionStorage.removeItem(storage);
       setPending(null); setDetail(null);
       if (command.body.test && (editing ? command.path === `/api/mcp/${editing.id}` : command.path === '/api/mcp')) { setTested(null); setEditing(null); setRotate(false); setToken(''); setName(''); setUrl(''); setShowForm(false); }
       else if (editing && command.path === `/api/mcp/${editing.id}`) setTested(null);
@@ -80,7 +79,7 @@ export function McpPanel({ agents, request, project }: { project?: string; agent
     } catch (error) { if (current === generation.current) setError(error instanceof Error ? error.message : 'Changes are not confirmed yet. Try again.'); }
     finally { flight.current = false; if (current === generation.current) setBusy(false); }
   }
-  const ignoreRecovery = <Button size="sm" disabled={busy} onClick={async () => { if (!await confirm({ title: 'Discard saved request?', description: 'Changes may already have succeeded. Check the list after it reloads.', confirm: 'Discard request' })) return; try { removeProductStorage(sessionStorage, storage); setPending(null); setInvalid(false); setRefresh(value => value + 1); } catch { setError('Browser storage could not be updated.'); } }}>Discard request</Button>;
+  const ignoreRecovery = <Button size="sm" disabled={busy} onClick={async () => { if (!await confirm({ title: 'Discard saved request?', description: 'Changes may already have succeeded. Check the list after it reloads.', confirm: 'Discard request' })) return; try { sessionStorage.removeItem(storage); setPending(null); setInvalid(false); setRefresh(value => value + 1); } catch { setError('Browser storage could not be updated.'); } }}>Discard request</Button>;
   const recoveryNotice = <>
     {invalid && <Alert tone="error" title="Recovery unavailable" actions={!pending && ignoreRecovery} />}
     {pending && <RecoveryAlert inFlight={busy} tone="warn" title="Not confirmed" actions={<><Button size="sm" variant="primary" disabled={busy} onClick={() => void execute(pending)}>Try again</Button>{ignoreRecovery}</>} />}

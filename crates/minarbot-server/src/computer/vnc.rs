@@ -16,7 +16,7 @@ use std::{
     time::Duration,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-const PROTOCOL: &str = "briefsip-vnc-v1";
+const PROTOCOL: &str = "minarbot-vnc-v1";
 const SAMPLE_BYTES: usize = 16 * 1024;
 const WRITE_TIMEOUT: Duration = Duration::from_secs(15);
 fn desktop_stopped() -> Failure {

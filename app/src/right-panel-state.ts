@@ -1,4 +1,3 @@
-import { readProductStorage } from './rename-storage.ts';
 export const rightPanelKey = (scope: string) => `minarbot:right-panel:${scope}`;
 export const rightPanelWidthKey = (scope: string) => `minarbot:right-panel-width:${scope}`;
 export type RunTarget = { turnId: string; stepId?: string };
@@ -12,7 +11,7 @@ export function parseRightPanelState(tab: string | null, width: string | null): 
 }
 export function createRightPanelStore(storage: Storage) {
   return {
-    read(scope: string): RightPanelState { try { return parseRightPanelState(readProductStorage(storage, rightPanelKey(scope)), readProductStorage(storage, rightPanelWidthKey(scope))); } catch { return { tab: 'chats', width: 360 }; } },
+    read(scope: string): RightPanelState { try { return parseRightPanelState(storage.getItem(rightPanelKey(scope)), storage.getItem(rightPanelWidthKey(scope))); } catch { return { tab: 'chats', width: 360 }; } },
     select(scope: string, tab: string) { try { storage.setItem(rightPanelKey(scope), JSON.stringify(tab)); } catch { /* Selection remains in memory. */ } },
   };
 }

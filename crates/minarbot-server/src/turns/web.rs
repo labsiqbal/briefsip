@@ -454,8 +454,8 @@ pub(crate) enum SearchBackend {
 impl SearchBackend {
     pub(crate) fn environment() -> Option<Self> {
         Self::from_environment(
-            minarbot_launcher::rename_migration::var("MINARBOT_WEB_SEARCH_URL").ok(),
-            minarbot_launcher::rename_migration::var("MINARBOT_BRAVE_API_KEY").ok(),
+            std::env::var("MINARBOT_WEB_SEARCH_URL").ok(),
+            std::env::var("MINARBOT_BRAVE_API_KEY").ok(),
         )
     }
 

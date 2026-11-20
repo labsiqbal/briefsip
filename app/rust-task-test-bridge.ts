@@ -21,12 +21,12 @@ export async function rustTaskTestBridge(database: string, signing: ReturnType<t
   function authenticated(method: string, path: string, body: unknown, actor: HumanActor | Principal, token?: string) {
     const requestId = String((body as { requestId?: string })?.requestId ?? randomUUID());
     const raw = body === undefined ? '' : JSON.stringify(body), at = Math.floor(Date.now() / 1000);
-    const headers: Record<string, string> = { Origin: auth.origin, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': requestId };
+    const headers: Record<string, string> = { Origin: auth.origin, 'Content-Type': 'application/json', 'X-Minarbot-Protocol': '1', 'X-Minarbot-Request-Id': requestId };
     if ('deviceId' in actor) {
       const proof = { deviceId: actor.deviceId, deviceGeneration: actor.generation, authorityGeneration: actor.authorityGeneration, requestId, nonce: randomBytes(32).toString('base64url'), iat: at, exp: at + 60, method, path, bodyDigest: sha256(raw) };
       headers.Authorization = `Device ${session}`;
-      headers['X-Briefsip-Proof'] = JSON.stringify({ ...proof, signature: sign(null, Buffer.from(JSON.stringify(deviceProofBody(proof))), signing.privateKey).toString('base64url') });
-      if (token) headers['X-Briefsip-Executor'] = token;
+      headers['X-Minarbot-Proof'] = JSON.stringify({ ...proof, signature: sign(null, Buffer.from(JSON.stringify(deviceProofBody(proof))), signing.privateKey).toString('base64url') });
+      if (token) headers['X-Minarbot-Executor'] = token;
     } else {
       const input = `${Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url')}.${Buffer.from(JSON.stringify({ iss: actor.issuer, sub: actor.subject, sid: actor.sessionId, azp: auth.origin, exp: Math.floor(actor.expiresAt / 1000), nbf: at - 1, iat: at - 1 })).toString('base64url')}`;
       headers.Authorization = `Bearer ${input}.${sign('RSA-SHA256', Buffer.from(input), keys.privateKey).toString('base64url')}`;
@@ -41,7 +41,7 @@ export async function rustTaskTestBridge(database: string, signing: ReturnType<t
     Atomics.wait(pause, 0, 0, Math.max(0, previousRequest + 51 - performance.now()));
     previousRequest = performance.now();
     const { headers, raw } = authenticated(method, path, body, actor, token);
-    if (recovery) headers['X-Briefsip-Recovery'] = recovery;
+    if (recovery) headers['X-Minarbot-Recovery'] = recovery;
     const decode = (status: number, value: Envelope): Result => {
       if (!value.ok) throw new ProtocolError(status, value.error.code, value.error.message, value.error.retryable, value.error.details);
       return { status, data: value.data, receipt: value.receipt };

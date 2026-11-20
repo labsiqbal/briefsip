@@ -170,7 +170,7 @@ impl Recovery<'_> {
             return Err(denied());
         }
         let body = json!([
-            "briefsip-infrastructure-fence-v1",
+            "minarbot-infrastructure-fence-v1",
             request,
             label(&evidence["fenceId"])?,
             true,
@@ -315,9 +315,9 @@ impl Recovery<'_> {
         let request_id = id(string(command, "requestId"))
             .filter(|value| command["requestId"] == *value)
             .ok_or_else(denied)?;
-        let payload = hash(&json!(["briefsip-restore-activate-v1", command]));
+        let payload = hash(&json!(["minarbot-restore-activate-v1", command]));
         let session = hash(&json!([
-            "briefsip-restore-activation-session-v1",
+            "minarbot-restore-activation-session-v1",
             self.actor.account,
             issuer,
             self.actor.subject,
@@ -449,7 +449,7 @@ mod tests {
         let observed = now();
         let expires = observed + 5_000;
         let body = json!([
-            "briefsip-infrastructure-fence-v1",
+            "minarbot-infrastructure-fence-v1",
             request,
             "fence",
             true,

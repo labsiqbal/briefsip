@@ -233,7 +233,7 @@ pub(super) fn edit(
     };
     let scope = format!("agents:{operation}:{project}:{aid}");
     let hash = digest(json!([
-        format!("briefsip-agent-{operation}-v1"),
+        format!("minarbot-agent-{operation}-v1"),
         project,
         aid,
         command
@@ -457,7 +457,7 @@ pub(super) fn create(
         evidence["avatar"] = json!(digest_bytes(bytes));
     }
     let scope = format!("agents:create:{project}");
-    let hash = digest(json!(["briefsip-agent-create-v1", evidence]));
+    let hash = digest(json!(["minarbot-agent-create-v1", evidence]));
     let prior = || -> Result<Option<Value>> {
         member(db, account, project, true)?;
         if one(
@@ -578,7 +578,7 @@ pub(super) fn create(
             let membership = member(db, account, project, true)?["grant_revision"].clone();
             let revisions = json!({"project":command["expectedProjectRevision"],"agent":1,"homeBinding":1,"membership":membership,"assignment":membership,"capability":1});
             let payload_digest = digest(json!([
-                "briefsip-task-payload-v1",
+                "minarbot-task-payload-v1",
                 aid,
                 project,
                 aid,
@@ -592,7 +592,7 @@ pub(super) fn create(
                 "INSERT INTO record_scopes VALUES('turns',?,?,?,'owner','agent',?)",
                 rusqlite::params![json!([aid]).to_string(), account, project, aid],
             )?;
-            db.execute("INSERT INTO tasks(id,logical_turn,project,agent,initiator_account,home_device,assignment_revision,capability_revision,capability_digest,capability_snapshot_json,provider_binding_id,provider_binding_revision,provider_binding_owner,state,payload_digest,payload_json,revision,created) VALUES(?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,1,?)",rusqlite::params![aid,aid,project,aid,account,home,membership.as_i64(),digest(json!(["briefsip-capabilities-v1",caps])),crate::db::canonical(&caps),binding["id"].as_str(),binding["revision"].as_i64(),binding["owner_account"].as_str(),if device["status"]=="ready"{"queued"}else{"waiting_device"},payload_digest,crate::db::canonical(&payload),state.config.now()])?;
+            db.execute("INSERT INTO tasks(id,logical_turn,project,agent,initiator_account,home_device,assignment_revision,capability_revision,capability_digest,capability_snapshot_json,provider_binding_id,provider_binding_revision,provider_binding_owner,state,payload_digest,payload_json,revision,created) VALUES(?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,1,?)",rusqlite::params![aid,aid,project,aid,account,home,membership.as_i64(),digest(json!(["minarbot-capabilities-v1",caps])),crate::db::canonical(&caps),binding["id"].as_str(),binding["revision"].as_i64(),binding["owner_account"].as_str(),if device["status"]=="ready"{"queued"}else{"waiting_device"},payload_digest,crate::db::canonical(&payload),state.config.now()])?;
         }
         Commit{account,project,scope:&scope,command:&command,digest:&hash}.save(db,state.config.now(),201,aid,1,json!({"agentId":aid,"agentRevision":1,"authorityRevision":1,"projectId":project,"participationRevision":1,"homeDeviceId":home,"avatarRevision":if avatar.is_some(){1}else{0}}))
     })

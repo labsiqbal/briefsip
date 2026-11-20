@@ -27,7 +27,7 @@ test('webhook receipts isolate, deduplicate, rotate and persist ignored events',
   async function send(hook: { route: string; secret: string }, id: string, event: string, payload: unknown, status = 202) {
     const body = JSON.stringify({ event, payload }), time = String(Math.floor(Date.now() / 1000));
     const signature = createHmac('sha256', hook.secret).update(`${time}\n${id}\n${body}`).digest('hex');
-    const response = await fetch(`${app.origin}/api/webhooks/${hook.route}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': id, 'X-Briefsip-Signature': signature }, body });
+    const response = await fetch(`${app.origin}/api/webhooks/${hook.route}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Minarbot-Time': time, 'X-Minarbot-Id': id, 'X-Minarbot-Signature': signature }, body });
     const data = await response.json(); assert.equal(response.status, status, JSON.stringify(data)); return data;
   }
   function beginEvent(hook: { route: string; secret: string }) {
@@ -35,7 +35,7 @@ test('webhook receipts isolate, deduplicate, rotate and persist ignored events',
     const signature = createHmac('sha256', hook.secret).update(`${time}\n${id}\n${body}`).digest('hex');
     let finish!: () => void;
     const response = new Promise<{ status: number | undefined; data: { outcome?: string } }>((resolve, reject) => {
-      const req = httpRequest(`${app.origin}/api/webhooks/${hook.route}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Briefsip-Time': time, 'X-Briefsip-Id': id, 'X-Briefsip-Signature': signature } }, async res => {
+      const req = httpRequest(`${app.origin}/api/webhooks/${hook.route}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Minarbot-Time': time, 'X-Minarbot-Id': id, 'X-Minarbot-Signature': signature } }, async res => {
         try { let raw = ''; for await (const chunk of res) raw += chunk; resolve({ status: res.statusCode, data: JSON.parse(raw) }); } catch (error) { reject(error); }
       });
       req.on('error', reject); req.write(body.slice(0, -1)); finish = () => req.end(body.slice(-1));

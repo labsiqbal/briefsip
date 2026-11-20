@@ -38,7 +38,7 @@ test('signed workflow events are scoped, durable, once-only, expiring and cancel
   }
   async function send(path: string, secret: string, body: string, id = randomUUID(), expected = 200, time = Math.floor(Date.now() / 1000)) {
     const signature = createHmac('sha256', secret).update(`${time}\n${id}\n`).update(body).digest('hex');
-    const response = await fetch(app.origin + path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Briefsip-Time': String(time), 'X-Briefsip-Id': id, 'X-Briefsip-Signature': signature }, body });
+    const response = await fetch(app.origin + path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Minarbot-Time': String(time), 'X-Minarbot-Id': id, 'X-Minarbot-Signature': signature }, body });
     const result = await response.json(); assert.equal(response.status, expected, JSON.stringify(result)); return result;
   }
   try {
@@ -70,15 +70,15 @@ test('signed workflow events are scoped, durable, once-only, expiring and cancel
     assert.equal(wrongHost.status, 403); assert(!wrongHost.body.includes(connection.secret));
     const body = JSON.stringify({ event: 'invoice.paid', payload: { invoice: 'SYNTHETIC-123' } }), delivery = randomUUID();
     const signatureTime = String(Math.floor(Date.now() / 1000)), signature = createHmac('sha256', connection.secret).update(`${signatureTime}\n${delivery}\n`).update(body).digest('hex');
-    const signedHeaders = { 'Content-Type': 'application/json', 'X-Briefsip-Time': signatureTime, 'X-Briefsip-Id': delivery, 'X-Briefsip-Signature': signature };
-    for (const headers of [{ ...signedHeaders, Origin: app.origin }, { ...signedHeaders, Origin: 'null' }, { ...signedHeaders, 'Content-Type': 'text/plain' }, { ...signedHeaders, 'X-Briefsip-Signature': signature.slice(1) }, { ...signedHeaders, 'X-Briefsip-Id': 'other-delivery' }]) {
+    const signedHeaders = { 'Content-Type': 'application/json', 'X-Minarbot-Time': signatureTime, 'X-Minarbot-Id': delivery, 'X-Minarbot-Signature': signature };
+    for (const headers of [{ ...signedHeaders, Origin: app.origin }, { ...signedHeaders, Origin: 'null' }, { ...signedHeaders, 'Content-Type': 'text/plain' }, { ...signedHeaders, 'X-Minarbot-Signature': signature.slice(1) }, { ...signedHeaders, 'X-Minarbot-Id': 'other-delivery' }]) {
       const denied = await fetch(app.origin + path, { method: 'POST', headers, body }); assert([401, 403].includes(denied.status));
       assert(!(await denied.text()).includes(connection.secret));
     }
     await send(path, connection.secret, JSON.stringify({ event: 'invoice.paid', payload: 'x'.repeat(65536) }), randomUUID(), 413);
     const invalidUtf8 = Buffer.from([0xff, 0xfe]);
     const invalidSignature = createHmac('sha256', connection.secret).update(`${signatureTime}\n${delivery}\n`).update(invalidUtf8).digest('hex');
-    const invalidResponse = await fetch(app.origin + path, { method: 'POST', headers: { ...signedHeaders, 'X-Briefsip-Signature': invalidSignature }, body: invalidUtf8 });
+    const invalidResponse = await fetch(app.origin + path, { method: 'POST', headers: { ...signedHeaders, 'X-Minarbot-Signature': invalidSignature }, body: invalidUtf8 });
     assert.equal(invalidResponse.status, 400); await invalidResponse.arrayBuffer();
     await send(path, 'wrong', body, randomUUID(), 401);
     await send(path, connection.secret, body, randomUUID(), 401, Math.floor(Date.now() / 1000) - 301);

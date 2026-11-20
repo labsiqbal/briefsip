@@ -31,7 +31,7 @@ pub(super) fn reserve(s: &Scope, run: &Value, node: &Value, seq: i64) -> Result<
     )?
     .ok_or_else(invalid)?;
     let mut body = json!({"v":1,"provisionId":Uuid::new_v4().to_string(),"waitKey":key,"projectId":s.project,"agentId":run["agent"],"sourceDeviceId":device["id"],"sourceDeviceGeneration":device["generation"],"authorityGeneration":authority["generation"],"secretGeneration":1,"event":node["event"],"deadline":s.state.config.now()+node["timeoutSeconds"].as_i64().ok_or_else(invalid)?*1000,"target":{"kind":"workflow","runId":run["id"],"seq":seq,"nodeId":node["id"],"expectedRunRevision":run["revision"]}});
-    let payload = digest(&canonical(&json!(["briefsip-wait-provision-v1", body])));
+    let payload = digest(&canonical(&json!(["minarbot-wait-provision-v1", body])));
     body["payloadDigest"] = json!(payload);
     db.execute("INSERT INTO wait_provisions(id,project,agent,source_device,source_generation,authority_generation,target_key,secret_generation,payload_digest,request_json,deadline,state) VALUES(?,?,?,?,?,?,?,1,?,?,?,'pending')",
         params![body["provisionId"].as_str(),s.project,run["agent"].as_str(),device["id"].as_str(),device["generation"].as_i64(),authority["generation"].as_str(),key,payload,canonical(&json!({"provision":body})),body["deadline"].as_i64()])?;
@@ -422,7 +422,7 @@ pub(crate) fn deliver(
         account,
         project,
         &format!("workflow-wait-event:{id}:{seq}"),
-        json!({"status":200,"data":{"run":id,"step":seq,"delivery":verified["id"],"accepted":true},"receipt":{"requestId":request,"actorId":account,"projectId":project,"payloadDigest":digest(&canonical(&json!(["briefsip-workflow-event-v1",id,seq,verified["id"],verified["digest"]]))),"status":200,"recordId":id,"recordRevision":revision,"committedAt":now}}),
+        json!({"status":200,"data":{"run":id,"step":seq,"delivery":verified["id"],"accepted":true},"receipt":{"requestId":request,"actorId":account,"projectId":project,"payloadDigest":digest(&canonical(&json!(["minarbot-workflow-event-v1",id,seq,verified["id"],verified["digest"]]))),"status":200,"recordId":id,"recordRevision":revision,"committedAt":now}}),
     )?;
     db.execute("UPDATE workflow_waits SET status='received',delivery=?,digest=?,result=? WHERE run=? AND seq=?",params![verified["id"].as_str(),verified["digest"].as_str(),canonical(&result),id,seq])?;
     db.execute(

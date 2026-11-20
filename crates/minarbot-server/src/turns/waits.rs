@@ -63,15 +63,15 @@ pub(crate) fn event(
     secret: &str,
     now: i64,
 ) -> Result<Value> {
-    if ["x-briefsip-time", "x-briefsip-id", "x-briefsip-signature"]
+    if ["x-minarbot-time", "x-minarbot-id", "x-minarbot-signature"]
         .iter()
         .any(|name| headers.get_all(*name).iter().count() != 1)
     {
         return Err(error(401, "Invalid webhook identity, time, or signature."));
     }
-    let time = crate::text_header(headers, "x-briefsip-time").unwrap_or("");
-    let id = crate::text_header(headers, "x-briefsip-id").unwrap_or("");
-    let signature = crate::text_header(headers, "x-briefsip-signature").unwrap_or("");
+    let time = crate::text_header(headers, "x-minarbot-time").unwrap_or("");
+    let id = crate::text_header(headers, "x-minarbot-id").unwrap_or("");
+    let signature = crate::text_header(headers, "x-minarbot-signature").unwrap_or("");
     if time.is_empty()
         || time.len() > 12
         || !time.bytes().all(|b| b.is_ascii_digit())
@@ -233,9 +233,9 @@ mod tests {
         .as_ref());
         let mut headers = axum::http::HeaderMap::new();
         for (name, value) in [
-            ("x-briefsip-time", time.as_str()),
-            ("x-briefsip-id", id),
-            ("x-briefsip-signature", signature.as_str()),
+            ("x-minarbot-time", time.as_str()),
+            ("x-minarbot-id", id),
+            ("x-minarbot-signature", signature.as_str()),
         ] {
             headers.insert(name, value.parse().map_err(|_| Failure::storage())?);
         }
@@ -283,7 +283,7 @@ mod tests {
         );
         let mut changed = headers.clone();
         changed.insert(
-            "x-briefsip-id",
+            "x-minarbot-id",
             axum::http::HeaderValue::from_static("different"),
         );
         assert_eq!(
@@ -293,7 +293,7 @@ mod tests {
             Some(401)
         );
         let mut duplicated = headers;
-        duplicated.append("x-briefsip-time", axum::http::HeaderValue::from_static("1"));
+        duplicated.append("x-minarbot-time", axum::http::HeaderValue::from_static("1"));
         assert_eq!(
             event(body, &duplicated, SECRET, NOW)
                 .err()

@@ -1,4 +1,3 @@
-import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { usePolling } from './hooks/usePolling';
 import { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Database, Ellipsis } from 'lucide-react';
@@ -12,7 +11,7 @@ const key = 'minarbot:shared-data-drop';
 export function SharedDataPanel({ request, agents }: { agents: { id: string; name: string }[]; request: <T>(path: string, data?: unknown) => Promise<T>; onClose: () => void }) {
   const [listing, setListing] = useState<Listing | null>(null), [after, setAfter] = useState(''), [reload, setReload] = useState(0);
   const [sql, setSQL] = useState(''), [result, setResult] = useState<QueryResult | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
-  const [pending, setPending] = useState<Pending | null>(() => { try { const p = JSON.parse(readProductStorage(sessionStorage, key) ?? 'null'); return p && typeof p.id === 'string' && /^[0-9a-f-]{36}$/i.test(p.id) && typeof p.table === 'string' && p.table.length > 0 && p.table.length <= 128 && Number.isSafeInteger(p.revision) && p.revision >= 0 ? p : null; } catch { return null; } });
+  const [pending, setPending] = useState<Pending | null>(() => { try { const p = JSON.parse(sessionStorage.getItem(key) ?? 'null'); return p && typeof p.id === 'string' && /^[0-9a-f-]{36}$/i.test(p.id) && typeof p.table === 'string' && p.table.length > 0 && p.table.length <= 128 && Number.isSafeInteger(p.revision) && p.revision >= 0 ? p : null; } catch { return null; } });
   const confirm = useConfirm();
   const heading = useRef<HTMLHeadingElement>(null), version = useRef(0);
   useEffect(() => { heading.current?.focus(); return () => { version.current++; }; }, []);
@@ -33,7 +32,7 @@ export function SharedDataPanel({ request, agents }: { agents: { id: string; nam
     const active = ++version.current; setBusy(true); setError('');
     try {
       const value = await request<QueryResult>('/api/data/' + (command ? 'drop' : 'query'), command ?? { id: crypto.randomUUID(), revision: listing.revision, sql });
-      if (command && JSON.parse(readProductStorage(sessionStorage, key) ?? 'null')?.id === command.id) removeProductStorage(sessionStorage, key);
+      if (command && JSON.parse(sessionStorage.getItem(key) ?? 'null')?.id === command.id) sessionStorage.removeItem(key);
       if (active !== version.current) return;
       setPending(null); setResult(value); setReload(n => n + 1);
     } catch (error) { if (active === version.current) setError((error as Error).message); }
@@ -44,7 +43,7 @@ export function SharedDataPanel({ request, agents }: { agents: { id: string; nam
     {error && <Alert tone="error">{error}</Alert>}
     {pending && <RecoveryAlert inFlight={busy} tone="warn" title={`Not confirmed: delete ${pending.table}`} actions={<>
       <Button size="sm" disabled={busy || !listing} onClick={() => void execute()}>Try again</Button>
-      <Button size="sm" disabled={busy} onClick={() => { removeProductStorage(sessionStorage, key); setPending(null); setReload(n => n + 1); }}>Discard request</Button>
+      <Button size="sm" disabled={busy} onClick={() => { sessionStorage.removeItem(key); setPending(null); setReload(n => n + 1); }}>Discard request</Button>
     </>} />}
     <Section id="shared-data-tables" title={<Tooltip content={<span className="bs-root set4-tooltip">{"Agent-shared tables; schema owned by creator. Do not store secrets or private data here."}</span>}><span tabIndex={0}>Tables</span></Tooltip>}>
       {!listing ? error ? <EmptyState title="Data is unavailable." /> : <><span className="sr-only" role="status">Loading tables...</span><SkeletonRows /></> : <>

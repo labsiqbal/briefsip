@@ -35,8 +35,8 @@ async function session(origin: string, token?: string, options: { method?: strin
     ...(options.method === 'POST' ? { body: JSON.stringify({ requestId }) } : {}),
     headers: {
       'Content-Type': 'application/json',
-      'X-Briefsip-Protocol': '1',
-      'X-Briefsip-Request-Id': requestId,
+      'X-Minarbot-Protocol': '1',
+      'X-Minarbot-Request-Id': requestId,
       Origin: options.origin ?? config.origin,
       ...(options.cookie ? { Cookie: options.cookie } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -148,7 +148,7 @@ test('canonical HTTP verifies identity, isolates projects and cannot dispatch le
   const clerk = createClerkClient({ secretKey: config.secretKey, publishableKey: config.publishableKey, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), telemetry: { disabled: true } });
   const app = await startCanonicalApp({ database: join(dir, 'db.sqlite'), auth: { ...config, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), development: true }, clerk });
   const send = async (path: string, method = 'GET', body?: { requestId: string; [key: string]: unknown }, token = jwt()) => {
-    const response = await fetch(app.origin + path, { method, headers: { Authorization: `Bearer ${token}`, Origin: config.origin, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': body?.requestId ?? randomUUID() }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    const response = await fetch(app.origin + path, { method, headers: { Authorization: `Bearer ${token}`, Origin: config.origin, 'Content-Type': 'application/json', 'X-Minarbot-Protocol': '1', 'X-Minarbot-Request-Id': body?.requestId ?? randomUUID() }, ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
   };
   try {
@@ -164,7 +164,7 @@ test('canonical HTTP verifies identity, isolates projects and cannot dispatch le
     assert.equal((await send(`/api/agents/${randomUUID()}/turns`)).status, 404);
     const invalid = await send('/api/projects', 'GET', undefined, 'invalid'); assert.equal(invalid.status, 401); assert.equal(invalid.body.ok, false);
     const duplicateId = randomUUID();
-    const duplicate = await fetch(app.origin + '/api/projects', { method: 'POST', headers: { Authorization: `Bearer ${jwt()}`, Origin: config.origin, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': duplicateId }, body: `{"requestId":"${duplicateId}","id":"${randomUUID()}","name":"First","name":"Second"}` });
+    const duplicate = await fetch(app.origin + '/api/projects', { method: 'POST', headers: { Authorization: `Bearer ${jwt()}`, Origin: config.origin, 'Content-Type': 'application/json', 'X-Minarbot-Protocol': '1', 'X-Minarbot-Request-Id': duplicateId }, body: `{"requestId":"${duplicateId}","id":"${randomUUID()}","name":"First","name":"Second"}` });
     assert.equal(duplicate.status, 400); assert.equal((await duplicate.json()).error.code, 'duplicate_key');
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
@@ -183,7 +183,7 @@ test('canonical invitation creates durable outbox and worker delivers through co
     rmSync(dir, { recursive: true, force: true });
   };
   let app = await startCanonicalApp(options).catch(async error => { await cleanup(); throw error; });
-  const send = async (path: string, body: Record<string, unknown>) => fetch(app.origin + path, { method: 'POST', headers: { Authorization: `Bearer ${jwt()}`, Origin: config.origin, 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': String(body.requestId) }, body: JSON.stringify(body) });
+  const send = async (path: string, body: Record<string, unknown>) => fetch(app.origin + path, { method: 'POST', headers: { Authorization: `Bearer ${jwt()}`, Origin: config.origin, 'Content-Type': 'application/json', 'X-Minarbot-Protocol': '1', 'X-Minarbot-Request-Id': String(body.requestId) }, body: JSON.stringify(body) });
   try {
     const projectId = randomUUID(); const project = await send('/api/projects', { requestId: randomUUID(), id: projectId, name: 'Mail fixture' }); assert.equal(project.status, 201);
     const invitationId = randomUUID(); const response = await send(`/api/projects/${projectId}/invitations`, { requestId: invitationId, email: 'member@example.com', agentAssignments: [], expiresAt: Date.now() + 60000, expectedProjectRevision: 1 }); assert.equal(response.status, 201, await response.clone().text());

@@ -468,7 +468,7 @@ fn workflow_schedule(s: &Scope, row: &Value) -> Result<()> {
     )?
     .ok_or_else(Failure::storage)?;
     let digest = crate::db::digest(&crate::db::canonical(&json!([
-        "briefsip-workflow-occurrence-v1",
+        "minarbot-workflow-occurrence-v1",
         id,
         occurrence,
         row["revision"],

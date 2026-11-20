@@ -83,7 +83,7 @@ pub fn render(db: &Connection, entries: &[Value], now: i64) -> Result<String> {
         lines.extend([
             "BEGIN:VEVENT".to_owned(),
             // An existing calendar import identifies this event by its full UID.
-            format!("UID:{}@briefsip.local", string(row, "id")),
+            format!("UID:{}@minarbot.local", string(row, "id")),
             format!("DTSTAMP:{}", stamp(now)?),
             format!("SEQUENCE:{}", row["revision"]),
             format!("DTSTART:{}", stamp(at)?),

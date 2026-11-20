@@ -562,11 +562,6 @@ async fn execute(
             include_str!("../../../../app/t3/pi-harness-extension.mjs"),
         )
         .map_err(|_| Failure::storage())?;
-        std::fs::write(
-            extension.with_file_name("rename-env.mjs"),
-            include_str!("../../../../desktop/src/rename-env.mjs"),
-        )
-        .map_err(|_| Failure::storage())?;
         args.extend([
             "--extension".into(),
             extension.to_string_lossy().into_owned(),

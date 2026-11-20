@@ -1,4 +1,3 @@
-import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { usePolling } from './hooks/usePolling';
 import { Markdown } from './Markdown';
 import { EventConnection } from './EventConnection';
@@ -65,7 +64,7 @@ export function WorkflowPanel({ owner, agents, request, onBack, renderConversati
 }) {
   const storage = `minarbot:workflow-command:${owner.id}`, listPath = `/api/agents/${owner.id}/workflows`;
   const [recovery, setRecovery] = useState(() => {
-    try { return { command: restoreWorkflowCommand(readProductStorage(sessionStorage, storage), owner.id, new Set(agents.map(agent => agent.id))), invalid: false }; }
+    try { return { command: restoreWorkflowCommand(sessionStorage.getItem(storage), owner.id, new Set(agents.map(agent => agent.id))), invalid: false }; }
     catch { return { command: null, invalid: true }; }
   });
   const [pending, setPending] = useState<Command | null>(recovery.command);
@@ -116,12 +115,12 @@ export function WorkflowPanel({ owner, agents, request, onBack, renderConversati
     if (command.kind === 'webhook') setHookSecret(null);
     try {
       const result = await request<{ id: string } & Partial<WorkflowHook>>(command.path, command.body);
-      if (JSON.parse(readProductStorage(sessionStorage, storage) ?? 'null')?.body?.id === command.body.id) removeProductStorage(sessionStorage, storage);
+      if (JSON.parse(sessionStorage.getItem(storage) ?? 'null')?.body?.id === command.body.id) sessionStorage.removeItem(storage);
       if (command.kind === 'save') {
         const key = `minarbot:workflow-draft:${owner.id}:${command.workflow?.id ?? 'new'}`;
         try {
-          const draft = restoreWorkflowEditorDraft(readProductStorage(sessionStorage, key));
-          if (draft && draft.revision === command.body.revision && workflowDraftMatches(draft.name, draft.graph, command.body as unknown as WorkflowDraft, new Set(agents.map(agent => agent.id)))) removeProductStorage(sessionStorage, key);
+          const draft = restoreWorkflowEditorDraft(sessionStorage.getItem(key));
+          if (draft && draft.revision === command.body.revision && workflowDraftMatches(draft.name, draft.graph, command.body as unknown as WorkflowDraft, new Set(agents.map(agent => agent.id)))) sessionStorage.removeItem(key);
         } catch { /* Preserve an unreadable or newer local draft. */ }
       }
       if (!mounted.current) return false;
@@ -141,7 +140,7 @@ export function WorkflowPanel({ owner, agents, request, onBack, renderConversati
     } catch (error) {
       if (!mounted.current) return false;
       if (typeof error === 'object' && error && 'status' in error && Number(error.status) < 500) {
-        if (JSON.parse(readProductStorage(sessionStorage, storage) ?? 'null')?.body?.id === command.body.id) removeProductStorage(sessionStorage, storage); setPending(null);
+        if (JSON.parse(sessionStorage.getItem(storage) ?? 'null')?.body?.id === command.body.id) sessionStorage.removeItem(storage); setPending(null);
         if (command.kind === 'save' && Number(error.status) === 409 && version === navigation.current) setConflict(true);
         if (command.kind === 'webhook' && Number(error.status) === 409) setHookConflict(command.workflow!.id);
         if (command.kind === 'schedule' && Number(error.status) === 409) setScheduleConflict(command.workflow!.id);
@@ -161,7 +160,7 @@ export function WorkflowPanel({ owner, agents, request, onBack, renderConversati
   }
   const confirm = useConfirm();
   const locked = busy || !!pending || conflict || recovery.invalid || !!selected?.deleted || !!(editing && editing !== 'new' && editing.deleted);
-  const banner = <>{editing && editing !== 'new' && !!editing.deleted && <Alert tone="warn">Workflow has been deleted. The draft remains saved in the browser.</Alert>}{recovery.invalid && <Alert tone="error" actions={<Button size="sm" onClick={() => { try { removeProductStorage(sessionStorage, storage); setRecovery({ command: null, invalid: false }); } catch { setError('Site storage is unavailable.'); } }}>Ignore recovery data</Button>}>Saved request could not be read. Check history before resending.</Alert>}{error && <Alert tone="error">{error}</Alert>}{pending && <RecoveryAlert inFlight={busy} tone="warn" title="Request is not confirmed yet" actions={<Button size="sm" disabled={busy} onClick={() => void execute(pending)}>Retry request</Button>} />}{conflict && editing && <Alert tone="warn" actions={<Button size="sm" disabled={busy} onClick={() => void reloadEdit()}>Load latest version</Button>}>Draft remains visible. Load the latest version; previous graph changes can be restored with Undo graph.</Alert>}</>;
+  const banner = <>{editing && editing !== 'new' && !!editing.deleted && <Alert tone="warn">Workflow has been deleted. The draft remains saved in the browser.</Alert>}{recovery.invalid && <Alert tone="error" actions={<Button size="sm" onClick={() => { try { sessionStorage.removeItem(storage); setRecovery({ command: null, invalid: false }); } catch { setError('Site storage is unavailable.'); } }}>Ignore recovery data</Button>}>Saved request could not be read. Check history before resending.</Alert>}{error && <Alert tone="error">{error}</Alert>}{pending && <RecoveryAlert inFlight={busy} tone="warn" title="Request is not confirmed yet" actions={<Button size="sm" disabled={busy} onClick={() => void execute(pending)}>Retry request</Button>} />}{conflict && editing && <Alert tone="warn" actions={<Button size="sm" disabled={busy} onClick={() => void reloadEdit()}>Load latest version</Button>}>Draft remains visible. Load the latest version; previous graph changes can be restored with Undo graph.</Alert>}</>;
   if (conversation && selected && run) return <><div className="k-page bs-root"><PageHeader title={selected.name} description={`${selected.name} · Version ${run.version} · Step ${conversation.node} · Run ${run.id}`} actions={<Button ref={conversationBack} variant="ghost" onClick={() => setConversation(null)}>Back to run {selected.name}</Button>} /></div>{renderConversation(conversation.thread, conversation.agent)}</>;
   if (editing) return <><div className="k-page bs-root">{banner}</div><WorkflowEditor key={editing === 'new' ? 'new' : editing.id} reload={editorReload} owner={owner} agents={agents} request={request} locked={locked} saved={editing === 'new' ? undefined : editing} draftKey={`minarbot:workflow-draft:${owner.id}:${editing === 'new' ? 'new' : editing.id}`} pendingSave={pending?.kind === 'save'} onReload={() => void reloadEdit()}
     initial={pending?.kind === 'save' ? pending.body as unknown as WorkflowDraft : editing === 'new' ? undefined : editing}

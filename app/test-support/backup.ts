@@ -1,4 +1,3 @@
-import { productEnv } from '../../desktop/src/rename-env.mjs';
 import { type DatabaseSync, backup } from 'node:sqlite';
 import { testDatabase } from './database.ts';
 import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
@@ -8,11 +7,11 @@ import { tmpdir } from 'node:os';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { HumanActor, HumanAuth } from './auth.ts';
 import { constantTimeEqualHex, digestCommand, ProtocolError, sha256 } from '../shared/protocol.ts';
-import { schemaVersion, transaction } from './legacy-schema.ts';
+import { schemaVersion, transaction } from './schema-fixture.ts';
 import { rustBinary } from '../rust-binary.ts';
 
 export function restoreCommand(args: string[], options: { env?: NodeJS.ProcessEnv; input?: string } = {}) {
-  const binary = rustBinary('minarbot-server', productEnv('MINARBOT_RUST_BINARY'));
+  const binary = rustBinary('minarbot-server', process.env.MINARBOT_RUST_BINARY);
   const result = spawnSync(binary, ['restore', ...args], { encoding: 'utf8', env: { ...process.env, ...options.env }, input: options.input, timeout: 10000, maxBuffer: 10 * 1024 * 1024 });
   if (result.error) throw result.error;
   const value = JSON.parse(result.stdout || 'null');
@@ -34,7 +33,7 @@ export function restoreWorkspace(source: string, destination: string, options: {
 
 // Fixtures generate old-schema archives and can seed proof state on a running test server.
 const restoreDenied=()=>new ProtocolError(403,'recovery_session_invalid','Recovery evidence is invalid or expired.');
-const restoreSessionDigest=(actor:HumanActor,proof:string)=>digestCommand(['briefsip-restore-session-v1',actor.accountId,actor.issuer,actor.subject,proof]);
+const restoreSessionDigest=(actor:HumanActor,proof:string)=>digestCommand(['minarbot-restore-session-v1',actor.accountId,actor.issuer,actor.subject,proof]);
 function recoveryOwner(db:DatabaseSync,auth:Pick<HumanAuth,'requireCurrent'>,actor:HumanActor){
   auth.requireCurrent(actor);
   const recorded=db.prepare('SELECT owner_account FROM minarbot_backup_authority').all();

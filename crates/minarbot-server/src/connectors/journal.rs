@@ -52,7 +52,7 @@ impl Journal {
                 Err(e) => return Err(e.into()),
             }
             for suffix in ["", "-wal", "-shm", "-journal"] {
-                match fs::symlink_metadata(crate::rename_migration::exact_sidecar(&file, suffix)) {
+                match fs::symlink_metadata(minarbot_launcher::files::sidecar(&file, suffix)) {
                     Ok(stat) => {
                         if !stat.is_file()
                             || stat.nlink() != 1

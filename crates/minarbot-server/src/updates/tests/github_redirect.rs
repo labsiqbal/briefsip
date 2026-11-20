@@ -11,7 +11,7 @@ async fn redirected_legacy_manifest_still_requires_a_valid_signature() -> crate:
     let key = Ed25519KeyPair::from_pkcs8(key.as_ref()).map_err(|_| "key parsing")?;
     let bytes = json!({
         "version":"0.14.0","id":"0.14.0-01234567","commit":"0123456789012345678901234567890123456789",
-        "archive":"briefsip-0.14.0-linux-x86_64.tar.gz","sha256":"0".repeat(64),
+        "archive":"minarbot-0.14.0-linux-x86_64.tar.gz","sha256":"0".repeat(64),
         "size":1,"notes":"fixture","created":"2026-11-20T00:00:00Z"
     }).to_string();
     let signature = STANDARD.encode(key.sign(bytes.as_bytes()).as_ref());

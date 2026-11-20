@@ -1,4 +1,3 @@
-import { readProductStorage } from '../rename-storage.ts';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 
 export const notificationMuteKey = 'minarbot:workflow-notifications-muted';
@@ -49,7 +48,7 @@ const deliveredKey = 'minarbot:needs-you-delivered';
 
 export function claimNotification(storage: Pick<Storage, 'getItem' | 'setItem'>, id: string) {
   try {
-    const saved: unknown = JSON.parse(readProductStorage(storage, deliveredKey) ?? '[]');
+    const saved: unknown = JSON.parse(storage.getItem(deliveredKey) ?? '[]');
     const ids = Array.isArray(saved) ? saved.filter((value): value is string => typeof value === 'string') : [];
     if (ids.includes(id)) return false;
     // ponytail: bounded browser history. Use server receipts if delivery spans devices.
@@ -81,7 +80,7 @@ export function useNeedsYouNotifications(onOpen: (target: TurnDestination, input
       for (const notice of notices) {
         if (before.has(notice.id)) continue;
         try {
-          if (readProductStorage(localStorage, notificationMuteKey) === '1' || !claimNotification(localStorage, notice.id)) continue;
+          if (localStorage.getItem(notificationMuteKey) === '1' || !claimNotification(localStorage, notice.id)) continue;
           const notification = new Notification(notice.title, { body: 'Open Minarbot to view the conversation.', tag: `minarbot:${notice.id}` });
           notification.onclick = () => { window.focus(); open.current(notice.target, notice.input); notification.close(); };
         } catch { /* Browser permissions and storage can change while the app is open. */ }

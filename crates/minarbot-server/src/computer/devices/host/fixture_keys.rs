@@ -3,7 +3,7 @@ use super::*;
 pub(super) struct FixtureKeys(PathBuf);
 impl FixtureKeys {
     pub(super) fn open(path: PathBuf, origin: &str) -> db::Result<Self> {
-        if minarbot_launcher::rename_migration::var("MINARBOT_TEST_SERVER").as_deref() != Ok("rust")
+        if std::env::var("MINARBOT_TEST_SERVER").as_deref() != Ok("rust")
             || !origin.starts_with("http://127.0.0.1:")
             || !valid_origin(origin, true)
         {
