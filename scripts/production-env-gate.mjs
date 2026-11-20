@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { fileManifest } from './release-lib.mjs';
+import { freePort } from './test-port.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -19,7 +20,7 @@ export function newestSnapshot() {
   return files[0];
 }
 
-export { freePort } from './test-port.mjs';
+export { freePort };
 
 export async function stop(child, closed) {
   if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
